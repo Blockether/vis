@@ -727,6 +727,133 @@ def __vis_install_matplotlib__():
         def stackplot(self, *a, **k):
             return stackplot(*a, **k)
 
+        # -- artist containers and axis handles ----------------------------
+        # `ax.add_patch(Rectangle(...))`, `ax.spines["top"].set_visible(False)`
+        # and `ax.xaxis.set_major_formatter(...)` are styling staples: they
+        # must accept the artist, return it, and never raise.
+        def _artists(self):
+            lst = getattr(self, "_vis_artists", None)
+            if lst is None:
+                lst = []
+                self._vis_artists = lst
+            return lst
+
+        def add_patch(self, p, *a, **k):
+            self._artists().append(p)
+            return p
+
+        def add_line(self, ln, *a, **k):
+            self._artists().append(ln)
+            return ln
+
+        def add_collection(self, col, *a, **k):
+            self._artists().append(col)
+            return col
+
+        def add_artist(self, art, *a, **k):
+            self._artists().append(art)
+            return art
+
+        def add_container(self, con, *a, **k):
+            self._artists().append(con)
+            return con
+
+        def get_children(self):
+            return list(self._artists())
+
+        @property
+        def spines(self):
+            sp = getattr(self, "_spines", None)
+            if sp is None:
+                sp = dict(
+                    (side, _Inert()) for side in ("left", "right", "top", "bottom")
+                )
+                self._spines = sp
+            return sp
+
+        @property
+        def xaxis(self):
+            ax = getattr(self, "_xaxis", None)
+            if ax is None:
+                ax = _AxisStub("x")
+                self._xaxis = ax
+            return ax
+
+        @property
+        def yaxis(self):
+            ax = getattr(self, "_yaxis", None)
+            if ax is None:
+                ax = _AxisStub("y")
+                self._yaxis = ax
+            return ax
+
+        def get_xlim(self):
+            lim = xlim()
+            return (float(lim[0]), float(lim[1])) if lim else (0.0, 1.0)
+
+        def get_ylim(self):
+            lim = ylim()
+            return (float(lim[0]), float(lim[1])) if lim else (0.0, 1.0)
+
+        def invert_xaxis(self):
+            lim = xlim()
+            return xlim(lim[1], lim[0]) if lim else None
+
+        def invert_yaxis(self):
+            lim = ylim()
+            return ylim(lim[1], lim[0]) if lim else None
+
+        def get_figure(self):
+            return gcf()
+
+        def get_legend_handles_labels(self):
+            return ([], [])
+
+        def set_aspect(self, *a, **k):
+            return None
+
+        def margins(self, *a, **k):
+            return None
+
+        def minorticks_on(self, *a, **k):
+            return None
+
+        def minorticks_off(self, *a, **k):
+            return None
+
+        def set_axis_off(self, *a, **k):
+            return None
+
+        def set_axis_on(self, *a, **k):
+            return None
+
+        def set_frame_on(self, *a, **k):
+            return None
+
+        def label_outer(self, *a, **k):
+            return None
+
+        def relim(self, *a, **k):
+            return None
+
+        def autoscale(self, *a, **k):
+            return None
+
+        def autoscale_view(self, *a, **k):
+            return None
+
+        def get_xticklabels(self, *a, **k):
+            return []
+
+        def get_yticklabels(self, *a, **k):
+            return []
+
+        def get_xticks(self, *a, **k):
+            return []
+
+        def get_yticks(self, *a, **k):
+            return []
+
     class _Patch(object):
         # Background artist stand-in for `figure.patch` / `axes.patch`. The
         # renderer paints its own chrome, so the properties are only recorded
@@ -2391,6 +2518,1022 @@ def __vis_install_matplotlib__():
     mpl_toolkits = types.ModuleType("mpl_toolkits")
     mpl_toolkits.mplot3d = mplot3d
 
+    # ---- matplotlib submodules -------------------------------------------
+    # Real plotting code imports from the PACKAGE, not just pyplot:
+    # `from matplotlib.patches import Rectangle`, `from matplotlib.colors
+    # import Normalize`, `import matplotlib.ticker as mticker`, ... Without a
+    # `__path__` those die with "matplotlib is not a package" before
+    # sys.modules is ever consulted, so the package marker and one small
+    # module per import path live here.
+    mpl.__path__ = []
+    mpl_toolkits.__path__ = []
+    mplot3d.__path__ = []
+
+    _math = __import__("math")
+    _submods = {}
+
+    def _submodule(_name, **attrs):
+        m = types.ModuleType("matplotlib." + _name)
+        m.__doc__ = "vis matplotlib.%s compat subset." % (_name,)
+        for _k in attrs:
+            setattr(m, _k, attrs[_k])
+        setattr(mpl, _name, m)
+        _submods["matplotlib." + _name] = m
+        return m
+
+    class _Inert(object):
+        # Decorative artist: records its construction and answers any unknown
+        # attribute with a no-op, so styling boilerplate never raises.
+        def __init__(self, *a, **k):
+            self.args = a
+            self.kwargs = dict(k)
+
+        def __getattr__(self, name):
+            if name.startswith("__"):
+                raise AttributeError(name)
+
+            def _noop(*a, **k):
+                return None
+
+            return _noop
+
+    # -- matplotlib.colors --------------------------------------------------
+    def _to_rgba(c, alpha=None):
+        r, g, b = _rgb(c, 0)
+        a = 1.0
+        if alpha is not None:
+            a = float(alpha)
+        elif isinstance(c, (tuple, list)) and len(c) == 4:
+            try:
+                a = float(c[3])
+            except (TypeError, ValueError):
+                a = 1.0
+        return (r / 255.0, g / 255.0, b / 255.0, a)
+
+    def _to_rgb(c):
+        return _to_rgba(c)[:3]
+
+    def _to_rgba_array(c, alpha=None):
+        if isinstance(c, (tuple, list)) and c and isinstance(c[0], (tuple, list, str)):
+            return [_to_rgba(v, alpha) for v in c]
+        return [_to_rgba(c, alpha)]
+
+    def _to_hex(c, keep_alpha=False):
+        rgba = _to_rgba(c)
+        vals = rgba if keep_alpha else rgba[:3]
+        return "#" + "".join(
+            "%02x" % max(0, min(255, int(_bi_round(v * 255.0)))) for v in vals
+        )
+
+    def _hex2color(s):
+        return _to_rgb(s)
+
+    def _is_color_like(c):
+        if isinstance(c, (tuple, list)):
+            return len(c) in (3, 4) and all(
+                isinstance(v, (int, float)) and not isinstance(v, bool) for v in c[:3]
+            )
+        if c is None or isinstance(c, bool):
+            return False
+        s = str(c).strip()
+        if s.startswith("#"):
+            return len(s) in (4, 7, 9)
+        if len(s) >= 2 and s[0] == "C" and s[1:].isdigit():
+            return True
+        return s.lower() in _CNAMED
+
+    def _flat_floats(a):
+        out = []
+        stack = [a]
+        while stack:
+            v = stack.pop()
+            if hasattr(v, "__iter__") and not isinstance(v, (str, bytes)):
+                stack.extend(list(v))
+                continue
+            try:
+                out.append(float(v))
+            except (TypeError, ValueError):
+                pass
+        return out
+
+    class _Normalize(object):
+        # Maps data to 0..1. The renderer does its own scaling, so this exists
+        # to be constructed, called, and passed around without surprises.
+        def __init__(self, vmin=None, vmax=None, clip=False):
+            self.vmin = vmin
+            self.vmax = vmax
+            self.clip = clip
+
+        def _range(self):
+            lo = 0.0 if self.vmin is None else float(self.vmin)
+            hi = 1.0 if self.vmax is None else float(self.vmax)
+            return lo, hi
+
+        def autoscale(self, A=None):
+            vals = _flat_floats(A)
+            if vals:
+                self.vmin = min(vals)
+                self.vmax = max(vals)
+            return None
+
+        def autoscale_None(self, A=None):
+            if self.vmin is None or self.vmax is None:
+                self.autoscale(A)
+            return None
+
+        def scaled(self):
+            return self.vmin is not None and self.vmax is not None
+
+        def __call__(self, value, clip=None):
+            if hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
+                return [self(v) for v in value]
+            lo, hi = self._range()
+            if hi == lo:
+                return 0.0
+            f = (float(value) - lo) / (hi - lo)
+            return 0.0 if f < 0.0 else (1.0 if f > 1.0 else f)
+
+        def inverse(self, value):
+            lo, hi = self._range()
+            return lo + float(value) * (hi - lo)
+
+    class _LogNorm(_Normalize):
+        def __call__(self, value, clip=None):
+            if hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
+                return [self(v) for v in value]
+            lo, hi = self._range()
+            v = float(value)
+            if v <= 0.0 or lo <= 0.0 or hi <= lo:
+                return 0.0
+            f = (_math.log10(v) - _math.log10(lo)) / (_math.log10(hi) - _math.log10(lo))
+            return 0.0 if f < 0.0 else (1.0 if f > 1.0 else f)
+
+    class _PowerNorm(_Normalize):
+        def __init__(self, gamma=1.0, vmin=None, vmax=None, clip=False):
+            _Normalize.__init__(self, vmin, vmax, clip)
+            self.gamma = float(gamma)
+
+        def __call__(self, value, clip=None):
+            f = _Normalize.__call__(self, value, clip)
+            if isinstance(f, list):
+                return [x**self.gamma for x in f]
+            return f**self.gamma
+
+    class _TwoSlopeNorm(_Normalize):
+        def __init__(self, vcenter=0.0, vmin=None, vmax=None):
+            _Normalize.__init__(self, vmin, vmax, False)
+            self.vcenter = float(vcenter)
+
+        def __call__(self, value, clip=None):
+            if hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
+                return [self(v) for v in value]
+            lo, hi = self._range()
+            v = float(value)
+            c = self.vcenter
+            if v < c:
+                f = 0.5 * ((v - lo) / (c - lo)) if c > lo else 0.0
+            else:
+                f = 0.5 + 0.5 * ((v - c) / (hi - c)) if hi > c else 1.0
+            return 0.0 if f < 0.0 else (1.0 if f > 1.0 else f)
+
+    class _CenteredNorm(_TwoSlopeNorm):
+        def __init__(self, vcenter=0.0, halfrange=None, clip=False):
+            half = 1.0 if halfrange is None else abs(float(halfrange))
+            _TwoSlopeNorm.__init__(self, vcenter, vcenter - half, vcenter + half)
+            self.halfrange = half
+
+    class _BoundaryNorm(_Normalize):
+        def __init__(self, boundaries, ncolors=None, clip=False, **k):
+            bs = [float(b) for b in boundaries]
+            _Normalize.__init__(self, bs[0] if bs else 0.0, bs[-1] if bs else 1.0, clip)
+            self.boundaries = bs
+            self.N = len(bs)
+            self.Ncmap = int(ncolors) if ncolors else max(1, len(bs) - 1)
+
+        def __call__(self, value, clip=None):
+            if hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
+                return [self(v) for v in value]
+            v = float(value)
+            idx = 0
+            for i in range(len(self.boundaries) - 1):
+                if v >= self.boundaries[i]:
+                    idx = i
+            return idx
+
+    class _NoNorm(_Normalize):
+        def __call__(self, value, clip=None):
+            return value
+
+    class _ListedColormap(_Colormap):
+        def __init__(self, colors, name="from_list", N=None):
+            seq = list(colors) if colors else ["#000000", "#ffffff"]
+            anchors = tuple(tuple(v / 255.0 for v in _rgb(c, 0)) for c in seq)
+            if len(anchors) == 1:
+                anchors = anchors + anchors
+            _Colormap.__init__(self, name, anchors)
+            self.colors = seq
+            if N:
+                self.N = int(N)
+
+    class _LinearSegmentedColormap(_ListedColormap):
+        def __init__(self, name="from_list", segmentdata=None, N=256, **k):
+            seq = segmentdata
+            if seq is None or isinstance(seq, dict):
+                # Real segmentdata is a red/green/blue anchor mapping; the
+                # subset renders gradients from a color LIST, so degrade to
+                # the endpoints rather than raising on an exotic spec.
+                seq = ["#000000", "#ffffff"]
+            _ListedColormap.__init__(self, seq, name, N)
+
+        @staticmethod
+        def from_list(name, colors, N=256, gamma=1.0):
+            return _ListedColormap(colors, name, N)
+
+    _CNAME_HEX = {}
+    for _cn in _CNAMED:
+        _CNAME_HEX[_cn] = _to_hex(_cn)
+
+    _submodule(
+        "colors",
+        Normalize=_Normalize,
+        LogNorm=_LogNorm,
+        SymLogNorm=_LogNorm,
+        PowerNorm=_PowerNorm,
+        TwoSlopeNorm=_TwoSlopeNorm,
+        DivergingNorm=_TwoSlopeNorm,
+        CenteredNorm=_CenteredNorm,
+        BoundaryNorm=_BoundaryNorm,
+        NoNorm=_NoNorm,
+        Colormap=_Colormap,
+        ListedColormap=_ListedColormap,
+        LinearSegmentedColormap=_LinearSegmentedColormap,
+        LightSource=_Inert,
+        to_rgba=_to_rgba,
+        to_rgb=_to_rgb,
+        to_rgba_array=_to_rgba_array,
+        to_hex=_to_hex,
+        rgb2hex=_to_hex,
+        hex2color=_hex2color,
+        is_color_like=_is_color_like,
+        cnames=_CNAME_HEX,
+        CSS4_COLORS=_CNAME_HEX,
+        BASE_COLORS=_CNAME_HEX,
+        TABLEAU_COLORS=dict(
+            ("tab:" + _n, _to_hex(_n))
+            for _n in (
+                "blue",
+                "orange",
+                "green",
+                "red",
+                "purple",
+                "brown",
+                "pink",
+                "gray",
+                "olive",
+                "cyan",
+            )
+        ),
+    )
+
+    # -- matplotlib.transforms ----------------------------------------------
+    class _Bbox(object):
+        def __init__(self, points=((0.0, 0.0), (1.0, 1.0))):
+            (self.x0, self.y0), (self.x1, self.y1) = (
+                (float(points[0][0]), float(points[0][1])),
+                (float(points[1][0]), float(points[1][1])),
+            )
+
+        @staticmethod
+        def from_bounds(x0, y0, w, h):
+            return _Bbox(((x0, y0), (float(x0) + float(w), float(y0) + float(h))))
+
+        @staticmethod
+        def from_extents(x0, y0, x1, y1):
+            return _Bbox(((x0, y0), (x1, y1)))
+
+        @property
+        def width(self):
+            return self.x1 - self.x0
+
+        @property
+        def height(self):
+            return self.y1 - self.y0
+
+        @property
+        def bounds(self):
+            return (self.x0, self.y0, self.width, self.height)
+
+        @property
+        def extents(self):
+            return (self.x0, self.y0, self.x1, self.y1)
+
+        def get_points(self):
+            return ((self.x0, self.y0), (self.x1, self.y1))
+
+        def expanded(self, sw, sh):
+            dw = self.width * (float(sw) - 1.0) / 2.0
+            dh = self.height * (float(sh) - 1.0) / 2.0
+            return _Bbox(((self.x0 - dw, self.y0 - dh), (self.x1 + dw, self.y1 + dh)))
+
+    class _Affine2D(_Inert):
+        # Chainable no-op transform: the renderer works in data space, so the
+        # builder methods only have to keep returning `self`.
+        def rotate(self, *a, **k):
+            return self
+
+        rotate_deg = rotate
+        rotate_around = rotate
+        rotate_deg_around = rotate
+        translate = rotate
+        scale = rotate
+        skew = rotate
+        skew_deg = rotate
+
+        def transform(self, values):
+            return values
+
+        transform_point = transform
+        transform_affine = transform
+        inverted = rotate
+
+    _submodule(
+        "transforms",
+        Bbox=_Bbox,
+        TransformedBbox=_Bbox,
+        BboxTransform=_Affine2D,
+        Affine2D=_Affine2D,
+        IdentityTransform=_Affine2D,
+        Transform=_Affine2D,
+        blended_transform_factory=lambda *a, **k: _Affine2D(),
+        offset_copy=lambda t, *a, **k: t,
+    )
+
+    # -- matplotlib.patches -------------------------------------------------
+    class _ShapePatch(_Patch):
+        # Geometry-carrying artist. `ax.add_patch(Rectangle(...))` has to
+        # accept the construction kwargs and read the geometry back.
+        def __init__(self, *a, **k):
+            _Patch.__init__(self)
+            self.args = a
+            for _k in k:
+                self._set(_k, k[_k])
+
+        def set_label(self, v, **k):
+            return self._set("label", v)
+
+        def get_label(self):
+            return self._props.get("label")
+
+        def get_bbox(self):
+            return _Bbox()
+
+        def get_path(self):
+            return None
+
+        def remove(self):
+            return None
+
+    class _Rectangle(_ShapePatch):
+        def __init__(self, xy=(0.0, 0.0), width=0.0, height=0.0, angle=0.0, **k):
+            _ShapePatch.__init__(self, xy, width, height, **k)
+            self.xy = (float(xy[0]), float(xy[1]))
+            self.width = float(width)
+            self.height = float(height)
+            self.angle = float(angle)
+
+        def get_x(self):
+            return self.xy[0]
+
+        def get_y(self):
+            return self.xy[1]
+
+        def get_xy(self):
+            return self.xy
+
+        def set_xy(self, xy):
+            self.xy = (float(xy[0]), float(xy[1]))
+            return None
+
+        def get_width(self):
+            return self.width
+
+        def get_height(self):
+            return self.height
+
+        def set_width(self, w):
+            self.width = float(w)
+            return None
+
+        def set_height(self, h):
+            self.height = float(h)
+            return None
+
+        def get_bbox(self):
+            return _Bbox.from_bounds(self.xy[0], self.xy[1], self.width, self.height)
+
+    class _Circle(_ShapePatch):
+        def __init__(self, xy=(0.0, 0.0), radius=1.0, **k):
+            _ShapePatch.__init__(self, xy, radius, **k)
+            self.center = (float(xy[0]), float(xy[1]))
+            self.radius = float(radius)
+
+        def get_center(self):
+            return self.center
+
+        def get_radius(self):
+            return self.radius
+
+        def get_bbox(self):
+            r = self.radius
+            return _Bbox.from_bounds(
+                self.center[0] - r, self.center[1] - r, 2 * r, 2 * r
+            )
+
+    class _Ellipse(_ShapePatch):
+        def __init__(self, xy=(0.0, 0.0), width=1.0, height=1.0, angle=0.0, **k):
+            _ShapePatch.__init__(self, xy, width, height, **k)
+            self.center = (float(xy[0]), float(xy[1]))
+            self.width = float(width)
+            self.height = float(height)
+            self.angle = float(angle)
+
+        def get_center(self):
+            return self.center
+
+    class _Polygon(_ShapePatch):
+        def __init__(self, xy=(), closed=True, **k):
+            _ShapePatch.__init__(self, xy, **k)
+            self.xy = [(float(p[0]), float(p[1])) for p in xy]
+            self.closed = bool(closed)
+
+        def get_xy(self):
+            return list(self.xy)
+
+        def set_xy(self, xy):
+            self.xy = [(float(p[0]), float(p[1])) for p in xy]
+            return None
+
+    class _Wedge(_ShapePatch):
+        def __init__(self, center=(0.0, 0.0), r=1.0, theta1=0.0, theta2=360.0, **k):
+            _ShapePatch.__init__(self, center, r, theta1, theta2, **k)
+            self.center = (float(center[0]), float(center[1]))
+            self.r = float(r)
+            self.theta1 = float(theta1)
+            self.theta2 = float(theta2)
+
+    _submodule(
+        "patches",
+        Patch=_ShapePatch,
+        Rectangle=_Rectangle,
+        FancyBboxPatch=_Rectangle,
+        Circle=_Circle,
+        CirclePolygon=_Circle,
+        Ellipse=_Ellipse,
+        Arc=_Ellipse,
+        Annulus=_Ellipse,
+        Polygon=_Polygon,
+        PathPatch=_Polygon,
+        RegularPolygon=_Circle,
+        Wedge=_Wedge,
+        Shadow=_ShapePatch,
+        Arrow=_ShapePatch,
+        FancyArrow=_ShapePatch,
+        FancyArrowPatch=_ShapePatch,
+        ConnectionPatch=_ShapePatch,
+        BoxStyle=_Inert,
+        ArrowStyle=_Inert,
+        ConnectionStyle=_Inert,
+    )
+
+    # -- matplotlib.lines / collections / text / legend ----------------------
+    class _Line2D(_Line):
+        # Also the legend-proxy idiom: `Line2D([], [], color=..., label=...)`.
+        def __init__(self, xdata=(), ydata=(), **k):
+            _Line.__init__(self, dict(k))
+            self.xdata = list(xdata) if xdata is not None else []
+            self.ydata = list(ydata) if ydata is not None else []
+
+        def get_xdata(self):
+            return list(self.xdata)
+
+        def get_ydata(self):
+            return list(self.ydata)
+
+        def set_data(self, x, y=None):
+            self.xdata = list(x)
+            self.ydata = list(y) if y is not None else []
+            return None
+
+        def get_color(self):
+            return self._s.get("color")
+
+        def set_marker(self, v):
+            self._s["marker"] = v
+            return None
+
+        def remove(self):
+            return None
+
+    class _Collection(_Inert):
+        def __init__(self, *a, **k):
+            _Inert.__init__(self, *a, **k)
+            self._label = k.get("label")
+
+        def set_label(self, v, **k):
+            self._label = v
+            return None
+
+        def get_label(self):
+            return self._label
+
+        def set_array(self, *a, **k):
+            return None
+
+        def get_paths(self):
+            return []
+
+    _submodule(
+        "lines",
+        Line2D=_Line2D,
+        lineStyles={"-": "solid", "--": "dashed", "-.": "dashdot", ":": "dotted"},
+        lineMarkers={},
+    )
+    _submodule(
+        "collections",
+        Collection=_Collection,
+        LineCollection=_Collection,
+        PolyCollection=_Collection,
+        PathCollection=_Collection,
+        PatchCollection=_Collection,
+        EllipseCollection=_Collection,
+        QuadMesh=_Collection,
+    )
+    _submodule("text", Text=_Inert, Annotation=_Inert, OffsetFrom=_Inert)
+    _submodule("legend", Legend=_Inert)
+    _submodule("legend_handler", HandlerBase=_Inert, HandlerPatch=_Inert)
+    _submodule("spines", Spine=_Inert)
+    _submodule("markers", MarkerStyle=_Inert)
+    _submodule("path", Path=_Inert)
+    _submodule(
+        "patheffects",
+        Stroke=_Inert,
+        Normal=_Inert,
+        withStroke=_Inert,
+        SimplePatchShadow=_Inert,
+        withSimplePatchShadow=_Inert,
+    )
+    _submodule(
+        "offsetbox",
+        AnchoredText=_Inert,
+        OffsetImage=_Inert,
+        AnnotationBbox=_Inert,
+        TextArea=_Inert,
+    )
+    _submodule(
+        "container", BarContainer=list, ErrorbarContainer=list, StemContainer=list
+    )
+    _submodule(
+        "colorbar",
+        Colorbar=_Colorbar,
+        ColorbarBase=_Colorbar,
+        make_axes=lambda *a, **k: (_new_axes(), {}),
+    )
+    _submodule(
+        "figure",
+        Figure=_Figure,
+        SubFigure=_Figure,
+        figaspect=lambda *a, **k: (6.4, 4.8),
+    )
+    _submodule(
+        "gridspec",
+        GridSpec=_GridSpec,
+        GridSpecFromSubplotSpec=_GridSpec,
+        SubplotSpec=_SubplotSpec,
+        GridSpecBase=_GridSpec,
+    )
+    _submodule("axes", Axes=_Axes, SubplotBase=_Axes)
+
+    class _AxisStub(_Inert):
+        # `ax.xaxis` / `ax.yaxis`: accepts formatters, locators and tick
+        # tweaks, and answers the getters with empty collections.
+        def __init__(self, which="x"):
+            _Inert.__init__(self, which)
+            self.which = which
+
+        def set_major_formatter(self, fmt, **k):
+            self.major_formatter = fmt
+            return None
+
+        def set_minor_formatter(self, fmt, **k):
+            self.minor_formatter = fmt
+            return None
+
+        def set_major_locator(self, loc, **k):
+            self.major_locator = loc
+            return None
+
+        def set_minor_locator(self, loc, **k):
+            self.minor_locator = loc
+            return None
+
+        def get_major_formatter(self):
+            return getattr(self, "major_formatter", None)
+
+        def get_major_locator(self):
+            return getattr(self, "major_locator", None)
+
+        def get_ticklabels(self, *a, **k):
+            return []
+
+        def get_majorticklabels(self, *a, **k):
+            return []
+
+        def get_major_ticks(self, *a, **k):
+            return []
+
+        def get_ticklines(self, *a, **k):
+            return []
+
+        def set_ticks(self, ticks=None, labels=None, **k):
+            if ticks is None:
+                return None
+            fn = xticks if self.which == "x" else yticks
+            return fn(ticks, labels) if labels is not None else fn(ticks)
+
+    _submodule("axis", Axis=_AxisStub, XAxis=_AxisStub, YAxis=_AxisStub, Tick=_Inert)
+
+    # -- matplotlib.artist ---------------------------------------------------
+    def _setp(obj, *args, **kwargs):
+        targets = list(obj) if isinstance(obj, (list, tuple)) else [obj]
+        for t in targets:
+            for _k in kwargs:
+                fn = getattr(t, "set_" + _k, None)
+                if callable(fn):
+                    fn(kwargs[_k])
+        return []
+
+    def _getp(obj, prop=None):
+        if prop is None:
+            return {}
+        fn = getattr(obj, "get_" + str(prop), None)
+        return fn() if callable(fn) else None
+
+    _submodule("artist", Artist=_Inert, setp=_setp, getp=_getp, get=_getp)
+
+    # -- matplotlib.ticker ---------------------------------------------------
+    class _Formatter(_Inert):
+        def __call__(self, x, pos=None):
+            return str(x)
+
+        def format_data(self, value):
+            return str(value)
+
+        def format_ticks(self, values):
+            return [self(v, i) for i, v in enumerate(values)]
+
+    class _FuncFormatter(_Formatter):
+        def __init__(self, func):
+            _Formatter.__init__(self, func)
+            self.func = func
+
+        def __call__(self, x, pos=None):
+            return self.func(x, pos)
+
+    class _FormatStrFormatter(_Formatter):
+        def __init__(self, fmt):
+            _Formatter.__init__(self, fmt)
+            self.fmt = fmt
+
+        def __call__(self, x, pos=None):
+            return self.fmt % x
+
+    class _StrMethodFormatter(_Formatter):
+        def __init__(self, fmt):
+            _Formatter.__init__(self, fmt)
+            self.fmt = fmt
+
+        def __call__(self, x, pos=None):
+            return self.fmt.format(x=x, pos=pos)
+
+    class _FixedFormatter(_Formatter):
+        def __init__(self, seq):
+            _Formatter.__init__(self, seq)
+            self.seq = list(seq)
+
+        def __call__(self, x, pos=None):
+            i = int(pos or 0)
+            return self.seq[i] if 0 <= i < len(self.seq) else ""
+
+    class _NullFormatter(_Formatter):
+        def __call__(self, x, pos=None):
+            return ""
+
+    class _PercentFormatter(_Formatter):
+        def __init__(self, xmax=100, decimals=None, symbol="%", is_latex=False):
+            _Formatter.__init__(self, xmax)
+            self.xmax = float(xmax) or 100.0
+            self.decimals = decimals
+            self.symbol = symbol or ""
+
+        def __call__(self, x, pos=None):
+            d = 0 if self.decimals is None else int(self.decimals)
+            return ("%." + str(d) + "f") % (100.0 * float(x) / self.xmax) + self.symbol
+
+    class _Locator(_Inert):
+        def __call__(self):
+            return []
+
+        def tick_values(self, vmin, vmax):
+            return []
+
+    class _FixedLocator(_Locator):
+        def __init__(self, locs, nbins=None):
+            _Locator.__init__(self, locs)
+            self.locs = [float(v) for v in locs]
+
+        def __call__(self):
+            return list(self.locs)
+
+        def tick_values(self, vmin, vmax):
+            return list(self.locs)
+
+    class _MultipleLocator(_Locator):
+        def __init__(self, base=1.0):
+            _Locator.__init__(self, base)
+            self.base = float(base) or 1.0
+
+        def tick_values(self, vmin, vmax):
+            lo, hi = float(vmin), float(vmax)
+            out = []
+            v = _math.ceil(lo / self.base) * self.base
+            while v <= hi + 1e-9 and len(out) < 1000:
+                out.append(v)
+                v += self.base
+            return out
+
+        def __call__(self):
+            lim = xlim()
+            return self.tick_values(lim[0], lim[1]) if lim else []
+
+    class _MaxNLocator(_Locator):
+        def __init__(self, nbins=10, **k):
+            _Locator.__init__(self, nbins)
+            self.nbins = nbins if isinstance(nbins, int) else 10
+
+        def tick_values(self, vmin, vmax):
+            lo, hi = float(vmin), float(vmax)
+            n = max(1, int(self.nbins))
+            if hi <= lo:
+                return [lo]
+            width = (hi - lo) / n
+            return [lo + i * width for i in range(n + 1)]
+
+    _submodule(
+        "ticker",
+        Formatter=_Formatter,
+        FuncFormatter=_FuncFormatter,
+        FormatStrFormatter=_FormatStrFormatter,
+        StrMethodFormatter=_StrMethodFormatter,
+        FixedFormatter=_FixedFormatter,
+        NullFormatter=_NullFormatter,
+        ScalarFormatter=_Formatter,
+        LogFormatter=_Formatter,
+        LogFormatterSciNotation=_Formatter,
+        EngFormatter=_Formatter,
+        PercentFormatter=_PercentFormatter,
+        Locator=_Locator,
+        FixedLocator=_FixedLocator,
+        MultipleLocator=_MultipleLocator,
+        MaxNLocator=_MaxNLocator,
+        AutoLocator=_MaxNLocator,
+        AutoMinorLocator=_MaxNLocator,
+        LinearLocator=_MaxNLocator,
+        IndexLocator=_FixedLocator,
+        LogLocator=_Locator,
+        NullLocator=_Locator,
+    )
+
+    # -- matplotlib.dates ----------------------------------------------------
+    _dt = __import__("datetime")
+    _EPOCH = _dt.datetime(1970, 1, 1)
+
+    def _date2num(d):
+        if hasattr(d, "__iter__") and not isinstance(d, (str, bytes)):
+            return [_date2num(v) for v in d]
+        if isinstance(d, _dt.datetime):
+            pass
+        elif isinstance(d, _dt.date):
+            d = _dt.datetime(d.year, d.month, d.day)
+        else:
+            return float(d)
+        naive = d.replace(tzinfo=None)
+        return (naive - _EPOCH).total_seconds() / 86400.0 + 719163.0
+
+    def _num2date(n, tz=None):
+        if hasattr(n, "__iter__") and not isinstance(n, (str, bytes)):
+            return [_num2date(v, tz) for v in n]
+        return _EPOCH + _dt.timedelta(days=float(n) - 719163.0)
+
+    class _DateFormatter(_Formatter):
+        def __init__(self, fmt="%Y-%m-%d", tz=None, **k):
+            _Formatter.__init__(self, fmt)
+            self.fmt = fmt
+
+        def __call__(self, x, pos=None):
+            try:
+                return _num2date(x).strftime(self.fmt)
+            except (TypeError, ValueError, OverflowError):
+                return str(x)
+
+    def _drange(dstart, dend, delta):
+        out = []
+        cur = dstart
+        while cur < dend and len(out) < 100000:
+            out.append(_date2num(cur))
+            cur = cur + delta
+        return out
+
+    _submodule(
+        "dates",
+        date2num=_date2num,
+        num2date=_num2date,
+        drange=_drange,
+        datestr2num=lambda s, **k: _date2num(s),
+        DateFormatter=_DateFormatter,
+        ConciseDateFormatter=_DateFormatter,
+        AutoDateFormatter=_DateFormatter,
+        DateLocator=_Locator,
+        AutoDateLocator=_Locator,
+        YearLocator=_Locator,
+        MonthLocator=_Locator,
+        WeekdayLocator=_Locator,
+        DayLocator=_Locator,
+        HourLocator=_Locator,
+        MinuteLocator=_Locator,
+        SecondLocator=_Locator,
+        ConciseDateConverter=_Inert,
+    )
+
+    # -- matplotlib.font_manager / image / animation -------------------------
+    class _FontProperties(_Inert):
+        def __init__(self, family=None, style=None, weight=None, size=None, **k):
+            _Inert.__init__(self, **k)
+            self._family = family
+            self._size = size
+            self._weight = weight
+
+        def get_family(self):
+            return self._family
+
+        def set_family(self, v):
+            self._family = v
+            return None
+
+        def get_size(self):
+            return self._size
+
+        def get_size_in_points(self):
+            return self._size
+
+        def set_size(self, v):
+            self._size = v
+            return None
+
+        def get_weight(self):
+            return self._weight
+
+        def copy(self):
+            return _FontProperties(self._family, None, self._weight, self._size)
+
+    _submodule(
+        "font_manager",
+        FontProperties=_FontProperties,
+        FontManager=_Inert,
+        fontManager=_Inert(),
+        findfont=lambda *a, **k: "",
+        get_font_names=lambda *a, **k: [],
+        findSystemFonts=lambda *a, **k: [],
+    )
+
+    def _imread(fname, format=None):
+        # Real pixels, via the PIL shim, as nested rows of 0..1 channels
+        # (numpy-wrapped when the numpy shim is importable).
+        _pil = __import__("PIL.Image", None, None, ["Image"])
+        im = _pil.open(fname)
+        im = im.convert("RGBA" if str(getattr(im, "mode", "")).endswith("A") else "RGB")
+        w, h = im.size
+        px = list(im.getdata())
+        rows = []
+        for y in range(h):
+            row = []
+            for x in range(w):
+                p = px[y * w + x]
+                p = p if isinstance(p, (tuple, list)) else (p,)
+                row.append([float(v) / 255.0 for v in p])
+            rows.append(row)
+        try:
+            _np = __import__("numpy")
+            return _np.array(rows)
+        except Exception:
+            return rows
+
+    def _imsave(fname, arr, **k):
+        clf()
+        imshow(arr, **dict((_k, k[_k]) for _k in ("cmap", "vmin", "vmax") if _k in k))
+        out = savefig(fname, format=k.get("format"), dpi=k.get("dpi"))
+        clf()
+        return out
+
+    _submodule(
+        "image",
+        imread=_imread,
+        imsave=_imsave,
+        AxesImage=_Inert,
+        NonUniformImage=_Inert,
+        thumbnail=_Inert,
+    )
+
+    class _Animation(_Inert):
+        # Constructing an animation is fine; encoding one is not something the
+        # imaging backend can do, so `save` says so instead of failing deep in
+        # a writer.
+        def __init__(self, fig=None, func=None, frames=None, *a, **k):
+            _Inert.__init__(self, fig, func, frames, *a, **k)
+            self.fig = fig
+
+        def _unsupported(self, what):
+            raise RuntimeError(
+                "vis matplotlib shim cannot encode animations (%s); render a "
+                "still frame with fig.savefig(...) instead" % (what,)
+            )
+
+        def save(self, *a, **k):
+            return self._unsupported("save")
+
+        def to_jshtml(self, *a, **k):
+            return self._unsupported("to_jshtml")
+
+        def to_html5_video(self, *a, **k):
+            return self._unsupported("to_html5_video")
+
+    _submodule(
+        "animation",
+        Animation=_Animation,
+        FuncAnimation=_Animation,
+        ArtistAnimation=_Animation,
+        PillowWriter=_Inert,
+        FFMpegWriter=_Inert,
+        ImageMagickWriter=_Inert,
+        writers={},
+    )
+
+    # -- matplotlib.backends -------------------------------------------------
+    _m_backend_agg = types.ModuleType("matplotlib.backends.backend_agg")
+    _m_backend_agg.FigureCanvasAgg = _Canvas
+    _m_backend_agg.FigureCanvas = _Canvas
+    _m_backends = types.ModuleType("matplotlib.backends")
+    _m_backends.__path__ = []
+    _m_backends.backend_agg = _m_backend_agg
+    mpl.backends = _m_backends
+    _submods["matplotlib.backends"] = _m_backends
+    _submods["matplotlib.backends.backend_agg"] = _m_backend_agg
+
+    # -- mpl_toolkits.axes_grid1 ---------------------------------------------
+    class _AxesDivider(object):
+        def __init__(self, ax):
+            self._ax = ax
+
+        def append_axes(self, position="right", size=None, pad=None, **k):
+            return _new_axes()
+
+        def new_horizontal(self, *a, **k):
+            return _new_axes()
+
+        def new_vertical(self, *a, **k):
+            return _new_axes()
+
+    axes_grid1 = types.ModuleType("mpl_toolkits.axes_grid1")
+    axes_grid1.make_axes_locatable = lambda ax=None: _AxesDivider(ax)
+    axes_grid1.AxesGrid = _Inert
+    axes_grid1.ImageGrid = _Inert
+    axes_grid1.Divider = _AxesDivider
+    mpl_toolkits.axes_grid1 = axes_grid1
+
+    # pyplot re-exports the handful of classes scripts reach for directly.
+    pyplot.Figure = _Figure
+    pyplot.GridSpec = _GridSpec
+    pyplot.Line2D = _Line2D
+    pyplot.Rectangle = _Rectangle
+    pyplot.Circle = _Circle
+    pyplot.Polygon = _Polygon
+    pyplot.Normalize = _Normalize
+    pyplot.setp = _setp
+    pyplot.getp = _getp
+    pyplot.imread = _imread
+    pyplot.imsave = _imsave
+    mpl.artist = _submods["matplotlib.artist"]
+    mpl.colors = _submods["matplotlib.colors"]
+
     sys.modules["matplotlib"] = mpl
     sys.modules["matplotlib.pyplot"] = pyplot
     sys.modules["matplotlib.style"] = style
@@ -2400,6 +3543,9 @@ def __vis_install_matplotlib__():
     sys.modules["mpl_toolkits.mplot3d.axes3d"] = axes3d
     sys.modules["mpl_toolkits.mplot3d.art3d"] = art3d
     sys.modules["mpl_toolkits.mplot3d.proj3d"] = proj3d
+    sys.modules["mpl_toolkits.axes_grid1"] = axes_grid1
+    for _modname in _submods:
+        sys.modules[_modname] = _submods[_modname]
 
     # Autoload: staple the module names onto builtins so `matplotlib.pyplot`,
     # a bare `pyplot`, and the conventional `plt` alias all work WITHOUT any

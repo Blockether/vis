@@ -194,7 +194,9 @@
    behind). This is the shared TUI/channel policy; web mirrors it."
   [form]
   (boolean (or (not (native-tool-form? form))
-               (contains? running-code-tools (some-> (:vis/tool-name form) name)))))
+               (contains? running-code-tools
+                          (some-> (:vis/tool-name form)
+                                  name)))))
 
 (def ^:private same-path-coalescable-tools
   "Native tools whose ADJACENT op-cards fold only when they target the SAME file."

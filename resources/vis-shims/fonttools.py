@@ -15,7 +15,73 @@ def __vis_install_fonttools__():
         )
     ).decode("utf-8")
     exec(compile(_src, "vis-fonttools-shim", "exec"), {})
+    __vis_fonttools_clear_errors__()
+
+
+_VIS_FT_HELP = (
+    "vis fontTools shim covers WOFF2 decompression only: "
+    "fontTools.ttLib.woff2.decompress(src, dst) and brotli.decompress(data). "
+    "{what} needs the full fontTools wheel, which the sandbox cannot install."
+)
+
+
+def __vis_fonttools_clear_errors__():
+    """Replace opaque import failures with messages naming the supported surface.
+
+    Without this, `from fontTools.ttLib import TTFont` fails with a bare
+    "cannot import name 'TTFont'", which reads like a broken install rather
+    than a deliberately partial shim.
+    """
+    import sys, types
+
+    ft = sys.modules.get("fontTools")
+    ttLib = sys.modules.get("fontTools.ttLib")
+    if ft is None or ttLib is None:
+        return
+
+    class TTLibError(Exception):
+        """fontTools.ttLib.TTLibError stand-in for the vis shim."""
+
+    def _unsupported(what):
+        raise NotImplementedError(_VIS_FT_HELP.format(what=what))
+
+    class TTFont:
+        def __init__(self, *_a, **_k):
+            _unsupported("fontTools.ttLib.TTFont")
+
+    class TTCollection:
+        def __init__(self, *_a, **_k):
+            _unsupported("fontTools.ttLib.TTCollection")
+
+    def newTable(*_a, **_k):
+        _unsupported("fontTools.ttLib.newTable")
+
+    ttLib.TTLibError = TTLibError
+    ttLib.TTFont = TTFont
+    ttLib.TTCollection = TTCollection
+    ttLib.newTable = newTable
+
+    ttFont = types.ModuleType("fontTools.ttLib.ttFont")
+    ttFont.__package__ = "fontTools.ttLib"
+    ttFont.TTFont = TTFont
+    ttFont.TTCollection = TTCollection
+    ttFont.TTLibError = TTLibError
+    ttFont.newTable = newTable
+    ttLib.ttFont = ttFont
+    sys.modules["fontTools.ttLib.ttFont"] = ttFont
+
+    def _explain(modname):
+        def __getattr__(name):
+            if name.startswith("__") and name.endswith("__"):
+                raise AttributeError(name)
+            raise ImportError(_VIS_FT_HELP.format(what=modname + "." + name))
+
+        return __getattr__
+
+    ft.__getattr__ = _explain("fontTools")
+    ttLib.__getattr__ = _explain("fontTools.ttLib")
 
 
 __vis_install_fonttools__()
+
 del __vis_install_fonttools__

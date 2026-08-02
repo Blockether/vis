@@ -115,6 +115,10 @@ CREATE INDEX idx_session_soul_claimed
 
 CREATE INDEX idx_session_soul_owner ON session_soul(owner_id);
 
+-- Direct `:latest` lookup is newest identity, independent of channel/claim state.
+CREATE INDEX idx_session_soul_created
+  ON session_soul(created_at DESC);
+
 -- Members of a project in tab order.
 CREATE INDEX idx_session_soul_project ON session_soul(project_id, project_position)
   WHERE project_id IS NOT NULL;
@@ -125,6 +129,12 @@ CREATE INDEX idx_session_soul_project ON session_soul(project_id, project_positi
 CREATE UNIQUE INDEX idx_project_position
   ON session_soul(project_id, project_position)
   WHERE project_id IS NOT NULL;
+
+-- Cross-channel session list: its predicates match this partial index exactly,
+-- and its order avoids a transient sort of every claimed top-level session.
+CREATE INDEX idx_session_soul_list_order
+  ON session_soul(project_position ASC, created_at DESC)
+  WHERE claimed_at IS NOT NULL AND parent_state_id IS NULL;
 
 -- =============================================================================
 -- workspace — a rift copy-on-write clone of cwd (a "draft"). One row = one
@@ -226,6 +236,10 @@ CREATE TABLE session_turn_soul (
 
 CREATE INDEX idx_session_turn_soul_state
   ON session_turn_soul(session_state_id, position);
+
+-- The usage rollup chooses the newest completed model for each session.
+CREATE INDEX idx_session_turn_soul_state_created
+  ON session_turn_soul(session_state_id, created_at DESC);
 
 CREATE TRIGGER trg_session_turn_soul_position_ai
 BEFORE INSERT ON session_turn_soul

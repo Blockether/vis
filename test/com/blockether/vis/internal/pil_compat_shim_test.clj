@@ -509,3 +509,30 @@
                   "try:\n"
                   "    Image.open(io.BytesIO(png)); ok = False\n" "except OSError as e:\n"
                   "    ok = 'too large' in str(e) and '20000x20000' in str(e)\n" "ok")))))))
+
+(defdescribe
+  pil-package-submodule-test
+  (it
+    "imports file and desktop integration modules without pretending support"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from PIL import ImageFile, ImageGrab, ImageTk, ImageQt, PSDraw, ImageShow, UnidentifiedImageError\n"
+              "ok = ImageFile.ImageFile is not None and issubclass(UnidentifiedImageError, OSError)\n"
+              "try:\n    ImageGrab.grab()\nexcept NotImplementedError:\n    unavailable = True\n"
+              "ok and unavailable")))))))
+
+(defdescribe pil-desktop-import-regression-test
+  (it "exposes conventional desktop symbols with a clear sandbox failure"
+    (with-python-context
+      (expect (true? (ev python-context
+                          (str "from PIL.ImageTk import BitmapImage, getimage\n"
+                               "from PIL.ImageWin import Dib, HDC, Window\n"
+                               "from PIL.ImageQt import toqimage, toqpixmap\n"
+                               "from PIL.ImageShow import Viewer, register\n"
+                               "symbols = [BitmapImage, getimage, Dib, HDC, Window, toqimage, toqpixmap, Viewer, register]\n"
+                               "try:\n    Dib()\nexcept NotImplementedError as error:\n    unavailable = 'PIL.ImageWin.Dib' in str(error)\n"
+                               "all(callable(symbol) for symbol in symbols) and unavailable")))))))

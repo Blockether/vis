@@ -3,6 +3,7 @@
    eval, and the language-facade wiring. The live-subprocess tests SKIP when no
    Python is on PATH so CI without Python stays green."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.ext.language-python.core :as core]
             [com.blockether.vis.ext.language-python.interpreter :as interp]
             [com.blockether.vis.ext.language-python.repl-manager :as repl]
@@ -110,6 +111,24 @@
                  (expect (:success? r))
                  (expect (= "21" (get-in r [:result "value"]))))
                (finally (repl/stop! dir))))))
+  (it "shows a home-relative, retryable cwd when no REPL is running"
+      (let
+        [home
+         (System/getProperty "user.home")
+
+         cwd
+         "~/vis-python-not-running"
+
+         env
+         {:workspace/root home :session-id test-session-id}
+
+         msg
+         (try (core/py-repl-eval-fn env {"code" "1 + 1" "cwd" cwd})
+              nil
+              (catch clojure.lang.ExceptionInfo e (.getMessage e)))]
+
+        (expect (str/includes? msg cwd))
+        (expect (not (str/includes? msg home)))))
   (it "repl status/stop lifecycle ops route through the manager"
       (when (has-python?)
         (let

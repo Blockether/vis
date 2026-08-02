@@ -55,6 +55,14 @@
                                 "df['c'] = df['a'] + df['b']\n"
                                 "sub = df[df['a'] > 2]\n"
                                 "df['c'].tolist() == [11,22,33,44] and sub.shape[0] == 2"))))))
+  (it "aligns Series arithmetic by index rather than by positional order"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "import pandas as pd, math\n"
+                                "x = pd.Series([1,2], index=['a','b'])\n"
+                                "y = pd.Series([10,20], index=['b','a'])\n"
+                                "z = x + y\n"
+                                "z.to_dict() == {'a':21,'b':12} and z.index == ['a','b']"))))))
   (it "iloc / loc selection (row, scalar, column)"
       (with-python-context (expect
                              (true? (ev python-context
@@ -139,3 +147,26 @@
                                               (str "import pandas as pd, numpy as np\n"
                                                    "df = pd.DataFrame({'a':[1,2,3]})\n"
                                                    "float(np.mean(df['a'].values)) == 2.0")))))))
+
+(defdescribe
+  pandas-package-submodule-test
+  (it
+    "imports api typing/testing/plotting/tseries package surfaces"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from pandas.api.types import is_numeric_dtype\n"
+              "from pandas.testing import assert_frame_equal\n"
+              "from pandas.plotting import scatter_matrix\n"
+              "from pandas.tseries.offsets import Day\n" "import pandas as pd\n"
+              "assert_frame_equal(pd.DataFrame({'x':[1]}), pd.DataFrame({'x':[1]}))\n"
+              "is_numeric_dtype('float64') and Day(2).days == 2 and scatter_matrix(pd.DataFrame({'x':[1]})) == []")))))))
+
+(defdescribe pandas-offset-regression-test
+  (it "provides Day.n as well as timedelta-compatible days"
+    (with-python-context
+      (expect (true? (ev python-context
+                          "from pandas.tseries.offsets import Day\nx = Day(3)\nx.n == 3 and x.days == 3"))))))

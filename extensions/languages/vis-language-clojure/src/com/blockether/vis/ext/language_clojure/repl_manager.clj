@@ -25,6 +25,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.core :as vis])
   (:import (java.io RandomAccessFile)
            (java.net ServerSocket)
@@ -179,12 +180,10 @@
    of the noisy machine-absolute `/Users/you/vis`. Paths outside home (and blanks)
    pass through unchanged."
   [^String dir]
-  (let [home (System/getProperty "user.home")]
-    (cond (str/blank? (str dir)) (str dir)
-          (nil? home) dir
-          (= dir home) "~"
-          (str/starts-with? dir (str home java.io.File/separator)) (str "~" (subs dir (count home)))
-          :else dir)))
+  (let [shown (paths/abbreviate-home dir)]
+    ;; `paths/abbreviate-home` renders the home dir as `~/` for general display;
+    ;; REPL resource ids have historically used the compact `~` spelling.
+    (if (= shown "~/") "~" shown)))
 
 (defn id-of
   "Stable session-resource id for the REPL rooted at `dir`. The dir is CANONICALIZED

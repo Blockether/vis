@@ -52,6 +52,76 @@
                      (expect (= [:db "audit-session" before after :gateway] @recorded))))))
 
 (defdescribe
+  soul-model-pin-test
+  "The session's model PIN rides the soul, so ONE `GET /v1/sessions` already says
+   which model each row runs on. Without it every client that names the model has
+   to follow up with `GET /v1/sessions/:sid/model` per session it opens."
+  (it "carries the persisted pin as model_pref"
+      (with-redefs
+        [lp/by-id
+         (constantly {:id "s1"
+                      :channel :api
+                      :title "t"
+                      :model "root-model"
+                      :model-pref {:provider "anthropic" :model "claude-opus-5"}})
+
+         lp/db-info
+         (constantly nil)
+
+         persistance/db-session-turn-stats
+         (constantly nil)]
+
+        (let [row (state/soul "s1")]
+          (expect (= {"provider" "anthropic" "model" "claude-opus-5"} (get row "model_pref")))
+          ;; The state's ROOT model is a DIFFERENT fact (no provider, not the
+          ;; user's pick) and keeps its own key.
+          (expect (= "root-model" (get row "model"))))))
+  (it "omits model_pref for a session on the router default"
+      (with-redefs
+        [lp/by-id
+         (constantly {:id "s2" :channel :api :title "t"})
+
+         lp/db-info
+         (constantly nil)
+
+         persistance/db-session-turn-stats
+         (constantly nil)]
+
+        (expect (not (contains? (state/soul "s2") "model_pref")))))
+  (it "an UNFLUSHED pick beats the persisted row during its debounce window"
+      (with-redefs
+        [lp/by-id
+         (constantly
+           {:id "s3" :channel :api :title "t" :model-pref {:provider "anthropic" :model "old"}})
+
+         lp/db-info
+         (constantly nil)
+
+         persistance/db-session-turn-stats
+         (constantly nil)
+
+         smodel/pending-pref
+         (constantly [true {:provider "zai" :model "glm-5.2"}])]
+
+        (expect (= {"provider" "zai" "model" "glm-5.2"} (get (state/soul "s3") "model_pref")))))
+  (it "a pending CLEAR drops the pin instead of repainting the old one"
+      (with-redefs
+        [lp/by-id
+         (constantly
+           {:id "s4" :channel :api :title "t" :model-pref {:provider "anthropic" :model "old"}})
+
+         lp/db-info
+         (constantly nil)
+
+         persistance/db-session-turn-stats
+         (constantly nil)
+
+         smodel/pending-pref
+         (constantly [true nil])]
+
+        (expect (not (contains? (state/soul "s4") "model_pref"))))))
+
+(defdescribe
   thinking-newline-normalization-test
   "Gateway-owned thinking normalization keeps live SSE, poll/replay, and session
    consumers in sync. A client may still render defensively, but it must

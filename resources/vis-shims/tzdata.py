@@ -777,6 +777,96 @@ def __vis_install_tzdata__():
             raise ParserError("Unknown ISO format: " + str(s))
         return r
 
+    rrule_mod = _types.ModuleType("dateutil.rrule")
+    YEARLY, MONTHLY, WEEKLY, DAILY, HOURLY, MINUTELY, SECONDLY = range(7)
+
+    class rrule:
+        def __init__(
+            self, freq, dtstart=None, interval=1, count=None, until=None, **kwargs
+        ):
+            self.freq = freq
+            self.dtstart = dtstart if dtstart is not None else _dt.datetime.now()
+            self.interval = int(interval)
+            self.count = count
+            self.until = until
+
+        def _advance(self, value):
+            if self.freq == YEARLY:
+                year = value.year + self.interval
+                day = min(value.day, _days_in_month(year, value.month))
+                return value.replace(year=year, day=day)
+            if self.freq == MONTHLY:
+                month = value.month - 1 + self.interval
+                year, month = value.year + month // 12, month % 12 + 1
+                return value.replace(
+                    year=year,
+                    month=month,
+                    day=min(value.day, _days_in_month(year, month)),
+                )
+            seconds = {
+                WEEKLY: 604800,
+                DAILY: 86400,
+                HOURLY: 3600,
+                MINUTELY: 60,
+                SECONDLY: 1,
+            }.get(self.freq, 86400)
+            return value + _dt.timedelta(seconds=seconds * self.interval)
+
+        def __iter__(self):
+            value, index = self.dtstart, 0
+            while self.count is None or index < self.count:
+                if self.until is not None and value > self.until:
+                    return
+                yield value
+                value, index = self._advance(value), index + 1
+
+        def __getitem__(self, index):
+            if index < 0:
+                raise IndexError(index)
+            for position, value in enumerate(self):
+                if position == index:
+                    return value
+            raise IndexError(index)
+
+    for _name, _value in (
+        ("YEARLY", YEARLY),
+        ("MONTHLY", MONTHLY),
+        ("WEEKLY", WEEKLY),
+        ("DAILY", DAILY),
+        ("HOURLY", HOURLY),
+        ("MINUTELY", MINUTELY),
+        ("SECONDLY", SECONDLY),
+    ):
+        setattr(rrule_mod, _name, _value)
+    rrule_mod.rrule = rrule
+
+    easter_mod = _types.ModuleType("dateutil.easter")
+
+    def easter(year, method=3):
+        # Meeus/Jones/Butcher Gregorian algorithm.
+        a, b = year % 19, year // 100
+        c, d, e = year % 100, b // 4, b % 4
+        f = (b + 8) // 25
+        g = (b - f + 1) // 3
+        h = (19 * a + b - d - g + 15) % 30
+        i, k = c // 4, c % 4
+        day = (32 + 2 * e + 2 * i - h - k) % 7
+        month_adjust = (a + 11 * h + 22 * day) // 451
+        month = (h + day - 7 * month_adjust + 114) // 31
+        return _dt.date(year, month, (h + day - 7 * month_adjust + 114) % 31 + 1)
+
+    easter_mod.easter = easter
+    easter_mod.EASTER_WESTERN = 3
+
+    utils_mod = _types.ModuleType("dateutil.utils")
+    utils_mod.today = lambda tzinfo=None: _dt.datetime.now(tzinfo)
+    utils_mod.default_tzinfo = lambda dt, tzinfo: (
+        dt.replace(tzinfo=tzinfo) if dt.tzinfo is None else dt
+    )
+
+    zoneinfo_mod = _types.ModuleType("dateutil.zoneinfo")
+    zoneinfo_mod.get_zonefile_instance = lambda: None
+
     _parser_mod = _types.ModuleType("dateutil.parser")
     _parser_mod.parse = parse
     _parser_mod.isoparse = isoparse
@@ -787,6 +877,10 @@ def __vis_install_tzdata__():
     _du_mod.tz = _tz_mod
     _du_mod.parser = _parser_mod
     _du_mod.relativedelta = _rd_mod
+    _du_mod.rrule = rrule_mod
+    _du_mod.easter = easter_mod
+    _du_mod.utils = utils_mod
+    _du_mod.zoneinfo = zoneinfo_mod
     _du_mod.__version__ = "system"
     _du_mod.__path__ = []
 
@@ -798,6 +892,10 @@ def __vis_install_tzdata__():
     _sys.modules["dateutil.tz"] = _tz_mod
     _sys.modules["dateutil.parser"] = _parser_mod
     _sys.modules["dateutil.relativedelta"] = _rd_mod
+    _sys.modules["dateutil.rrule"] = rrule_mod
+    _sys.modules["dateutil.easter"] = easter_mod
+    _sys.modules["dateutil.utils"] = utils_mod
+    _sys.modules["dateutil.zoneinfo"] = zoneinfo_mod
 
     # staple onto builtins so they resolve without import
     try:

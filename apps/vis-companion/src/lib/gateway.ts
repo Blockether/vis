@@ -887,9 +887,30 @@ export class GatewayClient {
    * This session's pinned provider/model as last seen — the header chip's first
    * frame. `null` here means BOTH "no pin" and "never read"; either way the
    * fetch below is still issued and reconciles on top.
+   *
+   * The session LIST already carries `model_pref` per row (the gateway soul
+   * reads it off the same `session_soul` row), so `seedSessionModels` normally
+   * fills this before a session is ever opened; the cached list is the fallback
+   * for a seed evicted from the snapshot store.
    */
   cachedSessionModel(sid: string): ModelPref | null {
-    return readSnapshot<ModelPref>(this.snapshotKey('model', sid));
+    const seeded = readSnapshot<ModelPref>(this.snapshotKey('model', sid));
+    if (seeded) return seeded;
+    return this.cachedSessions()?.find((row) => row.id === sid)?.model_pref ?? null;
+  }
+
+  /**
+   * Record each row's pin as the per-session seed. Rows without one only clear a
+   * seed that exists, so an unpinned fleet does not fill the snapshot store with
+   * nulls it would then have to persist.
+   */
+  private seedSessionModels(rows: Session[]): void {
+    for (const row of rows) {
+      if (!row?.id) continue;
+      const key = this.snapshotKey('model', row.id);
+      const pref = row.model_pref ?? null;
+      if (pref || readSnapshot<ModelPref>(key)) writeSnapshot(key, pref);
+    }
   }
 
   async sessionModel(sid: string, signal?: AbortSignal): Promise<ModelPref | null> {
@@ -1310,6 +1331,9 @@ export class GatewayClient {
       const order = res.headers.get(SESSIONS_ORDER_HEADER) ?? '';
       if (res.status === 304 && pin) return { ...pin, order };
       const rows = res.data?.sessions ?? [];
+      // Every row names the model it runs on, so opening any of them paints the
+      // right chip on the FIRST frame instead of after a per-session round trip.
+      this.seedSessionModels(rows);
       return {
         etag: res.etag ?? '',
         order,
@@ -1476,10 +1500,9 @@ export class GatewayClient {
   }
 
   /**
-   * Whole-life usage rollup for ONE session. On-demand only (the gateway has to
-   * decode every iteration's tool-call blob to count tools and folds), so this
-   * is never part of `listSessions` and is not snapshotted: it is fetched when
-   * a row is expanded and is `null` for a session that has no turns yet.
+   * Whole-life usage rollup for ONE session. On-demand only: it is absent from
+   * `listSessions` and snapshots, fetched when a row expands, and is `null` for
+   * a session that has no turns yet. The gateway memoizes each decoded iteration.
    */
   async sessionUsage(sid: string, signal?: AbortSignal): Promise<SessionUsage | null> {
     const res = await this.request<{ usage: SessionUsage | null }>(

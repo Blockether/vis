@@ -74,7 +74,13 @@
                            (str "import numpy as np\n"
                                 "a = np.array([[1,2,3],[4,5,6]])\n" "a[0] = 0\n"
                                 "b = np.array([1,2,3,4]); b[b > 2] = 9\n"
-                                "a.tolist() == [[0,0,0],[4,5,6]] and b.tolist() == [1,2,9,9]")))))))
+                                "a.tolist() == [[0,0,0],[4,5,6]] and b.tolist() == [1,2,9,9]"))))))
+  (it "rejects ragged nested sequences rather than creating malformed arrays"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "import numpy as np\n"
+                                "try:\n" "    np.array([[1,2],[3]])\n"
+                                "    ok = False\n" "except ValueError:\n" "    ok = True\n" "ok")))))))
 
 (defdescribe
   numpy-reductions-test
@@ -310,3 +316,28 @@
                            (str "import numpy as np\n"
                                 "np.atleast_3d(np.array([1,2])).shape == (1,2,1) "
                                 "and np.atleast_3d(np.zeros((2,3))).shape == (2,3,1)")))))))
+
+(defdescribe numpy-package-submodule-test
+             "The compatibility package keeps common NumPy import paths usable."
+             (it "imports and executes fft/polynomial/masked/testing/typing subsets"
+                 (with-python-context
+                   (expect (= [[0 0.25 -0.5 -0.25] 7 [1 9] true]
+                              (ev python-context
+                                  (str "from numpy.fft import fftfreq\n"
+                                       "from numpy.polynomial import Polynomial\n"
+                                       "from numpy.ma import array as masked_array\n"
+                                       "from numpy.testing import assert_allclose\n"
+                                       "from numpy.typing import NDArray\n"
+                                       "assert_allclose([1.0], [1.0 + 1e-8])\n"
+                                       "[fftfreq(4).tolist(), Polynomial([1,2])(3), "
+                                       "masked_array([1,2], mask=[False,True]).filled(9).tolist(), "
+                                       "NDArray is not None]")))))))
+
+(defdescribe numpy-ma-alias-regression-test
+  (it "keeps standard numpy.ma aliases and mask inspection usable"
+    (with-python-context
+      (expect (= [[1 9] [false true] [1 2] true]
+                 (ev python-context
+                     (str "from numpy.ma import masked_array, getmaskarray, getdata, isMaskedArray\n"
+                          "a = masked_array([1,2], mask=[False,True])\n"
+                          "[a.filled(9).tolist(), getmaskarray(a).tolist(), getdata(a).tolist(), isMaskedArray(a)]")))))))

@@ -1930,6 +1930,7 @@ def __vis_install_pptx__():
     mod = types.ModuleType("pptx")
     mod.Presentation = Presentation
     mod.__version__ = "1.0.2"
+    mod.__path__ = []
 
     api = types.ModuleType("pptx.api")
     api.Presentation = Presentation
@@ -2011,6 +2012,32 @@ def __vis_install_pptx__():
     text_mod.text = text_text_mod
     mod.text = text_mod
 
+    chart_mod = types.ModuleType("pptx.chart")
+    chart_data_mod = types.ModuleType("pptx.chart.data")
+
+    class CategoryChartData:
+        def __init__(self):
+            self.categories = []
+            self.series = []
+
+        def add_category(self, label):
+            self.categories.append(label)
+            return label
+
+        def add_series(self, name, values=()):
+            series = (name, tuple(values))
+            self.series.append(series)
+            return series
+
+    chart_data_mod.CategoryChartData = CategoryChartData
+    chart_data_mod.ChartData = CategoryChartData
+    chart_mod.data = chart_data_mod
+    mod.chart = chart_mod
+
+    # Chart OOXML output is not supported by the compact Rust deck writer.
+    # The data object above is still useful for code that assembles decks
+    # conditionally, and imports retain the normal python-pptx package shape.
+
     exc = types.ModuleType("pptx.exc")
     exc.PythonPptxError = PptxException
     exc.PackageNotFoundError = PptxException
@@ -2024,6 +2051,8 @@ def __vis_install_pptx__():
         ("pptx.util", util),
         ("pptx.dml", dml),
         ("pptx.dml.color", color_mod),
+        ("pptx.chart", chart_mod),
+        ("pptx.chart.data", chart_data_mod),
         ("pptx.enum", enum),
         ("pptx.enum.text", enum_text),
         ("pptx.enum.shapes", enum_shapes),

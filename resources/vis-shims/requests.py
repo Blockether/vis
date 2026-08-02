@@ -1006,12 +1006,37 @@ def __vis_install_requests_compat__():
         },
     )
 
+    adapters = _mk_module("requests.adapters", {})
+
+    class HTTPAdapter:
+        def __init__(
+            self, pool_connections=10, pool_maxsize=10, max_retries=0, pool_block=False
+        ):
+            self.max_retries = max_retries
+
+        def init_poolmanager(self, *args, **kwargs):
+            return None
+
+        def close(self):
+            return None
+
+        def send(self, *args, **kwargs):
+            raise NotImplementedError(
+                "requests.adapters.HTTPAdapter.send is unavailable in the vis shim"
+            )
+
+    adapters.HTTPAdapter = HTTPAdapter
+    adapters.DEFAULT_POOLSIZE = 10
+    adapters.DEFAULT_RETRIES = 0
+    adapters.DEFAULT_POOLBLOCK = False
+
     # ---- top-level requests module ---------------------------------------
     mod = types.ModuleType("requests")
     mod.__doc__ = (
         "vis requests-compatible shim backed by urllib (pure Python, no host bridge)."
     )
     mod.__version__ = "2.0-vis-urllib"
+    mod.__path__ = []
     mod.__build__ = 0x022000
     mod.__title__ = "requests"
     mod.__author__ = "vis"
@@ -1047,6 +1072,7 @@ def __vis_install_requests_compat__():
     mod.status_codes = status_codes
     mod.api = api
     mod.sessions = sessions
+    mod.adapters = adapters
 
     sys.modules["requests"] = mod
 

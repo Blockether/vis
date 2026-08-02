@@ -4,6 +4,7 @@
    live-subprocess tests SKIP when no bun is on PATH so CI without bun stays
    green."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.ext.language-typescript-bun.core :as core]
             [com.blockether.vis.ext.language-typescript-bun.repl-manager :as repl]
             [com.blockether.vis.ext.language-typescript-bun.runner :as runner]
@@ -122,6 +123,24 @@
                  (expect (:success? r))
                  (expect (= "21" (get-in r [:result "value"]))))
                (finally (repl/stop! dir))))))
+  (it "shows a home-relative, retryable cwd when no REPL is running"
+      (let
+        [home
+         (System/getProperty "user.home")
+
+         cwd
+         "~/vis-bun-not-running"
+
+         env
+         (assoc (test-env (io/file home)) :workspace/root home)
+
+         msg
+         (try (core/ts-repl-eval-fn env {"code" "1 + 1" "cwd" cwd})
+              nil
+              (catch clojure.lang.ExceptionInfo e (.getMessage e)))]
+
+        (expect (str/includes? msg cwd))
+        (expect (not (str/includes? msg home)))))
   (it "repl status/stop lifecycle ops route through the manager"
       (when (has-bun?)
         (let

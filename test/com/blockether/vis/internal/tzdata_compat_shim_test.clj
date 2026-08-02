@@ -127,3 +127,19 @@
                 "a = dt.datetime(2021,1,31,12)+relativedelta(months=1)==dt.datetime(2021,2,28,12)\n"
                 "b = dt.date(2021,7,1)+relativedelta(day=31,weekday=FR(-1))==dt.date(2021,7,30)\n"
                 "a and b")))))))
+
+(defdescribe
+  dateutil-package-submodule-test
+  (it
+    "imports rrule, easter and utility package modules"
+    (with-python-context
+      (expect
+        (=
+          [2 "2024-03-31" true]
+          (ev
+            python-context
+            (str
+              "import datetime as dt\n" "from dateutil.rrule import rrule, DAILY\n"
+              "from dateutil.easter import easter\n" "from dateutil.utils import default_tzinfo\n"
+              "dates = list(rrule(DAILY, dtstart=dt.datetime(2024,1,1), count=2))\n"
+              "[len(dates), str(easter(2024)), default_tzinfo(dt.datetime(2024,1,1), dt.timezone.utc).tzinfo is dt.timezone.utc]")))))))

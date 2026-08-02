@@ -709,17 +709,46 @@ def __vis_install_bs4__():
         def __repr__(self):
             return _render(self)
 
+    class CData(NavigableString):
+        pass
+
+    class Doctype(NavigableString):
+        pass
+
+    class FeatureNotFound(ValueError):
+        pass
+
+    class SoupStrainer:
+        """Small callable name/attribute filter compatible with parse_only use."""
+
+        def __init__(self, name=None, attrs=None, **kwargs):
+            self._matcher = _make_matcher(name, attrs, None, kwargs)
+
+        def search(self, element):
+            return element if self._matcher(element) else None
+
+        def __call__(self, element):
+            return bool(self._matcher(element))
+
     mod = types.ModuleType("bs4")
+    mod.__path__ = []
     mod.__version__ = "4.12-vis-pure"
     mod.BeautifulSoup = BeautifulSoup
     mod.Tag = Tag
     mod.NavigableString = NavigableString
     mod.Comment = Comment
+    mod.CData = CData
+    mod.Doctype = Doctype
+    mod.FeatureNotFound = FeatureNotFound
+    mod.SoupStrainer = SoupStrainer
 
     elem = types.ModuleType("bs4.element")
     elem.Tag = Tag
     elem.NavigableString = NavigableString
     elem.Comment = Comment
+    elem.CData = CData
+    elem.Doctype = Doctype
+    elem.SoupStrainer = SoupStrainer
     mod.element = elem
 
     sys.modules["bs4"] = mod

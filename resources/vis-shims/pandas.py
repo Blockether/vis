@@ -215,9 +215,18 @@ def __vis_install_pandas__():
 
         def _binop(self, other, fn):
             if isinstance(other, Series):
-                ov = other._v
+                other_by_index = dict(zip(other._i, other._v))
+                index = list(self._i)
+                index.extend(label for label in other._i if label not in self._i)
                 return Series(
-                    [fn(a, b) for a, b in zip(self._v, ov)], self._i, self.name
+                    [
+                        fn(self._v[self._pos(label)], other_by_index[label])
+                        if label in self._i and label in other_by_index
+                        else math.nan
+                        for label in index
+                    ],
+                    index,
+                    self.name,
                 )
             return Series([fn(a, other) for a in self._v], self._i, self.name)
 
@@ -2337,7 +2346,80 @@ def __vis_install_pandas__():
     mod.NA = _NA
     mod.NaN = _NA
     mod.__version__ = "2.0.0-vis-shim"
+    # pandas is a package in the real distribution; retain that import contract.
+    mod.__path__ = []
+
+    api_mod = types.ModuleType("pandas.api")
+    api_types = types.ModuleType("pandas.api.types")
+
+    def _dtype_value(value):
+        if isinstance(value, str):
+            return value.lower()
+        if hasattr(value, "dtype"):
+            return str(value.dtype).lower()
+        return _infer_dtype(_to_list(value)).lower()
+
+    api_types.is_numeric_dtype = lambda value: any(
+        token in _dtype_value(value) for token in ("int", "float", "complex")
+    )
+    api_types.is_integer_dtype = lambda value: "int" in _dtype_value(value)
+    api_types.is_float_dtype = lambda value: "float" in _dtype_value(value)
+    api_types.is_bool_dtype = lambda value: _dtype_value(value) == "bool"
+    api_types.is_string_dtype = lambda value: (
+        _dtype_value(value) in ("object", "string")
+    )
+    api_mod.types = api_types
+
+    testing_mod = types.ModuleType("pandas.testing")
+
+    def _assert_frame_equal(left, right, **kwargs):
+        if not isinstance(left, DataFrame) or not isinstance(right, DataFrame):
+            raise AssertionError("assert_frame_equal requires two DataFrames")
+        if left.to_dict("records") != right.to_dict("records") or list(
+            left.columns
+        ) != list(right.columns):
+            raise AssertionError("DataFrames are different")
+
+    def _assert_series_equal(left, right, **kwargs):
+        if (
+            not isinstance(left, Series)
+            or not isinstance(right, Series)
+            or left.tolist() != right.tolist()
+        ):
+            raise AssertionError("Series are different")
+
+    testing_mod.assert_frame_equal = _assert_frame_equal
+    testing_mod.assert_series_equal = _assert_series_equal
+
+    plotting_mod = types.ModuleType("pandas.plotting")
+    plotting_mod.scatter_matrix = lambda frame, *args, **kwargs: []
+    plotting_mod.register_matplotlib_converters = lambda: None
+
+    tseries_mod = types.ModuleType("pandas.tseries")
+    offsets_mod = types.ModuleType("pandas.tseries.offsets")
+
+    class Day(_dt.timedelta):
+        def __new__(cls, n=1, **kwargs):
+            return _dt.timedelta.__new__(cls, days=int(n))
+
+        @property
+        def n(self):
+            """Number of day units, matching pandas.tseries.offsets.Day."""
+            return self.days
+
+    offsets_mod.Day = Day
+    tseries_mod.offsets = offsets_mod
+    mod.api = api_mod
+    mod.testing = testing_mod
+    mod.plotting = plotting_mod
+    mod.tseries = tseries_mod
     sys.modules["pandas"] = mod
+    sys.modules["pandas.api"] = api_mod
+    sys.modules["pandas.api.types"] = api_types
+    sys.modules["pandas.testing"] = testing_mod
+    sys.modules["pandas.plotting"] = plotting_mod
+    sys.modules["pandas.tseries"] = tseries_mod
+    sys.modules["pandas.tseries.offsets"] = offsets_mod
     try:
         _bi.pandas = mod
     except Exception:

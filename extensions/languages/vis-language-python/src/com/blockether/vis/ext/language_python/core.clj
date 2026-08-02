@@ -11,6 +11,7 @@
             [com.blockether.vis.ext.language-python.repl-manager :as repl]
             [com.blockether.vis.ext.language-python.ruff :as pyruff]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python-test-runner :as ptr]))
 
 ;; =============================================================================
@@ -44,7 +45,7 @@
 
 (defn- resolve-dir
   ^String [root dir]
-  (let [d (str (or dir ""))]
+  (let [d (paths/expand-home (str (or dir "")))]
     (.getCanonicalPath (cond (= "" d) (io/file root)
                              (.isAbsolute (io/file d)) (io/file d)
                              :else (io/file root d)))))
@@ -149,12 +150,16 @@
      (and (map? arg) (get arg "timeout_ms"))]
 
     (when-not (= "up" (get (repl/status dir) "status"))
-      (throw (ex-info (str "Python REPL is not up for "
-                           dir
-                           "; call repl(\"python\", {\"cwd\": "
-                           (pr-str dir)
-                           "}) first")
-                      {:type :py/no-repl :dir dir})))
+      ;; Home-homogenized: the message reads `~/vis`, matching the REPL ids in
+      ;; session["resources"] — and `resolve-dir` expands `~` back, so the cwd
+      ;; shown can be pasted straight into the retry call.
+      (let [shown (paths/abbreviate-home (str dir))]
+        (throw (ex-info (str "Python REPL is not up for "
+                             shown
+                             "; call repl(\"python\", {\"cwd\": "
+                             (pr-str shown)
+                             "}) first")
+                        {:type :py/no-repl :dir dir}))))
     ;; Carry the evaluated code back on the result (string key) so the shared
     ;; repl_eval op-card can surface the FORM section — the render fn sees only
     ;; the result map, not the call args.

@@ -79,8 +79,13 @@
    two-element answer distinguishes \"nothing pending\" from \"pending CLEAR\"
    (back to the router default), which a bare nil cannot."
   [sid]
-  (let [k (str sid)
-        p @pending]
+  (let
+    [k
+     (str sid)
+
+     p
+     @pending]
+
     (if (contains? p k) [true (pending->val (get p k))] [false nil])))
 
 (defn model-of-cached

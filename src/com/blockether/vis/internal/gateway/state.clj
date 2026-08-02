@@ -3779,7 +3779,6 @@
        stats (try (some-> (lp/db-info)
                           (persistance/db-session-turn-stats sid))
                   (catch Throwable _ nil))
-
        ;; The session's MODEL PIN, from the same `session_soul` row `by-id` just
        ;; read — no extra query, so every list row carries it and a client never
        ;; has to follow up with `GET /v1/sessions/:sid/model` to name the model it

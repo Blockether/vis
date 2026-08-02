@@ -14,7 +14,8 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.language-typescript-bun.repl-manager :as repl]
             [com.blockether.vis.ext.language-typescript-bun.runner :as runner]
-            [com.blockether.vis.internal.extension :as extension]))
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.paths :as paths]))
 
 ;; =============================================================================
 ;; Activation
@@ -60,7 +61,7 @@
 
 (defn- resolve-dir
   ^String [root dir]
-  (let [d (str (or dir ""))]
+  (let [d (paths/expand-home (str (or dir "")))]
     (.getCanonicalPath (cond (= "" d) (io/file root)
                              (.isAbsolute (io/file d)) (io/file d)
                              :else (io/file root d)))))
@@ -227,12 +228,16 @@
       (when-not (and (map? arg) (get arg "cwd"))
         (when-let [hint (monorepo-root-hint root dir)]
           (throw (ex-info hint {:type :ts/monorepo-root :dir dir}))))
-      (throw (ex-info (str "TypeScript REPL is not up for "
-                           dir
-                           "; call repl(\"typescript\", {\"cwd\": "
-                           (pr-str dir)
-                           "}) first")
-                      {:type :ts/no-repl :dir dir})))
+      ;; Home-homogenized: the message reads `~/app`, matching the REPL ids in
+      ;; session["resources"] — and `resolve-dir` expands `~` back, so the cwd
+      ;; shown can be pasted straight into the retry call.
+      (let [shown (paths/abbreviate-home (str dir))]
+        (throw (ex-info (str "TypeScript REPL is not up for "
+                             shown
+                             "; call repl(\"typescript\", {\"cwd\": "
+                             (pr-str shown)
+                             "}) first")
+                        {:type :ts/no-repl :dir dir}))))
     ;; Carry the evaluated code back on the result (string key) so the shared
     ;; repl_eval op-card can surface the FORM section.
     (let [res (repl/eval! dir code tmo)]

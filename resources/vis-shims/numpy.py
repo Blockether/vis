@@ -29,12 +29,24 @@ def __vis_install_numpy__():
         return isinstance(x, (list, tuple))
 
     def _infer_shape(obj):
-        shp = []
-        o = obj
-        while _is_seq(o):
-            shp.append(len(o))
-            o = o[0] if len(o) else 0
-        return tuple(shp)
+        if not _is_seq(obj):
+            return ()
+        shape = []
+        level = obj
+        while _is_seq(level):
+            length = len(level)
+            shape.append(length)
+            if not length:
+                break
+            child_shape = _infer_shape(level[0])
+            for child in level[1:]:
+                if _infer_shape(child) != child_shape:
+                    raise ValueError(
+                        "setting an array element with a sequence; "
+                        "the requested array has an inhomogeneous shape"
+                    )
+            return tuple(shape) + child_shape
+        return tuple(shape)
 
     def _flatten_into(obj, out):
         if _is_seq(obj):
@@ -2561,9 +2573,154 @@ def __vis_install_numpy__():
     mod.shape = lambda a: _asarray(a).shape
     mod.size = lambda a: _asarray(a).size
 
+    # Package-level compatibility modules.  The shim deliberately keeps their
+    # numerical surface small, but imports must behave like NumPy imports rather
+    # than failing because ``numpy`` was installed as a plain module.
+    mod.__path__ = []
+
+    fft_mod = types.ModuleType("numpy.fft")
+
+    def _fft_unavailable(*args, **kwargs):
+        raise NotImplementedError(
+            "numpy.fft transforms are not implemented by the vis pure-Python shim"
+        )
+
+    def _fftfreq(n, d=1.0):
+        n = int(n)
+        if n < 1:
+            return _mk([], (0,), _FLOAT)
+        scale = 1.0 / (n * float(d))
+        cut = (n - 1) // 2 + 1
+        return _mk(
+            [((i if i < cut else i - n) * scale) for i in range(n)], (n,), _FLOAT
+        )
+
+    fft_mod.fft = _fft_unavailable
+    fft_mod.ifft = _fft_unavailable
+    fft_mod.rfft = _fft_unavailable
+    fft_mod.irfft = _fft_unavailable
+    fft_mod.fftn = _fft_unavailable
+    fft_mod.ifftn = _fft_unavailable
+    fft_mod.fftfreq = _fftfreq
+    fft_mod.rfftfreq = lambda n, d=1.0: _mk(
+        [i / (int(n) * float(d)) for i in range(int(n) // 2 + 1)],
+        (int(n) // 2 + 1,),
+        _FLOAT,
+    )
+
+    polynomial_mod = types.ModuleType("numpy.polynomial")
+
+    class Polynomial:
+        def __init__(self, coef, domain=None, window=None, symbol="x"):
+            self.coef = _asarray(coef)
+            self.domain = domain
+            self.window = window
+            self.symbol = symbol
+
+        def __call__(self, x):
+            def evaluate(value):
+                total = 0
+                for coefficient in reversed(self.coef._d):
+                    total = total * value + coefficient
+                return total
+
+            if _is_seq(x) or isinstance(x, ndarray):
+                values = _asarray(x)
+                return _mk(
+                    [evaluate(value) for value in values._d],
+                    values._shape,
+                    values._dtype,
+                )
+            return evaluate(x)
+
+        def __repr__(self):
+            return "Polynomial(" + repr(self.coef.tolist()) + ")"
+
+    polynomial_mod.Polynomial = Polynomial
+
+    ma_mod = types.ModuleType("numpy.ma")
+
+    class MaskedArray(ndarray):
+        def __init__(self, data, mask=False, dtype=None):
+            arr = _asarray(data, dtype)
+            ndarray.__init__(self, list(arr._d), arr._shape, arr._dtype)
+            if isinstance(mask, bool):
+                self.mask = _mk([mask] * len(arr._d), arr._shape, _BOOL)
+            else:
+                self.mask = _asarray(mask, _BOOL)
+
+        def filled(self, fill_value=0):
+            return _mk(
+                [
+                    fill_value if masked else value
+                    for value, masked in zip(self._d, self.mask._d)
+                ],
+                self._shape,
+                self._dtype,
+            )
+
+    ma_mod.MaskedArray = MaskedArray
+    ma_mod.array = lambda data, mask=False, dtype=None, **kwargs: MaskedArray(
+        data, mask, dtype
+    )
+    # `masked_array` is the documented spelling; `array` is its conventional
+    # short alias.  Keep both identities stable for `from numpy.ma import ...`.
+    ma_mod.masked_array = ma_mod.array
+    ma_mod.isMaskedArray = lambda value: isinstance(value, MaskedArray)
+    ma_mod.getdata = lambda value: (
+        _mk(list(value._d), value._shape, value._dtype)
+        if isinstance(value, MaskedArray)
+        else _asarray(value)
+    )
+    ma_mod.getmask = lambda value: getattr(value, "mask", False)
+    ma_mod.getmaskarray = lambda value: (
+        value.mask
+        if isinstance(value, MaskedArray)
+        else _mk([False] * _asarray(value).size, _asarray(value).shape, _BOOL)
+    )
+    ma_mod.masked = object()
+    ma_mod.nomask = False
+
+    testing_mod = types.ModuleType("numpy.testing")
+
+    def _assert_allclose(actual, desired, rtol=1e-07, atol=0, **kwargs):
+        if not allclose(actual, desired, rtol=rtol, atol=atol):
+            raise AssertionError(
+                "Not equal to tolerance rtol=%r, atol=%r" % (rtol, atol)
+            )
+
+    def _assert_array_equal(actual, desired, **kwargs):
+        left, right = _asarray(actual), _asarray(desired)
+        if left._shape != right._shape or left._d != right._d:
+            raise AssertionError("Arrays are not equal")
+
+    testing_mod.assert_allclose = _assert_allclose
+    testing_mod.assert_array_equal = _assert_array_equal
+    testing_mod.assert_equal = _assert_array_equal
+
+    typing_mod = types.ModuleType("numpy.typing")
+
+    class _TypeAlias:
+        def __class_getitem__(cls, item):
+            return cls
+
+    typing_mod.ArrayLike = _TypeAlias
+    typing_mod.NDArray = _TypeAlias
+
+    mod.fft = fft_mod
+    mod.polynomial = polynomial_mod
+    mod.ma = ma_mod
+    mod.testing = testing_mod
+    mod.typing = typing_mod
+
     sys.modules["numpy"] = mod
     sys.modules["numpy.linalg"] = linalg
     sys.modules["numpy.random"] = random_mod
+    sys.modules["numpy.fft"] = fft_mod
+    sys.modules["numpy.polynomial"] = polynomial_mod
+    sys.modules["numpy.ma"] = ma_mod
+    sys.modules["numpy.testing"] = testing_mod
+    sys.modules["numpy.typing"] = typing_mod
 
     try:
         import builtins as _b

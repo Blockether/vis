@@ -76,3 +76,13 @@
               " 'Rounded Rectangle 4' in slidexml,\n" " 'TextBox 3' in slidexml,\n"
               " '<a:defRPr' in slidexml,\n" " fill_raises,\n"
               " len(prs.slides) == 1,\n" " prs.slide_width, prs.slide_height]")))))))
+
+(defdescribe pptx-package-submodule-test
+             (it "imports chart data using the standard python-pptx package path"
+                 (with-python-context
+                   (expect (= [["one"] [["series" [1 2]]]]
+                              (ev python-context
+                                  (str "from pptx.chart.data import CategoryChartData\n"
+                                       "data = CategoryChartData()\n" "data.add_category('one')\n"
+                                       "data.add_series('series', [1,2])\n"
+                                       "[data.categories, data.series]")))))))

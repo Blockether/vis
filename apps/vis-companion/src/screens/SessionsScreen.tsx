@@ -812,9 +812,8 @@ const SessionRow = memo(function SessionRow({
 });
 
 // The expanded half of a session row: everything the list cannot afford to
-// carry for every session at once. `GET /v1/sessions/:sid/usage` decodes each
-// iteration's tool-call blob to count tools and folds, so it is fetched HERE,
-// once, when the row is actually opened — and aborted if the row closes first.
+// carry for every session at once. It is fetched HERE only when the row opens,
+// and aborted if the row closes first; the gateway memoizes decoded tool tallies.
 function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }) {
   const [usage, setUsage] = useState<SessionUsage | null>(null);
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -872,9 +871,15 @@ function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }
             <Stat label="Cost" value={formatUsd(usage.cost_usd)} />
           </dl>
           <dl className="mt-2.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-dialog-edge/40 pt-2">
-            {/* `/usage` aggregates turns and does not carry the model; the session
-                record does, so fall back to it instead of rendering a bare dash. */}
-            <Meta label="Model" value={usage.model || session.model || '—'} title={usage.provider} />
+            {/* `/usage` names the model the session actually RAN on, but only
+                once a turn has finished stamping it — a live session's newest
+                turn has none. The pin (list row) and the state's root model are
+                the standing answers, so fall back to those instead of a dash. */}
+            <Meta
+              label="Model"
+              value={usage.model || session.model_pref?.model || session.model || '—'}
+              title={usage.provider || session.model_pref?.provider}
+            />
             <Meta
               label="Active"
               value={formatDuration(usage.duration_ms)}

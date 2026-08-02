@@ -614,3 +614,101 @@
                                                     "ax.patch.set_facecolor('#202024')\n"
                                                     "fig.set_dpi(120)\n"
                                                     "ax.plot([1,2,3],[3,1,2])")))))))
+
+(defdescribe
+  matplotlib-submodule-imports-test
+  "Real plotting code imports from matplotlib SUBMODULES -- `from matplotlib.patches
+   import Rectangle`, `matplotlib.ticker`, `matplotlib.colors`,
+   `mpl_toolkits.axes_grid1`. Until they were registered in `sys.modules`, every one
+   of those imports died with `matplotlib is not a package`."
+  (it
+    "the shimmed submodules import and mirror the package attributes"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            "
+def _run():
+    import sys
+    mods = ['matplotlib.patches', 'matplotlib.colors', 'matplotlib.ticker',
+            'matplotlib.lines', 'matplotlib.collections', 'matplotlib.text',
+            'matplotlib.legend', 'matplotlib.transforms', 'matplotlib.dates',
+            'matplotlib.figure', 'matplotlib.gridspec', 'matplotlib.axes',
+            'matplotlib.axis', 'matplotlib.artist', 'matplotlib.font_manager',
+            'matplotlib.image', 'matplotlib.animation', 'matplotlib.path',
+            'matplotlib.patheffects', 'matplotlib.offsetbox', 'matplotlib.spines',
+            'matplotlib.markers', 'matplotlib.colorbar', 'matplotlib.container',
+            'matplotlib.backends.backend_agg', 'mpl_toolkits.mplot3d',
+            'mpl_toolkits.axes_grid1']
+    for m in mods:
+        __import__(m)
+        if sys.modules.get(m) is None:
+            return 'not in sys.modules: ' + m
+    from matplotlib.patches import Rectangle, Circle, Ellipse, Polygon, Wedge
+    from matplotlib.colors import (Normalize, LogNorm, ListedColormap,
+                                   LinearSegmentedColormap, to_hex, to_rgba)
+    from matplotlib.ticker import (FuncFormatter, MultipleLocator, MaxNLocator,
+                                   PercentFormatter)
+    from matplotlib.lines import Line2D
+    from matplotlib.collections import LineCollection
+    from matplotlib.transforms import Bbox, Affine2D
+    from matplotlib.dates import date2num, num2date, DateFormatter
+    from matplotlib.artist import setp, getp
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    import matplotlib
+    if matplotlib.patches.Rectangle is not Rectangle:
+        return 'matplotlib.patches attribute is not the submodule class'
+    if matplotlib.colors.Normalize is not Normalize:
+        return 'matplotlib.colors attribute is not the submodule class'
+    return True
+_run()
+")))))
+  (it
+    "patches, ticker, colors, dates and artist helpers behave"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            "
+def _run():
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+    from matplotlib.ticker import FuncFormatter, MultipleLocator
+    from matplotlib.colors import Normalize, to_rgba
+    from matplotlib.dates import date2num, num2date
+    from matplotlib.artist import setp
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    import datetime
+    plt.clf()
+    fig, ax = plt.subplots()
+    rect = Rectangle((0, 0), 2, 3, facecolor='#101014')
+    ax.add_patch(rect)
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, p: '%.1f' % v))
+    ax.xaxis.set_major_locator(MultipleLocator(0.5))
+    line, = ax.plot([1, 2, 3], [3, 1, 2])
+    setp(line, linewidth=2.0)
+    checks = []
+    checks.append(rect.get_bbox().bounds == (0.0, 0.0, 2.0, 3.0))
+    checks.append(sorted(ax.spines.keys()) == ['bottom', 'left', 'right', 'top'])
+    checks.append(MultipleLocator(0.5).tick_values(0, 2) == [0.0, 0.5, 1.0, 1.5, 2.0])
+    checks.append(Normalize(0, 10)(5) == 0.5)
+    checks.append(to_rgba('#ff0000') == (1.0, 0.0, 0.0, 1.0))
+    d = datetime.datetime(2024, 1, 2)
+    checks.append(abs(date2num(num2date(date2num(d))) - date2num(d)) < 1e-6)
+    checks.append(rect in ax.get_children())
+    checks.append(make_axes_locatable(ax) is not None)
+    return all(checks)
+_run()
+")))))
+  (it "a figure assembled through the submodule API still renders a PNG"
+      (with-python-context
+        (expect (< 100
+                   (png-len python-context
+                            (str "from matplotlib.patches import Rectangle\n"
+                                 "from matplotlib.ticker import MultipleLocator\n"
+                                 "fig, ax = plt.subplots()\n"
+                                 "ax.add_patch(Rectangle((0, 0), 1, 2, facecolor='#101014'))\n"
+                                 "ax.xaxis.set_major_locator(MultipleLocator(0.5))\n"
+                                 "ax.plot([1, 2, 3], [3, 1, 2])")))))))

@@ -2285,6 +2285,51 @@ def __vis_install_pil__():
     TiffTags.TAGS_V2 = {}
     TiffTags.lookup = lambda tag, group=None: None
 
+    # -- import-compatible modules for GUI/file-plugin entry points ----------
+    # They are intentionally explicit about unavailable host integration instead
+    # of making ``from PIL import ImageGrab`` fail as though Pillow were broken.
+    class UnidentifiedImageError(OSError):
+        pass
+
+    def _host_unavailable(name):
+        def unavailable(*args, **kwargs):
+            raise NotImplementedError(name + " is unavailable in the vis sandbox")
+
+        return unavailable
+
+    ImageFile = types.ModuleType("PIL.ImageFile")
+    ImageFile.ImageFile = Image
+    ImageFile.Parser = type(
+        "Parser",
+        (),
+        {
+            "feed": _host_unavailable("PIL.ImageFile.Parser"),
+            "close": _host_unavailable("PIL.ImageFile.Parser"),
+        },
+    )
+    ImageFile.LOAD_TRUNCATED_IMAGES = False
+    ImageGrab = types.ModuleType("PIL.ImageGrab")
+    ImageGrab.grab = _host_unavailable("PIL.ImageGrab.grab")
+    ImageGrab.grabclipboard = _host_unavailable("PIL.ImageGrab.grabclipboard")
+    ImageTk = types.ModuleType("PIL.ImageTk")
+    ImageTk.PhotoImage = _host_unavailable("PIL.ImageTk.PhotoImage")
+    ImageTk.BitmapImage = _host_unavailable("PIL.ImageTk.BitmapImage")
+    ImageTk.getimage = _host_unavailable("PIL.ImageTk.getimage")
+    ImageWin = types.ModuleType("PIL.ImageWin")
+    ImageWin.Dib = _host_unavailable("PIL.ImageWin.Dib")
+    ImageWin.HDC = _host_unavailable("PIL.ImageWin.HDC")
+    ImageWin.Window = _host_unavailable("PIL.ImageWin.Window")
+    ImageQt = types.ModuleType("PIL.ImageQt")
+    ImageQt.ImageQt = _host_unavailable("PIL.ImageQt.ImageQt")
+    ImageQt.toqimage = _host_unavailable("PIL.ImageQt.toqimage")
+    ImageQt.toqpixmap = _host_unavailable("PIL.ImageQt.toqpixmap")
+    PSDraw = types.ModuleType("PIL.PSDraw")
+    PSDraw.PSDraw = _host_unavailable("PIL.PSDraw.PSDraw")
+    ImageShow = types.ModuleType("PIL.ImageShow")
+    ImageShow.Viewer = _host_unavailable("PIL.ImageShow.Viewer")
+    ImageShow.register = _host_unavailable("PIL.ImageShow.register")
+    ImageShow.show = _host_unavailable("PIL.ImageShow.show")
+
     # -- ImageMorph (module presence) ----------------------------------------
     ImageMorph = types.ModuleType("PIL.ImageMorph")
 
@@ -2294,6 +2339,8 @@ def __vis_install_pil__():
         "vis Pillow-compatible shim backed by the host com.blockether/imaging renderer."
     )
     PIL.__version__ = "10.0-vis-imaging"
+    PIL.__path__ = []
+    PIL.UnidentifiedImageError = UnidentifiedImageError
     PIL.Image = Image_mod
     PIL.ImageDraw = ImageDraw
     PIL.ImageFilter = ImageFilter
@@ -2311,6 +2358,13 @@ def __vis_install_pil__():
     PIL.ExifTags = ExifTags
     PIL.TiffTags = TiffTags
     PIL.ImageMorph = ImageMorph
+    PIL.ImageFile = ImageFile
+    PIL.ImageGrab = ImageGrab
+    PIL.ImageTk = ImageTk
+    PIL.ImageWin = ImageWin
+    PIL.ImageQt = ImageQt
+    PIL.PSDraw = PSDraw
+    PIL.ImageShow = ImageShow
     PIL.__all__ = [
         "Image",
         "ImageDraw",
@@ -2349,6 +2403,13 @@ def __vis_install_pil__():
     sys.modules["PIL.ExifTags"] = ExifTags
     sys.modules["PIL.TiffTags"] = TiffTags
     sys.modules["PIL.ImageMorph"] = ImageMorph
+    sys.modules["PIL.ImageFile"] = ImageFile
+    sys.modules["PIL.ImageGrab"] = ImageGrab
+    sys.modules["PIL.ImageTk"] = ImageTk
+    sys.modules["PIL.ImageWin"] = ImageWin
+    sys.modules["PIL.ImageQt"] = ImageQt
+    sys.modules["PIL.PSDraw"] = PSDraw
+    sys.modules["PIL.ImageShow"] = ImageShow
 
     # Autoload: staple onto builtins so PIL.Image / Image.new work in every
     # run_python block WITHOUT an explicit import (mirrors json/yaml/matplotlib).

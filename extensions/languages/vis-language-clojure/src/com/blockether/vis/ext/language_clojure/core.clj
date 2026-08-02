@@ -304,7 +304,9 @@
 
        ("start" "restart")
        (do (when-not (.isDirectory (io/file dir))
-             (throw (ex-info (str "repl \"" op "\" target cwd does not exist: " dir)
+             (throw (ex-info (str "repl \"" op
+                                  "\" target cwd does not exist: " (repl-manager/home-relativize
+                                                                     (str dir)))
                              {:type :clj/bad-args :dir dir})))
            (let
              [result (if (= op "restart")
@@ -470,7 +472,12 @@
               (case (:type (ex-data e))
                 :clj/no-repl
                 (extension/failure {:error {:message (str "no REPL running in "
-                                                          (:dir (ex-data e))
+                                                          ;; Home-homogenized: the message reads
+                                                          ;; `~/vis`, matching the REPL ids in
+                                                          ;; session["resources"] — never a raw
+                                                          ;; `/Users/you/vis`.
+                                                          (repl-manager/home-relativize
+                                                            (str (:dir (ex-data e))))
                                                           " — start one: repl(\"clojure\")")
                                             :hint "then retry the eval"}})
 

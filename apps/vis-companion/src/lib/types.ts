@@ -37,7 +37,14 @@ export interface Session {
   id: string;
   title?: string;
   channel?: string;
+  /** The session state's ROOT model — a bare name, no provider, not the pin. */
   model?: string;
+  /**
+   * The session's pinned provider+model, straight off the list row. Absent means
+   * "runs on the router default"; carrying it here is what lets a client name the
+   * model without a `GET /v1/sessions/:sid/model` per session.
+   */
+  model_pref?: ModelPref | null;
   project_id?: string | null;
   project_name?: string | null;
   project_position?: number | null;
@@ -70,8 +77,8 @@ export interface Session {
 
 /**
  * GET /v1/sessions/:sid/usage — the whole-life rollup for one session. Fetched
- * on demand only: the gateway decodes every iteration's tool-call blob to count
- * tools and folds, so it is deliberately absent from the session list.
+ * on demand only and deliberately absent from the session list; the gateway
+ * memoizes each decoded iteration's tool-call tally.
  */
 export interface SessionUsage {
   turn_count?: number;

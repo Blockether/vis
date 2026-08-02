@@ -973,8 +973,7 @@
             ;; lets a session list answer "which model does this run on?" without
             ;; an extra per-session round-trip.
             (not-empty (:llm_pref_model soul))
-            (assoc :model-pref {:provider (:llm_pref_provider soul)
-                                :model (:llm_pref_model soul)})
+            (assoc :model-pref {:provider (:llm_pref_provider soul) :model (:llm_pref_model soul)})
 
             project
             (assoc :project-name (:name project))))))))
@@ -1412,6 +1411,122 @@
       :from [[:session_turn_state :s2]]
       :where [:= :s2.session_turn_soul_id :sts.session_turn_soul_id]}]]])
 
+;; ── whole-session usage tally ────────────────────────────────────────────────
+;;
+;; The immutability that makes the `ntr` branch index cacheable holds here too:
+;; `session_turn_iteration.tool_calls` is written ONCE at INSERT and never
+;; UPDATEd, so ONE row's per-tool tally is a constant and can be cached for the
+;; process lifetime, keyed by row id.
+;;
+;; That matters because the usage rollup is fetched per session ROW EXPAND in
+;; the companion (`GET /v1/sessions/:sid/usage`), and it used to re-thaw the
+;; session's ENTIRE blob history every single time — measured at ~200 ms for a
+;; real 2 907-call session, paid again on every open, per client. With the
+;; cache a blob is thawed at most ONCE, a LIVE session pays only for the
+;; iterations added since the last read, and an unchanged session answers from
+;; the merged memo without touching a blob at all.
+
+(def ^:private ^java.util.concurrent.ConcurrentHashMap usage-tally-cache
+  "Iteration row id → that row's `{:counts {tool n} :errors {tool n}}` tally.
+   Counts only — no forms, no results — so a row costs a few tens of bytes."
+  (java.util.concurrent.ConcurrentHashMap.))
+
+(def ^:private usage-tally-cache-max
+  "Row ceiling. On overflow the whole cache is dropped: a rebuild costs one
+   decode pass, never correctness."
+  20000)
+
+(def ^:private ^java.util.concurrent.ConcurrentHashMap usage-rollup-cache
+  "Session ref → `{:fingerprint [row-count id-digest] :tally {…}}`, the
+   MERGED tally, so re-reading an unchanged session skips even the per-row
+   merge. The fingerprint moves whenever an iteration row is added (new id) or
+   removed (new count), which is exactly when the rollup can differ."
+  (java.util.concurrent.ConcurrentHashMap.))
+
+(def ^:private usage-rollup-cache-max
+  "Session ceiling; dropped wholesale on overflow like the row cache."
+  512)
+
+(def ^:private empty-tally {:counts {} :errors {}})
+
+(defn- forms-tally
+  "ONE iteration's `{:counts :errors}` over its decoded tool-call `forms`, keyed
+   by `:vis/tool-name`. A form counts as FAILED the way channels judge one: it
+   carries an `:error` payload, or an explicit false `:success?`. Both rollups
+   come out of the SAME pass, so errors cost no extra decode."
+  [forms]
+  (reduce (fn [acc form]
+            (let
+              [n
+               (str (:vis/tool-name form))
+
+               ok
+               (:success? form)]
+
+              (if (str/blank? n)
+                acc
+                (cond-> (update-in acc [:counts n] (fnil inc 0))
+                  (or (some? (:error form)) (and (some? ok) (not ok)))
+                  (update-in [:errors n] (fnil inc 0))))))
+          empty-tally
+          forms))
+
+(defn- merge-tally
+  "Sum two `{:counts :errors}` tallies tool by tool."
+  [a b]
+  {:counts (merge-with + (:counts a) (:counts b)) :errors (merge-with + (:errors a) (:errors b))})
+
+(defn- usage-tally
+  "Merged `{:counts :errors}` over the iteration rows `row-ids` of session
+   `sref`, computed at most ONCE per row per process.
+
+   Three tiers, cheapest first: an unchanged session returns its memoised merge;
+   a session whose rows are all tallied re-merges cached per-row counts without
+   touching SQLite; only genuinely new rows are fetched — in bounded chunks, ids
+   first — and Nippy-thawed."
+  [db-info sref row-ids]
+  (let
+    [;; Row ids are opaque STRINGS, so the fingerprint is row count plus an
+     ;; order-independent digest of the ids: it moves the moment a row is
+     ;; added or removed, and never depends on SQLite's row order.
+     fingerprint
+     [(count row-ids)
+      (reduce (fn [acc id]
+                (unchecked-add (long acc) (long (hash id))))
+              0
+              row-ids)]
+
+     memo
+     (.get usage-rollup-cache sref)]
+
+    (if (= fingerprint (:fingerprint memo))
+      (:tally memo)
+      (let [missing (into [] (remove #(.containsKey usage-tally-cache %)) row-ids)]
+        (when (seq missing)
+          (when (> (.size usage-tally-cache) (long usage-tally-cache-max))
+            (.clear usage-tally-cache))
+          (doseq [chunk (partition-all 200 missing)]
+            (doseq
+              [row (query! db-info
+                           {:select [:qti.id :qti.tool_calls]
+                            :from [[:session_turn_iteration :qti]]
+                            :where [:and [:in :qti.id (vec chunk)] [:<> :qti.tool_calls nil]]})]
+              (.put usage-tally-cache (:id row) (forms-tally (<-blob (:tool_calls row)))))
+            ;; A row that vanished between the id query and this one tallies
+            ;; empty — never re-queried, never a miss loop.
+            (doseq [rid chunk]
+              (when-not (.containsKey usage-tally-cache rid)
+                (.put usage-tally-cache rid empty-tally)))))
+        (let
+          [tally (reduce (fn [acc rid]
+                           (merge-tally acc (or (.get usage-tally-cache rid) empty-tally)))
+                         empty-tally
+                         row-ids)]
+          (when (> (.size usage-rollup-cache) (long usage-rollup-cache-max))
+            (.clear usage-rollup-cache))
+          (.put usage-rollup-cache sref {:fingerprint fingerprint :tally tally})
+          tally)))))
+
 (defn db-session-usage-stats
   "ONE session's whole-life USAGE rollup, or nil when the session has no turns:
 
@@ -1424,10 +1539,13 @@
    Token/cost/iteration facts are SQL aggregates over the turn-state rollups
    (`session_turn_state`), which the turn writer already maintains — no
    iteration scan. Tool and fold counts have no column: they live inside each
-   iteration's nippy `tool_calls` BLOB, so those are decoded in bounded chunks
-   and counted by `:vis/tool-name` (a fold is the `session_fold` tool). That
-   decode is why this is an ON-DEMAND single-session read and never part of
-   `list-sessions`.
+   iteration's nippy `tool_calls` BLOB, so those are counted by `:vis/tool-name`
+   (a fold is the `session_fold` tool) through `usage-tally`, which thaws any one
+   row's blob at most ONCE per process and memoises the merged result per
+   session — a re-read costs two skinny id-only queries, a repeat read of an
+   unchanged session costs nothing beyond them, and a live session pays only for
+   the iterations added since the last read. It is still an ON-DEMAND
+   single-session read and never part of `list-sessions`.
 
    `:top-tools` is `[{:name s :count n}]`, busiest first, folds excluded.
 
@@ -1464,11 +1582,16 @@
       (when (pos? (long (or (:turns agg) 0)))
         (let
           [latest
+           ;; The newest turn that HAS a model. A turn's row is inserted when
+           ;; the turn STARTS and only stamped with provider/model when it
+           ;; finishes, so a plain "newest turn" pick reads NULL for as long as
+           ;; a session is live — exactly when a client is looking at it — and
+           ;; the rollup then reported no model at all. Skip unstamped rows.
            (query-one! db-info
                        {:select [:sts.llm_root_provider :sts.llm_root_model]
                         :from from
                         :join join
-                        :where where
+                        :where (conj where [:<> :sts.llm_root_model nil])
                         :order-by [[:ts.created_at :desc]]
                         :limit 1})
 
@@ -1484,32 +1607,11 @@
                                       join)
                           :where (conj where [:<> :qti.tool_calls nil])}))
 
-           ;; ONE decode pass, TWO rollups: every call by tool, and only the
-           ;; failed ones. Errors are the same judgement channels make about a
-           ;; form (`error` payload, or an explicit false `success?`), so a
-           ;; session's failure surface costs no second scan of the blobs.
+           ;; ONE Nippy thaw per iteration row, ONCE per process, and TWO
+           ;; rollups out of that single pass: every call by tool, and only the
+           ;; failed ones (see `usage-tally`).
            {counts :counts errors :errors}
-           (reduce (fn [acc chunk]
-                     (reduce (fn [acc* row]
-                               (reduce (fn [a form]
-                                         (let [n (str (:vis/tool-name form))
-                                               ok (:success? form)]
-                                           (if (str/blank? n)
-                                             a
-                                             (cond-> (update-in a [:counts n] (fnil inc 0))
-                                               (or (some? (:error form))
-                                                   (and (some? ok) (not ok)))
-                                               (update-in [:errors n] (fnil inc 0))))))
-                                       acc*
-                                       (<-blob (:tool_calls row))))
-                             acc
-                             (query! db-info
-                                     {:select [:qti.tool_calls]
-                                      :from [[:session_turn_iteration :qti]]
-                                      :where [:and [:in :qti.id (vec chunk)]
-                                              [:<> :qti.tool_calls nil]]})))
-                   {:counts {} :errors {}}
-                   (partition-all 200 iter-ids))
+           (usage-tally db-info soul-id-s iter-ids)
 
            folds
            (long (get counts "session_fold" 0))]

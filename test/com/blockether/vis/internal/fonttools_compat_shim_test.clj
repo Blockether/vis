@@ -102,3 +102,43 @@ def _run():
 
 _run()
 "))))))
+
+(defdescribe
+  fonttools-unsupported-surface-test
+  "The shim is a WOFF2 subset, so `from fontTools.ttLib import TTFont` used to fail
+   with a bare `cannot import name`, which reads like a broken install. Imports now
+   succeed and the unsupported entry points raise messages naming what IS covered."
+  (it
+    "TTFont imports and raises a NotImplementedError that names the supported surface"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            "
+def _run():
+    checks = []
+    from fontTools.ttLib import TTFont, TTLibError
+    checks.append(issubclass(TTLibError, Exception))
+    try:
+        TTFont('some.ttf')
+        checks.append(False)
+    except NotImplementedError as e:
+        checks.append('woff2' in str(e) and 'TTFont' in str(e))
+    from fontTools.ttLib.ttFont import TTFont as TTFont2
+    checks.append(TTFont2 is TTFont)
+    try:
+        from fontTools.ttLib import somethingUnsupported
+        checks.append(False)
+    except ImportError as e:
+        checks.append('woff2' in str(e))
+    try:
+        from fontTools import subset
+        checks.append(False)
+    except ImportError as e:
+        checks.append('woff2' in str(e))
+    import fontTools
+    checks.append(hasattr(fontTools.ttLib.woff2, 'decompress'))
+    return all(checks)
+_run()
+"))))))

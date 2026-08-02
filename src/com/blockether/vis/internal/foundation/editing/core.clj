@@ -3360,6 +3360,17 @@
                 hint
                 (str "\n" hint))}))
 
+(defn- non-failure-checks
+  "Model-facing `:checks` minus the edits already reported in `:failures`.
+   A failing edit's check IS its failure map (both are `conj`ed from the same
+   value in `patch-analysis`), so shipping both repeats every stale-anchor
+   diagnostic verbatim twice. What survives is the useful part: the edits that
+   resolved cleanly and were still discarded by the atomic refusal."
+  [checks failures]
+  (let [key-of (juxt :path :edit-index)
+        failed (into #{} (map key-of) failures)]
+    (vec (remove (comp failed key-of) checks))))
+
 (defn- patch-syntax-failures
   "Return plans that turn clean supported code into syntactically broken code.
    When the combined batch breaks a file, bisect it: apply the file's edits
@@ -4532,7 +4543,8 @@
       ;; Failure: full structured `:error` map with `:reason`, per-edit
       ;; `:failures`, `:checks`, and the optional `:loop-hint` so the
       ;; model can read them as plain map keys (no try/catch needed).
-      (let [first-failure (first (:failures result))]
+      (let [first-failure (first (:failures result))
+            other-checks (non-failure-checks (:checks result) (:failures result))]
         (extension/failure
           {:result nil
            :op :patch
@@ -4552,11 +4564,17 @@
                        (assoc :candidate-plans
                          (:candidate-plans result) :broken-paths
                          (:broken-paths result)))
-           :error {:message (:message result)
-                   :reason (:reason first-failure)
-                   :failures (:failures result)
-                   :checks (:checks result)
-                   :loop-hint (:loop-hint result)}})))))
+           ;; Only facts the message does NOT already carry: nil `:loop-hint`
+           ;; and failure-duplicating `:checks` are pure payload noise.
+           :error (cond-> {:message (:message result)
+                           :reason (:reason first-failure)
+                           :failures (:failures result)}
+
+                    (seq other-checks)
+                    (assoc :checks other-checks)
+
+                    (some? (:loop-hint result))
+                    (assoc :loop-hint (:loop-hint result)))})))))
 
 (defn- normalize-write-args
   "Accept write args EITHER as a single options map
@@ -4608,7 +4626,8 @@
                                   :changed-count (if (get summary "changed") 1 0)
                                   :op (:op plan)
                                   :file-befores [(select-keys plan [:path :before])]}}))
-      (let [first-failure (first (:failures result))]
+      (let [first-failure (first (:failures result))
+            other-checks (non-failure-checks (:checks result) (:failures result))]
         (extension/failure
           {:result nil
            :op :write
@@ -4620,12 +4639,16 @@
                       :started-at-ms (now-ms)
                       :finished-at-ms (now-ms)
                       :duration-ms 0}
-           :error {:message (:message result)
-                   :reason (:reason first-failure)
-                   :failures (:failures result)
-                   :checks (:checks result)
-                   :loop-hint (:loop-hint result)
-                   :mode :write}})))))
+           :error (cond-> {:message (:message result)
+                           :reason (:reason first-failure)
+                           :failures (:failures result)
+                           :mode :write}
+
+                    (seq other-checks)
+                    (assoc :checks other-checks)
+
+                    (some? (:loop-hint result))
+                    (assoc :loop-hint (:loop-hint result)))})))))
 
 (defn- create-dirs-tool
   "Ensure dir exists. Returns the canonical foundation map shape so the

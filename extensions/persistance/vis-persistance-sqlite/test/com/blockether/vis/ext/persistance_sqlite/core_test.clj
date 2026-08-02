@@ -26,7 +26,8 @@
             [com.blockether.vis.internal.persistance :as persistance]
             [honey.sql :as sql]
             [lazytest.core :refer [defdescribe it expect]]
-            [next.jdbc :as jdbc])
+            [next.jdbc :as jdbc]
+            [next.jdbc.result-set :as rs])
   (:import (java.io File)
            (java.util.concurrent CountDownLatch TimeUnit)))
 
@@ -41,6 +42,8 @@
 (defn- table-columns
   [store table]
   (set (map :name (jdbc/execute! (:datasource store) [(str "PRAGMA table_info(" table ")")]))))
+
+
 
 (def ^:private migration-checksum-mismatch? (private-core-fn "migration-checksum-mismatch?"))
 
@@ -544,6 +547,11 @@
                   (expect (= 1 (raw-count s2 :topup_probe)))
                   (finally (vis/db-dispose-connection! s2))))
            (finally (fs/delete-tree root))))))
+
+;; Mirrors the shape `db-list-sessions` builds: same predicates, same order. The
+;; index only earns its keep while the two stay aligned, so the plan is asserted
+;; here rather than trusted.
+
 
 (def ^:private multiprocess-child-code
   "(require '[com.blockether.vis.core :as vis])
@@ -2991,3 +2999,151 @@
                                                              user-atts)))))))
       ;; Bytes are still stored: display-only withholds the wire block, not the data.
       (expect (every? #(= b64 (:base64 %)) (concat user-atts tool-atts))))))
+
+(defdescribe
+  session-model-pin-rides-the-session-row-test
+  "`db-get-session` already selects the whole `session_soul` row, so the per-session
+   model PIN comes back with it — a session list can name the model each row runs
+   on without a follow-up query per session."
+  (it "carries the pin, keeps the root model distinct, and clears cleanly"
+      (let
+        [s
+         (h/store)
+
+         sid
+         (h/store-session! s {:channel :api :title "pinned" :model "root-model"})]
+
+        (expect (nil? (:model-pref (persistance/db-get-session s sid))))
+        (persistance/db-set-session-model-pref! s (str sid) "anthropic-coding-plan" "claude-opus-5")
+        (expect (= {:provider "anthropic-coding-plan" :model "claude-opus-5"}
+                   (:model-pref (persistance/db-get-session s sid))))
+        ;; Same fact as the dedicated reader — one row, two callers.
+        (expect (= (persistance/db-get-session-model-pref s (str sid))
+                   (:model-pref (persistance/db-get-session s sid))))
+        ;; The state's ROOT model is a different column and is left alone.
+        (expect (= "root-model" (:model (persistance/db-get-session s sid))))
+        (persistance/db-set-session-model-pref! s (str sid) nil nil)
+        (expect (nil? (:model-pref (persistance/db-get-session s sid)))))))
+
+(defdescribe
+  usage-model-survives-an-unstamped-turn-test
+  "A turn row is stamped with provider/model only when the turn FINISHES, so the
+   usage rollup names the newest turn that HAS one. Picking the newest turn flat
+   reported no model at all for every LIVE session — exactly the sessions a
+   client is looking at — and for any session whose last turn was interrupted."
+  (it "keeps the last stamped model while a newer turn is still running"
+      (let
+        [s
+         (h/store)
+
+         sid
+         (h/store-session! s {:channel :api :title "usage"})
+
+         done
+         (persistance/db-store-session-turn! s {:parent-session-id (str sid) :user-request "one"})]
+
+        (persistance/db-update-session-turn!
+          s
+          done
+          {:status :done
+           :iteration-count 1
+           :duration-ms 5
+           :tokens {"input" 10 "output" 2}
+           :cost {"total_cost" 0.5 "provider" "anthropic-coding-plan" "model" "claude-opus-5"}})
+        (expect (= {:provider "anthropic-coding-plan" :model "claude-opus-5"}
+                   (select-keys (persistance/db-session-usage-stats s (str sid))
+                                [:provider :model])))
+        ;; The running turn owns no model column yet; it must not blank the rollup.
+        (persistance/db-store-session-turn!
+          s
+          {:parent-session-id (str sid) :user-request "two" :status :running})
+        (let [u (persistance/db-session-usage-stats s (str sid))]
+          (expect (= 2 (:turn-count u)))
+          (expect (= {:provider "anthropic-coding-plan" :model "claude-opus-5"}
+                     (select-keys u [:provider :model])))))))
+
+(defdescribe
+  usage-tool-rollup-is-decoded-once-test
+  "The tool/fold/error half of the rollup has no column — it lives inside each
+   iteration's Nippy `tool_calls` BLOB — and the companion refetches
+   `/v1/sessions/:sid/usage` on every session-row expand. Re-thawing the whole
+   history each time cost ~200 ms on a 2 900-call session, per open, per client.
+
+   A row's blob is written ONCE at INSERT and never UPDATEd, so its tally is
+   immutable: it is cached by row id and the merge is memoised per session. This
+   pins the contract that makes that safe — a repeat read decodes NOTHING, a
+   grown session decodes ONLY the iterations added since, and the numbers are
+   identical either way."
+  (it
+    "decodes each iteration once, then only the new ones"
+    (let
+      [s
+       (h/store)
+
+       sid
+       (h/store-session! s {:channel :api :title "usage"})
+
+       tid
+       (vis/db-store-session-turn! s {:parent-session-id (str sid) :user-request "one"})
+
+       ;; A form counts as FAILED the way channels judge one: an `:error`
+       ;; payload, or an explicit false `:success?`.
+       decodes
+       (atom 0)
+
+       ;; `forms-tally` is private, so reach it through the ns, not `#'`.
+       tally-var
+       (ns-resolve 'com.blockether.vis.ext.persistance-sqlite.core 'forms-tally)
+
+       orig
+       @tally-var
+
+       stats
+       (fn []
+         (with-redefs-fn {tally-var (fn [forms]
+                                      (swap! decodes inc)
+                                      (orig forms))}
+           (fn []
+             (persistance/db-session-usage-stats s (str sid)))))
+
+       by-name
+       #(into {} (map (juxt :name :count)) %)]
+
+      (h/store-iteration! s
+                          {:session-turn-id tid
+                           :status :done
+                           :idx 0
+                           :code "cat"
+                           :forms [{:vis/tool-name "cat" :result 1}
+                                   {:vis/tool-name "patch" :error {:message "boom"}}]})
+      (h/store-iteration! s
+                          {:session-turn-id tid
+                           :status :done
+                           :idx 1
+                           :code "cat"
+                           :forms [{:vis/tool-name "cat" :success? false}
+                                   {:vis/tool-name "session_fold" :result "folded"}]})
+      (let [u (stats)]
+        (expect (= 4 (:tool-call-count u)))
+        (expect (= 1 (:fold-count u)))
+        (expect (= {"cat" 2 "patch" 1} (by-name (:top-tools u))))
+        (expect (= 2 (:error-count u)))
+        (expect (= {"cat" 1 "patch" 1} (by-name (:top-errors u))))
+        (expect (= 2 @decodes))
+        ;; Same session, nothing written in between: the answer is identical
+        ;; and not one blob is thawed again.
+        (expect (= u (stats)))
+        (expect (= 2 @decodes)))
+      ;; A live session grows: only the NEW row is decoded, and it lands in
+      ;; the rollup.
+      (h/store-iteration! s
+                          {:session-turn-id tid
+                           :status :done
+                           :idx 2
+                           :code "shell"
+                           :forms [{:vis/tool-name "shell" :result "ok"}]})
+      (let [u (stats)]
+        (expect (= 5 (:tool-call-count u)))
+        (expect (= {"cat" 2 "patch" 1 "shell" 1} (by-name (:top-tools u))))
+        (expect (= 2 (:error-count u)))
+        (expect (= 3 @decodes))))))

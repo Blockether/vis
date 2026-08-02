@@ -117,3 +117,17 @@
                            (str doc
                                 "s = str(soup)\n"
                                 "'<title>' in s and '<a href=' in s and '<li>' in s")))))))
+
+(defdescribe
+  bs4-package-submodule-test
+  (it
+    "exports familiar filter and node types"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from bs4 import BeautifulSoup, SoupStrainer, CData, Doctype, FeatureNotFound\n"
+              "soup = BeautifulSoup('<p>x</p>', 'html.parser')\n"
+              "isinstance(CData('x'), str) and isinstance(Doctype('html'), str) and SoupStrainer('p').search(soup.p) is soup.p")))))))

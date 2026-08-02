@@ -649,8 +649,27 @@
           (expect (not (contains? (:error res) :trace)))
           (expect (str/includes? (get-in res [:error :message]) "repl"))
           ;; message names the DIR the resolution ran against (from :dir ex-data)
-          (expect (str/includes? (get-in res [:error :message]) (.getCanonicalPath (io/file root))))
+          (expect (str/includes? (get-in res [:error :message])
+                                 (rm/home-relativize (.getCanonicalPath (io/file root)))))
           (expect (some? (get-in res [:error :hint]))))))
+  (it "home-homogenizes the dir in the message (`~/vis`, never `/Users/you/vis`)"
+      (let
+        [home
+         (System/getProperty "user.home")
+
+         dir
+         (str home java.io.File/separator "vis")]
+
+        (with-redefs
+          [rm/resolve-target! (fn [_sid _rid _default-dir]
+                                (throw (ex-info "boom" {:type :clj/no-repl :dir dir})))]
+          (let
+            [res (core/clj-eval-fn {:workspace/root (tmp-dir) :session-id "s"} {"code" "(+ 1 1)"})
+             msg (str (get-in res [:error :message]))]
+
+            (expect (false? (:success? res)))
+            (expect (str/includes? msg "~/vis"))
+            (expect (not (str/includes? msg home)))))))
   (it "turns :clj/unknown-repl-id into a clean failure echoing the bad id"
       (with-redefs
         [rm/resolve-target! (fn [_sid _rid _default-dir]

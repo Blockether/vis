@@ -426,16 +426,21 @@
 (def ^:private stage-keys
   "What ONE stage adds to [[result-core]] — and the only extra keys it may carry.
 
-   The union-of-every-stage base this replaced bought its no-KeyError promise at
-   the price of ~14 permanently nil/0/false keys on every single `run` (`lines`,
-   `sent`, `text`, `keys`, `stopped`, `pid`, `attach`, …). Totality is only owed
-   WITHIN the stage the caller already selected: nothing reaches for `lines`
-   without having asked for `op` \"logs\", so scoping the base per stage keeps the
-   guarantee and drops the dead half of the payload."
+   Totality is owed WITHIN the stage the caller selected: lifecycle stages expose
+   only their own fields while the shared identity/summary fields stay in
+   [[result-core]]. `wait` intentionally owns the same log-tail fields as `logs`
+   plus its bounded timeout."
   {"run" {"timeout_secs" nil}
    "background"
    {"pid" nil "status" nil "uptime_ms" nil "attach" nil "socket" nil "already_running" false}
    "logs" {"pid" nil "status" nil "uptime_ms" nil "lines" [] "line_count" 0 "dropped" 0}
+   "wait" {"pid" nil
+            "status" nil
+            "uptime_ms" nil
+            "lines" []
+            "line_count" 0
+            "dropped" 0
+            "timeout_secs" nil}
    "send" {"pid" nil "status" nil "sent" 0 "text" nil "keys" nil}
    "stop" {"pid" nil "status" nil "uptime_ms" nil "stopped" false}})
 
