@@ -710,19 +710,59 @@
 
 (def ^:private env-passthrough-prefixes ["LC_"])
 
+;; ── Variables that hijack the PRE-JAIL exec chain ──────────────────────────────
+;;
+;; The spawned argv is not the command: it is `perl -e 'setpgrp; exec …'` (the
+;; detacher, see `detach-argv`) exec'ing `sandbox-exec`/`bwrap`, which only THEN
+;; installs the kernel policy. Every one of those hops runs with the CHILD's
+;; environment while still UNCONFINED, so a variable that makes a program run
+;; code at startup — before it reaches `main` — is a complete jail bypass.
+;;
+;; Measured on macOS: with `PERL5OPT=-Mevil PERL5LIB=…` in the child env, the
+;; detacher ran the module and wrote a file in `$HOME` that the very same jailed
+;; argv was denied (`WRITE-DENIED`, no file) without it.
+;;
+;; These names are therefore refused UNCONDITIONALLY — an explicit `jail.env`
+;; opt-in cannot re-enable them, because the whole point of the opt-in is to hand
+;; a var to the CONFINED child, and these never reach it: they are consumed
+;; earlier, outside the jail. Opting `LD_PRELOAD` into a sandbox is not a use
+;; case, it is the exploit.
+
+(def ^:private pre-exec-hijack-names
+  "Exact names that run attacker code during another program's startup."
+  #{"GCONV_PATH" "LOCPATH" "NLSPATH" "HOSTALIASES" "RESOLV_HOST_CONF" "BASH_ENV" "ENV" "SHELLOPTS"
+    "BASHOPTS" "IFS"})
+
+(def ^:private pre-exec-hijack-prefixes
+  "Prefix families with the same power. `LD_*`/`DYLD_*` are the dynamic loader's
+   own injection hooks (`LD_PRELOAD`, `LD_AUDIT`, `LD_LIBRARY_PATH`,
+   `DYLD_INSERT_LIBRARIES`); `PERL*` configures the detacher itself (`PERL5OPT`
+   loads arbitrary modules); `BASH_FUNC_*` smuggles shell functions. Matched by
+   prefix on purpose — enumerating each name is a losing game."
+  ["LD_" "DYLD_" "PERL" "BASH_FUNC_"])
+
+(defn- pre-exec-hijack?
+  "True when `k` can execute code in the unconfined detacher/enforcer hops."
+  [^String k]
+  (or (contains? pre-exec-hijack-names k)
+      (boolean (some #(str/starts-with? k %) pre-exec-hijack-prefixes))))
+
 (defn- env-passthrough?
   [extra ^String k]
-  (or (contains? env-passthrough-names k)
-      (contains? extra k)
-      (boolean (some #(str/starts-with? k %) env-passthrough-prefixes))))
+  (and (not (pre-exec-hijack? k))
+       (or (contains? env-passthrough-names k)
+           (contains? extra k)
+           (boolean (some #(str/starts-with? k %) env-passthrough-prefixes)))))
 
 (defn jailed-child-env
   "The COMPLETE environment for a confined child. Only an allowlist of safe,
-   non-secret operator vars (PATH/HOME/LANG/…) plus any `jail.env` opt-ins are
    inherited; every API key / token / credential in the operator environment is
-   DROPPED. This session's proxy + CA variables are then added. Returns nil when
-   the policy is not enforcing — the caller keeps the parent environment as-is
-   (unjailed platforms/`sandbox: false`), so non-confined behavior is unchanged."
+   DROPPED, and so is every [[pre-exec-hijack?]] name — those would run code in
+   the unconfined detacher/enforcer before the jail exists, so no `jail.env`
+   opt-in can bring them back. This session's proxy + CA variables are then added.
+   Returns nil when the policy is not enforcing — the caller keeps the parent
+   environment as-is (unjailed platforms/`sandbox: false`), so non-confined
+   behavior is unchanged."
   [policy]
   (when (and policy (not (:disabled? policy)) (or (inherited-jail?) (supported?)))
     (let
@@ -735,7 +775,12 @@
                        (env-passthrough? extra k)))
              (System/getenv))]
 
-      (merge inherited (proxy-env policy)))))
+      ;; Total: the scrub also covers the proxy additions, so no later edit to
+      ;; `proxy-env` can reintroduce a pre-exec hijack name.
+      (into {}
+            (remove (fn [[k _]]
+                      (pre-exec-hijack? k)))
+            (merge inherited (proxy-env policy))))))
 
 ;; ── Standard language-process jail contract ────────────────────────────────
 ;; Language packs spawn managed REPLs and project test runners via raw

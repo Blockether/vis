@@ -795,18 +795,24 @@
       (let [^java.util.Map e (.environment pb)]
         (.clear e)
         (.putAll e ^java.util.Map env)))
-    (let [^Process p (.start pb)
-          out (slurp (.getInputStream p))]
+    (let
+      [^Process p (.start pb)
+       out (slurp (.getInputStream p))]
+
       {:exit (.waitFor p) :out out})))
 
 (defn- host-pgid
   "Process-group id of `pid`, read from THIS (unconfined) JVM — a jailed child
    cannot exec `ps` itself."
   [pid]
-  (let [^Process p (.start (doto (ProcessBuilder. ^java.util.List
-                                                  ["/bin/sh" "-c" (str "ps -o pgid= -p " pid)])
-                             (.redirectErrorStream true)))
-        out (str/trim (slurp (.getInputStream p)))]
+  (let
+    [^Process p
+     (.start (doto (ProcessBuilder. ^java.util.List ["/bin/sh" "-c" (str "ps -o pgid= -p " pid)])
+               (.redirectErrorStream true)))
+
+     out
+     (str/trim (slurp (.getInputStream p)))]
+
     (.waitFor p)
     out))
 
@@ -817,7 +823,13 @@
   ;; without it would break every launch. Emit the exact binary `supported?`
   ;; validated, by absolute path, so no lookup happens at all.
   (testing "linux bwrap/pasta are the discovered install locations"
-    (with-redefs [pj/linux-bwrap "/usr/local/bin/bwrap" pj/linux-pasta "/usr/bin/pasta"]
+    (with-redefs
+      [pj/linux-bwrap
+       "/usr/local/bin/bwrap"
+
+       pj/linux-pasta
+       "/usr/bin/pasta"]
+
       (let [av (pj/linux-bwrap-args {:rw [] :net-enabled? true :proxy-port 51000})]
         (is (= "/usr/bin/pasta" (first av)))
         (is (= "/usr/local/bin/bwrap" (nth av 10))))))
@@ -854,11 +866,18 @@
        (pj/jailed-child-env policy)
 
        script
-       (str "echo in > " wsc "/inside.txt && echo WROTE-INSIDE; "
-            "(echo out > " (.getCanonicalPath escape) ") 2>/dev/null && echo ESCAPED || echo WRITE-DENIED; "
-            "cat " (.getCanonicalPath secret) " 2>/dev/null || echo READ-DENIED; "
-            "curl -sS --max-time 4 https://example.com -o /dev/null 2>/dev/null && echo GOTNET || echo NET-DENIED; "
-            "exit 9")
+       (str
+         "echo in > "
+         wsc
+         "/inside.txt && echo WROTE-INSIDE; "
+         "(echo out > "
+         (.getCanonicalPath escape)
+         ") 2>/dev/null && echo ESCAPED || echo WRITE-DENIED; "
+         "cat "
+         (.getCanonicalPath secret)
+         " 2>/dev/null || echo READ-DENIED; "
+         "curl -sS --max-time 4 https://example.com -o /dev/null 2>/dev/null && echo GOTNET || echo NET-DENIED; "
+         "exit 9")
 
        argv
        (pj/detached-argv (pj/wrap-argv ["bash" "--noprofile" "--norc" "-lc" script] policy))]
@@ -869,9 +888,11 @@
                (is (str/includes? out "WROTE-INSIDE") "the session root stays writable")
                (is (str/includes? out "WRITE-DENIED") "a write outside the roots is refused")
                (is (not (.exists escape)) "and it must not land on disk either")
-               (is (not (str/includes? out "TOP-SECRET-DATA")) "a file outside the roots stays unreadable")
+               (is (not (str/includes? out "TOP-SECRET-DATA"))
+                   "a file outside the roots stays unreadable")
                (is (str/includes? out "NET-DENIED") "net-off is enforced")
-               (is (= 9 exit) "the detacher exec's in place: the command's own exit status survives")))
+               (is (= 9 exit)
+                   "the detacher exec's in place: the command's own exit status survives")))
            (testing "and that same jailed child leads its OWN process group"
              ;; Non-vacuous: the identical jailed argv spawned WITHOUT the prefix
              ;; sits in this JVM's group — how a child's `kill 0` reached the daemon.
@@ -882,8 +903,13 @@
 
                   start
                   (fn [av]
-                    (let [pb (doto (ProcessBuilder. ^java.util.List (vec av)) (.redirectErrorStream true))
-                          ^java.util.Map e (.environment pb)]
+                    (let
+                      [pb
+                       (doto (ProcessBuilder. ^java.util.List (vec av)) (.redirectErrorStream true))
+
+                       ^java.util.Map e
+                       (.environment pb)]
+
                       (.clear e)
                       (.putAll e ^java.util.Map env)
                       (.start pb)))
@@ -905,3 +931,153 @@
                     (io/delete-file ws true)
                     (io/delete-file secret true)
                     (io/delete-file escape true))))))
+
+(deftest a-path-shim-cannot-hijack-the-enforcer
+  ;; End-to-end consequence of naming the enforcer absolutely: a program with the
+  ;; enforcer's NAME, first on the child's PATH, must never be the thing that runs.
+  ;; The detach prefix exec's by PATH lookup, and the jailed child's environment is
+  ;; the scrubbed one, so a bare name here would hand the whole jail to the shim.
+  (when (sandbox-applicable?)
+    (let
+      [tmp
+       (System/getProperty "java.io.tmpdir")
+
+       ws
+       (doto (io/file tmp (str "vis-jail-hijack-ws-" (System/nanoTime))) (.mkdirs))
+
+       policy
+       {:roots-fn (constantly [(.getCanonicalPath ws)]) :net-enabled? false}
+
+       jailed
+       (pj/wrap-argv ["bash" "--noprofile" "--norc" "-lc" "echo RAN-JAILED"] policy)
+
+       enforcer
+       (basename (first jailed))
+
+       shim-dir
+       (doto (io/file tmp (str "vis-jail-shim-" (System/nanoTime))) (.mkdirs))
+
+       shim
+       (io/file shim-dir enforcer)
+
+       env
+       (assoc (pj/jailed-child-env policy)
+         "PATH" (str (.getCanonicalPath shim-dir) ":/usr/bin:/bin"))]
+
+      (spit shim "#!/bin/sh\necho PWNED-JAIL-BYPASSED\nexec \"$@\"\n")
+      (.setExecutable shim true)
+      (try (testing "non-vacuity: a bare name on this PATH really does resolve to the shim"
+             (let
+               [{:keys [out]} (run-with-env ["/bin/sh" "-c" (str enforcer " /bin/echo control")]
+                                            env)]
+               (is (str/includes? out "PWNED-JAIL-BYPASSED"))))
+           (testing "yet the launch argv still runs the validated enforcer"
+             (let [{:keys [out]} (run-with-env (pj/detached-argv jailed) env)]
+               (is (not (str/includes? out "PWNED-JAIL-BYPASSED"))
+                   "the enforcer must never be resolved through the child's PATH")
+               (is (str/includes? out "RAN-JAILED") "and the jailed command still runs")))
+           (finally (io/delete-file shim true)
+                    (io/delete-file shim-dir true)
+                    (io/delete-file ws true))))))
+
+(deftest pre-exec-hijack-vars-are-refused-even-when-opted-in
+  ;; The jail is not installed by the process the daemon spawns: `detached-argv`
+  ;; puts `perl -e 'setpgrp; exec …'` in front, and that perl — plus `sandbox-exec`
+  ;; / `bwrap` themselves — run UNCONFINED with the child's environment. Any
+  ;; variable that makes one of those hops execute code at startup is a full jail
+  ;; bypass, so the allowlist must refuse it ahead of every opt-in path.
+  (testing "no startup-code variable passes, not even as an explicit jail.env opt-in"
+    (doseq
+      [k ["PERL5OPT" "PERL5LIB" "PERLLIB" "PERL5DB" "LD_PRELOAD" "LD_AUDIT" "LD_LIBRARY_PATH"
+          "DYLD_INSERT_LIBRARIES" "DYLD_LIBRARY_PATH" "BASH_ENV" "BASH_FUNC_x%%" "ENV" "SHELLOPTS"
+          "IFS" "GCONV_PATH" "LOCPATH" "NLSPATH" "HOSTALIASES"]]
+      (is (#'pj/pre-exec-hijack? k) (str k " must be recognised as a pre-exec hijack"))
+      (is (not (#'pj/env-passthrough? #{k} k))
+          (str k " must not pass through even when the policy names it"))))
+  (testing "and the ordinary allowlist is untouched"
+    (is (#'pj/env-passthrough? #{} "PATH"))
+    (is (#'pj/env-passthrough? #{} "LC_ALL"))
+    (is (#'pj/env-passthrough? #{"MY_TOOL_FLAG"} "MY_TOOL_FLAG"))
+    (is (not (#'pj/env-passthrough? #{} "AWS_SECRET_ACCESS_KEY"))))
+  (testing "the produced environment carries none of them"
+    (when-let
+      [env (pj/jailed-child-env {:roots-fn (constantly [])
+                                 :net-enabled? false
+                                 :env-passthrough ["PERL5OPT" "LD_PRELOAD"]})]
+      (is (empty? (filter #'pj/pre-exec-hijack? (keys env)))))))
+
+(deftest a-pre-jail-env-hijack-cannot-escape-the-jail
+  ;; End-to-end consequence, measured against a directory the jail is told to
+  ;; DENY writes to: code running inside the jail cannot touch it, so the marker
+  ;; file appearing there means something ran BEFORE the sandbox was installed.
+  (when (and (sandbox-applicable?)
+             (= "perl" (basename (or (first (pj/detached-argv ["/bin/sh"])) ""))))
+    (let
+      [tmp
+       (System/getProperty "java.io.tmpdir")
+
+       ws
+       (doto (io/file tmp (str "vis-jail-hijack-env-ws-" (System/nanoTime))) (.mkdirs))
+
+       outside
+       (doto (io/file ws "no-write-here") (.mkdirs))
+
+       marker
+       (io/file outside "ESCAPED")
+
+       lib
+       (doto (io/file ws "perllib") (.mkdirs))
+
+       policy
+       {:roots-fn (constantly [(.getCanonicalPath ws)])
+        :net-enabled? false
+        :deny-write [(.getCanonicalPath outside)]}
+
+       argv
+       (pj/detached-argv (pj/wrap-argv ["/bin/sh" "-c" "echo RAN-JAILED"] policy))
+
+       clean
+       (pj/jailed-child-env policy)
+
+       hostile
+       (assoc clean
+         "PERL5OPT" "-Mvishijack"
+         "PERL5LIB" (.getCanonicalPath lib))]
+
+      (spit (io/file lib "vishijack.pm")
+            (str "package vishijack; sub import { system('/usr/bin/touch','"
+                 (.getCanonicalPath marker)
+                 "'); } 1;\n"))
+      (try (testing "the jailed command itself cannot write there"
+             (let
+               [{:keys [out]} (run-with-env
+                                (pj/detached-argv
+                                  (pj/wrap-argv
+                                    ["/bin/sh" "-c"
+                                     (str "touch '"
+                                          (.getCanonicalPath marker)
+                                          "' 2>/dev/null && echo WROTE || echo WRITE-DENIED")]
+                                    policy))
+                                clean)]
+               (is (str/includes? out "WRITE-DENIED"))
+               (is (not (.exists marker)))))
+           (testing "non-vacuity: left in the environment, the var really does escape the jail"
+             (.delete marker)
+             (run-with-env argv hostile)
+             (is (.exists marker)
+                 "the unconfined detacher must be the thing this test defends against"))
+           (testing "so the environment the launch contract builds must drop it"
+             (.delete marker)
+             (let
+               [{:keys [out]} (run-with-env argv
+                                            (into {}
+                                                  (remove (fn [[k _]]
+                                                            (#'pj/pre-exec-hijack? k)))
+                                                  hostile))]
+               (is (not (.exists marker)) "no code may run before the jail is installed")
+               (is (str/includes? out "RAN-JAILED") "and the jailed command still runs")))
+           (finally (io/delete-file marker true)
+                    (io/delete-file (io/file lib "vishijack.pm") true)
+                    (io/delete-file lib true)
+                    (io/delete-file outside true)
+                    (io/delete-file ws true))))))
