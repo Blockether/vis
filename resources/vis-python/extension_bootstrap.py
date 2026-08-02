@@ -28,6 +28,50 @@ def extension(name=None, description=None, version=None, kind=None, alias=None,
         'network_filters': list(network_filters or []),
     }
 
+def _kwargs_dict(x):
+    # The folded-kwargs map crosses the host boundary as a FOREIGN hash map, not a
+    # Python dict, so duck-type it (keys + item access) instead of isinstance().
+    if isinstance(x, (str, bytes, bytearray, list, tuple)) or not hasattr(x, 'keys'):
+        return None
+    try:
+        pairs = {k: x[k] for k in list(x.keys())}
+    except Exception:
+        return None
+    if not pairs:
+        return None
+    for k in pairs:
+        if not isinstance(k, str) or not k.isidentifier():
+            return None
+    return pairs
+
+def _kwargs_call(fn):
+    # KEYWORD ARGUMENTS for a Python-backed tool. Host tool callables are
+    # positional-only proxies, so the sandbox folds a caller's **kwargs into ONE
+    # TRAILING DICT positional: `mytool('g', want_json=True)` reaches Python as
+    # ('g', {'want_json': True}) and every keyword parameter silently keeps its
+    # default. Re-expand that trailing map whenever THIS signature binds it by
+    # keyword; a genuine dict positional (no such parameter, a positional-only
+    # slot, non-identifier keys) fails the bind and passes through untouched.
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return fn
+    def _call(*args):
+        if args:
+            kw = _kwargs_dict(args[-1])
+            if kw is not None:
+                head = args[:-1]
+                try:
+                    sig.bind(*head, **kw)
+                except TypeError:
+                    pass
+                else:
+                    return fn(*head, **kw)
+        return fn(*args)
+    _call.__name__ = getattr(fn, '__name__', 'symbol')
+    _call.__doc__ = fn.__doc__
+    return _call
+
 def symbol(fn, name=None, tag='observation', is_hidden=False, schema=None,
            description=None, result=None, is_native_tool=False, render=None,
            color_role=None):
@@ -74,7 +118,7 @@ def symbol(fn, name=None, tag='observation', is_hidden=False, schema=None,
                          'summary and optional body')
     if color_role is not None and not isinstance(color_role, str):
         raise ValueError('vis.symbol color_role= must be a string, e.g. search')
-    return {'marker': 'symbol', 'fn': fn, 'name': name or fn.__name__, 'tag': tag,
+    return {'marker': 'symbol', 'fn': _kwargs_call(fn), 'name': name or fn.__name__, 'tag': tag,
             'hidden': bool(is_hidden), 'is_native_tool': is_native,
             'schema': schema, 'description': description, 'result': result,
             'render': render, 'color_role': color_role,

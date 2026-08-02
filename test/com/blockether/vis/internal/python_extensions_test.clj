@@ -168,6 +168,70 @@ vis.extension(
                                   (expect (str/includes? (get-in result [:error :message])
                                                          "kaboom")))))))
 
+(def ^:private kwargs-py
+  "\"\"\"Kwargs fixture: keyword arguments must survive the sandbox fold.\"\"\"
+import vis
+
+
+def kw_probe(name, mode=\"plain\", is_deep=False):
+    \"\"\"await kw_probe(name, mode, is_deep) -> {\\\"mode\\\"} — echo how the args arrived.\"\"\"
+    return {\"name\": name, \"mode\": mode, \"is_deep\": is_deep}
+
+
+def kw_mapping(payload):
+    \"\"\"await kw_mapping(payload) -> {\\\"payload\\\"} — echo a mapping positional.\"\"\"
+    return {\"payload\": payload}
+
+
+vis.extension(
+    name=\"kwargs\",
+    description=\"Keyword-argument fixture extension.\",
+    version=\"0.1.0\",
+    kind=\"integration\",
+    alias=\"kw\",
+    symbols=[
+        vis.symbol(kw_probe, tag=\"observation\"),
+        vis.symbol(kw_mapping, tag=\"observation\"),
+    ],
+)
+")
+
+(defdescribe python-kwargs-test
+             (it "keyword args folded into ONE trailing map are re-expanded onto the signature — #83"
+                 (with-loaded {"kwargs.py" kwargs-py}
+                              (fn [_ _]
+                                (let
+                                  [probe
+                                   (symbol-fn (registered "kwargs") 'probe)
+
+                                   result
+                                   ;; how the sandbox delivers probe(g, mode=deep, is_deep=True)
+                                   (probe "g" {"mode" "deep" "is_deep" true})]
+
+                                  (expect (extension/envelope-success? result))
+                                  (expect (= "g" (get-in result [:result "name"])))
+                                  (expect (= "deep" (get-in result [:result "mode"])))
+                                  (expect (true? (get-in result [:result "is_deep"])))))))
+             (it "a plain positional call is untouched"
+                 (with-loaded {"kwargs.py" kwargs-py}
+                              (fn [_ _]
+                                (let
+                                  [result
+                                   ((symbol-fn (registered "kwargs") 'probe) "g" "deep")]
+
+                                  (expect (= "deep" (get-in result [:result "mode"])))
+                                  (expect (false? (get-in result [:result "is_deep"])))))))
+             (it "a genuine mapping positional stays ONE argument"
+                 (with-loaded {"kwargs.py" kwargs-py}
+                              (fn [_ _]
+                                (let
+                                  [result
+                                   ((symbol-fn (registered "kwargs") 'mapping) {"a" 1 "b" 2})]
+
+                                  (expect (extension/envelope-success? result))
+                                  (expect (= 1 (get-in result [:result "payload" "a"])))
+                                  (expect (= 2 (get-in result [:result "payload" "b"]))))))))
+
 ;; =============================================================================
 ;; State — durable across reloads
 ;; =============================================================================
