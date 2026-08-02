@@ -139,7 +139,7 @@
   com.blockether/imaging {:mvn/version "0.1.5"}
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
-  com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.37"}
+  com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.38"}
   com.blockether/ruff {:mvn/version "0.3.3"}
   org.clojure/core.memoize {:mvn/version "1.2.281"}
   com.blockether/fff {:mvn/version "0.12.2"}
