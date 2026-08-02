@@ -600,7 +600,11 @@ def __vis_install_bs4__():
         def unwrap(self):
             p = self.parent
             if p is None:
-                return self
+                # bs4's message is spelled exactly like this, typo included.
+                raise ValueError(
+                    "Cannot replace an element with its contents when that"
+                    "element is not part of a tree."
+                )
             idx = _index_of(p.contents, self)
             children = self.contents
             p.contents[idx : idx + 1] = children
@@ -2485,12 +2489,12 @@ def __vis_install_bs4__():
         return s
 
     # (substitution, void-element close prefix, empty attributes are booleans,
-    # one level of pretty-print indentation)
+    # one level of pretty-print indentation, Formatter object or None)
     _FORMATTERS = {
-        "minimal": (_sub_minimal, "/", False, " "),
-        "html": (_sub_html, "/", False, " "),
-        "html5": (_sub_html, "", True, " "),
-        None: (_sub_none, "/", False, " "),
+        "minimal": (_sub_minimal, "/", False, " ", None),
+        "html": (_sub_html, "/", False, " ", None),
+        "html5": (_sub_html, "", True, " ", None),
+        None: (_sub_none, "/", False, " ", None),
     }
     _CUR_FMT = [_FORMATTERS["minimal"]]
     # The encoding the current serialization claims to be in. Only <meta>
@@ -2506,7 +2510,7 @@ def __vis_install_bs4__():
             # surfaces as KeyError, not ValueError.
             raise KeyError(formatter)
         if callable(formatter):
-            return (formatter, "/", False, " ")
+            return (formatter, "/", False, " ", None)
         prefix = getattr(formatter, "void_element_close_prefix", "/")
         indent = getattr(formatter, "indent", " ")
         if isinstance(indent, int):
@@ -2518,6 +2522,9 @@ def __vis_install_bs4__():
             "" if prefix is None else prefix,
             bool(getattr(formatter, "empty_attributes_are_booleans", False)),
             indent,
+            # A Formatter subclass may override attributes() to reorder or drop
+            # attributes, so the renderer asks it instead of sorting itself.
+            formatter if callable(getattr(formatter, "attributes", None)) else None,
         )
 
     def _with_formatter(formatter, fn, encoding=_DEFAULT_OUTPUT_ENCODING):
@@ -2547,9 +2554,13 @@ def __vis_install_bs4__():
 
     def _open_tag(node, pad=""):
         void_close, bare_empty = _CUR_FMT[-1][1], _CUR_FMT[-1][2]
+        fmt_obj = _CUR_FMT[-1][4]
         parts = [pad + _LT + node.name]
-        for k in sorted(node.attrs):
-            v = node.attrs[k]
+        if fmt_obj is not None:
+            items = list(fmt_obj.attributes(node))
+        else:
+            items = [(k, node.attrs[k]) for k in sorted(node.attrs)]
+        for k, v in items:
             if v is None or (bare_empty and v == ""):
                 # A None-valued attribute renders bare (`<p data-x>`); only an
                 # empty string renders as `data-x=""` -- unless the formatter
@@ -2683,19 +2694,41 @@ def __vis_install_bs4__():
 
     # -- parser ------------------------------------------------------------------
     def _entity_text(name):
-        # A known entity becomes its character; an unknown one stays literal text
-        # with the terminating semicolon consumed, the way BeautifulSoup reports
-        # `&foo;` as `&foo`.
-        ref = _AMP + name + ";"
-        text = _html.unescape(ref)
-        return text if text != ref else _AMP + name
+        # bs4 resolves named references itself (its parser runs with
+        # convert_charrefs off).  A known entity becomes its character; an
+        # unknown one stays the literal string "&name", the terminating
+        # semicolon having been consumed by the tokenizer.
+        character = EntitySubstitution.HTML_ENTITY_TO_CHARACTER.get(name)
+        if character is not None:
+            return character
+        return _AMP + name
 
-    def _charref_text(name):
+    def _charref_text(name, original_encoding=None):
+        # Faithful to bs4: numeric references below 256 are often really
+        # Windows-1252 code points (&#147; for a left double quote), so those
+        # are decoded through the document encoding first.
         try:
-            code = int(name[1:], 16) if name[:1] in ("x", "X") else int(name)
-            return chr(code)
+            if name[:1] in ("x", "X"):
+                code = int(name.lstrip("xX"), 16)
+            else:
+                code = int(name)
         except (ValueError, OverflowError):
             return chr(65533)
+        data = None
+        if code < 256:
+            for encoding in (original_encoding, "windows-1252"):
+                if not encoding:
+                    continue
+                try:
+                    data = bytearray([code]).decode(encoding)
+                except UnicodeDecodeError:
+                    pass
+        if not data:
+            try:
+                data = chr(code)
+            except (ValueError, OverflowError):
+                pass
+        return data or chr(65533)
 
     class DetectsXMLParsedAsHTML:
         """bs4's mixin that warns when an XML document is parsed as HTML."""
@@ -2816,11 +2849,16 @@ def __vis_install_bs4__():
                     _pws(t) for t in self.stack
                 ):
                     text = _NL if _NL in text else " "
-                # Text inside <script>/<style>/<template>/<rt>/<rp> is wrapped in
-                # bs4's dedicated NavigableString subclass for that container.
-                cls = self.builder.string_containers.get(
-                    self._cur().name, NavigableString
-                )
+                # Text anywhere inside <script>/<style>/<template>/<rt>/<rp>
+                # is wrapped in bs4's dedicated NavigableString subclass for
+                # that container -- bs4 keeps a stack of container tags, so
+                # nesting does not lose the special class.
+                cls = NavigableString
+                for open_tag in reversed(self.stack):
+                    special = self.builder.string_containers.get(open_tag.name)
+                    if special is not None:
+                        cls = special
+                        break
                 self._cur().append(cls(text))
 
         def handle_starttag(self, tag, attrs, handle_empty_element=True):
@@ -3503,6 +3541,18 @@ def __vis_install_bs4__():
     class Doctype(PreformattedString):
         PREFIX = _LT + "!DOCTYPE "
         SUFFIX = _GT + _NL
+
+        @classmethod
+        def for_name_and_ids(cls, name, pub_id, system_id):
+            """Build a Doctype from a doctype's name and identifiers."""
+            value = name or ""
+            if pub_id is not None:
+                value += ' PUBLIC "%s"' % pub_id
+                if system_id is not None:
+                    value += ' "%s"' % system_id
+            elif system_id is not None:
+                value += ' SYSTEM "%s"' % system_id
+            return Doctype(value)
 
     class Declaration(PreformattedString):
         PREFIX = _LT + "?"
@@ -4744,8 +4794,8 @@ def __vis_install_bs4__():
                 return self.string
             return "%s|%s" % (self.name, self.attrs)
 
-        def __repr__(self):
-            return self.__str__()
+        # NOTE: bs4 gives SoupStrainer __str__ but no __repr__, so repr() falls
+        # back to the default object representation.  Keep it that way.
 
         def _normalize_search_value(self, value):
             return _normalize_search_value(value)

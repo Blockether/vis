@@ -1441,6 +1441,25 @@ export const AttachmentRail = memo(function AttachmentRail({
   );
 });
 
+// One turn can be 400+ tool calls, and mounting every segment of it in the frame
+// that opens the session IS the open: measured on device, the click-to-paint gap
+// was one 509 ms blocked frame, ~250 ms of it remark parsing prose and code that
+// lands hundreds of screens above the fold. The transcript opens PINNED TO THE
+// BOTTOM, so the tail is the only part anyone can see. Mount that tail, then ramp
+// the rest a chunk per frame, holding the reader's pixel while the page grows
+// above them (`overflow-anchor` is off on this scroller, so nobody else will).
+const SEGMENT_FIRST_PAINT = 8;
+const SEGMENT_RAMP_PER_FRAME = 12;
+
+/** The scroller this trace lives in, or the document's, so the ramp can hold it. */
+function scrollParent(node: HTMLElement | null): HTMLElement | null {
+  for (let el = node?.parentElement ?? null; el; el = el.parentElement) {
+    const overflowY = window.getComputedStyle(el).overflowY;
+    if (overflowY === 'auto' || overflowY === 'scroll') return el;
+  }
+  return (document.scrollingElement as HTMLElement | null) ?? null;
+}
+
 export const IterationTrace = memo(function IterationTrace({
   iterations,
   live = false,
@@ -1452,6 +1471,13 @@ export const IterationTrace = memo(function IterationTrace({
   client?: GatewayClient;
   sid?: string;
 }) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLElement | null>(null);
+  // Pre-growth geometry of that scroller, captured in the frame that asks for
+  // more: `null` means this render was not a ramp step.
+  const rampFromRef = useRef<{ height: number; bottomGap: number } | null>(null);
+  const [mountedSegments, setMountedSegments] = useState(SEGMENT_FIRST_PAINT);
+
   const visible = iterations
     .map((iteration, index) => ({
       iteration,
@@ -1467,9 +1493,6 @@ export const IterationTrace = memo(function IterationTrace({
       || attachments.length
       || forms.some((form) => showFormCode(form, formCode(form)) || toolCards(form).length),
     );
-
-  if (!visible.length) return null;
-
   type Entry = (typeof visible)[number];
   type Chunk =
     | { kind: 'code'; key: string; form: TranscriptForm }
@@ -1495,9 +1518,47 @@ export const IterationTrace = memo(function IterationTrace({
     if (entry.attachments.length) segments[segments.length - 1].closed = true;
   });
 
+  const rampDone = mountedSegments >= segments.length;
+
+  // Before the browser paints the segments the ramp just mounted ABOVE the
+  // reader: a reader at the bottom stays at the bottom, anyone else keeps the
+  // exact line they were reading.
+  useLayoutEffect(() => {
+    const from = rampFromRef.current;
+    rampFromRef.current = null;
+    const scroller = scrollerRef.current;
+    if (!from || !scroller) return;
+    const grew = scroller.scrollHeight - from.height;
+    if (grew <= 0) return;
+    if (from.bottomGap <= 8) scroller.scrollTop = scroller.scrollHeight;
+    else scroller.scrollTop += grew;
+  }, [mountedSegments]);
+
+  // A chunk per frame, so the work the first paint skipped never lands as one
+  // long frame either.
+  useEffect(() => {
+    if (rampDone) return;
+    const frame = window.requestAnimationFrame(() => {
+      const scroller = scrollerRef.current ?? scrollParent(rootRef.current);
+      scrollerRef.current = scroller;
+      rampFromRef.current = scroller
+        ? {
+          height: scroller.scrollHeight,
+          bottomGap: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
+        }
+        : null;
+      setMountedSegments((count) => count + SEGMENT_RAMP_PER_FRAME);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [mountedSegments, rampDone]);
+
+  if (!segments.length) return null;
+  const shown = rampDone ? segments : segments.slice(segments.length - mountedSegments);
+
+
   return (
-    <div className="mb-2.5 grid gap-2.5">
-      {segments.map((segment) => {
+    <div ref={rootRef} className="mb-2.5 grid gap-2.5">
+      {shown.map((segment) => {
         // Inside a segment, adjacent code-less forms pool into ONE grid; a python
         // block keeps its own frame under its source and starts a new pool after it.
         const chunks: Chunk[] = [];

@@ -37,6 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- sandbox: a Python block's `open(path, "w").write(text)` reaches the disk. The
+  sandbox runs on GraalPy, which does not refcount, so a handle dropped without
+  `close()` was never finalized at the end of the statement — the bytes stayed
+  in the buffer and the file was EMPTY, so the next tool (`git commit -F`) read
+  nothing. Writable handles are now tracked weakly and flushed before every tool
+  call and at the end of the block.
+- git tool: `git add -- <paths>` stages again. The `--verbose` the tool appends
+  so `add` reports what it staged landed AFTER the `--` separator, where git
+  reads it as a pathspec (`fatal: pathspec '--verbose' did not match any
+  files`); it is now inserted before the separator.
 - launcher: `vis-agent update --native|--jvm|--dev` reached the update path
   again (the launch-flag loop used to swallow them), and a `[[ … ]] && cmd`
   tail no longer makes a successful `runtime use` exit 1.
