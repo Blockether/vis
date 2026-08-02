@@ -308,6 +308,19 @@
           (symbol? x) (str x)
           :else x)))
 
+(defn- op-hook-payload
+  "STRINGS-ONLY `{'op' 'args' ['result']}` payload for a Python op hook.
+
+   Host tool args and results are ORDINARY Clojure data — keyword keys, keyword
+   enum values, symbols — and `->py` rejects every one of those outright. An
+   unstringified payload therefore threw a boundary violation INSIDE the hook,
+   killing the very call the hook was only observing (a `:before` guard fails
+   open, but an `:after` hook's throw surfaces on the tool). Every other Python
+   callback adapter (render, enrich-models, on-selected) already crosses through
+   `stringify-deep`; op hooks now do the same."
+  ([op-kw args] (stringify-deep {"op" (name op-kw) "args" (vec args)}))
+  ([op-kw args result] (stringify-deep {"op" (name op-kw) "args" (vec args) "result" result})))
+
 (defn- tool-adapter
   "Observed-tool fn for one Python-backed symbol. Return value = success
    payload; a raised Python exception = failure envelope (message + trace
@@ -398,7 +411,7 @@
   [ext-name ^Context ctx ^Value pyfn]
   (fn [env op-kw args next-fn]
     (let
-      [res (try (call-py-ext ext-name env ctx pyfn [{"op" (name op-kw) "args" (vec args)}])
+      [res (try (call-py-ext ext-name env ctx pyfn [(op-hook-payload op-kw args)])
                 (catch Throwable t
                   (tel/log! {:level :warn
                              :id ::op-hook-failed
@@ -419,11 +432,7 @@
    ignored and the original result always flows on."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [env op-kw args result]
-    (try (call-py-ext ext-name
-                      env
-                      ctx
-                      pyfn
-                      [{"op" (name op-kw) "args" (vec args) "result" (:result result)}])
+    (try (call-py-ext ext-name env ctx pyfn [(op-hook-payload op-kw args (:result result))])
          (catch Throwable t
            (tel/log! {:level :warn
                       :id ::op-hook-failed

@@ -507,6 +507,21 @@
         (expect (some? e))
         (expect (= :non-string-key (:vis/boundary-violation (ex-data e))))
         (expect (= ["outer"] (:path (ex-data e))))))
+  (it "a TOP-LEVEL keyword key still names WHERE, with an empty path"
+      (let [e (try (ep/boundary-view {:hit-count 1}) nil (catch clojure.lang.ExceptionInfo e e))]
+        (expect (some? e))
+        (expect (= :non-string-key (:vis/boundary-violation (ex-data e))))
+        (expect (= [] (:path (ex-data e))))
+        (expect (str/includes? (ex-message e) "TOP-LEVEL map key"))))
+  (it "a top-level :result key points the producer at the envelope mistake"
+      (let
+        [e (try (ep/boundary-view {:result {"ok" true} :success? true})
+                nil
+                (catch clojure.lang.ExceptionInfo e e))]
+        (expect (some? e))
+        (expect (= :non-string-key (:vis/boundary-violation (ex-data e))))
+        (expect (str/includes? (ex-message e) "INTERNAL result envelope"))
+        (expect (str/includes? (ex-message e) "never the envelope"))))
   (it "a keyword VALUE throws at any depth"
       (let
         [e (try (ep/boundary-view {"changes" [{"status" :added}]})

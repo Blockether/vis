@@ -5,6 +5,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.egress-proxy :as egress]
+            [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.agents :as agents]
             [com.blockether.vis.internal.config :as config]
@@ -441,6 +442,23 @@ vis.extension(
                        ["/x/ok.txt" "data"]
                        (fn [_]
                          :ran)))))))))
+
+(defdescribe
+  op-hook-payload-test
+  "Op-hook payloads carry ORDINARY host data — a keyword op enum, keyword arg
+   keys, keyword result values. Unstringified they died on the STRINGS-ONLY
+   boundary INSIDE the hook, taking down the very call the hook only observed."
+  (let [payload #'pyx/op-hook-payload]
+    (it "a before-hook payload is strings-only and crosses the boundary intact"
+        (let [p (payload :write [{:path "/x/a.clj" :is-overwrite true}])]
+          (expect (= {"op" "write" "args" [{"path" "/x/a.clj" "is-overwrite" true}]} p))
+          (expect (= p (ep/boundary-view p)))))
+    (it "an after-hook payload stringifies the result too"
+        (let [p (payload :grep ["needle"] {:status :ok :hits [{:path "a.clj"}]})]
+          (expect
+            (= {"op" "grep" "args" ["needle"] "result" {"status" "ok" "hits" [{"path" "a.clj"}]}}
+               p))
+          (expect (= p (ep/boundary-view p)))))))
 
 (def ^:private filter-py
   "import vis

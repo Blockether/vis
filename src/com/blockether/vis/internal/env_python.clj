@@ -48,15 +48,26 @@
    verb payloads) is built with string keys and string enum values at the
    SOURCE — there is no silent keyword->string conversion, so a keyword here
    means a producer bug, not data. `path` is the key path down from the value
-   handed to `->py`, so the offending producer field is nameable."
+   handed to `->py`, so the offending producer field is nameable.
+
+   The message ALWAYS says WHERE: an empty path means the offending key sits on
+   the value handed to the boundary itself, and a bare `:result`/`:success?`
+   there is vis' own internal envelope — the producer must hand Python the
+   PAYLOAD (`:result`), never the envelope that wraps it. Without that clause a
+   report reads `non-string-key :result` with no location at all."
   [kind x path]
   (throw (ex-info (str "STRINGS-ONLY boundary violation: "
                        (name kind)
                        " "
                        (pr-str x)
-                       (when (seq path) (str " at path " (pr-str (vec path))))
+                       (if (seq path)
+                         (str " at path " (pr-str (vec path)))
+                         (when (= :non-string-key kind) " at the TOP-LEVEL map key"))
                        " cannot cross Clojure->Python. Build boundary maps with"
-                       " string keys and stringify enum values at the source.")
+                       " string keys and stringify enum values at the source."
+                       (when (and (= :non-string-key kind) (contains? #{:result :success?} x))
+                         (str " This looks like vis' INTERNAL result envelope:"
+                              " hand Python the payload under :result, never the envelope.")))
                   {:vis/boundary-violation kind :value x :path (vec path)})))
 
 (defn normalize-dict-key
