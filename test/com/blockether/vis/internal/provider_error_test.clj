@@ -575,3 +575,82 @@
                                 "{\"error\":{\"message\":\"messages must not be empty\"}}"}}))))
   (it "no classification can soften a terminal kind"
       (expect (false? (perr/provider-error-retryable? resource-mismatch-err)))))
+
+(def ^:private all-auth-exhausted-err
+  "Every provider in the fallback list bowed out on credentials. svar's wrapper
+   carries NO status and no provider prose — the 401s live only on `:attempts`."
+  {:message "All providers exhausted"
+   :data {:type :svar.llm/all-providers-exhausted
+          :attempts [{:provider :rbi_genai
+                      :model "claude-opus-4-8"
+                      :status 401
+                      :reason :authentication
+                      :error "API authentication failed. Check your API key."}
+                     {:provider :openai_fb
+                      :model "gpt-5.1"
+                      :status 401
+                      :reason :authentication
+                      :error "Invalid API key provided"}]}})
+
+(defdescribe
+  all-attempts-auth-test
+  "An all-401 fleet failure used to classify `:generic` and tell the user to
+   `retry, or switch provider/model` — advice that re-sends the same rejected
+   key to every provider. The verdict lives on the attempts, not the wrapper."
+  (it "classifies the wrapper as :auth from the attempts alone"
+      (expect (= :auth (perr/provider-error-kind all-auth-exhausted-err))))
+  (it "names the fleet in the headline"
+      (expect (= "All providers rejected your credentials"
+                 (perr/provider-error-title all-auth-exhausted-err))))
+  (it "says the retry re-sends the same rejected key, and names the providers"
+      (let [expl (perr/provider-error-explanation all-auth-exhausted-err)]
+        (expect (str/includes? expl "rejected your credentials"))
+        (expect (str/includes? expl ":rbi_genai"))
+        (expect (str/includes? expl ":openai_fb"))
+        (expect (str/includes? expl "unchanged retry re-sends the same rejected key"))))
+  (it "points at re-authentication instead of a blind retry"
+      (let [step (perr/provider-error-next-step all-auth-exhausted-err)]
+        (expect (str/includes? step "re-authenticate :rbi_genai, :openai_fb"))
+        (expect (str/includes? step "their API keys"))))
+  (it "is terminal: an identical retry fails identically"
+      (expect (false? (perr/provider-error-retryable? all-auth-exhausted-err))))
+  (it "a single-provider 401 wrapper keeps the singular headline and pronoun"
+      (let
+        [one {:message "Provider unavailable"
+              :data {:type :svar.llm/provider-unavailable
+                     :attempts [{:provider :rbi_genai
+                                 :model "m"
+                                 :status 401
+                                 :reason :authentication
+                                 :error "unauthorized"}]}}]
+        (expect (= :auth (perr/provider-error-kind one)))
+        (expect (= "Provider authentication failed" (perr/provider-error-title one)))
+        (expect (str/includes? (perr/provider-error-next-step one) "its API key"))))
+  (it "ONE non-auth attempt keeps the generic fleet wording"
+      (expect (= :generic (perr/provider-error-kind exhausted-err)))
+      (expect (= "All providers unavailable" (perr/provider-error-title exhausted-err))))
+  (it "a wrapper with no attempts is no auth verdict"
+      (let [bare {:message "Provider unavailable" :data {:type :svar.llm/provider-unavailable}}]
+        (expect (false? (perr/auth-exhausted-attempts? bare)))
+        (expect (= :generic (perr/provider-error-kind bare)))))
+  (it "a timeout fleet is still an upstream timeout, not auth"
+      (let
+        [t {:message "All providers exhausted"
+            :data {:type :svar.llm/all-providers-exhausted
+                   :attempts [{:provider :a
+                               :model "m"
+                               :status 408
+                               :reason :transient-error
+                               :error "litellm.Timeout: BedrockException: Timeout Error"}]}}]
+        (expect (= :upstream-timeout (perr/provider-error-kind t)))
+        (expect (perr/provider-error-retryable? t))))
+  (it "reads auth prose off an attempt that carries no status"
+      (let
+        [p {:message "All providers exhausted"
+            :data {:type :svar.llm/all-providers-exhausted
+                   :attempts [{:provider :a
+                               :model "m"
+                               :reason :error
+                               :error "Authentication failed: invalid api key"}]}}]
+        (expect (perr/auth-exhausted-attempts? p))
+        (expect (= [:a] (perr/auth-failed-provider-ids p))))))

@@ -359,6 +359,34 @@
         (map? x) (str (or (:message x) (ex-message x)) " " (:body (or (:data x) x)))
         :else (str x)))
 
+(defn- attempt-auth-failure?
+  "True when ONE routing attempt bowed out on credentials: svar's
+   `:authentication` reason, a 401/403, or auth prose in the recorded error."
+  [{:keys [status reason error]}]
+  (boolean (or (contains? #{:authentication :auth} reason)
+               (contains? #{401 403} status)
+               (auth-provider-error? status (->error-text error) nil))))
+
+(defn auth-failed-provider-ids
+  "The providers that bowed out on credentials, in the order svar tried them."
+  [err]
+  (into []
+        (comp (filter attempt-auth-failure?) (keep :provider) (distinct))
+        (provider-error-attempts err)))
+
+(defn auth-exhausted-attempts?
+  "True when EVERY provider svar tried bowed out on credentials.
+
+   The `all-providers-exhausted` / `Provider unavailable` wrapper carries no
+   status and no provider prose of its own, so `auth-provider-error?` — which
+   reads only the wrapper — called an all-401 fleet failure `:generic` and told
+   the user to `retry, or switch provider/model`. An unchanged retry re-sends
+   the SAME rejected key to every provider. The evidence is on the attempts, so
+   read it there; with no attempts recorded there is no auth verdict to make."
+  [err]
+  (let [attempts (provider-error-attempts err)]
+    (boolean (and (seq attempts) (every? attempt-auth-failure? attempts)))))
+
 (defn provider-error-upstream-text
   "EVERY scrap of upstream failure text Vis holds for `err`, lowercased and
    joined: the wrapper message, the raw upstream body, and the per-provider
@@ -520,6 +548,14 @@
       (auth-provider-error? status provider-message message)
       (str "WHAT HAPPENED: the provider rejected your credentials."
            (when (seq provider-message) (str " " provider-message)))
+      (auth-exhausted-attempts? err)
+      (let [ids (auth-failed-provider-ids err)]
+        (str "WHAT HAPPENED: "
+             (if (> (count (provider-error-attempts err)) 1)
+               "every provider in this turn's fallback list rejected your credentials"
+               "the provider rejected your credentials")
+             (when (seq ids) (str " (" (str/join ", " (map str ids)) ")"))
+             " — an unchanged retry re-sends the same rejected key."))
       (billing-required-error? status)
       (str "WHAT HAPPENED: the provider requires payment or has no usable credits."
            (when (seq provider-message) (str " " provider-message)))
@@ -599,7 +635,9 @@
       "Output token budget too small"
 
       :auth
-      "Provider authentication failed"
+      (if (and (auth-exhausted-attempts? err) (> (count (provider-error-attempts err)) 1))
+        "All providers rejected your credentials"
+        "Provider authentication failed")
 
       :billing
       "Provider billing required"
@@ -666,7 +704,14 @@
            "in vis.yml) or drop the override, then retry — an unchanged retry fails identically.")
 
       :auth
-      (auth-provider-next-step data)
+      (let [ids (auth-failed-provider-ids err)]
+        (if (and (nil? (provider-id-of data)) (seq ids))
+          (str "NEXT STEP: re-authenticate "
+               (str/join ", " (map str ids))
+               " or fix "
+               (if (= 1 (count ids)) "its API key" "their API keys")
+               ", then retry.")
+          (auth-provider-next-step data)))
 
       :billing
       "NEXT STEP: check the provider's billing and available credits, then retry."
@@ -768,7 +813,8 @@
           gateway-field? :tool-schema
           (output-budget-too-small-error? status (str provider-message "\n" message))
           :output-budget-too-small
-          (auth-provider-error? status provider-message message) :auth
+          (or (auth-provider-error? status provider-message message) (auth-exhausted-attempts? err))
+          :auth
           (billing-required-error? status) :billing
           (anthropic-extra-usage-error? status provider-message message) :anthropic-extra-usage
           (rate-limit-error? status provider-message message) :rate-limit
