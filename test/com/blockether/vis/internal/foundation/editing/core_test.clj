@@ -3105,6 +3105,27 @@
         (expect (not (contains? (:properties cat-schema) "range")))
         (expect (= 2 (get-in cat-schema [:properties "ranges" :items :minItems])))
         (expect (= 2 (get-in cat-schema [:properties "ranges" :items :maxItems])))))
+  ;; `cat` IS the ls: a directory path lists it, and the listing options must be
+  ;; advertised on the native surface, not just reachable from Clojure/Python.
+  (it "cat advertises directory listing (ls) with `depth` and `is_hidden`"
+      (let
+        [entry
+         (->> (get-in editing/cat-symbol [:ext.symbol/schema :properties "files" :items :oneOf])
+              (filter #(= "object" (:type %)))
+              first)
+
+         description
+         (:ext.symbol/description editing/cat-symbol)
+
+         result
+         (:ext.symbol/result editing/cat-symbol)]
+
+        (expect (= "integer" (get-in entry [:properties "depth" :type])))
+        (expect (= 1 (get-in entry [:properties "depth" :minimum])))
+        (expect (= "boolean" (get-in entry [:properties "is_hidden" :type])))
+        (expect (string/includes? description "(ls)"))
+        (expect (string/includes? result "Directory (ls)"))
+        (expect (string/includes? result "children"))))
   (it "uses one portable patch shape with a path on every edit"
       (let [schema (:ext.symbol/schema editing/patch-symbol)]
         (expect (= "object" (:type schema)))
@@ -3117,7 +3138,7 @@
   outline-path-resolution-test
   "Regression: index must route through safe-path like every other file tool —
    it used the RAW path (slurp resolves against the JVM user.dir, not the
-   workspace cwd), so a nested `src/foo.clj` 404'd under `vis --source` while cat
+   workspace cwd), so a nested `src/foo.clj` 404'd on the source runtime while cat
    found it. The proof is that safe-path confinement now applies to index."
   (let [index-tool (private-fn "index-tool")]
     (it "resolves a NESTED workspace-relative path"
