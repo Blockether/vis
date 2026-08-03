@@ -545,84 +545,123 @@
              (expect (str/includes? output "SELF-BUILT:") output))
            (finally (delete-tree! root))))))
 
+(defn- tagged-source-fixture
+  "A sandboxed wrapper install plus a throwaway origin: v0.1.1, v0.1.9 and
+   v0.1.10 — newest by version, not by spelling — followed by untagged work the
+   pin must never follow. `update!` runs the wrapper against that origin rather
+   than GitHub; `run!` is the same wrapper without it."
+  []
+  (let
+    [root
+     (.toFile (Files/createTempDirectory "vis-agent-tag-test-" (make-array FileAttribute 0)))
+
+     origin
+     (doto (io/file root "origin") .mkdirs)
+
+     install-dir
+     (doto (io/file root "install") .mkdirs)
+
+     home
+     (doto (io/file root "home") .mkdirs)
+
+     vis-home
+     (doto (io/file home ".vis") .mkdirs)
+
+     tools
+     (doto (io/file root "tools") .mkdirs)
+
+     launcher
+     (io/file install-dir "vis-agent")
+
+     run!
+     (wrapper-runner {:launcher launcher :cwd root :home home :vis-home vis-home :tools tools})
+
+     commit!
+     (fn [content tag]
+       (spit (io/file origin "f") content)
+       (git! origin "add" "-A")
+       (git! origin "commit" "-qm" (str "commit " content))
+       (when tag (git! origin "tag" tag)))]
+
+    (copy-launcher! launcher)
+    (write-executable! (io/file tools "clojure") "#!/usr/bin/env bash\nprintf 'JVM:%s\\n' \"$*\"\n")
+    (git! origin "init" "-q" "-b" "main" ".")
+    (spit (io/file origin "deps.edn") "{}")
+    (commit! "one" "v0.1.1")
+    (commit! "two" "v0.1.9")
+    (commit! "three" "v0.1.10")
+    (commit! "unreleased" nil)
+    (.mkdirs (io/file vis-home "install"))
+    (spit (io/file vis-home "runtime") "jvm\n")
+    {:root root
+     :origin origin
+     :vis-home vis-home
+     :managed-src (io/file vis-home "install/src")
+     :run! run!
+     :update! (fn [args]
+                (run! args {"VIS_REPO_URL" (.getAbsolutePath origin)}))}))
+
+(defn- moving-refs
+  "Every branch and remote-tracking ref in `src` — what a pinned source must not
+   have, because each one is a ref `git pull` can follow off the pin."
+  [src]
+  (str/trim (:output (git! src "for-each-ref" "--format=%(refname)" "refs/heads" "refs/remotes"))))
+
 (defdescribe
   wrapper-tagged-source-update-test
   (it
     "pins the managed source to the newest release tag, or to a named ref"
-    (let
-      [root
-       (.toFile (Files/createTempDirectory "vis-agent-tag-test-" (make-array FileAttribute 0)))
+    (let [{:keys [root origin vis-home managed-src run! update!]} (tagged-source-fixture)]
+      (try ;; Nothing is prepared on disk: the wrapper acquires the source itself.
+        (let [{:keys [exit output]} (update! ["update"])]
+          (expect (= 0 exit) output)
+          (expect (str/includes? output "source pinned at v0.1.10")))
+        (expect (= "v0.1.10" (str/trim (slurp (io/file vis-home "install/ref")))))
+        (expect (= "v0.1.10" (str/trim (:output (git! managed-src "describe" "--tags")))))
+        ;; Pinned means pinned: no branch to step onto, no remote-tracking ref
+        ;; to follow, and ONE commit of history instead of the whole repo.
+        (expect (= "" (moving-refs managed-src)))
+        (expect (= "true"
+                   (str/trim (:output (git! managed-src "rev-parse" "--is-shallow-repository")))))
+        (expect (= "1" (str/trim (:output (git! managed-src "rev-list" "--count" "HEAD")))))
+        ;; The regression: `git checkout main && git pull` in there used to
+        ;; walk the source Vis runs a hundred commits past its pin.
+        (expect (not= 0 (:exit (git! managed-src "checkout" "main"))))
+        (let [{:keys [output]} (run! ["runtime" "show"])]
+          (expect (str/includes? output "Pinned at:    v0.1.10"))
+          (expect (str/includes? output "Runtime:      jvm")))
+        ;; A git ref that is not a release tag pins source, whatever is effective.
+        (let
+          [sha (str/trim (:output (git! origin "rev-parse" "HEAD")))
+           {:keys [exit output]} (update! ["update" sha])]
 
-       origin
-       (doto (io/file root "origin") .mkdirs)
-
-       install-dir
-       (doto (io/file root "install") .mkdirs)
-
-       home
-       (doto (io/file root "home") .mkdirs)
-
-       vis-home
-       (doto (io/file home ".vis") .mkdirs)
-
-       managed-src
-       (io/file vis-home "install/src")
-
-       tools
-       (doto (io/file root "tools") .mkdirs)
-
-       launcher
-       (io/file install-dir "vis-agent")
-
-       run!
-       (wrapper-runner {:launcher launcher :cwd root :home home :vis-home vis-home :tools tools})
-
-       commit!
-       (fn [content tag]
-         (spit (io/file origin "f") content)
-         (git! origin "add" "-A")
-         (git! origin "commit" "-qm" (str "commit " content))
-         (when tag (git! origin "tag" tag)))]
-
-      (try (copy-launcher! launcher)
-           (write-executable! (io/file tools "clojure")
-                              "#!/usr/bin/env bash\nprintf 'JVM:%s\\n' \"$*\"\n")
-           (git! origin "init" "-q" "-b" "main" ".")
-           (spit (io/file origin "deps.edn") "{}")
-           (commit! "one" "v0.1.1")
-           ;; v0.1.10 must beat v0.1.9: the newest tag is a version sort, not a
-           ;; lexicographic one.
-           (commit! "two" "v0.1.9")
-           (commit! "three" "v0.1.10")
-           ;; Untagged work on the branch is exactly what the default must NOT follow.
-           (commit! "unreleased" nil)
-           (.mkdirs (io/file vis-home "install"))
-           (git! root "clone" "-q" (.getAbsolutePath origin) (.getAbsolutePath managed-src))
-           (spit (io/file vis-home "runtime") "jvm\n")
-           (let [{:keys [exit output]} (run! ["update"])]
-             (expect (= 0 exit) output)
-             (expect (str/includes? output "source pinned at v0.1.10")))
-           (expect (= "v0.1.10" (str/trim (slurp (io/file vis-home "install/ref")))))
-           (expect (= "v0.1.10" (str/trim (:output (git! managed-src "describe" "--tags")))))
-           (let [{:keys [output]} (run! ["runtime" "show"])]
-             (expect (str/includes? output "Pinned at:    v0.1.10"))
-             (expect (str/includes? output "Runtime:      jvm")))
-           ;; A git ref that is not a release tag pins source, whatever is effective.
-           (let
-             [sha
-              (str/trim (:output (git! origin "rev-parse" "HEAD")))
-
-              {:keys [exit output]}
-              (run! ["update" sha])]
-
-             (expect (= 0 exit) output)
-             (expect (str/includes? output (str "source pinned at " sha)))
-             (expect (= sha (str/trim (slurp (io/file vis-home "install/ref"))))))
-           ;; One runtime per update: naming two is a refusal, not a guess.
-           (let [{:keys [exit output]} (run! ["update" "--native" "--dev"])]
-             (expect (= 1 exit) output)
-             (expect (str/includes? output "name one runtime, not --native and --dev")))
-           (finally (delete-tree! root))))))
+          (expect (= 0 exit) output)
+          (expect (str/includes? output (str "source pinned at " sha)))
+          (expect (= sha (str/trim (slurp (io/file vis-home "install/ref")))))
+          (expect (= sha (str/trim (:output (git! managed-src "rev-parse" "HEAD")))))
+          (expect (= "" (moving-refs managed-src))))
+        ;; Source moved off its pin by hand is REPORTED, never quietly run.
+        (git! managed-src "checkout" "--force" "--detach" "v0.1.10")
+        (expect (str/includes? (:output (run! ["runtime" "show"])) "DRIFTED"))
+        ;; One runtime per update: naming two is a refusal, not a guess.
+        (let [{:keys [exit output]} (run! ["update" "--native" "--dev"])]
+          (expect (= 1 exit) output)
+          (expect (str/includes? output "name one runtime, not --native and --dev")))
+        (finally (delete-tree! root)))))
+  (it "repins source an older wrapper left cloned on a branch"
+      (let [{:keys [root origin managed-src run! update!]} (tagged-source-fixture)]
+        (try ;; What a clone leaves behind: main, its remote-tracking twin, and the
+             ;; whole history to fast-forward through.
+          (git! root "clone" "-q" (.getAbsolutePath origin) (.getAbsolutePath managed-src))
+          (expect (str/includes? (moving-refs managed-src) "refs/heads/main"))
+          (let [{:keys [exit output]} (update! ["update"])]
+            (expect (= 0 exit) output)
+            (expect (str/includes? output "source pinned at v0.1.10")))
+          (expect (= "v0.1.10" (str/trim (:output (git! managed-src "describe" "--tags")))))
+          (expect (= "" (moving-refs managed-src)))
+          (expect (not= 0 (:exit (git! managed-src "checkout" "main"))))
+          (expect (str/includes? (:output (run! ["runtime" "show"])) "Pinned at:    v0.1.10"))
+          (finally (delete-tree! root))))))
 
 (defdescribe
   wrapper-update-dev-test
@@ -726,7 +765,11 @@
        ;; A released wrapper that differs from the installed one, and still works:
        ;; the marker is a comment on the line after the shebang.
        newer-wrapper
-       (str/replace-first (slurp "bin/vis-agent") "\n" (str "\n" marker "\n"))]
+       (str/replace-first (slurp "bin/vis-agent") "\n" (str "\n" marker "\n"))
+
+       ;; Every update runs against that origin, never against GitHub.
+       repo-env
+       {"VIS_REPO_URL" (.getAbsolutePath origin)}]
 
       (try
         (copy-launcher! launcher)
@@ -742,13 +785,13 @@
         (spit (io/file vis-home "runtime") "jvm\n")
         ;; The installed command is a COPY made at install time. Nothing but this
         ;; sync refreshes it, so a source update must carry it along.
-        (let [{:keys [exit output]} (run! ["update"])]
+        (let [{:keys [exit output]} (run! ["update"] repo-env)]
           (expect (= 0 exit) output)
           (expect (str/includes? output "vis-agent command updated from") output))
         (expect (str/includes? (slurp launcher) marker))
         ;; The replacement is a working command, and an update that changes
         ;; nothing says nothing.
-        (let [{:keys [exit output]} (run! ["update"])]
+        (let [{:keys [exit output]} (run! ["update"] repo-env)]
           (expect (= 0 exit) output)
           (expect (not (str/includes? output "vis-agent command updated from")) output))
         ;; A wrapper that lives IN a checkout is source: git owns it, never this.
@@ -767,7 +810,7 @@
                {:launcher checkout-launcher :cwd root :home home :vis-home vis-home :tools tools}))
 
            {:keys [exit output]}
-           (run-checkout! ["update"])]
+           (run-checkout! ["update"] repo-env)]
 
           (expect (= 0 exit) output)
           (expect (not (str/includes? (slurp checkout-launcher) marker)) output))

@@ -114,12 +114,18 @@ checkout's own wrapper.
 |---|---|
 | `~/.vis/runtime` | the persisted selection: `native`, `jvm`, or `dev`; absent means automatic |
 | `~/.vis/install/vis-agent-native` | the private native runtime |
-| `~/.vis/install/src` | the checkout Vis owns |
-| `~/.vis/install/ref` | the tag or commit that checkout sits at |
+| `~/.vis/install/src` | the checkout Vis owns: one shallow, detached commit, no branches, no remote-tracking refs |
+| `~/.vis/install/ref` | the tag or commit that checkout sits at; `runtime show` marks it `DRIFTED` when `HEAD` no longer matches |
 | `$VIS_DEV_CHECKOUT` (default `~/vis`) | the live checkout `dev` runs |
 
 That is the entire runtime state. Deleting `~/.vis/runtime` returns to
 automatic; deleting `~/.vis/install` is a full reset.
+
+That checkout is a pin, not a clone. An update fetches exactly one ref one commit
+deep, checks it out detached, then deletes every branch and remote-tracking ref
+and narrows the remote's fetch refspec to tags, so there is no `main` inside it
+for a stray `git pull` to follow. An install made by an older, cloning `vis-agent`
+is repaired into that shape by the next update.
 
 | Variable | Effect |
 |---|---|

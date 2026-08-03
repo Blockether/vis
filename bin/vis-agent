@@ -31,6 +31,7 @@ vis_home="${VIS_HOME:-$HOME/.vis}"
 vis_install_dir="$vis_home/install"
 vis_runtime_file="$vis_home/runtime"
 vis_repo_slug="${VIS_REPO_SLUG:-Blockether/vis}"
+vis_repo_url="${VIS_REPO_URL:-https://github.com/$vis_repo_slug.git}"
 managed_src="$vis_install_dir/src"
 managed_ref_file="$vis_install_dir/ref"
 
@@ -325,6 +326,18 @@ vis_runtime() {
       source_root="$(find_jvm_source 2>/dev/null || printf 'not installed')"
       ref="$(read_state "$managed_ref_file")"
       [[ -n "$ref" ]] || ref="unpinned"
+      # A pin is a claim about the source on disk, so check it instead of
+      # repeating it: source that has been walked off its ref is what the jvm
+      # runtime would silently run.
+      if [[ "$source_root" == "$managed_src" && -d "$managed_src/.git" ]] \
+         && command -v git >/dev/null 2>&1; then
+        local head_sha pin_sha
+        head_sha="$(git -C "$managed_src" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
+        pin_sha="$(git -C "$managed_src" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null || true)"
+        if [[ -n "$head_sha" && -n "$pin_sha" && "$head_sha" != "$pin_sha" ]]; then
+          ref="$ref (DRIFTED: source is at $head_sha — restore it with 'vis-agent update --jvm')"
+        fi
+      fi
       printf 'Runtime:      %s (%s)\n' "$effective" "$runtime_origin"
       printf 'Native:       %s\n' "$native"
       printf 'Source:       %s\n' "$source_root"
@@ -451,21 +464,71 @@ build_native_runtime() {
 # Follow tagged commits: the checkout Vis owns is moved onto the newest release
 # tag, or onto an exact ref you name. A developer's own checkout is never moved
 # by this path — that is what `update --dev` is for.
+#
+# Pinned is meant literally. This source is built by hand — `git init` plus ONE
+# shallow ref — rather than cloned, and every branch and remote-tracking ref is
+# dropped afterwards. A clone left `main` behind: HEAD sat on the tag while
+# `git checkout main && git pull` walked the source Vis actually runs a hundred
+# commits past its pin, having downloaded the whole history to do it. What is
+# not there cannot be followed, and an install now downloads one commit instead
+# of every commit ever made.
+
+# The newest published vX.Y.Z, from the remote's refs alone: no objects, no
+# history, no clone. git's own version sort, so v0.1.10 beats v0.1.9.
+newest_release_tag() {
+  git -C "$managed_src" ls-remote --refs --tags --sort=-v:refname origin 'v*' 2>/dev/null \
+    | awk -F/ 'NR == 1 { print $NF }'
+}
+
+# Fetch exactly one ref and nothing else. A tag (or branch) is advertised, so a
+# single shallow commit is enough; an exact SHA usually is not advertised, and
+# only that case pays for history.
+fetch_pinned_ref() {
+  local ref="$1"
+  git -C "$managed_src" fetch --quiet --force --depth 1 origin \
+      "+refs/tags/$ref:refs/tags/$ref" 2>/dev/null && return 0
+  git -C "$managed_src" fetch --quiet --force --depth 1 origin "$ref" 2>/dev/null && return 0
+  say "$ref is not an advertised tag — fetching history to find it"
+  git -C "$managed_src" fetch --force --prune --tags origin '+refs/heads/*:refs/remotes/origin/*'
+}
+
+# Leave no branch to step off: with every local and remote-tracking branch gone
+# the pinned commit is reachable through HEAD alone, and `git checkout main` in
+# there has nothing to check out.
+drop_moving_refs() {
+  local ref
+  while read -r ref; do
+    [[ -z "$ref" ]] || git -C "$managed_src" update-ref -d "$ref" 2>/dev/null || true
+  done < <(git -C "$managed_src" for-each-ref --format='%(refname)' refs/heads refs/remotes 2>/dev/null)
+}
+
 update_source() {
-  local ref="${1:-}"
+  local ref="${1:-}" target
   require_cmd git "the source runtime"
   if [[ ! -d "$managed_src/.git" ]]; then
-    say "cloning $vis_repo_slug into $managed_src"
-    git clone --filter=blob:none "https://github.com/$vis_repo_slug.git" "$managed_src" || exit 1
+    say "creating $managed_src for $vis_repo_slug"
+    mkdir -p "$managed_src" || exit 1
+    git -C "$managed_src" init --quiet || exit 1
   fi
-  say "fetching release tags for $managed_src"
-  git -C "$managed_src" fetch --tags --force --prune origin || exit 1
+  git -C "$managed_src" remote add origin "$vis_repo_url" 2>/dev/null \
+    || git -C "$managed_src" remote set-url origin "$vis_repo_url" || exit 1
+  # This source follows tags, never branches — so even a hand-run `git fetch`
+  # in there cannot bring `main` back.
+  git -C "$managed_src" config remote.origin.fetch '+refs/tags/*:refs/tags/*' || exit 1
   if [[ -z "$ref" ]]; then
-    ref="$(git -C "$managed_src" tag --list 'v*' --sort=-v:refname | head -1)"
+    say "asking $vis_repo_slug for its newest release tag"
+    ref="$(newest_release_tag)"
     [[ -n "$ref" ]] || die "update: no release tag (vX.Y.Z) is published yet" \
                           "Pin an exact commit instead: vis-agent update <sha>"
   fi
-  git -C "$managed_src" checkout --force --detach "$ref" || exit 1
+  say "fetching $ref for $managed_src"
+  fetch_pinned_ref "$ref" || exit 1
+  # A named branch never becomes a local ref here, so check out what was fetched.
+  target="$ref"
+  git -C "$managed_src" rev-parse --verify --quiet "$ref^{commit}" >/dev/null 2>&1 \
+    || target=FETCH_HEAD
+  git -C "$managed_src" checkout --force --detach "$target" || exit 1
+  drop_moving_refs
   mkdir -p "$vis_install_dir"
   printf '%s\n' "$ref" > "$managed_ref_file"
   say "source pinned at $ref ($managed_src)"
