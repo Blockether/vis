@@ -42,6 +42,8 @@
 
 (def ^:private format-shell-command @#'shell/format-shell-command)
 
+(def ^:private render-shell-call @#'shell/render-shell-call)
+
 (defn- with-shell-on
   "Shell is unconditionally available now; kept as a thin pass-through so the
    existing call sites read unchanged."
@@ -1024,6 +1026,34 @@
                  (expect (true? (get-in shell/vis-extension [:ext/engine :ext.engine/builtin?])))
                  (expect (nil? (get-in shell/vis-extension [:ext/engine :ext.engine/alias])))
                  (expect (= ['shell] (mapv :ext.symbol/symbol shell/shell-symbols)))))
+
+(defdescribe
+  shell-pending-call-render-test
+  (it "renders a PENDING run batch as the bash it is about to run, not invocation JSON"
+      (let
+        [commands
+         ["echo one && echo two" "ls -1"]
+
+         display
+         (render-shell-call {"commands" commands "op" "run"})]
+
+        (expect (= "bash" (:language display)))
+        ;; EXACTLY the finished card's COMMAND formatting, so the running block is
+        ;; already the shell block the result completes.
+        (expect (= (str/join "\n" (map format-shell-command commands)) (:code display)))
+        (expect (str/includes? (:code display) "echo one"))
+        (expect (not (str/includes? (:code display) "{")))))
+  (it "accepts the ONE-COMMAND spelling and keyword-keyed input"
+      (expect (= {:code "ls -1" :language "bash"} (render-shell-call {:commands "ls -1"}))))
+  (it "names the stage and its target for a lifecycle call that carries no commands"
+      (expect (= {:code "# shell logs sh-1" :language "bash"}
+                 (render-shell-call {"op" "logs" "id" "sh-1"}))))
+  (it "keeps the raw invocation when there is neither a command nor a target"
+      (expect (nil? (render-shell-call {"op" "run"})))
+      ;; A malformed batch is the CALL's error to report, never this preview's.
+      (expect (nil? (render-shell-call {"commands" [""]}))))
+  (it "publishes the renderer under the tool's wire name so the loop can reach it"
+      (expect (fn? (get (extension/native-tool-call-renderers [shell/vis-extension]) "shell")))))
 
 (defdescribe
   macos-jailed-pty-e2e-test

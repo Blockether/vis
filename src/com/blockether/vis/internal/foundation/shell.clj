@@ -223,6 +223,9 @@
      (->> (concat [{:trunk (.getPath root) :clone (.getPath root)}]
                   env-roots
                   workspace/*filesystem-roots*)
+          ;; A root the draft policy withholds is not a working directory:
+          ;; `shell` must not offer what `safe-path` refuses.
+          (remove :denied?)
           (mapcat (juxt :trunk :clone))
           (keep #(some-> %
                          io/file
@@ -2240,6 +2243,45 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
 ;; flat Python sandbox next to `git` / `cat` / `grep`.
 ;; =============================================================================
 
+(defn- render-shell-call
+  "PENDING-call display for a `shell` invocation: the bash this call is ABOUT to
+   run, so a RUNNING shell block reads as its command instead of the raw
+   `shell({\"commands\": …})` invocation JSON the model submitted. `run` /
+   `background` show the ordered command lines, pretty-printed exactly like the
+   completed card's COMMAND section; a lifecycle stage names itself and the
+   background id it targets. nil when the arguments carry neither — the raw
+   invocation stays the honest fallback."
+  [input]
+  (let
+    [op
+     (or (some-> (opt input :op)
+                 str
+                 str/trim
+                 not-empty)
+         "run")
+
+     id
+     (some-> (opt input :id)
+             str
+             str/trim
+             not-empty)
+
+     commands
+     (opt input :commands)
+
+     lines
+     (when (some? commands)
+       ;; A malformed batch is the CALL's error to report, never this preview's:
+       ;; fall through to the raw invocation instead of throwing before the run.
+       (try (mapv format-shell-command (ordered-lines commands)) (catch Throwable _ nil)))
+
+     code
+     (cond (seq lines) (str/join "\n" lines)
+           id (str "# shell " op " " id)
+           :else nil)]
+
+    (when code {:code code :language "bash"})))
+
 (def shell-symbol
   (vis/symbol
     #'shell
@@ -2261,6 +2303,7 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
        "Live ids: `session[\"resources\"]`. Output: `r[\"commands\"][0][\"stdout\"]` for run, `r[\"lines\"]` for "
        "`logs`/`wait`; `*_omitted_chars` marks truncation.")
      :render render-shell-result
+     :render-call render-shell-call
      :color-role :tool-color/shell
      :schema
      {:type "object"

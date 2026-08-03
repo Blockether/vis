@@ -952,10 +952,20 @@ function formCode(form: TranscriptForm): string {
   const nativeTool = form.tool_name && form.tool_name !== 'python_execution';
   // A running native call must show the invocation actually submitted, not its
   // prettified display mirror. Python keeps the canonical formatted surface.
-  const source = nativeTool
+  // Exception: a tool may AUTHOR the pending surface for its own call (marked by
+  // `display_language`, e.g. `shell` rendering its commands as a bash block); that
+  // block is what the finished card keeps showing, so the raw JSON never appears.
+  const authored = (form.display_language ?? '').trim() !== '';
+  const source = nativeTool && !authored
     ? form.code ?? form.source ?? form.src ?? form.display_code
     : form.display_code ?? form.code ?? form.source ?? form.src;
   return typeof source === 'string' ? source.trim() : '';
+}
+
+/** Highlighting language for a form's code block; python is the default surface. */
+function formCodeLanguage(form: TranscriptForm): string {
+  const language = (form.display_language ?? '').trim();
+  return language || 'python';
 }
 
 function formIsRunning(form: TranscriptForm): boolean {
@@ -995,11 +1005,13 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode(
     value,
     label,
     colorRole,
+    language = 'python',
     bare = false,
   }: {
     value: string;
     label: string;
     colorRole?: string;
+    language?: string;
     bare?: boolean;
   },
 ) {
@@ -1052,7 +1064,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode(
         <SyntaxCodeBlock
           value={visibleValue}
           copyValue={value}
-          language="python"
+          language={language}
           compact
           bare
           frameless
@@ -1110,12 +1122,12 @@ const FormTrace = memo(function FormTrace(
           belonged to the program printed BELOW it. */}
       {showCode && cards.length > 0 ? (
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
-          <CollapsibleFormCode value={code} label={codeLabel} colorRole={form.tool_color_role} bare />
+          <CollapsibleFormCode value={code} label={codeLabel} colorRole={form.tool_color_role} language={formCodeLanguage(form)} bare />
           <CardGrid cards={cards} bare />
         </div>
       ) : (
         <>
-          {showCode && <CollapsibleFormCode value={code} label={codeLabel} colorRole={form.tool_color_role} />}
+          {showCode && <CollapsibleFormCode value={code} label={codeLabel} colorRole={form.tool_color_role} language={formCodeLanguage(form)} />}
           <CardGrid cards={cards} />
         </>
       )}

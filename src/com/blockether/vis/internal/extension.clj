@@ -467,6 +467,10 @@
 ;; `(fn [result] -> {:summary :body})` — the op-card renderer for THIS symbol's result,
 ;; shared by every surface (native tool_result card + a Python-path surfaced value).
 (s/def :ext.symbol/render fn?)
+;; `(fn [input] -> {:code :language})` — how THIS symbol's PENDING call displays while
+;; it runs. Without one a running native call shows its raw invocation JSON; `shell`
+;; declares one so the block reads as the bash it is about to run.
+(s/def :ext.symbol/render-call fn?)
 ;; The op-card BADGE colour role for this symbol's result (`:tool-color/search`…).
 (s/def :ext.symbol/color-role keyword?)
 ;; Optional agent-context policy for large native arguments. `:elide-args` maps
@@ -500,7 +504,8 @@
                 :ext.symbol/inject-env? :ext.symbol/after-fn :ext.symbol/on-error-fn
                 :ext.symbol/source :ext.symbol/native-tool? :ext.symbol/schema :ext.symbol/name
                 :ext.symbol/call :ext.symbol/handler :ext.symbol/description :ext.symbol/result
-                :ext.symbol/render :ext.symbol/color-role :ext.symbol/replay]))
+                :ext.symbol/render :ext.symbol/render-call :ext.symbol/color-role
+                :ext.symbol/replay]))
 
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
@@ -1025,6 +1030,7 @@
                    :call (:ext.symbol/call e)
                    :replay (:ext.symbol/replay e)
                    :render (:ext.symbol/render e)
+                   :render-call (:ext.symbol/render-call e)
                    :color-role (:ext.symbol/color-role e)
                    :active? (symbol-active? e env)})))
         vec)))
@@ -1117,6 +1123,17 @@
   (into {}
         (keep (fn [t]
                 (when (:render t) [(:name t) (:render t)]))
+              (native-tools-for active-extensions))))
+
+(defn native-tool-call-renderers
+  "Map wire-name → `:render-call` fn for every declared native tool. A `:render-call`
+   takes the tool's INPUT and returns `{:code :language}` — how the call DISPLAYS while
+   it is still running, so a pending `shell` block reads as the bash it is about to run
+   instead of the raw invocation JSON. NOT active-filtered (mirrors `native-tool-renderers`)."
+  [active-extensions]
+  (into {}
+        (keep (fn [t]
+                (when (:render-call t) [(:name t) (:render-call t)]))
               (native-tools-for active-extensions))))
 
 (defn native-tool-color-roles
@@ -1382,6 +1399,10 @@
        ;; native tool_result card AND a Python-path surfaced value.
        (:render opts)
        (assoc :ext.symbol/render (:render opts))
+
+       ;; :render-call — how this symbol's call displays WHILE it runs (pending block).
+       (:render-call opts)
+       (assoc :ext.symbol/render-call (:render-call opts))
 
        (:color-role opts)
        (assoc :ext.symbol/color-role (:color-role opts))

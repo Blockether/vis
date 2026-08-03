@@ -4601,7 +4601,7 @@
      form-lines
      (fn [form block-number]
        (let
-         [{:keys [code display-code comment error success? started-at-ms]}
+         [{:keys [code display-code display-language comment error success? started-at-ms]}
           form
 
           is-error?
@@ -4668,19 +4668,27 @@
 
           ;; Canonical code surface: Python uses the gateway's cached, ruff-formatted
           ;; `:display-code`. A RUNNING native call is different: the user needs the
-          ;; exact invocation submitted to the tool, so prefer its raw `:code` and
-          ;; fall back to `:display-code` only when an older frame omitted it.
+          ;; exact invocation submitted to the tool, so prefer its raw `:code`. The
+          ;; exception is a tool that RENDERS its own pending call (`:render-call`,
+          ;; flagged by `:display-language`) — `shell` ships the bash it is about to
+          ;; run, and that block, not the call JSON, is the evidence on screen.
           code-text
           (str/trim (str (if (and running?
                                   (some? (:vis/tool-name form))
+                                  (str/blank? (str display-language))
                                   (not= (name (:vis/tool-name form)) "python_execution"))
                            (or (not-empty (str code)) display-code)
                            (or (not-empty (str display-code)) (vis/beautify-python code)))))
 
+          ;; A tool-authored pending display names its OWN language (`bash` for a
+          ;; shell block); every other code surface here is Python.
+          code-language
+          (or (not-empty (str display-language)) "python")
+
           ;; Tree-sitter recovers from syntax errors, so colorize failed programs too.
           ;; The diagnostic caret remains plain and column-aligned below.
           colored-lines
-          (some-> (hl/highlight "python" code-text)
+          (some-> (hl/highlight code-language code-text)
                   str/split-lines)
 
           inline-error-code-lines

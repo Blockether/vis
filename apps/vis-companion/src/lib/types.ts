@@ -554,6 +554,8 @@ export interface TranscriptForm {
   code?: string;
   /** Gateway-formatted Python, produced by the same cached ruff formatter as the TUI. */
   display_code?: string;
+  /** Highlighting language for `display_code`, authored by the tool that rendered it. */
+  display_language?: string;
   comment?: string;
   result?: JsonValue;
   result_render?: string;

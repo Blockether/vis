@@ -3955,6 +3955,31 @@
   [cards result-card]
   (if (and (seq cards) (some :result-render cards)) nil (:body result-card)))
 
+(defn- pending-call-display
+  "The DISPLAY a native call carries WHILE it runs: the tool's own `:render-call`
+   rendering of its INPUT, as `{:display-code :display-language}`. `shell` renders
+   the bash it is about to run, so the pending block is already the shell block its
+   result card completes instead of the raw `shell({…})` invocation JSON.
+
+   nil for a tool without a `:render-call`; a throwing renderer degrades to that raw
+   invocation rather than failing the call it was only previewing."
+  [call-renderers tool-name input]
+  (when-let [render (and tool-name (get call-renderers (name tool-name)))]
+    (let
+      [display (try (render input) (catch Throwable _ nil))
+       code (some-> (:code display)
+                    str
+                    str/trim
+                    not-empty)]
+
+      (when code
+        {:display-code code
+         :display-language (or (some-> (:language display)
+                                       str
+                                       str/trim
+                                       not-empty)
+                               "text")}))))
+
 (defn- tool-result-display
   "The human-channel DISPLAY for one executed TOOL CALL as `{:summary :body}` —
    the ONE surface both the TUI and web render, so they're unified:
@@ -5596,6 +5621,10 @@
                             ;; too — extensions still override by wire name.
                             {"python_execution" :tool-color/shell}
                             (extension/native-tool-color-roles active-extensions))
+       ;; per-tool PENDING-call renderers (symbol `:render-call`) — how a native call
+       ;; DISPLAYS while it is still running. `shell` declares one so the running block
+       ;; is the bash about to run, not the raw invocation JSON the model submitted.
+       call-renderers (extension/native-tool-call-renderers active-extensions)
        ;; ALL-OBSERVATION CONCURRENCY: when every code-entry is a read-only
        ;; observation (≥2 of them, no mutation / python_execution / handler /
        ;; preflight error), run the whole batch CONCURRENTLY through
@@ -5619,18 +5648,24 @@
              :as entry}]
            (log-stage! :code-exec iteration {:idx (inc (long idx)) :total total-blocks :code expr})
            (when (and on-chunk (not suppress-form-start?))
-             (on-chunk {:phase :form-start
-                        :iteration iteration-position
-                        :position idx
-                        :count total-blocks
-                        ;; Carry the native-tool name so channels can hide the
-                        ;; redundant invocation code WHILE the tool runs (not just
-                        ;; after the result lands). nil for a non-tool form.
-                        :vis/tool-name (:vis/tool-name entry)
-                        :scope (form-scope idx)
-                        :code expr
-                        :render-segments render-segments
-                        :started-at-ms (System/currentTimeMillis)}))
+             (on-chunk
+               (merge {:phase :form-start
+                       :iteration iteration-position
+                       :position idx
+                       :count total-blocks
+                       ;; Carry the native-tool name so channels can hide the
+                       ;; redundant invocation code WHILE the tool runs (not just
+                       ;; after the result lands). nil for a non-tool form.
+                       :vis/tool-name (:vis/tool-name entry)
+                       :scope (form-scope idx)
+                       :code expr
+                       :render-segments render-segments
+                       :started-at-ms (System/currentTimeMillis)}
+                      ;; …plus the tool's OWN rendering of the pending call, so a
+                      ;; running `shell` block reads as its command immediately.
+                      (pending-call-display call-renderers
+                                            (:vis/tool-name entry)
+                                            (:vis/native-input entry)))))
            ;; Stamp form-idx BEFORE eval so the
            ;; executing block's position is recorded
            ;; on the turn-state atom.
@@ -11329,8 +11364,34 @@
      sandbox-roots-fn
      (when (or active-workspace (seq configured-rw-roots))
        (fn []
-         (let [ws @workspace-atom]
-           (vec (distinct (concat (when ws [(str (:root ws))]) configured-rw-roots))))))
+         (let
+           [ws
+            @workspace-atom
+
+            ;; The SAME per-root draft resolution the native tools use, so the
+            ;; Python sandbox cannot reach a root the draft policy withholds
+            ;; (`:denied?`) or write straight into a root this draft only owns
+            ;; a private copy of — the clone is granted in its place.
+            entries
+            (workspace/env-filesystem-roots {:security-policy security-config
+                                             :workspace ws
+                                             :security/filesystem-roots configured-rw-roots})
+
+            clones
+            (into []
+                  (comp (filter #(and (:clone %) (not= (:clone %) (:trunk %)))) (map :clone))
+                  entries)
+
+            withheld
+            (into #{}
+                  (comp (filter #(or (:denied? %) (and (:clone %) (not= (:clone %) (:trunk %)))))
+                        (map :trunk))
+                  entries)]
+
+           (vec (distinct (concat (when ws [(str (:root ws))])
+                                  clones
+                                  (remove #(contains? withheld (workspace/normalize-root %))
+                                          configured-rw-roots)))))))
 
      access-view-fn
      (fn []

@@ -33,8 +33,8 @@
    per-form display projections, the tool-call linkage, and the repair/timeout
    flags channels surface."
   [;; source
-   [:code "code"] [:display-code "display_code"] [:comment "comment"] [:scope "scope"]
-   [:started-at-ms "started_at_ms"]
+   [:code "code"] [:display-code "display_code"] [:display-language "display_language"]
+   [:comment "comment"] [:scope "scope"] [:started-at-ms "started_at_ms"]
    ;; result surfaces — the raw value, the pre-rendered op-card body, and the
    ;; op-card HEADLINE (a tool-authored summary, never a first-line body slice)
    [:result "result"] [:result-render "result_render"] [:result-summary "result_summary"]
@@ -415,10 +415,15 @@
 (defn with-display-code
   "Attach the canonical cached ruff rendering of a form's Python source.
    Channels render `:display-code` verbatim; local callers without it may use
-   the same formatter. Nested result cards are normalized recursively."
+   the same formatter. Nested result cards are normalized recursively.
+
+   An AUTHORED `:display-code` is never overwritten: a native tool may render
+   its own PENDING call (`:render-call` — `shell` ships the bash it is about to
+   run instead of the raw invocation JSON), and that surface, paired with its
+   `:display-language`, is the one the channels must paint."
   [form]
   (cond-> form
-    (not (str/blank? (str (:code form))))
+    (and (str/blank? (str (:display-code form))) (not (str/blank? (str (:code form)))))
     (assoc :display-code (pyfmt/beautify-python (:code form)))
 
     (seq (:cards form))

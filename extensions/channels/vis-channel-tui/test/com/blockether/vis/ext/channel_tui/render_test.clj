@@ -759,7 +759,7 @@
         (expect (not (str/includes? body "RECAP")))
         (expect (str/includes? body "NEXT STEP: wait and retry, or switch provider/model."))
         (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 429")))))
-  (it "shows the exact native invocation while that call is running"
+  (it "shows the exact native invocation while a call the tool does not render is running"
       (let
         [code
          "shell({\"commands\":[\"sleep 30\"]})"
@@ -787,7 +787,32 @@
 
         (expect (some? code-line))
         (expect (nil? display-code-line))
-        (expect (= p/MARKER_CODE (marker-of code-line))))))
+        (expect (= p/MARKER_CODE (marker-of code-line)))))
+  (it "shows a tool-authored pending block instead of the raw invocation JSON"
+      (let
+        [lines
+         (format-iteration-entry {:iteration 0
+                                  :forms [{:vis/tool-name "shell"
+                                           :tool-color-role :tool-color/shell
+                                           :code "shell({\"commands\": [\"sleep 30\"]})"
+                                           ;; what `shell`'s own `:render-call` produced
+                                           :display-code "sleep 30"
+                                           :display-language "bash"
+                                           :started-at-ms 1000
+                                           :success? nil}]}
+                                 80
+                                 1
+                                 {:now-ms 2500})
+
+         command-line
+         (first (filter #(str/includes? (strip-ansi %) "sleep 30") lines))
+
+         json-line
+         (first (filter #(str/includes? (strip-ansi %) "commands") lines))]
+
+        (expect (some? command-line))
+        (expect (nil? json-line))
+        (expect (= p/MARKER_CODE (marker-of command-line))))))
 
 (defdescribe
   provider-auth-error-test

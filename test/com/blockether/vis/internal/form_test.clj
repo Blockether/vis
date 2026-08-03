@@ -155,3 +155,21 @@
       (expect (= {:vis/tool-name "rg"} (form/->display {:vis/tool-name "rg" :result-render nil}))))
   (it "labels the streaming placeholder as a native call"
       (expect (= "NATIVE CALL" (form/tool-label "native_call")))))
+
+(defdescribe form-authored-display-code-test
+             (it "keeps a tool-authored pending display instead of re-deriving it from the call"
+                 ;; `shell`'s `:render-call` already rendered the bash this call is about to run;
+                 ;; `with-display-code` must not overwrite it with the invocation's own formatting.
+                 (let
+                   [form (form/with-display-code {:code "shell({\"commands\": [\"sleep 30\"]})"
+                                                  :display-code "sleep 30"
+                                                  :display-language "bash"
+                                                  :vis/tool-name "shell"})]
+                   (expect (= "sleep 30" (:display-code form)))
+                   (expect (= "bash" (:display-language form)))
+                   ;; the raw invocation is still carried for the model-facing surfaces
+                   (expect (= "shell({\"commands\": [\"sleep 30\"]})" (:code form)))))
+             (it "still derives the display for a form that authored none"
+                 (let [form (form/with-display-code {:code "x=1"})]
+                   (expect (seq (:display-code form)))
+                   (expect (nil? (:display-language form))))))

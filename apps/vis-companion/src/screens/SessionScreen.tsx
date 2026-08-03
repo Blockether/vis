@@ -401,6 +401,7 @@ function formFromEvent(event: SseEvent, running = false): TranscriptForm {
     scope: stringField(event, 'scope') || undefined,
     code: stringField(event, 'code') || undefined,
     display_code: stringField(event, 'display_code') || undefined,
+    display_language: stringField(event, 'display_language') || undefined,
     comment: stringField(event, 'comment') || undefined,
     tool_name: stringField(event, 'tool_name') || undefined,
     tool_color_role: stringField(event, 'tool_color_role') || undefined,
