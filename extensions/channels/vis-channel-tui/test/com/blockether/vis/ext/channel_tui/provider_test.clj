@@ -507,20 +507,28 @@
            (reset! submitted [pid flow-id api-key])
            {"status" "ok"})
 
-         dlg/text-input-dialog!
+         dlg/transient-dialog!
          (fn [& args]
            (reset! input-args args)
-           "  sk-secret  ")]
+           {:action :submit :options {:api-key "  sk-secret  "}})]
 
         ;; The row that comes back carries NO credential — the daemon owns it.
         (expect (= {:id :zai-coding-plan}
                    (provider/authenticate-provider! nil {:id :zai-coding-plan})))
         (expect (= [:zai-coding-plan "flow-1" "sk-secret"] @submitted))
-        (let [opts (apply hash-map (drop 3 @input-args))]
+        (let
+          [[_ _ body spec]
+           @input-args
+
+           key-item
+           (first (:items (first (:groups spec))))]
+
           (expect (= ["  Z.ai (Coding Plan) requires a static API key."
                       "  Endpoint: https://api.z.ai/api/coding/paas/v4"]
-                     (:body opts)))
-          (expect (= \* (:mask opts)))))))
+                     body))
+          (expect (= :api-key (:id key-item)))
+          (expect (= \* (:mask key-item)))
+          (expect (= true (:secret? key-item)))))))
   (it "never runs the provider's in-process auth-fn"
       (let [auth-called? (atom false)]
         (with-redefs
@@ -530,7 +538,7 @@
            vis/gateway-provider-auth-start!
            (constantly {"flow_id" "flow-2" "kind" "api-key" "instructions" ["static guidance"]})
            vis/gateway-provider-auth-submit-key! (constantly {"status" "ok"})
-           dlg/text-input-dialog! (constantly "sk-key")]
+           dlg/transient-dialog! (constantly {:action :submit :options {:api-key "sk-key"}})]
 
           (expect (= {:id :zai-coding-plan}
                      (provider/authenticate-provider! nil {:id :zai-coding-plan})))
@@ -560,7 +568,7 @@
          (fn [& _]
            (reset! submitted? true))
 
-         dlg/text-input-dialog!
+         dlg/transient-dialog!
          (constantly nil)
 
          dlg/text-viewer-dialog!
@@ -969,6 +977,10 @@
          (fn [& _]
            "sk-typed-by-user")
 
+         dlg/transient-dialog!
+         (fn [& _]
+           {:action :submit :options {:api-key "sk-typed-by-user"}})
+
          dlg/select-dialog!
          (fn [_ _ items]
            (first items))]
@@ -1092,8 +1104,8 @@
            (fn [_]
              "Z.AI Coding")
 
-           dlg/text-input-dialog!
-           (constantly "sk-key")
+           dlg/transient-dialog!
+           (constantly {:action :submit :options {:api-key "sk-key"}})
 
            dlg/text-view-dialog!
            (text-view-recorder popups)
@@ -1124,8 +1136,8 @@
            (fn [_]
              "Z.AI Coding")
 
-           dlg/text-input-dialog!
-           (constantly "sk-key")
+           dlg/transient-dialog!
+           (constantly {:action :submit :options {:api-key "sk-key"}})
 
            dlg/text-view-dialog!
            (text-view-recorder popups)
@@ -1476,3 +1488,33 @@
                  (let [spec (provider/model-transient-spec [{:id "m1" :label "m1"}] 0 {} 8)]
                    (expect (= ["Models"] (mapv :title (:groups spec))))
                    (expect (= ["a"] (mapv :key (:items (first (:groups spec)))))))))
+
+;; ---------------------------------------------------------------------------
+;; API-key sign-in is a TRANSIENT, not a full-screen prompt.
+;;
+;; The old dialog painted a huge vis logo and made the user tab through an
+;; input box. Now the provider's own guidance stays on screen and the popup
+;; advertises exactly two keys: `k` reads the key inline, `a` submits it.
+;; ---------------------------------------------------------------------------
+
+(defdescribe
+  api-key-transient-spec-test
+  (it "advertises one keystroke per step: k reads the key, a signs in"
+      (expect (= "Sign in" (:title (provider/api-key-transient-spec))))
+      (expect (= ["Credential" "Authenticate"]
+                 (mapv :title (:groups (provider/api-key-transient-spec)))))
+      (expect (= [["k"] ["a"]]
+                 (mapv #(mapv :key (:items %)) (:groups (provider/api-key-transient-spec)))))
+      (expect (= [[:option] [:action]]
+                 (mapv #(mapv :type (:items %)) (:groups (provider/api-key-transient-spec))))))
+  (it "the credential item is masked while typed and secret once armed"
+      (let [item (first (:items (first (:groups (provider/api-key-transient-spec)))))]
+        (expect (= :api-key (:id item)))
+        (expect (= "API key" (:label item)))
+        (expect (= "API key:" (:prompt item)))
+        (expect (= \* (:mask item)))
+        (expect (= true (:secret? item)))))
+  (it "the only action submits the armed key"
+      (let [item (first (:items (second (:groups (provider/api-key-transient-spec)))))]
+        (expect (= :submit (:id item)))
+        (expect (= :action (:type item))))))

@@ -342,7 +342,10 @@
       (expect (= "(--no-verify)" (dlg/transient-item-arg {:type :switch :arg "--no-verify"} nil)))
       (expect (= "(%topic=fix)" (dlg/transient-item-arg {:type :option :arg "%topic="} "fix")))
       (expect (nil? (dlg/transient-item-arg {:type :action :arg "--nope"} nil)))
-      (expect (nil? (dlg/transient-item-arg {:type :switch} nil))))
+      (expect (nil? (dlg/transient-item-arg {:type :switch} nil)))
+      ;; A credential rides the transient WITHOUT ever being echoed.
+      (expect (= "(••••••)" (dlg/transient-item-arg {:type :option :secret? true} "sk-live-123")))
+      (expect (nil? (dlg/transient-item-arg {:type :option :secret? true} ""))))
   (it "one shared key + description column aligns every group into a grid"
       (expect (= {:key-w 2 :label-w (count "Amend last commit")}
                  (dlg/transient-layout commit-transient-spec)))))
@@ -1710,3 +1713,64 @@
         (expect (throws? clojure.lang.ExceptionInfo
                          #(toggle! {"name" "hand" "enabled" false "is_managed" false})))
         (expect (= 5 (count @calls)))))))
+
+;; ---------------------------------------------------------------------------
+;; `transient-dialog!`: a magit popup hosted in its OWN modal.
+;;
+;; This replaced the API-key prompt that painted a full-screen vis logo above a
+;; text box. The caller's guidance stays visible, the key is read INLINE on the
+;; hint row, and the armed credential renders as dots — never as text.
+;; ---------------------------------------------------------------------------
+
+(defdescribe
+  transient-dialog-test
+  (it
+    "reads a masked credential inline and submits it without echoing it"
+    (let
+      [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+       (virtual-screen)
+
+       spec
+       {:title "Sign in"
+        :groups [{:title "Credential"
+                  :items [{:key "k"
+                           :type :option
+                           :id :api-key
+                           :label "API key"
+                           :prompt "API key:"
+                           :mask \*
+                           :secret? true}]}
+                 {:title "Authenticate"
+                  :items [{:key "a" :type :action :id :submit :label "Sign in with this key"}]}]}]
+
+      (doseq [c [\k \s \k \- \1]]
+        (.addInput terminal (transient-key c)))
+      (.addInput terminal (KeyStroke. KeyType/Enter))
+      (.addInput terminal (transient-key \a))
+      (let
+        [ret
+         (dlg/transient-dialog! screen "Z.AI Authentication" ["Paste your key."] spec)
+
+         text
+         (str/join "\n" (map :text (painted-rows terminal)))]
+
+        (expect (= :submit (:action ret)))
+        (expect (= "sk-1" (get-in ret [:options :api-key])))
+        ;; The provider's guidance is still on screen above the popup.
+        (expect (str/includes? text "Paste your key."))
+        (expect (str/includes? text "Sign in with this key"))
+        ;; The credential is dots, and the raw key is nowhere on the screen.
+        (expect (str/includes? text "••••••"))
+        (expect (not (str/includes? text "sk-1"))))))
+  (it "Esc backs out of the popup without a value"
+      (let
+        [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+         (virtual-screen)
+
+         spec
+         {:title "Sign in"
+          :groups [{:title "Authenticate"
+                    :items [{:key "a" :type :action :id :submit :label "Sign in"}]}]}]
+
+        (.addInput terminal (transient-key :esc))
+        (expect (nil? (dlg/transient-dialog! screen "Auth" ["Guidance."] spec))))))

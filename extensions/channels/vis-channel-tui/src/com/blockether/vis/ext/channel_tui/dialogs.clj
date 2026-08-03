@@ -794,16 +794,6 @@
       :inner-w inner-w
       :inner-h (- box-h 2)})))
 
-(def vis-logo-lines
-  "ASCII rendition of the real vis emblem (logo.png) followed by the
-   wordmark. Drawn at the top of branded dialogs (the provider auth
-   gate). Centered + accent-colored by the caller; auto-dropped when
-   the terminal is too short."
-  ["              .." "           ...  ..." "      .:-----:  :-----:." "   .-=-:.  .::--::.  .:-=-."
-   "  -=-.   .--*###-.--.   .-=-" " -+:     :-*%#%%***-:     :+-" "  :=-.   .-+#*++*%+-:   .-=-"
-   "    :==-...:-=+++-:...-==:" "   ....:----..::..----:...." "     .:.   :=-..-=:   .:."
-   "             -===." "" "v i s"])
-
 (defn draw-flat-dialog-chrome!
   "Flat variant of `draw-dialog-chrome!`: no drop shadow, no accent title
    stripe, no separators - one thin-bordered rect on the dialog background
@@ -1539,9 +1529,8 @@
   "Show a text input dialog. Returns string or nil on Esc.
    Options: :mask char (e.g. \\* for passwords), :initial string,
    :body string-or-lines rendered above the input label,
-   :logo lines drawn centered in the accent color above the body,
    :flat? true selects the minimal inline-border chrome."
-  [^TerminalScreen screen title label & {:keys [mask initial body logo flat?] :or {initial ""}}]
+  [^TerminalScreen screen title label & {:keys [mask initial body flat?] :or {initial ""}}]
   (let
     [text
      (atom (vec initial))
@@ -1570,9 +1559,9 @@
          g
          (.newTextGraphics screen)
 
-         ;; Content: optional logo + body rows + label row + spacer + 3-row bordered input box.
-         ;; Pre-estimate the content height (at the default width) so the box
-         ;; adapts to a plain prompt; a logo keeps the spacious footprint (nil).
+         ;; Content: body rows + label row + spacer + 3-row bordered input box.
+         ;; Pre-estimate the content height (at the default width) so the box is
+         ;; sized to the prompt it actually holds.
          est-w
          (max 1 (- (default-content-width cols) 2))
 
@@ -1583,7 +1572,7 @@
               vec)
 
          req-h
-         (when-not (seq logo) (+ 4 (if (seq est-body) 1 0) (count est-body)))
+         (+ 4 (if (seq est-body) 1 0) (count est-body))
 
          bounds
          (if flat?
@@ -1611,18 +1600,8 @@
          body-gap
          (if (seq wrapped-body) 1 0)
 
-         full-h
-         (long (:content-h (dialog-layout bounds)))
-
-         ;; Drop the logo before clipping the body when the terminal is short.
-         logo-lines
-         (if (and (seq logo) (<= (+ 5 body-gap (count logo)) full-h)) (mapv str logo) [])
-
-         logo-block
-         (if (seq logo-lines) (inc (count logo-lines)) 0)
-
          content-count
-         (+ 4 body-gap logo-block (count wrapped-body))
+         (+ 4 body-gap (count wrapped-body))
 
          {:keys [content-top content-h hint-row]}
          (dialog-layout bounds content-count)
@@ -1634,7 +1613,7 @@
          (long content-h)
 
          max-body-lines
-         (max 0 (- content-h 4 body-gap logo-block))
+         (max 0 (- content-h 4 body-gap))
 
          visible-body
          (if (<= (count wrapped-body) max-body-lines)
@@ -1642,7 +1621,7 @@
            (conj (vec (take (max 0 (dec max-body-lines)) wrapped-body)) "..."))
 
          body-top
-         (+ content-top logo-block)
+         content-top
 
          label-row
          (+ body-top (count visible-body) body-gap)
@@ -1659,18 +1638,6 @@
          cursor-pos
          (draw-text-input-field! g (inc left) input-row inner-w display @cursor)]
 
-        (when (seq logo-lines)
-          ;; Brand accent for the `v i s` emblem — visible on every theme's
-          ;; dialog body (indigo on light, sky on dark). Matches show-welcome!.
-          (p/set-colors! g t/header-active-tab-accent t/dialog-bg)
-          (p/enable! g p/BOLD)
-          (doseq [[idx line] (map-indexed vector logo-lines)]
-            (let
-              [row (+ content-top (long idx))
-               lx (+ left 1 (max 0 (quot (- inner-w (p/display-width line)) 2)))]
-
-              (p/put-str! g lx row (ellipsize line text-w))))
-          (p/clear-styles! g))
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (doseq [[idx line] (map-indexed vector visible-body)]
           (let [row (+ body-top (long idx))]
@@ -2053,7 +2020,7 @@
                                 (recur))
             (recur)))))))
 
-(defn- magit-mini-read!
+(defn magit-mini-read!
   "Inline editable minibuffer painted over the magit hint-bar row:
    `<label> <text>` with a live cursor. Enter submits the trimmed string (may
    be empty), Esc returns nil. Opts: :initial (seed text), :mask (echo char)."
@@ -2240,9 +2207,19 @@
 (defn transient-item-arg
   "PURE: the trailing git-argument cell magit shows for a FLAG: `(--no-verify)` for
    a switch, `(%topic=fix)` for an option carrying `value`. nil for actions (a
-   command contributes no argument) and for flags that name none."
-  [{:keys [type arg]} value]
-  (let [v (when (and value (not (str/blank? (str value)))) (str value))]
+   command contributes no argument) and for flags that name none.
+
+   A `:secret? true` option NEVER renders what it holds: an armed API key shows
+   as `(••••••)`, so a credential can be carried by a transient without being
+   echoed onto the screen or into a screenshot."
+  [{:keys [type arg secret?]} value]
+  (let
+    [raw
+     (when (and value (not (str/blank? (str value)))) (str value))
+
+     v
+     (when raw (if secret? "••••••" raw))]
+
     (cond (= :action type) nil
           (and arg (= :option type)) (str "(" arg v ")")
           arg (str "(" arg ")")
@@ -2507,6 +2484,100 @@
                  :action
                  {:action (:id (:item r)) :switches (:switches state) :options (:options state)}))
              (recur state))))))))
+
+(defn transient-dialog!
+  "Host ONE magit transient in its OWN modal — the popup for flows that have no
+   status buffer to sit in (provider authentication). `body` (a string or lines)
+   is the caller's guidance, painted once at the top of the content area; the
+   transient owns every row under it and its hint bar lands on the dialog's own
+   hint row. The box is sized to what it actually holds, so a two-line prompt
+   opens a small dialog instead of a half-screen one.
+
+   OPTION items are read INLINE on that hint row (`magit-mini-read!`), honouring
+   the item's `:prompt` (default `<label>:`) and `:mask` (`\\*` for a credential);
+   mark such an item `:secret? true` and its value renders as dots, never as
+   text. `spec` may carry a `:title` for the popup itself when the frame's title
+   would read redundantly.
+
+   Returns `magit-transient!`'s `{:action :switches :options}`, or nil on Esc."
+  [^TerminalScreen screen title body spec]
+  (let
+    [size
+     (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+
+     cols
+     (.getColumns size)
+
+     rows
+     (.getRows size)
+
+     g
+     (.newTextGraphics screen)
+
+     est-w
+     (max 1 (- (default-content-width cols) 2))
+
+     wrapped
+     (->> (text-input-body-lines body)
+          (mapcat (fn [line]
+                    (if (str/blank? line) [""] (render/wrap-text line est-w))))
+          vec)
+
+     ;; The popup's own footprint: a leading blank, every group as header +
+     ;; items + a trailing blank (the last one dropped), plus its bold title.
+     popup-h
+     (reduce + 2 (map #(+ 2 (count (:items %))) (:groups spec)))
+
+     body-gap
+     (if (seq wrapped) 1 0)
+
+     content-count
+     (+ (count wrapped) (long body-gap) (long popup-h))
+
+     bounds
+     (draw-dialog-chrome! g cols rows title content-count)
+
+     {:keys [left inner-w]}
+     bounds
+
+     left
+     (long left)
+
+     inner-w
+     (long inner-w)
+
+     text-w
+     (max 1 (- inner-w 2))
+
+     {:keys [content-top hint-row]}
+     (dialog-layout bounds content-count)
+
+     content-top
+     (long content-top)]
+
+    (p/set-colors! g t/dialog-fg t/dialog-bg)
+    (doseq [[idx line] (map-indexed vector wrapped)]
+      (let [row (+ content-top (long idx))]
+        (p/fill-rect! g (inc left) row inner-w 1)
+        (p/put-str! g (+ left 2) row (ellipsize line text-w))))
+    (magit-transient! screen
+                      g
+                      left
+                      inner-w
+                      hint-row
+                      text-w
+                      (or (:title spec) title)
+                      spec
+                      (fn [{:keys [label prompt mask]} current]
+                        (magit-mini-read! screen
+                                          g
+                                          left
+                                          inner-w
+                                          hint-row
+                                          text-w
+                                          (or prompt (str label ":"))
+                                          {:initial current :mask mask}))
+                      {:boxed? true :min-row (+ content-top (count wrapped) (long body-gap))})))
 
 (defn- magit-push-flow!
   "Magit-style push transient (`magit-transient!`). SWITCHES (all optional):

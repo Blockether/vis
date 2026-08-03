@@ -1112,6 +1112,41 @@
             (= picked ::prev-page) (recur entries (dec page))
             :else picked))))
 
+(defn api-key-transient-spec
+  "PURE: the magit transient an API-key sign-in runs. `k` reads the key INLINE on
+   the dialog's hint row (echoed as `*`, and the armed value renders as dots, so
+   the credential never lands on screen), `a` submits it to the gateway, Esc
+   cancels. No cursor to move, no full-screen prompt: the provider's own guidance
+   stays visible above the popup."
+  []
+  {:title "Sign in"
+   :groups [{:title "Credential"
+             :items [{:key "k"
+                      :type :option
+                      :id :api-key
+                      :label "API key"
+                      :prompt "API key:"
+                      :mask \*
+                      :secret? true}]}
+            {:title "Authenticate"
+             :items [{:key "a" :type :action :id :submit :label "Sign in with this key"}]}]})
+
+(defn- read-api-key!
+  "Run `api-key-transient-spec` until a non-blank key is submitted (`k`, then `a`)
+   or the user backs out with Esc. Submitting nothing simply re-arms the popup.
+   Returns the key, or nil on cancel."
+  [^TerminalScreen screen title body]
+  (loop []
+
+    (let
+      [{:keys [action options]} (dlg/transient-dialog! screen title body (api-key-transient-spec))]
+      (when (= :submit action)
+        (or (some-> (:api-key options)
+                    str
+                    str/trim
+                    not-empty)
+            (recur))))))
+
 (defn- gateway-api-key-login!
   "Authenticate a plain API-key provider THROUGH THE GATEWAY.
 
@@ -1151,13 +1186,7 @@
               nil)
           (let
             [raw
-             (dlg/text-input-dialog! screen
-                                     label
-                                     "API Key:"
-                                     :mask \*
-                                     :flat? true
-                                     :logo dlg/vis-logo-lines
-                                     :body body)
+             (read-api-key! screen label body)
 
              api-key
              (some-> raw
