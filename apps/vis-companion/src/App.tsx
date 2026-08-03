@@ -48,6 +48,7 @@ import {
   onPushTap,
   pushPermission,
 } from './lib/push';
+import { syncPushRegistrations } from './lib/notify';
 
 type Tab = 'sessions' | 'connect';
 
@@ -623,27 +624,53 @@ export function App() {
   }, [activeUrl, activeToken, activePinned, activeLabel, knownAltsKey, recoveryNonce, refresh]);
 
 
-  // Native push: keep this device's token fresh with the active gateway, and
-  // reopen the session a tapped alert came from. Registration only refreshes a
-  // permission the user ALREADY granted (in Settings ▸ Notifications) — the app
-  // never prompts on launch, and the web build no-ops.
+  // Native push is a PER-GATEWAY choice, so the sweep is per gateway: every
+  // paired machine is brought in line with ITS OWN switch (that gateway's
+  // settings ▸ Notifications), not just the one the app happens to have open.
+  // Re-asserting both directions is what keeps the choice true over time — the
+  // OS rotates this device's token, and a "stop" made while a machine was
+  // unreachable has to land eventually. Registration only refreshes a permission
+  // the user ALREADY granted — the app never prompts on launch, and the web
+  // build no-ops.
+  const pairedKey = conns.map((c) => `${c.url}\u0000${c.token ?? ''}`).join('\n');
+  const notifyTargets = useMemo<GatewayConn[]>(
+    () =>
+      pairedKey
+        .split('\n')
+        .filter(Boolean)
+        .map((row) => {
+          const [url, token] = row.split('\u0000');
+          return { url, token: token || undefined };
+        }),
+    [pairedKey],
+  );
   useEffect(() => {
-    if (!client || !isPushSupported()) return;
+    if (notifyTargets.length === 0 || !isPushSupported()) return;
     let cancelled = false;
     void (async () => {
       if ((await pushPermission()) !== 'granted') return;
+      let token: string;
       try {
-        const token = await acquirePushToken();
-        if (!cancelled) await client.registerDevice(deviceRegistration(token));
+        token = await acquirePushToken();
       } catch {
-        // A gateway that cannot push, or an OS that withheld the token, is not
-        // a reason to degrade the session UI.
+        // An OS that withheld the token is not a reason to degrade the session UI.
+        return;
       }
+      if (cancelled) return;
+      await syncPushRegistrations(
+        notifyTargets,
+        token,
+        {
+          register: (conn, tok) => new GatewayClient(conn).registerDevice(deviceRegistration(tok)),
+          unregister: (conn, tok) => new GatewayClient(conn).unregisterDevice(tok),
+        },
+        () => cancelled,
+      );
     })();
     return () => {
       cancelled = true;
     };
-  }, [client]);
+  }, [notifyTargets]);
 
   useEffect(() => {
     void clearDeliveredPushes();

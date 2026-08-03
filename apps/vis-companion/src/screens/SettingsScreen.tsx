@@ -26,10 +26,12 @@ import {
 import { applyTheme, dedupeThemes, resolveLocalTheme } from '../lib/theme';
 import {
   DEFAULT_SESSION_PAGE_SIZE,
+  getGatewayNotify,
   getSessionsPerPage,
   getThemePalette,
   getThemePref,
   loadConnections,
+  setGatewayNotify,
   setSessionsPerPage,
   setThemePalette,
   setThemePref,
@@ -303,7 +305,9 @@ export function GatewaySettingsDialog({
 
           {!unreachable && !unauthorized && <ProvidersPanel client={client} />}
 
-          {!unreachable && !unauthorized && <NotificationsPanel client={client} />}
+          {!unreachable && !unauthorized && (
+            <NotificationsPanel client={client} gateway={gateway} />
+          )}
 
           {!unreachable && !unauthorized && <McpServersPanel client={client} />}
 
@@ -1316,7 +1320,13 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
  * The token itself never round-trips through the UI — the gateway masks every
  * token it stores, and the app matches its own row by computing the same mask.
  */
-function NotificationsPanel({ client }: { client: GatewayClient }) {
+function NotificationsPanel({
+  client,
+  gateway,
+}: {
+  client: GatewayClient;
+  gateway: GatewayConn;
+}) {
   const [push, setPush] = useState<PushStatus | null>(null);
   const [devices, setDevices] = useState<PushDevice[] | null>(null);
   const [perm, setPerm] = useState<PushPermission>('unsupported');
@@ -1327,15 +1337,24 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
   // user can act on — it is a missing capability upstream — so the whole panel
   // (and every button in it) disappears instead of offering calls that 404.
   const [unsupported, setUnsupported] = useState(false);
+  // The switch itself, remembered per gateway: a machine you silenced stays
+  // silenced across relaunches, and a machine you want stays registered even
+  // while another gateway is the one you have open.
+  const [notify, setNotify] = useState(true);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
       try {
-        const [state, permission] = await Promise.all([client.devices(signal), pushPermission()]);
+        const [state, permission, wanted] = await Promise.all([
+          client.devices(signal),
+          pushPermission(),
+          getGatewayNotify(gateway.url),
+        ]);
         if (signal?.aborted) return;
         setPush(state.push);
         setDevices(state.devices);
         setPerm(permission);
+        setNotify(wanted);
         setErr(null);
       } catch (e) {
         if (signal?.aborted) return;
@@ -1349,7 +1368,7 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
         setErr(e instanceof GatewayError ? e.message : String(e));
       }
     },
-    [client],
+    [client, gateway.url],
   );
 
   useEffect(() => {
@@ -1362,6 +1381,9 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
   const mask = token ? maskToken(token) : null;
   const mine = mask ? (devices ?? []).find((d) => d.token_preview === mask) : undefined;
   const registered = Boolean(mine);
+  // Both halves have to agree: this machine holds the token AND this device
+  // still wants alerts from it.
+  const notifying = registered && notify;
   const supported = isPushSupported();
 
   const enable = useCallback(async () => {
@@ -1371,14 +1393,16 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
     try {
       const fresh = await acquirePushToken();
       await client.registerDevice(deviceRegistration(fresh));
-      setNote('This device will be notified when a turn finishes.');
+      await setGatewayNotify(gateway.url, true);
+      setNotify(true);
+      setNote('This device will be notified when a turn finishes on this machine.');
       await load();
     } catch (e) {
       setErr(e instanceof GatewayError ? e.message : (e as Error).message);
     } finally {
       setBusy(null);
     }
-  }, [client, load]);
+  }, [client, gateway.url, load]);
 
   const disable = useCallback(async () => {
     const current = cachedPushToken();
@@ -1388,14 +1412,16 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
     setNote(null);
     try {
       await client.unregisterDevice(current);
-      setNote('This device will no longer be notified.');
+      await setGatewayNotify(gateway.url, false);
+      setNotify(false);
+      setNote('This device will no longer be notified by this machine.');
       await load();
     } catch (e) {
       setErr(e instanceof GatewayError ? e.message : (e as Error).message);
     } finally {
       setBusy(null);
     }
-  }, [client, load]);
+  }, [client, gateway.url, load]);
 
   // Push has two independent halves; this device only cares about its own. An
   // iOS-only gateway is "available" to an iPhone and "not configured" to a
@@ -1410,7 +1436,7 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
   return (
     <SettingsPanel
       title="Notifications"
-      description="Get a native alert on this device whenever a turn finishes or fails."
+      description="Alerts from THIS machine only — every paired machine has its own switch."
       meta={
         push
           ? available
@@ -1443,23 +1469,23 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
         )}
 
         <div className="flex flex-wrap gap-2">
-          {supported && !registered && (
+          {supported && !notifying && (
             <Button
               className="min-h-9 flex-1 px-3 font-mono text-meta"
               disabled={busy !== null || !available}
               onClick={() => void enable()}
             >
-              {busy === 'enable' ? 'Registering…' : 'Notify this device'}
+              {busy === 'enable' ? 'Registering…' : 'Notify me from this machine'}
             </Button>
           )}
-          {supported && registered && (
+          {supported && notifying && (
             <Button
               variant="danger"
               className="min-h-9 flex-1 px-3 font-mono text-meta"
               disabled={busy !== null}
               onClick={() => void disable()}
             >
-              {busy === 'disable' ? 'Removing…' : 'Stop notifying this device'}
+              {busy === 'disable' ? 'Removing…' : 'Stop notifying me from this machine'}
             </Button>
           )}
         </div>

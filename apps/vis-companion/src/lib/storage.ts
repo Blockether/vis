@@ -87,6 +87,7 @@ export async function removeConnection(url: string): Promise<GatewayConn[]> {
   await saveConnections(conns);
   if ((await getActiveUrl()) === url) await setActiveUrl(conns[0]?.url ?? null);
   if ((await getPrimaryUrl()) === url) await setPrimaryUrl(conns[0]?.url ?? null);
+  await forgetGatewayNotify(url);
   return conns;
 }
 
@@ -122,6 +123,7 @@ export async function switchConnectionUrl(
     delete store[from];
     await setRaw(SUBSCRIPTIONS_KEY, JSON.stringify(store));
   }
+  await moveGatewayNotify(from, to);
   return rest;
 }
 
@@ -259,4 +261,70 @@ export async function rememberSubscribedSession(gatewayUrl: string, sid: string)
   store[gatewayUrl] = sessions;
   await setRaw(SUBSCRIPTIONS_KEY, JSON.stringify(store));
   return sessions;
+}
+
+// ── Notifications, per gateway ──────────────────────────────────────
+// Native push is a decision about ONE machine, not about the app: the phone can
+// want a buzz when the work laptop finishes a turn and want silence from the
+// build box it is only watching. So the switch lives in that gateway's settings
+// and is stored per gateway URL, exactly like the subscribed-session list.
+const NOTIFY_KEY = 'vis.gatewayNotifications';
+
+/** Only an EXPLICIT entry is stored; absence means "not decided yet". */
+type NotifyStore = Record<string, boolean>;
+
+async function loadNotifyStore(): Promise<NotifyStore> {
+  const raw = await getRaw(NOTIFY_KEY);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const store: NotifyStore = {};
+    for (const [url, on] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof on === 'boolean') store[url] = on;
+    }
+    return store;
+  } catch {
+    return {};
+  }
+}
+
+async function saveNotifyStore(store: NotifyStore): Promise<void> {
+  await setRaw(NOTIFY_KEY, JSON.stringify(store));
+}
+
+/**
+ * Whether this device wants native pushes FROM ONE gateway.
+ *
+ * Defaults to on: a machine you paired is a machine you want to hear from, and
+ * nothing is delivered anyway until the OS permission exists. Turning the switch
+ * off in that gateway's settings is the only thing that silences it — and it
+ * stays off, including across relaunches, which is what makes the choice
+ * per gateway instead of "whichever gateway the app happened to open".
+ */
+export async function getGatewayNotify(url: string): Promise<boolean> {
+  return (await loadNotifyStore())[url] ?? true;
+}
+
+export async function setGatewayNotify(url: string, on: boolean): Promise<void> {
+  const store = await loadNotifyStore();
+  store[url] = on;
+  await saveNotifyStore(store);
+}
+
+/** The answer belongs to the machine, so it follows the machine to a new address. */
+async function moveGatewayNotify(from: string, to: string): Promise<void> {
+  const store = await loadNotifyStore();
+  if (!(from in store)) return;
+  store[to] = store[from];
+  delete store[from];
+  await saveNotifyStore(store);
+}
+
+/** Forgetting a gateway forgets its answer; re-pairing starts from the default. */
+async function forgetGatewayNotify(url: string): Promise<void> {
+  const store = await loadNotifyStore();
+  if (!(url in store)) return;
+  delete store[url];
+  await saveNotifyStore(store);
 }
