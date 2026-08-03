@@ -105,7 +105,7 @@ jobs:
         if: steps.guard.outputs.is_configured == 'true' && vars.RELAY_HEALTHCHECK_URL != ''
         run: |
           for attempt in 1 2 3 4 5; do
-            if curl -sS --fail --max-time 10 "${{ vars.RELAY_HEALTHCHECK_URL }}/healthz" -o /tmp/healthz.json; then
+            if curl -sS --fail --max-time 10 "${{ vars.RELAY_HEALTHCHECK_URL }}" -o /tmp/healthz.json; then
               cat /tmp/healthz.json
               node -e '
                 const health = require("/tmp/healthz.json");
