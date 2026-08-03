@@ -175,7 +175,11 @@
 (defn- raster->rgba
   "A raster's pixels as straight RGBA8 rows -- the shape the cdylib takes for both
    drawing and GIF frames. A flat scan over the backing `int[]`: drawing converts
-   the WHOLE canvas, so a per-pixel `getRGB`/`setRGB` here is felt as lag."
+   the WHOLE canvas, so a per-pixel `getRGB`/`setRGB` here is felt as lag.
+
+   `aset` on a `^bytes` local, NEVER `aset-byte`: the latter is `java.lang.
+   reflect.Array/setByte`, and four reflective stores per pixel cost 65 ms on a
+   800x600 canvas versus 1.8 ms for the inlined array store."
   ^bytes [^Raster r]
   (let
     [^ints px
@@ -195,10 +199,10 @@
         [p (bit-or amask (bit-and 0xffffffff (aget px i)))
          o (* 4 i)]
 
-        (aset-byte b o (unchecked-byte (ch p 16)))
-        (aset-byte b (+ o 1) (unchecked-byte (ch p 8)))
-        (aset-byte b (+ o 2) (unchecked-byte (ch p 0)))
-        (aset-byte b (+ o 3) (unchecked-byte (ch p 24)))))
+        (aset b o (unchecked-byte (ch p 16)))
+        (aset b (+ o 1) (unchecked-byte (ch p 8)))
+        (aset b (+ o 2) (unchecked-byte (ch p 0)))
+        (aset b (+ o 3) (unchecked-byte (ch p 24)))))
     b))
 
 (defn- ->img
@@ -207,7 +211,10 @@
   (im/from-pixels (raster->rgba r) (.getWidth r) (.getHeight r)))
 
 (defn- rgba->px!
-  "Overwrite a raster's pixels from straight RGBA8 rows, IN PLACE, and return it."
+  "Overwrite a raster's pixels from straight RGBA8 rows, IN PLACE, and return it.
+
+   The packing is spelled out rather than delegated to `argb`, whose arguments
+   are boxed: this runs once per pixel on every read of a drawn canvas."
   ^Raster [^Raster r ^bytes b]
   (let
     [^ints px
@@ -220,10 +227,10 @@
       (let [o (* 4 i)]
         (aset px
               i
-              (unchecked-int (argb (bit-and (aget b (+ o 3)) 0xff)
-                                   (bit-and (aget b o) 0xff)
-                                   (bit-and (aget b (+ o 1)) 0xff)
-                                   (bit-and (aget b (+ o 2)) 0xff))))))
+              (unchecked-int (bit-or (bit-shift-left (bit-and (aget b (+ o 3)) 0xff) 24)
+                                     (bit-shift-left (bit-and (aget b o) 0xff) 16)
+                                     (bit-shift-left (bit-and (aget b (+ o 1)) 0xff) 8)
+                                     (bit-and (aget b (+ o 2)) 0xff))))))
     r))
 
 (defn- ->raster
@@ -1759,156 +1766,228 @@
 
       body)))
 
+(defn- draw-ops
+  "The vector-draw ops ONE PIL draw call expands to. `fc`/`oc` are the resolved
+   `#rrggbbaa` fill/outline strings (or nil); `opts` carries the rest."
+  [op pts fc oc opts]
+  (let
+    [width
+     (int (or (get opts "width") 1))
+
+     stroke
+     (fn [c]
+       {:stroke c :stroke-width (max 1 width) :cap :butt :join :miter})]
+
+    (case (str op)
+      "point"
+      (when fc
+        (mapv (fn [[x y]]
+                {:op :rect :x x :y y :w 1 :h 1 :fill fc})
+              (partition 2 pts)))
+
+      "line"
+      (when fc
+        ;; +0.5 puts an odd-width stroke on the pixel CENTRE line, so a
+        ;; horizontal/vertical 1px line lands crisp instead of half-covering
+        ;; two rows the way a boundary-aligned path would.
+        (let [o (if (odd? (max 1 width)) 0.5 0.0)]
+          [(merge {:op :polyline
+                   :points (mapv (fn [[x y]]
+                                   [(+ (double x) o) (+ (double y) o)])
+                                 (partition 2 pts))}
+                  (stroke fc))]))
+
+      "rectangle"
+      (let
+        [[x0 y0 x1 y1]
+         pts
+
+         rx
+         (min (double x0) (double x1))
+
+         ry
+         (min (double y0) (double y1))
+
+         rw
+         (Math/abs (- (double x1) (double x0)))
+
+         rh
+         (Math/abs (- (double y1) (double y0)))]
+
+        (cond-> []
+          fc
+          (conj {:op :rect :x rx :y ry :w (inc rw) :h (inc rh) :fill fc})
+
+          oc
+          (conj (merge {:op :rect :x (+ rx 0.5) :y (+ ry 0.5) :w (max 1.0 rw) :h (max 1.0 rh)}
+                       (stroke oc)))))
+
+      "ellipse"
+      (let
+        [[x0 y0 x1 y1]
+         pts
+
+         w
+         (- (double x1) (double x0))
+
+         hh
+         (- (double y1) (double y0))]
+
+        (cond-> []
+          fc
+          (conj {:op :ellipse
+                 :cx (+ (double x0) (/ (inc w) 2.0))
+                 :cy (+ (double y0) (/ (inc hh) 2.0))
+                 :rx (/ (inc w) 2.0)
+                 :ry (/ (inc hh) 2.0)
+                 :fill fc})
+
+          oc
+          (conj (merge {:op :ellipse
+                        :cx (+ (double x0) (/ w 2.0))
+                        :cy (+ (double y0) (/ hh 2.0))
+                        :rx (max 0.5 (/ w 2.0))
+                        :ry (max 0.5 (/ hh 2.0))}
+                       (stroke oc)))))
+
+      "polygon"
+      (let [poly (mapv vec (partition 2 pts))]
+        (cond-> []
+          fc
+          (conj {:op :polygon :points poly :close true :fill fc})
+
+          oc
+          (conj (merge {:op :polygon :points poly :close true} (stroke oc)))))
+
+      ("arc" "chord" "pieslice")
+      (let
+        [[x0 y0 x1 y1]
+         pts
+
+         d
+         (arc-path (str op)
+                   x0
+                   y0
+                   x1
+                   y1
+                   (double (or (get opts "start") 0))
+                   (double (or (get opts "end") 0)))
+
+         line-c
+         (or oc (when (= (str op) "arc") fc))]
+
+        (cond-> []
+          (and fc (not= (str op) "arc"))
+          (conj {:op :path :d d :fill fc})
+
+          line-c
+          (conj (merge {:op :path :d d} (stroke line-c)))))
+
+      "text"
+      (let
+        [[x y]
+         pts
+
+         size
+         (double (or (get opts "font_size") 12))]
+
+        [{:op :text
+          :text (str (get opts "text"))
+          :x x
+          :y (+ (double y) (Math/round (* 0.8 size)))
+          :size size
+          :family sans-family
+          :fill (or fc (->hex (->argb [0 0 0] "RGB")))}])
+
+      nil)))
+
 (defn- op-draw
   [h op xy opts]
   (let
-    [pts
-     (mapv double xy)
-
-     fill
+    [fill
      (get opts "fill")
 
      outline
      (get opts "outline")
 
-     width
-     (int (or (get opts "width") 1))
-
-     fc
-     (when (some? fill) (->hex (->argb fill "RGB")))
-
-     oc
-     (when (some? outline) (->hex (->argb outline "RGB")))
-
-     stroke
-     (fn [c]
-       {:stroke c :stroke-width (max 1 width) :cap :butt :join :miter})
-
      ops
-     (case (str op)
-       "point"
-       (when fc
-         (mapv (fn [[x y]]
-                 {:op :rect :x x :y y :w 1 :h 1 :fill fc})
-               (partition 2 pts)))
-
-       "line"
-       (when fc
-         ;; +0.5 puts an odd-width stroke on the pixel CENTRE line, so a
-         ;; horizontal/vertical 1px line lands crisp instead of half-covering
-         ;; two rows the way a boundary-aligned path would.
-         (let [o (if (odd? (max 1 width)) 0.5 0.0)]
-           [(merge {:op :polyline
-                    :points (mapv (fn [[x y]]
-                                    [(+ (double x) o) (+ (double y) o)])
-                                  (partition 2 pts))}
-                   (stroke fc))]))
-
-       "rectangle"
-       (let
-         [[x0 y0 x1 y1]
-          pts
-
-          rx
-          (min (double x0) (double x1))
-
-          ry
-          (min (double y0) (double y1))
-
-          rw
-          (Math/abs (- (double x1) (double x0)))
-
-          rh
-          (Math/abs (- (double y1) (double y0)))]
-
-         (cond-> []
-           fc
-           (conj {:op :rect :x rx :y ry :w (inc rw) :h (inc rh) :fill fc})
-
-           oc
-           (conj (merge {:op :rect :x (+ rx 0.5) :y (+ ry 0.5) :w (max 1.0 rw) :h (max 1.0 rh)}
-                        (stroke oc)))))
-
-       "ellipse"
-       (let
-         [[x0 y0 x1 y1]
-          pts
-
-          w
-          (- (double x1) (double x0))
-
-          hh
-          (- (double y1) (double y0))]
-
-         (cond-> []
-           fc
-           (conj {:op :ellipse
-                  :cx (+ (double x0) (/ (inc w) 2.0))
-                  :cy (+ (double y0) (/ (inc hh) 2.0))
-                  :rx (/ (inc w) 2.0)
-                  :ry (/ (inc hh) 2.0)
-                  :fill fc})
-
-           oc
-           (conj (merge {:op :ellipse
-                         :cx (+ (double x0) (/ w 2.0))
-                         :cy (+ (double y0) (/ hh 2.0))
-                         :rx (max 0.5 (/ w 2.0))
-                         :ry (max 0.5 (/ hh 2.0))}
-                        (stroke oc)))))
-
-       "polygon"
-       (let [poly (mapv vec (partition 2 pts))]
-         (cond-> []
-           fc
-           (conj {:op :polygon :points poly :close true :fill fc})
-
-           oc
-           (conj (merge {:op :polygon :points poly :close true} (stroke oc)))))
-
-       ("arc" "chord" "pieslice")
-       (let
-         [[x0 y0 x1 y1]
-          pts
-
-          d
-          (arc-path (str op)
-                    x0
-                    y0
-                    x1
-                    y1
-                    (double (or (get opts "start") 0))
-                    (double (or (get opts "end") 0)))
-
-          line-c
-          (or oc (when (= (str op) "arc") fc))]
-
-         (cond-> []
-           (and fc (not= (str op) "arc"))
-           (conj {:op :path :d d :fill fc})
-
-           line-c
-           (conj (merge {:op :path :d d} (stroke line-c)))))
-
-       "text"
-       (let
-         [[x y]
-          pts
-
-          size
-          (double (or (get opts "font_size") 12))]
-
-         [{:op :text
-           :text (str (get opts "text"))
-           :x x
-           :y (+ (double y) (Math/round (* 0.8 size)))
-           :size size
-           :family sans-family
-           :fill (or fc (->hex (->argb [0 0 0] "RGB")))}])
-
-       nil)]
+     (draw-ops op
+               (mapv double xy)
+               (when (some? fill) (->hex (->argb fill "RGB")))
+               (when (some? outline) (->hex (->argb outline "RGB")))
+               opts)]
 
     (when (seq ops) (draw-into! h ops))
+    nil))
+
+(defn- read-draw-op
+  "Decode ONE op record of a flat draw batch starting at `i`: name, n-coords,
+   coords..., n-opts, then key/value pairs. Returns [next-index ops]."
+  [b ^long i]
+  (let
+    [nc
+     (long (nth b (inc i)))
+
+     c0
+     (+ i 2)
+
+     pts
+     (mapv #(double (nth b %)) (range c0 (+ c0 nc)))
+
+     ko
+     (+ c0 nc)
+
+     nkv
+     (long (nth b ko))
+
+     kv
+     (inc ko)
+
+     opts
+     (persistent! (reduce (fn [m p]
+                            (let [o (+ kv (* 2 (long p)))]
+                              (assoc! m (str (nth b o)) (nth b (inc o)))))
+                          (transient {})
+                          (range nkv)))
+
+     hex
+     (fn [k]
+       (when-let [v (get opts k)]
+         (->hex (long v))))]
+
+    [(+ kv (* 2 nkv)) (draw-ops (str (nth b i)) pts (hex "fill") (hex "outline") opts)]))
+
+(defn- op-draws
+  "Queue a whole BATCH of ImageDraw ops that the Python side buffered. Crossing
+   the bridge dominates a draw: a nested list+dict per op marshals in ~35 us,
+   while one flat scalar record costs ~1 us, so a run of draws crosses ONCE.
+   Layout, per handle: handle, n-ops, then each op as `read-draw-op` reads it,
+   with colours pre-packed as 0xAARRGGBB longs."
+  [batch]
+  (let
+    [b
+     (vec batch)
+
+     n
+     (count b)]
+
+    (loop [i 0]
+      (when (< i n)
+        (let
+          [h (long (nth b i))
+           nops (long (nth b (inc i)))
+           [j ops] (loop
+                     [j (+ i 2)
+                      k 0
+                      acc []]
+
+                     (if (< k nops)
+                       (let [[j2 more] (read-draw-op b j)]
+                         (recur (long j2) (inc k) (into acc more)))
+                       [j acc]))]
+
+          (when (seq ops) (draw-into! h ops))
+          (recur (long j)))))
     nil))
 
 (defn- op-textbbox
@@ -2002,6 +2081,8 @@
                          (pil-envelope #(op-merge mode hs)))
    "__vis_pil_draw__" (fn [h op xy opts]
                         (pil-envelope #(op-draw h op xy opts)))
+   "__vis_pil_draws__" (fn [batch]
+                         (pil-envelope #(op-draws batch)))
    "__vis_pil_textbbox__" (fn [text size]
                             (pil-envelope #(op-textbbox text size)))
    "__vis_pil_offset__" (fn [h dx dy]

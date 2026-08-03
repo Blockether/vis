@@ -596,4 +596,26 @@
           ;; 160 s for this loop. Even sharing ONE live image, a cdylib `draw` call per op
           ;; still cost ~1.4 ms (~3 s here) because the canvas round-trips through the
           ;; renderer per call. Queued as ONE batch, the whole run is a few milliseconds.
-          (expect (< ms 5000) (str "2000 draws took " (long ms) " ms"))))))
+          (expect (< ms 1000) (str "2000 draws took " (long ms) " ms")))))
+  (it "reading a drawn canvas does not pay a reflective store per pixel"
+      (with-python-context
+        (let
+          [t0
+           (System/nanoTime)
+
+           painted
+           (ev python-context
+               (str "from PIL import Image, ImageDraw\n"
+                    "im = Image.new('RGB',(800,600),(0,0,0))\n" "d = ImageDraw.Draw(im)\n"
+                    "for i in range(20):\n" "    d.rectangle([i,i,i+4,i+4], fill=(255,0,0))\n"
+                    "    im.getpixel((i+1,i+1))\n" "list(im.getpixel((1,1)))"))
+
+           ms
+           (/ (- (System/nanoTime) t0) 1e6)]
+
+          (expect (= [255 0 0] painted))
+          ;; Every read flushes the queue, so the 480k-pixel canvas is converted both
+          ;; ways per cycle. `aset-byte` is `java.lang.reflect.Array/setByte`: four
+          ;; reflective stores per pixel cost ~65 ms a flush, ~1.4 s for these cycles.
+          ;; The inlined array store does the same conversion in ~1.2 ms.
+          (expect (< ms 800) (str "20 draw/read cycles took " (long ms) " ms"))))))

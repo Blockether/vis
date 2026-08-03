@@ -15,6 +15,8 @@ def __vis_install_pil__():
     import sys, types, base64, math, struct
 
     def _H(name, *args):
+        if _draw_queue:
+            _flush_draws()
         fn = globals().get(name)
         if fn is None:
             raise OSError("vis: the PIL host backend is not bound in this sandbox")
@@ -44,6 +46,77 @@ def __vis_install_pil__():
             return list(x)
         except Exception:
             return x
+
+    # -- ImageDraw batching --------------------------------------------------
+    # Crossing to the host dominates a draw: marshalling ONE nested list+dict
+    # costs ~35 us, a flat scalar record ~1 us. So draw ops are QUEUED here as
+    # flat records -- name, n-coords, coords..., n-opts, key/value pairs, with
+    # colours pre-packed as 0xAARRGGBB -- and a whole run crosses as ONE call.
+    # `_H` flushes the queue first, so no other host call sees stale pixels.
+    _draw_queue = {}
+    _draw_queued = [0]
+    _MAX_QUEUED_DRAWS = 4096
+
+    def _flush_draws():
+        if not _draw_queue:
+            return
+        batch = []
+        for handle, entry in _draw_queue.items():
+            batch.append(handle)
+            batch.append(entry[0])
+            batch.extend(entry[1])
+        _draw_queue.clear()
+        _draw_queued[0] = 0
+        _H("__vis_pil_draws__", batch)
+
+    def _queue_draw(handle, record):
+        entry = _draw_queue.get(handle)
+        if entry is None:
+            entry = [0, []]
+            _draw_queue[handle] = entry
+        entry[0] += 1
+        entry[1].extend(record)
+        _draw_queued[0] += 1
+        if _draw_queued[0] >= _MAX_QUEUED_DRAWS:
+            _flush_draws()
+
+    _color_cache = {}
+
+    def _packcol(color):
+        # A PIL colour spec packed into ONE 0xAARRGGBB scalar, memoised: draw
+        # loops reuse a handful of colours, and packing here beats marshalling
+        # a list per op.
+        if color is None:
+            return None
+        try:
+            key = color if isinstance(color, (str, int)) else tuple(color)
+        except TypeError:
+            key = None
+        if key is not None:
+            packed = _color_cache.get(key)
+            if packed is not None:
+                return packed
+        if isinstance(color, str):
+            parts = [int(v) for v in _getrgb(color)]
+        elif isinstance(color, (list, tuple)):
+            parts = [int(v) for v in color]
+        else:
+            v = int(color)
+            parts = [v, v, v]
+        if len(parts) == 1:
+            parts = parts * 3
+        while len(parts) < 3:
+            parts.append(0)
+        alpha = parts[3] if len(parts) > 3 else 255
+        packed = (
+            ((alpha & 255) << 24)
+            | ((parts[0] & 255) << 16)
+            | ((parts[1] & 255) << 8)
+            | (parts[2] & 255)
+        )
+        if key is not None and len(_color_cache) < 1024:
+            _color_cache[key] = packed
+        return packed
 
     # -- resampling / transpose / mode constants -----------------------------
     NEAREST = 0
@@ -1171,14 +1244,21 @@ def __vis_install_pil__():
             self._im = im
             self.mode = im.mode
 
-        def _col(self, c):
-            if c is None:
-                return None
-            if isinstance(c, str):
-                return list(_getrgb(c))
-            if isinstance(c, (list, tuple)):
-                return [int(x) for x in c]
-            return int(c)
+        def _emit(self, name, xy, keys, values):
+            # ONE flat scalar record per op, appended to the shared draw queue.
+            record = [name]
+            points = self._flat(xy)
+            record.append(len(points))
+            record.extend(points)
+            tail = []
+            for i in range(len(keys)):
+                value = values[i]
+                if value is not None:
+                    tail.append(keys[i])
+                    tail.append(value)
+            record.append(len(tail) // 2)
+            record.extend(tail)
+            _queue_draw(self._im._handle, record)
 
         def _flat(self, xy):
             xy = list(xy)
@@ -1193,34 +1273,17 @@ def __vis_install_pil__():
             return out
 
         def point(self, xy, fill=None):
-            _H(
-                "__vis_pil_draw__",
-                self._im._handle,
-                "point",
-                self._flat(xy),
-                {"fill": self._col(fill)},
-            )
+            self._emit("point", xy, ("fill",), (_packcol(fill),))
 
         def line(self, xy, fill=None, width=1, joint=None):
-            _H(
-                "__vis_pil_draw__",
-                self._im._handle,
-                "line",
-                self._flat(xy),
-                {"fill": self._col(fill), "width": int(width)},
-            )
+            self._emit("line", xy, ("fill", "width"), (_packcol(fill), int(width)))
 
         def rectangle(self, xy, fill=None, outline=None, width=1):
-            _H(
-                "__vis_pil_draw__",
-                self._im._handle,
+            self._emit(
                 "rectangle",
-                self._flat(xy),
-                {
-                    "fill": self._col(fill),
-                    "outline": self._col(outline),
-                    "width": int(width),
-                },
+                xy,
+                ("fill", "outline", "width"),
+                (_packcol(fill), _packcol(outline), int(width)),
             )
 
         def rounded_rectangle(
@@ -1253,87 +1316,64 @@ def __vis_install_pil__():
                 self.arc((x1 - d, y1 - d, x1, y1), 0, 90, fill=outline, width=width)
 
         def ellipse(self, xy, fill=None, outline=None, width=1):
-            _H(
-                "__vis_pil_draw__",
-                self._im._handle,
+            self._emit(
                 "ellipse",
-                self._flat(xy),
-                {
-                    "fill": self._col(fill),
-                    "outline": self._col(outline),
-                    "width": int(width),
-                },
+                xy,
+                ("fill", "outline", "width"),
+                (_packcol(fill), _packcol(outline), int(width)),
             )
 
         def polygon(self, xy, fill=None, outline=None, width=1):
-            _H(
-                "__vis_pil_draw__",
-                self._im._handle,
+            self._emit(
                 "polygon",
-                self._flat(xy),
-                {
-                    "fill": self._col(fill),
-                    "outline": self._col(outline),
-                    "width": int(width),
-                },
+                xy,
+                ("fill", "outline", "width"),
+                (_packcol(fill), _packcol(outline), int(width)),
             )
 
         def arc(self, xy, start, end, fill=None, width=1):
-            _H(
-                "__vis_pil_draw__",
-                self._im._handle,
+            self._emit(
                 "arc",
-                self._flat(xy),
-                {
-                    "fill": self._col(fill),
-                    "start": float(start),
-                    "end": float(end),
-                    "width": int(width),
-                },
+                xy,
+                ("fill", "start", "end", "width"),
+                (_packcol(fill), float(start), float(end), int(width)),
             )
 
         def chord(self, xy, start, end, fill=None, outline=None, width=1):
-            _H(
-                "__vis_pil_draw__",
-                self._im._handle,
+            self._emit(
                 "chord",
-                self._flat(xy),
-                {
-                    "fill": self._col(fill),
-                    "outline": self._col(outline),
-                    "start": float(start),
-                    "end": float(end),
-                    "width": int(width),
-                },
+                xy,
+                ("fill", "outline", "start", "end", "width"),
+                (
+                    _packcol(fill),
+                    _packcol(outline),
+                    float(start),
+                    float(end),
+                    int(width),
+                ),
             )
 
         def pieslice(self, xy, start, end, fill=None, outline=None, width=1):
-            _H(
-                "__vis_pil_draw__",
-                self._im._handle,
+            self._emit(
                 "pieslice",
-                self._flat(xy),
-                {
-                    "fill": self._col(fill),
-                    "outline": self._col(outline),
-                    "start": float(start),
-                    "end": float(end),
-                    "width": int(width),
-                },
+                xy,
+                ("fill", "outline", "start", "end", "width"),
+                (
+                    _packcol(fill),
+                    _packcol(outline),
+                    float(start),
+                    float(end),
+                    int(width),
+                ),
             )
 
         def text(self, xy, text, fill=None, font=None, anchor=None, **kw):
             size = getattr(font, "size", 12) if font is not None else 12
-            _H(
-                "__vis_pil_draw__",
-                self._im._handle,
+            self._emit(
                 "text",
-                [float(xy[0]), float(xy[1])],
-                {
-                    "text": str(text),
-                    "fill": self._col(fill) if fill is not None else [0, 0, 0],
-                    "font_size": int(size),
-                },
+                xy,
+                ("fill", "font_size", "text"),
+                (_packcol(fill), int(size), str(text)),
             )
 
         def multiline_text(self, xy, text, fill=None, font=None, spacing=4, **kw):
