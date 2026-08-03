@@ -10,8 +10,11 @@
 #     even the paid macos-*-xlarge is 14 GB. The macOS asset can therefore ONLY
 #     come from an Apple-silicon machine like this one (or a self-hosted runner,
 #     which is the same machine wearing a CI hat).
-#   * On Apple silicon, linux-arm64 is a NATIVE docker build (no emulation), so
-#     this host can produce two of the three assets.
+#   * On Apple silicon, linux-arm64 is a NATIVE container build, and linux-x64
+#     is a ROSETTA-translated one. Measured here with a native-image hello
+#     world: 15.8 s on linux/arm64 vs 1 m 16 s on linux/amd64 — 4.8x, which is
+#     slow but still under the 86-130 min the free x64 runner takes when it
+#     does not OOM outright. So this ONE host can build ALL THREE assets.
 #
 # Usage:
 #   bin/release-native                          # every target this host can build
@@ -21,9 +24,15 @@
 #
 # Targets:
 #   macos-arm64  `clojure -T:build native` on this Mac  (>= 32 GB RAM)
-#   linux-arm64  docker/podman --target native-export --platform linux/arm64
-#   linux-x64    NOT built here. Under qemu the same analysis emulates for many
-#                hours and usually dies; that asset stays on CI:
+#   linux-arm64  container build --platform linux/arm64 (native on Apple silicon)
+#   linux-x64    container build --platform linux/amd64. Needs FAST emulation:
+#                a podman machine with Rosetta (`[machine] rosetta = true` in
+#                ~/.config/containers/containers.conf, applied at `machine init`)
+#                or Docker Desktop's "Use Rosetta for x86_64/amd64 emulation".
+#                qemu-user's TCG interpreter is another order of magnitude below
+#                that and the analysis dies before it finishes, so this script
+#                MEASURES the emulator and refuses the slow one instead of
+#                burning a night. CI stays the fallback:
 #                  gh workflow run native-release.yml -f tag=vX.Y.Z
 #
 # Assets land in the repo root as vis-agent-<os>-<arch>-community.tar.gz, exactly
@@ -55,15 +64,16 @@ host_os="$(uname -s)"
 host_arch="$(uname -m)"
 
 # What this host can actually build. Kept honest: an Intel Mac cannot produce the
-# arm64 assets, and no Mac produces linux-x64 without emulation.
+# arm64 assets, and a foreign-arch container target still has to prove its
+# emulator is Rosetta-fast before it is allowed to run (see build_linux).
 buildable=()
 case "$host_os/$host_arch" in
   Darwin/arm64)
-    buildable=(macos-arm64 linux-arm64) ;;
+    buildable=(macos-arm64 linux-arm64 linux-x64) ;;
   Linux/aarch64|Linux/arm64)
-    buildable=(linux-arm64) ;;
+    buildable=(linux-arm64 linux-x64) ;;
   Linux/x86_64)
-    buildable=(linux-x64) ;;
+    buildable=(linux-x64 linux-arm64) ;;
   *)
     die "no native release target for $host_os/$host_arch" ;;
 esac
@@ -119,10 +129,13 @@ build_macos_arm64() {
   built_asset="$asset"
 }
 
-# ── linux-arm64 (container build, native on Apple silicon) ───────────────────
+# ── linux targets (container build) ──────────────────────────────────────────
 # `docker` on this host may BE podman (podman ships a `docker` shim) and podman
 # has no `buildx` subcommand, so resolve the engine first and then speak its
-# dialect. `VIS_CONTAINER_CLI` forces one.
+# dialect. `VIS_CONTAINER_CLI` forces one; `VIS_CONTAINER_CONNECTION` selects a
+# non-default podman machine (`--connection`) or docker context (`--context`),
+# which is how this host builds in a VM sized for the builder JVM without
+# disturbing the small default machine everything else uses.
 container_engine() {
   local candidate
   for candidate in ${VIS_CONTAINER_CLI:+"$VIS_CONTAINER_CLI"} docker podman; do
@@ -133,56 +146,122 @@ container_engine() {
   return 1
 }
 
-build_linux_arm64() {
-  local asset="vis-agent-linux-arm64-community.tar.gz"
-  local out="target/native-export/linux-arm64"
-  local engine flavor mem
-  engine="$(container_engine)" || die "linux-arm64 needs docker or podman on PATH"
+engine=""
+flavor=""
+engine_args=()
+# bash 3.2 (what macOS ships) treats "${empty[@]}" as unset under `set -u`.
+eng() { "$engine" ${engine_args[@]+"${engine_args[@]}"} "$@"; }
+
+probe_image="debian:bookworm-slim"
+
+resolve_engine() {
+  [[ -z "$engine" ]] || return 0
+  engine="$(container_engine)" || die "a linux target needs docker or podman on PATH"
   flavor=docker
   "$engine" --version 2>/dev/null | grep -qi podman && flavor=podman
-  "$engine" info >/dev/null 2>&1 || \
+  engine_args=()
+  if [[ -n "${VIS_CONTAINER_CONNECTION:-}" ]]; then
+    if [[ "$flavor" == podman ]]; then
+      engine_args=(--connection "$VIS_CONTAINER_CONNECTION")
+    else
+      engine_args=(--context "$VIS_CONTAINER_CONNECTION")
+    fi
+  fi
+  eng info >/dev/null 2>&1 || \
     die "$engine is installed but its Linux VM is not reachable" \
         "podman: podman machine init (once), then podman machine start" \
         "docker: start Docker Desktop"
   # The builder JVM needs ~14 GiB INSIDE the VM. Both engines default to far less
   # and the build dies in [4/8] with an OOM after ~40 wasted minutes.
+  local mem
   if [[ "$flavor" == podman ]]; then
-    mem="$("$engine" info --format '{{.Host.MemTotal}}' 2>/dev/null || echo 0)"
+    mem="$(eng info --format '{{.Host.MemTotal}}' 2>/dev/null || echo 0)"
   else
-    mem="$("$engine" info --format '{{.MemTotal}}' 2>/dev/null || echo 0)"
+    mem="$(eng info --format '{{.MemTotal}}' 2>/dev/null || echo 0)"
   fi
   if [[ "$mem" =~ ^[0-9]+$ ]] && (( mem > 0 && mem < 16000000000 )); then
     die "$engine only has $((mem / 1000000000)) GB of RAM; this build needs >= 16 GB" \
         "podman: podman machine stop && podman machine set --memory 24576 --cpus 8 && podman machine start" \
         "docker: Docker Desktop -> Settings -> Resources -> Memory, then rerun."
   fi
-  say "building linux-arm64 ($engine, native on this host)"
+}
+
+# How fast is this platform HERE? Nothing in `docker info` says which emulator
+# binfmt_misc hands a foreign binary to, and that single fact decides whether
+# linux-x64 is an hour or a lost night — so measure it with a fixed integer loop.
+# Measured on an M-series Mac, podman applehv, 8 vCPU (1e6 shell iterations):
+#   linux/arm64, no emulation   2 s
+#   linux/amd64 through Rosetta 11 s   (native-image itself: 4.8x, hello world
+#                                       15.8 s arm64 vs 1 m 16 s amd64)
+# qemu-user's TCG interpreter is another order of magnitude below Rosetta, and
+# an analysis at that speed does not finish.
+platform_loop_seconds() {
+  local platform="$1" started
+  eng run --rm --platform "$platform" "$probe_image" true >/dev/null 2>&1 || \
+    die "$engine cannot run $platform containers here" \
+        "podman: recreate the machine with Rosetta — put '[machine]' + 'rosetta = true' in" \
+        "        ~/.config/containers/containers.conf, then podman machine init (it is an" \
+        "        init-time setting; 'podman machine set' cannot turn it on)" \
+        "docker: Settings -> General -> Use Rosetta for x86_64/amd64 emulation"
+  started=$SECONDS
+  eng run --rm --platform "$platform" "$probe_image" \
+    sh -c 'i=0; while [ "$i" -lt 1000000 ]; do i=$((i+1)); done' >/dev/null
+  printf '%s\n' "$(( SECONDS - started ))"
+}
+
+require_usable_platform() {
+  local platform="$1" seconds budget
+  budget="${VIS_EMULATION_MAX_SECONDS:-40}"
+  say "probing $platform (is this emulator Rosetta or qemu?)"
+  seconds="$(platform_loop_seconds "$platform")"
+  say "$platform ran the reference loop in ${seconds}s (native ~2s, Rosetta ~11s)"
+  (( seconds <= budget )) || [[ -n "${VIS_ALLOW_SLOW_EMULATION:-}" ]] || \
+    die "$platform is emulated far below Rosetta speed here (${seconds}s vs ~11s)" \
+        "That is qemu-user, and a native-image analysis on it runs for many hours" \
+        "and usually dies. Give the engine Rosetta, use a real host of that arch," \
+        "or leave this asset to CI:" \
+        "  gh workflow run native-release.yml -f tag=${tag:-vX.Y.Z}" \
+        "VIS_ALLOW_SLOW_EMULATION=1 overrides this, at that cost."
+}
+
+build_linux() {
+  local target="$1" platform graal_arch asset out
+  case "$target" in
+    linux-arm64) platform=linux/arm64 graal_arch=aarch64 ;;
+    linux-x64)   platform=linux/amd64 graal_arch=x64 ;;
+    *)           die "unknown linux target $target" ;;
+  esac
+  asset="vis-agent-${target}-community.tar.gz"
+  out="target/native-export/$target"
+  resolve_engine
+  require_usable_platform "$platform"
+  say "building $target ($engine, $platform)"
   rm -rf "$out"
   if [[ "$flavor" == podman ]]; then
-    "$engine" build \
+    eng build \
       --target native-export \
-      --platform linux/arm64 \
-      --build-arg GRAAL_ARCH=aarch64 \
+      --platform "$platform" \
+      --build-arg GRAAL_ARCH="$graal_arch" \
       -o "type=local,dest=$out" \
       .
   else
-    "$engine" buildx build \
+    eng buildx build \
       --target native-export \
-      --platform linux/arm64 \
-      --build-arg GRAAL_ARCH=aarch64 \
+      --platform "$platform" \
+      --build-arg GRAAL_ARCH="$graal_arch" \
       --output "type=local,dest=$out" \
       .
   fi
   bin/stage-release-bundle --from-dir "$out" "$asset"
-  say "smoke: help inside a linux/arm64 container"
-  "$engine" run --rm --platform linux/arm64 \
+  say "smoke: help inside a $platform container"
+  eng run --rm --platform "$platform" \
     -v "$repo_root/target/release-bundle:/bundle:ro" \
-    debian:bookworm-slim /bundle/vis-agent --native help >/dev/null
+    "$probe_image" /bundle/vis-agent --native help >/dev/null
   say "smoke: GraalPy stdlib inside that container"
-  "$engine" run --rm --platform linux/arm64 \
+  eng run --rm --platform "$platform" \
     -v "$repo_root/target/release-bundle:/bundle:ro" \
-    debian:bookworm-slim /bundle/vis-agent --native python -c "import ast; print('py-ok')" \
-    | grep -qx 'py-ok' || die "the linux-arm64 bundle cannot import the Python stdlib"
+    "$probe_image" /bundle/vis-agent --native python -c "import ast; print('py-ok')" \
+    | grep -qx 'py-ok' || die "the $target bundle cannot import the Python stdlib"
   built_asset="$asset"
 }
 
@@ -193,9 +272,8 @@ assets=()
 built_asset=""
 for t in "${selected[@]}"; do
   case "$t" in
-    macos-arm64) build_macos_arm64; assets+=("$built_asset") ;;
-    linux-arm64) build_linux_arm64; assets+=("$built_asset") ;;
-    linux-x64)   die "linux-x64 is a CI target: gh workflow run native-release.yml -f tag=${tag:-vX.Y.Z}" ;;
+    macos-arm64)           build_macos_arm64; assets+=("$built_asset") ;;
+    linux-arm64|linux-x64) build_linux "$t"; assets+=("$built_asset") ;;
   esac
 done
 

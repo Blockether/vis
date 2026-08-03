@@ -85,3 +85,78 @@
              (doseq [entry ["vis-agent" "vis-agent-native" "install-vis-agent"]]
                (expect (.canExecute (io/file bundle-dir entry)) entry)))
            (finally (delete-tree! root))))))
+
+(defn- fake-tools!
+  "A PATH directory whose `uname` claims `os`/`arch`, plus a container engine that
+  answers `--version`/`info`/`run` without a VM. Lets the host-target and
+  emulation rules be exercised for hosts this machine is not."
+  [os arch]
+  (let
+    [dir (.toFile (Files/createTempDirectory "vis-release-native-test-"
+                                             (make-array FileAttribute 0)))]
+    (write-executable! (io/file dir "uname")
+                       (str "#!/usr/bin/env bash\n"
+                            "case \"${1:-}\" in\n"
+                            "  -s) printf '"
+                            os
+                            "\\n' ;;\n"
+                            "  -m) printf '"
+                            arch
+                            "\\n' ;;\n"
+                            "  *)  printf '" os
+                            "\\n' ;;\n" "esac\n"))
+    (write-executable! (io/file dir "engine")
+                       (str "#!/usr/bin/env bash\n" "case \"${1:-}\" in\n"
+                            ;; `info` doubles as the RAM probe: 32 GiB, so the
+                            ;; memory guard passes and the emulation one decides.
+                            "  --version) printf 'podman version 6.0.0\\n' ;;\n"
+                            "  info)      printf '34359738368\\n' ;;\n"
+                            "  *)         exit 0 ;;\n" "esac\n"))
+    dir))
+
+(defn- run-release-native
+  [dir args env-extra]
+  (run-bash (into ["bash" "bin/release-native"] args)
+            (merge {"PATH" (str (.getAbsolutePath dir) ":" (System/getenv "PATH"))} env-extra)))
+
+(defdescribe
+  release-native-targets-test
+  (it "builds every asset an Apple-silicon host can reach, and refuses the rest"
+      (let
+        [mac
+         (fake-tools! "Darwin" "arm64")
+
+         linux-arm
+         (fake-tools! "Linux" "aarch64")]
+
+        (try
+          ;; linux-x64 belongs here now: native-image under Rosetta measured 4.8x
+          ;; native (15.8 s vs 1 m 16 s for a hello-world image), still inside the
+          ;; 86-130 min the free x64 runner takes when it does not OOM.
+          (let [{:keys [exit output]} (run-release-native mac ["--list"] {})]
+            (expect (= 0 exit) output)
+            (doseq [target ["macos-arm64" "linux-arm64" "linux-x64"]]
+              (expect (str/includes? output target) output)))
+          ;; A Linux host cannot produce the macOS asset, whatever is installed.
+          (let [{:keys [exit output]} (run-release-native linux-arm ["--targets" "macos-arm64"] {})]
+            (expect (not= 0 exit) output)
+            (expect (str/includes? output "cannot build") output))
+          (finally (delete-tree! mac) (delete-tree! linux-arm))))))
+
+(defdescribe release-native-emulation-guard-test
+             (it "refuses a foreign platform that is not Rosetta-fast, before building anything"
+                 (let [mac (fake-tools! "Darwin" "arm64")]
+                   (try (let
+                          [{:keys [exit output]}
+                           ;; A budget no measurement can meet stands in for qemu-user: the guard
+                           ;; must fire on the probe, never after an hour of analysis.
+                           (run-release-native mac
+                                               ["--targets" "linux-x64"]
+                                               {"VIS_CONTAINER_CLI" (.getAbsolutePath
+                                                                      (io/file mac "engine"))
+                                                "VIS_EMULATION_MAX_SECONDS" "-1"})]
+                          (expect (not= 0 exit) output)
+                          (expect (str/includes? output "qemu-user") output)
+                          (expect (str/includes? output "native-release.yml") output)
+                          (expect (not (str/includes? output "building linux-x64")) output))
+                        (finally (delete-tree! mac))))))

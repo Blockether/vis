@@ -149,17 +149,25 @@ release CI and local builds, so a hand-built asset and a CI asset are identical.
 
 | Platform | Bundle | Built by |
 |---|---|---|
-| Linux x86-64 | `vis-agent-linux-x64-community.tar.gz` | release CI |
+| Linux x86-64 | `vis-agent-linux-x64-community.tar.gz` | release CI, or a local container build (Rosetta-emulated on Apple silicon) |
 | Linux ARM64 | `vis-agent-linux-arm64-community.tar.gz` | release CI, or a local container build |
 | macOS ARM64 | `vis-agent-macos-arm64-community.tar.gz` | an Apple-silicon machine — no hosted macOS runner has the RAM |
 
 Building the image needs GraalVM Community Edition 25.1.3 exactly (the repository
 pin is authoritative) and a machine with **32 GB of RAM**: the points-to analysis
 live set is ~14 GiB, and a 16 GB host spends most of the build in GC. On such a
-machine, `bin/release-native` builds every asset that host can produce (macOS
-natively, Linux ARM64 through docker/podman with no emulation), smoke-tests each
-one, and with `--tag vX.Y.Z --upload` attaches them to the release. Linux x86-64
-stays on CI — under emulation that analysis takes hours and usually dies.
+machine, `bin/release-native` builds every asset that host can produce, smoke-tests
+each one, and with `--tag vX.Y.Z --upload` attaches them to the release. On Apple
+silicon that is all three: macOS natively, Linux ARM64 in a container with no
+emulation, and Linux x86-64 through Rosetta — measured at 4.8x native for
+native-image (a hello-world image takes 15.8 s on `linux/arm64` against 1 m 16 s on
+`linux/amd64`), which is still well inside the 86–130 minutes the free x86-64 runner
+needs when it does not run out of memory. The emulator decides that, so the script
+measures it and refuses qemu-user, where the same analysis runs for hours and
+usually dies: Docker Desktop needs *Use Rosetta for x86_64/amd64 emulation*, podman
+needs a machine created with `rosetta = true` under `[machine]` in
+`containers.conf`. Where it was built does not change the asset — native-image
+targets the `x86-64-v3` baseline regardless of the builder's own CPU.
 
 On a platform with no published bundle, use `jvm`, or build a sidecar locally with
 `vis-agent update --jvm --rebuild`.
