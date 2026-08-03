@@ -1,0 +1,143 @@
+name: Relay
+
+# The push relay (apps/vis-companion-relay) is a Cloudflare Worker: its source IS
+# its deployment. A commit that changes the relay and is not deployed is a lie,
+# so every such commit on main is verified and shipped here — and only such a
+# commit: the path filter means a relay run never happens for unrelated work.
+#
+# Everything deployment-specific lives in GitHub, never in this public repo:
+#
+#   secrets.CLOUDFLARE_API_TOKEN       token with Workers Scripts:Edit + D1:Edit
+#   secrets.CLOUDFLARE_ACCOUNT_ID
+#   secrets.CLOUDFLARE_D1_DATABASE_ID  from `wrangler d1 create vis-companion-relay`
+#   vars.APNS_KEY_ID, vars.APNS_TEAM_ID, vars.APNS_TOPIC   (omit for FCM-only)
+#   vars.APNS_DEFAULT_ENV              production | sandbox, default production
+#   vars.RELAY_HEALTHCHECK_URL         optional; <relay>/healthz, curled after deploy
+#
+# Key material never reaches CI. The APNs .p8 and the FCM service account are set
+# once with `wrangler secret put` and live only in Cloudflare; `wrangler deploy`
+# does not touch a Worker's secrets. Without the three Cloudflare values the
+# deploy job verifies and then stands down with a notice, so a fork stays green.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/vis-companion-relay/**"
+      - ".github/workflows/relay.yml"
+  pull_request:
+    paths:
+      - "apps/vis-companion-relay/**"
+      - ".github/workflows/relay.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer relay commit supersedes an older still-running one; the deploy is
+# idempotent, so cancelling the loser costs nothing.
+concurrency:
+  group: relay-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/vis-companion-relay
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/vis-companion-relay/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # The suite drives the real router against a node:sqlite D1 shim and a fake
+      # provider fetch — no network, so it is the same gate here as locally.
+      - name: Test
+        run: npm test
+
+  deploy:
+    needs: verify
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/vis-companion-relay
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/vis-companion-relay/package-lock.json
+
+      - run: npm ci
+
+      - name: Is a Cloudflare account wired up?
+        id: cf
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ -n "$D1_DATABASE_ID" ]; then
+            echo "is_configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Relay not deployed::Set CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_D1_DATABASE_ID to deploy this Worker on every relay commit."
+          fi
+
+      # The D1 id identifies one account's database, so the committed config
+      # carries a placeholder and the real id is stamped into the checkout.
+      - name: Point the config at this account's database
+        if: steps.cf.outputs.is_configured == 'true'
+        run: |
+          sed -i "s|REPLACE_WITH_YOUR_D1_DATABASE_ID|${D1_DATABASE_ID}|" wrangler.jsonc
+          if grep -q REPLACE_WITH_YOUR_D1_DATABASE_ID wrangler.jsonc; then
+            echo "::error title=Relay deploy::wrangler.jsonc still holds the D1 placeholder"
+            exit 1
+          fi
+
+      # schema.sql is CREATE TABLE IF NOT EXISTS throughout: a no-op after the
+      # first run, and the reason a fresh account needs no manual step.
+      - name: Apply the schema
+        if: steps.cf.outputs.is_configured == 'true'
+        run: npx wrangler d1 execute vis-companion-relay --remote --file schema.sql --yes
+
+      # `--var` overrides the committed empty defaults; the tuning vars in
+      # wrangler.jsonc are generic and stay as committed.
+      - name: Deploy
+        if: steps.cf.outputs.is_configured == 'true'
+        env:
+          APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
+          APNS_TEAM_ID: ${{ vars.APNS_TEAM_ID }}
+          APNS_TOPIC: ${{ vars.APNS_TOPIC }}
+          APNS_DEFAULT_ENV: ${{ vars.APNS_DEFAULT_ENV || 'production' }}
+        run: |
+          npx wrangler deploy \
+            --var "APNS_KEY_ID:${APNS_KEY_ID}" \
+            --var "APNS_TEAM_ID:${APNS_TEAM_ID}" \
+            --var "APNS_TOPIC:${APNS_TOPIC}" \
+            --var "APNS_DEFAULT_ENV:${APNS_DEFAULT_ENV}"
+
+      # Proof the deployed Worker answers, not just that upload returned 0.
+      - name: Smoke-test /healthz
+        if: steps.cf.outputs.is_configured == 'true' && vars.RELAY_HEALTHCHECK_URL != ''
+        env:
+          HEALTHCHECK_URL: ${{ vars.RELAY_HEALTHCHECK_URL }}
+        run: |
+          code=$(curl -fsS --retry 5 --retry-all-errors --retry-delay 2 \
+                   -o /tmp/healthz -w '%{http_code}' "$HEALTHCHECK_URL")
+          cat /tmp/healthz
+          echo
+          test "$code" = "200"

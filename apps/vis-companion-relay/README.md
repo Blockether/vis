@@ -86,6 +86,31 @@ material is a secret, never a var.** Put production on a custom domain — a
 D1 is used for grants rather than KV on purpose: free KV allows 1,000 writes/day,
 which breaks at 1,000 registrations.
 
+## Continuous deployment
+
+`.github/workflows/relay.yml` typechecks, tests, and — on `main` — deploys this
+Worker on **every commit that touches `apps/vis-companion-relay/**`**, and on no
+other commit. The Worker's source is its deployment; a relay commit that has not
+shipped is a lie.
+
+Configure it once, in GitHub, so nothing deployment-specific is committed:
+
+| where | name | what |
+| --- | --- | --- |
+| secret | `CLOUDFLARE_API_TOKEN` | Workers Scripts:Edit + D1:Edit |
+| secret | `CLOUDFLARE_ACCOUNT_ID` | |
+| secret | `CLOUDFLARE_D1_DATABASE_ID` | id from `wrangler d1 create` |
+| variable | `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC` | omit all three for FCM-only |
+| variable | `APNS_DEFAULT_ENV` | `production` (default) or `sandbox` |
+| variable | `RELAY_HEALTHCHECK_URL` | optional `<relay>/healthz`, curled after deploy |
+
+**CI never sees key material.** `APNS_KEY_P8` and `FCM_SERVICE_ACCOUNT` are set
+once with `wrangler secret put` and live only in Cloudflare; `wrangler deploy`
+leaves a Worker's secrets untouched. The run stamps the D1 id into the checkout's
+`wrangler.jsonc`, re-applies `schema.sql` (idempotent, so a fresh account needs no
+manual step), deploys, and curls `/healthz`. Without the three Cloudflare values
+the job verifies and stands down with a notice, so a fork stays green.
+
 ## Pointing a gateway at it
 
 ```bash
