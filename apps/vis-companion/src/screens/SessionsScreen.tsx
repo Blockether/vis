@@ -91,8 +91,15 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
 }
 
 // The scope strip's chips: one per machine plus "All".
+//
+// A chip is a CONTROL, so it sits on the app's control scale: the same `min-h-6`
+// as the New session button above it, and `text-meta` — the step the header line
+// it answers is already set in. At `text-chip` inside a `min-h-7` box the label
+// was the smallest type on the screen floating in eight px of dead space on each
+// side, so every chip read as taller than the row that holds it while saying
+// less than the line above it.
 function chipClass(isOn: boolean): string {
-  return `inline-flex min-h-7 shrink-0 items-center gap-1.5 border px-2 font-mono text-chip transition-colors duration-150 motion-reduce:transition-none ${
+  return `inline-flex min-h-6 shrink-0 items-center gap-1.5 border px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none ${
     isOn ? 'border-accent bg-hover font-bold text-white' : 'border-edge text-dialog-hint hover:text-white'
   }`;
 }
@@ -838,7 +845,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
             nothing else on the screen changes: multi-machine costs the solo user
             nothing. */}
         {machines.length > 1 && (
-          <div className="flex items-center gap-1.5 overflow-x-auto border-t border-dialog-edge bg-panel px-3 py-1.5 sm:px-4">
+          <div className="flex items-center gap-1.5 overflow-x-auto border-t border-dialog-edge bg-panel px-3 py-2 sm:px-4">
             <button
               type="button"
               aria-pressed={scope === null}
