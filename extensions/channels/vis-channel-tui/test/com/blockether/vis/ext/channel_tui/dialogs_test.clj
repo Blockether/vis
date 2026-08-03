@@ -265,22 +265,25 @@
   "EVERY terminal row (blanks KEPT) after one paint of `magit-transient!` at the
    host-dialog geometry `magit-status-buffer!` hands it, so the popup's own
    band geometry — its full-width rule, its margin rows, the row its hint bar
-   lands on — is inspectable."
-  [spec left inner-w hint-row]
-  (let
-    [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-     (virtual-screen)
+   lands on — is inspectable. `opts` goes straight through, so the BOXED variant
+   a host dialog runs it in is inspectable exactly the same way."
+  ([spec left inner-w hint-row] (transient-grid! spec left inner-w hint-row nil))
+  ([spec left inner-w hint-row opts]
+   (let
+     [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+      (virtual-screen)
 
-     g
-     (.newTextGraphics screen)]
+      g
+      (.newTextGraphics screen)]
 
-    (.addInput terminal (transient-key :esc))
-    (dlg/magit-transient! screen g left inner-w hint-row 70 "Commit" spec (constantly nil))
-    (vec (for [y (range 30)]
-           (apply str
-             (for [x (range 80)]
-               (let [^TextCharacter ch (.getCharacter terminal (TerminalPosition. (int x) (int y)))]
-                 (if ch (.getCharacterString ch) " "))))))))
+     (.addInput terminal (transient-key :esc))
+     (dlg/magit-transient! screen g left inner-w hint-row 70 "Commit" spec (constantly nil) opts)
+     (vec (for [y (range 30)]
+            (apply str
+              (for [x (range 80)]
+                (let
+                  [^TextCharacter ch (.getCharacter terminal (TerminalPosition. (int x) (int y)))]
+                  (if ch (.getCharacterString ch) " ")))))))))
 
 (defn- row-with [rows needle] (some #(when (str/includes? (:text %) needle) %) rows))
 
@@ -422,6 +425,49 @@
   (it "Esc cancels the transient, armed flags and all"
       (expect (nil? (:ret (drive-transient! commit-transient-spec [\h :esc]))))))
 
+(defdescribe magit-transient-boxed-test
+             ;; The provider dialog runs the SAME transient inside its own frame
+             ;; (`provider/run-transient!` passes `{:boxed? true :min-row …}`), so the box
+             ;; has to survive the popup: inner columns only, T-junctions ON the border,
+             ;; and the hint bar on the host's own hint row instead of its bottom edge.
+             (it "boxed, the rule ends in T-junctions and the hint bar shares the host's hint row"
+                 (let
+                   [grid
+                    (transient-grid! commit-transient-spec 3 74 27 {:boxed? true :min-row 6})
+
+                    rule-y
+                    (first (keep-indexed (fn [i s]
+                                           (when (str/includes? s "────") i))
+                                         grid))]
+
+                   (expect (= \├ (nth (nth grid rule-y) 3)))
+                   (expect (= \┤ (nth (nth grid rule-y) 78)))
+                   (expect (str/blank? (subs (nth grid rule-y) 0 3)))
+                   (expect (str/blank? (subs (nth grid rule-y) 79)))
+                   ;; The hint bar lands ON the host's hint row, so the row below it — the
+                   ;; dialog's bottom border — is never swallowed.
+                   (expect (str/includes? (nth grid 27) "toggle flag"))
+                   (expect (str/blank? (nth grid 28)))
+                   ;; Nothing above `:min-row` is painted or wiped.
+                   (expect (>= rule-y 6))
+                   (expect (every? str/blank? (take 6 grid)))))
+             (it
+               "a transient taller than the host box stops at :min-row instead of climbing over it"
+               (let
+                 [tall
+                  {:groups (vec (for [gi (range 3)]
+                                  {:title (str "Group " gi)
+                                   :items (vec (for [i (range 5)]
+                                                 {:key (str (char (+ (int \a) (* gi 5) i)))
+                                                  :type :action
+                                                  :id (keyword (str "a" gi i))
+                                                  :label (str "Action " gi "-" i)}))}))}
+
+                  grid
+                  (transient-grid! tall 3 74 27 {:boxed? true :min-row 6})]
+
+                 (expect (str/includes? (nth grid 6) "Commit"))
+                 (expect (every? str/blank? (take 6 grid))))))
 
 (defdescribe session-dialog-wheel-test
              (it "session picker coalesces wheel floods and moves selection"

@@ -2349,126 +2349,164 @@
 
    `g left inner-w hint-row text-w` are the SAME buffer-geometry values the other
    inline minibuffer primitives receive, so the popup shares the status buffer's
-   canvas instead of allocating its own screen."
-  [^TerminalScreen screen g left inner-w hint-row text-w title spec read-option]
-  (let
-    [cols
-     (long (.getColumns ^com.googlecode.lanterna.TerminalSize (.getTerminalSize screen)))
+   canvas instead of allocating its own screen.
 
-     ;; A leading blank row gives the first group header its MARGIN-TOP, so
-     ;; `Arguments` breathes under the transient's bold title instead of
-     ;; sitting glued to it (groups after it already get one from the
-     ;; trailing blank of the group before).
-     display-rows
-     (into [{:kind :blank}]
-           (butlast (into []
-                          (mapcat (fn [{:keys [title items]}]
-                                    (concat [{:kind :header :text title}]
-                                            (map (fn [it]
-                                                   {:kind :item :item it})
-                                                 items)
-                                            [{:kind :blank}])))
-                          (:groups spec))))
+   `opts` re-targets the SAME transient at a host DIALOG's frame instead of a
+   full-width buffer:
+     `:boxed?`  paint only the box's INNER columns — the separator gets
+                T-junctions on the box border and the hint bar lands ON the
+                dialog's own `hint-row` instead of swallowing its bottom border.
+     `:min-row` first row the popup may touch or wipe (a boxed host's content
+                top, or the row under whatever header the host keeps visible).
+                A tall transient stops there instead of climbing over it."
+  ([^TerminalScreen screen g left inner-w hint-row text-w title spec read-option]
+   (magit-transient! screen g left inner-w hint-row text-w title spec read-option nil))
+  ([^TerminalScreen screen g left inner-w hint-row text-w title spec read-option opts]
+   (let
+     [cols
+      (long (.getColumns ^com.googlecode.lanterna.TerminalSize (.getTerminalSize screen)))
 
-     n
-     (count display-rows)
+      boxed?
+      (boolean (:boxed? opts))
 
-     ;; Anchor the popup to the BOTTOM: body rows sit just above the hint row,
-     ;; the bold title one row above them. Clamp so a short terminal never
-     ;; paints above the top edge.
-     body-top
-     (max 1 (- (long hint-row) (long n)))
+      top-limit
+      (long (or (:min-row opts) 0))
 
-     title-row
-     (max 0 (dec (long body-top)))
+      ;; A leading blank row gives the first group header its MARGIN-TOP, so
+      ;; `Arguments` breathes under the transient's bold title instead of
+      ;; sitting glued to it (groups after it already get one from the
+      ;; trailing blank of the group before).
+      display-rows
+      (into [{:kind :blank}]
+            (butlast (into []
+                           (mapcat (fn [{:keys [title items]}]
+                                     (concat [{:kind :header :text title}]
+                                             (map (fn [it]
+                                                    {:kind :item :item it})
+                                                  items)
+                                             [{:kind :blank}])))
+                           (:groups spec))))
 
-     footer
-     [["-key" "toggle flag"] ["key" "run command"] ["Esc" "cancel"]]
+      n
+      (count display-rows)
 
-     ;; FULL-BLEED band. The popup owns EVERY column of the terminal and its
-     ;; hint bar lands on the host dialog's bottom border row, swallowing it:
-     ;; nothing frames the transient on the left, right, or bottom. Only the
-     ;; top separator caps it, one row above the title.
-     foot-row
-     (inc (long hint-row))
+      ;; Anchor the popup to the BOTTOM: body rows sit just above the hint row,
+      ;; the bold title one row above them. Clamp so a short terminal — or a
+      ;; boxed host's reserved header — never paints above the top edge.
+      body-top
+      (max (if boxed? (inc top-limit) 1) (- (long hint-row) n))
 
-     clear-row!
-     (fn [row]
-       (p/set-colors! g t/dialog-fg t/dialog-bg)
-       (p/fill-rect! g 0 row cols 1))
+      title-row
+      (max (if boxed? top-limit 0) (dec (long body-top)))
 
-     layout
-     (transient-layout spec)
+      footer
+      [["-key" "toggle flag"] ["key" "run command"] ["Esc" "cancel"]]
 
-     sep-row
-     (max 0 (dec (long title-row)))]
+      ;; FULL-BLEED band. The popup owns EVERY column of the terminal and its
+      ;; hint bar lands on the host dialog's bottom border row, swallowing it:
+      ;; nothing frames the transient on the left, right, or bottom. Only the
+      ;; top separator caps it, one row above the title. BOXED inverts all
+      ;; three: the band is the host box's inner width and the hint bar shares
+      ;; the host's own hint row, so the frame survives.
+      foot-row
+      (if boxed? (long hint-row) (inc (long hint-row)))
 
-    (loop [state {:switches #{} :options {}}]
-      (clear-row! sep-row)
-      (p/set-colors! g t/dialog-border t/dialog-bg)
-      (p/draw-separator! g -1 cols sep-row)
-      (clear-row! title-row)
-      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-      (p/styled g
-                [p/BOLD]
-                (p/put-str! g (+ (long left) 2) title-row (ellipsize (str title) text-w)))
-      (dotimes [i n]
-        (let
-          [r (nth display-rows i)
-           row (+ (long body-top) (long i))]
+      band-x
+      (if boxed? (inc (long left)) 0)
 
-          (clear-row! row)
-          (case (:kind r)
-            :header
-            (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                (p/styled g
-                          [p/BOLD]
-                          (p/put-str! g (+ (long left) 2) row (ellipsize (str (:text r)) text-w))))
+      band-w
+      (if boxed? (long inner-w) cols)
 
-            :blank
-            nil
+      clear-row!
+      (fn [row]
+        (p/set-colors! g t/dialog-fg t/dialog-bg)
+        (p/fill-rect! g band-x row band-w 1))
 
-            :item
-            (let
-              [{:keys [type id] :as it} (:item r)
-               active? (case type
-                         :switch
-                         (contains? (:switches state) id)
+      layout
+      (transient-layout spec)
 
-                         :option
-                         (contains? (:options state) id)
+      sep-row
+      (max 0 (dec (long title-row)))
 
-                         false)
-               value (when (= type :option) (get (:options state) id))]
+      ;; Boxed, the popup owns every row from `:min-row` down, so a shorter
+      ;; page never leaves the taller previous one bleeding above its title.
+      wipe-top
+      (if boxed? top-limit sep-row)
 
-              (draw-transient-item! g left row inner-w layout it active? value)))))
-      (draw-hint-bar! g -1 foot-row cols footer)
-      (.setCursorPosition screen nil)
-      (.refresh screen Screen$RefreshType/DELTA)
-      (let [key (read-modal-key! screen)]
-        (if (nil? key)
-          (recur state)
-          (condp = (key-type key)
-            KeyType/Escape nil
-            KeyType/Character
-            (let
-              [ch (key-character key)
-               r (transient-toggle spec state ch)]
+      ;; Boxed, the host's hint row is the floor: a page taller than the box
+      ;; must lose its overflow rows rather than paint over the frame.
+      visible
+      (if boxed? (min (long n) (max 1 (- (long hint-row) (long body-top)))) (long n))]
 
-              (case (:kind r)
-                :continue
-                (recur (:state r))
+     (loop [state {:switches #{} :options {}}]
+       (dotimes [i (max 1 (- (long body-top) (long wipe-top)))]
+         (clear-row! (+ (long wipe-top) i)))
+       (when (>= (long sep-row) (long wipe-top))
+         (p/set-colors! g t/dialog-border t/dialog-bg)
+         (if boxed?
+           (p/draw-separator! g left (+ (long left) (long inner-w) 1) sep-row)
+           (p/draw-separator! g -1 cols sep-row)))
+       (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+       (p/styled g
+                 [p/BOLD]
+                 (p/put-str! g (+ (long left) 2) title-row (ellipsize (str title) text-w)))
+       (dotimes [i visible]
+         (let
+           [r (nth display-rows i)
+            row (+ (long body-top) (long i))]
 
-                :option
-                (let
-                  [{:keys [id] :as it} (:item r)
-                   v (read-option it (get (:options state) id))]
+           (clear-row! row)
+           (case (:kind r)
+             :header
+             (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                 (p/styled g
+                           [p/BOLD]
+                           (p/put-str! g (+ (long left) 2) row (ellipsize (str (:text r)) text-w))))
 
-                  (recur (if (nil? v) state (assoc-in state [:options id] v))))
+             :blank
+             nil
 
-                :action
-                {:action (:id (:item r)) :switches (:switches state) :options (:options state)}))
-            (recur state)))))))
+             :item
+             (let
+               [{:keys [type id] :as it} (:item r)
+                active? (case type
+                          :switch
+                          (contains? (:switches state) id)
+
+                          :option
+                          (contains? (:options state) id)
+
+                          false)
+                value (when (= type :option) (get (:options state) id))]
+
+               (draw-transient-item! g left row inner-w layout it active? value)))))
+       (draw-hint-bar! g (if boxed? left -1) foot-row (if boxed? inner-w cols) footer)
+       (.setCursorPosition screen nil)
+       (.refresh screen Screen$RefreshType/DELTA)
+       (let [key (read-modal-key! screen)]
+         (if (nil? key)
+           (recur state)
+           (condp = (key-type key)
+             KeyType/Escape nil
+             KeyType/Character
+             (let
+               [ch (key-character key)
+                r (transient-toggle spec state ch)]
+
+               (case (:kind r)
+                 :continue
+                 (recur (:state r))
+
+                 :option
+                 (let
+                   [{:keys [id] :as it} (:item r)
+                    v (read-option it (get (:options state) id))]
+
+                   (recur (if (nil? v) state (assoc-in state [:options id] v))))
+
+                 :action
+                 {:action (:id (:item r)) :switches (:switches state) :options (:options state)}))
+             (recur state))))))))
 
 (defn- magit-push-flow!
   "Magit-style push transient (`magit-transient!`). SWITCHES (all optional):
