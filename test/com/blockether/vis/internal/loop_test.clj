@@ -276,7 +276,9 @@
   ;; The model often restates its run_python code in its message prose; that
   ;; prose must be SUPPRESSED so it doesn't render as a dim duplicate of the
   ;; real code block. Only genuine commentary survives.
-  (let [tc [{:input {:code "await patch(x)"}}]]
+  ;; The door (`normalize-tool-calls`) already stringified every argument key,
+  ;; so this reads `"code"` — there is no keyword variant to fall back to.
+  (let [tc [{:input {"code" "await patch(x)"}}]]
     (it "suppresses prose that is only the code in a fence"
         (expect (nil? (prose-beyond-code "```python\nawait patch(x)\n```" tc))))
     (it "suppresses prose that is the code verbatim (no fence)"
@@ -5805,3 +5807,26 @@
         (expect (string? (py-literal normalized)))))
     (it "still refuses a keyword that never passed through the adapter"
       (expect (throws? Exception #(#'lp/py-literal {"op" :delete}))))))
+
+(defdescribe tool-call-door-strings-only-test
+  (describe "svar's keywordized tool arguments are stringified once, at the door"
+    (it "normalizes every tool call's :input at every depth"
+      (let [door #'lp/normalize-tool-calls
+            calls (door [{:id "t1" :name "patch"
+                          :input {:edits [{:path "a.clj" :from_anchor "1:aa" :replace "x"}]}}
+                         {:id "t2" :name "fs" :input {:op :delete :paths ["x"]}}])]
+        (expect (= [{"edits" [{"path" "a.clj" "from_anchor" "1:aa" "replace" "x"}]}
+                    {"op" "delete" "paths" ["x"]}]
+                   (mapv :input calls)))
+        (expect (= ["t1" "t2"] (mapv :id calls)))))
+    (it "lets downstream consumers read string keys only — no keyword fallback"
+      (let [payload (apply str (repeat 20 "x"))
+            [tc] (#'lp/normalize-tool-calls [{:id "w" :name "write"
+                                              :input {:path "a.clj" :content payload}}])
+            receipts (#'lp/oversized-arg-receipts tc {:elide-args {"content" 8}})]
+        (expect (= ["content"] (mapv :arg receipts)))
+        (expect (= [20] (mapv :chars receipts)))))
+    (it "feeds call synthesis directly, with no second conversion"
+      (let [[tc] (#'lp/normalize-tool-calls [{:id "d" :name "doc" :input {:name "struct_patch"}}])]
+        (expect (= "doc({\"name\": \"struct_patch\"})"
+                   (#'lp/tool-call->python-source real-call-shapes tc)))))))

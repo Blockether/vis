@@ -4402,7 +4402,7 @@
   (let [input (:input tool-call)]
     (into []
           (keep (fn [[arg threshold]]
-                  (let [payload (or (get input arg) (get input (keyword arg)))]
+                  (let [payload (get input arg)]
                     (when (and (string? payload) (> (count payload) (long threshold)))
                       {:arg arg :chars (count payload) :sha256 (extension/sha256-hex payload)}))))
           (:elide-args replay-policy))))
@@ -4452,10 +4452,7 @@
      (:input tool-call)
 
      elided-keys
-     (into #{}
-           (mapcat (fn [{:keys [arg]}]
-                     [arg (keyword arg)]))
-           elided)
+     (into #{} (map :arg) elided)
 
      visible-input
      (apply dissoc input elided-keys)
@@ -5040,6 +5037,27 @@
                   :else x))]
     (walk (or input {}))))
 
+(defn- normalize-tool-calls
+  "THE DOOR: every native tool call svar returns enters the engine HERE, already
+   strings-only.
+
+   Model-authored tool arguments are DATA, never Clojure identifiers. svar's
+   `decode-tool-arguments` now decodes them strings-only at the source (its
+   `stringify-tool-args` keeps both keys and keyword/symbol values as strings),
+   so this door is normally a no-op. It stays because vis pins svar by version
+   and MUST NOT trust a provider adapter to have been fixed: an older svar, or a
+   new adapter path, would otherwise leak keywordized argument keys such as
+   `:path` into the engine.
+
+   Vis is strings-only end to end — the sandbox, the synthesized Python,
+   persistence and the wire all speak snake_case strings — so the whole
+   tool-call vector is normalized ONCE, at the single point where `ask-code!`'s
+   result becomes engine data. Everything downstream — call synthesis, replay
+   elision, `retry_native`, receipts, iteration records — reads plain string
+   keys and must NOT re-check a keyword variant."
+  [tool-calls]
+  (mapv #(update % :input normalize-tool-input) (vec tool-calls)))
+
 (defn- resolve-native-retry
   "Resolve retry_native from extension replay policy plus one prior tool call."
   [previous-iterations replay-policies input]
@@ -5072,9 +5090,12 @@
           (nil? policy) {:error (str "retry_native target " (pr-str id) " has no replay policy.")}
           (not (retryable-tool-call? iter-record tool-call policy))
           {:error (str "retry_native target " (pr-str id) " is not retryable for this failure.")}
+          ;; `:retry-overrides` is EXTENSION-authored EDN, so it can still carry
+          ;; keywords; the merged input is re-normalized before it re-enters the
+          ;; engine as a synthesized call.
           :else {:tool-call {:name (:name tool-call)
-                             :input (merge (normalize-tool-input (:input tool-call))
-                                           (:retry-overrides policy))}})))
+                             :input (normalize-tool-input (merge (:input tool-call)
+                                                                 (:retry-overrides policy)))}})))
 
 (def ^:private engine-native-tool-resolvers
   {"retry_native" (fn [{:keys [previous-iterations replay-policies]} input]
@@ -5233,7 +5254,7 @@
     (let
       [code (->> tool-calls
                  (map (fn [tc]
-                        (or (:code (:input tc)) (get (:input tc) "code") "")))
+                        (get (:input tc) "code" "")))
                  (str/join "\n"))
        squash #(str/replace (str %) #"\s+" "")
        fenced-stripped (-> p
@@ -5507,7 +5528,7 @@
        ;; code. A tool-call reply becomes the executable blocks: one
        ;; `run_python` call → one block, carrying the tool_use `:id` so the
        ;; driver can pair its result into a `tool_result` message.
-       tool-calls (vec (:tool-calls ask-result))
+       tool-calls (normalize-tool-calls (:tool-calls ask-result))
        ;; The model can return PROSE (`:content`) ALONGSIDE a tool call — its
        ;; commentary while it acts. Capture it ALWAYS: with no tool calls it IS
        ;; the final answer; WITH tool calls it's assistant prose shown above the
