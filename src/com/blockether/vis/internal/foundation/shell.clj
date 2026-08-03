@@ -816,6 +816,73 @@
 
 (defn- bg-entry [session id] (get-in @bg-procs [(str session) (str id)]))
 
+(defn- bg-live?
+  "True only while `id` still holds a RUNNING process in this session."
+  [session id]
+  (boolean (when-let [entry (bg-entry session id)]
+             ((:alive? (:proc entry))))))
+
+(defn- command->bg-id-slug
+  "Name a background shell after the program it runs: `npm run dev` -> `npm`.
+   Setup prefixes (`cd …`, `export …`, `VAR=1 …`) are skipped so the id names what
+   is actually being watched, and a pathed binary keeps only its basename."
+  [command]
+  (let
+    [program
+     (->> (str/split (str command) #"&&|\|\||;|\n")
+          (map str/trim)
+          (remove str/blank?)
+          (keep (fn [segment]
+                  (->> (str/split segment #"\s+")
+                       (remove str/blank?)
+                       (remove #(str/includes? % "="))
+                       first)))
+          (remove #{"cd" "export" "source" "." "env" "sudo" "exec" "set" "nohup"})
+          first)
+
+     slug
+     (-> (str (or program "shell"))
+         (str/replace #"^.*/" "")
+         str/lower-case
+         (str/replace #"[^a-z0-9]+" "-")
+         (str/replace #"^-+" "")
+         (str/replace #"-+$" ""))]
+
+    (if (str/blank? slug) "shell" (subs slug 0 (min 24 (count slug))))))
+
+(defn- auto-bg-id
+  "Derive the handle for a background START that carried none.
+
+   Starting a long process is the ONE background call that does not act on an
+   existing handle, so rejecting `{op: \"background\", commands: […]}` for a missing
+   `id` failed a well-formed call over a name the caller had to invent — the most
+   frequent shell dead end there is.
+
+   Re-issuing the SAME script while it runs returns that shell's own id, so the
+   duplicate start resolves to `already_running` instead of a second dev server;
+   otherwise the program name is suffixed until no LIVE shell holds it, so an auto
+   id never hijacks an unrelated running process."
+  [session commands]
+  (let
+    [wanted
+     (mapv str commands)
+
+     running-same
+     (->> (get @bg-procs (str session))
+          (filter (fn [[id entry]]
+                    (and (= wanted (vec (:commands entry))) (bg-live? session id))))
+          ffirst)
+
+     base
+     (command->bg-id-slug (first wanted))]
+
+    (or running-same
+        (loop [n 1]
+          (let [candidate (if (= 1 n) base (str base "-" n))]
+            (cond (not (bg-live? session candidate)) candidate
+                  (< n 100) (recur (inc n))
+                  :else (str base "-" (System/nanoTime))))))))
+
 (defn- drop-bg-entry!
   [session id]
   (let
@@ -1653,7 +1720,16 @@
       (do (reject-text) (shell-batch-impl env (need-commands) opts))
 
       "background"
-      (do (reject-text) (shell-bg-impl env (need-id) valid-commands opts))
+      ;; A start is the one background stage with no prior handle: derive the id from
+      ;; the command rather than fail a well-formed start over a missing name. Every
+      ;; other stage (no commands) still names the shell it acts on.
+      (do (reject-text)
+          (shell-bg-impl env
+                         (if (and (nil? id) valid-commands)
+                           (auto-bg-id (:session-id env) valid-commands)
+                           (need-id))
+                         valid-commands
+                         opts))
 
       "logs"
       (do (reject-commands) (reject-text) (shell-logs-impl env (need-id) (opt opts :n)))
@@ -2315,15 +2391,14 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
        "op" {:type "string"
              :enum ["run" "background" "logs" "wait" "send" "stop"]
              :description "Stage; default run, or background with `id`."}
-       "id" {:type "string" :minLength 1 :description "Background id for lifecycle ops."}
+       "id" {:type "string" :minLength 1 :description "Background handle; a start may omit it."}
        "timeout_secs"
        {:type "integer" :minimum 1 :maximum 600 :description "run/wait timeout; default 120s."}
        "until" {:type "string"
                 :minLength 1
                 :description
                 "wait (required): end on a log line matching this regex; ANSI color is ignored."}
-       "cwd" {:type "string"
-              :description "Working directory under allowed root; relative uses workspace."}
+       "cwd" {:type "string" :description "Dir under allowed root; relative uses workspace."}
        "n" {:type "integer"
             :minimum 1
             :maximum 2000

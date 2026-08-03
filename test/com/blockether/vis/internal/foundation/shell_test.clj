@@ -393,6 +393,36 @@
                    ;; …but a command IS required when nothing is running yet.
                    (expect (threw? #(shell* env {"op" "background" "id" "never-started"}))))
                  (finally (resources/stop-all! sid))))))))
+  (it "starts a background shell WITHOUT an id, naming it after the command"
+      ;; Regression: `{op: "background", commands: […]}` was rejected for a missing
+      ;; `id` — a name the caller had to invent for the ONE stage that acts on no
+      ;; prior handle, so the most natural start was a hard failure. It now names
+      ;; itself after the program, re-issuing the same script resolves to the SAME
+      ;; shell instead of a duplicate, and a different script never takes a live id.
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-ext-auto-id"
+               env {:session-id sid}]
+
+              (try (let
+                     [started (:result (shell* env {"op" "background" "commands" ["sleep 60"]}))
+                      again (:result (shell* env {"op" "background" "commands" ["sleep 60"]}))
+                      other (:result (shell* env
+                                             {"op" "background" "commands" ["cd / && sleep 61"]}))]
+
+                     (expect (= "sleep" (get started "id")))
+                     (expect (= "running" (get started "status")))
+                     (expect (false? (get started "already_running")))
+                     (expect (= "sleep" (get again "id")))
+                     (expect (true? (get again "already_running")))
+                     (expect (= (get started "pid") (get again "pid")))
+                     (expect (= "sleep-2" (get other "id")))
+                     (expect (not= (get started "pid") (get other "pid")))
+                     ;; every other stage still names the shell it acts on
+                     (expect (threw? #(shell* env {"op" "logs"}))))
+                   (finally (resources/stop-all! sid))))))))
   (it "carries uptime_ms and the shared TOTAL identity core in the logs payload"
       (with-shell-on
         (fn []
