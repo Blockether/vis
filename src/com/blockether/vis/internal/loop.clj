@@ -5019,16 +5019,24 @@
    DEEP: keys are normalized at EVERY depth, not just the top level. Tools like
    `patch` carry NESTED dicts (`edits [{:from_anchor …}]`); a shallow pass left
    the model-drift colon on those nested keys, so the synthesized Python call
-   leaked `patch([{\":from_anchor\": …}])`. Only KEYS are touched — values (edit
-   `replace` text, anchors, paths) pass through verbatim."
+   leaked `patch([{\":from_anchor\": …}])`.
+
+   VALUES TOO, at every depth: a keyword/symbol VALUE (an enum coerced by the
+   provider adapter, `{\"op\" :delete}`) is stringified HERE — `:delete` ->
+   `\"delete\"`, `:a/b` -> `\"a/b\"` — because `py-literal` rightly treats one as
+   a producer bug and throws `boundary-violation!`, which killed the whole tool
+   call instead of running it. Everything else (edit `replace` text, anchors,
+   paths, numbers, booleans) passes through verbatim."
   [input]
   (letfn [(nk [k] (env/normalize-dict-key (if (keyword? k) (name k) (str k))))
+          (nv [x] (if (keyword? x) (subs (str x) 1) (str x)))
           (walk [x]
             (cond (map? x) (into {}
                                  (map (fn [[k v]]
                                         [(nk k) (walk v)]))
                                  x)
                   (or (vector? x) (seq? x) (set? x)) (mapv walk x)
+                  (or (keyword? x) (symbol? x)) (nv x)
                   :else x))]
     (walk (or input {}))))
 

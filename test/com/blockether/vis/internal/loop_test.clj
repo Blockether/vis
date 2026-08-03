@@ -5785,3 +5785,23 @@
                        (expect (false? (:timeout? result)))
                        (expect (true? (:is-submitted (:result result)))))
                      (finally (ce/remove-channel-event-listener! chan ::hitl-wall))))))
+
+(defdescribe normalize-tool-input-strings-only-test
+  (describe "svar-edge tool arguments are strings-only, keys AND values"
+    (it "stringifies keyword/symbol values at every depth so py-literal renders"
+      (let [normalize #'lp/normalize-tool-input
+            py-literal #'lp/py-literal
+            normalized (normalize {:op :delete
+                                   :paths ['a "b"]
+                                   :edits [{:mode :replace/nested}]
+                                   :count 3
+                                   :is_overwrite true})]
+        (expect (= {"op" "delete"
+                    "paths" ["a" "b"]
+                    "edits" [{"mode" "replace/nested"}]
+                    "count" 3
+                    "is_overwrite" true}
+                   normalized))
+        (expect (string? (py-literal normalized)))))
+    (it "still refuses a keyword that never passed through the adapter"
+      (expect (throws? Exception #(#'lp/py-literal {"op" :delete}))))))
