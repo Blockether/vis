@@ -1215,7 +1215,19 @@
    No provider credential is ever exchanged or written in the TUI process."
   ([^TerminalScreen screen provider] (authenticate-provider! screen provider false))
   ([^TerminalScreen screen provider force?]
-   (cond (github-copilot-provider? (:id provider))
+   (cond (vis/provider-command-minted? provider)
+         ;; The credential is MINTED BY THE MACHINE: `api_key_command` runs per
+         ;; request. Prompting for a key here would let a typed value silently
+         ;; outrank the helper, so explain and refuse instead.
+         (do (dlg/text-view-dialog! screen
+                                    (str (vis/display-label (:id provider)) " Authentication")
+                                    [(str (vis/display-label (:id provider))
+                                          " mints its own credential.") ""
+                                     "Its api_key_command helper is run for every request, so"
+                                     "there is no API key to enter here. Change how the token"
+                                     "is minted by editing api_key_command in the config."])
+             nil)
+         (github-copilot-provider? (:id provider))
          (when
            (gateway-device-login! screen (:id provider) (vis/display-label (:id provider)) force?)
            provider)

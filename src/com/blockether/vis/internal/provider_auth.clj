@@ -103,12 +103,30 @@
          (into [] (comp (map str) (remove str/blank?)) (f)))
        (catch Throwable _ nil)))
 
+(defn- configured-provider
+  "The configured provider map for `provider-id`, or nil when the fleet does
+   not carry it. Cached — this sits on the auth request path."
+  [provider-id]
+  (let [pid (keyword (name provider-id))]
+    (first (filter (fn [p]
+                     (= pid (:id p)))
+                   (providers/configured-providers-cached)))))
+
+(defn self-minted?
+  "True when configuration mints this provider's credential itself (an
+   `api_key_command` helper). There is no key for a human to collect, so no
+   auth flow may be offered for it — a key typed into a dialog would silently
+   outrank the helper on the next request."
+  [provider-id]
+  (try (providers/command-minted? (configured-provider provider-id)) (catch Throwable _ false)))
+
 (defn supported?
   "True when `provider-id` can be authenticated over the wire — OAuth (PKCE or
    device) or a plain API key — as opposed to only through the interactive
    terminal `:provider/auth-fn`."
   [provider-id]
-  (boolean (or (:start (auth-kinds provider-id)) (api-key-leg? provider-id))))
+  (boolean (and (not (self-minted? provider-id))
+                (or (:start (auth-kinds provider-id)) (api-key-leg? provider-id)))))
 
 (defn- refresh-fleet!
   "Auth changed the credential file, so every cached status/limits view is
@@ -171,7 +189,13 @@
   (drop-flows! (fn [e]
                  (= provider-id (:provider-id e))))
   (let [{:keys [start await]} (auth-kinds provider-id)]
-    (cond (nil? (provider-descriptor provider-id))
+    (cond (self-minted? provider-id)
+          {:ok? false
+           :error :auth-self-minted
+           :message (str
+                      (name provider-id)
+                      " mints its own credential with api_key_command — there is no key to enter")}
+          (nil? (provider-descriptor provider-id))
           {:ok? false :error :unknown-provider :message (str "no registered provider " provider-id)}
           (and (nil? start) (not (api-key-leg? provider-id)))
           {:ok? false

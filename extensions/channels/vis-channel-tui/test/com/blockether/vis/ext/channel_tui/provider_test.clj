@@ -632,8 +632,9 @@
                     {:id :slow}
                     {:is-authenticated nil :loading? true}
                     {:provider-id :slow :status :loading :static {} :dynamic {:limits []}})]
-            (expect (str/includes? text "Authenticated: no"))
-            (expect (str/includes? text "Is loading: true"))
+            (expect (str/includes? text "Authenticated: checking…"))
+            (expect (not (str/includes? text "Authenticated: no")))
+            (expect (not (str/includes? text "Is loading:")))
             (expect (str/includes? text "Status: loading"))
             (expect (= false @limits-probed?)))))))
 
@@ -1518,3 +1519,35 @@
       (let [item (first (:items (second (:groups (provider/api-key-transient-spec)))))]
         (expect (= :submit (:id item)))
         (expect (= :action (:type item))))))
+
+(defdescribe command-minted-provider-auth-test
+             ;; The screen that started this: a provider whose token is minted by
+             ;; `api_key_command` was still offered an "enter your API key" transient,
+             ;; right under guidance saying the token is minted automatically.
+             (it "explains instead of prompting when config mints the credential itself"
+                 (let
+                   [message
+                    (atom nil)
+
+                    start-called?
+                    (atom false)]
+
+                   (with-redefs
+                     [vis/gateway-provider-auth-start!
+                      (fn [& _]
+                        (reset! start-called? true)
+                        nil)
+
+                      dlg/text-view-dialog!
+                      (fn [& args]
+                        (reset! message args))
+
+                      dlg/transient-dialog!
+                      (fn [& _]
+                        (throw (ex-info "must never prompt for a machine-minted key" {})))]
+
+                     (expect (nil? (provider/authenticate-provider!
+                                     nil
+                                     {:id :corp :api-key-command "mint-token"})))
+                     (expect (= false @start-called?))
+                     (expect (str/includes? (str @message) "api_key_command"))))))

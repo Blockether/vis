@@ -4,6 +4,7 @@
    a warm caller, a stale snapshot must refresh OFF the calling thread, and
    every same-process fleet mutation must invalidate the snapshot."
   (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]
+            [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
@@ -480,3 +481,43 @@
   (with-redefs [providers/provider-reachable? (constantly true)]
     (let [router {:providers [{:id :lmstudio :priority 0} {:id :zai-coding-plan :priority 1}]}]
       (is (= {:router router :demoted []} (providers/demote-unreachable-providers router))))))
+
+(deftest command-minted-provider-test
+  ;; A provider whose config carries `api_key_command` mints its OWN credential
+  ;; on every request. Classifying it as `:api-key` made every channel offer a
+  ;; "type your API key" prompt for a credential no human holds — and a typed
+  ;; key then silently outranks the helper on the next request.
+  (is (= true (providers/command-minted? {:id :corp :api-key-command "mint-token"})))
+  (is (= false (providers/command-minted? {:id :corp :api-key "sk-1"})))
+  (is (= false (providers/command-minted? nil)))
+  (is (= :command (providers/auth-kind :corp {:id :corp :api-key-command "mint-token"})))
+  (is (= :api-key (providers/auth-kind :corp {:id :corp :api-key "sk-1"})))
+  (is (= :api-key (providers/auth-kind :corp)))
+  (is (= :oauth (providers/auth-kind (first providers/oauth-provider-ids))))
+  (is (= :none (providers/auth-kind (first providers/local-no-auth-provider-ids)))))
+
+(deftest status-checking-verdict-test
+  ;; A probe still in flight is NOT a verdict. Both report forms used to render
+  ;; the placeholder status as a definitive "no" and retract it one refresh
+  ;; later, which is exactly what a provider card showed while it was loading.
+  (let
+    [limits
+     {:provider-id :slow :status :loading :static {} :dynamic {:limits []}}
+
+     loading
+     {:is-authenticated nil :loading? true}
+
+     text
+     (providers/status-text {:id :slow} loading limits)
+
+     md
+     (providers/status-md {:id :slow} loading limits)]
+
+    (is (str/includes? text "Authenticated: checking…"))
+    (is (not (str/includes? text "Authenticated: no")))
+    (is (str/includes? md "**Authenticated:** checking…"))
+    (is (not (str/includes? md "no ✗")))
+    (is (str/includes? (providers/status-md {:id :slow} {:is-authenticated true} limits) "yes ✓"))
+    (is (str/includes? (providers/status-md {:id :slow} {:is-authenticated false} limits) "no ✗"))
+    (is (str/includes? (providers/status-text {:id :slow} {:is-authenticated false} limits)
+                       "Authenticated: no"))))

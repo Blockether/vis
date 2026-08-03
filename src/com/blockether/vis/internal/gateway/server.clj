@@ -971,7 +971,7 @@
                     (:unknown-provider :unknown-flow)
                     404
 
-                    (:auth-unsupported :missing-input :invalid-input)
+                    (:auth-unsupported :auth-self-minted :missing-input :invalid-input)
                     400
 
                     502)

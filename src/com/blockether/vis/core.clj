@@ -468,6 +468,7 @@
 ;; live model catalogs, persistence. Channels add only interaction.
 ;; =============================================================================
 (import-vars [provider-auth-kind providers/auth-kind]
+             [provider-command-minted? providers/command-minted?]
              [provider-oauth-ids providers/oauth-provider-ids]
              [provider-local-no-auth-ids providers/local-no-auth-provider-ids]
              [provider-url-host providers/url-host]

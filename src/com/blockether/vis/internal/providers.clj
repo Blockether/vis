@@ -46,14 +46,27 @@
    provider extension)."
   (into #{:openai-codex :anthropic-coding-plan} (keys github-copilot-account-types)))
 
+(defn command-minted?
+  "True when the credential is minted BY THE MACHINE: config carries an
+   `api_key_command`, so the helper mints (and rotates) the token on every
+   request and there is nothing for a human to type or paste."
+  [provider]
+  (some? (:api-key-command provider)))
+
 (defn auth-kind
-  "How a provider id authenticates: `:oauth` (interactive flow owned by
-   the provider extension), `:none` (local, no credentials), or
-   `:api-key`."
-  [pid]
-  (cond (contains? oauth-provider-ids pid) :oauth
-        (contains? local-no-auth-provider-ids pid) :none
-        :else :api-key))
+  "How a provider authenticates: `:command` (an `api_key_command` mints the
+   credential — never prompt), `:oauth` (interactive flow owned by the
+   provider extension), `:none` (local, no credentials), or `:api-key`.
+
+   The 1-arity classifies by id alone and therefore can never see a
+   command-minted provider; pass the configured provider map when the
+   answer decides whether to prompt a human."
+  ([pid] (auth-kind pid nil))
+  ([pid provider]
+   (cond (command-minted? provider) :command
+         (contains? oauth-provider-ids pid) :oauth
+         (contains? local-no-auth-provider-ids pid) :none
+         :else :api-key)))
 
 (defn url-host
   "Extract host from URL for display. 'https://llm.blockether.com/v1' ->
@@ -447,6 +460,15 @@
          (when quota (str ": " quota))
          (when note (str " - " note)))))
 
+(defn- auth-verdict
+  "Three-valued authentication verdict for a status map. A probe still in
+   flight is `:checking`, NEVER a definitive `:no` the card is about to
+   retract one refresh later."
+  [status]
+  (cond (get status "is_authenticated") :yes
+        (get status "is_loading") :checking
+        :else :no))
+
 (defn status-text
   "Multi-line human status + limits report for a configured provider.
    The single source for the TUI 'Show Status + Limits' dialog and the
@@ -466,7 +488,7 @@
       rows
       (->> status
            (remove (fn [[k _]]
-                     (= k "is_authenticated")))
+                     (contains? #{"is_authenticated" "is_loading"} k)))
            (sort-by (comp str key))
            (map (fn [[k v]]
                   (str (status-entry-label k) ": " (format-status-value v)))))
@@ -478,7 +500,16 @@
        "\n"
        (concat
          [title "" (str "Base URL: " (or (config/provider-base-url provider) "-"))
-          (str "Authenticated: " (if (get status "is_authenticated") "yes" "no"))]
+          (str "Authenticated: "
+               (case (auth-verdict status)
+                 :yes
+                 "yes"
+
+                 :no
+                 "no"
+
+                 :checking
+                 "checking…"))]
          (when-let [e (get status "error")]
            ["" (str "Error: " e)])
          (when (seq rows) (concat [""] rows))
@@ -533,8 +564,8 @@
       label
       (config/display-label (:id provider))
 
-      ok?
-      (boolean (get status "is_authenticated"))
+      verdict
+      (auth-verdict status)
 
       dynamic
       (get-in limits [:dynamic :limits])
@@ -550,7 +581,15 @@
        (concat
          [(str "## " label) ""
           (str "**Authenticated:** "
-               (if ok? "yes ✓" "no ✗")
+               (case verdict
+                 :yes
+                 "yes ✓"
+
+                 :no
+                 "no ✗"
+
+                 :checking
+                 "checking…")
                "  ·  **Base URL:** `"
                (or (config/provider-base-url provider) "-")
                "`")]

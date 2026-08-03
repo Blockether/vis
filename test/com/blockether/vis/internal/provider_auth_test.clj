@@ -411,3 +411,36 @@
             (expect (= true (:ok? (pauth/logout! :fake-pkce))))
             ;; A completion that lands after the logout must NOT re-authenticate.
             (expect (= :unknown-flow (:error (pauth/complete-auth! fid "https://cb?code=a")))))))))
+
+(defdescribe provider-auth-self-minted-test
+             ;; `api_key_command` mints the credential per request. Offering an auth flow
+             ;; for such a provider invites a client to collect a key that would then
+             ;; outrank the helper, so the daemon refuses it before any flow is minted.
+             (it "refuses to start a flow for a provider whose credential is machine-minted"
+                 (with-redefs
+                   [providers/configured-providers-cached
+                    (constantly [{:id :corp :api-key-command "mint-token"}])
+
+                    registry/provider-by-id
+                    (constantly {:provider/auth-prompt-fn (constantly ["paste a key"])})
+
+                    providers/auth-kind
+                    (constantly :api-key)]
+
+                   (expect (= false (pauth/supported? :corp)))
+                   (let [result (pauth/start-auth! :corp)]
+                     (expect (= false (:ok? result)))
+                     (expect (= :auth-self-minted (:error result)))
+                     (expect (str/includes? (:message result) "api_key_command")))))
+             (it "still supports a plain API-key provider that is not command-minted"
+                 (with-redefs
+                   [providers/configured-providers-cached
+                    (constantly [{:id :corp :api-key "sk-1"}])
+
+                    registry/provider-by-id
+                    (constantly {:provider/auth-prompt-fn (constantly ["paste a key"])})
+
+                    providers/auth-kind
+                    (constantly :api-key)]
+
+                   (expect (= true (pauth/supported? :corp))))))
