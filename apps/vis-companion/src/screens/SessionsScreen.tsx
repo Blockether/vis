@@ -33,6 +33,7 @@ import {
   sessionIsDirty,
   sessionIsListed,
   sessionIsLive,
+  showsScopeStrip,
   type FleetMachine,
 } from '../lib/fleet';
 
@@ -481,6 +482,9 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   const scopeMachine = scope
     ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
     : null;
+  // The strip is where the fleet's tallies live; the header line only speaks
+  // when there is no strip to speak for it.
+  const hasScopeStrip = showsScopeStrip(machines);
   const showMachineHeaders = machines.length > 1 && !scopeMachine;
 
   // A scope narrowed to a dead machine is not an empty machine: with the rest of
@@ -772,23 +776,31 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                           <span className="px-1 opacity-40">·</span>
                           {totals.all} {totals.all === 1 ? 'session' : 'sessions'}
                         </span>
-                        {/* No glyph here either: on a header LINE the word
-                            "live" already says what the number is, and the `●`
-                            only added a mark that hung below the digits beside
-                            it. Green is the whole signal. */}
-                        <span
-                          className={`whitespace-nowrap ${totals.live > 0 ? 'font-bold text-ok' : ''}`}
-                        >
-                          {totals.live} live
-                        </span>
-                        {totals.unread > 0 && (
-                          <span
-                            className="whitespace-nowrap font-bold text-accent-ink"
-                            role="status"
-                            aria-live="polite"
-                          >
-                            {totals.unread} unread
-                          </span>
+                        {/* WHERE the two numbers live is a one-place question.
+                            While the scope strip is on screen every chip
+                            carries its machine's live and unread and the All
+                            chip carries the fleet's, one row below this line —
+                            so saying it here was the same fact twice, and a
+                            third time in every machine header. One machine
+                            paired means there is no strip at all: then, and
+                            only then, this line takes the counts back. */}
+                        {!hasScopeStrip && (
+                          <>
+                            <span
+                              className={`whitespace-nowrap ${totals.live > 0 ? 'font-bold text-ok' : ''}`}
+                            >
+                              {totals.live} live
+                            </span>
+                            {totals.unread > 0 && (
+                              <span
+                                className="whitespace-nowrap font-bold text-accent-ink"
+                                role="status"
+                                aria-live="polite"
+                              >
+                                {totals.unread} unread
+                              </span>
+                            )}
+                          </>
                         )}
                       </>
                     )}
@@ -857,7 +869,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
         {/* The scope strip. One machine paired → this whole row is absent, and
             nothing else on the screen changes: multi-machine costs the solo user
             nothing. */}
-        {machines.length > 1 && (
+        {hasScopeStrip && (
           <div className="flex items-center gap-1.5 overflow-x-auto border-t border-dialog-edge bg-panel px-3 py-2 sm:px-4">
             <button
               type="button"
@@ -867,7 +879,12 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
             >
               All
               {fleetLive > 0 && <LiveTally count={fleetLive} />}
-              <UnreadBadge count={fleetUnread} />
+              {/* Unread is the one count that ARRIVES on its own, so the fleet
+                  total stays a live region now that the header line above no
+                  longer says it. `contents` keeps the chip's own layout. */}
+              <span role="status" aria-live="polite" className="contents">
+                <UnreadBadge count={fleetUnread} />
+              </span>
             </button>
             {machines.map((machine) => {
               const key = machineKey(machine.conn);
@@ -934,7 +951,6 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
           <div className="border-t border-dialog-edge">
             {sections.map(({ machine, groups }) => {
               const key = machineKey(machine.conn);
-              const tally = tallies.get(key);
               return (
                 <section key={key} aria-label={machines.length > 1 ? `${machineLabel(machine.conn)} projects` : undefined}>
                   {/* With one machine paired the fleet costs nothing — not the header,
@@ -971,15 +987,11 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                             <span>
                               {groups.length} {groups.length === 1 ? 'project' : 'projects'}
                             </span>
-                            {!!tally?.live && (
-                              <span className="font-bold text-ok">{tally.live} live</span>
-                            )}
-                            {/* A machine HEADER has room for the word, so it says it, exactly
-                                like the fleet line above: the filled badge is for the chips,
-                                where there is no room for anything but a number. */}
-                            {!!tally?.unread && (
-                              <span className="font-bold text-accent-ink">{tally.unread} unread</span>
-                            )}
+                            {/* The strip above carries this machine's live and
+                                unread counts, and it does NOT scroll away with
+                                the list, so a section header that repeated them
+                                only printed the same two numbers a second
+                                time. */}
                           </>
                         )}
                       </span>

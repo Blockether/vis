@@ -16,6 +16,7 @@ import {
   sessionIsDirty,
   sessionIsEmpty,
   sessionIsListed,
+  showsScopeStrip,
   type FleetMachine,
 } from './fleet';
 import type { GatewayConn, Session } from './types';
@@ -204,5 +205,14 @@ describe('dirty sessions', () => {
     expect(sessionIsListed(fresh(), true)).toBe(true);
     expect(sessionIsListed(fresh(), false)).toBe(false);
     expect(sessionIsListed(fresh({ title: 'Named' }), false)).toBe(true);
+  });
+});
+
+describe('showsScopeStrip', () => {
+  it('is the strip, and therefore who states the tallies', () => {
+    expect(showsScopeStrip([machine(studio, []), machine(tower, [])])).toBe(true);
+    // Solo: no strip, so the header line is the only surface left to count on.
+    expect(showsScopeStrip([machine(studio, [])])).toBe(false);
+    expect(showsScopeStrip([])).toBe(false);
   });
 });
