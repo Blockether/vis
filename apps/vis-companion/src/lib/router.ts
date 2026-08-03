@@ -94,3 +94,33 @@ export function sessionShareUrl(sid: string, gatewayId?: string): string {
     : '';
   return `${origin}${sessionHash(sid, gatewayId)}`;
 }
+
+/**
+ * Identity of the screen currently filling the shell: the open session, or the
+ * empty string for the navigator. Compared, never parsed.
+ */
+export function screenKey(
+  target: { conn: { url: string }; sid: string } | null | undefined,
+): string {
+  return target ? `${target.conn.url}\u0000${target.sid}` : '';
+}
+
+/**
+ * True when the shell moved INTO a session screen, or across to a different
+ * one.
+ *
+ * Overlays belong to the screen that opened them. Navigation here is not always
+ * a tap: creating a session from the list is an async POST, so a user who opens
+ * Settings while it flies gets the transcript swapped in UNDERNEATH the modal —
+ * the list header and tab bar unmount, and a `fresh` session focuses its
+ * composer, which pins the shell and re-anchors the dialog's `fixed` box to a
+ * now-transformed ancestor. The dialog jumps out of the safe area and floats
+ * over a screen it was never opened from.
+ *
+ * Leaving a session is deliberately NOT a dismissal: the gateway settings
+ * dialog closes the open session itself when it switches the primary gateway,
+ * and must survive doing so.
+ */
+export function isSessionEntered(previous: string, next: string): boolean {
+  return next !== '' && next !== previous;
+}

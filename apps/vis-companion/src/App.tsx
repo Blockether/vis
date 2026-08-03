@@ -34,7 +34,7 @@ import { getThemePalette, getThemePref } from './lib/storage';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
-import { parseRoute, parseSessionDeepLink, sessionHash, tabHash } from './lib/router';
+import { isSessionEntered, parseRoute, parseSessionDeepLink, screenKey, sessionHash, tabHash } from './lib/router';
 import {
   reclaimViewportForExternalNavigation,
   useVisualViewportShell,
@@ -237,6 +237,20 @@ export function App() {
     setOpenTarget({ conn, sid, fresh });
     void rememberSubscribedSession(conn.url, sid).catch(() => undefined);
   }, []);
+
+  // Overlays are screen-scoped, and a navigation can land while one is up: see
+  // `isSessionEntered`. Dismissing here covers every way in — list tap, deep
+  // link, notification tap, share intake, and the create that finishes after
+  // the user has already opened Settings.
+  const screen = screenKey(openTarget);
+  const shownScreen = useRef(screen);
+  useEffect(() => {
+    const previous = shownScreen.current;
+    shownScreen.current = screen;
+    if (!isSessionEntered(previous, screen)) return;
+    setSettingsTarget(null);
+    setAppSettingsOpen(false);
+  }, [screen]);
 
   // A share sheet drop, an Android `ACTION_SEND`, or a Shortcuts run carries a
   // payload but no destination. `lib/share-intake` parks it; this decides where
