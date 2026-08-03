@@ -296,6 +296,33 @@
    on every provider."
   1568)
 
+(defn- clamped-to
+  "ONE forced downscale of `data` so neither side exceeds `target`, VERIFIED by
+   re-probing the result: `{:bytes <b> :width <w> :height <h>}` only when the
+   output really measures within `max-dimension`, nil otherwise.
+
+   The re-probe is the whole point. A scaler that hands the input straight back
+   -- a container it will not re-encode, a frame layout it refuses to resample --
+   must never be mistaken for a picture that fits, or an oversized payload goes
+   out believing it was shrunk."
+  [^bytes data ^long target ^long max-dimension]
+  (let
+    [out
+     (try (imaging/optimize data {:max-width target :max-height target :force true})
+          (catch Throwable _ nil))
+
+     scaled
+     (when (and out (pos? (alength ^bytes out))) (try (imaging/probe out) (catch Throwable _ nil)))
+
+     w
+     (long (or (:width scaled) 0))
+
+     h
+     (long (or (:height scaled) 0))]
+
+    (when (and (pos? w) (pos? h) (<= w max-dimension) (<= h max-dimension))
+      {:bytes out :width w :height h})))
+
 (defn fit-dimensions
   "Downscale an already wire-safe payload until NEITHER side exceeds
    `max-dimension`, preserving aspect ratio and container (`imaging/optimize`'s
@@ -305,6 +332,19 @@
    the way [[fit-within]] does: the alternative is not \"send the original\", it
    is a provider 400 that replays on every later turn ([[max-wire-dimension]]).
 
+   ALWAYS smaller, never merely attempted:
+
+     * the ceiling is the first rung and every later rung HALVES it, so a
+       container that refuses one scale factor is stepped down again instead of
+       leaving at its original size;
+     * every candidate is re-PROBED, so a payload comes back fitted only once it
+       has been MEASURED inside the ceiling -- a scaler that returned the input
+       unchanged does not count as a fit;
+     * a payload the prober cannot measure is treated as OVERSIZED, not as fine,
+       because an unmeasured picture is exactly the one that 400s;
+     * a picture no rung can bring under the limit is refused rather than sent:
+       one oversized image fails the WHOLE request, on every later turn.
+
    Returns `{:bytes <b> :width <w> :height <h>}` -- `data` ITSELF when it already
    fits, so the verbatim-bytes contract holds for every picture within the
    ceiling -- or `{:reason <why>}` when an oversized picture cannot be brought
@@ -312,9 +352,11 @@
   ([^bytes data] (fit-dimensions data max-wire-dimension))
   ([^bytes data ^long max-dimension]
    (let
-     [probe
-      (when (and *enabled?* data (pos? (alength data)))
-        (try (imaging/probe data) (catch Throwable _ nil)))
+     [scalable?
+      (boolean (and *enabled?* data (pos? (alength data))))
+
+      probe
+      (when scalable? (try (imaging/probe data) (catch Throwable _ nil)))
 
       w
       (long (or (:width probe) 0))
@@ -323,35 +365,31 @@
       (long (or (:height probe) 0))]
 
      (cond
-       ;; Nothing to measure (conversion off, or a container the prober cannot
-       ;; read): best effort beats dropping a picture over a size never seen.
-       (or (nil? probe) (not (pos? w)) (not (pos? h))) {:bytes data}
-       (and (<= w max-dimension) (<= h max-dimension)) {:bytes data :width w :height h}
-       :else (let
-               [out
-                (try (imaging/optimize
-                       data
-                       {:max-width max-dimension :max-height max-dimension :force true})
-                     (catch Throwable _ nil))
-
-                scaled
-                (when (and out (pos? (alength ^bytes out)))
-                  (try (imaging/probe out) (catch Throwable _ nil)))
-
-                w2
-                (long (or (:width scaled) 0))
-
-                h2
-                (long (or (:height scaled) 0))]
-
-               (if (and (pos? w2) (pos? h2) (<= w2 max-dimension) (<= h2 max-dimension))
-                 {:bytes out :width w2 :height h2}
-                 {:reason (str w
-                               "x"
-                               h
-                               " exceeds the "
-                               max-dimension
-                               "px per-side limit for images and could not be downscaled")}))))))
+       ;; Measured, and already inside the ceiling: the payload ITSELF, byte for
+       ;; byte -- nothing under the cap is ever re-encoded.
+       (and (pos? w) (pos? h) (<= w max-dimension) (<= h max-dimension))
+       {:bytes data :width w :height h}
+       ;; Nothing this build can scale (conversion off, or no bytes at all).
+       ;; Best effort beats dropping a picture over a size never seen.
+       (not scalable?) {:bytes data}
+       ;; Over the ceiling -- or unmeasurable, which is treated the same way.
+       ;; Step DOWN until something probes inside the limit.
+       :else (or (some #(clamped-to data (long %) max-dimension)
+                       (->> (iterate #(quot (long %) 2) max-dimension)
+                            (take 4)
+                            (take-while pos?)
+                            (distinct)))
+                 (if (pos? (max w h))
+                   {:reason (str w
+                                 "x"
+                                 h
+                                 " exceeds the "
+                                 max-dimension
+                                 "px per-side limit for images and could not be downscaled")}
+                   ;; Never measured and never scaled: the decoder cannot read this
+                   ;; container at all, so there is no size to honour and nothing to
+                   ;; re-encode here. Hand it back and let the wire judge it.
+                   {:bytes data}))))))
 
 (def ^:const video-gif-max-dimension
   "Long-edge ceiling for the GIF a clip becomes. A model reads a contact sheet,

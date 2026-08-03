@@ -484,7 +484,41 @@
   (it "leaves the payload alone when conversion is unavailable"
       (binding [image-convert/*enabled?* false]
         (let [data (raster-bytes "png" 40 20 0xff0000)]
-          (expect (identical? data (:bytes (image-convert/fit-dimensions data 10))))))))
+          (expect (identical? data (:bytes (image-convert/fit-dimensions data 10)))))))
+  (it "steps DOWN again when the scaler hands the payload straight back"
+      (let
+        [data
+         (raster-bytes "png" 4000 1000 0x00ff00)
+
+         real
+         imaging/optimize
+
+         targets
+         (atom [])]
+
+        ;; A container the scaler refuses to re-encode at the first rung: the
+        ;; bytes come back UNCHANGED, still 4000px wide. Trusting that output is
+        ;; exactly how an oversized picture reaches the wire believing it fits.
+        (with-redefs
+          [imaging/optimize (fn [d opts]
+                              (swap! targets conj (:max-width opts))
+                              (if (= 500 (:max-width opts)) d (real d opts)))]
+          (let [r (image-convert/fit-dimensions data 500)]
+            (expect (= [500 250] @targets))
+            (expect (nil? (:reason r)))
+            (expect (<= (long (:width r)) 500))
+            (expect (<= (long (:height r)) 500))
+            (expect (= [(:width r) (:height r)] (decoded-size (:bytes r))))))))
+  (it "never lets a picture past the ceiling, whatever its shape"
+      (doseq [[w h] [[4000 1000] [1000 4000] [2400 2400] [1569 10] [10 1569]]]
+        (let [r (image-convert/fit-dimensions (raster-bytes "png" w h 0xff0000) 1568)]
+          (expect (nil? (:reason r)))
+          (expect (= [(:width r) (:height r)] (decoded-size (:bytes r))))
+          (expect (<= (long (:width r)) 1568))
+          (expect (<= (long (:height r)) 1568)))))
+  (it "hands back a payload no decoder can measure instead of dropping it"
+      (let [junk (byte-array (map byte (range 1 40)))]
+        (expect (identical? junk (:bytes (image-convert/fit-dimensions junk 100)))))))
 
 ;; =============================================================================
 ;; Cross-validation: a decoder that is NOT the one that wrote the bytes
