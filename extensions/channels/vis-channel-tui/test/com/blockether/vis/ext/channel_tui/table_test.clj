@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.table-test
   "The `vis-table` viewer, end to end on the TUI side: the pure CSV primitives
-   (parse, measure, align, filter, sort, render), the grid a `vis-table` fence
+   (parse, measure, align, page, sort, render), the grid a `vis-table` fence
    paints inline in the transcript, and the spreadsheet dialog a click on that
    grid opens.
 
@@ -80,15 +80,19 @@
              (it "ignores the header when deciding (a numeric column is titled with words)"
                  (expect (= [:right] (table/csv-aligns [["qty"] ["1"] ["2"]])))))
 
-(defdescribe csv-filter-test
-             (it "matches any cell, case-insensitively"
-                 (expect (= [["yak" "10" "second"]] (table/filter-csv-rows (rest grid) "YAK")))
-                 (expect (= [["yak" "10" "second"]] (table/filter-csv-rows (rest grid) "second"))))
-             (it "a blank query keeps every row"
-                 (expect (= 3 (count (table/filter-csv-rows (rest grid) ""))))
-                 (expect (= 3 (count (table/filter-csv-rows (rest grid) "  ")))))
-             (it "no match is an empty result, never the whole sheet"
-                 (expect (= [] (table/filter-csv-rows (rest grid) "nope")))))
+(defdescribe csv-page-test
+             (it "counts pages, and an empty sheet still has page 1/1"
+                 (expect (= 3 (table/page-count 60 25)))
+                 (expect (= 2 (table/page-count 50 25)))
+                 (expect (= 1 (table/page-count 0 25))))
+             (it "maps a row to its page and back to that page's first row"
+                 (expect (= 0 (table/page-index 24 25)))
+                 (expect (= 1 (table/page-index 25 25)))
+                 (expect (= 25 (table/page-start 40 25)))
+                 (expect (= 0 (table/page-start 3 25))))
+             (it "a page-size of zero never divides by zero"
+                 (expect (= 1 (table/page-count 0 0)))
+                 (expect (= 3 (table/page-start 3 0)))))
 
 (defdescribe
   csv-sort-test
@@ -186,6 +190,15 @@
 
 (defn- component [] (dlg/table-modal-component "fleet.csv" grid))
 
+;; A sheet nobody can see at once: what paging exists for.
+(def ^:private big-grid
+  (table/parse-csv (apply str
+                     "n,label\n"
+                     (for [i (range 60)]
+                       (str i ",row-" i "\n")))))
+
+(defn- big-component [] (dlg/table-modal-component "events.csv" big-grid))
+
 (defn- measure [component state] ((:measure component) state 80 30))
 
 (defn- press
@@ -199,8 +212,6 @@
                 ((:on-key component) ((:reconcile component) st m) k m))))
           state
           keys))
-
-(defn- typing [c] (KeyStroke. (Character/valueOf c) false false false))
 
 (defn- special [t] (KeyStroke. t))
 
@@ -219,31 +230,60 @@
         (expect (str/includes? (:title m) "3 rows × 3 cols"))
         (expect (= 3 (count (:widths m))))
         (expect (= [:left :right :left] (:aligns m)))))
-  (it "typing filters over EVERY column and retitles with the ratio"
+  (it "a sheet that fits on one page carries no page counter"
+      (let [c (component)]
+        (expect (not (str/includes? (:title (measure c (:init c))) "page")))
+        (expect (= 1 (:pages (measure c (:init c)))))))
+  (it "PgDn turns a WHOLE page: the cursor lands on its first row and the title counts"
       (let
         [c
-         (component)
+         (big-component)
+
+         m0
+         (measure c (:init c))
+
+         page-size
+         (long (:list-h m0))
 
          st
-         (press c (:init c) [(typing \y)])
+         (press c (:init c) [(special KeyType/PageDown)])
 
          m
          (measure c st)]
 
-        (expect (= "y" (:query st)))
-        (expect (= 1 (:total m)))
-        (expect (= [["yak" "10" "second"]] (:visible m)))
-        (expect (str/includes? (:title m) "1/3 rows"))))
-  (it "backspace restores the hidden rows"
+        (expect (< page-size 60))
+        (expect (str/includes? (:title m0) (str "page 1/" (:pages m0))))
+        (expect (= page-size (:selected st)))
+        (expect (= 1 (:page m)))
+        (expect (= page-size (:scroll ((:reconcile c) st m))))
+        (expect (str/includes? (:title m) (str "page 2/" (:pages m))))))
+  (it "PgUp comes back and neither page key walks off the sheet"
       (let
         [c
-         (component)
+         (big-component)
 
-         st
-         (press c (:init c) [(typing \y) (special KeyType/Backspace)])]
+         back
+         (press c (:init c) [(special KeyType/PageDown) (special KeyType/PageUp)])
 
-        (expect (= "" (:query st)))
-        (expect (= 3 (:total (measure c st))))))
+         top
+         (press c (:init c) (repeat 9 (special KeyType/PageUp)))
+
+         end
+         (press c (:init c) (repeat 9 (special KeyType/PageDown)))]
+
+        (expect (zero? (long (:selected back))))
+        (expect (zero? (long (:selected top))))
+        (expect (= 59 (:selected end)))))
+  (it "Home and End jump to the first and last row"
+      (let
+        [c
+         (big-component)
+
+         end
+         (press c (:init c) [(special KeyType/End)])]
+
+        (expect (= 59 (:selected end)))
+        (expect (zero? (long (:selected (press c end [(special KeyType/Home)])))))))
   (it "↑/↓ move the row cursor and stop at the ends"
       (let
         [c
@@ -313,24 +353,28 @@
          (press c (:init c) [(special KeyType/ArrowDown) (special KeyType/Tab)])]
 
         (expect (= ["yak" "10" "second"] (::dlg/done st)))))
-  (it "keeps a filtered selection inside the shrunken list"
+  (it "the window snaps to the page holding the cursor, never mid-page"
       (let
         [c
-         (component)
+         (big-component)
+
+         page-size
+         (long (:list-h (measure c (:init c))))
 
          st
-         (press c (:init c) [(special KeyType/ArrowDown) (special KeyType/ArrowDown) (typing \y)])
+         (press c (:init c) (repeat page-size (special KeyType/ArrowDown)))
 
          m
          (measure c st)]
 
-        (expect (= 1 (:total m)))
-        (expect (zero? (long (:selected ((:reconcile c) st m))))))))
+        (expect (= page-size (:selected st)))
+        (expect (= 1 (:page m)))
+        (expect (= page-size (:scroll ((:reconcile c) st m)))))))
 
 (defdescribe
   table-dialog-paint-test
   (it
-    "paints the filter field, the bordered grid and the hint bar"
+    "paints the bordered grid, the page keys and the hint bar"
     (let
       [vt
        (term/virtual-screen)
@@ -363,7 +407,7 @@
               (str/join "\n" rows)]
 
              (expect (str/includes? txt "fleet.csv"))
-             (expect (str/includes? txt "filter rows"))
+             (expect (str/includes? txt "PgUp/PgDn"))
              (expect (str/includes? txt "name"))
              (expect (str/includes? txt "ada"))
              (expect (str/includes? txt "120"))

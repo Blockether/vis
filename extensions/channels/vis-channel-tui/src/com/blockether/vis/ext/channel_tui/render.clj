@@ -2267,7 +2267,7 @@
                                    :url (:path img)}))
                   ;; Every painted row of a `vis-table` grid is a click target:
                   ;; clicking the table opens the WHOLE data set in the sortable,
-                  ;; filterable table dialog (`:table` branch of the click case) —
+                  ;; pageable table dialog (`:table` branch of the click case) —
                   ;; the transcript only ever shows a preview of the rows.
                   (when-let [tbl (:table meta)]
                     (cr/register! {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
@@ -6409,7 +6409,7 @@
 (def ^:private table-preview-rows
   "Data rows a `vis-table` fence paints INLINE. The transcript shows a preview,
    never the whole dataset: the full payload rides in every painted row's
-   `:table` meta, and the table dialog (click the grid) sorts, filters and
+   `:table` meta, and the table dialog (click the grid) pages, sorts and
    selects over ALL of it."
   10)
 
@@ -6445,7 +6445,7 @@
                   hidden
                   " more row"
                   (when (not= 1 hidden) "s")
-                  " — click the table to sort, filter and select")))
+                  " — click the table to page, sort and select")))
 
      header
      (vec (layout/ast->entries [:ast {} [:p {} summary]] content-w {}))

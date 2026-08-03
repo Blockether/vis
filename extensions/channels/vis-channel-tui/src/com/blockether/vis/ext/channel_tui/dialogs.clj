@@ -944,12 +944,17 @@
 (defn table-modal-component
   "Pure `run-modal!` component behind `table-view-dialog!` — the spreadsheet view
    of a `vis-table` artifact. `grid` is `table/parse-csv` output (first row is the
-   header). Filtering, sorting, geometry and the key map are plain functions of
+   header). Paging, sorting, geometry and the key map are plain functions of
    immutable state, so the whole viewer is testable with no terminal; only
    `:paint` touches the screen.
 
-   Keys: type to filter over EVERY column, ↑/↓ pick a row, ←/→ pick a column,
-   Enter sorts by that column (toggling ascending/descending), Esc closes."
+   The sheet is PAGED, not scrolled: the window always starts on a page boundary
+   (`table/page-start`), so a row never straddles two screens and the title says
+   which page of how many you are on.
+
+   Keys: ↑/↓ pick a row, PgUp/PgDn turn a whole page, ←/→ pick a column, Enter
+   sorts by that column (toggling ascending/descending), Tab yields the row, Esc
+   closes."
   [title grid]
   (let
     [header
@@ -965,150 +970,156 @@
      ;; (cursor caret + sort arrow) so moving the cursor or re-sorting NEVER
      ;; re-flows the grid — the marks always have room already.
      sizing-grid
-     (into [(mapv (fn [h] (str "▸" h " ▲")) header)] data)]
+     (into [(mapv (fn [h]
+                    (str "▸" h " ▲"))
+                  header)]
+           data)]
 
-    {:init {:query "" :selected 0 :scroll 0 :col 0 :sort-idx nil :sort-dir :asc}
-     :measure (fn [{:keys [query sort-idx sort-dir col]} cols rows]
-                (let
-                  [visible
-                   (cond-> (table/filter-csv-rows data query)
-                     sort-idx
-                     (table/sort-csv-rows sort-idx sort-dir))
+    {:init {:selected 0 :scroll 0 :col 0 :sort-idx nil :sort-dir :asc}
+     :measure
+     (fn [{:keys [sort-idx sort-dir col selected]} cols rows]
+       (let
+         [visible
+          (cond-> data
+            sort-idx
+            (table/sort-csv-rows sort-idx sort-dir))
 
-                   total
-                   (count visible)
+          total
+          (count visible)
 
-                   footer
-                   [["type" "filter"] ["↑/↓" "row"] ["←/→" "column"] ["Enter" "sort"]
-                    ["Esc" "close"]]
+          footer
+          ;; Five hints have to fit an 80-column terminal: a dropped entry is
+          ;; always the LAST one, and losing "Esc close" would hide the only way out.
+          [["↑/↓" "row"] ["PgUp/PgDn" "page"] ["←/→" "col"] ["Enter" "sort"] ["Esc" "close"]]
 
-                   content-w
-                   (footer-content-width cols footer (table/csv-natural-width sizing-grid))
+          content-w
+          (footer-content-width cols footer (table/csv-natural-width sizing-grid))
 
-                   ;; Tall enough to scroll a big sheet, but a 3-row CSV gets a
-                   ;; 3-row box. Sized from ALL data rows, never the filtered
-                   ;; ones, so typing a query cannot resize the dialog.
-                   content-h-req
-                   (min (long (adaptive-content-height rows nil)) (+ 6 (max 1 (count data))))
+          ;; Tall enough to page through a big sheet, but a 3-row CSV gets a
+          ;; 3-row box: the grid spends 3 rows on its head (top rule, header,
+          ;; rule) and 1 on the bottom rule.
+          content-h-req
+          (min (long (adaptive-content-height rows nil)) (+ 4 (max 1 (count data))))
 
-                   bounds
-                   (dialog-bounds cols rows content-w content-h-req)
+          bounds
+          (dialog-bounds cols rows content-w content-h-req)
 
-                   {:keys [content-top content-h hint-row]}
-                   (dialog-layout bounds)
+          {:keys [content-top content-h hint-row]}
+          (dialog-layout bounds)
 
-                   ;; The query field plus its rule sit above the grid; the grid itself
-                   ;; spends 3 rows on its head (top rule, header, rule) and 1 on the
-                   ;; bottom rule, so only the rest is data.
-                   grid-top
-                   (+ (long content-top) 2)
+          grid-top
+          (long content-top)
 
-                   list-h
-                   (max 1 (- (long content-h) 2 4))
+          list-h
+          (max 1 (- (long content-h) 4))
 
-                   widths
-                   (table/csv-stretch-widths (table/csv-widths sizing-grid (:inner-w bounds))
-                                             (:inner-w bounds))
+          pages
+          (long (table/page-count total list-h))
 
-                   aligns
-                   (table/csv-aligns grid)
+          page
+          (long (table/page-index (p/clamp (long selected) 0 (max 0 (dec (long total)))) list-h))
 
-                   head-cells
-                   (mapv (fn [i]
-                           (str (when (= (long i) (long col)) "▸")
-                                (nth header i "")
-                                (when (= sort-idx i) (if (= :desc sort-dir) " ▼" " ▲"))))
-                         (range (count widths)))]
+          widths
+          (table/csv-stretch-widths (table/csv-widths sizing-grid (:inner-w bounds))
+                                    (:inner-w bounds))
 
-                  {:cols cols
-                   :rows rows
-                   :title (str title
-                               "  "
-                               total
-                               (when-not (= total (count data)) (str "/" (count data)))
-                               ;; "1/3 rows": the plural follows the DATASET, not the
-                               ;; filtered count, so a one-hit filter never says "1/3 row".
-                               " row" (when-not (= 1 (max (long total) (count data))) "s")
-                               " × " ncols
-                               " col" (when-not (= 1 ncols) "s"))
-                   :visible visible
-                   :total total
-                   :footer footer
-                   :content-w content-w
-                   :content-h-req content-h-req
-                   :bounds bounds
-                   :content-top content-top
-                   :content-h content-h
-                   :hint-row hint-row
-                   :grid-top grid-top
-                   :list-h list-h
-                   :widths widths
-                   :aligns aligns
-                   :head-cells head-cells}))
+          aligns
+          (table/csv-aligns grid)
+
+          head-cells
+          (mapv (fn [i]
+                  (str (when (= (long i) (long col)) "▸")
+                       (nth header i "")
+                       (when (= sort-idx i) (if (= :desc sort-dir) " ▼" " ▲"))))
+                (range (count widths)))]
+
+         {:cols cols
+          :rows rows
+          :title (str title
+                      "  "
+                      total
+                      " row"
+                      (when-not (= 1 total) "s")
+                      " × "
+                      ncols
+                      " col"
+                      (when-not (= 1 ncols) "s")
+                      ;; The page counter appears only when there IS a second
+                      ;; page — a 3-row sheet must not grow a pager.
+                      (when (> pages 1) (str "  page " (inc page) "/" pages)))
+          :visible visible
+          :total total
+          :footer footer
+          :content-w content-w
+          :content-h-req content-h-req
+          :bounds bounds
+          :content-top content-top
+          :content-h content-h
+          :hint-row hint-row
+          :grid-top grid-top
+          :list-h list-h
+          :page page
+          :pages pages
+          :widths widths
+          :aligns aligns
+          :head-cells head-cells}))
      :reconcile (fn [state {:keys [total list-h]}]
                   (let [selected (p/clamp (:selected state) 0 (max 0 (dec (long total))))]
                     (assoc state
                       :selected selected
-                      :scroll (visible-window-start selected (:scroll state) list-h total))))
-     :paint
-     (fn
-       [g {:keys [selected scroll query]}
-        {:keys [cols rows title visible total footer content-w content-h-req bounds content-top
-                content-h hint-row grid-top list-h widths aligns head-cells]}]
-       (let
-         [{:keys [left right inner-w]}
-          bounds
+                      ;; Paging, not scrolling: the window snaps to the page holding
+                      ;; the cursor.
+                      :scroll (table/page-start selected list-h))))
+     :paint (fn
+              [g {:keys [selected scroll]}
+               {:keys [cols rows title visible total footer content-w content-h-req bounds
+                       content-top content-h hint-row grid-top list-h widths aligns head-cells]}]
+              (let
+                [{:keys [left inner-w]}
+                 bounds
 
-          x
-          (inc (long left))]
+                 x
+                 (inc (long left))]
 
-         (draw-dialog-chrome! g cols rows title content-w content-h-req)
-         (p/set-colors! g t/dialog-fg t/dialog-bg)
-         (p/fill-rect! g x content-top inner-w content-h)
-         (let
-           [cursor
-            (draw-text-input-field! g left content-top inner-w query (count query) "filter rows…")]
-           (p/set-colors! g t/dialog-border t/dialog-bg)
-           (p/draw-separator! g left right (inc (long content-top)))
-           (table/draw-line! g x grid-top inner-w false (table/boxed-border-line widths :top))
-           (table/draw-line! g
-                             x
-                             (+ (long grid-top) 1)
-                             inner-w
-                             true
-                             (table/boxed-row-line widths head-cells (repeat :left)))
-           (table/draw-line! g
-                             x
-                             (+ (long grid-top) 2)
-                             inner-w
-                             false
-                             (table/boxed-border-line widths :middle))
-           (if (zero? (long total))
-             (table/draw-line! g
-                               x
-                               (+ (long grid-top) 3)
-                               inner-w
-                               false
-                               "  No row matches this filter")
-             (dotimes [i (min (long list-h) (long total))]
-               (let [idx (+ (long scroll) (long i))]
-                 (when (< idx (long total))
-                   (table/draw-line! g
-                                     x
-                                     (+ (long grid-top) 3 (long i))
-                                     inner-w
-                                     (= idx (long selected))
-                                     (table/boxed-row-line widths (nth visible idx) aligns))))))
-           (table/draw-line! g
-                             x
-                             (+ (long grid-top) 3 (max 1 (min (long list-h) (long total))))
-                             inner-w
-                             false
-                             (table/boxed-border-line widths :bottom))
-           (draw-hint-bar! g left hint-row inner-w footer)
-           cursor)))
+                (draw-dialog-chrome! g cols rows title content-w content-h-req)
+                (p/set-colors! g t/dialog-fg t/dialog-bg)
+                (p/fill-rect! g x content-top inner-w content-h)
+                (table/draw-line! g x grid-top inner-w false (table/boxed-border-line widths :top))
+                (table/draw-line! g
+                                  x
+                                  (+ (long grid-top) 1)
+                                  inner-w
+                                  true
+                                  (table/boxed-row-line widths head-cells (repeat :left)))
+                (table/draw-line! g
+                                  x
+                                  (+ (long grid-top) 2)
+                                  inner-w
+                                  false
+                                  (table/boxed-border-line widths :middle))
+                (if (zero? (long total))
+                  (table/draw-line! g x (+ (long grid-top) 3) inner-w false "  No rows")
+                  (dotimes [i (min (long list-h) (- (long total) (long scroll)))]
+                    (let [idx (+ (long scroll) (long i))]
+                      (when (< idx (long total))
+                        (table/draw-line!
+                          g
+                          x
+                          (+ (long grid-top) 3 (long i))
+                          inner-w
+                          (= idx (long selected))
+                          (table/boxed-row-line widths (nth visible idx) aligns))))))
+                (table/draw-line!
+                  g
+                  x
+                  (+ (long grid-top) 3 (max 1 (min (long list-h) (- (long total) (long scroll)))))
+                  inner-w
+                  false
+                  (table/boxed-border-line widths :bottom))
+                (draw-hint-bar! g left hint-row inner-w footer)
+                nil))
      :on-key
-     (fn [{:keys [selected col query sort-idx sort-dir] :as state} key {:keys [total visible]}]
+     (fn [{:keys [selected col sort-idx sort-dir] :as state} key {:keys [total visible list-h]}]
        (let [clampf #(p/clamp % 0 (max 0 (dec (long total))))]
          (if-let [wheel (modal-wheel-step key)]
            (assoc state :selected (clampf (+ (long selected) (long wheel))))
@@ -1118,6 +1129,12 @@
              KeyType/ArrowDown (assoc state :selected (clampf (inc (long selected))))
              KeyType/ArrowLeft (assoc state :col (p/clamp (dec (long col)) 0 (dec (long ncols))))
              KeyType/ArrowRight (assoc state :col (p/clamp (inc (long col)) 0 (dec (long ncols))))
+             ;; A page key moves a WHOLE window, landing the cursor on the first row
+             ;; of the neighbouring page — the spreadsheet idiom.
+             KeyType/PageUp (assoc state :selected (clampf (- (long selected) (long list-h))))
+             KeyType/PageDown (assoc state :selected (clampf (+ (long selected) (long list-h))))
+             KeyType/Home (assoc state :selected 0)
+             KeyType/End (assoc state :selected (clampf (dec (long total))))
              ;; Enter re-sorts by the column under the cursor; pressing it again
              ;; on the SAME column flips the direction, the spreadsheet idiom.
              KeyType/Enter (assoc state
@@ -1125,22 +1142,12 @@
                              :sort-dir (if (and (= sort-idx col) (= :asc sort-dir)) :desc :asc)
                              :selected 0
                              :scroll 0)
-             KeyType/Backspace (assoc state
-                                 :query (if (seq query) (subs query 0 (dec (count query))) query)
-                                 :selected 0)
-             KeyType/Character
-             (let [c (key-character key)]
-               (if (and c (not (.isCtrlDown ^KeyStroke key)) (not (.isAltDown ^KeyStroke key)))
-                 (assoc state
-                   :query (str query c)
-                   :selected 0)
-                 state))
              KeyType/Tab (if (pos? (long total)) {::done (nth visible selected nil)} state)
              state))))}))
 
 (defn table-view-dialog!
   "Open a `vis-table` artifact — the CSV/TSV fence `vis_attach` writes — as a live
-   spreadsheet: type to filter across every column, ↑/↓ and ←/→ to move the row /
+   spreadsheet: PgUp/PgDn to turn a page, ↑/↓ and ←/→ to move the row /
    column cursor, Enter to sort by the current column. `tbl` is the click region's
    `:table` payload (`{:name :csv :cols :rows :title}`). Returns nil, or the
    selected row on Tab."

@@ -2,9 +2,9 @@ import { memo, useMemo, useState } from 'react';
 
 // A CSV/TSV artifact is DATA, not a picture. `vis_attach` emits it as a
 // ````vis-table` fence and BOTH surfaces paint it as a real grid: the TUI through
-// `channel_tui/table.clj`, the companion through this component. Parsing,
-// filtering and sorting are pure functions so the behaviour is testable without a
-// DOM, exactly like the TUI's primitives.
+// `channel_tui/table.clj`, the companion through this component. Parsing, paging
+// and sorting are pure functions so the behaviour is testable without a DOM,
+// exactly like the TUI's primitives.
 
 export type TableArtifact = {
   /** `[Table: fleet.csv 3 rows × 3 cols, 64 B]` — the caption row. */
@@ -110,19 +110,6 @@ export function isNumericColumn(rows: string[][], index: number): boolean {
 
 export type TableRow = { key: number; cells: string[] };
 
-/** Case-insensitive substring match against ANY cell. A blank query matches everything. */
-export function rowMatches(cells: string[], query: string): boolean {
-  const q = String(query ?? '')
-    .trim()
-    .toLowerCase();
-  if (q === '') return true;
-  return cells.some((cell) => String(cell ?? '').toLowerCase().includes(q));
-}
-
-export function filterRows(rows: TableRow[], query: string): TableRow[] {
-  return rows.filter((row) => rowMatches(row.cells, query));
-}
-
 /**
  * Sort by column `index`. A column whose every non-blank cell parses as a number
  * sorts NUMERICALLY (so 9 comes before 10), any other column case-insensitively;
@@ -150,6 +137,38 @@ export function sortRows(rows: TableRow[], index: number, dir: 'asc' | 'desc'): 
   });
 }
 
+/** Page sizes the pager offers; the first one is also the threshold that shows it. */
+export const PAGE_SIZES = [10, 25, 50, 100] as const;
+
+/** How many pages `total` rows fill — never less than one, so page 1/1 always exists. */
+export function pageCount(total: number, size: number): number {
+  return Math.max(1, Math.ceil(Math.max(0, total) / Math.max(1, size)));
+}
+
+/** Clamp a page index into the pages `total` rows actually have. */
+export function clampPage(page: number, total: number, size: number): number {
+  return Math.min(Math.max(0, Math.trunc(page)), pageCount(total, size) - 1);
+}
+
+/** The rows of one page — the ONLY rows the grid paints. */
+export function pageRows<T>(rows: readonly T[], page: number, size: number): T[] {
+  const step = Math.max(1, size);
+  const start = clampPage(page, rows.length, step) * step;
+  return rows.slice(start, start + step);
+}
+
+/** `1–25 of 60`, or `0 of 0` for an empty sheet. 1-based, inclusive. */
+export function pageRange(
+  total: number,
+  page: number,
+  size: number,
+): { first: number; last: number } {
+  if (total <= 0) return { first: 0, last: 0 };
+  const step = Math.max(1, size);
+  const start = clampPage(page, total, step) * step;
+  return { first: start + 1, last: Math.min(total, start + step) };
+}
+
 /** Render rows back to CSV — what Copy hands to the clipboard. */
 export function toCsv(rows: string[][]): string {
   return rows
@@ -166,6 +185,11 @@ export function toCsv(rows: string[][]): string {
 
 const HEAD_CELL =
   'sticky top-0 z-10 bg-panel-2 px-2 py-1.5 text-left align-bottom font-semibold text-code-foreground';
+
+/** The `│` of the TUI grid: every column but the first carries its own rule. */
+const COLUMN_RULE = 'border-l border-code-edge';
+
+const PAGER_BUTTON = 'border border-edge px-2 py-0.5 text-chip text-muted active:bg-hover';
 
 export const DataTable = memo(function DataTable({
   body,
@@ -195,35 +219,45 @@ export const DataTable = memo(function DataTable({
     [header, rows],
   );
 
-  const [query, setQuery] = useState('');
   const [sort, setSort] = useState<{ index: number; dir: 'asc' | 'desc' } | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   const [copied, setCopied] = useState(false);
+  const [pageSize, setPageSize] = useState<number>(25);
+  const [page, setPage] = useState(0);
 
-  const visible = useMemo(() => {
-    const matched = filterRows(rows, query);
-    return sort ? sortRows(matched, sort.index, sort.dir) : matched;
-  }, [rows, query, sort]);
+  const ordered = useMemo(
+    () => (sort ? sortRows(rows, sort.index, sort.dir) : rows),
+    [rows, sort],
+  );
 
-  const chosen = visible.filter((row) => selected.has(row.key));
+  const pages = pageCount(ordered.length, pageSize);
+  const current = clampPage(page, ordered.length, pageSize);
+  const shown = useMemo(() => pageRows(ordered, current, pageSize), [ordered, current, pageSize]);
+  const range = pageRange(ordered.length, current, pageSize);
+  /** A sheet nobody would ever page through must not grow a pager. */
+  const paged = ordered.length > PAGE_SIZES[0];
+
+  const chosen = ordered.filter((row) => selected.has(row.key));
   const label = artifact.name || 'table';
 
-  const toggleSort = (index: number) =>
-    setSort((current) =>
-      current && current.index === index
-        ? { index, dir: current.dir === 'asc' ? 'desc' : 'asc' }
+  const toggleSort = (index: number) => {
+    setSort((currentSort) =>
+      currentSort && currentSort.index === index
+        ? { index, dir: currentSort.dir === 'asc' ? 'desc' : 'asc' }
         : { index, dir: 'asc' },
     );
+    setPage(0);
+  };
 
   const toggleRow = (key: number) =>
-    setSelected((current) => {
-      const next = new Set(current);
+    setSelected((currentSelection) => {
+      const next = new Set(currentSelection);
       if (!next.delete(key)) next.add(key);
       return next;
     });
 
   const copy = () => {
-    const payload = (chosen.length > 0 ? chosen : visible).map((row) => row.cells);
+    const payload = (chosen.length > 0 ? chosen : ordered).map((row) => row.cells);
     void navigator.clipboard?.writeText(toCsv([header, ...payload]));
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
@@ -238,9 +272,7 @@ export const DataTable = memo(function DataTable({
           {artifact.summary || label}
         </span>
         <span className="shrink-0 text-chip text-muted" aria-live="polite">
-          {visible.length === rows.length
-            ? `${rows.length} ${rows.length === 1 ? 'row' : 'rows'}`
-            : `${visible.length}/${rows.length} rows`}
+          {`${rows.length} ${rows.length === 1 ? 'row' : 'rows'}`}
           {selected.size > 0 ? ` · ${selected.size} selected` : ''}
         </span>
         <button
@@ -250,16 +282,6 @@ export const DataTable = memo(function DataTable({
         >
           {copied ? 'Copied' : chosen.length > 0 ? `Copy ${chosen.length}` : 'Copy CSV'}
         </button>
-      </div>
-      <div className="px-2 py-1.5">
-        <input
-          type="search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Filter rows…"
-          aria-label={`Filter rows of ${label}`}
-          className="w-full bg-input px-2 py-1 text-meta text-code-foreground placeholder:text-muted"
-        />
       </div>
       <div className="max-h-[60vh] max-w-full overflow-auto overscroll-x-contain">
         <table className="w-full border-collapse text-meta text-code-foreground" aria-label={label}>
@@ -276,7 +298,7 @@ export const DataTable = memo(function DataTable({
                         : 'descending'
                       : 'none'
                   }
-                  className={`${HEAD_CELL} ${aligns[index] ? 'text-right' : 'text-left'}`}
+                  className={`${HEAD_CELL} ${index > 0 ? COLUMN_RULE : ''} ${aligns[index] ? 'text-right' : 'text-left'}`}
                 >
                   <button
                     type="button"
@@ -291,7 +313,7 @@ export const DataTable = memo(function DataTable({
             </tr>
           </thead>
           <tbody>
-            {visible.map((row) => (
+            {shown.map((row) => (
               <tr
                 key={row.key}
                 aria-selected={selected.has(row.key)}
@@ -308,26 +330,70 @@ export const DataTable = memo(function DataTable({
                 {header.map((_, index) => (
                   <td
                     key={index}
-                    className={`px-2 py-1 whitespace-nowrap ${aligns[index] ? 'text-right tabular-nums' : 'text-left'}`}
+                    className={`px-2 py-1 whitespace-nowrap ${index > 0 ? COLUMN_RULE : ''} ${aligns[index] ? 'text-right tabular-nums' : 'text-left'}`}
                   >
                     {row.cells[index] ?? ''}
                   </td>
                 ))}
               </tr>
             ))}
-            {visible.length === 0 && (
+            {ordered.length === 0 && (
               <tr>
                 <td
                   colSpan={Math.max(1, header.length)}
                   className="px-2 py-2 text-center text-meta text-muted"
                 >
-                  No row matches this filter
+                  No rows
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
+      {paged && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-code-edge px-2 py-1.5">
+          <label className="flex shrink-0 items-center gap-1 text-chip text-muted">
+            Rows
+            <select
+              value={pageSize}
+              aria-label={`Rows per page of ${label}`}
+              onChange={(event) => {
+                setPageSize(Number(event.target.value));
+                setPage(0);
+              }}
+              className="bg-input px-1 py-0.5 text-chip text-code-foreground"
+            >
+              {PAGE_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="min-w-0 flex-1 truncate text-chip text-muted" aria-live="polite">
+            {`${range.first}–${range.last} of ${ordered.length}`}
+          </span>
+          <span className="shrink-0 text-chip text-muted">{`Page ${current + 1}/${pages}`}</span>
+          <button
+            type="button"
+            onClick={() => setPage(Math.max(0, current - 1))}
+            disabled={current === 0}
+            aria-label="Previous page"
+            className={`${PAGER_BUTTON} ${current === 0 ? 'opacity-40' : ''}`}
+          >
+            Prev
+          </button>
+          <button
+            type="button"
+            onClick={() => setPage(Math.min(pages - 1, current + 1))}
+            disabled={current >= pages - 1}
+            aria-label="Next page"
+            className={`${PAGER_BUTTON} ${current >= pages - 1 ? 'opacity-40' : ''}`}
+          >
+            Next
+          </button>
+        </div>
+      )}
     </div>
   );
 });

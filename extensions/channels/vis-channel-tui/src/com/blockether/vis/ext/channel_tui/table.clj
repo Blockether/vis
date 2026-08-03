@@ -244,7 +244,7 @@
 ;; A CSV/TSV attachment is DATA, not a picture: `vis_attach` emits it as a
 ;; ````vis-table` fence and BOTH surfaces paint it as a real grid — the TUI
 ;; through these primitives, the companion through `DataTable.tsx`. Parse,
-;; measure, align, filter, sort and render all live here as PURE functions, so
+;; measure, align, page, sort and render all live here as PURE functions, so
 ;; the table dialog's behaviour is unit-testable without a terminal.
 
 (defn parse-csv
@@ -376,9 +376,16 @@
 
     (if (or (zero? n) (neg? extra) (zero? extra))
       (vec widths)
-      (let [base (quot extra n)
-            r (rem extra n)]
-        (vec (map-indexed (fn [i w] (+ (long w) base (if (< (long i) r) 1 0))) widths))))))
+      (let
+        [base
+         (quot extra n)
+
+         r
+         (rem extra n)]
+
+        (vec (map-indexed (fn [i w]
+                            (+ (long w) base (if (< (long i) r) 1 0)))
+                          widths))))))
 
 (defn csv-number
   "Parse a cell as a number for sorting/alignment. Thousands separators, a
@@ -411,17 +418,29 @@
             (if (numeric-column? data i) :right :left))
           (range (long (reduce max 0 (map count rows)))))))
 
-(defn csv-row-matches?
-  "Case-insensitive substring match of `query` against ANY cell of `row`. A
-   blank query matches everything."
-  [row query]
-  (let [q (str/lower-case (str/trim (str query)))]
-    (or (str/blank? q) (boolean (some #(str/includes? (str/lower-case (str %)) q) row)))))
+(defn page-count
+  "How many pages of `page-size` rows `total` rows fill — never fewer than one, so
+   `page 1/1` exists even for an empty sheet."
+  [total page-size]
+  (let
+    [t
+     (max 0 (long total))
 
-(defn filter-csv-rows
-  "Keep the DATA rows matching `query` (see `csv-row-matches?`), source order."
-  [rows query]
-  (if (str/blank? (str query)) (vec rows) (filterv #(csv-row-matches? % query) rows)))
+     s
+     (max 1 (long page-size))]
+
+    (max 1 (quot (+ t (dec s)) s))))
+
+(defn page-index
+  "0-based page holding row `idx` when a page shows `page-size` rows."
+  [idx page-size]
+  (quot (max 0 (long idx)) (max 1 (long page-size))))
+
+(defn page-start
+  "First row index of the page holding `idx` — the grid's scroll offset, which is
+   why the viewer moves a WHOLE page at a time instead of creeping row by row."
+  [idx page-size]
+  (* (long (page-index idx page-size)) (max 1 (long page-size))))
 
 (defn sort-csv-rows
   "Sort DATA rows (header excluded) by column `idx`; `dir` is `:asc`/`:desc`. A

@@ -1855,8 +1855,8 @@
   ([^TerminalScreen _screen ref] (open-click-target! ref)))
 
 (defn- open-table-viewer!
-  "Click an inline `vis-table` grid → the whole CSV as a live spreadsheet: filter
-   across every column, move the row/column cursor, sort by a column. The
+  "Click an inline `vis-table` grid → the whole CSV as a live spreadsheet: page
+   through it, move the row/column cursor, sort by a column. The
    transcript only ever paints a PREVIEW of the rows, so the full payload travels
    in the click region's `:table`; this dialog is how the rest of it is read
    without leaving the TUI."

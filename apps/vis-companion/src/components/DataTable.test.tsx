@@ -2,9 +2,12 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
   DataTable,
+  clampPage,
   csvNumber,
-  filterRows,
   isNumericColumn,
+  pageCount,
+  pageRange,
+  pageRows,
   parseCsv,
   parseTableBlock,
   sortRows,
@@ -98,20 +101,12 @@ describe('numbers', () => {
   });
 });
 
-describe('filter and sort', () => {
+describe('sorting', () => {
   const data = rows([
     ['ada', '9', 'first'],
     ['yak', '10', 'second'],
     ['zed', '120', 'third'],
   ]);
-
-  it('matches any column, case-insensitively; a blank query keeps everything', () => {
-    expect(filterRows(data, 'YA').map((r) => r.cells[0])).toEqual(['yak']);
-    expect(filterRows(data, 'second').map((r) => r.cells[0])).toEqual(['yak']);
-    expect(filterRows(data, '  ').length).toBe(3);
-    expect(filterRows(data, 'nope')).toEqual([]);
-  });
-
   it('sorts a numeric column by magnitude, not lexicographically', () => {
     expect(sortRows(data, 1, 'asc').map((r) => r.cells[1])).toEqual(['9', '10', '120']);
     expect(sortRows(data, 1, 'desc').map((r) => r.cells[1])).toEqual(['120', '10', '9']);
@@ -128,6 +123,34 @@ describe('filter and sort', () => {
   });
 });
 
+describe('paging', () => {
+  const many = rows(Array.from({ length: 60 }, (_, i) => [String(i)]));
+
+  it('counts pages, and an empty sheet still has page 1/1', () => {
+    expect(pageCount(60, 25)).toBe(3);
+    expect(pageCount(50, 25)).toBe(2);
+    expect(pageCount(0, 25)).toBe(1);
+  });
+
+  it('clamps a page past the end back onto the last one', () => {
+    expect(clampPage(9, 60, 25)).toBe(2);
+    expect(clampPage(-4, 60, 25)).toBe(0);
+  });
+
+  it('slices exactly one page, the last one short', () => {
+    expect(pageRows(many, 0, 25).map((r) => r.cells[0])[0]).toBe('0');
+    expect(pageRows(many, 0, 25).length).toBe(25);
+    expect(pageRows(many, 1, 25).map((r) => r.cells[0])[0]).toBe('25');
+    expect(pageRows(many, 2, 25).length).toBe(10);
+  });
+
+  it('reports a 1-based inclusive range', () => {
+    expect(pageRange(60, 0, 25)).toEqual({ first: 1, last: 25 });
+    expect(pageRange(60, 2, 25)).toEqual({ first: 51, last: 60 });
+    expect(pageRange(0, 0, 25)).toEqual({ first: 0, last: 0 });
+  });
+});
+
 describe('DataTable', () => {
   const html = renderToStaticMarkup(<DataTable body={fence} compact />);
 
@@ -138,11 +161,22 @@ describe('DataTable', () => {
     expect(text(html)).toContain('third');
   });
 
-  it('offers the filter, the sort affordance and the row count', () => {
-    expect(html).toContain('aria-label="Filter rows of fleet.csv"');
+  it('offers the sort affordance and the row count, and no filter box', () => {
     expect(html).toContain('aria-sort="none"');
     expect(text(html)).toContain('3 rows');
     expect(text(html)).toContain('[Table: fleet.csv 3 rows × 3 cols, 64 B]');
+    expect(html).not.toContain('type="search"');
+    expect(html).not.toContain('Filter rows');
+  });
+
+  it('rules every column but the first — the TUI grid\'s │, in CSS', () => {
+    const heads = html.match(/<th\b[^>]*>/g) ?? [];
+    expect(heads[0]).not.toContain('border-l');
+    expect(heads[1]).toContain('border-l');
+    expect(heads[2]).toContain('border-l');
+    const cells = html.match(/<td\b[^>]*>/g) ?? [];
+    expect(cells[0]).not.toContain('border-l');
+    expect(cells[1]).toContain('border-l');
   });
 
   it('right-aligns the numeric column only', () => {
@@ -156,6 +190,30 @@ describe('DataTable', () => {
     const empty = renderToStaticMarkup(
       <DataTable body={['[Table: none.csv 0 rows × 1 cols, 0 B]', 'none.csv', 'text/csv', '1x0', '0 B', 'name'].join('\n')} compact />,
     );
-    expect(text(empty)).toContain('No row matches this filter');
+    expect(text(empty)).toContain('No rows');
+  });
+
+  it('hides the pager for a sheet that fits on one page', () => {
+    expect(html).not.toContain('aria-label="Next page"');
+  });
+
+  it('pages a long sheet: 25 rows, a page counter and working arrows', () => {
+    const long = [
+      '[Table: events.csv 60 rows × 2 cols, 1 KB]',
+      'events.csv',
+      'text/csv',
+      '2x60',
+      '1 KB',
+      'n,label',
+      ...Array.from({ length: 60 }, (_, i) => `${i},row-${i}`),
+    ].join('\n');
+    const paged = renderToStaticMarkup(<DataTable body={long} compact />);
+    expect((paged.match(/<tr/g) ?? []).length).toBe(26);
+    expect(text(paged)).toContain('1–25 of 60');
+    expect(text(paged)).toContain('Page 1/3');
+    expect(paged).toContain('aria-label="Next page"');
+    expect(paged).toContain('aria-label="Rows per page of events.csv"');
+    expect(text(paged)).toContain('row-24');
+    expect(text(paged)).not.toContain('row-25');
   });
 });
