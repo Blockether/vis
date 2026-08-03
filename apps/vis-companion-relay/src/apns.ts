@@ -137,8 +137,10 @@ const APNS_WRONG_ENVIRONMENT = new Set(["BadDeviceToken", "BadEnvironmentKeyInTo
 /**
  * Send, retrying once against the other environment. A TestFlight build
  * registered as `sandbox` (or the reverse) is the single most common
- * misconfiguration, and the retry is what makes it self-healing: the caller
- * persists `result.environment` when it differs.
+ * misconfiguration, and the retry is what keeps it working anyway. The relay
+ * stores nothing, so the correction is never remembered: such a grant pays the
+ * extra round trip on every push until the app re-registers and is handed a
+ * grant sealed with the environment that actually answered.
  */
 export async function sendApns(
   cfg: ApnsConfig,
