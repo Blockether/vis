@@ -847,11 +847,15 @@
     ;; index Flyway migrations so they're discoverable without dir listing
     (write-migration-indexes! native-class-dir)
     ;; `vis/VERSION` resource (git short sha) so `vis-agent --version` has a value.
+    ;; A container build has no repo to ask — `.dockerignore` drops `.git`, so the
+    ;; probe below finds nothing there and every Linux asset stamped itself "dev".
+    ;; `bin/release-native` passes the host's sha in as VIS_BUILD_SHA, and it wins.
     (let
       [sha
-       (try (str/trim (:out (b/process {:command-args ["git" "rev-parse" "--short" "HEAD"]
-                                        :out :capture})))
-            (catch Throwable _ nil))
+       (or (not-empty (str/trim (or (System/getenv "VIS_BUILD_SHA") "")))
+           (try (str/trim (:out (b/process {:command-args ["git" "rev-parse" "--short" "HEAD"]
+                                            :out :capture})))
+                (catch Throwable _ nil)))
 
        vfile
        (io/file native-class-dir "vis" "VERSION")]

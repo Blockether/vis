@@ -164,11 +164,22 @@ RUN check-graal-pins
 # which is exactly where that folding happens, so the constant bakes as
 # /home/vis/.vis — matching the runtime user's HOME. Setting HOME alone does not
 # do it: the JDK derives user.home from getpwuid(), and the build runs as root.
-RUN VIS_NATIVE_EXTRA_ARGS="-Duser.home=/home/vis ${VIS_NATIVE_EXTRA_ARGS}" \
+#
+# `vis/VERSION` — what `vis-agent --version` prints — is a git short sha, and
+# `.dockerignore` drops `.git`, so `build.clj`'s own probe finds no repo here and
+# stamped every container-built asset "dev". `bin/release-native` passes the
+# host's sha as VIS_BUILD_SHA; declared HERE so a new sha rebuilds only this
+# layer (`COPY . .` busts it anyway) and never the dependency cache above.
+ARG VIS_BUILD_SHA=""
+RUN VIS_BUILD_SHA="${VIS_BUILD_SHA}" \
+    VIS_NATIVE_EXTRA_ARGS="-Duser.home=/home/vis ${VIS_NATIVE_EXTRA_ARGS}" \
     clojure -T:build native \
     && test -x target/vis \
     && test -d target/resources \
-    && ./target/vis --version
+    && ./target/vis --version \
+    && { [ -z "${VIS_BUILD_SHA}" ] \
+         || ./target/vis --version | grep -q "${VIS_BUILD_SHA}" \
+         || { echo "native image reports no VIS_BUILD_SHA=${VIS_BUILD_SHA}" >&2; exit 1; }; }
 
 # ── Stage: native-export ─────────────────────────────────────────────────────
 # Not part of the runtime image: a BUILD-ONLY stage whose whole filesystem is the

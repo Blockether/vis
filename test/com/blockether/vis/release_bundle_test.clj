@@ -197,3 +197,70 @@
              ;; Emulation speed still gates the build itself.
              (expect (not= 0 exit) output))
            (finally (delete-tree! mac))))))
+
+(defdescribe
+  release-native-podman-export-test
+  (it
+    "copies the bundle out of a container, because podman-remote rejects --output"
+    (let
+      [mac
+       (fake-tools! "Darwin" "arm64")
+
+       log
+       (io/file mac "engine.log")
+
+       podman
+       (io/file mac "podman")]
+
+      ;; `podman build -o type=local,dest=…` is a LOCAL-only flag: a Mac client
+      ;; drives its Linux VM in REMOTE mode and refuses it AFTER the whole build
+      ;; has run. The export therefore goes through create + cp, and the build
+      ;; args this host overrides (heap, version sha) must reach the builder.
+      (write-executable!
+        podman
+        (str "#!/usr/bin/env bash\n"
+             "printf '%s\\n' \"$*\" >> \"" (.getAbsolutePath log)
+             "\"\n" "if [ \"${1:-}\" = \"--connection\" ]; then shift 2; fi\n"
+             "case \"${1:-}\" in\n" "  --version) printf 'podman version 6.0.0\\n' ;;\n"
+             "  info)      printf '34359738368\\n' ;;\n" "  create)    printf 'ctr123\\n' ;;\n"
+             "  *)         exit 0 ;;\n" "esac\n"))
+      (try (let
+             [{:keys [exit output]}
+              (run-release-native mac
+                                  ["--targets" "linux-arm64"]
+                                  {"VIS_CONTAINER_CLI" (.getAbsolutePath podman)
+                                   "VIS_NATIVE_EXTRA_ARGS" "-J-Xmx7g"})
+
+              logged
+              (slurp log)]
+
+             ;; The fake engine copies nothing, so staging rejects the bundle —
+             ;; the run must still have driven the export the documented way.
+             (expect (not= 0 exit) output)
+             (expect (str/includes? logged "--target native-export") logged)
+             (expect (not (str/includes? logged "type=local")) logged)
+             (expect (str/includes? logged "--build-arg VIS_NATIVE_EXTRA_ARGS=-J-Xmx7g") logged)
+             (expect (re-find #"--build-arg VIS_BUILD_SHA=[0-9a-f]{7,}" logged) logged)
+             (expect (str/includes? logged "create --platform linux/arm64") logged)
+             (doseq
+               [entry ["vis-agent" "vis-agent-native" "install-vis-agent" "vis-agent-resources"]]
+               (expect (str/includes? logged (str "cp ctr123:/" entry " ")) logged)))
+           (finally (delete-tree! mac))))))
+
+(defdescribe
+  native-build-sha-stamp-test
+  (it "lets a container build stamp a real sha instead of \"dev\""
+      (let
+        [dockerfile
+         (slurp "Dockerfile")
+
+         build-clj
+         (slurp "build.clj")]
+
+        ;; `.dockerignore` drops `.git`, so build.clj's own `git rev-parse` finds
+        ;; no repo inside the image and every container-built asset reported
+        ;; `vis-agent dev`. The host's sha arrives as a build arg instead.
+        (expect (str/includes? (slurp ".dockerignore") ".git"))
+        (expect (str/includes? dockerfile "ARG VIS_BUILD_SHA") dockerfile)
+        (expect (str/includes? dockerfile "RUN VIS_BUILD_SHA=\"${VIS_BUILD_SHA}\"") dockerfile)
+        (expect (str/includes? build-clj "(System/getenv \"VIS_BUILD_SHA\")") build-clj))))
