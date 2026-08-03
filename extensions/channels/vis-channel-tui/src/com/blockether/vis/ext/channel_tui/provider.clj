@@ -822,19 +822,6 @@
               (p/put-str! g text-x (+ row 2) (dlg/ellipsize (str "   " limit-summary) text-w)))
             (p/set-colors! g t/dialog-fg t/dialog-bg))))))
 
-(defn- ensure-provider-model
-  [items provider-id model]
-  (mapv (fn [provider]
-          (if (same-id? (:id provider) provider-id)
-            (update
-              provider
-              :models
-              (fn [models]
-                (let [models (vec (or models []))]
-                  (if (some #(= model (:name %)) models) models (conj models {:name model})))))
-            provider))
-        items))
-
 ;; Channel-neutral status / limits / persistence shapes — the core
 ;; provider service (channel-neutral). Aliased privately so
 ;; the dialog code below reads unchanged.
@@ -975,6 +962,155 @@
 
        (or (:provider/logout-fn registered) (:api-key provider))
        (conj {:id :logout :label "Log Out" :key \l})))))
+
+(def ^:private routing-action-ids
+  "The actions that re-point the ROUTER. Magit groups a popup's commands by what
+   they touch, and these are the ones that change where requests go."
+  #{:default :fallback :clear-fallback})
+
+(defn provider-transient-spec
+  "PURE: the magit transient spec for ONE provider row's `actions` (whatever
+   `provider-action-items` offered). Every action keeps the SINGLE key it already
+   advertised, so the popup is driven by direct keystrokes — `d`, `f`, `a` — with
+   no cursor at all, and the commands are grouped the way magit groups a popup:
+   routing first, then the account verbs. A group with no surviving action is
+   dropped, so a provider that cannot authenticate never shows an empty heading."
+  [actions]
+  (let
+    [group (fn [title pred]
+             (when-let
+               [items (seq (into []
+                                 (comp (filter pred)
+                                       (map (fn [action]
+                                              {:key (str (:key action))
+                                               :type :action
+                                               :id (:id action)
+                                               :label (:label action)})))
+                                 actions))]
+               {:title title :items (vec items)}))]
+    {:groups (into []
+                   (remove nil?)
+                   [(group "Routing" #(contains? routing-action-ids (:id %)))
+                    (group "Account" #(not (contains? routing-action-ids (:id %))))])}))
+
+(def ^:private model-transient-keys
+  "Single-key bindings the model transient hands out, in order. Magit's own
+   paging keys (`n` / `p`) are held back so a model can never shadow them."
+  "abcdefghijklmoqrstuvwxyz")
+
+(defn model-transient-page-size
+  "PURE: how many models one transient page holds inside `rows` usable body rows.
+   Reserves the popup's own chrome — the leading blank, the `Models` header and
+   the `Commands` group carrying paging plus `Show every model` — and never asks
+   for more single-key bindings than exist."
+  [rows]
+  (p/clamp (- (long rows) 7) 1 (count model-transient-keys)))
+
+(defn model-transient-spec
+  "PURE: the magit transient spec for the model picker. `entries` are
+   `build-model-list` rows, and each real model becomes a COMMAND bound to one
+   letter — a model is chosen with a single keystroke exactly like `d` sets the
+   default, never with a cursor. Models past one page are reached with magit's
+   `n` / `p`, and the `:show-all` sentinel becomes `*`. `marks` is
+   `{:default id :fallback id}` for the models this provider already holds, so
+   the tagged pair stays findable without reading the cards."
+  ([entries page marks] (model-transient-spec entries page marks (count model-transient-keys)))
+  ([entries page marks page-size]
+   (let
+     [page-size
+      (long (p/clamp (long page-size) 1 (count model-transient-keys)))
+
+      models
+      (into [] (remove #(= :show-all (:id %))) entries)
+
+      show-all?
+      (boolean (some #(= :show-all (:id %)) entries))
+
+      pages
+      (max 1 (quot (+ (count models) (dec page-size)) page-size))
+
+      page
+      (long (p/clamp (long page) 0 (dec pages)))
+
+      from
+      (min (count models) (* page page-size))
+
+      window
+      (subvec models from (min (count models) (+ from page-size)))
+
+      item
+      (fn [i model]
+        (let
+          [id
+           (:id model)
+
+           role
+           (cond (and (some? (:default marks)) (= id (:default marks))) "  (default)"
+                 (and (some? (:fallback marks)) (= id (:fallback marks))) "  (fallback)"
+                 :else "")]
+
+          {:key (str (nth model-transient-keys i))
+           :type :action
+           :id id
+           :label (str (:label model) role)}))
+
+      commands
+      (cond-> []
+        (> pages 1)
+        (conj {:key "n" :type :action :id ::next-page :label "Next page"}
+              {:key "p" :type :action :id ::prev-page :label "Previous page"})
+
+        show-all?
+        (conj {:key "*" :type :action :id :show-all :label "Show every model"}))]
+
+     {:groups (cond->
+                [{:title (if (> pages 1) (str "Models  " (inc page) "/" pages) "Models")
+                  :items (into [] (map-indexed item) window)}]
+                (seq commands)
+                (conj {:title "Commands" :items commands}))})))
+
+(defn- run-transient!
+  "Run ONE magit transient INSIDE the provider dialog's own frame: same box, same
+   hint row, no second window. Nothing in this dialog is a flag, so the option
+   reader is never reached."
+  [^TerminalScreen screen g {:keys [left inner-w hint-row text-w min-row]} title spec]
+  (dlg/magit-transient! screen
+                        g
+                        left
+                        inner-w
+                        hint-row
+                        text-w
+                        title
+                        spec
+                        (fn [_item _current]
+                          nil)
+                        {:boxed? true :min-row min-row}))
+
+(defn- run-model-transient!
+  "Magit transient model picker for `provider`: one keystroke per model, `n` / `p`
+   to page a long catalog, `*` to expand the models the gateway hid. Returns the
+   chosen model id, or nil when the user backed out with Esc."
+  [^TerminalScreen screen g geom provider entries preferred marks page-size]
+  (loop
+    [entries
+     entries
+
+     page
+     0]
+
+    (let
+      [title
+       (str (vis/display-label (:id provider)) " — models")
+
+       picked
+       (:action
+         (run-transient! screen g geom title (model-transient-spec entries page marks page-size)))]
+
+      (cond (nil? picked) nil
+            (= picked :show-all) (recur (build-model-list provider preferred true) 0)
+            (= picked ::next-page) (recur entries (inc page))
+            (= picked ::prev-page) (recur entries (dec page))
+            :else picked))))
 
 (defn- gateway-api-key-login!
   "Authenticate a plain API-key provider THROUGH THE GATEWAY.
@@ -1310,10 +1446,6 @@
       (atom (when-let [pid (:fallback-provider seed)]
               {:provider-id (keyword (name pid)) :model (:fallback-model seed)}))
 
-      ;; Which tag the `:models` picker is about to write.
-      model-role
-      (atom :primary)
-
       statuses
       (atom (into {}
                   (map (fn [provider]
@@ -1334,18 +1466,6 @@
 
       mode
       (atom :list)
-
-      action-sel
-      (atom 0)
-
-      model-items
-      (atom [])
-
-      model-sel
-      (atom 0)
-
-      model-scroll
-      (atom 0)
 
       status-scroll
       (atom 0)
@@ -1426,7 +1546,17 @@
           (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
           _
-          (swap! scroll #(card-window-start @selected % content-h total))]
+          (swap! scroll #(card-window-start @selected % content-h total))
+
+          ;; Everything a magit transient needs to live INSIDE this box: the
+          ;; frame's own columns and hint row, plus a floor under the focused
+          ;; provider's card so the popup never paints over the row it edits.
+          geom
+          {:left left
+           :inner-w inner-w
+           :hint-row hint-row
+           :text-w (max 0 (- inner-w 4))
+           :min-row (+ (long content-top) (long card-rows) (long card-gap))}]
 
          ;; Clear content area
          (p/set-bg! g t/dialog-bg)
@@ -1519,162 +1649,11 @@
                              :total-h total
                              :inner-h (card-visible-count content-h)
                              :scroll @scroll}))
-         ;; Bottom-anchored magit-style transients painted OVER the card list —
-         ;; the provider stays visible above, actions/confirm live at the base.
-         (cond
-           (and (= @mode :models) (pos? total))
-           (let
-             [provider
-              (nth @items @selected)
-
-              models
-              @model-items
-
-              n
-              (count models)
-
-              capacity
-              (max 1 (- content-h 3))
-
-              sel
-              (p/clamp (long @model-sel) 0 (max 0 (dec n)))
-
-              old-scroll
-              (p/clamp (long @model-scroll) 0 (max 0 (- n capacity)))
-
-              sc
-              (cond (< sel old-scroll) sel
-                    (>= sel (+ old-scroll capacity)) (inc (- sel capacity))
-                    :else old-scroll)
-
-              sc
-              (p/clamp sc 0 (max 0 (- n capacity)))
-
-              shown-count
-              (if (pos? n) (min capacity (- n sc)) 1)
-
-              last-body
-              (+ content-top content-h -1)
-
-              body-top
-              (- (inc last-body) shown-count)
-
-              title-row
-              (dec body-top)
-
-              sep-row
-              (dec title-row)]
-
-             (reset! model-sel sel)
-             (reset! model-scroll sc)
-             (p/set-colors! g t/dialog-fg t/dialog-bg)
-             (p/fill-rect! g (inc left) sep-row inner-w (+ shown-count 2))
-             (p/set-colors! g t/dialog-border t/dialog-bg)
-             (p/draw-separator! g left (+ left inner-w 1) sep-row)
-             (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-             (p/styled g
-                       [p/BOLD]
-                       (p/put-str! g
-                                   (+ left 2)
-                                   title-row
-                                   (str (vis/display-label (:id provider)) " — models")))
-             (if (zero? n)
-               (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                   (p/put-str! g (+ left 2) body-top "No models available"))
-               (doseq [i (range shown-count)]
-                 (let
-                   [idx (+ sc (long i))
-                    model (nth models idx)
-                    row (+ body-top (long i))
-                    sel? (= idx sel)
-                    default? (and (string? (:id model))
-                                  (same-id? (:id provider) (:provider-id @default-selection))
-                                  (= (:id model) (:model @default-selection)))
-                    fallback? (and (string? (:id model))
-                                   (tagged? provider @fallback-selection)
-                                   (= (:id model) (:model @fallback-selection)))
-                    marker (cond default? "  (default)"
-                                 fallback? "  (fallback)"
-                                 :else "")
-                    label (str (:label model) marker)
-                    label (subs label 0 (min (count label) (max 0 (- inner-w 5))))
-                    ;; The tag marker keeps its ROLE ink — the same accent /
-                    ;; warning pair the cards' chips fill with — so the tagged
-                    ;; models are findable without reading every row. nil once
-                    ;; truncation ate the marker.
-                    marker-x (when (and (seq marker) (str/ends-with? label marker))
-                               (+ left 2 p/SELECTION_WIDTH (- (count label) (count marker))))]
-
-                   (p/set-colors! g t/dialog-fg t/dialog-bg)
-                   (p/fill-rect! g (inc left) row inner-w 1)
-                   (p/draw-selection-marker! g (inc left) row sel? t/dialog-hint-key)
-                   (p/set-colors! g (if sel? t/dialog-fg t/dialog-hint) t/dialog-bg)
-                   (if sel?
-                     (p/styled g [p/BOLD] (p/put-str! g (+ left 2 p/SELECTION_WIDTH) row label))
-                     (p/put-str! g (+ left 2 p/SELECTION_WIDTH) row label))
-                   (when marker-x
-                     (p/set-colors! g
-                                    (second (role-chip (if default? :default :fallback)))
-                                    t/dialog-bg)
-                     (p/styled g [p/BOLD] (p/put-str! g marker-x row marker))
-                     (p/set-colors! g t/dialog-fg t/dialog-bg))))))
-           (and (= @mode :actions) (pos? total))
-           (let
-             [provider
-              (nth @items @selected)
-
-              actions
-              (provider-action-items provider
-                                     (get @statuses (:id provider))
-                                     (tagged? provider @fallback-selection)
-                                     (tagged? provider @default-selection))
-
-              n
-              (count actions)
-
-              last-body
-              (+ content-top content-h -1)
-
-              body-top
-              (max (+ content-top 2) (- (inc last-body) n))
-
-              title-row
-              (dec body-top)
-
-              sep-row
-              (dec title-row)]
-
-             (p/set-colors! g t/dialog-fg t/dialog-bg)
-             (p/fill-rect! g (inc left) sep-row inner-w 1)
-             (p/set-colors! g t/dialog-border t/dialog-bg)
-             (p/draw-separator! g left (+ left inner-w 1) sep-row)
-             (p/set-colors! g t/dialog-fg t/dialog-bg)
-             (p/fill-rect! g (inc left) title-row inner-w 1)
-             (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-             (p/styled g
-                       [p/BOLD]
-                       (p/put-str! g
-                                   (+ left 2)
-                                   title-row
-                                   (str (vis/display-label (:id provider)) " — actions")))
-             (doseq [[i action] (map-indexed vector actions)]
-               (let
-                 [row (+ (long body-top) (long i))
-                  sel? (= (long i) (long @action-sel))
-                  keytxt (str (:key action))
-                  kx (+ left 2 p/SELECTION_WIDTH)
-                  lx (+ kx (p/display-width keytxt) 2)]
-
-                 (p/set-colors! g t/dialog-fg t/dialog-bg)
-                 (p/fill-rect! g (inc left) row inner-w 1)
-                 (p/draw-selection-marker! g (inc left) row sel? t/dialog-hint-key)
-                 (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                 (p/put-str! g kx row keytxt)
-                 (p/set-colors! g (if sel? t/dialog-fg t/dialog-hint) t/dialog-bg)
-                 (if sel?
-                   (p/styled g [p/BOLD] (p/put-str! g lx row (:label action)))
-                   (p/put-str! g lx row (:label action))))))
-           (= @mode :confirm)
+         ;; Bottom-anchored overlay painted OVER the card list — the provider
+         ;; stays visible above it. Actions and models are real magit transients
+         ;; (`dlg/magit-transient!`) that run their OWN key loop, so the only
+         ;; thing left to paint from here is the y/n confirm line.
+         (when (= @mode :confirm)
            (let
              [prompt
               (:prompt @pending)
@@ -1701,12 +1680,6 @@
                              hint-row
                              inner-w
                              (case @mode
-                               :models
-                               [["↑/↓" "move"] ["Enter" "set default"] ["Esc" "back"]]
-
-                               :actions
-                               [["↑/↓" "move"] ["Enter" "run"] ["key" "pick"] ["Esc" "back"]]
-
                                :status
                                [["↑/↓" "scroll"] ["Esc" "back"]]
 
@@ -1725,76 +1698,6 @@
            (if (nil? key)
              (do (Thread/sleep 100) (recur))
              (cond
-               (= @mode :models)
-               (if (instance? MouseAction key)
-                 (let [at (.getActionType ^MouseAction key)]
-                   (cond (= at MouseActionType/SCROLL_UP)
-                         (do (swap! model-sel #(max 0 (dec (long %)))) (recur))
-                         (= at MouseActionType/SCROLL_DOWN)
-                         (do (swap! model-sel #(min (max 0 (dec (count @model-items)))
-                                                    (inc (long %))))
-                             (recur))
-                         :else (recur)))
-                 (let
-                   [ktype (.getKeyType ^com.googlecode.lanterna.input.KeyStroke key)
-                    n (count @model-items)]
-
-                   (cond (= ktype KeyType/Escape) (do (reset! mode :actions) (recur))
-                         (= ktype KeyType/ArrowUp)
-                         (do (swap! model-sel #(p/clamp (dec (long %)) 0 (max 0 (dec n)))) (recur))
-                         (= ktype KeyType/ArrowDown)
-                         (do (swap! model-sel #(p/clamp (inc (long %)) 0 (max 0 (dec n)))) (recur))
-                         (and (= ktype KeyType/Enter) (pos? n))
-                         (let
-                           [provider (nth @items @selected)
-                            choice (nth @model-items (p/clamp (long @model-sel) 0 (dec n)))]
-
-                           (if (= (:id choice) :show-all)
-                             (let
-                               [current (if (= @model-role :fallback)
-                                          @fallback-selection
-                                          @default-selection)
-                                preferred (when (same-id? (:id provider) (:provider-id current))
-                                            [(:model current)])]
-
-                               (reset! model-items (build-model-list provider preferred true))
-                               (reset! model-sel 0)
-                               (reset! model-scroll 0)
-                               (recur))
-                             (let
-                               [role @model-role
-                                ;; A rejected tag (fallback on the primary's own
-                                ;; provider) is a 400 from the daemon — show its
-                                ;; reason instead of killing the dialog loop.
-                                selection
-                                (try
-                                  (if (= role :fallback)
-                                    (vis/gateway-set-router-fallback! (:id provider) (:id choice))
-                                    (vis/gateway-set-router-default! (:id provider) (:id choice)))
-                                  (catch Exception e
-                                    (dlg/text-view-dialog!
-                                      screen
-                                      (if (= role :fallback) "Fallback rejected" "Default rejected")
-                                      [(or (ex-message e) (str e))])
-                                    ::rejected))]
-
-                               (when-not (= selection ::rejected)
-                                 (swap! items ensure-provider-model
-                                   (:provider-id selection)
-                                   (:model selection))
-                                 (if (= role :fallback)
-                                   (reset! fallback-selection selection)
-                                   (do ;; The daemon drops a fallback that collides with
-                                       ;; the new primary's provider — mirror that here.
-                                     (when (tagged? provider @fallback-selection)
-                                       (reset! fallback-selection nil))
-                                     (reset! default-selection selection)
-                                     (swap! items default-first-providers (:provider-id selection))
-                                     (reset! selected 0)
-                                     (reset! scroll 0))))
-                               (reset! mode :list)
-                               (recur))))
-                         :else (recur))))
                (= @mode :status)
                (if (instance? MouseAction key)
                  (let
@@ -1830,104 +1733,6 @@
                          (or (= ktype KeyType/Escape) (= c \n))
                          (do (reset! pending nil) (reset! mode :list) (recur))
                          :else (recur))))
-               (= @mode :actions)
-               (if (instance? MouseAction key)
-                 (recur)
-                 (let
-                   [ktype (.getKeyType ^com.googlecode.lanterna.input.KeyStroke key)
-                    provider (nth @items @selected)
-                    actions (provider-action-items provider
-                                                   (get @statuses (:id provider))
-                                                   (tagged? provider @fallback-selection)
-                                                   (tagged? provider @default-selection))
-                    n (count actions)
-                    run-action!
-                    (fn [action]
-                      (case (:id action)
-                        (:default :fallback)
-                        (let
-                          [role (if (= (:id action) :fallback) :fallback :primary)
-                           current (if (= role :fallback) @fallback-selection @default-selection)
-                           preferred (when (same-id? (:id provider) (:provider-id current))
-                                       [(:model current)])]
-
-                          (reset! model-role role)
-                          (reset! model-items (build-model-list provider preferred false))
-                          (reset! model-sel 0)
-                          (reset! model-scroll 0)
-                          (reset! mode :models))
-
-                        :clear-fallback
-                        (do (try (vis/gateway-set-router-fallback!)
-                                 (reset! fallback-selection nil)
-                                 (catch Exception e
-                                   ;; Same contract as tagging: a daemon refusal
-                                   ;; explains itself instead of killing the loop.
-                                   (dlg/text-view-dialog! screen
-                                                          "Clear fallback failed"
-                                                          [(or (ex-message e) (str e))])))
-                            (reset! mode :list))
-
-                        :authenticate
-                        (do (when (authenticate-provider! screen provider (:force? action))
-                              ;; Auth wrote the credential DAEMON-side, so re-read
-                              ;; the row from the persisted fleet instead of
-                              ;; trusting what the dialog handed back — the TUI
-                              ;; never holds the key itself.
-                              (swap! items assoc
-                                @selected
-                                (or (first (filter (fn [p]
-                                                     (= (:id p) (:id provider)))
-                                                   (vis/configured-providers)))
-                                    provider)))
-                            (reset! mode :list))
-
-                        :status
-                        (do (reset! status-scroll 0) (reset! mode :status))
-
-                        :logout
-                        (do (reset! pending
-                              {:prompt
-                               (str "Log out of " (vis/display-label (:id provider)) "?  y / n")
-                               :run
-                               (fn []
-                                 (if-let [err (perform-logout! provider)]
-                                   (dlg/text-view-dialog! screen
-                                                          (str (vis/display-label (:id provider))
-                                                               " Authentication")
-                                                          [(str "Logout failed: " err)])
-                                   ;; The provider KEEPS its config row: only the
-                                   ;; credential is gone, so drop the cached
-                                   ;; verdicts and let the row re-probe as
-                                   ;; unauthenticated.
-                                   (do (swap! statuses dissoc (:id provider))
-                                       (swap! limits dissoc (:id provider))
-                                       (refresh-provider-diagnostics! provider statuses limits))))})
-                            (reset! mode :confirm))
-
-                        (reset! mode :list))
-                      (when-let [provider* (get @items @selected)]
-                        (refresh-provider-diagnostics! provider* statuses limits)))]
-
-                   (cond (= ktype KeyType/Escape) (do (reset! mode :list) (recur))
-                         (= ktype KeyType/ArrowUp)
-                         (do (swap! action-sel #(p/clamp (dec (long %)) 0 (max 0 (dec n)))) (recur))
-                         (= ktype KeyType/ArrowDown)
-                         (do (swap! action-sel #(p/clamp (inc (long %)) 0 (max 0 (dec n)))) (recur))
-                         (= ktype KeyType/Enter)
-                         (do (run-action! (nth actions
-                                               (p/clamp (long @action-sel) 0 (max 0 (dec n)))))
-                             (recur))
-                         (= ktype KeyType/Character)
-                         (let
-                           [^Character c (Character/valueOf
-                                           (Character/toLowerCase
-                                             (.getCharacter ^com.googlecode.lanterna.input.KeyStroke
-                                                            key)))]
-                           (if-let [action (some #(when (= c (:key %)) %) actions)]
-                             (do (run-action! action) (recur))
-                             (recur)))
-                         :else (recur))))
                (instance? MouseAction key)
                (let
                  [^MouseAction ma key
@@ -1957,9 +1762,144 @@
                    (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur))
                    (= ktype KeyType/ArrowDown)
                    (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
-                   ;; Enter - open the inline actions view for the selected provider
+                   ;; Enter — the provider's magit transient: every action fires
+                   ;; from its OWN key (`d`, `f`, `a`, …) with no cursor at all,
+                   ;; and picking a model is a second transient, not a menu.
                    (= ktype KeyType/Enter)
-                   (do (when (pos? total) (reset! action-sel 0) (reset! mode :actions)) (recur))
+                   (do
+                     (when (pos? total)
+                       (let
+                         [provider (nth @items @selected)
+                          actions (provider-action-items provider
+                                                         (get @statuses (:id provider))
+                                                         (tagged? provider @fallback-selection)
+                                                         (tagged? provider @default-selection))
+                          ;; The card the transient is about stays painted above
+                          ;; it (`:min-row` floors the popup under it), so the
+                          ;; provider being configured is never off screen.
+                          _ (draw-provider-card! g
+                                                 left
+                                                 content-top
+                                                 inner-w
+                                                 @selected
+                                                 false
+                                                 provider
+                                                 (get @statuses (:id provider))
+                                                 (get @limits (:id provider))
+                                                 @default-selection
+                                                 @fallback-selection)
+                          picked (:action (run-transient! screen
+                                                          g
+                                                          geom
+                                                          (str (vis/display-label (:id provider))
+                                                               " — actions")
+                                                          (provider-transient-spec actions)))
+                          action (some #(when (= picked (:id %)) %) actions)]
+
+                         (case (:id action)
+                           (:default :fallback)
+                           (let
+                             [role (if (= (:id action) :fallback) :fallback :primary)
+                              current (if (= role :fallback) @fallback-selection @default-selection)
+                              preferred (when (same-id? (:id provider) (:provider-id current))
+                                          [(:model current)])
+                              ;; A model list needs the whole panel, so this one
+                              ;; transient reclaims the card's rows and pages
+                              ;; whatever still will not fit.
+                              rows (max 1 (- (long hint-row) (long content-top) 1))
+                              choice (run-model-transient!
+                                       screen
+                                       g
+                                       (assoc geom :min-row content-top)
+                                       provider
+                                       (build-model-list provider preferred false)
+                                       preferred
+                                       {:default (when (same-id? (:id provider)
+                                                                 (:provider-id @default-selection))
+                                                   (:model @default-selection))
+                                        :fallback (when (tagged? provider @fallback-selection)
+                                                    (:model @fallback-selection))}
+                                       (model-transient-page-size rows))
+                              ;; A rejected tag (fallback on the primary's own
+                              ;; provider) is a 400 from the daemon — show its
+                              ;; reason instead of killing the dialog loop.
+                              selection
+                              (when choice
+                                (try (if (= role :fallback)
+                                       (vis/gateway-set-router-fallback! (:id provider) choice)
+                                       (vis/gateway-set-router-default! (:id provider) choice))
+                                     (catch Exception e
+                                       (dlg/text-view-dialog! screen
+                                                              (if (= role :fallback)
+                                                                "Fallback rejected"
+                                                                "Default rejected")
+                                                              [(or (ex-message e) (str e))])
+                                       ::rejected)))]
+
+                             (when (and (some? selection) (not= selection ::rejected))
+                               (if (= role :fallback)
+                                 (reset! fallback-selection selection)
+                                 (do ;; The daemon drops a fallback that collides with
+                                     ;; the new primary's provider — mirror that here.
+                                   (when (tagged? provider @fallback-selection)
+                                     (reset! fallback-selection nil))
+                                   (reset! default-selection selection)
+                                   (swap! items default-first-providers (:provider-id selection))
+                                   (reset! selected 0)
+                                   (reset! scroll 0)))))
+
+                           :clear-fallback
+                           (try (vis/gateway-set-router-fallback!)
+                                (reset! fallback-selection nil)
+                                (catch Exception e
+                                  ;; Same contract as tagging: a daemon refusal
+                                  ;; explains itself instead of killing the loop.
+                                  (dlg/text-view-dialog! screen
+                                                         "Clear fallback failed"
+                                                         [(or (ex-message e) (str e))])))
+
+                           :authenticate
+                           (when (authenticate-provider! screen provider (:force? action))
+                             ;; Auth wrote the credential DAEMON-side, so re-read
+                             ;; the row from the persisted fleet instead of
+                             ;; trusting what the dialog handed back — the TUI
+                             ;; never holds the key itself.
+                             (swap! items assoc
+                               @selected
+                               (or (first (filter (fn [p]
+                                                    (= (:id p) (:id provider)))
+                                                  (vis/configured-providers)))
+                                   provider)))
+
+                           :status
+                           (do (reset! status-scroll 0) (reset! mode :status))
+
+                           :logout
+                           (do
+                             (reset! pending
+                               {:prompt
+                                (str "Log out of " (vis/display-label (:id provider)) "?  y / n")
+                                :run
+                                (fn []
+                                  (if-let [err (perform-logout! provider)]
+                                    (dlg/text-view-dialog! screen
+                                                           (str (vis/display-label (:id provider))
+                                                                " Authentication")
+                                                           [(str "Logout failed: " err)])
+                                    ;; The provider KEEPS its config row: only the
+                                    ;; credential is gone, so drop the cached
+                                    ;; verdicts and let the row re-probe as
+                                    ;; unauthenticated.
+                                    (do
+                                      (swap! statuses dissoc (:id provider))
+                                      (swap! limits dissoc (:id provider))
+                                      (refresh-provider-diagnostics! provider statuses limits))))})
+                             (reset! mode :confirm))
+
+                           nil)
+                         (when-let [provider* (get @items @selected)]
+                           (refresh-provider-diagnostics! provider* statuses limits))))
+                     (recur))
                    (= ktype KeyType/Character)
                    (let
                      [c (Character/toLowerCase (.getCharacter

@@ -19,6 +19,18 @@
           (pos? attempts) (do (Thread/sleep 20) (recur (dec attempts)))
           :else false)))
 
+(defn- add-keys!
+  "Queue `keys` on the virtual terminal: `KeyType` members go through untouched,
+   characters become plain keystrokes, so a magit transient's single-key commands
+   are driven exactly as a user types them."
+  [^DefaultVirtualTerminal terminal keys]
+  (doseq [k keys]
+    (.addInput terminal
+               ^KeyStroke
+               (if (instance? KeyType k)
+                 (KeyStroke. ^KeyType k)
+                 (KeyStroke. (Character/valueOf ^Character k) false false)))))
+
 (defdescribe provider-dialog-namespace-test
              (it "loads the provider dialog namespace"
                  (expect (some? (find-ns 'com.blockether.vis.ext.channel-tui.provider)))))
@@ -57,7 +69,7 @@
 (defdescribe
   provider-inline-model-transient-test
   (it
-    "selects and retains a live-catalog default model inside the provider dialog"
+    "selects the default model inside the provider dialog instead of opening another dialog"
     (let
       [terminal
        (DefaultVirtualTerminal. (TerminalSize. 80 30))
@@ -66,9 +78,6 @@
        (doto (TerminalScreen. terminal) (.startScreen))
 
        selected
-       (atom nil)
-
-       saved
        (atom nil)
 
        seed
@@ -96,9 +105,7 @@
 
            vis/gateway-provider-model-options
            (fn [provider-id _]
-             {:models (if (= provider-id :alpha)
-                        ["alpha-live" "alpha-1" "alpha-2"]
-                        ["beta-default" "beta-2"])
+             {:models (if (= provider-id :alpha) ["alpha-1" "alpha-2"] ["beta-default" "beta-2"])
               :hidden-count 0})
 
            vis/gateway-set-router-default!
@@ -112,7 +119,7 @@
            (constantly [])
 
            vis/save-config!
-           #(reset! saved %)
+           (constantly nil)
 
            vis/load-config
            (constantly seed)
@@ -121,18 +128,11 @@
            (fn [& _]
              (throw (ex-info "nested model dialog opened" {})))]
 
-          ;; Default :beta starts first. Choose :alpha, open its actions, choose
-          ;; "Set as Default...", select the first live model, then close.
-          (doseq
-            [key-type [KeyType/ArrowDown KeyType/Enter KeyType/Enter KeyType/Enter KeyType/Escape]]
-            (.addInput terminal (KeyStroke. key-type)))
+          ;; Default :beta starts first. Choose :alpha, Enter opens its magit
+          ;; transient, `d` runs "Set as Default...", `a` takes the first model.
+          (add-keys! terminal [KeyType/ArrowDown KeyType/Enter \d \a KeyType/Escape KeyType/Escape])
           (provider/show-provider-dialog! screen seed)
-          (expect (= {:provider-id :alpha :model "alpha-live"} @selected))
-          (expect (= ["alpha-1" "alpha-2" "alpha-live"]
-                     (->> (get @saved "providers")
-                          (some #(when (= :alpha (:id %)) %))
-                          :models
-                          (mapv :name)))))
+          (expect (= {:provider-id :alpha :model "alpha-1"} @selected)))
         (finally (.stopScreen screen))))))
 
 (defdescribe provider-card-scroll-test
@@ -1210,12 +1210,9 @@
          (fn [& _]
            (throw (ex-info "nested model dialog opened" {})))]
 
-        ;; Default :beta sorts first. Down to :alpha, open actions, DOWN past
-        ;; "Set as Default..." onto "Set as Fallback...", take the first model.
-        (doseq
-          [key-type [KeyType/ArrowDown KeyType/Enter KeyType/ArrowDown KeyType/Enter KeyType/Enter
-                     KeyType/Escape KeyType/Escape]]
-          (.addInput terminal (KeyStroke. key-type)))
+        ;; Default :beta sorts first. Down to :alpha, Enter opens its magit
+        ;; transient, `f` runs "Set as Fallback...", `a` takes the first model.
+        (add-keys! terminal [KeyType/ArrowDown KeyType/Enter \f \a KeyType/Escape KeyType/Escape])
         (provider/show-provider-dialog! screen seed)
         {:shown @shown :primary @primary})
       (finally (.stopScreen screen)))))
@@ -1416,3 +1413,66 @@
            (expect (not (str/includes? (row-text 1) "Chat unlimited")))
            (expect (str/includes? (row-text 2) "Chat unlimited"))
            (finally (.stopScreen screen))))))
+
+(defdescribe
+  provider-transient-spec-test
+  (it "groups a provider's actions the way magit groups a popup, keeping their keys"
+      (let
+        [spec (provider/provider-transient-spec [{:id :default :label "Set as Default..." :key \d}
+                                                 {:id :fallback :label "Set as Fallback..." :key \f}
+                                                 {:id :authenticate :label "Authenticate" :key \a}
+                                                 {:id :logout :label "Log Out" :key \l}])]
+        (expect (= ["Routing" "Account"] (mapv :title (:groups spec))))
+        (expect (= [["d" "f"] ["a" "l"]] (mapv #(mapv :key (:items %)) (:groups spec))))
+        (expect (= [["Set as Default..." "Set as Fallback..."] ["Authenticate" "Log Out"]]
+                   (mapv #(mapv :label (:items %)) (:groups spec))))
+        (expect (= [:default :fallback :authenticate :logout]
+                   (mapv :id (mapcat :items (:groups spec)))))
+        (expect (every? #(= :action (:type %)) (mapcat :items (:groups spec))))))
+  (it "drops a group no action landed in"
+      (let
+        [spec (provider/provider-transient-spec
+                [{:id :default :label "Set as Default..." :key \d}])]
+        (expect (= ["Routing"] (mapv :title (:groups spec)))))))
+
+(defdescribe model-transient-spec-test
+             (it "reserves the popup's own chrome and never outruns its single-key bindings"
+                 (expect (= 1 (provider/model-transient-page-size 3)))
+                 (expect (= 13 (provider/model-transient-page-size 20)))
+                 (expect (= 24 (provider/model-transient-page-size 200))))
+             (it "binds one letter per model and tags the routed pair"
+                 (let
+                   [entries
+                    [{:id "m1" :label "m1"} {:id "m2" :label "m2"} {:id "m3" :label "m3"}
+                     {:id :show-all :label "Show all"}]
+
+                    spec
+                    (provider/model-transient-spec entries 0 {:default "m1" :fallback "m2"} 2)
+
+                    [models commands]
+                    (:groups spec)]
+
+                   (expect (= "Models  1/2" (:title models)))
+                   (expect (= ["a" "b"] (mapv :key (:items models))))
+                   (expect (= ["m1  (default)" "m2  (fallback)"] (mapv :label (:items models))))
+                   (expect (= ["m1" "m2"] (mapv :id (:items models))))
+                   (expect (= "Commands" (:title commands)))
+                   (expect (= ["n" "p" "*"] (mapv :key (:items commands))))
+                   (expect (= [::provider/next-page ::provider/prev-page :show-all]
+                              (mapv :id (:items commands))))))
+             (it "pages the rest of the catalog onto the same letters"
+                 (let
+                   [entries
+                    [{:id "m1" :label "m1"} {:id "m2" :label "m2"} {:id "m3" :label "m3"}]
+
+                    [models commands]
+                    (:groups (provider/model-transient-spec entries 1 {} 2))]
+
+                   (expect (= "Models  2/2" (:title models)))
+                   (expect (= ["a"] (mapv :key (:items models))))
+                   (expect (= ["m3"] (mapv :id (:items models))))
+                   (expect (= ["n" "p"] (mapv :key (:items commands))))))
+             (it "shows no paging or expansion commands when one page holds everything"
+                 (let [spec (provider/model-transient-spec [{:id "m1" :label "m1"}] 0 {} 8)]
+                   (expect (= ["Models"] (mapv :title (:groups spec))))
+                   (expect (= ["a"] (mapv :key (:items (first (:groups spec)))))))))
