@@ -157,18 +157,23 @@
       ;; door leads back INTO the shim; a self-call would be a RecursionError on the
       ;; very first `open`.
       (let
-        [ctx (sandbox)
-         before (open-fd-count)
-         r (ep/run-python-block ctx
-                                (str "import builtins, io, pathlib\n"
-                                     "for _ in range(40):\n"
-                                     "    h = pathlib.Path(F).open()\n"
-                                     "    h = io.open(F)\n"
-                                     "    h = builtins.open(F)\n"
-                                     "    del h\n"
-                                     "len(__vis_fd_registry__)")
-                                "t1/i2")
-         grown (- (open-fd-count) before)]
+        [ctx
+         (sandbox)
+
+         before
+         (open-fd-count)
+
+         r
+         (ep/run-python-block ctx
+                              (str "import builtins, io, pathlib\n"
+                                   "for _ in range(40):\n" "    h = pathlib.Path(F).open()\n"
+                                   "    h = io.open(F)\n" "    h = builtins.open(F)\n"
+                                   "    del h\n" "len(__vis_fd_registry__)")
+                              "t1/i2")
+
+         grown
+         (- (open-fd-count) before)]
+
         (expect (nil? (:error r)))
         (expect (>= 8 (:result r)))
         (expect (> 40 grown))))
@@ -183,14 +188,11 @@
       (let
         [r (ep/run-python-block (sandbox)
                                 (str "import gc\n"
-                                     "h = open(F, 'rb')\n"
-                                     "raw = h.raw\n"
+                                     "h = open(F, 'rb')\n" "raw = h.raw\n"
                                      "fd = h.fileno()\n"
                                      "owned = __vis_fd_registry__[fd][0]() is raw\n"
-                                     "del h\n"
-                                     "gc.collect()\n"
-                                     "__vis_reclaim_fds__(True)\n"
-                                     "[owned, raw.read().decode()]")
+                                     "del h\n" "gc.collect()\n"
+                                     "__vis_reclaim_fds__(True)\n" "[owned, raw.read().decode()]")
                                 "t1/i2")]
         (expect (nil? (:error r)))
         (expect (= [true "probe\n"] (:result r)))))
@@ -200,16 +202,12 @@
       ;; reads through — EBADF from code that did nothing wrong.
       (let
         [r (ep/run-python-block (sandbox)
-                                (str "import gc, os\n"
-                                     "fd = os.open(F, os.O_RDONLY)\n"
+                                (str "import gc, os\n" "fd = os.open(F, os.O_RDONLY)\n"
                                      "h = open(fd, 'rb', closefd=False)\n"
                                      "tracked = fd in __vis_fd_registry__\n"
-                                     "del h\n"
-                                     "gc.collect()\n"
-                                     "__vis_reclaim_fds__(True)\n"
-                                     "out = os.read(fd, 5).decode()\n"
-                                     "os.close(fd)\n"
-                                     "[tracked, out]")
+                                     "del h\n" "gc.collect()\n"
+                                     "__vis_reclaim_fds__(True)\n" "out = os.read(fd, 5).decode()\n"
+                                     "os.close(fd)\n" "[tracked, out]")
                                 "t1/i2")]
         (expect (nil? (:error r)))
         (expect (= [false "probe"] (:result r)))))
@@ -221,13 +219,27 @@
       ;; `builtins.open` IS one — a RecursionError on the very next `open`, the same
       ;; hazard the reinstall already unwraps for `print`, one door further down.
       (let
-        [ctx (sandbox)
-         f (:result (ep/run-python-block ctx "F" "t1/i2"))
-         _ (ep/run-python-block ctx "for _ in range(6):\n    h = open(F)\n    del h" "t1/i3")
-         before (ep/run-python-block ctx "id(__vis_fd_registry__)" "t1/i4")
-         _ (ep/run-python-block ctx "globals().clear()" "t1/i5")
-         r (ep/run-python-block ctx (str "open(" (pr-str f) ").read()") "t1/i6")
-         after (ep/run-python-block ctx "id(__vis_fd_registry__)" "t1/i7")]
+        [ctx
+         (sandbox)
+
+         f
+         (:result (ep/run-python-block ctx "F" "t1/i2"))
+
+         _
+         (ep/run-python-block ctx "for _ in range(6):\n    h = open(F)\n    del h" "t1/i3")
+
+         before
+         (ep/run-python-block ctx "id(__vis_fd_registry__)" "t1/i4")
+
+         _
+         (ep/run-python-block ctx "globals().clear()" "t1/i5")
+
+         r
+         (ep/run-python-block ctx (str "open(" (pr-str f) ").read()") "t1/i6")
+
+         after
+         (ep/run-python-block ctx "id(__vis_fd_registry__)" "t1/i7")]
+
         (expect (nil? (:error r)))
         (expect (= "probe\n" (:result r)))
         (expect (nil? (:error after)))
@@ -240,22 +252,26 @@
       ;; the shim is a subclass — this is what proves the subclass is really the
       ;; one being constructed.
       (let
-        [ctx (sandbox)
-         before (open-fd-count)
-         r (ep/run-python-block ctx
-                                (str "import io\n"
-                                     "h = io.FileIO(F)\n"
-                                     "c = io.open_code(F)\n"
-                                     "seen = [h.fileno() in __vis_fd_registry__,\n"
-                                     "        c.fileno() in __vis_fd_registry__]\n"
-                                     "h.close()\n"
-                                     "c.close()\n"
-                                     "for _ in range(40):\n"
-                                     "    g = io.FileIO(F)\n"
-                                     "    del g\n"
-                                     "seen + [len(__vis_fd_registry__) <= 8]")
-                                "t1/i2")
-         grown (- (open-fd-count) before)]
+        [ctx
+         (sandbox)
+
+         before
+         (open-fd-count)
+
+         r
+         (ep/run-python-block ctx
+                              (str "import io\n"
+                                   "h = io.FileIO(F)\n" "c = io.open_code(F)\n"
+                                   "seen = [h.fileno() in __vis_fd_registry__,\n"
+                                   "        c.fileno() in __vis_fd_registry__]\n"
+                                   "h.close()\n" "c.close()\n"
+                                   "for _ in range(40):\n" "    g = io.FileIO(F)\n"
+                                   "    del g\n" "seen + [len(__vis_fd_registry__) <= 8]")
+                              "t1/i2")
+
+         grown
+         (- (open-fd-count) before)]
+
         (expect (nil? (:error r)))
         (expect (= [true true true] (:result r)))
         (expect (> 40 grown))))
@@ -266,14 +282,12 @@
       ;; the moment the sandbox loaded.
       (let
         [r (ep/run-python-block (sandbox)
-                                (str "import io, pathlib\n"
-                                     "raw = open(F, 'rb', buffering=0)\n"
+                                (str "import io, pathlib\n" "raw = open(F, 'rb', buffering=0)\n"
                                      "out = [isinstance(raw, io.FileIO),\n"
                                      "       issubclass(io.FileIO, io.RawIOBase),\n"
                                      "       isinstance(io.FileIO(F), io.FileIO),\n"
                                      "       pathlib.Path(F).read_text()]\n"
-                                     "raw.close()\n"
-                                     "out")
+                                     "raw.close()\n" "out")
                                 "t1/i2")]
         (expect (nil? (:error r)))
         (expect (= [true true true "probe\n"] (:result r)))))
@@ -281,19 +295,15 @@
       ;; Same contract as `open(fd, closefd=False)`, at the raw door: the block
       ;; opened that fd itself and still reads through it after the wrapper dies.
       (let
-        [r (ep/run-python-block (sandbox)
-                                (str "import gc, io, os\n"
-                                     "fd = os.open(F, os.O_RDONLY)\n"
-                                     "__vis_fd_registry__.pop(fd, None)\n"
-                                     "h = io.FileIO(fd, 'r', False)\n"
-                                     "tracked = fd in __vis_fd_registry__\n"
-                                     "del h\n"
-                                     "gc.collect()\n"
-                                     "__vis_reclaim_fds__(True)\n"
-                                     "out = os.read(fd, 5).decode()\n"
-                                     "os.close(fd)\n"
-                                     "[tracked, out]")
-                                "t1/i2")]
+        [r (ep/run-python-block
+             (sandbox)
+             (str "import gc, io, os\n"
+                  "fd = os.open(F, os.O_RDONLY)\n" "__vis_fd_registry__.pop(fd, None)\n"
+                  "h = io.FileIO(fd, 'r', False)\n" "tracked = fd in __vis_fd_registry__\n"
+                  "del h\n" "gc.collect()\n"
+                  "__vis_reclaim_fds__(True)\n" "out = os.read(fd, 5).decode()\n"
+                  "os.close(fd)\n" "[tracked, out]")
+             "t1/i2")]
         (expect (nil? (:error r)))
         (expect (= [false "probe"] (:result r)))))
   (it "reclaims a HOST resource a block dropped, not only descriptors it opened"
@@ -303,19 +313,24 @@
       ;; no `open` was ever involved. The shim registers a reaper that the runtime
       ;; calls on its own schedule, so the process count is what has to be watched.
       (let
-        [ctx (sandbox)
-         before (open-fd-count)
-         r (ep/run-python-block ctx
-                                (str "import gc, sqlite3\n"
-                                     "for i in range(40):\n"
-                                     "    c = sqlite3.connect(W + str(i) + '.db')\n"
-                                     "    c.execute('create table t(x)')\n"
-                                     "    del c\n"
-                                     "gc.collect()\n"
-                                     "__vis_reclaim_fds__(True)\n"
-                                     "'done'")
-                                "t1/i2")
-         grown (- (open-fd-count) before)]
+        [ctx
+         (sandbox)
+
+         before
+         (open-fd-count)
+
+         r
+         (ep/run-python-block ctx
+                              (str "import gc, sqlite3\n" "for i in range(40):\n"
+                                   "    c = sqlite3.connect(W + str(i) + '.db')\n"
+                                   "    c.execute('create table t(x)')\n"
+                                   "    del c\n" "gc.collect()\n"
+                                   "__vis_reclaim_fds__(True)\n" "'done'")
+                              "t1/i2")
+
+         grown
+         (- (open-fd-count) before)]
+
         (expect (nil? (:error r)))
         (expect (= "done" (:result r)))
         (expect (> 20 grown)))))

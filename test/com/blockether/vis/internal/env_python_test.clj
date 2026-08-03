@@ -732,68 +732,66 @@
                  (expect (< elapsed 15000)
                          (str "collect-garbage! blocked on the GIL for " elapsed "ms")))))
 
-(defdescribe sandbox-open-flush-test
-             ;; GraalPy does NOT refcount, so the CPython idiom
-             ;; `open(p, "w").write(text)` - a handle dropped without close() - was
-             ;; never finalized at the end of the statement: the bytes stayed in the
-             ;; buffer and the file on disk was EMPTY until an arbitrary later GC.
-             ;; A block wrote a commit message and `git commit -F` read nothing.
-             ;; The sandbox `open` tracks writable handles weakly and the runner
-             ;; flushes them before every tool call and at the end of the block.
-             (it "puts a block's unclosed write on disk, before a tool call and at block end"
-                 (let
-                   [dir
-                    (.toFile (java.nio.file.Files/createTempDirectory
-                               "vis-open-flush"
-                               (make-array java.nio.file.attribute.FileAttribute 0)))
+(defdescribe
+  sandbox-open-flush-test
+  ;; GraalPy does NOT refcount, so the CPython idiom
+  ;; `open(p, "w").write(text)` - a handle dropped without close() - was
+  ;; never finalized at the end of the statement: the bytes stayed in the
+  ;; buffer and the file on disk was EMPTY until an arbitrary later GC.
+  ;; A block wrote a commit message and `git commit -F` read nothing.
+  ;; The sandbox `open` tracks writable handles weakly and the runner
+  ;; flushes them before every tool call and at the end of the block.
+  (it
+    "puts a block's unclosed write on disk, before a tool call and at block end"
+    (let
+      [dir
+       (.toFile (java.nio.file.Files/createTempDirectory
+                  "vis-open-flush"
+                  (make-array java.nio.file.attribute.FileAttribute 0)))
 
-                    end-file
-                    (java.io.File. dir "at-end.txt")
+       end-file
+       (java.io.File. dir "at-end.txt")
 
-                    mid-file
-                    (java.io.File. dir "before-tool.txt")
+       mid-file
+       (java.io.File. dir "before-tool.txt")
 
-                    raw-file
-                    (java.io.File. dir "unwrapped.txt")
+       raw-file
+       (java.io.File. dir "unwrapped.txt")
 
-                    ctx
-                    (:python-context
-                      (ep/create-python-context
-                        {'read_back (fn [& args]
-                                      (let [f (java.io.File. (str (first args)))]
-                                        (if (.exists f) (slurp f) "")))}
-                        (constantly [dir])))
+       ctx
+       (:python-context (ep/create-python-context {'read_back
+                                                   (fn [& args]
+                                                     (let [f (java.io.File. (str (first args)))]
+                                                       (if (.exists f) (slurp f) "")))}
+                                                  (constantly [dir])))
 
-                    at-end
-                    (ep/run-python-block
-                      ctx
-                      (str "open(" (pr-str (.getAbsolutePath end-file)) ", 'w').write('flushed-bytes')\n"
-                           "print('block-done')"))
+       at-end
+       (ep/run-python-block ctx
+                            (str "open(" (pr-str (.getAbsolutePath end-file))
+                                 ", 'w').write('flushed-bytes')\n" "print('block-done')"))
 
-                    before-tool
-                    (ep/run-python-block
-                      ctx
-                      (str "open(" (pr-str (.getAbsolutePath mid-file)) ", 'w').write('mid-bytes')\n"
-                           "print(read_back(" (pr-str (.getAbsolutePath mid-file)) "))"))
+       before-tool
+       (ep/run-python-block ctx
+                            (str "open("
+                                 (pr-str (.getAbsolutePath mid-file))
+                                 ", 'w').write('mid-bytes')\n"
+                                 "print(read_back("
+                                 (pr-str (.getAbsolutePath mid-file))
+                                 "))"))
 
-                    unwrapped
-                    (ep/run-python-block
-                      ctx
-                      (str "__vis_real_open__(" (pr-str (.getAbsolutePath raw-file)) ", 'w').write('lost')\n"
-                           "print('raw-done')"))]
+       unwrapped
+       (ep/run-python-block ctx
+                            (str "__vis_real_open__(" (pr-str (.getAbsolutePath raw-file))
+                                 ", 'w').write('lost')\n" "print('raw-done')"))]
 
-                   (try
-                     (expect (nil? (:error at-end)))
-                     (expect (= "block-done\n" (:stdout at-end)))
-                     (expect (= "flushed-bytes" (slurp end-file)))
-
-                     ;; A tool that reads a just-written file sees the bytes.
-                     (expect (nil? (:error before-tool)))
-                     (expect (= "mid-bytes\n" (:stdout before-tool)))
-
-                     ;; Counterfactual: the untracked handle is the old behaviour -
-                     ;; the write is still sitting in an unflushed buffer.
-                     (expect (= "raw-done\n" (:stdout unwrapped)))
-                     (expect (zero? (.length raw-file)))
-                     (finally
-                       (run! #(.delete ^java.io.File %) [end-file mid-file raw-file dir]))))))
+      (try (expect (nil? (:error at-end)))
+           (expect (= "block-done\n" (:stdout at-end)))
+           (expect (= "flushed-bytes" (slurp end-file)))
+           ;; A tool that reads a just-written file sees the bytes.
+           (expect (nil? (:error before-tool)))
+           (expect (= "mid-bytes\n" (:stdout before-tool)))
+           ;; Counterfactual: the untracked handle is the old behaviour -
+           ;; the write is still sitting in an unflushed buffer.
+           (expect (= "raw-done\n" (:stdout unwrapped)))
+           (expect (zero? (.length raw-file)))
+           (finally (run! #(.delete ^java.io.File %) [end-file mid-file raw-file dir]))))))

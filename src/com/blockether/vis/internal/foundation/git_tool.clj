@@ -47,31 +47,27 @@
    still keeps the message as ONE token instead of three."
   [^String line]
   (let [n (.length line)]
-    (loop [i 0
-           buf (StringBuilder.)
-           started? false
-           q no-quote
-           tokens []]
+    (loop
+      [i 0
+       buf (StringBuilder.)
+       started? false
+       q no-quote
+       tokens []]
+
       (if (>= i n)
-        (cond-> tokens started? (conj (.toString buf)))
+        (cond-> tokens
+          started?
+          (conj (.toString buf)))
         (let [c (.charAt line i)]
-          (cond
-            (and (= q no-quote) (Character/isWhitespace c))
-            (if started?
-              (recur (inc i) (StringBuilder.) false no-quote (conj tokens (.toString buf)))
-              (recur (inc i) buf false no-quote tokens))
-
-            (and (= q no-quote) (or (= c \') (= c \")))
-            (recur (inc i) buf true c tokens)
-
-            (= c q)
-            (recur (inc i) buf true no-quote tokens)
-
-            (and (= c \\) (not= q \') (< (inc i) n))
-            (recur (+ i 2) (.append buf (.charAt line (inc i))) true q tokens)
-
-            :else
-            (recur (inc i) (.append buf c) true q tokens)))))))
+          (cond (and (= q no-quote) (Character/isWhitespace c))
+                (if started?
+                  (recur (inc i) (StringBuilder.) false no-quote (conj tokens (.toString buf)))
+                  (recur (inc i) buf false no-quote tokens))
+                (and (= q no-quote) (or (= c \') (= c \"))) (recur (inc i) buf true c tokens)
+                (= c q) (recur (inc i) buf true no-quote tokens)
+                (and (= c \\) (not= q \') (< (inc i) n))
+                (recur (+ i 2) (.append buf (.charAt line (inc i))) true q tokens)
+                :else (recur (inc i) (.append buf c) true q tokens)))))))
 
 (defn- normalize-args
   "Coerce ONE element of the `commands` batch into a vector of literal git
@@ -82,21 +78,16 @@
    argv and throws. An empty result is the caller's signal to ask for at least
    one argument."
   [args]
-  (cond
-    (sequential? args)
-    (into [] (comp (map str) (remove str/blank?)) args)
-
-    (string? args)
-    (into [] (remove str/blank?) (split-argv args))
-
-    :else
-    (throw (ex-info (str "git commands must be lists of literal tokens \u2014 "
-                         "one command is a batch of ONE, so pass each as an array, "
-                         "e.g. [[\"status\", \"--short\"]] or [[\"commit\", \"-m\", \"wip\"]]. "
-                         "Got "
-                         (pr-str (type args))
-                         ".")
-                    {:type ::bad-commands :tool "git"}))))
+  (cond (sequential? args) (into [] (comp (map str) (remove str/blank?)) args)
+        (string? args) (into [] (remove str/blank?) (split-argv args))
+        :else (throw (ex-info
+                       (str "git commands must be lists of literal tokens \u2014 "
+                            "one command is a batch of ONE, so pass each as an array, "
+                            "e.g. [[\"status\", \"--short\"]] or [[\"commit\", \"-m\", \"wip\"]]. "
+                            "Got "
+                            (pr-str (type args))
+                            ".")
+                       {:type ::bad-commands :tool "git"}))))
 
 (defn- normalize-batch
   "The ordered batch with its ONE genuinely ambiguous spelling resolved. A FLAT
@@ -126,12 +117,20 @@
    files` and staged NOTHING. The reporting-flag scan is likewise limited to the
    option side, so a file literally named `-v` cannot suppress the flag."
   [tokens]
-  (let [tokens (vec tokens)
-        cut (or (first (keep-indexed (fn [i t] (when (= "--" t) i)) tokens))
-                (count tokens))
-        opts (subvec tokens 0 cut)]
-    (if (and (= "add" (first tokens))
-             (not (some #{"-v" "--verbose" "-n" "--dry-run"} opts)))
+  (let
+    [tokens
+     (vec tokens)
+
+     cut
+     (or (first (keep-indexed (fn [i t]
+                                (when (= "--" t) i))
+                              tokens))
+         (count tokens))
+
+     opts
+     (subvec tokens 0 cut)]
+
+    (if (and (= "add" (first tokens)) (not (some #{"-v" "--verbose" "-n" "--dry-run"} opts)))
       (into (conj opts "--verbose") (subvec tokens cut))
       tokens)))
 
@@ -170,8 +169,7 @@
                     {:type ::bad-options :tool "git"})))
   (let
     [commands
-     (normalize-batch
-       (batch/ordered "git" (or (get opts "commands") (get opts :commands))))
+     (normalize-batch (batch/ordered "git" (or (get opts "commands") (get opts :commands))))
 
      t0
      (now-ms)

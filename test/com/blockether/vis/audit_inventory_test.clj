@@ -63,15 +63,12 @@
    so a row can be compared against the artifact's own declaration."
   [raw]
   (let [s (str/lower-case (str raw))]
-    (cond
-      (or (str/includes? s "lesser general public")
-          (str/includes? s "lgpl"))              "LGPL-3.0"
-      (str/includes? s "eclipse public")         (if (str/includes? s "2.0") "EPL-2.0" "EPL-1.0")
-      (str/includes? s "apache")                 "Apache-2.0"
-      (or (str/includes? s "universal permissive")
-          (re-find #"\bupl\b" s))               "UPL-1.0"
-      (re-find #"\bmit\b" s)                    "MIT"
-      :else                                      raw)))
+    (cond (or (str/includes? s "lesser general public") (str/includes? s "lgpl")) "LGPL-3.0"
+          (str/includes? s "eclipse public") (if (str/includes? s "2.0") "EPL-2.0" "EPL-1.0")
+          (str/includes? s "apache") "Apache-2.0"
+          (or (str/includes? s "universal permissive") (re-find #"\bupl\b" s)) "UPL-1.0"
+          (re-find #"\bmit\b" s) "MIT"
+          :else raw)))
 
 (defdescribe
   audit-inventory-test
@@ -96,13 +93,14 @@
                   (str "the cached POM declares " declared ", not MIT")))))
   (it "agrees with every cached POM, so no in-house row drifts from the artifact"
       (let [rows (inventory)]
-        (doseq [[coord version] (in-house-coords)
-                :let [declared (cached-pom-license coord version)]
-                :when declared]
+        (doseq
+          [[coord version] (in-house-coords)
+           :let [declared (cached-pom-license coord version)]
+           :when declared]
+
           (let [stated (:license (get rows coord))]
             (expect (= (normalize declared) stated)
-                    (str coord " states " stated
-                         " but its POM declares " declared)))))))
+                    (str coord " states " stated " but its POM declares " declared)))))))
 
 (defdescribe
   audit-generated-date-test
@@ -118,9 +116,6 @@
         (expect (str/includes? src "(defn- stamp-date"))
         ;; the ONLY clock read left feeds stamp-date's "content changed" branch
         (expect (= 1 (count (re-seq #"LocalDate/now" src))))
-        (expect (str/includes?
-                 (second (str/split src #"\(defn- stamp-date"))
-                 "LocalDate/now"))))
+        (expect (str/includes? (second (str/split src #"\(defn- stamp-date")) "LocalDate/now"))))
   (it "the committed document states one resolved ISO date"
-      (expect (= 1 (count (re-seq #"(?m)^> Generated \d{4}-\d{2}-\d{2}\.$"
-                                  (slurp audit-file)))))))
+      (expect (= 1 (count (re-seq #"(?m)^> Generated \d{4}-\d{2}-\d{2}\.$" (slurp audit-file)))))))

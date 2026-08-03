@@ -127,11 +127,10 @@
   [cache k v]
   (swap! cache (fn [{:keys [m order] :as c}]
                  (cond (contains? m k) c
-                       (>= (count order) (long parse-cache-size))
-                       {:m (-> m
-                               (dissoc (nth order 0))
-                               (assoc k v))
-                        :order (conj (subvec order 1) k)}
+                       (>= (count order) (long parse-cache-size)) {:m (-> m
+                                                                          (dissoc (nth order 0))
+                                                                          (assoc k v))
+                                                                   :order (conj (subvec order 1) k)}
                        :else {:m (assoc m k v) :order (conj order k)})))
   v)
 
@@ -671,14 +670,9 @@
     (if-let [hit (get (:m @defs-cache) k)]
       hit
       (let
-        [res
-         (process-source source language)
-
-         items
-         (or (.structure res) [])
-
-         lines
-         (str/split-lines source)]
+        [res (process-source source language)
+         items (or (.structure res) [])
+         lines (str/split-lines source)]
 
         (remember! defs-cache
                    k

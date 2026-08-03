@@ -245,8 +245,7 @@
       (let
         [config
          {:providers [{:id :anthropic :models [{:name "claude-opus-5"}]}
-                      {:id :openrouter
-                       :models [{:name "gpt-oss-120b"} {:name "z-ai/glm-4.6v"}]}]}
+                      {:id :openrouter :models [{:name "gpt-oss-120b"} {:name "z-ai/glm-4.6v"}]}]}
 
          out
          (#'main/config-with-model-override config "z-ai/glm-4.6v")

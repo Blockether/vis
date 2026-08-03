@@ -44,21 +44,15 @@
    silently sequenced), a value that is neither, or an empty batch."
   [tool commands]
   (let
-    [v
-     (cond
-       ;; The one coercion: a lone command line IS a batch of one.
-       (string? commands)
-       [commands]
-
-       (or (sequential? commands) (instance? java.util.List commands))
-       (vec commands)
-
-       :else
-       (throw (ex-info (str tool
-                            " commands must be an ORDERED array (a bare string is taken as the"
-                            " batch of one); a set or a map has no input order.")
-                       {:type ::bad-commands :tool tool})))]
-
+    [v (cond
+         ;; The one coercion: a lone command line IS a batch of one.
+         (string? commands) [commands]
+         (or (sequential? commands) (instance? java.util.List commands)) (vec commands)
+         :else (throw (ex-info (str
+                                 tool
+                                 " commands must be an ORDERED array (a bare string is taken as the"
+                                 " batch of one); a set or a map has no input order.")
+                               {:type ::bad-commands :tool tool})))]
     (when (empty? v)
       (throw (ex-info (str tool " needs at least one command.") {:type ::no-commands :tool tool})))
     v))

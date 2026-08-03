@@ -169,16 +169,17 @@
                                 "and len(soup.findAll('li')) == 2"))))))
   (it "returns a list for every attribute lookup shape"
       (with-python-context
-        (expect (true?
-                  (ev python-context
-                      (str doc
-                           "soup.find('div').get_attribute_list('class') == ['box','wide'] "
-                           "and soup.find('div').get_attribute_list('nope') == [None] "
-                           "and soup.find('div').has_attr('id') and not soup.find('div').has_attr('nope') "
-                           ;; bs4's `x in tag` asks about CHILDREN (Tag.__contains__ reads
-                           ;; contents), never attributes -- attribute membership is `.attrs`.
-                           "and 'id' in soup.find('div').attrs "
-                           "and 'id' not in soup.find('div')")))))))
+        (expect
+          (true?
+            (ev python-context
+                (str
+                  doc
+                  "soup.find('div').get_attribute_list('class') == ['box','wide'] "
+                  "and soup.find('div').get_attribute_list('nope') == [None] "
+                  "and soup.find('div').has_attr('id') and not soup.find('div').has_attr('nope') "
+                  ;; bs4's `x in tag` asks about CHILDREN (Tag.__contains__ reads
+                  ;; contents), never attributes -- attribute membership is `.attrs`.
+                  "and 'id' in soup.find('div').attrs " "and 'id' not in soup.find('div')")))))))
 
 (defdescribe bs4-selector-engine-test
              (it "supports the attribute operator set"
@@ -331,7 +332,8 @@
           (ev
             python-context
             (str
-              "import io\n" "from bs4 import BeautifulSoup\n"
+              "import io\n"
+              "from bs4 import BeautifulSoup\n"
               "BeautifulSoup(b'<p>bytes</p>', 'html.parser').p.string == 'bytes' "
               "and BeautifulSoup(io.StringIO('<p>stream</p>'), 'html.parser').p.string == 'stream' "
               "and str(BeautifulSoup('', 'html.parser')) == '' "
@@ -339,16 +341,13 @@
               "and BeautifulSoup('', 'html.parser').decode(True) == ''"))))))
   ;; Upstream bs4 4.12 measures len(markup) before parsing, so None raises.
   (it "raises TypeError for None markup exactly like upstream bs4"
-      (with-python-context
-        (expect (= "TypeError: object of type 'NoneType' has no len()"
-                  (ev python-context
-                      (str "from bs4 import BeautifulSoup\n"
-                           "try:\n"
-                           "    BeautifulSoup(None, 'html.parser')\n"
-                           "    _r = 'no error'\n"
-                           "except Exception as _e:\n"
-                           "    _r = type(_e).__name__ + ': ' + str(_e)\n"
-                           "_r"))))))
+      (with-python-context (expect (= "TypeError: object of type 'NoneType' has no len()"
+                                      (ev python-context
+                                          (str "from bs4 import BeautifulSoup\n"
+                                               "try:\n" "    BeautifulSoup(None, 'html.parser')\n"
+                                               "    _r = 'no error'\n" "except Exception as _e:\n"
+                                               "    _r = type(_e).__name__ + ': ' + str(_e)\n"
+                                               "_r"))))))
   (it "recovers from unclosed and stray tags"
       (with-python-context
         (expect (true? (ev python-context
@@ -547,90 +546,106 @@
                                 "and c.p.replace_with(c.p) is None "
                                 "and e.encode('ascii') == '<p>caf&#233;</p>'.encode('ascii')")))))))
 
-(defdescribe bs4-inspection-test
-  (it "exposes PageElement, ResultSet and SoupStrainer the way bs4 does"
+(defdescribe
+  bs4-inspection-test
+  (it
+    "exposes PageElement, ResultSet and SoupStrainer the way bs4 does"
     (with-python-context
-      (expect (true? (ev python-context
-                         (str "from bs4 import BeautifulSoup, SoupStrainer\n"
-                              "from bs4.element import PageElement, NavigableString, Tag\n"
-                              "s = BeautifulSoup('<p class=' + chr(39) + 'x' + chr(39) + '>a</p><p>b</p>', 'html.parser')\n"
-                              "rs = s.find_all('p')\n"
-                              "st = SoupStrainer('p', {'class': 'x'})\n"
-                              "isinstance(s.p, PageElement) and issubclass(NavigableString, PageElement) "
-                              "and hasattr(PageElement, 'find_all_next') and hasattr(PageElement, 'wrap') "
-                              "and type(rs).__name__ == 'ResultSet' and type(rs.source).__name__ == 'SoupStrainer' "
-                              "and str(st) == 'p|' + repr({'class': 'x'}) "
-                              "and st.search_tag('p', {'class': 'x'}) is not None "
-                              "and [str(t) for t in s.find_all(st)] == [str(s.p)] "
-                              "and isinstance(Tag(name='p'), PageElement)"))))))
-
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from bs4 import BeautifulSoup, SoupStrainer\n"
+              "from bs4.element import PageElement, NavigableString, Tag\n"
+              "s = BeautifulSoup('<p class=' + chr(39) + 'x' + chr(39) + '>a</p><p>b</p>', 'html.parser')\n"
+              "rs = s.find_all('p')\n"
+              "st = SoupStrainer('p', {'class': 'x'})\n"
+              "isinstance(s.p, PageElement) and issubclass(NavigableString, PageElement) "
+              "and hasattr(PageElement, 'find_all_next') and hasattr(PageElement, 'wrap') "
+              "and type(rs).__name__ == 'ResultSet' and type(rs.source).__name__ == 'SoupStrainer' "
+              "and str(st) == 'p|' + repr({'class': 'x'}) "
+              "and st.search_tag('p', {'class': 'x'}) is not None "
+              "and [str(t) for t in s.find_all(st)] == [str(s.p)] "
+              "and isinstance(Tag(name='p'), PageElement)"))))))
   (it "reports the builder, its registry and per-node inspection defaults"
+      (with-python-context
+        (expect
+          (true?
+            (ev python-context
+                (str
+                  "from bs4 import BeautifulSoup\n"
+                  "from bs4.builder import TreeBuilder, HTMLParserTreeBuilder, builder_registry\n"
+                  "s = BeautifulSoup('<p>x</p><br>', 'html.parser', store_line_numbers=True)\n"
+                  "b = s.builder\n"
+                  "isinstance(b, TreeBuilder) and isinstance(b, HTMLParserTreeBuilder) "
+                  "and sorted(b.features)[:3] == ['html', 'html.parser', 'strict'] "
+                  "and b.is_xml is False and b.TRACKS_LINE_NUMBERS is True "
+                  "and b.can_be_empty_element('br') and not b.can_be_empty_element('p') "
+                  "and builder_registry.lookup('html.parser') is HTMLParserTreeBuilder "
+                  "and builder_registry.lookup('lxml') is None "
+                  "and s.br.is_empty_element and not s.p.is_empty_element "
+                  "and s.p.sourceline == 1 and s.hidden == 1 and s.p.hidden is False "
+                  "and s.is_xml is False and s.p.namespace is None"))))))
+  (it
+    "decodes bytes through UnicodeDammit and records the encoding on the soup"
     (with-python-context
-      (expect (true? (ev python-context
-                         (str "from bs4 import BeautifulSoup\n"
-                              "from bs4.builder import TreeBuilder, HTMLParserTreeBuilder, builder_registry\n"
-                              "s = BeautifulSoup('<p>x</p><br>', 'html.parser', store_line_numbers=True)\n"
-                              "b = s.builder\n"
-                              "isinstance(b, TreeBuilder) and isinstance(b, HTMLParserTreeBuilder) "
-                              "and sorted(b.features)[:3] == ['html', 'html.parser', 'strict'] "
-                              "and b.is_xml is False and b.TRACKS_LINE_NUMBERS is True "
-                              "and b.can_be_empty_element('br') and not b.can_be_empty_element('p') "
-                              "and builder_registry.lookup('html.parser') is HTMLParserTreeBuilder "
-                              "and builder_registry.lookup('lxml') is None "
-                              "and s.br.is_empty_element and not s.p.is_empty_element "
-                              "and s.p.sourceline == 1 and s.hidden == 1 and s.p.hidden is False "
-                              "and s.is_xml is False and s.p.namespace is None"))))))
-
-  (it "decodes bytes through UnicodeDammit and records the encoding on the soup"
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from bs4 import BeautifulSoup, UnicodeDammit\n"
+              "from bs4.dammit import EncodingDetector\n"
+              "raw = '<meta charset=' + chr(39) + 'utf-8' + chr(39) + '><p>caf' + chr(233) + '</p>'\n"
+              "s = BeautifulSoup(raw.encode('utf-8'), 'html.parser')\n"
+              "d = UnicodeDammit(raw.encode('utf-8'))\n"
+              "s.original_encoding == 'utf-8' and s.declared_html_encoding == 'utf-8' "
+              "and s.contains_replacement_characters is False "
+              "and d.unicode_markup == raw and d.original_encoding == 'utf-8' "
+              "and UnicodeDammit(raw).original_encoding is None "
+              "and EncodingDetector.find_declared_encoding(raw.encode('utf-8')) is None "
+              "and EncodingDetector.find_declared_encoding(raw.encode('utf-8'), True) == 'utf-8'"))))))
+  (it
+    "renders through the formatter stack: output_ready, decode and prettify"
     (with-python-context
-      (expect (true? (ev python-context
-                         (str "from bs4 import BeautifulSoup, UnicodeDammit\n"
-                              "from bs4.dammit import EncodingDetector\n"
-                              "raw = '<meta charset=' + chr(39) + 'utf-8' + chr(39) + '><p>caf' + chr(233) + '</p>'\n"
-                              "s = BeautifulSoup(raw.encode('utf-8'), 'html.parser')\n"
-                              "d = UnicodeDammit(raw.encode('utf-8'))\n"
-                              "s.original_encoding == 'utf-8' and s.declared_html_encoding == 'utf-8' "
-                              "and s.contains_replacement_characters is False "
-                              "and d.unicode_markup == raw and d.original_encoding == 'utf-8' "
-                              "and UnicodeDammit(raw).original_encoding is None "
-                              "and EncodingDetector.find_declared_encoding(raw.encode('utf-8')) is None "
-                              "and EncodingDetector.find_declared_encoding(raw.encode('utf-8'), True) == 'utf-8'"))))))
-
-  (it "renders through the formatter stack: output_ready, decode and prettify"
-    (with-python-context
-      (expect (true? (ev python-context
-                         (str "from bs4 import BeautifulSoup, CData, Comment, Doctype\n"
-                              "from bs4.element import Script, Stylesheet\n"
-                              "s = BeautifulSoup('<p>a &amp; b</p>', 'html.parser')\n"
-                              "t = s.p.string\n"
-                              "h = BeautifulSoup('<script>a<1</script><style>b</style>', 'html.parser')\n"
-                              "t.output_ready() == 'a &amp; b' and t.output_ready(None) == 'a & b' "
-                              "and Comment('c').output_ready() == '<!--c-->' "
-                              "and CData('x').output_ready() == '<![CDATA[x]]>' "
-                              "and Doctype('html').output_ready() == '<!DOCTYPE html>' + chr(10) "
-                              "and s.p.decode(indent_level=1) == ' <p>' + chr(10) + '  a &amp; b' + chr(10) + ' </p>' + chr(10) "
-                              "and s.prettify(formatter=None) == '<p>' + chr(10) + ' a & b' + chr(10) + '</p>' + chr(10) "
-                              "and s.p.decode_contents() == 'a &amp; b' "
-                              "and s.p.renderContents() == b'a &amp; b' "
-                              "and type(h.script.string).__name__ == 'Script' "
-                              "and type(h.style.string).__name__ == 'Stylesheet' "
-                              "and issubclass(Script, str) and issubclass(Stylesheet, str)"))))))
-
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from bs4 import BeautifulSoup, CData, Comment, Doctype\n"
+              "from bs4.element import Script, Stylesheet\n"
+              "s = BeautifulSoup('<p>a &amp; b</p>', 'html.parser')\n" "t = s.p.string\n"
+              "h = BeautifulSoup('<script>a<1</script><style>b</style>', 'html.parser')\n"
+              "t.output_ready() == 'a &amp; b' and t.output_ready(None) == 'a & b' "
+              "and Comment('c').output_ready() == '<!--c-->' "
+              "and CData('x').output_ready() == '<![CDATA[x]]>' "
+              "and Doctype('html').output_ready() == '<!DOCTYPE html>' + chr(10) "
+              "and s.p.decode(indent_level=1) == ' <p>' + chr(10) + '  a &amp; b' + chr(10) + ' </p>' + chr(10) "
+              "and s.prettify(formatter=None) == '<p>' + chr(10) + ' a & b' + chr(10) + '</p>' + chr(10) "
+              "and s.p.decode_contents() == 'a &amp; b' "
+              "and s.p.renderContents() == b'a &amp; b' "
+              "and type(h.script.string).__name__ == 'Script' "
+              "and type(h.style.string).__name__ == 'Stylesheet' "
+              "and issubclass(Script, str) and issubclass(Stylesheet, str)"))))))
   (it "keeps the legacy generator aliases and the bs4 submodules importable"
-    (with-python-context
-      (expect (true? (ev python-context
-                         (str "import bs4, bs4.builder, bs4.dammit, bs4.diagnose, bs4.element, bs4.formatter\n"
-                              "from bs4 import BeautifulSoup\n"
-                              "from bs4.formatter import Formatter, HTMLFormatter\n"
-                              "s = BeautifulSoup('<div><p>a</p><b>c</b></div>', 'html.parser')\n"
-                              "len(list(s.div.childGenerator())) == 2 "
-                              "and len(list(s.div.recursiveChildGenerator())) == 4 "
-                              "and len(list(s.b.parentGenerator())) == 2 "
-                              "and isinstance(HTMLFormatter(), Formatter) "
-                              "and callable(bs4.diagnose.diagnose) "
-                              "and bs4.__all__ == ['BeautifulSoup'] "
-                              "and hasattr(bs4.element, 'PageElement') "
-                              "and hasattr(bs4.dammit, 'EncodingDetector')")))))))
+      (with-python-context
+        (expect
+          (true?
+            (ev python-context
+                (str
+                  "import bs4, bs4.builder, bs4.dammit, bs4.diagnose, bs4.element, bs4.formatter\n"
+                  "from bs4 import BeautifulSoup\n"
+                  "from bs4.formatter import Formatter, HTMLFormatter\n"
+                  "s = BeautifulSoup('<div><p>a</p><b>c</b></div>', 'html.parser')\n"
+                  "len(list(s.div.childGenerator())) == 2 "
+                  "and len(list(s.div.recursiveChildGenerator())) == 4 "
+                  "and len(list(s.b.parentGenerator())) == 2 "
+                  "and isinstance(HTMLFormatter(), Formatter) "
+                  "and callable(bs4.diagnose.diagnose) " "and bs4.__all__ == ['BeautifulSoup'] "
+                  "and hasattr(bs4.element, 'PageElement') "
+                  "and hasattr(bs4.dammit, 'EncodingDetector')")))))))
 
 (defdescribe
   bs4-soupsieve-and-builder-parity-test
@@ -638,140 +653,142 @@
   ;; + soupsieve 2.5 on CPython; each assertion below matched upstream exactly.
   (it "exposes the soupsieve module facade and bs4.css API"
       (with-python-context
-        (expect (true? (ev python-context
-                           (str
-                                "import soupsieve as sv\n"
-                                "from bs4 import BeautifulSoup as B\n"
-                                "s = B('<div><p class=\"a\">x</p><p>y</p></div>', 'html.parser')\n"
-                                "out = (sv.__version__ == '2.5'\n"
-                                "       and [t.name for t in sv.select('p.a', s)] == ['p']\n"
-                                "       and sv.match('p.a', s.p)\n"
-                                "       and [t.name for t in s.css.select('div:has(> p.a)')] == ['div']\n"
-                                "       and s.css.select_one('p:nth-of-type(2)').get_text() == 'y'\n"
-                                "       and list(sv.filter('p.a', s.div.contents))[0] is s.p\n"
-                                "       and sv.closest('div', s.p) is s.div)\n"
-                                "out"))))))
-  (it "matches upstream for namespace selectors under html.parser"
-      (with-python-context
-        (expect (true? (ev python-context
-                           (str
-                                "from bs4 import BeautifulSoup as B\n"
-                                "s = B('<svg xmlns:xlink=\"http://x\"><a xlink:href=\"u\">t</a></svg>', 'html.parser')\n"
-                                "ns = {'xlink': 'http://x'}\n"
-                                "# html.parser records no namespaces, so these match nothing upstream too.\n"
-                                "out = [len(s.css.select('[xlink|href]', namespaces=ns)), len(s.css.select('[*|href]')), len(s.css.select('a[href]'))] == [0, 0, 0]\n"
-                                "out"))))))
-  (it "compiles soupsieve custom selectors and rejects undefined ones"
-      (with-python-context
-        (expect (true? (ev python-context
-                           (str
-                                "import soupsieve as sv\n"
-                                "from bs4 import BeautifulSoup as B\n"
-                                "s = B('<div><p class=\"a\">x</p></div>', 'html.parser')\n"
-                                "got = [t.name for t in sv.compile(':--mine', custom={':--mine': 'p.a'}).select(s)]\n"
-                                "try:\n"
-                                "    sv.select(':--nope', s)\n"
-                                "    err = 'no error'\n"
-                                "except Exception as e:\n"
-                                "    err = type(e).__name__ + '|' + str(e).splitlines()[0]\n"
-                                "out = (got == ['p'] and err == \"SelectorSyntaxError|Undefined custom selector ':--nope' found at position 7\")\n"
-                                "out"))))))
+        (expect
+          (true? (ev python-context
+                     (str "import soupsieve as sv\n"
+                          "from bs4 import BeautifulSoup as B\n"
+                          "s = B('<div><p class=\"a\">x</p><p>y</p></div>', 'html.parser')\n"
+                          "out = (sv.__version__ == '2.5'\n"
+                          "       and [t.name for t in sv.select('p.a', s)] == ['p']\n"
+                          "       and sv.match('p.a', s.p)\n"
+                          "       and [t.name for t in s.css.select('div:has(> p.a)')] == ['div']\n"
+                          "       and s.css.select_one('p:nth-of-type(2)').get_text() == 'y'\n"
+                          "       and list(sv.filter('p.a', s.div.contents))[0] is s.p\n"
+                          "       and sv.closest('div', s.p) is s.div)\n" "out"))))))
+  (it
+    "matches upstream for namespace selectors under html.parser"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from bs4 import BeautifulSoup as B\n"
+              "s = B('<svg xmlns:xlink=\"http://x\"><a xlink:href=\"u\">t</a></svg>', 'html.parser')\n"
+              "ns = {'xlink': 'http://x'}\n"
+              "# html.parser records no namespaces, so these match nothing upstream too.\n"
+              "out = [len(s.css.select('[xlink|href]', namespaces=ns)), len(s.css.select('[*|href]')), len(s.css.select('a[href]'))] == [0, 0, 0]\n"
+              "out"))))))
+  (it
+    "compiles soupsieve custom selectors and rejects undefined ones"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "import soupsieve as sv\n"
+              "from bs4 import BeautifulSoup as B\n"
+              "s = B('<div><p class=\"a\">x</p></div>', 'html.parser')\n"
+              "got = [t.name for t in sv.compile(':--mine', custom={':--mine': 'p.a'}).select(s)]\n"
+              "try:\n"
+              "    sv.select(':--nope', s)\n" "    err = 'no error'\n"
+              "except Exception as e:\n"
+              "    err = type(e).__name__ + '|' + str(e).splitlines()[0]\n"
+              "out = (got == ['p'] and err == \"SelectorSyntaxError|Undefined custom selector ':--nope' found at position 7\")\n"
+              "out"))))))
   (it "rejects non-Tag input to soupsieve with bs4's TypeError"
       (with-python-context
         (expect (true? (ev python-context
-                           (str
-                                "import soupsieve as sv\n"
+                           (str "import soupsieve as sv\n"
                                 "from bs4 import BeautifulSoup as B\n"
                                 "s = B('<p>x</p>', 'html.parser')\n"
-                                "try:\n"
-                                "    sv.select('p', s.p.string)\n"
-                                "    out = 'no error'\n"
-                                "except TypeError as e:\n"
+                                "try:\n" "    sv.select('p', s.p.string)\n"
+                                "    out = 'no error'\n" "except TypeError as e:\n"
                                 "    out = str(e).startswith(\"Expected a BeautifulSoup 'Tag'\")\n"
                                 "out"))))))
   (it "raises NotImplementedError for CSS pseudo-elements"
       (with-python-context
         (expect (true? (ev python-context
-                           (str
-                                "import soupsieve as sv\n"
+                           (str "import soupsieve as sv\n"
                                 "from bs4 import BeautifulSoup as B\n"
                                 "s = B('<p>x</p>', 'html.parser')\n"
-                                "try:\n"
-                                "    sv.select('p::before', s)\n"
-                                "    out = 'no error'\n"
-                                "except NotImplementedError as e:\n"
+                                "try:\n" "    sv.select('p::before', s)\n"
+                                "    out = 'no error'\n" "except NotImplementedError as e:\n"
                                 "    out = str(e).startswith('Pseudo-element found at position')\n"
                                 "out"))))))
   (it "returns a real generator from SoupSieve.iselect"
       (with-python-context
-        (expect (true? (ev python-context
-                           (str
-                                "import soupsieve as sv, inspect\n"
-                                "from bs4 import BeautifulSoup as B\n"
-                                "s = B('<p>a</p><p>b</p>', 'html.parser')\n"
-                                "g = sv.compile('p').iselect(s)\n"
-                                "out = inspect.isgenerator(g) and [t.get_text() for t in g] == ['a', 'b']\n"
-                                "out"))))))
-  (it "honors the on_duplicate_attribute builder option"
-      (with-python-context
-        (expect (true? (ev python-context
-                           (str
-                                "from bs4 import BeautifulSoup as B\n"
-                                "m = '<p id=\"one\" id=\"two\">x</p>'\n"
-                                "out = (B(m, 'html.parser').p['id'] == 'two'\n"
-                                "       and B(m, 'html.parser', on_duplicate_attribute='ignore').p['id'] == 'one'\n"
-                                "       and B(m, 'html.parser', on_duplicate_attribute=lambda t, k, v: t.__setitem__(k, t[k] + ',' + v)).p['id'] == 'one,two')\n"
-                                "out"))))))
+        (expect
+          (true?
+            (ev python-context
+                (str "import soupsieve as sv, inspect\n" "from bs4 import BeautifulSoup as B\n"
+                     "s = B('<p>a</p><p>b</p>', 'html.parser')\n" "g = sv.compile('p').iselect(s)\n"
+                     "out = inspect.isgenerator(g) and [t.get_text() for t in g] == ['a', 'b']\n"
+                     "out"))))))
+  (it
+    "honors the on_duplicate_attribute builder option"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from bs4 import BeautifulSoup as B\n" "m = '<p id=\"one\" id=\"two\">x</p>'\n"
+              "out = (B(m, 'html.parser').p['id'] == 'two'\n"
+              "       and B(m, 'html.parser', on_duplicate_attribute='ignore').p['id'] == 'one'\n"
+              "       and B(m, 'html.parser', on_duplicate_attribute=lambda t, k, v: t.__setitem__(k, t[k] + ',' + v)).p['id'] == 'one,two')\n"
+              "out"))))))
   (it "honors element_classes while parsing"
       (with-python-context
         (expect (true? (ev python-context
-                           (str
-                                "from bs4 import BeautifulSoup as B\n"
-                                "from bs4.element import Tag\n"
-                                "class MyTag(Tag):\n"
+                           (str "from bs4 import BeautifulSoup as B\n"
+                                "from bs4.element import Tag\n" "class MyTag(Tag):\n"
                                 "    pass\n"
                                 "s = B('<p>x</p>', 'html.parser', element_classes={Tag: MyTag})\n"
-                                "out = type(s.p) is MyTag\n"
-                                "out"))))))
-  (it "substitutes meta charset declarations for the eventual encoding"
-      (with-python-context
-        (expect (true? (ev python-context
-                           (str
-                                "from bs4 import BeautifulSoup as B\n"
-                                "s = B('<meta charset=\"utf-8\"><meta http-equiv=\"Content-type\" content=\"text/html; charset=utf-8\">', 'html.parser')\n"
-                                "d = s.decode(eventual_encoding='iso-8859-1')\n"
-                                "out = ('charset=\"iso-8859-1\"' in d and 'charset=iso-8859-1' in d)\n"
-                                "out"))))))
+                                "out = type(s.p) is MyTag\n" "out"))))))
+  (it
+    "substitutes meta charset declarations for the eventual encoding"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from bs4 import BeautifulSoup as B\n"
+              "s = B('<meta charset=\"utf-8\"><meta http-equiv=\"Content-type\" content=\"text/html; charset=utf-8\">', 'html.parser')\n"
+              "d = s.decode(eventual_encoding='iso-8859-1')\n"
+              "out = ('charset=\"iso-8859-1\"' in d and 'charset=iso-8859-1' in d)\n" "out"))))))
   (it "raises bs4's exact mutation error messages"
       (with-python-context
         (expect (true? (ev python-context
-                           (str
-                                "from bs4 import BeautifulSoup as B\n"
-                                "s = B('<div><p>x</p></div>', 'html.parser')\n"
-                                "msgs = []\n"
+                           (str "from bs4 import BeautifulSoup as B\n"
+                                "s = B('<div><p>x</p></div>', 'html.parser')\n" "msgs = []\n"
                                 "for fn in (lambda: s.div.append(s.div),\n"
                                 "           lambda: s.div.insert(0, None),\n"
                                 "           lambda: s.p.insert_before(s.p),\n"
                                 "           lambda: s.p.replace_with(s.div)):\n"
-                                "    try:\n"
-                                "        fn()\n"
-                                "        msgs.append('no error')\n"
-                                "    except Exception as e:\n"
+                                "    try:\n" "        fn()\n"
+                                "        msgs.append('no error')\n" "    except Exception as e:\n"
                                 "        msgs.append(str(e))\n"
                                 "out = msgs == ['Cannot insert a tag into itself.',\n"
                                 "               'Cannot insert None into a tag.',\n"
                                 "               \"Can't insert an element before itself.\",\n"
                                 "               'Cannot replace a Tag with its parent.']\n"
                                 "out"))))))
-  (it "warns with MarkupResemblesLocatorWarning for URLs and filenames"
-      (with-python-context
-        (expect (true? (ev python-context
-                           (str
-                                "import warnings\n"
-                                "from bs4 import BeautifulSoup as B, MarkupResemblesLocatorWarning\n"
-                                "with warnings.catch_warnings(record=True) as w:\n"
-                                "    warnings.simplefilter('always')\n"
-                                "    B('http://example.com/x', 'html.parser')\n"
-                                "    B('index.html', 'html.parser')\n"
-                                "out = [issubclass(x.category, MarkupResemblesLocatorWarning) for x in w] == [True, True]\n"
-                                "out")))))))
+  (it
+    "warns with MarkupResemblesLocatorWarning for URLs and filenames"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "import warnings\n"
+              "from bs4 import BeautifulSoup as B, MarkupResemblesLocatorWarning\n"
+              "with warnings.catch_warnings(record=True) as w:\n"
+              "    warnings.simplefilter('always')\n"
+              "    B('http://example.com/x', 'html.parser')\n"
+              "    B('index.html', 'html.parser')\n"
+              "out = [issubclass(x.category, MarkupResemblesLocatorWarning) for x in w] == [True, True]\n"
+              "out")))))))

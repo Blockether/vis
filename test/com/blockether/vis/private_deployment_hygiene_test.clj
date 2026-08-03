@@ -38,8 +38,7 @@
     :fix "use a neutral placeholder (10.0.0.5) in examples"}
    {:what "a path into the private operations repository"
     :re (re-pattern (str "(?i)" "infra" "structure[/\\\\]" "playbook"))
-    :fix
-    "describe the knob here on its own terms; cross-reference nothing outside this repo"}])
+    :fix "describe the knob here on its own terms; cross-reference nothing outside this repo"}])
 
 (defn- scannable?
   [^java.io.File file]

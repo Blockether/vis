@@ -52,7 +52,7 @@ def gh_issue(number):
         "number": d["number"],
         "title": d["title"],
         "state": d["state"],
-        "labels": [l["name"] for l in d.get("labels", [])],
+        "labels": [lbl["name"] for lbl in d.get("labels", [])],
         "author": d.get("user", {}).get("login"),
         "body": (d.get("body") or "")[:4000],
         "comments": d.get("comments", 0),
@@ -69,7 +69,7 @@ def gh_issues(state="open"):
             {
                 "number": d["number"],
                 "title": d["title"],
-                "labels": [l["name"] for l in d.get("labels", [])],
+                "labels": [lbl["name"] for lbl in d.get("labels", [])],
             }
             for d in ds
             if "pull_request" not in d  # issues only, not PRs

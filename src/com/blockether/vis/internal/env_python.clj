@@ -2473,8 +2473,7 @@
                       "Original error: ")
        sandbox-denial-operation
        (str
-         "Sandbox policy denied "
-         sandbox-denial-operation
+         "Sandbox policy denied " sandbox-denial-operation
          ": the resource is outside approved filesystem roots. "
          "Use cat(path) to read, patch([{\"path\": p, \"from_anchor\": a, \"replace\": s}]) to edit, "
          "repl_eval(language, code) for project code, "

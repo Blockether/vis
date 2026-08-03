@@ -134,10 +134,9 @@
       ;; a shape complaint. Quoting still decides the tokens.
       (let [seen (atom [])]
         (with-redefs
-          [shell/run-argv
-           (fn [_ argv _]
-             (swap! seen conj (vec (rest argv)))
-             {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
+          [shell/run-argv (fn [_ argv _]
+                            (swap! seen conj (vec (rest argv)))
+                            {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
           (git-impl {} {"commands" "status --short"})
           (git-impl {} {"commands" ["commit -m 'wip: with spaces'"]})
           (expect (= [["status" "--short"] ["commit" "-m" "wip: with spaces"]] @seen)))))
@@ -147,10 +146,9 @@
       ;; argv rather than two commands. Flagless strings stay one command each.
       (let [seen (atom [])]
         (with-redefs
-          [shell/run-argv
-           (fn [_ argv _]
-             (swap! seen conj (vec (rest argv)))
-             {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
+          [shell/run-argv (fn [_ argv _]
+                            (swap! seen conj (vec (rest argv)))
+                            {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
           (git-impl {} {"commands" ["commit" "-m" "wip"]})
           (expect (= [["commit" "-m" "wip"]] @seen))
           (reset! seen [])

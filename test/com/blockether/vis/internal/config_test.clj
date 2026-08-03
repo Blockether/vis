@@ -116,9 +116,10 @@
         (doseq [id [:openAI :zAI-coding :OpenRouter :lmStudio :ACME :x]]
           (expect (= (name id) (config/display-label id))))))
   (it "a registered provider extension still owns its own branding"
-      (with-redefs [registry/provider-by-id (fn [pid]
-                                              (when (= pid :openai)
-                                                {:provider/id pid :provider/label "OpenAI"}))]
+      (with-redefs
+        [registry/provider-by-id (fn [pid]
+                                   (when (= pid :openai)
+                                     {:provider/id pid :provider/label "OpenAI"}))]
         (expect (= "OpenAI" (config/display-label :openai)))))
   (it "falls back to `Provider` only when there is no id at all"
       (with-redefs [registry/provider-by-id (constantly nil)]
