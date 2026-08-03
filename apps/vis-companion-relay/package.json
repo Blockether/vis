@@ -9,8 +9,6 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "wrangler dev --remote",
-    "db:local": "wrangler d1 execute vis-companion-relay --local --file schema.sql",
-    "db:apply": "wrangler d1 execute vis-companion-relay --remote --file schema.sql",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {

@@ -20,6 +20,12 @@ export const APNS_SANDBOX_HOST = "https://api.sandbox.push.apple.com";
  */
 export const JWT_TTL_MS = 45 * 60 * 1000;
 
+/**
+ * A provider that stops answering must not hold this request open: the Worker's
+ * CPU and wall time is exactly what an attacker would otherwise be spending.
+ */
+export const PROVIDER_TIMEOUT_MS = 10_000;
+
 export interface ApnsConfig {
   keyP8: string;
   keyId: string;
@@ -101,11 +107,15 @@ async function post(
   if (notification.collapseId) headers["apns-collapse-id"] = notification.collapseId.slice(0, 64);
 
   try {
-    const response = await deps.fetch(`${apnsHost(environment)}/3/device/${deviceToken}`, {
-      method: "POST",
-      headers,
-      body: apnsPayload(notification),
-    });
+    const response = await deps.fetch(
+      `${apnsHost(environment)}/3/device/${encodeURIComponent(deviceToken)}`,
+      {
+        method: "POST",
+        headers,
+        body: apnsPayload(notification),
+        signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+      },
+    );
     const text = await response.text();
     let reason = "";
     try {

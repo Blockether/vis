@@ -1,7 +1,17 @@
 /** Shared shapes. Nothing here ever carries key material to a caller. */
 
 export interface Env {
-  DB: D1Database;
+  /**
+   * The seal. 32+ random bytes, `wrangler secret put RELAY_SEAL_KEY` — the one
+   * piece of state this relay has, and it lives in Cloudflare's secret store
+   * rather than in any database. Rotating it invalidates every grant at once.
+   */
+  RELAY_SEAL_KEY?: string;
+  /** The outgoing key during a rotation: opened, never issued. */
+  RELAY_SEAL_KEY_PREVIOUS?: string;
+  /** How long a freshly minted grant stays valid. Default 90 days. */
+  GRANT_TTL_DAYS?: string;
+
   /** The whole `AuthKey_<kid>.p8` PEM. A SECRET — `wrangler secret put`. */
   APNS_KEY_P8?: string;
   APNS_KEY_ID?: string;
@@ -10,21 +20,21 @@ export interface Env {
   APNS_DEFAULT_ENV?: string;
   /** The whole Firebase service-account JSON. A SECRET. */
   FCM_SERVICE_ACCOUNT?: string;
-  PUSH_RATE_LIMIT?: string;
-  PUSH_RATE_WINDOW_MS?: string;
-  GRANT_RATE_LIMIT?: string;
-  /** Push attempts per client address per window — the cap on made-up grants. */
-  IP_PUSH_RATE_LIMIT?: string;
-  /** How long a grant that was never pushed to survives the cron sweep. */
-  UNUSED_GRANT_TTL_MS?: string;
-  MAX_GRANTS_PER_DEVICE?: string;
+
+  /**
+   * Metering, from the platform rather than from a table: Cloudflare's rate
+   * limiting bindings keep their counters at the edge, so refusing a flood
+   * costs no storage operation at all. Declared in `wrangler.jsonc`.
+   */
+  MINT_LIMIT: RateLimit;
+  PUSH_ADDRESS_LIMIT: RateLimit;
+  PUSH_DEVICE_LIMIT: RateLimit;
 }
 
 /** Everything non-deterministic, injected so a test can pin it. */
 export interface Deps {
   fetch: typeof fetch;
   now: () => number;
-  randomGrant: () => string;
 }
 
 export interface Notification {
@@ -41,7 +51,7 @@ export interface Notification {
 export interface PushResult {
   status: number;
   reason: string;
-  /** The environment that actually worked, when it is not the stored one. */
+  /** The environment that actually worked, when it is not the sealed one. */
   environment?: string;
 }
 

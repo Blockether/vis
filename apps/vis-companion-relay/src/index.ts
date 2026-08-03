@@ -9,55 +9,69 @@
  *   app     -> POST /v1/grants   {device_token}      => an opaque grant
  *   app     -> hands the grant to a gateway when the user says "notify me"
  *   gateway -> POST /v1/push     Bearer <grant>      => the relay signs + sends
- *   app     -> DELETE /v1/grants/<grant>             => revoked, alone
  *
  * What the relay therefore is NOT: it holds no user account, no session, no
- * transcript, and no gateway credential. The gateway never learns the device
- * token; the relay never learns which gateway pushed, only that a grant did.
- * Encrypt the alert body app-side and the relay cannot read it either.
+ * transcript, no gateway credential — and, since the grant carries its own
+ * sealed contents (`seal.ts`), no database either. The gateway never learns the
+ * device token; the relay never learns which gateway pushed, only that a grant
+ * did. Encrypt the alert body app-side and the relay cannot read it either.
  *
- * Abuse budget. Every route is public, so each one is metered before it can
- * cost anything: a request body is refused by Content-Length before it is
- * parsed, grant creation and push are both capped per client address, push is
- * capped per grant, and an over-limit subject is answered from a single
- * indexed read with no write at all (`consumeQuota` returns before the
- * INSERT). Nothing here accumulates for free either — `scheduled` sweeps
- * expired quota windows and grants that were minted and never used.
+ * Abuse budget. Every route is public — nobody authenticates to ASK for a
+ * grant, and a gateway only ever proves it holds one — so the question is never
+ * "is this caller allowed" but "what does an unwelcome caller cost". A body too
+ * big is refused by Content-Length before it is parsed; minting and pushing are
+ * both metered per client address by a Cloudflare rate limiting binding, whose
+ * counters live at the edge, so a flood is refused without a single storage
+ * operation; and pushes are metered per DEVICE, not per grant, so minting a
+ * thousand grants for one phone still buys the same one phone's worth of noise.
+ * Nothing accumulates anywhere, so nothing has to be swept.
  */
 
 import { apnsConfig, APNS_DEAD_REASONS, sendApns } from "./apns";
 import { fcmConfig, FCM_DEAD_REASONS, sendFcm } from "./fcm";
-import {
-  consumeQuota,
-  createGrant,
-  deleteGrantById,
-  findGrant,
-  notePush,
-  purgeExpired,
-  randomGrant,
-  revokeGrant,
-  setEnvironment,
-} from "./store";
+import { sha256Hex } from "./jwt";
+import { seal, unseal } from "./seal";
 import type { Deps, Env, Notification, Platform } from "./types";
 import { PLATFORMS } from "./types";
 
 export const defaultDeps: Deps = {
   fetch: (...args: Parameters<typeof fetch>) => fetch(...args),
   now: () => Date.now(),
-  randomGrant,
 };
 
-const MAX_DEVICE_TOKEN_CHARS = 4096;
 const MAX_BODY_CHARS = 4096;
 /** An alert is a few hundred bytes; APNs itself refuses more than 4 KiB. */
 const MAX_REQUEST_BYTES = 16384;
 const MAX_DATA_KEYS = 32;
+const DEFAULT_GRANT_TTL_DAYS = 90;
+
+/**
+ * A device token is interpolated into the APNs request path, so its shape is a
+ * security boundary and not a nicety: anything outside these alphabets could
+ * steer the relay's authenticated request at another APNs path. Apple's token
+ * is hex; Google's is url-safe base64 with a colon.
+ */
+const TOKEN_SHAPES: Record<Platform, RegExp> = {
+  ios: /^[0-9a-fA-F]{32,200}$/,
+  ipados: /^[0-9a-fA-F]{32,200}$/,
+  android: /^[A-Za-z0-9_:.-]{32,4096}$/,
+};
+
+const SAFE_HEADERS: Record<string, string> = {
+  "content-type": "application/json; charset=utf-8",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "no-referrer",
+  /**
+   * Wildcard is safe here precisely because nothing is ambient: there is no
+   * cookie and no session, a caller must already hold the grant it presents,
+   * and the companion is a WebView that would otherwise be refused by CORS.
+   */
+  "access-control-allow-origin": "*",
+};
 
 function json(status: number, payload: unknown): Response {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
+  return new Response(JSON.stringify(payload), { status, headers: SAFE_HEADERS });
 }
 
 function fail(status: number, code: string, message: string): Response {
@@ -80,6 +94,21 @@ function bearer(request: Request): string {
  */
 function clientKey(request: Request): string {
   return request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for") ?? "anon";
+}
+
+/**
+ * The keys that can open a grant. The first one also seals new grants, so a
+ * rotation is: move the old value to `RELAY_SEAL_KEY_PREVIOUS`, put a new one
+ * in `RELAY_SEAL_KEY`, and drop the previous once every app has re-registered.
+ */
+function sealKeys(env: Env): string[] {
+  return [env.RELAY_SEAL_KEY, env.RELAY_SEAL_KEY_PREVIOUS]
+    .map((value) => (value ?? "").trim())
+    .filter((value) => value.length > 0);
+}
+
+function unsealed(): Response {
+  return fail(503, "relay_unconfigured", "this relay has no RELAY_SEAL_KEY and cannot issue or open grants");
 }
 
 /** A body big enough to cost CPU is refused before a single byte is parsed. */
@@ -144,6 +173,7 @@ async function health(env: Env): Promise<Response> {
   return json(200, {
     is_ok: true,
     service: "vis-companion-relay",
+    is_accepting_grants: sealKeys(env).length > 0,
     apns: {
       is_available: apns !== null,
       topic: apns?.topic ?? null,
@@ -154,14 +184,11 @@ async function health(env: Env): Promise<Response> {
 }
 
 async function createGrantHandler(request: Request, env: Env, deps: Deps): Promise<Response> {
-  const quota = await consumeQuota(
-    env.DB,
-    `grant-ip:${clientKey(request)}`,
-    intVar(env.GRANT_RATE_LIMIT, 30),
-    intVar(env.PUSH_RATE_WINDOW_MS, 3600000),
-    deps.now(),
-  );
-  if (!quota.isAllowed) return fail(429, "rate_limited", "too many grants from this address");
+  const { success } = await env.MINT_LIMIT.limit({ key: `mint:${clientKey(request)}` });
+  if (!success) return fail(429, "rate_limited", "too many grants from this address");
+
+  const keys = sealKeys(env);
+  if (keys.length === 0) return unsealed();
 
   const body = await readJson(request);
   if (body === TOO_LARGE) return oversized();
@@ -169,94 +196,83 @@ async function createGrantHandler(request: Request, env: Env, deps: Deps): Promi
 
   const deviceToken = str(body.device_token);
   const platform = str(body.platform || "ios") as Platform;
-  if (!deviceToken || deviceToken.length > MAX_DEVICE_TOKEN_CHARS) {
-    return fail(400, "bad_request", "device_token is required");
-  }
   if (!PLATFORMS.includes(platform)) {
     return fail(400, "bad_request", `platform must be one of ${PLATFORMS.join(", ")}`);
   }
+  if (!TOKEN_SHAPES[platform].test(deviceToken)) {
+    return fail(400, "bad_request", `device_token is not a valid ${platform} registration token`);
+  }
 
-  const { grant, row } = await createGrant(
-    env.DB,
-    {
-      deviceToken,
-      platform,
-      environment: str(body.environment) || "production",
-      label: str(body.label) || null,
-    },
-    deps,
-    intVar(env.MAX_GRANTS_PER_DEVICE, 10),
-  );
+  const expiresAt = deps.now() + intVar(env.GRANT_TTL_DAYS, DEFAULT_GRANT_TTL_DAYS) * 86_400_000;
+  const environment = str(body.environment) === "sandbox" ? "sandbox" : "production";
+  const grant = await seal(keys[0], { deviceToken, platform, environment, expiresAt });
 
   return json(201, {
     grant,
     relay_url: new URL(request.url).origin,
-    platform: row.platform,
-    environment: row.environment,
-    created_at: row.created_at,
+    platform,
+    environment,
+    expires_at: expiresAt,
   });
 }
 
 async function pushHandler(request: Request, env: Env, deps: Deps): Promise<Response> {
   /**
-   * Before the grant lookup, not after: a flood of made-up grants must not buy
-   * one database read each. Over the limit this answers from a single indexed
-   * read and writes nothing.
+   * Before the body is read and before a byte is decrypted: a flood of made-up
+   * grants must buy nothing but this one edge-local counter increment.
    */
-  const address = await consumeQuota(
-    env.DB,
-    `push-ip:${clientKey(request)}`,
-    intVar(env.IP_PUSH_RATE_LIMIT, 600),
-    intVar(env.PUSH_RATE_WINDOW_MS, 3600000),
-    deps.now(),
-  );
-  if (!address.isAllowed) {
-    return json(429, {
-      error: { code: "rate_limited", message: "too many push attempts from this address" },
-      reset_at: address.resetAt,
-    });
+  const address = await env.PUSH_ADDRESS_LIMIT.limit({ key: `push:${clientKey(request)}` });
+  if (!address.success) {
+    return fail(429, "rate_limited", "too many push attempts from this address");
   }
+
+  const keys = sealKeys(env);
+  if (keys.length === 0) return unsealed();
 
   const parsed = await readJson(request);
   if (parsed === TOO_LARGE) return oversized();
   const body = parsed ?? {};
-  const grant = bearer(request) || str(body.grant);
-  if (!grant) return fail(401, "no_grant", "an Authorization: Bearer <grant> header is required");
+  const presented = bearer(request) || str(body.grant);
+  if (!presented) {
+    return fail(401, "no_grant", "an Authorization: Bearer <grant> header is required");
+  }
 
-  const row = await findGrant(env.DB, grant);
-  if (!row) return fail(404, "unknown_grant", "this grant was revoked or never existed");
+  /**
+   * Forged, expired, or sealed under a key that has since been rotated away are
+   * one answer with one meaning for the gateway: this grant will never deliver
+   * again, forget the device and let the app hand you a new one.
+   */
+  const grant = await unseal(keys, presented, deps.now());
+  if (!grant) return fail(404, "unknown_grant", "this grant is not valid on this relay, or has expired");
 
   const notification = notificationFrom(body);
   if (!notification) return fail(400, "bad_request", "title or body is required");
 
-  const quota = await consumeQuota(
-    env.DB,
-    `grant:${row.id}`,
-    intVar(env.PUSH_RATE_LIMIT, 120),
-    intVar(env.PUSH_RATE_WINDOW_MS, 3600000),
-    deps.now(),
-  );
-  if (!quota.isAllowed) {
-    return json(429, {
-      error: { code: "rate_limited", message: "this grant is over its push quota" },
-      reset_at: quota.resetAt,
-    });
+  /**
+   * Per device, not per grant: grants are free to mint, so a cap on one grant
+   * would cap nothing. The fingerprint is a hash — the limiter never sees a
+   * device token either.
+   */
+  const fingerprint = (await sha256Hex(grant.deviceToken)).slice(0, 32);
+  const device = await env.PUSH_DEVICE_LIMIT.limit({ key: `device:${fingerprint}` });
+  if (!device.success) {
+    return fail(429, "rate_limited", "this device is over its push quota");
   }
 
-  const isApple = row.platform === "ios" || row.platform === "ipados";
+  const isApple = grant.platform === "ios" || grant.platform === "ipados";
   const apns = isApple ? apnsConfig(env) : null;
   const fcm = isApple ? null : fcmConfig(env);
   if (isApple ? !apns : !fcm) {
-    return fail(503, "provider_unconfigured", `this relay cannot push to ${row.platform}`);
+    return fail(503, "provider_unconfigured", `this relay cannot push to ${grant.platform}`);
   }
 
   const result = apns
     ? await sendApns(
         apns,
-        { deviceToken: row.device_token, environment: row.environment, notification },
+        { deviceToken: grant.deviceToken, environment: grant.environment, notification },
         deps,
       )
-    : await sendFcm(fcm!, { deviceToken: row.device_token, notification }, deps);
+    : await sendFcm(fcm!, { deviceToken: grant.deviceToken, notification }, deps);
 
   const isDead =
     result.status === 410 ||
@@ -264,12 +280,11 @@ async function pushHandler(request: Request, env: Env, deps: Deps): Promise<Resp
     (isApple ? APNS_DEAD_REASONS.has(result.reason) : FCM_DEAD_REASONS.has(result.reason));
 
   if (isDead) {
-    await deleteGrantById(env.DB, row.id);
     return json(410, {
       is_delivered: false,
       status: result.status,
       reason: result.reason,
-      is_revoked: true,
+      is_dead: true,
     });
   }
 
@@ -277,20 +292,25 @@ async function pushHandler(request: Request, env: Env, deps: Deps): Promise<Resp
     return json(502, { is_delivered: false, status: result.status, reason: result.reason });
   }
 
-  await notePush(env.DB, row.id, deps.now());
-  if (result.environment && result.environment !== row.environment) {
-    await setEnvironment(env.DB, row.id, result.environment);
-  }
   return json(200, {
     is_delivered: true,
     status: 200,
     reason: "",
-    environment: result.environment ?? row.environment,
+    environment: result.environment ?? grant.environment,
   });
 }
 
-async function revokeHandler(grant: string, env: Env): Promise<Response> {
-  return json(200, { is_revoked: await revokeGrant(env.DB, grant) });
+/** The companion is a WebView; a preflight it cannot pass is a broken app. */
+function preflight(): Response {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      ...SAFE_HEADERS,
+      "access-control-allow-methods": "GET, POST, OPTIONS",
+      "access-control-allow-headers": "authorization, content-type",
+      "access-control-max-age": "86400",
+    },
+  });
 }
 
 export async function handle(request: Request, env: Env, deps: Deps = defaultDeps): Promise<Response> {
@@ -300,35 +320,15 @@ export async function handle(request: Request, env: Env, deps: Deps = defaultDep
 
   if (isOversized(request)) return oversized();
 
+  if (method === "OPTIONS") return preflight();
   if (method === "GET" && (path === "/healthz" || path === "/")) return await health(env);
   if (method === "POST" && path === "/v1/grants") return await createGrantHandler(request, env, deps);
   if (method === "POST" && path === "/v1/push") return await pushHandler(request, env, deps);
-  if (method === "DELETE" && path.startsWith("/v1/grants/")) {
-    return await revokeHandler(decodeURIComponent(path.slice("/v1/grants/".length)), env);
-  }
   return fail(404, "not_found", `${method} ${path} is not a route of this relay`);
-}
-
-/**
- * The cron sweep. Public grant creation means anyone can leave rows behind, so
- * rows must expire on their own: quota windows long past, and grants nobody
- * ever pushed to. A grant in real use is never touched, whatever its age.
- */
-export async function sweep(env: Env, deps: Deps = defaultDeps): Promise<{
-  quota: number;
-  grants: number;
-}> {
-  return await purgeExpired(env.DB, deps.now(), {
-    quotaWindowMs: intVar(env.PUSH_RATE_WINDOW_MS, 3600000),
-    unusedGrantMs: intVar(env.UNUSED_GRANT_TTL_MS, 30 * 24 * 3600000),
-  });
 }
 
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
     return handle(request, env, defaultDeps);
-  },
-  async scheduled(_controller: unknown, env: Env): Promise<void> {
-    await sweep(env, defaultDeps);
   },
 };

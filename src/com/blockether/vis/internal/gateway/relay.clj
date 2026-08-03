@@ -18,8 +18,8 @@
      only by breaking push for everyone else;
    * this gateway never learns the raw APNs/FCM device token, so a gateway you
      do not trust cannot fingerprint the device it notifies;
-   * revocation is per grant — the device deletes one row and this gateway is
-     mute, alone.
+   * a grant expires by itself. Its expiry travels inside it, sealed, so the
+     relay keeps no list of anybody and an abandoned gateway simply goes mute.
 
    The relay itself lives in `apps/vis-companion-relay` (a Cloudflare Worker).
    Configure a gateway with `VIS_PUSH_RELAY_URL`, or `~/.vis/relay.edn`

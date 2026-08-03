@@ -278,7 +278,7 @@ asks that relay for an opaque **grant** and gives the grant to the gateway.
 app     -> POST   /v1/grants        {device_token}   => a grant
 app     -> hands the grant to this gateway on "notify this device"
 gateway -> POST   /v1/push          Bearer <grant>   => the relay signs and sends
-app     -> DELETE /v1/grants/<grant>                 => revoked, alone
+(nothing is stored: the grant carries its own sealed expiry)
 ```
 
 Point a gateway at a relay with either of:
@@ -303,19 +303,23 @@ What that changes, and why it is worth an extra hop:
   can only be repaired by breaking push for every other gateway;
 - this gateway **never learns the raw device token**, so a gateway you do not trust
   cannot fingerprint the device it notifies;
-- **revocation is per grant**: deleting one row mutes one gateway, alone;
+- **a grant expires by itself** — its expiry is sealed inside it, so an abandoned
+  gateway goes mute on its own and the relay never keeps a list of anybody;
 - the relay learns *when* a push happened, never *what* — the alert body can be
   encrypted app-side, so the promise above still holds.
 
-A relay answering `404` (unknown grant) or `410` (the provider says the device is
-gone) makes the gateway forget the device on the spot. Direct credentials and a
+A relay answering `404` (the grant is forged, expired, or was sealed under a key the
+relay has since rotated away) or `410` (the provider says the device is gone) makes
+the gateway forget the device on the spot. Direct credentials and a
 relay can coexist: a device registered with a `token` uses the credentials below,
 a device registered with a `grant` uses the relay. `GET /v1/devices` reports which
 under `push.relay`.
 
 The relay itself is in this repo — `apps/vis-companion-relay`, a Cloudflare Worker
-plus D1 that runs on the free plan. Its README covers deploying, quotas and the
-failure verdicts.
+that stores **nothing**: no database, no queue, no cron. A grant is an AES-256-GCM
+sealed capability carrying its own device token and expiry, and the abuse counters
+live in Cloudflare's rate limiting bindings, so there is no table to dump, exhaust,
+or migrate. Its README covers deploying, the limits and the failure verdicts.
 
 ### Gateway side, iOS (APNs credentials)
 

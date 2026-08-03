@@ -1,5 +1,5 @@
 {
-  // The tests additionally drive node:sqlite as a stand-in D1 binding.
+  // The tests additionally use node globals (Buffer) to verify real signatures.
   "extends": "./tsconfig.base.json",
   "compilerOptions": { "types": ["@cloudflare/workers-types", "node"] },
   "include": ["src", "test", "vitest.config.ts"]

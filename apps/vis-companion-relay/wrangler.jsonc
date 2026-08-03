@@ -1,40 +1,42 @@
 {
-  // Push relay for the vis companion. `wrangler deploy` needs exactly one D1
-  // database and the provider secrets below; nothing else.
+  // Push relay for the vis companion. It stores NOTHING: no D1, no KV, no
+  // Durable Object, no cron, no table to dump. A grant carries its own
+  // contents sealed under RELAY_SEAL_KEY (see src/seal.ts), and the abuse
+  // counters live in Cloudflare's own rate limiting bindings, at the edge.
   //
-  //   wrangler d1 create vis-companion-relay      # paste the id into database_id
-  //   npm run db:apply                            # create the tables
-  //   wrangler secret put APNS_KEY_P8             # the .p8 PEM, whole file
-  //   wrangler secret put FCM_SERVICE_ACCOUNT     # the service-account JSON
+  // Deploying is therefore three secrets and one command:
+  //
+  //   wrangler secret put RELAY_SEAL_KEY        # openssl rand -base64 32
+  //   wrangler secret put APNS_KEY_P8           # the .p8 PEM, whole file
+  //   wrangler secret put FCM_SERVICE_ACCOUNT   # the service-account JSON
   //   npm run deploy
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "vis-companion-relay",
   "main": "src/index.ts",
   "compatibility_date": "2025-01-01",
-  "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "vis-companion-relay",
-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
-    }
+  // Metering without storage. `namespace_id` is any integer unique to the
+  // account; `period` may only be 10 or 60 seconds. Counters are kept in the
+  // Cloudflare location serving the request, so a refusal costs no write
+  // anywhere and cannot be made expensive by flooding it.
+  "ratelimits": [
+    // Minting is public by design — an app must be able to sign up with no
+    // account — so it is the address that pays for it.
+    { "name": "MINT_LIMIT", "namespace_id": "1001", "simple": { "limit": 5, "period": 60 } },
+    // Checked BEFORE a grant is even opened: a flood of forged grants must not
+    // buy one decryption each.
+    { "name": "PUSH_ADDRESS_LIMIT", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } },
+    // Keyed by the DEVICE, not the grant: minting a second grant for the same
+    // phone therefore buys no extra pushes to it.
+    { "name": "PUSH_DEVICE_LIMIT", "namespace_id": "1003", "simple": { "limit": 20, "period": 60 } }
   ],
-  // Every hour: drop quota windows that have already reset and grants nobody
-  // ever pushed to. Public signup means garbage arrives on its own.
-  "triggers": { "crons": ["23 * * * *"] },
   // Public configuration only. Key material is a secret, never a var:
-  //   wrangler secret put APNS_KEY_P8 / FCM_SERVICE_ACCOUNT
+  //   wrangler secret put RELAY_SEAL_KEY / APNS_KEY_P8 / FCM_SERVICE_ACCOUNT
   "vars": {
     "APNS_KEY_ID": "",
     "APNS_TEAM_ID": "",
     "APNS_TOPIC": "",
     "APNS_DEFAULT_ENV": "production",
-    "PUSH_RATE_LIMIT": "120",
-    "PUSH_RATE_WINDOW_MS": "3600000",
-    "GRANT_RATE_LIMIT": "30",
-    "IP_PUSH_RATE_LIMIT": "600",
-    "UNUSED_GRANT_TTL_MS": "2592000000",
-    "MAX_GRANTS_PER_DEVICE": "10"
+    "GRANT_TTL_DAYS": "90"
   }
 }

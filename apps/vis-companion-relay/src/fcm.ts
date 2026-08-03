@@ -4,6 +4,7 @@
  * APNs this needs nothing special from the runtime.
  */
 
+import { PROVIDER_TIMEOUT_MS } from "./apns";
 import { signJwt } from "./jwt";
 import type { Deps, Env, Notification, PushResult } from "./types";
 
@@ -62,6 +63,7 @@ export async function accessToken(cfg: FcmConfig, deps: Deps): Promise<string | 
       grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
       assertion,
     }).toString(),
+    signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
   });
   if (!response.ok) return null;
   const parsed = (await response.json()) as { access_token?: string };
@@ -104,6 +106,7 @@ export async function sendFcm(
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify(message(args.deviceToken, args.notification)),
+        signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
       },
     );
     const text = await response.text();
