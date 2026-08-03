@@ -7,6 +7,7 @@
             [com.blockether.vis.ext.language-python.core :as core]
             [com.blockether.vis.ext.language-python.interpreter :as interp]
             [com.blockether.vis.ext.language-python.repl-manager :as repl]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.process-jail :as process-jail]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
@@ -34,27 +35,80 @@
 (defn- has-python? [] (boolean (or (on-path? "python3") (on-path? "python"))))
 
 ;; ── interpreter detection (no subprocess) ────────────────────────────────────
-(defdescribe interpreter-test
-             (it "prefers a project-local .venv interpreter when present"
-                 (let
-                   [root
-                    (tmp-dir)
+(defdescribe
+  interpreter-test
+  (it "prefers a project-local .venv interpreter when present"
+      (let
+        [root
+         (tmp-dir)
 
-                    py
-                    (io/file root ".venv" "bin" "python")]
+         py
+         (io/file root ".venv" "bin" "python")]
 
-                   (try (.mkdirs (.getParentFile py))
-                        (spit py "#!/bin/sh\n")
-                        (.setExecutable py true)
-                        (expect (= [(.getCanonicalPath py)]
-                                   (interp/resolve-command (.getPath root))))
-                        (finally (cleanup root)))))
-             (it "falls back to a system interpreter with no project env"
-                 (let [root (tmp-dir)]
-                   (try (let [cmd (interp/resolve-command (.getPath root))]
-                          (expect (= 1 (count cmd)))
-                          (expect (#{"python3" "python"} (first cmd))))
-                        (finally (cleanup root))))))
+        (try (.mkdirs (.getParentFile py))
+             (spit py "#!/bin/sh\n")
+             (.setExecutable py true)
+             (expect (= [(.getAbsolutePath py)] (interp/detect-command (.getPath root))))
+             (finally (cleanup root)))))
+  (it "keeps the venv symlink instead of canonicalizing OUT of the venv"
+      ;; `.venv/bin/python3` is a symlink into the base installation.
+      ;; Canonicalizing it leaves the virtualenv, `pyvenv.cfg` is never
+      ;; read, and the run dies with `No module named pytest`
+      ;; (Blockether/vis#98).
+      (let
+        [root
+         (tmp-dir)
+
+         base
+         (io/file root "base" "python3")
+
+         py
+         (io/file root ".venv" "bin" "python3")]
+
+        (try (.mkdirs (.getParentFile base))
+             (spit base "#!/bin/sh\n")
+             (.mkdirs (.getParentFile py))
+             (Files/createSymbolicLink (.toPath py) (.toPath base) (into-array FileAttribute []))
+             (expect (= [(.getAbsolutePath py)] (interp/detect-command (.getPath root))))
+             (finally (cleanup root)))))
+  (it "falls back to a system interpreter with no project env"
+      (let [root (tmp-dir)]
+        (try (let [cmd (interp/detect-command (.getPath root))]
+               (expect (= 1 (count cmd)))
+               (expect (#{"python3" "python"} (first cmd))))
+             (finally (cleanup root))))))
+
+;; ── `python.interpreter` / `python.runner` pinned in merged config ───────────
+(defdescribe
+  interpreter-pin-test
+  "A workspace whose only sanctioned invocation is undetectable (`vis-agent
+   python`, a wrapper script) pins it instead (Blockether/vis#98)."
+  (it "takes a vector as the argv prefix, verbatim"
+      (expect (= ["vis-agent" "python"]
+                 (interp/pinned-command "/proj"
+                                        {"python" {"interpreter" ["vis-agent" "python"]}}))))
+  (it "takes a bare string as ONE argument, never word-split"
+      (expect (= ["my python"]
+                 (interp/pinned-command "/proj" {"python" {"interpreter" "my python"}}))))
+  (it "resolves a path-like pin against the project dir"
+      (expect (= ["/proj/.venv/bin/python"]
+                 (interp/pinned-command "/proj" {"python" {"interpreter" [".venv/bin/python"]}}))))
+  (it "expands ~ in a pinned path"
+      (expect (= [(str (System/getProperty "user.home") "/bin/py")]
+                 (interp/pinned-command "/proj" {"python" {"interpreter" "~/bin/py"}}))))
+  (it "is nil without a pin, and for blank entries"
+      (expect (nil? (interp/pinned-command "/proj" {})))
+      (expect (nil? (interp/pinned-command "/proj" {"python" {"interpreter" ["" "  "]}}))))
+  (it "prefers the pin over detection"
+      (with-redefs
+        [config/load-config-raw (constantly {"python" {"interpreter" ["vis-agent" "python"]}})]
+        (expect (= ["vis-agent" "python"]
+                   (interp/resolve-command (System/getProperty "java.io.tmpdir"))))))
+  (it "reads python.runner, ignoring anything that is not a backend"
+      (expect (= "project" (interp/pinned-runner {"python" {"runner" "Project"}})))
+      (expect (= "graalpy" (interp/pinned-runner {"python" {"runner" "graalpy"}})))
+      (expect (nil? (interp/pinned-runner {"python" {"runner" "pytest"}})))
+      (expect (nil? (interp/pinned-runner {})))))
 
 ;; ── uv detection reads TOML TABLE HEADERS, not substrings ────────────────────
 ;; `[tool.uvicorn]` used to satisfy a `str/includes? "[tool.uv"` check, so a

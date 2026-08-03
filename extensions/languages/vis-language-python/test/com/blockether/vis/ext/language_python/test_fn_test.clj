@@ -8,6 +8,7 @@
             [com.blockether.vis.ext.language-python.interpreter :as interp]
             [com.blockether.vis.internal.foundation.language-surface :as language-surface]
             [com.blockether.vis.internal.process-jail :as process-jail]
+            [com.blockether.vis.internal.python-project :as pyproj]
             ;; side-effecting require: registers the built-in pytest shim so
             ;; `extension/sandbox-shims` can hand the runner its preamble.
             [com.blockether.vis.internal.foundation.shim-pytest]
@@ -215,4 +216,56 @@
         (try (.mkdirs (io/file root "tests"))
              (expect (= [(.getCanonicalPath (io/file root "tests"))]
                         (resolve-test-paths (.getPath root) {} nil)))
+             (finally (cleanup root))))))
+
+;; ── backend selection + a layout read that FAILED (Blockether/vis#98) ──────────
+(def ^:private select-runner @#'core/select-runner)
+
+(defdescribe
+  runner-selection-test
+  "`python.runner` in merged config picks the default backend; an explicit
+   `environment` / `runner` argument still wins."
+  (it "defaults to the hermetic sandbox"
+      (with-redefs [interp/configured-runner (constantly nil)]
+        (expect (= "graalpy" (select-runner {})))))
+  (it "honors python.runner from merged config"
+      (with-redefs [interp/configured-runner (constantly "project")]
+        (expect (= "project" (select-runner {})))))
+  (it "lets an explicit environment beat the configured default"
+      (with-redefs [interp/configured-runner (constantly "project")]
+        (expect (= "graalpy" (select-runner {"environment" "graalpy"})))))
+  (it "lets an explicit runner beat the configured default"
+      (with-redefs [interp/configured-runner (constantly "project")]
+        (expect (= "graalpy" (select-runner {"runner" "graalpy"})))))
+  (it "keeps environment/project and the private compatibility aliases"
+      (expect (= "project" (select-runner {"environment" "project"})))
+      (expect (= "project" (select-runner {"runner" "project"})))
+      (expect (= "project" (select-runner {"interpreter" "python3"})))))
+
+(defdescribe
+  layout-warning-test
+  "A layout read that FAILED is REPORTED. Degrading silently to `no import roots`
+   is what makes a src-layout project report bogus `No module named <pkg>`."
+  (it "surfaces the layout warning on the run_tests result"
+      (let [root (tmp-dir)]
+        (try (.mkdirs (io/file root "tests"))
+             (spit (io/file root "tests" "test_sample.py") "def test_ok():\n    assert True\n")
+             (with-redefs
+               [pyproj/project-layout (constantly {:import-roots []
+                                                   :testpaths []
+                                                   :warning "project layout not read: boom"})]
+               (let
+                 [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                                {"runner" "graalpy"}))]
+                 (expect (= "project layout not read: boom" (get res "warning")))
+                 (expect (= 1 (get res "passed")))))
+             (finally (cleanup root)))))
+  (it "adds no warning key when the layout reads cleanly"
+      (let [root (tmp-dir)]
+        (try (.mkdirs (io/file root "tests"))
+             (spit (io/file root "tests" "test_sample.py") "def test_ok():\n    assert True\n")
+             (let
+               [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                              {"runner" "graalpy"}))]
+               (expect (nil? (get res "warning"))))
              (finally (cleanup root))))))

@@ -311,7 +311,7 @@
 (def mcp-server-keys
   #{"transport" "command" "args" "cwd" "env" "url" "headers" "enabled" "timeout_ms" "listen"
     "auth"})
-(def python-keys #{"resource_cache" "source_paths"})
+(def python-keys #{"resource_cache" "source_paths" "interpreter" "runner"})
 (def message-queue-keys
   #{"breaker_threshold" "retry_backoff_ms" "halfopen_probe_ms" "retry_after_cap_ms"})
 (def titling-keys #{"mode" "provider" "model"})
@@ -337,6 +337,12 @@
    "contributors_disabled" #(and (or (vector? %) (set? %)) (every? non-blank-string? %))})
 (s/def ::tui-settings #(closed-map? tui-schema %))
 
+(s/def ::python-interpreter
+  ;; Same value shape as a provider's `api_key_command`: an argv vector, or a
+  ;; bare program/path that is ONE argument and is never word-split.
+  (s/or :argv (s/coll-of non-blank-string? :kind vector? :min-count 1)
+        :program non-blank-string?))
+
 (def python-schema
   ;; `resource_cache`: GraalPy internal-resource cache root (where the Python
   ;; stdlib extracts at runtime). Read ONCE per process at polyglot-engine boot;
@@ -346,7 +352,17 @@
   ;; on top of what the project's own packaging metadata declares -- the escape
   ;; hatch for a layout vis cannot infer. Relative to the working directory; `~`
   ;; expands.
-  {"resource_cache" non-blank-string? "source_paths" string-list?})
+  ;; `interpreter`: the argv PREFIX that launches this project's Python for
+  ;; `repl` / `repl_eval` and the `project` test runner, pinned instead of
+  ;; detected (uv / poetry / .venv / python3). A path-like entry resolves against
+  ;; the project dir; `~` expands; a bare name is looked up on PATH.
+  ;; `runner`: default `run_tests("python")` backend -- the hermetic `graalpy`
+  ;; sandbox or the `project` interpreter's own pytest. Explicit call arguments
+  ;; still win.
+  {"resource_cache" non-blank-string?
+   "source_paths" string-list?
+   "interpreter" (spec-pred ::python-interpreter)
+   "runner" (one-of #{"graalpy" "project"})})
 (s/def ::python #(closed-map? python-schema %))
 
 (def message-queue-schema

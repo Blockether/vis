@@ -80,7 +80,10 @@
    "db_spec" {"backend" "sqlite" "path" "/tmp/vis.db"}
    "grep" {"include_gitignored_paths" ["repositories/"] "always_exclude" ["target/"]}
    "toggles" {"reasoning_level" "deep"}
-   "python" {"resource_cache" "~/.vis/cache/graal-resources" "source_paths" ["src" "lib/vendor"]}
+   "python" {"resource_cache" "~/.vis/cache/graal-resources"
+             "source_paths" ["src" "lib/vendor"]
+             "interpreter" [".venv/bin/python"]
+             "runner" "project"}
    "tui_settings" {"theme_name" "dark" "contributors_disabled" ["voice"]}
    "mcp" {"servers" {"local" {"transport" "stdio"
                               "command" "npx"
@@ -183,6 +186,14 @@
     (expect (config-spec/valid? (assoc-in full-config ["python" "source_paths"] [])))
     (expect (not (config-spec/valid? (assoc-in full-config ["python" "source_paths"] "src"))))
     (expect (not (config-spec/valid? (assoc-in full-config ["python" "source_paths"] [1]))))
+    ;; Interpreter pin: an argv vector or a bare program, never empty or numeric.
+    (expect (config-spec/valid? (assoc-in full-config ["python" "interpreter"] "python3.12")))
+    (expect (not (config-spec/valid? (assoc-in full-config ["python" "interpreter"] []))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["python" "interpreter"] [1]))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["python" "interpreter"] ""))))
+    ;; Runner: a closed enum of the two execution backends.
+    (expect (config-spec/valid? (assoc-in full-config ["python" "runner"] "graalpy")))
+    (expect (not (config-spec/valid? (assoc-in full-config ["python" "runner"] "uv"))))
     ;; Queue tuning: a closed block of positive numbers; the backoff is a non-empty list.
     (expect (config-spec/valid? (assoc-in full-config ["message_queue" "breaker_threshold"] 5)))
     (expect (not (config-spec/valid?

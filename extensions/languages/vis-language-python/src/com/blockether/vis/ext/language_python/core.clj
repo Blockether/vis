@@ -312,6 +312,29 @@
                          parse-long)
        "output" (tail-str s 8000)})))
 
+(defn- select-runner
+  "Which backend a `run_tests` call uses, in precedence order: an explicit
+   `environment` (`project`, else the sandbox), then the private compatibility
+   aliases `runner` / `interpreter`, then `python.runner` from merged config,
+   else the hermetic GraalPy sandbox."
+  [opts]
+  (let
+    [environment
+     (str/lower-case (str (or (get opts "environment") "")))
+
+     r
+     (str/lower-case (str (or (get opts "runner")
+                              (when (get opts "interpreter") "project")
+                              (interpreter/configured-runner)
+                              "graalpy")))]
+
+    (cond (= "project" environment) "project"
+          ;; An explicit environment that is not `project` is the sandbox,
+          ;; whatever config or the compatibility aliases say.
+          (seq environment) "graalpy"
+          (contains? #{"project" "interpreter" "real" "system"} r) "project"
+          :else "graalpy")))
+
 (defn py-test-fn
   "run_tests handler for Python. Two execution environments:
      - the DEFAULT is hermetic, stdlib-only GraalPy. It discovers `test_*.py` /
@@ -321,10 +344,13 @@
        `{paths}` entries may be FILES or dirs, resolve against `cwd`, must
        exist, and discovering nothing is NOT a pass. The project's declared
        import roots (a `src` layout) are on `sys.path`; installed third-party
-       deps are NOT visible.
+       deps are NOT visible. When that layout could not be READ, the result
+       carries a `warning` instead of quietly claiming the project has none.
      - `{environment \"project\"}` shells the project interpreter's pytest
-       (`uv`/`poetry`/`.venv`/`python3` `-m pytest <paths>`) so installed test
-       dependencies are visible.
+       (the argv pinned as `python.interpreter`, else `uv`/`poetry`/`.venv`/
+       `python3` `-m pytest <paths>`) so installed test dependencies are visible.
+   `python.runner` in merged config chooses the DEFAULT backend; an explicit
+   `environment` / `runner` argument still wins.
    `runner` and `interpreter` remain private compatibility aliases."
   [env arg]
   (let
@@ -338,17 +364,7 @@
      (resolve-dir root (get opts "cwd"))
 
      runner
-     (let
-       [environment
-        (str/lower-case (str (or (get opts "environment") "")))
-
-        r
-        (str/lower-case
-          (str (or (get opts "runner") (when (get opts "interpreter") "project") "graalpy")))]
-
-       (if (or (= "project" environment) (contains? #{"project" "interpreter" "real" "system"} r))
-         "project"
-         "graalpy"))
+     (select-runner opts)
 
      ;; The project interpreter reads the project's own config itself; only the
      ;; hermetic backend has to be taught the layout (one throwaway context).
@@ -358,10 +374,13 @@
      paths
      (resolve-test-paths dir opts (:testpaths layout))]
 
-    (extension/success {:result (assoc (if (= "project" runner)
-                                         (project-test (:session-id env) dir paths)
-                                         (graalpy-test paths (:import-roots layout)))
-                                  "language" "python")})))
+    (extension/success {:result (cond->
+                                  (assoc (if (= "project" runner)
+                                           (project-test (:session-id env) dir paths)
+                                           (graalpy-test paths (:import-roots layout)))
+                                    "language" "python")
+                                  (:warning layout)
+                                  (assoc "warning" (:warning layout)))})))
 
 ;; =============================================================================
 ;; Manifest

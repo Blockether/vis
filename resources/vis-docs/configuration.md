@@ -445,6 +445,28 @@ resolve against the working directory, `~` expands, and an entry that is not an
 existing directory is dropped. An explicit `PYTHONPATH` in the environment still
 precedes both.
 
+Vis otherwise picks the interpreter itself — uv, then Poetry, then a project
+`.venv`, then `python3`. When your workspace mandates a launcher Vis cannot
+detect (a wrapper script, a container shim, `vis-agent python`), pin it:
+
+```yaml
+# vis.yml
+python:
+  interpreter: [vis-agent, python]   # argv prefix, or a bare path
+  runner: project                    # default run_tests backend
+```
+
+The pin is used by `repl` / `repl_eval` and by the `project` test runner, ahead
+of all detection. A list is the argv prefix verbatim; a bare string is **one**
+argument and is never word-split, so a path may contain spaces. A path-like
+entry resolves against the project directory, `~` expands, and a bare name is
+looked up on `PATH`.
+
+`runner` chooses the default `run_tests("python")` backend: `graalpy`, the
+hermetic stdlib-only sandbox, or `project`, the interpreter's own pytest, where
+installed dependencies are visible. An explicit `environment` or `runner`
+argument on the call still wins.
+
 ## Extension environment
 
 Extensions may declare the environment variables they read so Vis can report whether they are available. Their values never come from `vis.yml` or Vis state. Set them in the environment that starts Vis, or in the working directory's `.env` / `.env.local` files. Precedence is: process environment, then `.env`, then `.env.local`; a blank value from any higher-precedence source intentionally masks a lower value. Dotenv files support `NAME=value` and `export NAME=value`, quoted values, comments, CRLF, and a UTF-8 BOM:

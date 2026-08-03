@@ -63,6 +63,11 @@
                   (remove #{"." "./"} (map str/trim (remove str/blank? paths)))
                   #(.isDirectory ^File %)))
 
+(defn- throwable-msg
+  "A non-empty description of `t` for a `:error` / `:warning` string."
+  ^String [^Throwable t]
+  (or (not-empty (str (ex-message t))) (.getName (class t))))
+
 (defn declared-config
   "Raw layout `dir`'s packaging metadata declares, read inside `ctx`:
 
@@ -79,7 +84,9 @@
      setup.cfg [options]               package_dir = =src
      setup.cfg [tool:pytest] / pytest.ini / tox.ini [pytest]   pythonpath / testpaths
 
-   Unreadable or absent metadata yields empty vectors, never an error. The
+   Unreadable or absent metadata yields empty vectors, never a throw; a read that
+   FAILED (as opposed to one that found nothing) also carries `:error` with why,
+   so a caller can say so instead of reporting a project with no layout. The
    caller's globals are left exactly as they were found."
   [^Context ctx ^String dir]
   (let
@@ -101,7 +108,7 @@
          (let [^Value res (.eval ctx "python" (str entry "(globals()[" (pr-str arg) "])"))]
            {:import-roots (strings (.getArrayElement res 0))
             :testpaths (strings (.getArrayElement res 1))})
-         (catch Throwable _ {:import-roots [] :testpaths []})
+         (catch Throwable t {:import-roots [] :testpaths [] :error (throwable-msg t)})
          ;; The CLI interpreter is the human's own scope -- leave nothing behind.
          (finally (.removeMember bindings arg) (.removeMember bindings entry)))))
 
@@ -133,18 +140,50 @@
   (vec (distinct (concat (configured-import-roots dir)
                          (existing-dirs dir (:import-roots (declared-config ctx dir)))))))
 
+(defn- read-layout
+  "ONE attempt at `project-layout`, in a throwaway trusted GraalPy context.
+   `:warning` (present only on failure) says why the read degraded to nothing."
+  [^String dir]
+  (let
+    [built
+     (try {:ctx (pyx/build-context)}
+          (catch Throwable t
+            {:warning (str "GraalPy context unavailable, project layout not read: "
+                           (throwable-msg t))}))
+
+     ^Context ctx
+     (:ctx built)]
+
+    (if (nil? ctx)
+      {:import-roots [] :testpaths [] :warning (:warning built)}
+      (try (let [declared (declared-config ctx dir)]
+             (cond->
+               {:import-roots (vec (distinct (concat (configured-import-roots dir)
+                                                     (existing-dirs dir (:import-roots declared)))))
+                :testpaths (existing-paths dir (:testpaths declared))}
+               (:error declared)
+               (assoc :warning
+                 (str "project metadata unreadable, import roots not applied: "
+                      (:error declared)))))
+           (catch Throwable t
+             {:import-roots []
+              :testpaths []
+              :warning (str "project layout not read: " (throwable-msg t))})
+           (finally (try (.close ctx true) (catch Throwable _)))))))
+
 (defn project-layout
   "`{:import-roots [abs…] :testpaths [abs…]}` for `dir`, read in a THROWAWAY
    trusted GraalPy context (~130ms) -- for callers that have no context of
    their own, such as the `run_tests` handler. Both are canonical paths of
-   entries that exist; either may be empty."
+   entries that exist; either may be empty.
+
+   A FAILED read is retried once (a cold context can lose its first attempt) and,
+   if it fails again, the map carries `:warning`. Degrading silently to \"no
+   import roots\" is what makes a `src`-layout project report bogus
+   `No module named <pkg>` errors from the user's own tests."
   [^String dir]
-  (let [^Context ctx (try (pyx/build-context) (catch Throwable _ nil))]
-    (if (nil? ctx)
-      {:import-roots [] :testpaths []}
-      (try (let [declared (declared-config ctx dir)]
-             {:import-roots (vec (distinct (concat (configured-import-roots dir)
-                                                   (existing-dirs dir (:import-roots declared)))))
-              :testpaths (existing-paths dir (:testpaths declared))})
-           (catch Throwable _ {:import-roots [] :testpaths []})
-           (finally (try (.close ctx true) (catch Throwable _)))))))
+  (let [first-try (read-layout dir)]
+    (if (:warning first-try)
+      (let [retry (read-layout dir)]
+        (if (:warning retry) (update retry :warning #(str % " (retried once)")) retry))
+      first-try)))
