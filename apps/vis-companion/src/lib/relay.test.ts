@@ -33,6 +33,7 @@ vi.mock("@capacitor/preferences", () => ({
 }));
 
 import {
+  PUBLISHER_RELAY_URL,
   grantFor,
   registerForPush,
   registeredIds,
@@ -138,10 +139,16 @@ describe("which machines need a relay", () => {
     expect(relayUrlFor(androidOnly, "ios")).toBe(RELAY);
   });
 
-  it("stays silent when neither a key nor a relay exists", () => {
+  it("falls back to the relay this BUILD was published with", () => {
+    // Nobody should have to know an address to be notified. WHICH relay can
+    // sign for this app is a property of the app — its publisher owns the topic
+    // and the signing key — so a machine that names none is not a machine
+    // without push; it is the ordinary case.
     expect(
       relayUrlFor(status({ relay: { is_available: false, url: null } }), "ios"),
-    ).toBeNull();
+    ).toBe(PUBLISHER_RELAY_URL);
+    expect(PUBLISHER_RELAY_URL.startsWith("https://")).toBe(true);
+    // A gateway we have not heard from yet is not a gateway with no relay.
     expect(relayUrlFor(undefined, "ios")).toBeNull();
   });
 
@@ -253,6 +260,22 @@ describe("registering this device with one gateway", () => {
     expect(target.registered[0]).toMatchObject({
       platform: "ios",
       environment: "production",
+      relay_url: RELAY,
+    });
+  });
+
+  it("tells the gateway WHICH relay sealed the grant", async () => {
+    // A grant is gibberish to every relay but the one that sealed it, so the
+    // address belongs to the grant — not to a global setting on a machine that
+    // never chose it and cannot know which build the phone is running.
+    const relay = minter();
+    const target = gatewayOf(
+      status({ relay: { is_available: false, url: null } }),
+    );
+    await registerForPush(device(), target.gateway, relay.mint);
+    expect(target.registered[0]).toMatchObject({
+      grant: "vg1.grant-1",
+      relay_url: PUBLISHER_RELAY_URL,
     });
   });
 

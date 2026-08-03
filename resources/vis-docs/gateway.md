@@ -281,20 +281,26 @@ gateway -> POST   /v1/push          Bearer <grant>   => the relay signs and send
 (nothing is stored: the grant carries its own sealed expiry)
 ```
 
-Point a gateway at a relay with either of:
+Nothing to configure. Which relay can sign for a companion build is a property of
+the **build**, so the app — not your laptop — knows the address: it mints its
+grant there and posts `{grant, relay_url}` to `/v1/devices` in one request. A
+gateway nobody ever configured delivers.
+
+An operator can still name a relay, which is then used for devices that named
+none:
 
 ```bash
 export VIS_PUSH_RELAY_URL=https://push.example.com
 echo '{:url "https://push.example.com"}' > ~/.vis/relay.edn
 ```
 
-Then register the device with a `grant` instead of a `token`:
+Registering by hand carries the address in the same body:
 
 ```bash
 curl -sS -X POST "$GATEWAY/v1/devices" \
   -H "x-vis-protocol: 2" -H "authorization: Bearer $VIS_TOKEN" \
   -H 'content-type: application/json' \
-  -d '{"grant":"…","platform":"ios","label":"iPhone"}'
+  -d '{"grant":"…","relay_url":"https://push.example.com","platform":"ios","label":"iPhone"}'
 ```
 
 What that changes, and why it is worth an extra hop:
@@ -321,15 +327,16 @@ sealed capability carrying its own device token and expiry, and the abuse counte
 live in Cloudflare's rate limiting bindings, so there is no table to dump, exhaust,
 or migrate. Its README covers deploying, the limits and the failure verdicts.
 
-**Run your own.** No relay address is compiled into anything. The gateway reads it
-from the two settings above and publishes it as `push.relay.url`; the companion
-mints its grant at whatever address that machine names, and this repository names
-none. Deploy that Worker to your own Cloudflare account with your own
-`RELAY_SEAL_KEY` and your own APNs key or Firebase service account, point your
-gateways at it, and nothing of yours touches anyone else's infrastructure. The one
-thing configuration cannot move is the wall at the top of this section: a relay
-signs for the app whose keys it holds, so your own relay serves *your own*
-companion build — a store-distributed companion can only be woken by the relay its
+**Run your own.** The companion carries its publisher's relay as a build
+constant — a self-hoster changes it in their own build, next to the bundle id and
+`google-services.json` they already had to change. Deploy that Worker to your own
+Cloudflare account with your own `RELAY_SEAL_KEY` and your own APNs key or
+Firebase service account, and every phone running your build mints there, on
+every machine, with nothing of yours touching anyone else's infrastructure;
+`VIS_PUSH_RELAY_URL` overrides one machine when you want it to. The one thing
+configuration cannot move is the wall at the top of this section: a relay signs
+for the app whose keys it holds, so your own relay serves *your own* companion
+build — a store-distributed companion can only be woken by the relay its
 publisher runs.
 
 Two failures are worth telling apart. An address that is not `https` is not a relay:

@@ -2383,7 +2383,8 @@
                                         :client (get body "client")
                                         :client-version (get body "client_version")
                                         :label (get body "label")
-                                        :bundle-id (get body "bundle_id")})]
+                                        :bundle-id (get body "bundle_id")
+                                        :relay-url (get body "relay_url")})]
         (json-response {:device (device-wire device) :push (push/status)})
         (error-response 400 :bad-request "unusable device token")))))
 

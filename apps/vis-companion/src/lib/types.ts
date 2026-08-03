@@ -509,6 +509,9 @@ export interface PushDevice {
   client_version?: string;
   label?: string;
   bundle_id?: string;
+  /** Set when this device is woken through a relay, which is not a secret. */
+  relay_url?: string;
+  is_relayed?: boolean;
   registered_at?: number;
   last_seen?: number;
 }
@@ -520,6 +523,8 @@ export interface PushDevice {
 export interface PushDeviceInput {
   token?: string;
   grant?: string;
+  /** The relay that sealed `grant`; it is the only one that can open it. */
+  relay_url?: string;
   platform?: string;
   environment?: "sandbox" | "production";
   client?: string;

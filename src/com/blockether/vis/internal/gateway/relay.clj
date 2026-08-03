@@ -22,9 +22,13 @@
      relay keeps no list of anybody and an abandoned gateway simply goes mute.
 
    The relay itself lives in `apps/vis-companion-relay` (a Cloudflare Worker).
-   Configure a gateway with `VIS_PUSH_RELAY_URL`, or `~/.vis/relay.edn`
-   `{:url \"https://push.example.com\"}`. Unset = no relay; the direct
-   `gateway.push` / `gateway.fcm` credentials still work exactly as before."
+   The DEVICE names it: which relay can sign for a build is a property of the
+   BUILD, so the app mints its grant at the relay serving the app it is and
+   posts `{grant, relay_url}` to `/v1/devices` — a gateway nobody configured
+   still delivers. `VIS_PUSH_RELAY_URL`, or `~/.vis/relay.edn`
+   `{:url \"https://push.example.com\"}`, is an operator override for devices
+   that named nothing; the direct `gateway.push` / `gateway.fcm` credentials
+   still work exactly as before."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -61,36 +65,48 @@
                   (str/lower-case (str (.getHost (URI/create url)))))
        (catch Throwable _ false)))
 
-(defn config
-  "Where this gateway relays pushes, or `:is-configured false`. Never throws.
+(defn usable-url
+  "The address a grant may be handed to, trimmed of trailing slashes — or nil.
 
    A grant is a BEARER capability and the alert carries the title and body of
-   what just happened, so the address both are handed to is TLS or nothing: a
-   cleartext relay is reported `:is-insecure` and is never used — silently
-   trusting it would put a permanent right to push to that phone on the wire.
-   Loopback is the exception; it never reaches a network."
+   what just happened, so the address both are handed to is TLS or nothing:
+   silently trusting cleartext would put a permanent right to push to that phone
+   on the wire. Loopback is the exception; it never reaches a network."
+  [url]
+  (let
+    [u (some-> url
+               str
+               str/trim
+               (str/replace #"/+$" ""))]
+    (when (and (not (str/blank? u))
+               (or (str/starts-with? u "https://")
+                   (and (str/starts-with? u "http://") (loopback? u))))
+      u)))
+
+(defn config
+  "The relay this gateway names for EVERY device, or `:is-configured false`.
+   Never throws. An operator override; most gateways need none, because a
+   registered device carries the address of the relay that sealed its grant."
   []
   (let
     [side
      (or (side-config) {})
 
-     url
+     raw
      (some-> (or (env-val "VIS_PUSH_RELAY_URL") (:url side))
              str
              str/trim
              (str/replace #"/+$" ""))
 
-     is-secure
-     (boolean (and (not (str/blank? url))
-                   (or (str/starts-with? url "https://")
-                       (and (str/starts-with? url "http://") (loopback? url)))))]
+     usable
+     (usable-url raw)]
 
-    {:url (when-not (str/blank? url) url)
+    {:url (when-not (str/blank? raw) raw)
      :source (cond (env-val "VIS_PUSH_RELAY_URL") "env"
                    (:url side) "file"
                    :else nil)
-     :is-insecure (boolean (and (not (str/blank? url)) (not is-secure)))
-     :is-configured is-secure}))
+     :is-insecure (boolean (and (not (str/blank? raw)) (nil? usable)))
+     :is-configured (some? usable)}))
 
 (defn configured?
   "True when a grant registered here can actually be delivered."
@@ -156,28 +172,30 @@
        (catch Throwable t {:status 0 :reason (or (ex-message t) "transport-error")})))
 
 (defn send!
-  "Ask the relay to deliver one alert to the device this grant names. Returns
-   `{:status int :reason str}` — status 0 for a transport failure, so this
-   never throws. A stumble is tried once more; the relay answers 404/410 once
-   the grant is gone, which is the caller's cue to forget the device."
-  [grant notification]
-  (let [cfg (config)]
-    (cond (:is-insecure cfg) {:status 0 :reason "insecure-relay-url"}
-          (not (:is-configured cfg)) {:status 0 :reason "not-configured"}
-          :else (let
-                  [first-try (post-once (:url cfg) grant notification)
-                   result (if-not (transient-verdict? first-try)
-                            first-try
-                            (do (Thread/sleep ^long RETRY-DELAY-MS)
-                                (post-once (:url cfg) grant notification)))]
+  "Ask `relay-url` to deliver one alert to the device this grant names. Returns
+   `{:status int :reason str}` — status 0 for a transport failure, so this never
+   throws. A stumble is tried once more; the relay answers 404/410 once the
+   grant is gone, which is the caller's cue to forget the device.
 
-                  (when (not= 200 (:status result))
-                    (tel/log! {:level :warn
-                               :id ::relay-push-failed
-                               :data {:grant (mask grant)
-                                      :status (:status result)
-                                      :reason (:reason result)}}))
-                  result))))
+   The address is an argument, not a global: a grant is sealed by ONE relay, so
+   it is only ever spendable at the one the device named when it registered."
+  [relay-url grant notification]
+  (let [url (usable-url relay-url)]
+    (cond (str/blank? (str relay-url)) {:status 0 :reason "not-configured"}
+          (nil? url) {:status 0 :reason "insecure-relay-url"}
+          :else
+          (let
+            [first-try (post-once url grant notification)
+             result (if-not (transient-verdict? first-try)
+                      first-try
+                      (do (Thread/sleep ^long RETRY-DELAY-MS) (post-once url grant notification)))]
+
+            (when (not= 200 (:status result))
+              (tel/log! {:level :warn
+                         :id ::relay-push-failed
+                         :data
+                         {:grant (mask grant) :status (:status result) :reason (:reason result)}}))
+            result))))
 
 (defn dead-grant?
   "True when the relay's verdict means this grant will never deliver again —

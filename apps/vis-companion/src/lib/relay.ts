@@ -50,6 +50,25 @@ export type MintGrant = (
 const RENEW_BEFORE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
+ * The relay that serves THIS build — and the reason a fresh install needs no
+ * configuration at all.
+ *
+ * WHICH relay can wake this app is a property of the app, never of the machine
+ * it pairs with: APNs binds a topic to the Apple team that owns the bundle id,
+ * and an FCM token is minted against the Firebase project compiled in here. Its
+ * publisher is therefore the only party whose key this device will accept, and
+ * a laptop that just ran `vis gateway` has no way to know that address. So the
+ * app carries it, mints its own grant there, and hands the gateway both.
+ *
+ * Ship your own build and you change this line beside the bundle id and
+ * `google-services.json` you already changed — the three belong together. A
+ * paired machine may still name its own relay, which overrides this: an
+ * operator who runs one knows something the build does not.
+ */
+export const PUBLISHER_RELAY_URL =
+  "https://vis-companion-relay.blockether.workers.dev";
+
+/**
  * The relay one gateway needs to reach THIS device, or null when it can sign
  * pushes to it itself.
  *
@@ -69,23 +88,28 @@ export function relayUrlFor(
 ): string | null {
   if (!push) return null;
   if (signsItself(push, platform)) return null;
-  const url = push.relay?.url;
-  // This device's push token travels to whatever address the gateway names here,
-  // so a paired machine may send us to a relay over TLS and nowhere else.
-  if (!push.relay?.is_available || !url || !url.startsWith("https://"))
-    return null;
-  return url;
+  const named = push.relay?.url;
+  // A machine that names no relay is the ordinary case, not a broken one: it
+  // gets the publisher's. But a machine whose operator DID name one is obeyed
+  // even when we refuse it — this device's push token travels to that address,
+  // so a named relay is TLS or nothing, and quietly rerouting an `http` one to
+  // the publisher would hide the misconfiguration `refusedRelayUrl` reports.
+  if (!named) return PUBLISHER_RELAY_URL;
+  return named.startsWith("https://") && !push.relay?.is_insecure
+    ? named
+    : null;
 }
 
 /**
  * The relay a machine named and this device REFUSED, or null.
  *
- * Anyone may run their own relay — the address is configuration on the machine,
- * never a constant in this app — and the first way that goes wrong is an `http`
- * address, which would put a permanent right to push to this phone on the wire.
- * Such a machine holds no credentials AND has a relay we will not use, and
- * "missing push credentials" would send its operator looking for a signing key
- * they do not need. Name the address instead: only they can change it.
+ * Anyone may run their own relay — a machine may name one of its own, which
+ * overrides the address this build ships with — and the first way that goes
+ * wrong is an `http` address, which would put a permanent right to push to this
+ * phone on the wire. Such a machine holds no credentials AND named a relay we
+ * will not use, and "missing push credentials" would send its operator looking
+ * for a signing key they do not need. Name the address instead: only they can
+ * change it.
  */
 export function refusedRelayUrl(
   push: PushStatus | undefined,
@@ -194,7 +218,15 @@ export async function registerForPush(
     return { kind: "token", value: String(device.token ?? "") };
   }
   const grant = await grantFor(relayUrl, device, mint, now);
-  await gateway.register({ ...device, token: undefined, grant });
+  // The grant is gibberish to every relay but the one that sealed it, so the
+  // address travels WITH it. That is what lets a gateway holding no credential
+  // and no configuration deliver: it was told where.
+  await gateway.register({
+    ...device,
+    token: undefined,
+    grant,
+    relay_url: relayUrl,
+  });
   return { kind: "grant", value: grant };
 }
 

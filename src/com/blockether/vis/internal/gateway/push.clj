@@ -189,12 +189,6 @@
 
 (defn configured? "True when this gateway can deliver an APPLE push." [] (:is-configured (config)))
 
-(defn any-configured?
-  "True when this gateway can deliver a push to SOME platform — through the
-   relay, or with its own Apple or Android credentials. Any one of the three is
-   a perfectly valid setup."
-  []
-  (or (configured?) (fcm/configured?) (relay/configured?)))
 
 ;; =============================================================================
 ;; ES256 provider token (JWT)
@@ -358,6 +352,20 @@
 
 (defn device-count ^long [] (count (ensure-loaded!)))
 
+(defn any-configured?
+  "True when this gateway can deliver a push to SOME platform — with its own
+   Apple or Android credentials, through an operator-configured relay, or
+   because a registered DEVICE named the relay that sealed its grant.
+
+   That last one is the zero-configuration path and the common one: which relay
+   can sign for a build is a property of the build, so the phone knows the
+   address and this machine has no way to. Any of the four is a valid setup."
+  []
+  (boolean (or (configured?)
+               (fcm/configured?)
+               (relay/configured?)
+               (some :relay-url (vals (ensure-loaded!))))))
+
 (defn- not-blank
   [s]
   (let
@@ -368,11 +376,15 @@
 
 (defn register-device!
   "Idempotently register (or refresh) one device. A device identifies itself
-   either by a raw APNs/FCM token this gateway pushes to directly, or by a
-   relay GRANT (`gateway.relay`) that lets it be woken WITHOUT this gateway
-   ever learning its token. Returns the stored device, or nil when neither is
-   usable."
-  [{:keys [token grant platform environment client client-version label bundle-id]}]
+   either by a raw APNs/FCM token this gateway pushes to directly, or by a relay
+   GRANT (`gateway.relay`) that lets it be woken WITHOUT this gateway ever
+   learning its token. Returns the stored device, or nil when neither is usable.
+
+   A grant is sealed by ONE relay, so the device also names where to spend it;
+   an address that is not TLS is dropped here rather than at send time. The
+   address sticks across a refresh that omits it — losing it would silence a
+   device that is still perfectly reachable."
+  [{:keys [token grant platform environment client client-version label bundle-id relay-url]}]
   (let
     [token
      (not-blank token)
@@ -397,6 +409,7 @@
                 {:id id
                  :token token
                  :grant grant
+                 :relay-url (or (relay/usable-url relay-url) (:relay-url existing))
                  :platform (or platform "ios")
                  :environment (if (= "sandbox" environment) "sandbox" "production")
                  :client (or client "vis-companion")
@@ -412,7 +425,8 @@
                    :data {:token (mask id)
                           :platform (:platform device)
                           :env (:environment device)
-                          :is-relayed (some? grant)}})
+                          :is-relayed (some? grant)
+                          :relay (:relay-url device)}})
         device))))
 
 (defn unregister-device!
@@ -498,11 +512,11 @@
 
 (defn send-to-device!
   "Deliver one alert to one registered device. A device that handed us a relay
-   grant is delivered through the relay — it holds the signing key so this
-   gateway does not have to — and everything else goes straight to APNs/FCM
-   with this gateway's own credentials. Retries once against the other APNs
-   environment (a TestFlight build registered as `sandbox`, or the reverse, is
-   the single most common misconfiguration) and forgets the device when the
+   grant is delivered through the relay it named — that relay holds the signing
+   key so this gateway does not have to — and everything else goes straight to
+   APNs/FCM with this gateway's own credentials. Retries once against the other
+   APNs environment (a TestFlight build registered as `sandbox`, or the reverse,
+   is the single most common misconfiguration) and forgets the device when the
    provider says it is gone. Returns `{:is-delivered bool :status :reason}`."
   [device notification]
   (let
@@ -515,6 +529,11 @@
      grant
      (:grant device)
 
+     ;; The device's own relay first: it is the one that sealed this grant. The
+     ;; configured relay is the operator override, for a device that named none.
+     relay-url
+     (or (:relay-url device) (:url (relay/config)))
+
      id
      (or (:id device) token grant)
 
@@ -522,9 +541,10 @@
      (cond
        ;; A grant wins over any local credential: it is the only path that also
        ;; works when this gateway is not the one that signed the app.
-       (and grant (relay/configured?)) (let [r (relay/send! grant notification)]
-                                         (when (relay/dead-grant? r) (unregister-device! id))
-                                         r)
+       (and grant (relay/usable-url relay-url)) (let [r (relay/send! relay-url grant notification)]
+                                                  (when (relay/dead-grant? r)
+                                                    (unregister-device! id))
+                                                  r)
        (str/blank? (str token)) {:status 0 :reason "relay-not-configured"}
        (= "android" platform) (let [r (fcm/send! token notification)]
                                 (when (fcm/dead-token? r) (unregister-device! id))
@@ -736,12 +756,18 @@
      (fcm/config)
 
      r
-     (relay/status)]
+     (relay/status)
 
-    {:is-available (or (:is-configured cfg) (:is-configured f) (:is-available r))
+     ;; A gateway holding no credential and naming no relay is still able to
+     ;; push, if a device brought its own address. Reporting otherwise would
+     ;; make the app offer to fix a machine that has nothing wrong with it.
+     is-relayed
+     (or (:is-available r) (boolean (some :relay-url (vals (ensure-loaded!)))))]
+
+    {:is-available (or (:is-configured cfg) (:is-configured f) is-relayed)
      :provider (cond (and (:is-configured cfg) (:is-configured f)) "apns+fcm"
                      (:is-configured f) "fcm"
-                     (and (:is-available r) (not (:is-configured cfg))) "relay"
+                     (and is-relayed (not (:is-configured cfg))) "relay"
                      :else "apns")
      :environment (:default-environment cfg)
      :topic (:topic cfg)

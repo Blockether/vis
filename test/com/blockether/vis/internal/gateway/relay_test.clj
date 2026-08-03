@@ -121,7 +121,7 @@
                     [relay-server (start-relay! (fn [_]
                                                   {:status 200 :body "{\"is_delivered\":true}"}))]
                     (try (configure-relay! home (:url relay-server))
-                         (let [result (relay/send! "GRANT-abcdef123456" ALERT)]
+                         (let [result (relay/send! (:url relay-server) "GRANT-abcdef123456" ALERT)]
                            (testing "the relay's verdict is the gateway's verdict"
                              (is (= 200 (:status result)))
                              (is (= "" (:reason result))))
@@ -224,32 +224,33 @@
 
 (deftest a-relay-that-stumbles-is-asked-twice-test
   (testing "a 503 costs one retry, and the second answer is the verdict"
-    (with-push-home [home]
-                    (let
-                      [attempts
-                       (atom 0)
+    (with-push-home
+      [home]
+      (let
+        [attempts
+         (atom 0)
 
-                       relay-server
-                       (start-relay! (fn [_]
-                                       (if (= 1 (swap! attempts inc))
-                                         {:status 503 :body "{\"reason\":\"upstream\"}"}
-                                         {:status 200 :body "{\"is_delivered\":true}"})))]
+         relay-server
+         (start-relay! (fn [_]
+                         (if (= 1 (swap! attempts inc))
+                           {:status 503 :body "{\"reason\":\"upstream\"}"}
+                           {:status 200 :body "{\"is_delivered\":true}"})))]
 
-                      (try (configure-relay! home (:url relay-server))
-                           (is (= 200 (:status (relay/send! "GRANT-abcdef123456" ALERT))))
-                           (is (= 2 (count @(:requests relay-server))))
-                           (finally ((:stop! relay-server)))))))
+        (try (configure-relay! home (:url relay-server))
+             (is (= 200 (:status (relay/send! (:url relay-server) "GRANT-abcdef123456" ALERT))))
+             (is (= 2 (count @(:requests relay-server))))
+             (finally ((:stop! relay-server)))))))
   (testing "a verdict the relay already reached is never asked again"
-    (with-push-home [home]
-                    (let
-                      [relay-server (start-relay! (fn [_]
-                                                    {:status 404
-                                                     :body
-                                                     "{\"error\":{\"code\":\"unknown_grant\"}}"}))]
-                      (try (configure-relay! home (:url relay-server))
-                           (is (= 404 (:status (relay/send! "GRANT-abcdef123456" ALERT))))
-                           (is (= 1 (count @(:requests relay-server))))
-                           (finally ((:stop! relay-server))))))))
+    (with-push-home
+      [home]
+      (let
+        [relay-server (start-relay! (fn [_]
+                                      {:status 404
+                                       :body "{\"error\":{\"code\":\"unknown_grant\"}}"}))]
+        (try (configure-relay! home (:url relay-server))
+             (is (= 404 (:status (relay/send! (:url relay-server) "GRANT-abcdef123456" ALERT))))
+             (is (= 1 (count @(:requests relay-server))))
+             (finally ((:stop! relay-server))))))))
 
 (deftest a-cleartext-relay-is-refused-before-the-grant-leaves-test
   (testing "a grant is a bearer capability: the address it is handed to is TLS or nothing"
@@ -261,7 +262,9 @@
                       (is (= "http://push.example.com" (:url cfg))))
                     (is (false? (relay/configured?)))
                     (is (= {:status 0 :reason "insecure-relay-url"}
-                           (relay/send! "GRANT-abcdef123456" ALERT)))
+                           (relay/send! "http://push.example.com" "GRANT-abcdef123456" ALERT)))
+                    (is (= {:status 0 :reason "not-configured"}
+                           (relay/send! nil "GRANT-abcdef123456" ALERT)))
                     (let [st (relay/status)]
                       (is (false? (:is-available st)))
                       (is (true? (:is-insecure st))))))
@@ -273,3 +276,50 @@
                     (is (true? (relay/configured?)))
                     (configure-relay! home "http://localhost:8787")
                     (is (true? (relay/configured?))))))
+
+;; Zero configuration is the whole product claim: install the app, run
+;; `vis gateway`, tap "notify this device". Which relay can sign for a build is a
+;; property of the BUILD, so the phone — not the laptop — is the one that knows
+;; the address, and it learns it from the relay that sealed its grant.
+
+(deftest a-device-names-the-relay-that-sealed-its-grant-test
+  (with-push-home [_home]
+                  (let
+                    [relay-server (start-relay! (fn [_]
+                                                  {:status 200 :body "{\"is_delivered\":true}"}))]
+                    (try (testing "this gateway is configured with nothing at all"
+                           (is (false? (relay/configured?)))
+                           (is (nil? (:url (relay/config)))))
+                         (let
+                           [device (push/register-device! {:grant "GRANT-abcdef123456"
+                                                           :platform "ios"
+                                                           :relay-url (:url relay-server)})]
+                           (testing "push is nevertheless available — a device brought an address"
+                             (is (true? (push/any-configured?)))
+                             (is (true? (:is-available (push/status)))))
+                           (testing "and the alert goes to the relay the DEVICE named"
+                             (let [result (push/send-to-device! device ALERT)]
+                               (is (true? (:is-delivered result)))
+                               (is (= 200 (:status result))))
+                             (let [request (first @(:requests relay-server))]
+                               (is (= 1 (count @(:requests relay-server))))
+                               (is (= "/v1/push" (:path request)))
+                               (is (= "Bearer GRANT-abcdef123456" (:authorization request)))))
+                           (testing
+                             "the address is not a secret: it is where this device's alerts go"
+                             (is (= (:url relay-server) (:relay-url (first (push/list-devices)))))))
+                         (finally ((:stop! relay-server)))))))
+
+(deftest a-device-may-not-name-a-cleartext-relay-test
+  (testing "an address a device supplies is still TLS or nothing"
+    (with-push-home [_home]
+                    (let
+                      [device (push/register-device! {:grant "GRANT-abcdef123456"
+                                                      :platform "ios"
+                                                      :relay-url "http://push.example.com"})]
+                      (is (some? device))
+                      (is (nil? (:relay-url device)))
+                      (is (false? (push/any-configured?)))
+                      (let [result (push/send-to-device! device ALERT)]
+                        (is (false? (:is-delivered result)))
+                        (is (= "relay-not-configured" (:reason result))))))))
