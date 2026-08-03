@@ -516,13 +516,13 @@
                                                   (fake-env []))]
         (expect (contains? handlers "run_tests"))))
   ;; REGRESSION #93: the graalpy backend's own hint tells the agent to
-  ;; re-run with {"runner": "project"} — a strict schema that omits
-  ;; `runner` rejects the call that hint asks for.
-  (it "run_tests advertises the pack-backend `runner` selector"
+  ;; re-run with {"environment": "project"} — a strict schema that omits
+  ;; `environment` rejects the call that hint asks for.
+  (it "run_tests advertises the generic project environment selector"
       (let [schema (:ext.symbol/schema language-surface/test-symbol)]
         (expect (false? (:additionalProperties schema)))
-        (expect (= "string" (get-in schema [:properties "runner" :type])))
-        (expect (re-find #"(?i)graalpy" (get-in schema [:properties "runner" :description]))))))
+        (expect (= "string" (get-in schema [:properties "environment" :type])))
+        (expect (= ["project"] (get-in schema [:properties "environment" :enum]))))))
 
 (defdescribe
   render-lint-result-names-target-test

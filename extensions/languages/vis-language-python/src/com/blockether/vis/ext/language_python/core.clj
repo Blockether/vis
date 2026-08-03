@@ -246,8 +246,8 @@
       dep-smell?
       (assoc "hint"
         (str "Some tests failed to import modules under the stdlib-only GraalPy "
-             "sandbox. Re-run with {\"runner\": \"project\"} to use the project "
-             "interpreter's installed dependencies.")))))
+             "sandbox. Re-run with {\"environment\": \"project\"} to use the project's "
+             "interpreter and installed dependencies.")))))
 
 (defn- project-test
   "Escape-hatch backend: shell the project interpreter's pytest (uv / poetry /
@@ -313,8 +313,8 @@
        "output" (tail-str s 8000)})))
 
 (defn py-test-fn
-  "run_tests handler for Python. Two backends behind `{runner}`:
-     - \"graalpy\" (DEFAULT) — hermetic, stdlib-only. Discovers `test_*.py` /
+  "run_tests handler for Python. Two execution environments:
+     - the DEFAULT is hermetic, stdlib-only GraalPy. It discovers `test_*.py` /
        `*_test.py` under `{paths}` (default: the project's declared pytest
        `testpaths`, else `tests/` if present, else the run's `cwd`) and runs
        each in a TRUSTED GraalPy context via the built-in pytest shim.
@@ -322,10 +322,10 @@
        exist, and discovering nothing is NOT a pass. The project's declared
        import roots (a `src` layout) are on `sys.path`; installed third-party
        deps are NOT visible.
-     - \"project\" — shells the project interpreter's pytest
+     - `{environment \"project\"}` shells the project interpreter's pytest
        (`uv`/`poetry`/`.venv`/`python3` `-m pytest <paths>`) so installed test
-       deps ARE visible. Aliases: `{interpreter true}`.
-   Pass an opts map `{runner, paths, cwd}` (a bare code string is not accepted)."
+       dependencies are visible.
+   `runner` and `interpreter` remain private compatibility aliases."
   [env arg]
   (let
     [root
@@ -339,9 +339,16 @@
 
      runner
      (let
-       [r (str/lower-case
-            (str (or (get opts "runner") (when (get opts "interpreter") "project") "graalpy")))]
-       (if (contains? #{"project" "interpreter" "real" "system"} r) "project" "graalpy"))
+       [environment
+        (str/lower-case (str (or (get opts "environment") "")))
+
+        r
+        (str/lower-case
+          (str (or (get opts "runner") (when (get opts "interpreter") "project") "graalpy")))]
+
+       (if (or (= "project" environment) (contains? #{"project" "interpreter" "real" "system"} r))
+         "project"
+         "graalpy"))
 
      ;; The project interpreter reads the project's own config itself; only the
      ;; hermetic backend has to be taught the layout (one throwaway context).

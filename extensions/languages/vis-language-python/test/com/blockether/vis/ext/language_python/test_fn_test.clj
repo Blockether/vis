@@ -6,6 +6,7 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.ext.language-python.core :as core]
             [com.blockether.vis.ext.language-python.interpreter :as interp]
+            [com.blockether.vis.internal.foundation.language-surface :as language-surface]
             [com.blockether.vis.internal.process-jail :as process-jail]
             ;; side-effecting require: registers the built-in pytest shim so
             ;; `extension/sandbox-shims` can hand the runner its preamble.
@@ -87,10 +88,15 @@
                (expect (= 0 (get res "files")))
                (expect (= 0 (get res "passed"))))
              (finally (cleanup root)))))
-  (it "routes {interpreter true} to the project backend (not graalpy)"
-      ;; No project pytest is installed in CI, so we only assert the ROUTING:
-      ;; the project backend shells a process and returns a "project" runner tag
-      ;; with the resolved cmd — never the graalpy shape.
+  (it "exposes the generic project environment and routes it to project pytest"
+      (let
+        [environment-schema (get-in language-surface/test-symbol
+                                    [:ext.symbol/schema :properties "environment"])]
+        (expect (= ["project"] (:enum environment-schema)))
+        (expect (not (re-find #"(?i)python|graalpy|pytest|venv"
+                              (:description environment-schema)))))
+      ;; No project pytest is assumed in CI; assert routing from the public option
+      ;; to the project-process result shape rather than whether that suite passes.
       (when (has-python?)
         (let
           [root
@@ -106,7 +112,7 @@
                (let
                  [res (:result (core/py-test-fn {:workspace/root (.getPath root)
                                                  :session-id session-id}
-                                                {"interpreter" true}))]
+                                                {"environment" "project"}))]
                  (expect (= "project" (get res "runner")))
                  (expect (vector? (get res "cmd")))
                  (expect (some #{"-m" "pytest"} (get res "cmd"))))

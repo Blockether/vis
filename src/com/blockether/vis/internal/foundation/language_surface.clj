@@ -1060,11 +1060,11 @@
                "exclude" {:type "array" :items {:type "string"} :description "Skipped tags."}
                "cwd" {:type "string" :description "Project dir; root default."}
                "filter" {:type "string" :description "Name filter if supported."}
-               "runner" {:type "string"
-                         :description
-                         (str "Pack-specific backend. python: `graalpy` (default, hermetic) "
-                              "or `project` (shells the project interpreter's pytest, so "
-                              "installed deps are visible).")}}
+               "environment"
+               {:type "string"
+                :enum ["project"]
+                :description
+                "Execution environment when supported; `project` uses the project's managed toolchain and dependencies."}}
               :required ["language"]
               :additionalProperties false}
      :inject-env? true
