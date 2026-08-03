@@ -104,10 +104,18 @@ def _expand(path):
 
 
 def _load(path, size, index=None):
+    # The host resolves a font by FILE, so a family we do not actually have on
+    # disk must LOSE the probe in `font` instead of silently answering with the
+    # fallback face.
+    import os as _os
+
+    resolved = _expand(path)
+    if not _os.path.exists(resolved):
+        return None
     try:
         if index is None:
-            return ImageFont.truetype(_expand(path), size)
-        return ImageFont.truetype(_expand(path), size, index=index)
+            return ImageFont.truetype(resolved, size)
+        return ImageFont.truetype(resolved, size, index=index)
     except Exception:
         return None
 

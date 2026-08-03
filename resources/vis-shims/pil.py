@@ -1238,6 +1238,12 @@ def __vis_install_pil__():
     Image_mod.Transpose = Transpose
     Image_mod.__version__ = "10.0-vis-imaging"
 
+    def _fontname(font):
+        # What `ImageFont.truetype` was handed -- a font file path or a family
+        # name. The host resolves it against the shared font database; an empty
+        # string means "whatever the host falls back to".
+        return str(getattr(font, "path", "") or "")
+
     # -- ImageDraw -----------------------------------------------------------
     class _Draw:
         def __init__(self, im, mode=None):
@@ -1372,8 +1378,8 @@ def __vis_install_pil__():
             self._emit(
                 "text",
                 xy,
-                ("fill", "font_size", "text"),
-                (_packcol(fill), int(size), str(text)),
+                ("fill", "font_size", "font", "text"),
+                (_packcol(fill), int(size), _fontname(font), str(text)),
             )
 
         def multiline_text(self, xy, text, fill=None, font=None, spacing=4, **kw):
@@ -1384,18 +1390,18 @@ def __vis_install_pil__():
 
         def textbbox(self, xy, text, font=None, **kw):
             size = getattr(font, "size", 12) if font is not None else 12
-            b = _lst(_H("__vis_pil_textbbox__", str(text), int(size)))
+            b = _lst(_H("__vis_pil_textbbox__", str(text), int(size), _fontname(font)))
             x, y = xy[0], xy[1]
             return (x + b[0], y + b[1], x + b[2], y + b[3])
 
         def textlength(self, text, font=None, **kw):
             size = getattr(font, "size", 12) if font is not None else 12
-            b = _lst(_H("__vis_pil_textbbox__", str(text), int(size)))
+            b = _lst(_H("__vis_pil_textbbox__", str(text), int(size), _fontname(font)))
             return b[2] - b[0]
 
         def textsize(self, text, font=None, **kw):
             size = getattr(font, "size", 12) if font is not None else 12
-            b = _lst(_H("__vis_pil_textbbox__", str(text), int(size)))
+            b = _lst(_H("__vis_pil_textbbox__", str(text), int(size), _fontname(font)))
             return (b[2] - b[0], b[3] - b[1])
 
         def regular_polygon(
@@ -1498,27 +1504,27 @@ def __vis_install_pil__():
 
     # -- ImageFont -----------------------------------------------------------
     class _Font:
-        def __init__(self, size=10, name="SansSerif"):
+        def __init__(self, size=10, name=""):
             self.size = int(size)
             self.path = name
 
         def getbbox(self, text, *a, **k):
-            b = _lst(_H("__vis_pil_textbbox__", str(text), int(self.size)))
+            b = _lst(_H("__vis_pil_textbbox__", str(text), int(self.size), self.path))
             return (b[0], b[1], b[2], b[3])
 
         def getsize(self, text, *a, **k):
-            b = _lst(_H("__vis_pil_textbbox__", str(text), int(self.size)))
+            b = _lst(_H("__vis_pil_textbbox__", str(text), int(self.size), self.path))
             return (b[2] - b[0], b[3] - b[1])
 
         def getlength(self, text, *a, **k):
-            b = _lst(_H("__vis_pil_textbbox__", str(text), int(self.size)))
+            b = _lst(_H("__vis_pil_textbbox__", str(text), int(self.size), self.path))
             return b[2] - b[0]
 
     ImageFont = types.ModuleType("PIL.ImageFont")
     ImageFont.FreeTypeFont = _Font
     ImageFont.ImageFont = _Font
     ImageFont.truetype = lambda font=None, size=10, *a, **k: _Font(
-        size, str(font) if font else "SansSerif"
+        size, str(font) if font else ""
     )
     ImageFont.load_default = lambda size=None: _Font(size or 10)
     ImageFont.load = lambda filename: _Font(10, str(filename))

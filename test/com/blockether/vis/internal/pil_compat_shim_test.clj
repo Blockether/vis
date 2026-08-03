@@ -619,3 +619,60 @@
           ;; reflective stores per pixel cost ~65 ms a flush, ~1.4 s for these cycles.
           ;; The inlined array store does the same conversion in ~1.2 ms.
           (expect (< ms 800) (str "20 draw/read cycles took " (long ms) " ms"))))))
+
+(defdescribe
+  pil-font-family-test
+  "The font a caller asks for reaches the host renderer. It used to be dropped at
+   the bridge -- every `draw.text` was painted in the fallback sans face at
+   whatever size was requested -- which is what made monospaced grid renders come
+   out letter-spaced and mangled."
+  (it "a monospace family measures every glyph at the same advance"
+      (with-python-context
+        (expect
+          (true?
+            (ev python-context
+                (str "from PIL import Image, ImageDraw, ImageFont\n"
+                     "d = ImageDraw.Draw(Image.new('RGB',(10,10),(0,0,0)))\n"
+                     "mono = ImageFont.truetype('Noto Sans Mono', 20)\n"
+                     "sans = ImageFont.truetype('Noto Sans', 20)\n"
+                     "(d.textlength('iiii', font=mono) == d.textlength('WWWW', font=mono)"
+                     " and d.textlength('iiii', font=sans) < d.textlength('WWWW', font=sans))"))))))
+  (it
+    "the requested family reaches the PIXELS, not just the measurement"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from PIL import Image, ImageDraw, ImageFont\n" "def ink(family):\n"
+              "    im = Image.new('RGB',(240,48),(0,0,0))\n" "    d = ImageDraw.Draw(im)\n"
+              "    d.text((4,4), 'iiiiii', font=ImageFont.truetype(family, 24), fill=(255,255,255))\n"
+              "    b = im.getbbox()\n"
+              "    return b[2] - b[0]\n" "ink('Noto Sans Mono') > ink('Noto Sans') + 4"))))))
+  (it "a -Bold face is rendered bold, weight read off the font name"
+      (with-python-context
+        (expect
+          (true? (ev python-context
+                     (str "from PIL import Image, ImageDraw, ImageFont\n"
+                          "d = ImageDraw.Draw(Image.new('RGB',(10,10),(0,0,0)))\n"
+                          "reg = ImageFont.truetype('NotoSans-Regular.ttf', 20)\n"
+                          "bold = ImageFont.truetype('NotoSans-Bold.ttf', 20)\n"
+                          "d.textlength('Hello', font=bold) > d.textlength('Hello', font=reg)"))))))
+  (it "an unknown font falls back instead of failing"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "from PIL import Image, ImageDraw, ImageFont\n"
+                                "im = Image.new('RGB',(120,40),(0,0,0))\n"
+                                "d = ImageDraw.Draw(im)\n"
+                                "f = ImageFont.truetype('/no/such/dir/Totally-Unknown.ttf', 20)\n"
+                                "d.text((2,2), 'vis', font=f, fill=(255,255,255))\n"
+                                "d.textlength('vis', font=f) > 0 and im.getbbox() is not None"))))))
+  (it "no font at all still measures and paints, exactly as before"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "from PIL import Image, ImageDraw\n"
+                                "im = Image.new('RGB',(120,40),(0,0,0))\n"
+                                "d = ImageDraw.Draw(im)\n"
+                                "d.text((2,2), 'vis', fill=(255,255,255))\n"
+                                "d.textlength('vis') > 0 and im.getbbox() is not None")))))))

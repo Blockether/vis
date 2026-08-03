@@ -1675,8 +1675,100 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private sans-family
-  "The one font `imaging` renders text with (embedded; no system font lookup)."
+  "Fallback face. Text used to be PINNED to it -- the font a caller asked for
+   never crossed the bridge -- so every render came out in sans at whatever size
+   was requested. Now it is only what an unresolvable request falls back to."
   "Noto Sans")
+
+(def ^:private font-weight-words
+  "Weight words a font FILE name or family name carries, longest first so
+   `extrabold` is never read as `bold`. A PIL font object has no weight of its
+   own, so this name is the only place a `-Bold` face announces itself."
+  [["extrablack" 950] ["ultrablack" 950] ["extrabold" 800] ["ultrabold" 800] ["extralight" 200]
+   ["ultralight" 200] ["semibold" 600] ["demibold" 600] ["semilight" 350] ["heavy" 900]
+   ["black" 900] ["bold" 700] ["medium" 500] ["light" 300] ["thin" 100]])
+
+(defn- font-key
+  "Families compare on letters and digits only: `JetBrainsMono-Bold.ttf` and
+   `JetBrains Mono` name the same face."
+  [s]
+  (str/replace (str/lower-case (str s)) #"[^a-z0-9]+" ""))
+
+(def ^:private family-index
+  "font-key -> family, over every family the shared database knows."
+  (delay (into {}
+               (map (fn [f]
+                      [(font-key f) f]))
+               (im/fonts))))
+
+(defonce ^:private font-cache (atom {}))
+
+(defn- font-file-families
+  "Register a real font FILE with the shared database (once per path) and answer
+   the families it provided; `nil` when the spec is not a readable font file."
+  [^String spec]
+  (when (re-find #"(?i)\.(ttf|otf|ttc)$" spec)
+    (let [f (java.io.File. spec)]
+      (when (.isFile f) (try (seq (im/register-font! f)) (catch Throwable _ nil))))))
+
+(defn- font-family-named
+  "The database family this name means, tolerating punctuation and a trailing
+   weight/style word (`Noto Sans Bold` -> `Noto Sans`)."
+  [s]
+  (let
+    [idx
+     @family-index
+
+     k
+     (font-key s)]
+
+    (or (get idx k)
+        (get idx
+             (reduce (fn [acc w]
+                       (str/replace acc w ""))
+                     k
+                     (into ["italic" "oblique"] (map first) font-weight-words))))))
+
+(defn- resolve-font*
+  [^String spec]
+  (let
+    [stem
+     (str/replace (or (peek (str/split spec #"[/\\]")) spec) #"(?i)\.(ttf|otf|ttc)$" "")
+
+     lower
+     (str/lower-case stem)
+
+     weight
+     (some (fn [[w n]]
+             (when (str/includes? lower w) n))
+           font-weight-words)
+
+     italic
+     (boolean (re-find #"italic|oblique" lower))
+
+     family
+     (or (first (font-file-families spec)) (font-family-named stem) sans-family)]
+
+    (cond-> {:family family}
+      weight
+      (assoc :weight weight)
+
+      italic
+      (assoc :italic true))))
+
+(defn- resolve-font
+  "PIL hands the host whatever `ImageFont.truetype` was given: a font FILE path
+   or a family name. A file is registered with the shared font database and
+   answers its real families; a name is matched against the database; anything
+   else falls back to `sans-family`. Weight and italic are read off the name."
+  [spec]
+  (let [s (str/trim (str (or spec "")))]
+    (if (str/blank? s)
+      {:family sans-family}
+      (or (get @font-cache s)
+          (let [resolved (resolve-font* s)]
+            (swap! font-cache assoc s resolved)
+            resolved)))))
 
 (defn- draw-img
   "The live cdylib image backing this handle's draw run, created on first draw
@@ -1889,15 +1981,24 @@
          pts
 
          size
-         (double (or (get opts "font_size") 12))]
+         (double (or (get opts "font_size") 12))
 
-        [{:op :text
-          :text (str (get opts "text"))
-          :x x
-          :y (+ (double y) (Math/round (* 0.8 size)))
-          :size size
-          :family sans-family
-          :fill (or fc (->hex (->argb [0 0 0] "RGB")))}])
+         {:keys [family weight italic]}
+         (resolve-font (get opts "font"))]
+
+        [(cond->
+           {:op :text
+            :text (str (get opts "text"))
+            :x x
+            :y (+ (double y) (Math/round (* 0.8 size)))
+            :size size
+            :family family
+            :fill (or fc (->hex (->argb [0 0 0] "RGB")))}
+           weight
+           (assoc :weight weight)
+
+           italic
+           (assoc :italic true))])
 
       nil)))
 
@@ -1991,8 +2092,19 @@
     nil))
 
 (defn- op-textbbox
-  [text size]
-  (let [m (im/text-measure {:text (str text) :size (double size) :family sans-family})]
+  [text size font]
+  (let
+    [{:keys [family weight italic]}
+     (resolve-font font)
+
+     m
+     (im/text-measure (cond-> {:text (str text) :size (double size) :family family}
+                        weight
+                        (assoc :weight weight)
+
+                        italic
+                        (assoc :italic true)))]
+
     [0 0 (long (Math/ceil (double (:width m 0)))) (long (Math/round (* 1.2 (double size))))]))
 
 ;; ---------------------------------------------------------------------------
@@ -2083,8 +2195,8 @@
                         (pil-envelope #(op-draw h op xy opts)))
    "__vis_pil_draws__" (fn [batch]
                          (pil-envelope #(op-draws batch)))
-   "__vis_pil_textbbox__" (fn [text size]
-                            (pil-envelope #(op-textbbox text size)))
+   "__vis_pil_textbbox__" (fn [text size font]
+                            (pil-envelope #(op-textbbox text size font)))
    "__vis_pil_offset__" (fn [h dx dy]
                           (pil-envelope #(op-offset h dx dy)))
    "__vis_pil_alpha_composite__" (fn [d s dx dy]
