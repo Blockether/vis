@@ -184,3 +184,24 @@ export function Spinner({ className = '' }: { className?: string }) {
     </span>
   );
 }
+
+/**
+ * A live count that rides INSIDE another label — a scope chip, a machine row.
+ *
+ * The strip used to paint the number and a `●` glyph as one text run: the glyph
+ * carries its own metrics and drops below the digits' optical centre, so the
+ * green pair read as one smudged token hanging low in a chip whose every other
+ * part is centred. There is no room for the word "live" beside a machine name,
+ * so the count is PARENTHESISED instead: brackets in the host's own ink, the
+ * number in green. It is nothing but text, so it sits on the label's baseline by
+ * construction, and colour is what still says "live" — with the word itself kept
+ * for anyone who cannot see the colour.
+ */
+export function LiveTally({ count }: { count: number }) {
+  return (
+    <span className="whitespace-nowrap">
+      (<span className="font-bold text-ok">{count}</span>)
+      <span className="sr-only"> live</span>
+    </span>
+  );
+}

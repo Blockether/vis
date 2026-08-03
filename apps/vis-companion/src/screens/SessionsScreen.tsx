@@ -1,6 +1,6 @@
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { Banner, Button, DialogFrame, Input, Spinner } from '../components/ui';
+import { Banner, Button, DialogFrame, Input, LiveTally, Spinner } from '../components/ui';
 import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { GatewayConn, Session, SessionUsage, WorkspaceDraft } from '../lib/types';
@@ -765,8 +765,14 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                           <span className="px-1 opacity-40">·</span>
                           {totals.all} {totals.all === 1 ? 'session' : 'sessions'}
                         </span>
-                        <span className={`whitespace-nowrap ${totals.live > 0 ? 'font-bold text-ok' : ''}`}>
-                          {totals.live > 0 ? '●' : '○'} {totals.live} live
+                        {/* No glyph here either: on a header LINE the word
+                            "live" already says what the number is, and the `●`
+                            only added a mark that hung below the digits beside
+                            it. Green is the whole signal. */}
+                        <span
+                          className={`whitespace-nowrap ${totals.live > 0 ? 'font-bold text-ok' : ''}`}
+                        >
+                          {totals.live} live
                         </span>
                         {totals.unread > 0 && (
                           <span
@@ -853,7 +859,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
               onClick={() => selectScope(null)}
             >
               All
-              {fleetLive > 0 && <span className="font-bold text-ok">{fleetLive}●</span>}
+              {fleetLive > 0 && <LiveTally count={fleetLive} />}
             </button>
             {machines.map((machine) => {
               const key = machineKey(machine.conn);
@@ -871,9 +877,12 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                     <span className="opacity-70">offline</span>
                   ) : (
                     <>
-                      {!!tally?.live && <span className="font-bold text-ok">{tally.live}●</span>}
+                      {!!tally?.live && <LiveTally count={tally.live} />}
                       {!!tally?.unread && (
-                        <span className="font-bold text-accent-ink">{tally.unread}</span>
+                        <span className="font-bold text-accent-ink">
+                          {tally.unread}
+                          <span className="sr-only"> unread</span>
+                        </span>
                       )}
                     </>
                   )}
