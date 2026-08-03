@@ -71,6 +71,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- fix(native-image): the native binary no longer aborts with "Cannot reflectively
+  invoke constructor 'public java.math.BigInteger(java.lang.String)'". Loading any
+  YAML document that contains a plain integer runs
+  `yamlstar.numbers/parse-safe-integer`, i.e. `clojure.core/bigint` on the raw
+  scalar STRING, and that ends in an untyped `(BigInteger. x)` — a
+  `clojure.lang.Reflector` call the image had no metadata for, so `vis doctor`,
+  `vis sessions list`, `vis providers status` and one-shot prompts died on startup
+  in every workspace but the vis repository root. vis's own
+  `reachability-metadata.json` now registers `BigInteger(String)` plus the
+  `BigInteger(String,int)` that `clojure.tools.reader` uses for integer literals,
+  and `com.blockether.vis.native-reachability-test` pins both.
+
 - fix(drafts): `/draft apply` no longer deletes the trees the fork never copied.
   Since rift 0.0.10-8 a clone is gitignore-aware, so every ignored path (and every
   regenerable artifact directory such as `dist`, `build`, `coverage`, or a

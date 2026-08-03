@@ -23,6 +23,24 @@
           ]
         }
       ]
+    },
+    {
+      "type": "java.math.BigInteger",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String",
+            "int"
+          ]
+        }
+      ]
     }
   ],
   "resources": [
