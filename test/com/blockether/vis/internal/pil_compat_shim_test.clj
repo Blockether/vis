@@ -542,3 +542,44 @@
               "symbols = [BitmapImage, getimage, Dib, HDC, Window, toqimage, toqpixmap, Viewer, register]\n"
               "try:\n    Dib()\nexcept NotImplementedError as error:\n    unavailable = 'PIL.ImageWin.Dib' in str(error)\n"
               "all(callable(symbol) for symbol in symbols) and unavailable")))))))
+
+(defdescribe
+  pil-draw-batching-test
+  "A run of consecutive ImageDraw ops shares ONE live cdylib image; the pixels are
+   flushed back into the host raster before any other op reads them."
+  (it "consecutive draws accumulate and interleave with pixel reads"
+      (with-python-context
+        (expect (= [[255 0 0] [0 255 0] [0 0 255] [0 0 0]]
+                   (ev python-context
+                       (str "from PIL import Image, ImageDraw\n"
+                            "im = Image.new('RGB',(20,20),(0,0,0))\n" "d = ImageDraw.Draw(im)\n"
+                            "d.point((1,1), fill=(255,0,0))\n" "d.point((2,2), fill=(0,255,0))\n"
+                            "d.rectangle([5,5,6,6], fill=(0,0,255))\n"
+                            "[list(im.getpixel(p)) for p in [(1,1),(2,2),(5,5),(0,0)]]"))))))
+  (it "pending draws are flushed for copy / tobytes / save"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "from PIL import Image, ImageDraw\n"
+                                "im = Image.new('RGB',(4,4),(0,0,0))\n" "d = ImageDraw.Draw(im)\n"
+                                "d.rectangle([0,0,3,3], fill=(1,2,3))\n" "c = im.copy()\n"
+                                "list(c.getpixel((2,2))) == [1,2,3] "
+                                "and im.tobytes()[:3] == bytes([1,2,3])"))))))
+  (it "a run of draws does not pay a whole-canvas conversion per op"
+      (with-python-context
+        (let
+          [t0
+           (System/nanoTime)
+
+           painted
+           (ev python-context
+               (str "from PIL import Image, ImageDraw\n" "im = Image.new('RGB',(800,600),(0,0,0))\n"
+                    "d = ImageDraw.Draw(im)\n" "for i in range(200):\n"
+                    "    d.point((i,i), fill=(255,255,255))\n" "list(im.getpixel((199,199)))"))
+
+           ms
+           (/ (- (System/nanoTime) t0) 1e6)]
+
+          (expect (= [255 255 255] painted))
+          ;; Converting the 480k-pixel canvas in and out per op cost ~80 ms each
+          ;; -- about 16 s for this loop -- before the draw run was batched.
+          (expect (< ms 5000) (str "200 draws took " (long ms) " ms"))))))

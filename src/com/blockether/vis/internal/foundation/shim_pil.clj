@@ -35,6 +35,15 @@
 
 (defonce ^:private counter (atom 0))
 
+;; Live draw runs: handle -> the cdylib image a run of consecutive ImageDraw ops
+;; shares. Converting the whole canvas into the cdylib and back on EVERY op is
+;; O(pixels) per op, which made character-by-character text rendering crawl;
+;; keeping the image live turns a run of N ops into ONE conversion. `entry`
+;; flushes it back into the raster before any other op observes the pixels.
+(defonce ^:private live-draws (atom {}))
+
+(declare flush-draws! take-draw!)
+
 ;; ---------------------------------------------------------------------------
 ;; The raster. `getRGB`/`setRGB`/`getWidth`/`getHeight` keep exactly the
 ;; BufferedImage shape the pixel algorithms below were written against:
@@ -62,9 +71,20 @@
     (swap! registry assoc h {:img img :mode mode})
     h))
 
-(defn- entry [h] (get @registry (long h)))
+(defn- raw-entry
+  "Registry entry WITHOUT flushing an in-flight draw run. Only the draw path,
+   which owns that run, may read an entry this way."
+  [h]
+  (get @registry (long h)))
 
-(defn- free-img! [h] (swap! registry dissoc (long h)) nil)
+(defn- entry [h] (flush-draws! h) (raw-entry h))
+
+(defn- free-img!
+  [h]
+  (some-> (take-draw! h)
+          im/close!)
+  (swap! registry dissoc (long h))
+  nil)
 
 ;; ---------------------------------------------------------------------------
 ;; Pixel / colour helpers. Pixels are handled as packed 0xAARRGGBB longs.
@@ -143,83 +163,83 @@
   ^String [^long p]
   (format "#%02x%02x%02x%02x" (ch p 16) (ch p 8) (ch p 0) (ch p 24)))
 
+(defn- raster->rgba
+  "A raster's pixels as straight RGBA8 rows -- the shape the cdylib takes for both
+   drawing and GIF frames. A flat scan over the backing `int[]`: drawing converts
+   the WHOLE canvas, so a per-pixel `getRGB`/`setRGB` here is felt as lag."
+  ^bytes [^Raster r]
+  (let
+    [^ints px
+     (.px r)
+
+     amask
+     (.amask r)
+
+     n
+     (alength px)
+
+     b
+     (byte-array (* 4 n))]
+
+    (dotimes [i n]
+      (let
+        [p (bit-or amask (bit-and 0xffffffff (aget px i)))
+         o (* 4 i)]
+
+        (aset-byte b o (unchecked-byte (ch p 16)))
+        (aset-byte b (+ o 1) (unchecked-byte (ch p 8)))
+        (aset-byte b (+ o 2) (unchecked-byte (ch p 0)))
+        (aset-byte b (+ o 3) (unchecked-byte (ch p 24)))))
+    b))
+
 (defn- ->img
   "A live `imaging` image holding this raster's pixels (straight RGBA8)."
   [^Raster r]
+  (im/from-pixels (raster->rgba r) (.getWidth r) (.getHeight r)))
+
+(defn- rgba->px!
+  "Overwrite a raster's pixels from straight RGBA8 rows, IN PLACE, and return it."
+  ^Raster [^Raster r ^bytes b]
   (let
-    [w
-     (.getWidth r)
+    [^ints px
+     (.px r)
 
-     h
-     (.getHeight r)
+     n
+     (alength px)]
 
-     b
-     (byte-array (* 4 w h))]
-
-    (dotimes [y h]
-      (dotimes [x w]
-        (let
-          [p (.getRGB r x y)
-           o (* 4 (+ (* y w) x))]
-
-          (aset-byte b o (unchecked-byte (ch p 16)))
-          (aset-byte b (+ o 1) (unchecked-byte (ch p 8)))
-          (aset-byte b (+ o 2) (unchecked-byte (ch p 0)))
-          (aset-byte b (+ o 3) (unchecked-byte (ch p 24))))))
-    (im/from-pixels b w h)))
-
-(defn- raster->rgba
-  "A raster's pixels as straight RGBA8 rows (the cdylib's GIF frame shape)." ; the cdylib owns palette quantization now, so animation frames cross as full-canvas RGBA8.
-  ^bytes [^Raster r]
-  (let
-    [w
-     (.getWidth r)
-
-     h
-     (.getHeight r)
-
-     b
-     (byte-array (* 4 w h))]
-
-    (dotimes [y h]
-      (dotimes [x w]
-        (let
-          [p (.getRGB r x y)
-           o (* 4 (+ (* y w) x))]
-
-          (aset-byte b o (unchecked-byte (ch p 16)))
-          (aset-byte b (+ o 1) (unchecked-byte (ch p 8)))
-          (aset-byte b (+ o 2) (unchecked-byte (ch p 0)))
-          (aset-byte b (+ o 3) (unchecked-byte (ch p 24))))))
-    b))
+    (dotimes [i n]
+      (let [o (* 4 i)]
+        (aset px
+              i
+              (unchecked-int (argb (bit-and (aget b (+ o 3)) 0xff)
+                                   (bit-and (aget b o) 0xff)
+                                   (bit-and (aget b (+ o 1)) 0xff)
+                                   (bit-and (aget b (+ o 2)) 0xff))))))
+    r))
 
 (defn- ->raster
   "An `imaging` image's pixels as a raster in `mode`."
   ^Raster [img mode]
-  (let
-    [w
-     (im/width img)
+  (let [{:keys [width height]} (im/info img)]
+    (rgba->px! (new-raster mode (long width) (long height)) (im/pixels img))))
 
-     h
-     (im/height img)
+(defn- take-draw!
+  "Detach this handle's in-flight draw image, if any."
+  [h]
+  (let [k (long h)]
+    (when-let [img (get @live-draws k)]
+      (swap! live-draws dissoc k)
+      img)))
 
-     ^bytes b
-     (im/pixels img)
-
-     out
-     (new-raster mode w h)]
-
-    (dotimes [y h]
-      (dotimes [x w]
-        (let [o (* 4 (+ (* y w) x))]
-          (.setRGB out
-                   x
-                   y
-                   (argb (bit-and (aget b (+ o 3)) 0xff)
-                         (bit-and (aget b o) 0xff)
-                         (bit-and (aget b (+ o 1)) 0xff)
-                         (bit-and (aget b (+ o 2)) 0xff))))))
-    out))
+(defn- flush-draws!
+  "Write a handle's in-flight draw image back into its raster and close it, so
+   every other op reads pixels that already include the drawing."
+  [h]
+  (when-let [img (take-draw! h)]
+    (try (when-let [^Raster r (:img (raw-entry h))]
+           (rgba->px! r (im/pixels img)))
+         (finally (im/close! img))))
+  nil)
 
 (defn- img->mode
   "Pillow's `mode` for a just-opened file.
@@ -1640,23 +1660,23 @@
   "The one font `imaging` renders text with (embedded; no system font lookup)."
   "Noto Sans")
 
-(defn- draw-into!
-  "Run a batch of `imaging` draw ops against this raster, IN PLACE. Vector
-   drawing lives in the cdylib (tiny-skia), so the raster round-trips through a
-   live image for the duration of the batch."
-  [^Raster r ops]
-  (let [src (->img r)]
-    (try (im/draw! src (vec ops))
-         (let
-           [out (->raster src (if (has-alpha? r) "RGBA" "RGB"))
-            w (.getWidth r)
-            h (.getHeight r)]
+(defn- draw-img
+  "The live cdylib image backing this handle's draw run, created on first draw
+   and reused by the ops that follow."
+  [h ^Raster r]
+  (or (get @live-draws (long h))
+      (let [img (->img r)]
+        (swap! live-draws assoc (long h) img)
+        img)))
 
-           (dotimes [y h]
-             (dotimes [x w]
-               (.setRGB r x y (.getRGB out x y)))))
-         (finally (im/close! src)))
-    nil))
+(defn- draw-into!
+  "Run a batch of `imaging` draw ops against this handle's raster. Vector drawing
+   lives in the cdylib (tiny-skia), so the pixels round-trip through a live image
+   -- one that STAYS live until another op reads the raster, so a run of draws
+   (per-character text, say) pays ONE canvas conversion instead of one per op."
+  [h ^Raster r ops]
+  (im/draw! (draw-img h r) (vec ops))
+  nil)
 
 (defn- arc-path
   "SVG path data for a PIL arc/chord/pieslice over the bounding box
@@ -1717,7 +1737,9 @@
   [h op xy opts]
   (let
     [{:keys [^Raster img]}
-     (entry h)
+     ;; NOT `entry`: this op owns the in-flight draw run, so flushing here would
+     ;; undo the batching.
+     (raw-entry h)
 
      pts
      (mapv double xy)
@@ -1865,7 +1887,7 @@
 
        nil)]
 
-    (when (seq ops) (draw-into! img ops))
+    (when (seq ops) (draw-into! h img ops))
     nil))
 
 (defn- op-textbbox
