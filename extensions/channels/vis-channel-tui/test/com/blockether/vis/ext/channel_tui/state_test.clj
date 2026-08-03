@@ -2370,6 +2370,127 @@
           (expect (= 1 (count (rows acked))))
           (expect (= "t-9" (:turn-id acked-row)))
           (expect (nil? (:awaiting-ack? acked-row))))))
+  (it "lets a DELIBERATE repeat queue again — only the same KEYPRESS is dropped"
+      ;; The guard has to stay NARROW. The submit path clears the editor on Enter
+      ;; unconditionally, so swallowing a submission deletes the user's text with nothing
+      ;; on screen to explain it — the same invisibility that caused the double queue,
+      ;; pointed the other way. Repeating yourself ("continue", "yes", the same nudge) is
+      ;; ordinary once the first row is visible and acked, and must go out.
+      (let
+        [enqueue-fn
+         (-> #'state/event-registry
+             deref
+             deref
+             (get :enqueue-message)
+             :fn)
+
+         db
+         {:active-tab-id :b
+          :input-history []
+          :pastes {}
+          :paste-counter 0
+          :tab-locals {:a {:session {:id "a"}
+                           :loading? true
+                           ;; acked long ago: turn id bound, nothing in flight
+                           :pending-sends [{:text "continue"
+                                            :client-id "c-1"
+                                            :turn-id "t-1"
+                                            :mine? true
+                                            :queued-at-ms (- (System/currentTimeMillis) 60000)}]
+                           :input-history []
+                           :pastes {}
+                           :paste-counter 0}}}
+
+         result
+         (enqueue-fn db [:enqueue-message "continue" :a])]
+
+        (expect (= 1 (count (filterv #(= :gateway-enqueue (first %)) (:fx result)))))
+        (expect (= ["continue" "continue"]
+                   (mapv :text (get-in result [:db :tab-locals :a :pending-sends]))))))
+  (it "SAYS so when it drops an identical keypress"
+      ;; A silent drop is indistinguishable from a swallowed message — exactly the bug
+      ;; this whole path exists to prevent. Suppression must be visible.
+      (let
+        [enqueue-fn
+         (-> #'state/event-registry
+             deref
+             deref
+             (get :enqueue-message)
+             :fn)
+
+         db
+         {:active-tab-id :b
+          :input-history []
+          :pastes {}
+          :paste-counter 0
+          :tab-locals {:a {:session {:id "a"}
+                           :loading? true
+                           :pending-sends
+                           [{:text "double tap" :client-id "c-1" :mine? true :awaiting-ack? true}]
+                           :input-history []
+                           :pastes {}
+                           :paste-counter 0}}}
+
+         result
+         (enqueue-fn db [:enqueue-message "double tap" :a])]
+
+        (expect (empty? (filterv #(= :gateway-enqueue (first %)) (:fx result))))
+        (expect (= 1 (count (get-in result [:db :tab-locals :a :pending-sends]))))
+        (expect (some #(= :notify (first %)) (:fx result)))))
+  (it "records a retraction the ack can act on, and infers NOTHING from a missing row"
+      ;; A cancel (`:restore-pending-to-input`) or `:clear-pending-sends` drops a row the
+      ;; gateway has not NAMED yet — its turn id is still being minted inside the open
+      ;; POST — so the delete has to wait for the ack, and the correlation id is recorded
+      ;; for it. Absence alone must never count as retraction: a row also vanishes when
+      ;; its TAB closes, and that path deliberately re-submits the text under the same
+      ;; idempotency key, so deleting there would destroy a message the user still wants.
+      (let
+        [retracted?
+         #'state/submission-retracted?
+
+         mark
+         #'state/mark-retracted
+
+         db
+         (fn [w]
+           {:active-tab-id :b :tab-locals {:a w}})]
+
+        (expect (false? (retracted? (db {:pending-sends []}) :a "c-1")))
+        (expect (true?
+                  (retracted? (db (mark {} [{:client-id "c-1" :awaiting-ack? true}])) :a "c-1")))
+        ;; a row the gateway already named is deleted by turn id, never recorded here
+        (expect (false? (retracted? (db (mark {} [{:client-id "c-1" :turn-id "t-1"}])) :a "c-1")))
+        ;; someone else's correlation id is not ours
+        (expect (false? (retracted? (db (mark {} [{:client-id "c-2"}])) :a "c-1")))
+        ;; no db proves nothing — never delete on a guess
+        (expect (false? (retracted? nil :a "c-1")))))
+  (it
+    "a cancel and an explicit clear both record their un-named rows as retracted"
+    ;; Through the real events: the row leaves the queue AND its correlation id is left
+    ;; behind, so the enqueue ack can delete the turn the gateway is about to name.
+    (let
+      [registry
+       (-> #'state/event-registry
+           deref
+           deref)
+
+       run
+       (fn [event-id db]
+         ((:fn (get registry event-id)) db [event-id :a]))
+
+       db
+       {:active-tab-id :a
+        :session {:id "s"}
+        :input (input/empty-input)
+        :input-history []
+        :pastes {}
+        :paste-counter 0
+        :pending-sends [{:text "take it back" :client-id "c-1" :mine? true :awaiting-ack? true}]}]
+
+      (doseq [event-id [:restore-pending-to-input :clear-pending-sends]]
+        (let [{db' :db} (run event-id db)]
+          (expect (= [] (vec (:pending-sends db'))))
+          (expect (= ["c-1"] (vec (:retracted-sends db'))))))))
   (it "never queues a submission while a cancel is in flight (:cancelling?)"
       ;; REGRESSION: pressing Esc to cancel, then typing a new message, parked that
       ;; message in the queue (`:pending-sends`) behind the turn being torn down —
@@ -3122,6 +3243,67 @@
                             nil))
           (expect (= 2 @calls))
           (expect (= ["t-same"] (mapv :turn-id (:pending-sends @state/app-db)))))))
+  (it "a session with NO id stages the row instead of leaving it awaiting an ack"
+      ;; `:awaiting-ack?` is what tells `:drain-pending` to leave the head alone. If the
+      ;; fx just returned when there is no session to POST to, that flag would stay set
+      ;; forever: a row that says "Queued", never sends, and wedges every message queued
+      ;; behind it. Staging locally is the only exit that keeps the queue alive.
+      (with-redefs
+        [vis/notify! (fn [& _]
+                       nil)]
+        (reset! state/app-db
+          {:session {}
+           :active-tab-id :main
+           :render-version 0
+           :loading? true
+           :pending-sends [{:text "orphan" :client-id "cid-x" :mine? true :awaiting-ack? true}]})
+        ((get @@#'state/fx-registry :gateway-enqueue)
+          :main
+          {}
+          {:text "orphan" :agent-text "orphan" :client-id "cid-x" :mine? true}
+          nil
+          nil
+          {}
+          nil)
+        (let [row (first (:pending-sends @state/app-db))]
+          (expect (= "orphan" (:text row)))
+          (expect (true? (:unsent? row)))
+          (expect (nil? (:awaiting-ack? row))))))
+  (it "a submission RETRACTED mid-flight deletes the turn it was standing for"
+      ;; Cancelling pulls the row back into the editor and `:clear-pending-sends` drops
+      ;; it — but neither can delete a gateway record whose turn id did not exist yet, so
+      ;; the turn used to run anyway with nothing on screen that ever said it would. The
+      ;; ack settles it: no row, no turn.
+      (let [deleted (atom nil)]
+        (with-redefs
+          [vis/gateway-submit-turn! (fn [_ _]
+                                      {:turn {"turn_id" "t-gone" "status" "queued"}})
+           vis/gateway-delete-queued-turn! (fn [sid tid]
+                                             (reset! deleted [sid tid])
+                                             {:ok true})
+           vis/notify! (fn [& _]
+                         nil)]
+
+          ;; the row is already gone: the user took the message back mid-round-trip
+          (reset! state/app-db {:session {:id "c1"}
+                                :active-tab-id :main
+                                :render-version 0
+                                :loading? true
+                                :pending-sends []
+                                ;; the cancel/clear that removed the row left this behind
+                                :retracted-sends ["cid-gone"]})
+          (await-enqueue!
+            ((get @@#'state/fx-registry :gateway-enqueue)
+              :main
+              {:id "c1"}
+              {:text "take it back" :agent-text "take it back" :client-id "cid-gone" :mine? true}
+              nil
+              nil
+              {}
+              nil))
+          (expect (= ["c1" "t-gone"] @deleted))
+          ;; and nothing is painted back onto the screen
+          (expect (= [] (:pending-sends @state/app-db))))))
   (it "a submission the gateway never took is staged unsent AND drained, not orphaned"
       ;; Both halves of the rescue. The row is FLAGGED (the strip must not imply the
       ;; server has it), and the drain is nudged: the turn we queued behind may have
@@ -4089,13 +4271,16 @@
           (expect (= [[:unassign-session-project "busy"]] fx))))
     (it "a session with queued/pending sends is left alone"
         (let
-          [{:keys [fx]} (close-tab (base {:session {:id "queued"} :pending-sends [{:text "later"}]})
+          [{:keys [fx]} (close-tab (base {:session {:id "queued"}
+                                          :pending-sends [{:text "later" :client-id "c-later"}]})
                                    :main)]
           ;; Queued work prevents runtime/listener release; the authored-but-
           ;; unsubmitted sends are handed to the gateway (:submit-orphan-sends)
-          ;; instead of being dropped with the closing tab's :tab-locals.
+          ;; instead of being dropped with the closing tab's :tab-locals — carrying
+          ;; the correlation id, because a row still awaiting its ack may ALREADY be
+          ;; registered and must not queue the same text a second time.
           (expect (= [[:unassign-session-project "queued"]
-                      [:submit-orphan-sends "queued" ["later"]]]
+                      [:submit-orphan-sends "queued" [{:text "later" :client-id "c-later"}]]]
                      fx))))
     (it "closing the last remaining tab is a no-op (no release)"
         (let
