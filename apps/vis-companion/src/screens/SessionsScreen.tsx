@@ -1,6 +1,6 @@
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { Banner, Button, DialogFrame, Input, LiveTally, Spinner } from '../components/ui';
+import { Banner, Button, DialogFrame, Input, LiveTally, Spinner, UnreadBadge } from '../components/ui';
 import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { GatewayConn, Session, SessionUsage, WorkspaceDraft } from '../lib/types';
@@ -471,6 +471,13 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
     () => [...tallies.values()].reduce((sum, tally) => sum + tally.live, 0),
     [tallies],
   );
+  // Unscoped, the strip is the only place the fleet can say "something new
+  // arrived on a machine you are not looking at": without this the All chip
+  // counts what is running and stays silent about what is waiting.
+  const fleetUnread = useMemo(
+    () => [...tallies.values()].reduce((sum, tally) => sum + tally.unread, 0),
+    [tallies],
+  );
   const scopeMachine = scope
     ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
     : null;
@@ -860,6 +867,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
             >
               All
               {fleetLive > 0 && <LiveTally count={fleetLive} />}
+              <UnreadBadge count={fleetUnread} />
             </button>
             {machines.map((machine) => {
               const key = machineKey(machine.conn);
@@ -878,12 +886,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                   ) : (
                     <>
                       {!!tally?.live && <LiveTally count={tally.live} />}
-                      {!!tally?.unread && (
-                        <span className="font-bold text-accent-ink">
-                          {tally.unread}
-                          <span className="sr-only"> unread</span>
-                        </span>
-                      )}
+                      <UnreadBadge count={tally?.unread ?? 0} />
                     </>
                   )}
                 </button>
@@ -970,6 +973,12 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                             </span>
                             {!!tally?.live && (
                               <span className="font-bold text-ok">{tally.live} live</span>
+                            )}
+                            {/* A machine HEADER has room for the word, so it says it, exactly
+                                like the fleet line above: the filled badge is for the chips,
+                                where there is no room for anything but a number. */}
+                            {!!tally?.unread && (
+                              <span className="font-bold text-accent-ink">{tally.unread} unread</span>
                             )}
                           </>
                         )}

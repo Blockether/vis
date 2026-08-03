@@ -205,3 +205,28 @@ export function LiveTally({ count }: { count: number }) {
     </span>
   );
 }
+
+/**
+ * Unread is NOT a tally, it is a notification, so it must not join the live
+ * count's parentheses: `macbook (4) 3` puts two bare numbers side by side and
+ * nothing in the chip says which is which — the reader has to remember that
+ * green means live and amber means new.
+ *
+ * The session row already speaks this app's unread language: a FILLED amber
+ * block. The chip borrows it and drops the word, because a filled box aligns by
+ * its own box instead of by a glyph's metrics, and it is the only solid thing in
+ * a strip of outlined chips — exactly the weight a notification wants and the
+ * live count deliberately does not have.
+ *
+ * Nothing to report renders nothing at all, so a caller cannot paint an empty
+ * badge.
+ */
+export function UnreadBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span className="inline-flex items-center bg-accent px-1 font-mono text-chip font-bold text-accent-foreground">
+      {count}
+      <span className="sr-only"> unread</span>
+    </span>
+  );
+}
