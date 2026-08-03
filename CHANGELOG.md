@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- fix(drafts): `/draft apply` no longer deletes the trees the fork never copied.
+  Since rift 0.0.10-8 a clone is gitignore-aware, so every ignored path (and every
+  regenerable artifact directory such as `dist`, `build`, `coverage`, or a
+  virtualenv) is missing from the draft by construction — `deleted-paths` read that
+  absence as an agent deletion and `apply!` erased those files from the user's real
+  repository. Trunk paths the backend cannot have cloned are now excluded from the
+  deletion diff, and `resources/vis-docs/drafts.md` documents what a fork copies.
+
 ## [v0.1.25] - 2026-08-03
 
 ### Changed

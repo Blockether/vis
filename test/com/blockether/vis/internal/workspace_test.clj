@@ -585,7 +585,52 @@
                                                         0))
              (expect (= [] (ws/deleted-paths clone trunk 0)))
              (expect (= [] (ws/deleted-paths clone trunk -5)))
-             (finally (delete-tree! trunk) (delete-tree! clone))))))
+             (finally (delete-tree! trunk) (delete-tree! clone)))))
+  (it "a gitignored trunk tree the fork never cloned is NEVER an agent deletion"
+      (let
+        [trunk
+         (temp-dir "vis-ignguard-t")
+
+         clone
+         (temp-dir "vis-ignguard-c")]
+
+        (try (git! (io/file trunk) "init" "-q")
+             (spit (io/file trunk ".gitignore") "generated/\nsecret.env\n")
+             (.mkdirs (io/file trunk "generated"))
+             (spit (io/file trunk "generated/out.js") "REGENERABLE OUTPUT\n")
+             (spit (io/file trunk "secret.env") "TOKEN=keep-me\n")
+             (spit (io/file trunk "src.txt") "source\n")
+             (spit (io/file trunk "gone.txt") "the agent really deleted this\n")
+             ;; What a gitignore-aware CoW fork actually produces: every ignored
+             ;; path is absent from the clone because it was never copied.
+             (spit (io/file clone ".gitignore") "generated/\nsecret.env\n")
+             (spit (io/file clone "src.txt") "source\n")
+             (Thread/sleep 8)
+             (expect (= ["gone.txt"] (ws/deleted-paths clone trunk (System/currentTimeMillis))))
+             (finally (delete-tree! trunk) (delete-tree! clone)))))
+  (it
+    "a regenerable artifact tree the fork filters out is NEVER an agent deletion, even when git tracks it"
+    (let
+      [trunk
+       (temp-dir "vis-artguard-t")
+
+       clone
+       (temp-dir "vis-artguard-c")]
+
+      (try (git! (io/file trunk) "init" "-q")
+           (.mkdirs (io/file trunk "dist"))
+           (spit (io/file trunk "dist/bundle.js") "COMMITTED BUILD OUTPUT\n")
+           (.mkdirs (io/file trunk "apps/web/coverage"))
+           (spit (io/file trunk "apps/web/coverage/lcov.info") "nested report\n")
+           (spit (io/file trunk "src.txt") "source\n")
+           (git! (io/file trunk) "add" "-A")
+           (git! (io/file trunk) "-c" "user.email=t@t" "-c" "user.name=t" "commit" "-qm" "init")
+           ;; rift's built-in artifact list drops these names at any depth
+           ;; whatever git thinks of them, so the clone never had them.
+           (spit (io/file clone "src.txt") "source\n")
+           (Thread/sleep 8)
+           (expect (= [] (ws/deleted-paths clone trunk (System/currentTimeMillis))))
+           (finally (delete-tree! trunk) (delete-tree! clone))))))
 
 (defdescribe
   fresh-lineage-inheritance-test

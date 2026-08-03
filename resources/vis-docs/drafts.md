@@ -119,8 +119,23 @@ its label in the Draft column. `C-x e` opens the dedicated draft picker. Bare
 
 Creates and enters a draft forked from the **current workspace tree**. This is a
 filesystem snapshot of the root Vis is using, not an instruction to check out a
-clean Git `HEAD`. Existing working-tree content is therefore the source of the
-draft.
+clean Git `HEAD`. Existing working-tree content — including your uncommitted
+changes — is therefore the source of the draft.
+
+The fork is **gitignore-aware**. Whatever your repository ignores is not copied
+into the draft, and neither are regenerable artifact directories at any depth
+(`node_modules`, `target`, `dist`, `build`, `coverage`, `__pycache__`,
+virtualenvs, and framework caches such as `.next`, `.turbo`, or `.vite`) — even
+when your repository happens to track one. A file git tracks despite an ignore
+rule is still copied, and the repository itself (`.git`) is always copied.
+
+That is what makes forking a large repository fast: this repository clones about
+2,400 entries instead of about 20,000. Anything the draft needs but did not
+receive is regenerable — run the install or build inside the draft.
+
+Because those trees were never copied, Vis never reads their absence from the
+draft as a deletion: `/draft apply` leaves your real `node_modules`, build
+output, and ignored local files (`.env` and friends) exactly where they are.
 
 A label is required. Vis may add a numeric suffix when the corresponding draft
 directory name already exists; use the displayed label when resuming it.
@@ -141,8 +156,9 @@ pre-existing files merely because they are absent from the draft.
 Creates and enters a draft seeded from the **last commit**. Vis forks the tree as
 usual and then rewinds the copy to `HEAD`: every committed file is present at its
 committed content, and your uncommitted work — modified tracked files and new
-untracked ones — stays in your real project and is never copied in. Ignored
-build and dependency directories are left in place so the draft still builds.
+untracked ones — stays in your real project and is never copied in. As with
+`/draft new`, ignored and regenerable trees are not copied either, so a clean
+draft may have to regenerate its dependencies or build output.
 
 The repository must already have a commit; otherwise the command reports that
 there is nothing to start a clean draft from. The paths the seed left out are

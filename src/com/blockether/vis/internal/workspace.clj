@@ -745,6 +745,50 @@
             true
             (recur (inc i))))))))
 
+(def ^:private fork-artifact-dir-names
+  "Directory names a FILTERED CoW fork never copies, whatever git thinks of them:
+   the backend's built-in regenerable-artifact list (rift's `CopyFilter`, matched
+   at any depth). Only the DELETION side consults this. A tree the clone never
+   received must not read as an agent deletion — `apply!` would erase it from the
+   user's real repo — and skipping a path here can only ever leave a real file
+   alone, never destroy one."
+  #{"node_modules" ".pnpm-store" "target" ".venv" "venv" ".tox" ".nox" "__pycache__" ".pytest_cache"
+    ".mypy_cache" ".ruff_cache" ".next" ".nuxt" ".svelte-kit" ".turbo" ".vite" ".parcel-cache"
+    ".cache" "dist" "build" "coverage"})
+
+(defn- fork-artifact-path?
+  "True when any segment of the trunk-relative `rel` names a filtered-out
+   regenerable artifact tree."
+  [^Path rel]
+  (let [c (.getNameCount rel)]
+    (loop [i 0]
+      (cond (>= i c) false
+            (contains? fork-artifact-dir-names (str (.getName rel i))) true
+            :else (recur (inc i))))))
+
+(defn- fork-ignored-paths
+  "Repo-relative paths trunk's OWN repository ignores and does not track — exactly
+   what a gitignore-aware fork leaves out of the clone. The backend consults the
+   source repository's ignore rules and keeps every index-recorded path, so a
+   force-added ignored file IS cloned and is therefore not in this set. Whole
+   ignored directories come back collapsed (`dist/`, `apps/web/ios/`), so the walk
+   prunes the subtree on a hit instead of listing thousands of files.
+
+   These paths are absent from the clone BY CONSTRUCTION, never by the agent.
+   Without the guard, `apply!` reads every ignored tree the fork skipped as a
+   deletion and erases it from the user's real repo — local env files, generated
+   native projects, build output. Not a git repo (or git unavailable) → `#{}`,
+   which leaves the pre-existing behavior untouched."
+  [trunk]
+  (let [dir (io/file trunk)]
+    (if-not (.isDirectory (io/file dir ".git"))
+      #{}
+      (into #{}
+            (comp (map #(str/replace % #"/+$" "")) (remove str/blank?))
+            (git-lines dir
+                       ["-c" "core.quotePath=false" "ls-files" "--others" "--ignored"
+                        "--exclude-standard" "--directory"])))))
+
 (defn changed-paths
   "Repo-relative paths of files under `clone` whose mtime is newer than
    `fork-ms` — i.e. exactly what the agent touched since the fork
@@ -794,12 +838,19 @@
    unconditionally, whatever the trees contain. The hard exit (rather than
    relying on the `<` comparison alone) also keeps pathological trunk
    mtimes (epoch/pre-epoch, e.g. unpacked from a tarball) from ever
-   mtimes (epoch/pre-epoch, e.g. unpacked from a tarball) from ever
    comparing below the baseline into a real `.delete` of the user's files.
 
    Paths a CLEAN seed dropped (`clean-seed-skips`) are excluded too: the
    clone never received the user's UNCOMMITTED trunk files, so their absence
-   is the SEED's doing and applying it must not delete them from trunk."
+   is the SEED's doing and applying it must not delete them from trunk.
+
+   Paths the FORK itself never copied are excluded on the same principle. A
+   filtered CoW clone omits the source repository's ignored trees
+   (`fork-ignored-paths`) and the built-in regenerable artifact names
+   (`fork-artifact-path?`), so their absence from the clone is the BACKEND's
+   doing. Reading it as an agent deletion would let `apply!` erase a user's
+   ignored files — `.env`, a generated native project, build output — from
+   their real repo."
   [clone trunk fork-ms]
   (if-not (pos? (long fork-ms))
     []
@@ -817,13 +868,20 @@
        ;; Absent from the clone BY CONSTRUCTION, never by the agent.
        (clean-seed-skips clone)
 
+       ignored
+       (fork-ignored-paths trunk)
+
+       fork-omitted?
+       (fn [^Path rel]
+         (or (prune-dir? rel) (fork-artifact-path? rel) (contains? ignored (paths/unixify rel))))
+
        acc
        (java.util.ArrayList.)]
 
       (Files/walkFileTree troot
                           (proxy [SimpleFileVisitor] []
                             (preVisitDirectory [dir ^BasicFileAttributes _a]
-                              (if (prune-dir? (.relativize troot ^Path dir))
+                              (if (fork-omitted? (.relativize troot ^Path dir))
                                 FileVisitResult/SKIP_SUBTREE
                                 FileVisitResult/CONTINUE))
                             (visitFile [file ^BasicFileAttributes attrs]
@@ -835,7 +893,7 @@
                                  rel-str
                                  (paths/unixify rel)]
 
-                                (when (and (not (prune-dir? rel))
+                                (when (and (not (fork-omitted? rel))
                                            (not (contains? skips rel-str))
                                            (< (.toMillis (.lastModifiedTime attrs)) (long fork-ms))
                                            (not (Files/exists (.resolve croot rel) nofollow)))
