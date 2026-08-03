@@ -41,6 +41,10 @@ Read only the section relevant to the change. Keep this file for durable, repo-w
 - Tailwind v4 utilities only: no component CSS, CSS modules, CSS-in-JS, or inline styles. Use only `text-chip`, `text-meta`, `text-ui`, `text-body`, `text-title`, `text-subhead`, `text-head`, and `text-display`; no ad-hoc sizing or `leading-*`.
 - Verify UI work with `npm run lint` and `npm run build` in this directory.
 - Never edit generated `ios/` or `android/`. Put native behavior in the idempotent prepare scripts: `ios-prepare.mjs` removes legacy host stamping; `android-prepare.mjs` stamps Android capabilities.
+- **A machine owns its projects.** The sessions list is a fleet of paired gateways (`src/lib/fleet.ts`): machine → project → session, and the same repo checked out on two machines is two projects. Never merge rows by folder name across machines.
+- The scope chip strip answers "which machine", and it answers it once: scoping hides the machine headers, retitles the header, narrows every count, and pins "New session" to that gateway. With one machine paired the strip, the chips, and the machine count all disappear — the feature costs a solo user nothing.
+- "New session" is a split control. `newSessionTarget` is `null` only when several machines are in scope; then both halves open the same portal menu, which asks "Create the session on" BEFORE the draft question — a workspace only exists on a machine. Unreachable machines are never offered (`creatableMachines`).
+- One dead machine is a degraded section, not an error page (`fleetError`); but scoped to that machine its failure IS the screen (`scopeError`) — say "not answering", show the message and a Retry, and disable the create buttons instead of rendering "No sessions yet".
 
 ## Companion releases
 
@@ -91,6 +95,9 @@ UX proposals are **made in the app and photographed**, never described in prose.
 - **Look at the pixels, not at the file list.** Attach every shot with `vis_attach("/tmp/vis-ui/<name>.png")` and actually read it: that is how `state === 'filter'` against a registry declaring `'filtered'` was caught — three "different" states had produced byte-identical PNGs. `PIL.Image.paste` is not bound in this sandbox, so attach the raw PNGs individually instead of composing a contact sheet.
 - Give every design a state that can **falsify** it: the solo state (one machine paired, the whole concept must disappear) and a degraded state (a machine offline) are what expose a layout that only works in the demo.
 - The gallery is production code: `npm run typecheck`, `npm run lint`, and `npm run build` must be clean before it ships.
+- A design that survived the gallery is still unproven: shoot the SHIPPED screen against **real gateways** too. Point the dev server's connection list at live registry entries (`~/.vis/gateway/registry/*.edn`) with `spel storage local set CapacitorStorage.vis.connections '<json>'` (and the bare `vis.connections` key), include one unreachable URL, reload, and photograph the same states into `/tmp/vis-e2e/`. That is where "scoped to the offline machine" turned out to render `No sessions yet`.
+- Drive that browser by **`@ref` from `spel snapshot -i -c`**, not by `find role button --name`: name matching is a substring match, so `--name 'New session'` also matches `aria-label="Choose which machine the new session runs on"` and the ambiguous click silently does nothing. If a control has no name in the snapshot, that is a real accessibility bug — give it an `aria-label` instead of working around it.
+- When a click seems to do nothing, confirm it against `spel eval-js "…element.click()"` before blaming the app: the DOM path proves whether the handler or the locator is at fault. `spel console` dumps every entry ever captured — read `spel errors` instead.
 
 ## Shipping verified work
 

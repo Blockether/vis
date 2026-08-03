@@ -1,0 +1,148 @@
+import { describe, expect, it } from 'vitest';
+import {
+  creatableMachines,
+  fleetError,
+  isFleetLoaded,
+  machineCounts,
+  machineKey,
+  machineLabel,
+  newSessionTarget,
+  reconcileMachines,
+  scopedMachines,
+  scopeError,
+  scopedSessions,
+  type FleetMachine,
+} from './fleet';
+import type { GatewayConn, Session } from './types';
+
+const studio: GatewayConn = { url: 'http://studio.local:7890', label: 'studio' };
+const tower: GatewayConn = { url: 'http://tower.local:7890' };
+const vps: GatewayConn = { url: 'http://10.0.0.5:7890', label: 'vps-eu' };
+
+function session(id: string, extra: Partial<Session> = {}): Session {
+  return { id, title: id, ...extra };
+}
+
+function machine(conn: GatewayConn, sessions: Session[] | null, error: string | null = null): FleetMachine {
+  return { conn, sessions, error };
+}
+
+describe('machineLabel', () => {
+  it('prefers the pairing label and falls back to the host', () => {
+    expect(machineLabel(studio)).toBe('studio');
+    expect(machineLabel(tower)).toBe('tower.local:7890');
+    expect(machineLabel({ url: 'http://tower.local:7890', label: '   ' })).toBe('tower.local:7890');
+  });
+});
+
+describe('reconcileMachines', () => {
+  it('keeps loaded rows across a re-pair, drops removed machines, blanks new ones', () => {
+    const loaded = machine(studio, [session('a')]);
+    const next = reconcileMachines([studio, vps], [loaded, machine(tower, [session('b')])]);
+    expect(next).toHaveLength(2);
+    expect(next[0]).toBe(loaded);
+    expect(next[1]).toEqual({ conn: vps, sessions: null, error: null });
+  });
+
+  it('takes a renamed connection without dropping its rows', () => {
+    const renamed = { ...studio, label: 'desk' };
+    const next = reconcileMachines([renamed], [machine(studio, [session('a')])]);
+    expect(next[0].conn).toBe(renamed);
+    expect(next[0].sessions).toEqual([session('a')]);
+  });
+});
+
+describe('scope', () => {
+  const machines = [machine(studio, [session('a'), session('b')]), machine(tower, [session('c')])];
+
+  it('null scope is the whole fleet, in pairing order', () => {
+    expect(scopedSessions(machines, null).map((s) => s.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('a scope narrows to one machine', () => {
+    expect(scopedMachines(machines, tower.url)).toEqual([machines[1]]);
+    expect(scopedSessions(machines, tower.url).map((s) => s.id)).toEqual(['c']);
+  });
+
+  it('a scope on an unpaired machine falls back to the fleet', () => {
+    expect(scopedSessions(machines, 'http://gone.local:7890')).toHaveLength(3);
+  });
+
+  it('is loaded only once every machine in scope has answered', () => {
+    const half = [machine(studio, [session('a')]), machine(tower, null)];
+    expect(isFleetLoaded(half, null)).toBe(false);
+    expect(isFleetLoaded(half, studio.url)).toBe(true);
+    expect(isFleetLoaded([machine(tower, null, 'offline')], null)).toBe(true);
+    expect(isFleetLoaded([], null)).toBe(false);
+  });
+});
+
+describe('fleetError', () => {
+  it('stays silent while anything still answers', () => {
+    expect(fleetError([machine(studio, [session('a')]), machine(tower, null, 'offline')])).toBeNull();
+    expect(fleetError([machine(studio, null)])).toBeNull();
+    expect(fleetError([])).toBeNull();
+  });
+
+  it('reports the first failure when every machine is down', () => {
+    expect(fleetError([machine(studio, null, 'refused'), machine(tower, null, 'offline')])).toBe('refused');
+  });
+});
+
+describe('newSessionTarget', () => {
+  const fleet = [machine(studio, []), machine(tower, [])];
+
+  it('asks when the fleet scope covers several machines', () => {
+    expect(newSessionTarget(fleet, null)).toBeNull();
+  });
+
+  it('creates straight on the scoped machine', () => {
+    expect(newSessionTarget(fleet, tower.url)).toBe(tower);
+  });
+
+  it('never asks a solo user', () => {
+    expect(newSessionTarget([machine(studio, [])], null)).toBe(studio);
+  });
+
+  it('offers only reachable machines in the chooser', () => {
+    const withDead = [...fleet, machine(vps, null, 'offline')];
+    expect(creatableMachines(withDead).map((m) => m.conn)).toEqual([studio, tower]);
+  });
+});
+
+describe('machineCounts', () => {
+  it('tallies sessions, live and unread for one machine', () => {
+    const rows = [session('a', { live: true }), session('b'), session('c', { live: true })];
+    const counts = machineCounts(
+      machine(studio, rows),
+      (s) => s.live === true,
+      (s) => s.id === 'b',
+    );
+    expect(counts).toEqual({ sessions: 3, live: 2, unread: 1 });
+  });
+
+  it('a machine that has not answered counts as nothing', () => {
+    expect(machineCounts(machine(tower, null), () => true, () => true)).toEqual({
+      sessions: 0,
+      live: 0,
+      unread: 0,
+    });
+  });
+});
+
+describe('scopeError', () => {
+  const fleet = [machine(studio, [session('a')]), machine(tower, null, 'offline')];
+
+  it('stays null while anything in scope answers', () => {
+    expect(scopeError(fleet, null)).toBeNull();
+    expect(scopeError(fleet, machineKey(studio))).toBeNull();
+  });
+
+  it('surfaces the failure when the scope points at the dead machine', () => {
+    expect(scopeError(fleet, machineKey(tower))).toBe('offline');
+  });
+
+  it('surfaces a total blackout for the unscoped fleet', () => {
+    expect(scopeError([machine(studio, null, 'down'), machine(tower, null, 'offline')], null)).toBe('down');
+  });
+});

@@ -841,8 +841,7 @@ export function App() {
           />
         ) : (
           <SessionsScreen
-            active={active}
-            client={client}
+            conns={conns}
             subscriptions={subscriptions}
             onUnreachable={handleUnreachable}
             onOpen={openGatewaySession}

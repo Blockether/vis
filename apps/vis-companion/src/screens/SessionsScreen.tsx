@@ -9,6 +9,21 @@ import { onWake } from '../lib/wake';
 import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
 import { PencilIcon, SwipeActions, TrashIcon } from '../components/SwipeActions';
 import { DEFAULT_SESSION_PAGE_SIZE, getSessionsPerPage, subscribeSessionsPerPage } from '../lib/storage';
+import { hostOf } from '../lib/endpoints';
+import {
+  creatableMachines,
+  fleetError,
+  isFleetLoaded,
+  machineCounts,
+  machineKey,
+  machineLabel,
+  newSessionTarget,
+  reconcileMachines,
+  scopedConns,
+  scopedMachines,
+  scopeError,
+  type FleetMachine,
+} from '../lib/fleet';
 
 const SESSION_LIST_EVENTS = new Set([
   'turn.started',
@@ -38,6 +53,38 @@ const SKELETON_GROUPS = [
   ['w-3/5', 'w-2/5', 'w-1/2'],
   ['w-1/2', 'w-2/3'],
 ];
+
+// One client per paired machine, kept for the life of the tab. The snapshot
+// cache and the conditional-GET validators live on the instance, so rebuilding
+// one per poll would refetch the whole fleet every ten seconds.
+const fleetClients = new Map<string, GatewayClient>();
+
+function clientFor(conn: GatewayConn): GatewayClient {
+  const key = `${conn.url}\u0000${conn.token ?? ''}`;
+  const existing = fleetClients.get(key);
+  if (existing) return existing;
+  const client = new GatewayClient({ url: conn.url, token: conn.token });
+  fleetClients.set(key, client);
+  return client;
+}
+
+// Rebuild the fleet from the paired machines, painting each new one from its own
+// last known list so a machine that was on screen a second ago comes back with
+// rows instead of a skeleton.
+function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetMachine[] {
+  return reconcileMachines(conns, previous).map((machine) => {
+    if (machine.sessions !== null) return machine;
+    const cached = clientFor(machine.conn).cachedSessions();
+    return cached ? { ...machine, sessions: cached } : machine;
+  });
+}
+
+// The scope strip's chips: one per machine plus "All".
+function chipClass(isOn: boolean): string {
+  return `inline-flex min-h-7 shrink-0 items-center gap-1.5 border px-2 font-mono text-chip transition-colors duration-150 motion-reduce:transition-none ${
+    isOn ? 'border-accent bg-hover font-bold text-white' : 'border-edge text-dialog-hint hover:text-white'
+  }`;
+}
 
 
 function useSessionsPerPage(): number {
@@ -88,19 +135,24 @@ type StartIn =
   | { kind: 'resume'; draft: WorkspaceDraft };
 
 interface Props {
-  active: GatewayConn | null;
-  client: GatewayClient | null;
+  /** Every paired machine, in pairing order. This screen renders the FLEET. */
+  conns: GatewayConn[];
   subscriptions: SessionSubscriptionHub | null;
-  /** The gateway stopped answering — the shell decides what to show instead. */
+  /** No machine is answering at all — the shell decides what to show instead. */
   onUnreachable?: (message: string | null) => void;
   onOpen: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
 }
 
-export function SessionsScreen({ active, client, subscriptions, onUnreachable, onOpen }: Props) {
-  // Seed from the gateway's last known list so returning to this tab repaints the
-  // previous frame instantly; the effect below revalidates and reconciles on top.
-  const [sessions, setSessions] = useState<Session[] | null>(() => client?.cachedSessions() ?? null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: Props) {
+  // A machine OWNS its projects: every row belongs to exactly one gateway, and a
+  // project only exists inside the machine it lives on. The fleet is therefore
+  // one entry per paired machine, seeded from that machine's last known list so
+  // returning to this tab repaints the previous frame instantly; the effects
+  // below revalidate each machine independently and reconcile on top.
+  const [machines, setMachines] = useState<FleetMachine[]>(() => hydrateMachines(conns, []));
+  // `null` is the whole fleet; a scope is one machine's URL, picked in the strip.
+  // It narrows BOTH what the list shows and where a new session is created.
+  const [scope, setScope] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   // Keep keystrokes immediate even when a large session fleet is regrouped.
   const deferredQuery = useDeferredValue(query);
@@ -127,23 +179,28 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
   // Swipe-revealed row actions. One dialog serves both: renaming asks for the new
   // title, deleting asks for consent — a destructive tap two pixels from a thumb
   // rest position must never be one-way.
-  const [rowAction, setRowAction] = useState<{ mode: 'rename' | 'delete'; session: Session } | null>(
-    null,
-  );
+  const [rowAction, setRowAction] = useState<{
+    mode: 'rename' | 'delete';
+    session: Session;
+    /** The machine that OWNS the row — never whichever one is active. */
+    conn: GatewayConn;
+  } | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const refreshAnchorRef = useRef<{ id: string; top: number } | null>(null);
-  const activeRef = useRef(active);
-  const clientRef = useRef(client);
+  const connsRef = useRef(conns);
+  const machinesRef = useRef(machines);
   // Refs mirror the latest props for callbacks that must not re-subscribe on every
   // connection object identity change. Written in an effect so render stays pure.
   useEffect(() => {
-    activeRef.current = active;
-    clientRef.current = client;
+    connsRef.current = conns;
+    machinesRef.current = machines;
   });
-  const activeKey = active ? `${active.url}\u0000${active.token ?? ''}` : '';
+  // Transport identity of the WHOLE fleet: pairing, unpairing or re-tokening a
+  // machine reloads it; renaming one never does.
+  const fleetKey = conns.map((conn) => `${conn.url}\u0000${conn.token ?? ''}`).join('|');
   // Repaint when a read mark moves — opening a session clears its badge from here.
   const readMarks = useReadMarks();
 
@@ -151,48 +208,81 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
   // it arrived with, so only answers that land AFTER this point raise a badge.
   // Without the seed, a fresh install would paint the whole fleet unread.
   useEffect(() => {
-    if (sessions) seedReadMarks(sessions);
-  }, [sessions]);
+    for (const machine of machines) if (machine.sessions) seedReadMarks(machine.sessions);
+  }, [machines]);
+
+  const patchMachine = useCallback(
+    (key: string, update: (machine: FleetMachine) => FleetMachine) => {
+      setMachines((current) => {
+        const index = current.findIndex((machine) => machineKey(machine.conn) === key);
+        // Unpaired while its request was in flight: the answer is not fleet news.
+        if (index < 0) return current;
+        const next = update(current[index]);
+        if (next === current[index]) return current;
+        const copy = current.slice();
+        copy[index] = next;
+        return copy;
+      });
+    },
+    [],
+  );
+
+  // ONE machine's list. Machines load independently on purpose: a gateway that is
+  // asleep must not keep the machines next to it off the screen, and its failure
+  // degrades that machine's section instead of the whole list.
+  const loadMachine = useCallback(
+    async (conn: GatewayConn, signal?: AbortSignal) => {
+      const key = machineKey(conn);
+      const api = clientFor(conn);
+      try {
+        // Paint the first page the moment it lands instead of waiting for the whole
+        // fleet to drain. Only ever called on a cold load (see `listSessions`).
+        const next = await api.listSessions(signal, (partial) => {
+          if (signal?.aborted) return;
+          patchMachine(key, (machine) => ({
+            ...machine,
+            sessions: reconcileSessions(machine.sessions, partial),
+            error: null,
+          }));
+        });
+        if (signal?.aborted) return;
+        // Anchor EVERY reload: the 10s poll can reorder rows under a reading
+        // thumb. The layout effect below no-ops at the top of the list, so the
+        // first paint is unaffected.
+        refreshAnchorRef.current = visibleListAnchor(listRef.current);
+        patchMachine(key, (machine) => ({
+          ...machine,
+          sessions: reconcileSessions(machine.sessions, next),
+          error: null,
+        }));
+      } catch (cause) {
+        if (signal?.aborted) return;
+        patchMachine(key, (machine) => ({ ...machine, error: (cause as Error).message }));
+      }
+    },
+    [patchMachine],
+  );
 
   const load = useCallback(
     async (signal?: AbortSignal, background = false) => {
-      const connection = activeRef.current;
-      if (!connection) {
-        setSessions([]);
-        setLoadError(null);
-        return;
-      }
       if (background) {
         const started = pollStartedAt.current;
         if (started !== null && Date.now() - started < STALE_POLL_MS) return;
         pollStartedAt.current = Date.now();
       }
       try {
-        const client = clientRef.current ?? new GatewayClient(connection);
-        // Paint the first page the moment it lands instead of waiting for the whole
-        // fleet to drain. Only ever called on a cold load (see `listSessions`).
-        const next = await client.listSessions(signal, (partial) => {
-          if (signal?.aborted) return;
-          setSessions((current) => reconcileSessions(current, partial));
-        });
-        if (!signal?.aborted) {
-          // Anchor EVERY reload: the 10s poll can reorder rows under a reading
-          // thumb. The layout effect below no-ops at the top of the list, so the
-          // first paint is unaffected.
-          refreshAnchorRef.current = visibleListAnchor(listRef.current);
-          setSessions((current) => reconcileSessions(current, next));
-          setLoadError(null);
-        }
-      } catch (cause) {
-        if (!signal?.aborted && !background) {
-          setLoadError((cause as Error).message);
-        }
+        await Promise.all(connsRef.current.map((conn) => loadMachine(conn, signal)));
       } finally {
         if (background) pollStartedAt.current = null;
       }
     },
-    [],
+    [loadMachine],
   );
+
+  // Pairing changes rebuild the fleet; machines that stayed keep their rows.
+  useEffect(() => {
+    setMachines((current) => hydrateMachines(connsRef.current, current));
+  }, [fleetKey]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -200,13 +290,7 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
       if (document.visibilityState === 'visible') void load(controller.signal, true);
     };
 
-    // A gateway switch paints THAT gateway's snapshot rather than the previous
-    // one's rows. Same array identity as the seed above, so a plain remount is a
-    // no-op re-render, not a repaint.
-    const cached = clientRef.current?.cachedSessions() ?? null;
-    if (cached) setSessions(cached);
-    if ((sessions === null && !cached) || !active) void load(controller.signal);
-    else void load(controller.signal, true);
+    void load(controller.signal);
     // 10s: slow enough to stay cheap, fast enough that a phone picked up mid-turn
     // shows the truth. Cheap on BOTH ends — an unchanged fleet comes back as a 304
     // with no body (see `GatewayClient.listSessions`), and `load(_, true)` drops a
@@ -225,7 +309,7 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
       stopWake();
     };
     // A connection identity change should preserve the existing frame until its data arrives.
-  }, [activeKey, load]);
+  }, [fleetKey, load]);
 
   useEffect(() => {
     if (!subscriptions) return;
@@ -250,7 +334,7 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
     const row = Array.from(viewport.querySelectorAll<HTMLElement>('[data-session-id]'))
       .find((element) => element.dataset.sessionId === anchor.id);
     if (row) viewport.scrollTop += row.getBoundingClientRect().top - anchor.top;
-  }, [sessions]);
+  }, [machines]);
 
   // Transcript search runs server-side (matches user requests + LLM responses)
   // and unions its matching ids into the local title/project filter.
@@ -259,52 +343,115 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
     // An empty query has no server matches; `matches` below derives that without
     // writing state from this effect.
     if (!needle) return;
-    const connection = activeRef.current;
-    if (!connection) return;
+    const targets = scopedConns(connsRef.current, scope);
+    if (targets.length === 0) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      void (clientRef.current ?? new GatewayClient(connection))
-        .searchSessionMatches(needle, controller.signal)
-        .then((matches) => {
-          if (!controller.signal.aborted) {
-            setTranscriptMatches(new Map(matches.map((m) => [m.sessionId, m])));
-          }
-        })
-        .catch(() => {
-          if (!controller.signal.aborted) setTranscriptMatches(null);
-        });
+      void Promise.all(
+        // One machine failing to search (asleep, older gateway) must not blank the
+        // matches the others found.
+        targets.map((conn) =>
+          clientFor(conn)
+            .searchSessionMatches(needle, controller.signal)
+            .catch(() => []),
+        ),
+      ).then((found) => {
+        if (controller.signal.aborted) return;
+        setTranscriptMatches(new Map(found.flat().map((match) => [match.sessionId, match])));
+      });
     }, 200);
     return () => {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [deferredQuery, activeKey]);
+  }, [deferredQuery, fleetKey, scope]);
 
   const matches = deferredQuery.trim() ? transcriptMatches : null;
 
-  const visible = useMemo(() => {
-    if (!sessions) return null;
+  const inScope = useMemo(() => scopedMachines(machines, scope), [machines, scope]);
+
+  // The list is only "still loading" while NOTHING has answered: one slow machine
+  // must not hold the machines beside it off the screen.
+  const sessions = useMemo(() => {
+    if (machines.length === 0) return [];
+    const rows = inScope.flatMap((machine) => machine.sessions ?? []);
+    return inScope.some((machine) => machine.sessions !== null) || isFleetLoaded(machines, scope)
+      ? rows
+      : null;
+  }, [inScope, machines, scope]);
+
+  // Filtering happens INSIDE each machine: two checkouts of the same repo on two
+  // machines are two projects, and a folder name never merges them.
+  const filtered = useMemo(() => {
     const needle = deferredQuery.trim().toLowerCase();
-    return sessions.filter((session) => {
-      if (emptyUntitled(session)) return false;
-      return (
-        !needle ||
-        sessionSearchText(session).includes(needle) ||
-        matches?.has(session.id) === true
-      );
-    });
-  }, [deferredQuery, sessions, matches]);
+    return inScope.map((machine) => ({
+      machine,
+      sessions: (machine.sessions ?? []).filter((session) => {
+        if (emptyUntitled(session)) return false;
+        return (
+          !needle ||
+          sessionSearchText(session).includes(needle) ||
+          matches?.has(session.id) === true
+        );
+      }),
+    }));
+  }, [inScope, deferredQuery, matches]);
+
+  const visible = useMemo(
+    () => (sessions === null ? null : filtered.flatMap((entry) => entry.sessions)),
+    [filtered, sessions],
+  );
 
   const totals = useMemo(() => {
     const all = sessions?.length ?? 0;
     const shown = visible?.length ?? 0;
-    const projects = new Set(sessions?.map(projectLabel) ?? []).size;
+    // Projects are counted PER MACHINE. Counting bare folder names collapsed two
+    // machines' `vis` checkouts into one project that belonged to neither.
+    const projects = new Set(
+      inScope.flatMap((machine) =>
+        (machine.sessions ?? []).map(
+          (session) => `${machineKey(machine.conn)}\u0000${projectLabel(session)}`,
+        ),
+      ),
+    ).size;
     const live = sessions?.filter(sessionIsLive).length ?? 0;
     const unread = sessions?.filter((session) => unreadTurnCount(session) > 0).length ?? 0;
     return { all, shown, projects, live, unread };
     // `readMarks` is the store version: marks change outside React, so it is the
     // dependency that makes the unread tally recompute.
-  }, [sessions, visible, readMarks]);
+  }, [inScope, sessions, visible, readMarks]);
+
+  // Per-machine tallies for the strip and the machine headers.
+  const tallies = useMemo(
+    () =>
+      new Map(
+        machines.map((machine) => [
+          machineKey(machine.conn),
+          machineCounts(machine, sessionIsLive, (session) => unreadTurnCount(session) > 0),
+        ]),
+      ),
+    [machines, readMarks],
+  );
+  const fleetLive = useMemo(
+    () => [...tallies.values()].reduce((sum, tally) => sum + tally.live, 0),
+    [tallies],
+  );
+  const scopeMachine = scope
+    ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
+    : null;
+  const showMachineHeaders = machines.length > 1 && !scopeMachine;
+
+  // A scope narrowed to a dead machine is not an empty machine: with the rest of
+  // the fleet hidden, that machine's failure IS the screen.
+  const scopedError = scopeError(machines, scope);
+
+  const selectScope = useCallback((next: string | null) => {
+    setScope(next);
+    // Drafts are repo-scoped ON a machine: the parked list belongs to whichever
+    // machine the next session is created on.
+    setDrafts(null);
+    setStartMenu(null);
+  }, []);
 
   /**
    * Drafts are REPO-scoped, and the gateway only lists them through a session that
@@ -312,9 +459,15 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
    * that has a workspace, and the menu NAMES that repo — a fleet spanning several
    * projects must not be told these drafts belong to whatever it creates next.
    */
+  // Where a "New session" tap lands: the scoped machine, or the only machine
+  // paired. `null` means the app must ASK before it can create anything.
+  const target = newSessionTarget(machines, scope);
+  const targetMachine = target
+    ? (machines.find((machine) => machineKey(machine.conn) === machineKey(target)) ?? null)
+    : null;
   const draftProbe = useMemo(
-    () => sessions?.find((session) => projectPath(session)) ?? null,
-    [sessions],
+    () => targetMachine?.sessions?.find((session) => projectPath(session)) ?? null,
+    [targetMachine],
   );
   const draftRepo = draftProbe ? projectLabel(draftProbe) : '';
 
@@ -337,14 +490,14 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
   // choices above it still work without it.
   useEffect(() => {
     if (!startMenu || drafts !== null) return;
-    const connection = activeRef.current;
-    if (!draftProbe || !connection) {
+    const conn = targetMachine?.conn;
+    if (!draftProbe || !conn) {
       setDrafts([]);
       return;
     }
     const controller = new AbortController();
     setDraftsError(null);
-    void (clientRef.current ?? new GatewayClient(connection))
+    void clientFor(conn)
       .drafts(draftProbe.id, controller.signal)
       .then((rows) => setDrafts(rows))
       .catch((cause) => {
@@ -353,7 +506,7 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
         setDraftsError((cause as Error).message);
       });
     return () => controller.abort();
-  }, [startMenu, drafts, draftProbe]);
+  }, [startMenu, drafts, draftProbe, targetMachine]);
 
   // An anchored popover whose anchor moved is a lie, so a resize closes it. Escape
   // closes it and hands focus back to the caret it came from.
@@ -377,8 +530,13 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
    * the draft), so a failed fork must not leave a session sitting on trunk — the one
    * place the user said not to work. It has no turns yet, so it is taken back out.
    */
-  async function createSession(startIn: StartIn = { kind: 'trunk' }) {
-    if (!active) return;
+  async function createSession(startIn: StartIn = { kind: 'trunk' }, on: GatewayConn | null = target) {
+    // Several machines in scope: the app cannot guess which one should run this
+    // session, so it asks instead of creating one somewhere arbitrary.
+    if (!on) {
+      openStartMenu();
+      return;
+    }
     setCreateBusy(true);
     setCreateBusyLabel(
       startIn.kind === 'fork' ? 'Forking...' : startIn.kind === 'resume' ? 'Entering...' : 'Creating...',
@@ -386,7 +544,7 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
     setCreateError(null);
     setStartMenu(null);
     try {
-      const api = client ?? new GatewayClient(active);
+      const api = clientFor(on);
       const session = await api.createSession({});
       if (startIn.kind !== 'trunk') {
         try {
@@ -401,7 +559,7 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
         setDrafts(null);
       }
       await load();
-      if (session.id) await onOpen(active, session.id, true);
+      if (session.id) await onOpen(on, session.id, true);
     } catch (cause) {
       setCreateError((cause as Error).message);
     } finally {
@@ -423,14 +581,14 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
     void createSession({ kind: 'fork', label, clean });
   }
 
-  const startRename = useCallback((session: Session) => {
-    setRowAction({ mode: 'rename', session });
+  const startRename = useCallback((session: Session, conn: GatewayConn) => {
+    setRowAction({ mode: 'rename', session, conn });
     setRenameDraft(session.title?.trim() ?? '');
     setActionError(null);
   }, []);
 
-  const startDelete = useCallback((session: Session) => {
-    setRowAction({ mode: 'delete', session });
+  const startDelete = useCallback((session: Session, conn: GatewayConn) => {
+    setRowAction({ mode: 'delete', session, conn });
     setActionError(null);
   }, []);
 
@@ -441,7 +599,7 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
   }
 
   async function commitRowAction() {
-    if (!rowAction || !active) return;
+    if (!rowAction) return;
     const title = renameDraft.trim();
     if (rowAction.mode === 'rename' && !title) {
       setActionError('A session name cannot be empty.');
@@ -450,7 +608,7 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
     setActionBusy(true);
     setActionError(null);
     try {
-      const api = client ?? new GatewayClient(active);
+      const api = clientFor(rowAction.conn);
       if (rowAction.mode === 'rename') await api.renameSession(rowAction.session.id, title);
       else await api.deleteSession(rowAction.session.id);
       setRowAction(null);
@@ -469,16 +627,25 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
   // matches are never hidden behind a collapse.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const forceExpand = deferredQuery.trim().length > 0;
-  const toggleProject = useCallback((project: string) => {
+  const toggleProject = useCallback((key: string) => {
     setExpanded((previous) => {
       const next = new Set(previous);
-      if (next.has(project)) next.delete(project);
-      else next.add(project);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }, []);
 
-  const groups = useMemo(() => groupByProject(visible ?? []), [visible]);
+  // Machine → project → sessions. The machine is the organizer, so its sections
+  // are built from ITS rows only.
+  const sections = useMemo(
+    () =>
+      filtered.map((entry) => ({
+        machine: entry.machine,
+        groups: groupByProject(entry.sessions),
+      })),
+    [filtered],
+  );
 
   // A dead gateway is not a sessions problem: there is nothing to navigate, so the
   // shell drops us on the Machines screen instead of rendering a session list
@@ -489,6 +656,10 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
   // screen used to un-gate the shell, get itself re-mounted, fail again, and gate
   // the shell again — a mount/fail/unmount loop that hammered the dead gateway
   // with thousands of requests per second instead of resting on Machines.
+  //
+  // With several machines paired only a TOTAL blackout is an error: one machine
+  // asleep is a degraded section inside a list that still works.
+  const loadError = fleetError(machines);
   const reportedError = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     if (reportedError.current === undefined && loadError === null) {
@@ -513,13 +684,17 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
         <div className="bg-panel-2 px-3 py-2.5 sm:px-4 sm:py-3">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="font-mono text-body font-bold text-white">Projects</p>
+              <p className="truncate font-mono text-body font-bold text-white">
+                {scopeMachine ? machineLabel(scopeMachine.conn) : machines.length > 1 ? 'Fleet' : 'Projects'}
+              </p>
               <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-meta text-dialog-hint">
                 {sessions === null ? (
                   <>
                     <Spinner className="text-accent-ink" />
                     <span>Reading sessions...</span>
                   </>
+                ) : scopedError ? (
+                  <span className="whitespace-nowrap font-bold text-accent-ink">not answering</span>
                 ) : (
                   <>
                     {/* Facts travel as WHOLE units. Every value used to be its own flex
@@ -528,6 +703,9 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
                         could strand "●" from its "4 live". Each fact is now nowrap and
                         the groups are separated by SPACE rather than punctuation, so the
                         line can only break between facts. */}
+                    {machines.length > 1 && !scopeMachine && (
+                      <span className="whitespace-nowrap">{machines.length} machines</span>
+                    )}
                     <span className="whitespace-nowrap">
                       {totals.projects} {totals.projects === 1 ? 'project' : 'projects'}
                       <span className="px-1 opacity-40">·</span>
@@ -545,35 +723,27 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
                         {totals.unread} unread
                       </span>
                     )}
-                    {/* No refresh status here on purpose. This line is `flex-wrap`,
-                        so appending "· refreshing..." could rewrap it onto a second
-                        line and shove the whole list down. The list revalidates
-                        itself every 10s, on wake and on fleet events — there is no
-                        manual refresh left to report. */}
                   </>
                 )}
               </p>
             </div>
-            {/* One action, one weight. Refresh used to sit here as a second, quieter
-                button; the list now revalidates itself on a timer, and a control whose
-                honest label is almost always "already up to date" is noise beside the
-                only thing a user actually comes here to do. */}
             {/* SPLIT control: one button, two jobs. The wide half stays the plain new
                 session it always was — the common path never grows a click — and the
                 caret half is where the workspace question lives, so starting in a draft
-                stops being a TUI-only slash command. The caret is painted in the theme's
-                title-bar ink, not the accent: two amber halves read as one 33px-wider
-                button, while amber + black reads as "there is a second thing here".
-                Neither half animates on press — the caret ANCHORS the popover, and a
-                transform would drag the menu's measured box with it. The seam is the
-                caret's OWN foreground, not the accent: one shipped palette paints its
-                title bar amber, and there the halves would otherwise fuse. */}
+                stops being a TUI-only slash command. With several machines in scope
+                there is no workspace question yet, because there is no MACHINE yet:
+                both halves then open the same chooser, and picking a machine creates
+                the session there. Scope one machine in the strip and the tap goes
+                straight through again. */}
             <div className="flex shrink-0 items-stretch">
               <Button
                 variant="solid"
                 pressEffect="none"
                 className="min-h-6 border-r-0 px-2 py-0.5 font-mono text-chip sm:min-h-6"
-                disabled={createBusy || !active}
+                disabled={createBusy || machines.length === 0 || !!scopeMachine?.error}
+                aria-haspopup={target ? undefined : 'menu'}
+                aria-label={target && machines.length > 1 ? `New session on ${machineLabel(target)}` : 'New session'}
+                title={target && machines.length > 1 ? `New session on ${machineLabel(target)}` : undefined}
                 onClick={() => void createSession()}
               >
                 {/* Same fixed-width stack as Refresh: "Creating..." is wider than
@@ -597,11 +767,11 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
                 variant="contrast"
                 pressEffect="none"
                 className="min-h-6 border-l-dialog-title-foreground/30 px-2 py-0.5 font-mono text-chip sm:min-h-6"
-                disabled={createBusy || !active}
+                disabled={createBusy || machines.length === 0 || !!scopeMachine?.error}
                 aria-haspopup="menu"
                 aria-expanded={startMenu !== null}
-                aria-label="Choose where the new session starts"
-                title="Start in a draft"
+                aria-label={target ? 'Choose where the new session starts' : 'Choose which machine the new session runs on'}
+                title={target ? 'Start in a draft' : 'Choose a machine'}
                 onClick={() => (startMenu ? closeStartMenu() : openStartMenu())}
               >
                 <span aria-hidden>▾</span>
@@ -614,6 +784,48 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
             </div>
           )}
         </div>
+
+        {/* The scope strip. One machine paired → this whole row is absent, and
+            nothing else on the screen changes: multi-machine costs the solo user
+            nothing. */}
+        {machines.length > 1 && (
+          <div className="flex items-center gap-1.5 overflow-x-auto border-t border-dialog-edge bg-panel px-3 py-1.5 sm:px-4">
+            <button
+              type="button"
+              aria-pressed={scope === null}
+              className={chipClass(scope === null)}
+              onClick={() => selectScope(null)}
+            >
+              All
+              {fleetLive > 0 && <span className="font-bold text-ok">{fleetLive}●</span>}
+            </button>
+            {machines.map((machine) => {
+              const key = machineKey(machine.conn);
+              const tally = tallies.get(key);
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={scope === key}
+                  className={chipClass(scope === key)}
+                  onClick={() => selectScope(scope === key ? null : key)}
+                >
+                  {machineLabel(machine.conn)}
+                  {machine.error ? (
+                    <span className="opacity-70">offline</span>
+                  ) : (
+                    <>
+                      {!!tally?.live && <span className="font-bold text-ok">{tally.live}●</span>}
+                      {!!tally?.unread && (
+                        <span className="font-bold text-accent-ink">{tally.unread}</span>
+                      )}
+                    </>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         <div className="flex min-h-10 items-center border-y border-dialog-edge bg-panel px-3 sm:min-h-9 sm:px-4">
           <span className="shrink-0 font-mono text-ui text-accent-ink">›</span>
@@ -629,6 +841,18 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
         <div ref={listRef} className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable]">
         {sessions === null ? (
           <NavigatorSkeleton />
+        ) : scopedError && !visible?.length ? (
+          <div className="px-5 py-16 text-center">
+            <p className="font-mono text-body font-bold text-white/70">
+              {scopeMachine ? `${machineLabel(scopeMachine.conn)} is not answering` : 'No machine is answering'}
+            </p>
+            <p className="mt-2 font-mono text-ui text-dialog-hint">{scopedError}</p>
+            <div className="mt-4 flex justify-center">
+              <Button variant="ghost" onClick={() => void load()}>
+                Retry
+              </Button>
+            </div>
+          </div>
         ) : visible?.length === 0 ? (
           <div className="px-5 py-16 text-center">
             <p className="font-mono text-body font-bold text-white/70">
@@ -640,23 +864,81 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
           </div>
         ) : (
           <div className="border-t border-dialog-edge">
-            {groups.map(([project, projectSessions]) => (
-            <ProjectGroup
-              key={project}
-              project={project}
-              sessions={projectSessions}
-              conn={active!}
-              matches={matches}
-              needle={deferredQuery.trim()}
-              onOpen={onOpen}
-              onRename={startRename}
-              onDelete={startDelete}
-              expanded={expanded.has(project)}
-              forceExpand={forceExpand}
-              onToggle={toggleProject}
-              pageSize={pageSize}
-            />
-          ))}
+            {sections.map(({ machine, groups }) => {
+              const key = machineKey(machine.conn);
+              const tally = tallies.get(key);
+              return (
+                <section key={key} aria-label={`${machineLabel(machine.conn)} projects`}>
+                  {/* The machine header exists only while there is more than one
+                      machine to tell apart, and disappears once the strip has scoped
+                      to one — the chip already says where you are. */}
+                  {showMachineHeaders && (
+                    <header className="flex items-center justify-between gap-3 border-b border-dialog-edge bg-panel px-3 py-1.5 sm:px-4">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span
+                          className={`size-1.5 shrink-0 ${machine.error ? 'bg-dialog-hint' : 'bg-ok'}`}
+                          aria-hidden="true"
+                        />
+                        <span className="truncate font-mono text-ui font-bold text-white">
+                          {machineLabel(machine.conn)}
+                        </span>
+                      </span>
+                      <span className="flex shrink-0 items-center gap-2 font-mono text-chip text-dialog-hint">
+                        {machine.error ? (
+                          <>
+                            <span>offline</span>
+                            <button
+                              type="button"
+                              className="border border-edge px-1.5 py-0.5 transition-colors duration-150 hover:text-white motion-reduce:transition-none"
+                              onClick={() => void loadMachine(machine.conn)}
+                            >
+                              Retry
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <span>
+                              {groups.length} {groups.length === 1 ? 'project' : 'projects'}
+                            </span>
+                            {!!tally?.live && (
+                              <span className="font-bold text-ok">{tally.live} live</span>
+                            )}
+                          </>
+                        )}
+                      </span>
+                    </header>
+                  )}
+                  {groups.length === 0
+                    ? showMachineHeaders && (
+                        <p className="px-3 py-3 font-mono text-meta text-dialog-hint sm:px-4">
+                          {machine.error
+                            ? 'This machine is not answering.'
+                            : machine.sessions === null
+                              ? 'Reading sessions...'
+                              : 'No sessions on this machine yet.'}
+                        </p>
+                      )
+                    : groups.map(([project, projectSessions]) => (
+                        <ProjectGroup
+                          key={`${key}\u0000${project}`}
+                          groupKey={`${key}\u0000${project}`}
+                          project={project}
+                          sessions={projectSessions}
+                          conn={machine.conn}
+                          matches={matches}
+                          needle={deferredQuery.trim()}
+                          onOpen={onOpen}
+                          onRename={startRename}
+                          onDelete={startDelete}
+                          expanded={expanded.has(`${key}\u0000${project}`)}
+                          forceExpand={forceExpand}
+                          onToggle={toggleProject}
+                          pageSize={pageSize}
+                        />
+                      ))}
+                </section>
+              );
+            })}
           </div>
         )}
         </div>
@@ -743,57 +1025,90 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
               from `sm` up it becomes a popover pinned under the caret it came from. */}
           <div
             role="menu"
-            aria-label="Start the new session in"
+            aria-label={target ? 'Start the new session in' : 'Create the new session on'}
             className="absolute inset-x-0 bottom-0 max-h-[70vh] touch-pan-y overflow-y-auto overscroll-contain border-t border-dialog-edge bg-panel pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-auto sm:bottom-auto sm:left-[var(--menu-left)] sm:top-[var(--menu-top)] sm:w-80 sm:border sm:pb-0 sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
             style={{ '--menu-top': `${startMenu.top}px`, '--menu-left': `${startMenu.left}px` } as CSSProperties}
             onClick={(event) => event.stopPropagation()}
           >
-            <p className="border-b border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-              Start the session in
-            </p>
-            <StartOption
-              title="The project itself"
-              hint="Edits land straight in the repo — no isolated copy."
-              badge="Default"
-              onSelect={() => void createSession()}
-            />
-            <StartOption
-              title="A new draft, with my uncommitted changes"
-              hint="A private copy of this project exactly as it is now — your uncommitted changes come with it. The real project stays untouched."
-              onSelect={() => askDraftName(false)}
-            />
-            <StartOption
-              title="A new draft, without my uncommitted changes"
-              hint="A private copy of this project as of your last commit. Your uncommitted work stays here, in the real project, untouched."
-              onSelect={() => askDraftName(true)}
-            />
-            <div className="flex items-baseline justify-between gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2">
-              <span className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-                Or a draft you parked
-              </span>
-              {draftRepo && (
-                <span className="truncate font-mono text-chip text-dialog-hint/70">{draftRepo}</span>
-              )}
-            </div>
-            {drafts === null ? (
-              <p className="flex items-center gap-2 px-3 py-3 font-mono text-meta text-dialog-hint">
-                <Spinner className="text-accent-ink" />
-                Reading drafts...
-              </p>
-            ) : drafts.length === 0 ? (
-              <p className="px-3 py-3 font-mono text-meta text-dialog-hint">
-                {draftsError ?? 'No drafts parked in this project yet.'}
-              </p>
-            ) : (
-              drafts.map((draft) => (
+            {target ? (
+              <>
+                <p className="border-b border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+                  Start the session in
+                  {machines.length > 1 ? ` · ${machineLabel(target)}` : ''}
+                </p>
                 <StartOption
-                  key={draft.workspace_id}
-                  title={draft.label?.trim() || shortId(draft.workspace_id)}
-                  hint={draftHint(draft)}
-                  badge={draft.is_current ? 'in use' : undefined}
-                  onSelect={() => void createSession({ kind: 'resume', draft })}
+                  title="The project itself"
+                  hint="Edits land straight in the repo — no isolated copy."
+                  badge="Default"
+                  onSelect={() => void createSession()}
                 />
-              ))
+                <StartOption
+                  title="A new draft, with my uncommitted changes"
+                  hint="A private copy of this project exactly as it is now — your uncommitted changes come with it. The real project stays untouched."
+                  onSelect={() => askDraftName(false)}
+                />
+                <StartOption
+                  title="A new draft, without my uncommitted changes"
+                  hint="A private copy of this project as of your last commit. Your uncommitted work stays here, in the real project, untouched."
+                  onSelect={() => askDraftName(true)}
+                />
+                <div className="flex items-baseline justify-between gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2">
+                  <span className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+                    Or a draft you parked
+                  </span>
+                  {draftRepo && (
+                    <span className="truncate font-mono text-chip text-dialog-hint/70">{draftRepo}</span>
+                  )}
+                </div>
+                {drafts === null ? (
+                  <p className="flex items-center gap-2 px-3 py-3 font-mono text-meta text-dialog-hint">
+                    <Spinner className="text-accent-ink" />
+                    Reading drafts...
+                  </p>
+                ) : drafts.length === 0 ? (
+                  <p className="px-3 py-3 font-mono text-meta text-dialog-hint">
+                    {draftsError ?? 'No drafts parked in this project yet.'}
+                  </p>
+                ) : (
+                  drafts.map((draft) => (
+                    <StartOption
+                      key={draft.workspace_id}
+                      title={draft.label?.trim() || shortId(draft.workspace_id)}
+                      hint={draftHint(draft)}
+                      badge={draft.is_current ? 'in use' : undefined}
+                      onSelect={() => void createSession({ kind: 'resume', draft })}
+                    />
+                  ))
+                )}
+              </>
+            ) : (
+              /* No machine is in scope, so the session has no home yet. The draft
+                 question comes AFTER this one — a workspace only exists on a
+                 machine — so this menu asks the one question that has to be first. */
+              <>
+                <p className="border-b border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+                  Create the session on
+                </p>
+                {creatableMachines(machines).length === 0 ? (
+                  <p className="px-3 py-3 font-mono text-meta text-dialog-hint">
+                    No paired machine is answering right now.
+                  </p>
+                ) : (
+                  creatableMachines(machines).map((machine) => {
+                    const tally = tallies.get(machineKey(machine.conn));
+                    const count = tally?.sessions ?? 0;
+                    return (
+                      <StartOption
+                        key={machineKey(machine.conn)}
+                        title={machineLabel(machine.conn)}
+                        hint={`${count} ${count === 1 ? 'session' : 'sessions'} · ${hostOf(machine.conn.url)}`}
+                        badge={tally?.live ? `${tally.live} live` : undefined}
+                        onSelect={() => void createSession({ kind: 'trunk' }, machine.conn)}
+                      />
+                    );
+                  })
+                )}
+              </>
             )}
           </div>
         </div>,
@@ -862,6 +1177,7 @@ export function SessionsScreen({ active, client, subscriptions, onUnreachable, o
 // (`reconcileSessions`), so an unchanged group must not re-render its rows.
 const ProjectGroup = memo(function ProjectGroup({
   project,
+  groupKey,
   sessions,
   conn,
   matches,
@@ -875,22 +1191,28 @@ const ProjectGroup = memo(function ProjectGroup({
   pageSize,
 }: {
   project: string;
+  /** Collapse identity, scoped to the MACHINE: project names repeat across them. */
+  groupKey: string;
   sessions: Session[];
   conn: GatewayConn;
   matches: Map<string, SessionMatch> | null;
   needle: string;
   onOpen: Props['onOpen'];
-  onRename: (session: Session) => void;
-  onDelete: (session: Session) => void;
+  onRename: (session: Session, conn: GatewayConn) => void;
+  onDelete: (session: Session, conn: GatewayConn) => void;
   expanded: boolean;
   forceExpand: boolean;
-  onToggle: (project: string) => void;
+  onToggle: (groupKey: string) => void;
   pageSize: number;
 }) {
   const root = projectRoot(sessions);
   const liveSessions = useMemo(() => sessions.filter(sessionIsLive), [sessions]);
   const liveCount = liveSessions.length;
   const isOpen = expanded || forceExpand;
+  // Row actions must reach the machine that OWNS the row. Bound here so a
+  // memoized row does not re-render on every paint of its parent.
+  const renameRow = useCallback((session: Session) => onRename(session, conn), [onRename, conn]);
+  const deleteRow = useCallback((session: Session) => onDelete(session, conn), [onDelete, conn]);
 
   // A coarse clock ages the recency window: once a session is more than an hour past
   // its last activity it leaves the collapsed peek on its own, no refresh needed.
@@ -915,7 +1237,7 @@ const ProjectGroup = memo(function ProjectGroup({
       <header className="bg-panel-2">
         <button
           type="button"
-          onClick={() => onToggle(project)}
+          onClick={() => onToggle(groupKey)}
           aria-expanded={isOpen}
           className="flex min-h-11 w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:px-4"
         >
@@ -954,8 +1276,8 @@ const ProjectGroup = memo(function ProjectGroup({
               match={matches?.get(session.id) ?? null}
               needle={needle}
               onOpen={onOpen}
-              onRename={onRename}
-              onDelete={onDelete}
+              onRename={renameRow}
+              onDelete={deleteRow}
             />
           ))}
           {remaining > 0 && (
