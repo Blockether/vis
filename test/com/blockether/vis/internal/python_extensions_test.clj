@@ -9,6 +9,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.agents :as agents]
             [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.human-input :as human-input]
             [com.blockether.vis.internal.persistance :as ps]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.toggles :as toggles]
@@ -197,41 +198,36 @@ vis.extension(
 )
 ")
 
-(defdescribe python-kwargs-test
-             (it "keyword args folded into ONE trailing map are re-expanded onto the signature — #83"
-                 (with-loaded {"kwargs.py" kwargs-py}
-                              (fn [_ _]
-                                (let
-                                  [probe
-                                   (symbol-fn (registered "kwargs") 'probe)
+(defdescribe
+  python-kwargs-test
+  (it "keyword args folded into ONE trailing map are re-expanded onto the signature — #83"
+      (with-loaded {"kwargs.py" kwargs-py}
+                   (fn [_ _]
+                     (let
+                       [probe
+                        (symbol-fn (registered "kwargs") 'probe)
 
-                                   result
-                                   ;; how the sandbox delivers probe(g, mode=deep, is_deep=True)
-                                   (probe "g" {"mode" "deep" "is_deep" true})]
+                        result
+                        ;; how the sandbox delivers probe(g, mode=deep, is_deep=True)
+                        (probe "g" {"mode" "deep" "is_deep" true})]
 
-                                  (expect (extension/envelope-success? result))
-                                  (expect (= "g" (get-in result [:result "name"])))
-                                  (expect (= "deep" (get-in result [:result "mode"])))
-                                  (expect (true? (get-in result [:result "is_deep"])))))))
-             (it "a plain positional call is untouched"
-                 (with-loaded {"kwargs.py" kwargs-py}
-                              (fn [_ _]
-                                (let
-                                  [result
-                                   ((symbol-fn (registered "kwargs") 'probe) "g" "deep")]
-
-                                  (expect (= "deep" (get-in result [:result "mode"])))
-                                  (expect (false? (get-in result [:result "is_deep"])))))))
-             (it "a genuine mapping positional stays ONE argument"
-                 (with-loaded {"kwargs.py" kwargs-py}
-                              (fn [_ _]
-                                (let
-                                  [result
-                                   ((symbol-fn (registered "kwargs") 'mapping) {"a" 1 "b" 2})]
-
-                                  (expect (extension/envelope-success? result))
-                                  (expect (= 1 (get-in result [:result "payload" "a"])))
-                                  (expect (= 2 (get-in result [:result "payload" "b"]))))))))
+                       (expect (extension/envelope-success? result))
+                       (expect (= "g" (get-in result [:result "name"])))
+                       (expect (= "deep" (get-in result [:result "mode"])))
+                       (expect (true? (get-in result [:result "is_deep"])))))))
+  (it "a plain positional call is untouched"
+      (with-loaded {"kwargs.py" kwargs-py}
+                   (fn [_ _]
+                     (let [result ((symbol-fn (registered "kwargs") 'probe) "g" "deep")]
+                       (expect (= "deep" (get-in result [:result "mode"])))
+                       (expect (false? (get-in result [:result "is_deep"])))))))
+  (it "a genuine mapping positional stays ONE argument"
+      (with-loaded {"kwargs.py" kwargs-py}
+                   (fn [_ _]
+                     (let [result ((symbol-fn (registered "kwargs") 'mapping) {"a" 1 "b" 2})]
+                       (expect (extension/envelope-success? result))
+                       (expect (= 1 (get-in result [:result "payload" "a"])))
+                       (expect (= 2 (get-in result [:result "payload" "b"]))))))))
 
 ;; =============================================================================
 ;; State — durable across reloads
@@ -1358,3 +1354,89 @@ vis.extension(
                (expect (= :ok (:slash/status res)))))
            (expect (false? (toggles/enabled? "shell")))
            (finally (toggles/set-value! "shell" before))))))
+
+;; =============================================================================
+;; Human input — `vis.ask` blocks the extension until a channel answers
+;; =============================================================================
+
+(defn- answer-pending!
+  "Wait for a human-input request titled `title` to show up, then run `answer-fn`
+   on its id. Runs off-thread: `vis.ask` parks the calling thread."
+  [title answer-fn]
+  (future (loop [n 0]
+            (if-let [req (first (filter #(= title (:title %)) (human-input/pending-requests)))]
+              (answer-fn (:id req))
+              (when (< n 400) (Thread/sleep 25) (recur (inc n)))))))
+
+(def ^:private asker-py
+  "
+import vis
+
+def ask_key():
+    'Ask for deploy details.'
+    answer = vis.ask(
+        'Deploy',
+        [{'id': 'env', 'type': 'select', 'options': ['staging', 'prod'], 'is_required': True},
+         {'id': 'token', 'type': 'password'},
+         {'id': 'dry', 'type': 'checkbox', 'default': True}],
+        description='Pick a target',
+        timeout_ms=20000,
+    )
+    return {'ok': bool(answer),
+            'reason': answer.reason,
+            'env': answer['env'],
+            'dry': answer['dry'],
+            'is_handle': answer['token'].startswith('vis-secret:'),
+            'token': answer.reveal('token'),
+            'forgotten': vis.forget(answer['token'])}
+
+def ask_cancelled():
+    'Ask for confirmation.'
+    answer = vis.ask('Confirm', [{'id': 'yes', 'type': 'checkbox'}], timeout_ms=20000)
+    return {'ok': bool(answer), 'reason': answer.reason, 'values': answer.values}
+
+vis.extension(name='asker', description='asker', alias='a',
+              symbols=[vis.symbol(ask_key), vis.symbol(ask_cancelled)])
+")
+
+(defdescribe
+  python-human-input-test
+  (it "vis.ask pauses the extension, then returns typed values with the password kept opaque"
+      (with-loaded {"asker.py" asker-py}
+                   (fn [_ _]
+                     (let
+                       [ask-key
+                        (symbol-fn (registered "asker") 'ask_key)
+
+                        answered
+                        (answer-pending! "Deploy"
+                                         #(human-input/submit! % {"env" "prod" "token" "hunter2"}))
+
+                        result
+                        (:result (ask-key))]
+
+                       (expect (= {:is-accepted true} @answered))
+                       (expect (= {"ok" true
+                                   "reason" "submitted"
+                                   "env" "prod"
+                                   "dry" true
+                                   "is_handle" true
+                                   "token" "hunter2"
+                                   "forgotten" true}
+                                  result))
+                       (expect (empty? (human-input/pending-requests)))))))
+  (it "a cancelled request returns a falsey answer instead of raising"
+      (with-loaded {"asker.py" asker-py}
+                   (fn [_ _]
+                     (let
+                       [ask-cancelled
+                        (symbol-fn (registered "asker") 'ask_cancelled)
+
+                        answered
+                        (answer-pending! "Confirm" #(human-input/cancel! % "dismissed"))
+
+                        result
+                        (:result (ask-cancelled))]
+
+                       (expect (true? @answered))
+                       (expect (= {"ok" false "reason" "dismissed" "values" {}} result)))))))

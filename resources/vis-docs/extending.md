@@ -287,6 +287,44 @@ vis.notify("Rules reloaded", "success") # user-facing toast: info success warn e
 `vis.log` writes to `~/.vis/vis.log`; `vis.notify` shows in whatever channel
 is active (TUI banner, web toast, …).
 
+### Asking the human
+
+`vis.ask` pauses the extension and asks the person a typed question, then
+blocks until they answer. The request is published to whatever channel is
+active, so the same call works in the TUI, the web UI, or the companion app.
+
+```python
+answer = vis.ask("Deploy", [
+    {"id": "env", "type": "select", "options": ["staging", "prod"],
+     "is_required": True},
+    {"id": "notes", "type": "multiline", "label": "Release notes"},
+    {"id": "token", "type": "password", "label": "Deploy token"},
+], description="Pick a target", timeout_ms=120000)
+
+if answer:                       # falsey when cancelled or timed out
+    deploy(answer["env"], answer.reveal("token"))
+else:
+    vis.log("info", "deploy skipped: " + answer.reason)
+```
+
+Field `type` is one of `plaintext`, `password`, `multiline`, `select`,
+`multiselect`, `checkbox`. A field may also carry `label`, `description`,
+`placeholder`, `default`, `is_required`, and — for the two `select` types —
+`options` (strings, or `{"value": ..., "label": ...}` maps). Request options:
+`description`, `submit_label`, `cancel_label`, `is_cancellable`, and
+`timeout_ms` (default 5 minutes, capped at 1 hour).
+
+`vis.ask` never raises for a refusal: cancelling or timing out returns a falsey
+`Answer` whose `reason` says which (`cancelled`, `timeout`, or whatever reason
+the host cancelled with). `answer.values` always carries every field, defaults
+included.
+
+**Secrets never round-trip as plaintext.** A `password` field answers with an
+opaque `vis-secret:` handle; `answer.reveal("token")` (or `vis.reveal(handle)`)
+resolves it inside the process, and `vis.forget(handle)` drops it. Handles are
+what the transcript, logs, and the model see — so pass the handle around and
+reveal it only at the moment of use.
+
 ### LLM providers
 
 `vis.provider(...)` registers a first-class provider the model can actually

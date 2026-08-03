@@ -229,6 +229,78 @@ def shell(opts):
         )
     return _host['jailed_shell'](opts)
 
+class Answer:
+    # The outcome of `vis.ask(...)`. Truthy only when the human submitted.
+    # `values` is keyed by field id and always carries every field; a
+    # `password` field holds an opaque `vis-secret:` handle, never plaintext.
+    def __init__(self, raw):
+        raw = raw or {}
+        self.is_submitted = bool(raw.get('is_submitted'))
+        self.reason = str(raw.get('reason') or 'cancelled')
+        self.request_id = raw.get('request_id')
+        self.values = dict(raw.get('values') or {})
+
+    def __bool__(self):
+        return self.is_submitted
+
+    def __contains__(self, field_id):
+        return str(field_id) in self.values
+
+    def __getitem__(self, field_id):
+        return self.values[str(field_id)]
+
+    def get(self, field_id, default=None):
+        v = self.values.get(str(field_id))
+        return default if v is None else v
+
+    def reveal(self, field_id):
+        # Plaintext behind a password field's handle — trusted side only.
+        return reveal(self.values.get(str(field_id)))
+
+    def __repr__(self):
+        return 'Answer(is_submitted=%r, reason=%r, fields=%r)' % (
+            self.is_submitted,
+            self.reason,
+            sorted(self.values),
+        )
+
+def ask(title, fields, **options):
+    # Pause and ask the human for typed values, then BLOCK until they answer.
+    #
+    #   answer = vis.ask('Deploy', [
+    #       {'id': 'env', 'type': 'select', 'options': ['staging', 'prod'],
+    #        'is_required': True},
+    #       {'id': 'token', 'type': 'password', 'label': 'Deploy token'},
+    #   ], description='Pick a target', timeout_ms=120000)
+    #   if answer:
+    #       deploy(answer['env'], answer.reveal('token'))
+    #
+    # Field types: plaintext, password, multiline, select, multiselect,
+    # checkbox. Options: description, submit_label, cancel_label,
+    # is_cancellable, timeout_ms (default 5 min, capped at 1 hour).
+    # A cancelled, timed-out or unanswered request returns a falsey Answer
+    # whose `reason` says which — it never raises.
+    import json
+    if not isinstance(fields, (list, tuple)) or not fields:
+        raise TypeError('ask needs a non-empty list of field specs')
+    request = dict(options)
+    request['title'] = str(title)
+    request['fields'] = [dict(f) for f in fields]
+    return Answer(json.loads(_host['request_input'](json.dumps(request))))
+
+def reveal(handle):
+    # Resolve an opaque `vis-secret:` handle to its plaintext, or None when the
+    # handle is unknown or already forgotten. Never log or return the result.
+    if not handle:
+        return None
+    return _host['reveal_secret'](str(handle))
+
+def forget(handle):
+    # Drop the plaintext behind a handle as soon as it is no longer needed.
+    if not handle:
+        return False
+    return bool(_host['forget_secret'](str(handle)))
+
 # Compatibility for extensions written before the public `vis.shell` spelling.
 jailed_shell = shell
 """
@@ -241,6 +313,9 @@ _vis_mod.__dict__["_host"] = {
     "log": __vis_host_log__,
     "notify": __vis_host_notify__,
     "jailed_shell": __vis_host_jailed_shell__,
+    "request_input": __vis_host_request_input__,
+    "reveal_secret": __vis_host_reveal_secret__,
+    "forget_secret": __vis_host_forget_secret__,
 }
 exec(compile(_vis_body, "<vis-bootstrap>", "exec"), _vis_mod.__dict__)
 _vis_sys.modules["vis"] = _vis_mod

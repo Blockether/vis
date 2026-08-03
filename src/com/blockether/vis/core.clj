@@ -797,6 +797,38 @@
   (requiring-resolve 'com.blockether.vis.internal.channel-events/channel-event-listeners))
 
 ;; =============================================================================
+;; Human input — the typed pause an extension uses to ask the operator
+;;
+;; `request-human-input!` BLOCKS the calling extension until a channel calls
+;; `submit-human-input!`/`cancel-human-input!`, or the request times out. The
+;; dialog itself is a channel concern: a channel subscribes to the bus above and
+;; renders the `:human-input/request` event, then answers by request id.
+;; =============================================================================
+(def request-human-input! (requiring-resolve 'com.blockether.vis.internal.human-input/request!))
+
+(def submit-human-input! (requiring-resolve 'com.blockether.vis.internal.human-input/submit!))
+
+(def cancel-human-input! (requiring-resolve 'com.blockether.vis.internal.human-input/cancel!))
+
+(def cancel-all-human-input!
+  (requiring-resolve 'com.blockether.vis.internal.human-input/cancel-all!))
+
+(def pending-human-input
+  (requiring-resolve 'com.blockether.vis.internal.human-input/pending-requests))
+
+(def pending-human-input-request
+  (requiring-resolve 'com.blockether.vis.internal.human-input/pending-request))
+
+(def human-input-secret-handle?
+  (requiring-resolve 'com.blockether.vis.internal.human-input/secret-handle?))
+
+(def reveal-human-input-secret
+  (requiring-resolve 'com.blockether.vis.internal.human-input/reveal-secret))
+
+(def forget-human-input-secret!
+  (requiring-resolve 'com.blockether.vis.internal.human-input/forget-secret!))
+
+;; =============================================================================
 ;; Binary entry point
 ;;
 ;; `clojure -M:vis` invokes this `-main`. The dispatcher / built-in

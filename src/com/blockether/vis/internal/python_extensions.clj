@@ -234,7 +234,28 @@
                                 ((requiring-resolve
                                    'com.blockether.vis.internal.foundation.shell/jailed-shell)
                                   extension/*current-environment*
-                                  opts))))))
+                                  opts))))
+    (.putMember g
+                "__vis_host_request_input__"
+                ;; Typed human-input pause: one JSON request object in, one JSON
+                ;; answer object out. BLOCKS this extension call until the human
+                ;; answers, cancels, or the request times out.
+                (->executable (fn [request-json]
+                                ((requiring-resolve
+                                   'com.blockether.vis.internal.human-input/request-json!)
+                                  request-json))))
+    (.putMember g
+                "__vis_host_reveal_secret__"
+                (->executable (fn [handle]
+                                ((requiring-resolve
+                                   'com.blockether.vis.internal.human-input/reveal-secret)
+                                  (str handle)))))
+    (.putMember g
+                "__vis_host_forget_secret__"
+                (->executable (fn [handle]
+                                (boolean ((requiring-resolve
+                                            'com.blockether.vis.internal.human-input/forget-secret!)
+                                           (str handle))))))))
 
 ;; =============================================================================
 ;; Adapters — Python callables wrapped as the Clojure fns the extension
