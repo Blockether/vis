@@ -33,7 +33,10 @@
    stringified `git/vcs-kind`).
 
    workspace identity — `\"root\"` `\"sandbox\"` `\"id\"` `\"label\"`
-     `\"filesystem_roots\"` (configured `workspace.filesystem` catalog entries)
+     `\"filesystem_roots\"` (configured `workspace.filesystem` catalog entries,
+     each with its `\"draft\"` isolation policy and whether this session sees an
+     `\"isolated\"` private copy; the session's OWN trunk↔clone pair is folded
+     into `\"root\"`/`\"sandbox\"` instead)
    `\"changed\"` / `\"changed_paths\"` — since-fork edits
    session linkage — `\"session_state_id\"` `\"session_id\"` `\"session_title\"`
      `\"session_fork_of\"` (foreign namespaces stay folded)"
@@ -66,11 +69,16 @@
       (:label workspace)
       (assoc "label" (:label workspace))
 
-      (seq filesystem-roots)
+      (seq (remove :primary? filesystem-roots))
       (assoc "filesystem_roots"
-        (mapv (fn [{:keys [trunk]}]
-                {"cwd" trunk "isolated" false})
-              filesystem-roots))
+        (mapv (fn [{:keys [trunk clone draft denied?]}]
+                (cond->
+                  {"cwd" trunk
+                   "isolated" (boolean (and clone (not= clone trunk)))
+                   "draft" (name (or draft :shared))}
+                  denied?
+                  (assoc "is_denied" true)))
+              (remove :primary? filesystem-roots)))
 
       changed
       (assoc "changed"

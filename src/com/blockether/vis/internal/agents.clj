@@ -325,16 +325,21 @@
   "The added filesystem roots' REAL (trunk) dirs as Files, for the stacked
    guidance scan. Only the trunk is read — a draft clone wouldn't carry a
    freshly-added rules file, and live roots have trunk==clone anyway. Reads
-   the per-turn `*filesystem-roots*` binding (empty when unbound / single-root)."
+   the per-turn `*filesystem-roots*` binding (empty when unbound / single-root).
+   The session's OWN trunk↔clone pair (`:primary?`) is already the primary
+   chain, and a root the draft policy withholds (`:denied?`) must not be read
+   at all."
   []
   (into []
-        (keep (fn [{:keys [trunk]}]
-                (some-> trunk
-                        str
-                        str/trim
-                        not-empty
-                        ((fn [^String p]
-                           (java.io.File. p))))))
+        (comp (remove :primary?)
+              (remove :denied?)
+              (keep (fn [{:keys [trunk]}]
+                      (some-> trunk
+                              str
+                              str/trim
+                              not-empty
+                              ((fn [^String p]
+                                 (java.io.File. p)))))))
         workspace/*filesystem-roots*))
 
 (defn primary-instructions

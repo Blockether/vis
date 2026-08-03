@@ -82,8 +82,8 @@
 
 (def model-keys #{"name" "context" "output_limit" "is_tool_call"})
 (def provider-keys
-  #{"id" "api_key" "api_key_command" "models" "base_url" "compatibility" "api_style" "responses_path"
-    "llm_headers" "extra_body" "is_stateless"})
+  #{"id" "api_key" "api_key_command" "models" "base_url" "compatibility" "api_style"
+    "responses_path" "llm_headers" "extra_body" "is_stateless"})
 
 (def compatibility-values
   "The wire dialects a provider may declare. `api_style` remains the raw svar
@@ -192,18 +192,28 @@
 
 ;; ── Workspace filesystem catalog ─────────────────────────────────────────────
 ;; ONE documented catalog of every filesystem root. Each entry is
-;; `{id, path, description, access?, search?}`. `access` (default read-write)
-;; picks RW vs read-only; `search: false` keeps the root OUT of the default
-;; grep sweep (explicit paths still reach it). The catalog is the sole
-;; source of truth; `jail.filesystem.allow` references entries by id.
-(def workspace-entry-keys #{"id" "path" "description" "access" "search"})
+;; `{id, path, description, access?, search?, draft?}`. `access` (default
+;; read-write) picks RW vs read-only; `search: false` keeps the root OUT of the
+;; default grep sweep (explicit paths still reach it); `draft` (default
+;; `shared`) is the root's ISOLATION policy for a drafted session. The catalog is
+;; the sole source of truth; `jail.filesystem.allow` references entries by id.
+(def workspace-entry-keys #{"id" "path" "description" "access" "search" "draft"})
 (def workspace-access-values #{"read-only" "readonly" "ro" "read-write" "readwrite" "rw"})
+(def workspace-draft-values
+  "Per-root DRAFT isolation vocabulary.
+
+   `shared`         — the draft writes THROUGH to the real root (default).
+   `copy-only`      — the draft gets a private copy; `apply!` never lands it back.
+   `copy-and-apply` — private copy, landed back into the real root on `apply!`.
+   `not-allowed`    — the root is withheld from a drafted session entirely."
+  #{"shared" "copy-only" "copy-and-apply" "not-allowed"})
 (def workspace-entry-schema
   {"id" non-blank-string?
    "path" rooted-path?
    "description" non-blank-string?
    "access" (one-of workspace-access-values)
-   "search" boolean?})
+   "search" boolean?
+   "draft" (one-of workspace-draft-values)})
 (s/def ::workspace-entry #(closed-map? workspace-entry-schema #{"id" "path"} %))
 (s/def ::workspace-entries (s/coll-of ::workspace-entry :kind vector?))
 (def workspace-keys #{"filesystem"})
@@ -630,6 +640,37 @@
   "Search visibility defaults to true; only an explicit `search: false` opts out."
   [entry]
   (false? (get entry "search")))
+
+(defn entry-draft-policy
+  "The catalog entry's DRAFT isolation policy as a keyword. Absent/unknown →
+   `:shared` (write through to the real root), the historical behaviour."
+  [entry]
+  (case
+    (some-> (get entry "draft")
+            str
+            str/lower-case)
+    "copy-only"
+    :copy-only
+
+    "copy-and-apply"
+    :copy-and-apply
+
+    "not-allowed"
+    :not-allowed
+
+    :shared))
+
+(defn workspace-draft-policies
+  "`{catalog-path -> policy}` for every declared root that opts OUT of the default
+   `:shared` behaviour. Independent of `jail.filesystem.allow`: the policy governs
+   draft isolation, which applies whether or not the OS jail is enabled."
+  [config]
+  (assert-config! config)
+  (into {}
+        (keep (fn [entry]
+                (let [policy (entry-draft-policy entry)]
+                  (when (not= :shared policy) [(get entry "path") policy]))))
+        (get-in config ["workspace" "filesystem"] [])))
 
 (def vis-home-entry
   "Vis's OWN session folder — `~/.vis`: `state.yml`, the session DB, the gateway

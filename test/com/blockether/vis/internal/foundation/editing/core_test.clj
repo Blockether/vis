@@ -1308,7 +1308,8 @@
          (private-fn "cat-tool")
 
          err-type
-         (fn [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+         (fn [f]
+           (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
 
         ;; The single-path sandbox form takes whatever expression the caller
         ;; computed, so `safe-path` is the only place nil/"" can be caught.
@@ -1330,7 +1331,8 @@
          (private-fn "ls-tool")
 
          msg
-         (fn [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-message e))))
+         (fn [f]
+           (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-message e))))
 
          cat-msg
          (msg #(cat-tool {"files" [""]}))
@@ -6372,3 +6374,61 @@
                                         (constantly true)
                                         0
                                         0))))))
+
+(defdescribe
+  draft-isolated-root-enforcement-test
+  (it
+    "jail DISABLED: a drafted session's trunk path still remaps into the clone (regression: `/` accepted it verbatim and wrote into the real tree)"
+    (let
+      [safe-path
+       (private-fn "safe-path")
+
+       trunk
+       (mk-tmp-dir "vis-iso-trunk")
+
+       clone
+       (mk-tmp-dir "vis-iso-clone")]
+
+      (spit (java.io.File. ^String trunk "a.txt") "TRUNK ORIGINAL")
+      (spit (java.io.File. ^String clone "a.txt") "IN CLONE")
+      (binding
+        [workspace/*workspace-root*
+         clone
+
+         ;; Exactly what `env-filesystem-roots` binds with the OS jail OFF: the
+         ;; session's own trunk↔clone pair plus a host root that matches EVERY
+         ;; absolute path.
+         workspace/*filesystem-roots*
+         [{:trunk trunk :clone clone :draft :copy-and-apply :primary? true}
+          {:trunk "/" :clone "/" :draft :shared :no-search? true}]]
+
+        (let [f (safe-path (str trunk "/a.txt"))]
+          (expect (string/starts-with? (.getCanonicalPath ^java.io.File f) clone))
+          (expect (= "IN CLONE" (slurp f)))))))
+  (it "a root the draft policy WITHHOLDS is refused outright, even with a host root granted"
+      (let
+        [safe-path
+         (private-fn "safe-path")
+
+         clone
+         (mk-tmp-dir "vis-iso-clone2")
+
+         secret
+         (mk-tmp-dir "vis-iso-secret")]
+
+        (spit (java.io.File. ^String secret "c.txt") "SECRET")
+        (binding
+          [workspace/*workspace-root*
+           clone
+
+           workspace/*filesystem-roots*
+           [{:trunk secret :clone secret :draft :not-allowed :denied? true}
+            {:trunk "/" :clone "/" :draft :shared :no-search? true}]]
+
+          (expect (= #{secret} (workspace/denied-roots)))
+          (expect (not-any? #{secret} (workspace/allowed-roots)))
+          (expect (throws? clojure.lang.ExceptionInfo #(safe-path (str secret "/c.txt"))))
+          (expect (= :ext.foundation.editing/path-denied
+                     (try (safe-path (str secret "/c.txt"))
+                          nil
+                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))

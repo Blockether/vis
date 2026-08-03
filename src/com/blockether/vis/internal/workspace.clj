@@ -65,30 +65,92 @@
         (string? value) (keyword value)
         :else :live))
 
+(def draft-policies
+  "Closed per-root DRAFT isolation vocabulary — the `draft` key of a
+   `workspace.filesystem` catalog entry.
+
+   `:shared`         write THROUGH to the real root (default, historical).
+   `:copy-only`      private copy for the draft; never landed back.
+   `:copy-and-apply` private copy, landed into the real root on `apply!`.
+   `:not-allowed`    withheld from a drafted session (read AND write)."
+  #{:shared :copy-only :copy-and-apply :not-allowed})
+
+(def isolating-draft-policies
+  "Policies that demand a PRIVATE copy of the root for a draft."
+  #{:copy-only :copy-and-apply})
+
+(defn draft-policy-id
+  "Coerce a persisted/configured draft policy to the closed vocabulary.
+   Anything unknown degrades to `:shared`."
+  [value]
+  (let
+    [k (cond (keyword? value) value
+             (string? value) (keyword value)
+             :else nil)]
+    (or (draft-policies k) :shared)))
+
+(defn- entry-val
+  "Read `k` from a persisted entry map under EITHER a keyword or a string key —
+   JSON round-trips differ per persistance backend, and a policy that silently
+   read as nil would degrade an isolated root back to `:shared`."
+  [e k]
+  (let [n (name k)]
+    (or (clojure.core/get e (keyword n))
+        (clojure.core/get e n)
+        (clojure.core/get e (keyword (str/replace n "-" "_")))
+        (clojure.core/get e (str/replace n "-" "_")))))
+
 (defn- root-entry
-  "Normalize one persisted filesystem-root entry to `{:trunk :clone :fork-ms}`.
-   Entries are always maps (`<-json` keywordizes keys): `:trunk` is the real
-   dir, `:clone` its backend working copy (== `:trunk` when live), `:fork-ms`
-   the since-fork mtime baseline (nil = live). Returns nil for junk."
+  "Normalize one persisted filesystem-root entry to
+   `{:trunk :clone :fork-ms :backend :policy}`. Entries are maps (string or
+   keyword keys): `:trunk` is the real dir, `:clone` its backend working copy
+   (== `:trunk` when live), `:fork-ms` the since-fork mtime baseline (nil =
+   live), `:policy` the `draft` policy the clone was minted for. A bare path
+   string is accepted as a live, shared root. Returns nil for junk."
   [e]
-  (when (map? e)
-    (let
-      [t
-       (normalize-root (:trunk e))
+  (cond (string? e) (when-let [t (normalize-root e)]
+                      {:trunk t :clone t :fork-ms nil :backend nil :policy :shared})
+        (map? e) (let
+                   [t
+                    (normalize-root (entry-val e :trunk))
 
-       c
-       (normalize-root (:clone e))]
+                    c
+                    (normalize-root (entry-val e :clone))]
 
-      (when t
-        {:trunk t :clone (or c t) :fork-ms (:fork-ms e) :backend (backend-id (:backend e))}))))
+                   (when t
+                     {:trunk t
+                      :clone (or c t)
+                      :fork-ms (entry-val e :fork-ms)
+                      :backend (backend-id (entry-val e :backend))
+                      :policy (draft-policy-id (entry-val e :policy))}))))
+
+(defn- draft-policy-for
+  "Draft policy for canonical `root`: its OWN catalog entry, else the policy of
+   the DEEPEST configured ancestor (a nested path inherits the isolation of the
+   root that contains it), else `:shared`."
+  [policies root]
+  (or (clojure.core/get policies root)
+      (let
+        [under (filterv (fn [[configured _]]
+                          (and (seq configured) (str/starts-with? (str root) (str configured "/"))))
+                 policies)]
+        (when (seq under) (val (apply max-key (comp count key) under))))
+      :shared))
 
 (defn env-filesystem-roots
-  "Canonical `[{:trunk :clone}]` pairs available to the current tool call.
-   Includes configured workspace catalog entries and immutable read/write roots from
-   the environment security snapshot. Configured roots map to themselves (no draft
-   clone). With the jail disabled, host filesystem roots are granted and marked
-   no-search so explicit paths are unrestricted without making default searches
-   crawl the machine."
+  "Canonical `[{:trunk :clone :draft}]` entries available to the current tool
+   call. Includes the session's OWN draft pair, the per-root clones minted for
+   that draft, configured workspace catalog entries, and immutable read/write
+   roots from the environment security snapshot. With the jail disabled, host
+   filesystem roots are granted and marked no-search so explicit paths are
+   unrestricted without making default searches crawl the machine.
+
+   `:draft` carries the root's `workspace.filesystem` isolation policy. In a
+   DRAFTED session a root is marked `:denied?` when the policy withholds it
+   (`:not-allowed`) or when a copy policy has NO clone minted for this draft —
+   writing through would silently break the promise, so it fails CLOSED. The
+   session's own trunk↔clone pair is FIRST so an absolute trunk path remaps into
+   the clone before a broad host root (jail disabled) can accept it verbatim."
   [env-or-roots]
   (let
     [environment?
@@ -97,8 +159,38 @@
      unrestricted?
      (and environment? (false? (get-in env-or-roots [:security-policy :sandbox])))
 
-     workspace-roots
-     (if environment? (:workspace/filesystem-roots env-or-roots) env-or-roots)
+     policies
+     (when environment?
+       (into {}
+             (keep (fn [[path policy]]
+                     (when-let [root (normalize-root path)]
+                       [root (draft-policy-id policy)])))
+             (get-in env-or-roots [:security-policy :draft-policies])))
+
+     ws
+     (when environment? (:workspace env-or-roots))
+
+     primary-trunk
+     (normalize-root (:repo-root ws))
+
+     primary-clone
+     (normalize-root (or (:root ws) (when environment? (:workspace/root env-or-roots))))
+
+     drafted?
+     (boolean (and primary-trunk primary-clone (not= primary-trunk primary-clone)))
+
+     ;; Per-root clones minted for THIS draft, keyed by canonical trunk.
+     persisted
+     (if environment?
+       (or (:workspace/filesystem-roots env-or-roots) (:filesystem-roots ws))
+       env-or-roots)
+
+     clones
+     (into {}
+           (keep (fn [e]
+                   (when-let [entry (root-entry e)]
+                     [(:trunk entry) entry])))
+           persisted)
 
      host-roots
      (when unrestricted?
@@ -113,19 +205,56 @@
      (if unrestricted?
        (into #{} (keep normalize-root) host-roots)
        (when environment?
-         (into #{} (keep normalize-root) (:security/no-search-roots env-or-roots))))]
+         (into #{} (keep normalize-root) (:security/no-search-roots env-or-roots))))
 
-    (vec (distinct (concat (keep (fn [e]
-                                   (when-let [{:keys [trunk clone]} (root-entry e)]
-                                     {:trunk trunk :clone clone}))
-                                 workspace-roots)
-                           (keep (fn [path]
-                                   (when-let [root (normalize-root path)]
-                                     {:trunk root
-                                      :clone root
-                                      :no-search? (boolean (and no-search
-                                                                (contains? no-search root)))}))
-                                 configured-roots))))))
+     entry
+     (fn [trunk clone policy]
+       (let
+         [isolated?
+          (boolean (and clone (not= clone trunk)))
+
+          denied?
+          (and drafted?
+               (or (= :not-allowed policy)
+                   (and (contains? isolating-draft-policies policy) (not isolated?))))]
+
+         (cond-> {:trunk trunk :clone (if isolated? clone trunk) :draft policy}
+           denied?
+           (assoc :denied? true)
+
+           (and no-search (contains? no-search trunk))
+           (assoc :no-search? true))))
+
+     minted
+     (map (fn [{:keys [trunk clone policy]}]
+            (entry trunk clone (if (= :shared policy) (draft-policy-for policies trunk) policy)))
+          (vals clones))
+
+     ;; A policied root the jail never listed (jail off ⇒ only host roots are
+     ;; configured) still has to be denied/remapped, so it enters explicitly.
+     policied
+     (when drafted?
+       (keep (fn [[root policy]]
+               (when-not (clojure.core/get clones root) (entry root nil policy)))
+             policies))
+
+     catalog
+     (keep
+       (fn [path]
+         (when-let [root (normalize-root path)]
+           (entry root (:clone (clojure.core/get clones root)) (draft-policy-for policies root))))
+       configured-roots)]
+
+    (->> (concat
+           (when drafted?
+             [{:trunk primary-trunk :clone primary-clone :draft :copy-and-apply :primary? true}])
+           minted
+           policied
+           catalog)
+         (remove nil?)
+         (reduce (fn [acc e]
+                   (if (some #(= (:trunk %) (:trunk e)) acc) acc (conj acc e)))
+                 []))))
 
 (defn cwd
   "Resolve the current workspace cwd. In production the channel
@@ -138,16 +267,18 @@
 (defn allowed-roots
   "Canonical absolute CLONE/working-copy paths the current tool call may
    operate under: the primary cwd FIRST, then each bound filesystem root's
-   `:clone`. Deduped; the primary is always present. The confinement set the
-   editing layer's `safe-path` checks the (possibly remapped) target against."
+   `:clone`. Roots the draft policy WITHHOLDS (`:denied?`) are excluded.
+   Deduped; the primary is always present. The confinement set the editing
+   layer's `safe-path` checks the (possibly remapped) target against."
   []
   (let
     [primary
      (.getCanonicalPath (cwd))
 
      extra
-     (keep #(some-> (:clone %)
-                    normalize-root)
+     (keep #(when-not (:denied? %)
+              (some-> (:clone %)
+                      normalize-root))
            *filesystem-roots*)]
 
     (vec (distinct (cons primary extra)))))
@@ -159,19 +290,48 @@
   []
   (into #{}
         (keep (fn [e]
-                (when (:no-search? e)
+                (when (and (:no-search? e) (not (:denied? e)))
                   (some-> (:clone e)
                           normalize-root))))
         *filesystem-roots*))
 
 (defn filesystem-root-mappings
-  "The bound filesystem roots as canonical `[{:trunk :clone}]` pairs — the
+  "The bound filesystem roots as canonical `[{:trunk :clone :draft}]` entries — the
    trunk↔clone remap table the editing layer uses so the model can address a
    context file by its REAL (trunk) path while edits land in the `:clone`.
-   Empty in the single-root case. Does NOT include the primary (relative paths
-   resolve under cwd directly)."
+   Withheld (`:denied?`) roots are excluded: there is nothing to remap onto.
+   Empty in the single-root case. Does NOT include the primary cwd (relative
+   paths resolve under cwd directly), but DOES include the session's own
+   trunk↔clone pair when it works in a draft."
   []
-  (vec *filesystem-roots*))
+  (vec (remove :denied? *filesystem-roots*)))
+
+(defn denied-roots
+  "Canonical TRUNK paths this turn must NOT touch at all: catalog roots whose
+   `draft` policy withholds them from an isolated draft (`not-allowed`, or a copy
+   policy with no clone minted for this draft). `safe-path` rejects any path
+   under one — the ONE enforcement point that does not depend on the OS jail."
+  []
+  (into #{}
+        (keep (fn [e]
+                (when (:denied? e)
+                  (some-> (:trunk e)
+                          normalize-root))))
+        *filesystem-roots*))
+
+(defn draft-isolation-plan
+  "Per-root plan for a NEW draft: `[{:trunk :policy}]` for every bound filesystem
+   root whose `draft` policy demands a PRIVATE copy. Reads the per-turn
+   `*filesystem-roots*` binding, so a caller outside a bound tool call plans
+   nothing."
+  []
+  (into []
+        (comp (remove :primary?)
+              (keep (fn [{:keys [trunk draft]}]
+                      (when (contains? isolating-draft-policies draft)
+                        {:trunk trunk :policy draft})))
+              (distinct))
+        *filesystem-roots*))
 
 (defn- file-path ^String [f] (.getCanonicalPath (io/file f)))
 
@@ -1007,6 +1167,24 @@
   ^File [trunk]
   (doto (io/file (draft-store-root trunk) ".fresh-seed") (.mkdirs)))
 
+(defn- fork-extra-roots!
+  "Mint one private clone per planned extra root (`[{:trunk :policy}]`, from
+   `draft-isolation-plan`). Returns persistable entries. Best-effort per root: a
+   root that cannot be forked yields NO entry, and `env-filesystem-roots` then
+   marks that copy-policy root `:denied?` — the draft loses access rather than
+   silently writing through to the real tree."
+  [plan name required]
+  (into []
+        (keep (fn [{:keys [trunk policy]}]
+                (try (let [{:keys [root backend]} (backend-fork! trunk trunk name required)]
+                       {:trunk trunk
+                        :clone (file-path root)
+                        :fork-ms (System/currentTimeMillis)
+                        :backend (clojure.core/name (backend-id backend))
+                        :policy (clojure.core/name (draft-policy-id policy))})
+                     (catch Throwable _ nil))))
+        plan))
+
 (defn create!
   "Create an isolated DRAFT using the strongest available backend and pin it
    to `:session-state-id`. The backend must provide the full draft capability
@@ -1040,7 +1218,8 @@
    as agent edits, and the dropped paths are recorded so `deleted-paths`
    never mistakes them for deletions. Requires a repository with a commit;
    throws `:workspace/clean-seed-unavailable` otherwise."
-  [db-info {:keys [session-state-id label from required-capabilities blank? clean?]}]
+  [db-info
+   {:keys [session-state-id label from required-capabilities blank? clean? filesystem-roots]}]
   (let
     [trunk
      (or (:repo-root from) (trunk-root))
@@ -1086,6 +1265,15 @@
      fork-ms
      (if (or blank? inherited-fresh?) 0 (System/currentTimeMillis))
 
+     ;; Every catalog root whose `draft` policy demands a PRIVATE copy gets one
+     ;; minted here, so the draft never writes through to the real root. The
+     ;; caller may pass an explicit plan (tests, non-interactive spawns);
+     ;; otherwise the plan comes from the roots bound for this turn.
+     extra-roots
+     (fork-extra-roots! (or filesystem-roots (draft-isolation-plan))
+                        nm
+                        (or required-capabilities draft-required-capabilities))
+
      ws
      (p/db-workspace-insert! db-info
                              {:repo-id rid
@@ -1096,6 +1284,7 @@
                               :parent-workspace-id (:id from)
                               :state :active
                               :fork-ms fork-ms
+                              :filesystem-roots extra-roots
                               ;; Drafts apply from their immediate fork; apply-fork-ms
                               ;; equals fork-ms so apply! reads one baseline uniformly.
                               :apply-fork-ms fork-ms})
@@ -1183,6 +1372,24 @@
     (p/db-session-state-set-workspace! db-info session-state-id workspace-id)
     ws))
 
+(defn extra-root-entries
+  "Normalized `[{:trunk :clone :fork-ms :backend :policy}]` for the EXTRA
+   filesystem roots a workspace owns — the per-root draft clones minted for it
+   by `create!`. Empty for a trunk or a single-root draft."
+  [ws]
+  (into [] (keep root-entry) (:filesystem-roots ws)))
+
+(defn- extra-root-clones
+  "`{:backend :root}` for each extra root this workspace OWNS a private copy of
+   — the reclamation list `abandon!`/session deletion must release alongside the
+   primary clone. Shared (clone == trunk) roots own nothing and are skipped."
+  [ws]
+  (into []
+        (keep (fn [{:keys [trunk clone backend]}]
+                (when (and clone (not= clone trunk)) {:backend backend :root clone})))
+        (extra-root-entries ws)))
+
+
 (defn- land-clone!
   "Copy one clone tree's since-fork edits + deletions into its `trunk`,
    tagging each change with the `trunk` it landed under (so a multi-root
@@ -1215,7 +1422,9 @@
     (into edits deletes)))
 
 (defn apply!
-  "Land a draft's primary clone changes into its real workspace root."
+  "Land a draft's changes into their real roots: the primary clone into
+   `:repo-root`, plus every extra root minted with the `copy-and-apply` draft
+   policy into its own trunk. `copy-only` / `not-allowed` roots never land."
   [db-info {:keys [workspace-id]}]
   (let [ws (get db-info workspace-id)]
     (when-not ws (throw (ex-info "Unknown workspace" {:workspace-id workspace-id})))
@@ -1223,7 +1432,12 @@
       (when-not fork-ms
         (throw (ex-info "Workspace has no fork timestamp; cannot apply"
                         {:type :workspace/no-baseline :workspace-id workspace-id})))
-      (let [changes (vec (land-clone! (:root ws) (:repo-root ws) fork-ms))]
+      (let
+        [changes (into (vec (land-clone! (:root ws) (:repo-root ws) fork-ms))
+                       (mapcat (fn [{:keys [trunk clone policy] :as entry}]
+                                 (when (and (= :copy-and-apply policy) clone (not= clone trunk))
+                                   (land-clone! clone trunk (long (or (:fork-ms entry) 0))))))
+                       (extra-root-entries ws))]
         (fire-hook! :on-apply ws {:changed changes})
         {:status :ok :changed changes :landed (count changes) :workspace ws}))))
 
@@ -1253,13 +1467,15 @@
                (conj discarded (:id done)))))))
 
 (defn abandon!
-  "Transition a workspace to :discarded and release its primary backend-owned clone."
+  "Transition a workspace to :discarded and release the backend-owned clones it
+   holds: its primary clone plus every private per-root draft clone."
   [db-info {:keys [workspace-id reason]}]
   (let [ws (get db-info workspace-id)]
     (when-not ws (throw (ex-info "Unknown workspace" {:workspace-id workspace-id})))
     (let
       [done (p/db-workspace-update-state! db-info workspace-id :discarded)
-       fut (discard-roots-async! [{:backend (:workspace-backend ws) :root (:root ws)}])]
+       fut (discard-roots-async! (into [{:backend (:workspace-backend ws) :root (:root ws)}]
+                                       (extra-root-clones ws)))]
 
       (fire-hook! :on-discard done {:reason reason})
       (assoc (or done ws)
@@ -1267,7 +1483,8 @@
         :discard-future fut))))
 
 (defn discard-session-clones!
-  "On session DELETE, release primary backend-owned clones in its lineage."
+  "On session DELETE, release backend-owned clones in its lineage — each
+   workspace's primary clone plus its private per-root draft clones."
   [db-info session-soul-id]
   (when (and db-info session-soul-id)
     (when-let [state-id (p/db-latest-session-state-id db-info session-soul-id)]
@@ -1280,5 +1497,6 @@
                    acc
                    (recur (some-> (:parent-workspace-id ws)
                                   (get db-info))
-                          (conj acc {:backend (:workspace-backend ws) :root (:root ws)}))))]
+                          (into (conj acc {:backend (:workspace-backend ws) :root (:root ws)})
+                                (extra-root-clones ws)))))]
         (discard-roots-async! roots)))))

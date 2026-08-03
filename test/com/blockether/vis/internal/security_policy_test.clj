@@ -26,10 +26,11 @@
        (doto (java.io.File. home ".m2") .mkdirs)
 
        cfg
-       {"workspace" {"filesystem"
-                     [{"id" "spel" "path" "~/spel" "description" "Sibling repo"}
-                      {"id" "ro" "path" "~/read-only" "access" "read-only"}
-                      {"id" "m2" "path" "~/.m2" "search" false "description" "Maven cache"}]}
+       {"workspace"
+        {"filesystem"
+         [{"id" "spel" "path" "~/spel" "description" "Sibling repo" "draft" "copy-and-apply"}
+          {"id" "ro" "path" "~/read-only" "access" "read-only" "draft" "not-allowed"}
+          {"id" "m2" "path" "~/.m2" "search" false "description" "Maven cache"}]}
         "jail" {"enabled" true
                 "filesystem" {"allow" ["spel" "ro" "m2"]}
                 "network" {"allowed_domains" ["example.com"] "inbound_ports" [5273]}}}
@@ -59,6 +60,12 @@
                   "~/.m2" "Maven cache"
                   "~/.vis" (get config-spec/vis-home-entry "description")}
                  (get-in view ["filesystem" "descriptions"])))
+      ;; Only roots that opt OUT of the default `shared` isolation are named.
+      (expect (= {"~/spel" "copy-and-apply" "~/read-only" "not-allowed"}
+                 (get-in view ["filesystem" "draft"])))
+      (expect (= {(.getCanonicalPath sibling) :copy-and-apply
+                  (.getCanonicalPath (java.io.File. home "read-only")) :not-allowed}
+                 (policy/draft-policies snapshot)))
       (expect (= [5273] (get-in view ["network" "inbound_ports"])))
       (expect (= "reload" (get view "changes_require")))
       (expect (re-matches #"sha256:[0-9a-f]{64}" (get view "generation")))))
@@ -93,7 +100,7 @@
                  (get-in view ["filesystem" "read_write"])))
       (expect (= host-roots (get-in view ["filesystem" "no_search"])))
       (expect (= (mapv (fn [root]
-                         {:trunk root :clone root :no-search? true})
+                         {:trunk root :clone root :draft :shared :no-search? true})
                        host-roots)
                  (workspace/env-filesystem-roots {:security-policy snapshot
                                                   :security/filesystem-roots []

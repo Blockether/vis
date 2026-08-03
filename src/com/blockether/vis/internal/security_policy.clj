@@ -120,8 +120,21 @@
                                 [rp v])))
                       m)))
 
+      ;; Per-root DRAFT isolation policy, keyed by the SAME canonical path the
+      ;; filesystem grants use. Independent of `:sandbox`: a drafted session
+      ;; isolates catalog roots whether or not the OS jail confines them.
+      draft-policies
+      (into {}
+            (keep (fn [[path policy]]
+                    (when-let [rp (nearest-real-path path base-dir home)]
+                      [rp policy])))
+            (config-spec/workspace-draft-policies config))
+
       policy
-      {:sandbox (not= false (get-in config ["jail" "enabled"])) :network network :process-jail jail}
+      {:sandbox (not= false (get-in config ["jail" "enabled"]))
+       :network network
+       :process-jail jail
+       :draft-policies draft-policies}
 
       generation
       (sha256 policy)]
@@ -130,6 +143,12 @@
        :generation generation
        :base-dir (str base-dir)
        :home (str home)))))
+
+(defn draft-policies
+  "Canonical `{root-path -> draft policy}` for catalog roots that opt out of the
+   default `:shared` isolation. Empty for a catalog that declares no `draft` key."
+  [policy]
+  (or (:draft-policies policy) {}))
 
 (defn- host-filesystem-roots
   "Canonical host filesystem roots. With the jail disabled these represent
@@ -198,17 +217,30 @@
      (into {}
            (map (fn [[k v]]
                   [(home-relative k home) v]))
-           (:path-descriptions jail))]
+           (:path-descriptions jail))
+
+     ;; Only roots that opt OUT of the default `shared` isolation are worth
+     ;; naming: a drafted session either works on a private copy of them or
+     ;; cannot touch them at all.
+     draft
+     (into {}
+           (keep (fn [[k v]]
+                   (let [p (name v)]
+                     (when-not (= "shared" p) [(home-relative k home) p]))))
+           (draft-policies policy))]
 
     (cond->
       {"generation" (:generation policy)
        "sandboxed" (boolean (:sandbox policy))
-       "filesystem" {"read_write" rw
-                     "process_read_only" ro
-                     "deny_read" deny-read
-                     "deny_write" deny-write
-                     "no_search" no-search
-                     "descriptions" descriptions}
+       "filesystem" (cond->
+                      {"read_write" rw
+                       "process_read_only" ro
+                       "deny_read" deny-read
+                       "deny_write" deny-write
+                       "no_search" no-search
+                       "descriptions" descriptions}
+                      (seq draft)
+                      (assoc "draft" draft))
        "network" {"enabled" true
                   "allowed_domains" (vec (:allowed-domains network))
                   "denied_domains" (vec (:denied-domains network))

@@ -11391,7 +11391,7 @@
            (vec (distinct (concat (when ws [(str (:root ws))])
                                   clones
                                   (remove #(contains? withheld (workspace/normalize-root %))
-                                          configured-rw-roots)))))))
+                                    configured-rw-roots)))))))
 
      access-view-fn
      (fn []

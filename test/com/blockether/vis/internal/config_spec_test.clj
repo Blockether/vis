@@ -52,7 +52,8 @@
                   "path" "/opt/svar"
                   "description" "a sibling repo"
                   "access" "read-write"
-                  "search" true} {"id" "ref" "path" "~/reference" "access" "read-only"}
+                  "search" true
+                  "draft" "copy-and-apply"} {"id" "ref" "path" "~/reference" "access" "read-only"}
                  {"id" "gen" "path" "~/generated"}
                  {"id" "cache" "path" "~/.m2" "search" false "description" "maven cache"}]}
    "jail" {"enabled" true
@@ -130,6 +131,16 @@
     (expect (not (config-spec/valid? (assoc-in full-config
                                        ["workspace" "filesystem"]
                                        [{"id" "x" "path" "~/ok" "description" ""}]))))
+    ;; `draft` is a closed policy enum: shared / copy-only / copy-and-apply / not-allowed.
+    (expect (= #{"shared" "copy-only" "copy-and-apply" "not-allowed"}
+               config-spec/workspace-draft-values))
+    (doseq [policy config-spec/workspace-draft-values]
+      (expect (config-spec/valid? (assoc-in full-config
+                                    ["workspace" "filesystem"]
+                                    [{"id" "x" "path" "~/ok" "draft" policy}]))))
+    (expect (not (config-spec/valid? (assoc-in full-config
+                                       ["workspace" "filesystem"]
+                                       [{"id" "x" "path" "~/ok" "draft" "sideways"}]))))
     ;; jail.filesystem is pure id admission — only an `allow` STRING VECTOR, nothing else.
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "filesystem" "allow"] "svar"))))
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "filesystem" "deny"] ["svar"]))))

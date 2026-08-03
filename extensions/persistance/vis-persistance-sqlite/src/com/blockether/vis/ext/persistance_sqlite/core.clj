@@ -812,7 +812,13 @@
       (assoc :label (:label row))
 
       (:last_focused_at_ms row)
-      (assoc :last-focused-at-ms (:last_focused_at_ms row)))))
+      (assoc :last-focused-at-ms (:last_focused_at_ms row))
+
+      ;; Extra filesystem roots bound to this workspace: the per-root draft
+      ;; clones minted for it. JSON array of
+      ;; `{trunk, clone, fork_ms, backend, policy}` maps.
+      (:filesystem_roots row)
+      (assoc :filesystem-roots (or (<-json (:filesystem_roots row)) [])))))
 
 
 (defn db-workspace-insert!
@@ -821,10 +827,11 @@
    Required: :repo-id :repo-root :root
    Optional: :id (defaults to a new UUID), :label, :fork-ms, :apply-fork-ms,
              :workspace-kind, :workspace-backend, :parent-workspace-id, :state
-             (defaults to :active)"
+             (defaults to :active), :filesystem-roots (extra per-root draft
+             clones, persisted as a JSON array)"
   [db-info
    {:keys [id repo-id repo-root root label fork-ms apply-fork-ms workspace-kind workspace-backend
-           parent-workspace-id state]}]
+           parent-workspace-id state filesystem-roots]}]
   (when (ds db-info)
     (let
       [ws-id
@@ -850,6 +857,8 @@
                                :parent_workspace_id (some-> parent-workspace-id
                                                             ->ref)
                                :state (->kw (or state :active))
+                               :filesystem_roots (when (seq filesystem-roots)
+                                                   (->json (vec filesystem-roots)))
                                :created_at now}]})
           (row->workspace (query-one! tx-info
                                       {:select [:*] :from :workspace :where [:= :id ws-id]})))))))

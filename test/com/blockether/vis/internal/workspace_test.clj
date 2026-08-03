@@ -209,48 +209,45 @@
         (if-not (ws/isolated-workspaces-supported? base)
           ;; No copy-on-write backend here (CI) — the live round-trip can't run.
           (expect (not (ws/isolated-workspaces-supported? base)))
-          (do
-            (spit (io/file base "keep.txt") "KEEP\n")
-            (spit (io/file base "gone.txt") "DOOMED\n")
-            (.mkdirs (io/file base "sub"))
-            (spit (io/file base "sub" "nested.txt") "NESTED\n")
-            (with-store
-              (fn [store]
-                (let
-                  [seed (seed-workspace! store base)
+          (do (spit (io/file base "keep.txt") "KEEP\n")
+              (spit (io/file base "gone.txt") "DOOMED\n")
+              (.mkdirs (io/file base "sub"))
+              (spit (io/file base "sub" "nested.txt") "NESTED\n")
+              (with-store
+                (fn [store]
+                  (let
+                    [seed (seed-workspace! store base)
+                     state-id (pin-session! store (str (random-uuid)) (:id seed))
+                     draft (ws/create! store {:session-state-id state-id :from seed})
+                     draft-id (:id draft)]
 
-                   state-id (pin-session! store (str (random-uuid)) (:id seed))
-
-                   draft (ws/create! store {:session-state-id state-id :from seed})
-
-                   draft-id (:id draft)]
-
-                  (try
-                    ;; the clone carries trunk's whole tree, nested dirs included
-                    (expect (= "NESTED\n" (slurp (io/file (:root draft) "sub" "nested.txt"))))
-                    ;; edit a NESTED file and delete a trunk file inside the draft
-                    (Thread/sleep 20)
-                    (spit (io/file (:root draft) "sub" "nested.txt") "NESTED-EDIT\n")
-                    (io/delete-file (io/file (:root draft) "gone.txt"))
-                    ;; parking the draft repoints the session at trunk and lists it as parked
-                    (binding [ws/*workspace-root* base]
-                      (ws/stash! store state-id))
-                    (expect (= base (:root (ws/for-session store state-id))))
-                    (expect (= [draft-id] (mapv :id (ws/list-drafts store (:repo-id draft)))))
-                    ;; re-entering restores the pin AND the clone's uncommitted work
-                    (ws/resume! store {:session-state-id state-id :workspace-id draft-id})
-                    (expect (= draft-id (:id (ws/for-session store state-id))))
-                    (expect (= "NESTED-EDIT\n" (slurp (io/file (:root draft) "sub" "nested.txt"))))
-                    (let [{:keys [landed changed]} (ws/apply! store {:workspace-id draft-id})]
-                      (expect (= 2 landed))
-                      (expect (= #{"sub/nested.txt" "gone.txt"} (set (map :path changed))))
-                      (expect (= #{:modify :delete} (set (map :status changed)))))
-                    ;; the deletion travelled, the nested edit landed, the rest survives
-                    (expect (not (.exists (io/file base "gone.txt"))))
-                    (expect (= "NESTED-EDIT\n" (slurp (io/file base "sub" "nested.txt"))))
-                    (expect (= "KEEP\n" (slurp (io/file base "keep.txt"))))
-                    (finally (try (ws/abandon! store {:workspace-id draft-id})
-                                  (catch Throwable _ nil)))))))))
+                    (try
+                      ;; the clone carries trunk's whole tree, nested dirs included
+                      (expect (= "NESTED\n" (slurp (io/file (:root draft) "sub" "nested.txt"))))
+                      ;; edit a NESTED file and delete a trunk file inside the draft
+                      (Thread/sleep 20)
+                      (spit (io/file (:root draft) "sub" "nested.txt") "NESTED-EDIT\n")
+                      (io/delete-file (io/file (:root draft) "gone.txt"))
+                      ;; parking the draft repoints the session at trunk and lists it as parked
+                      (binding [ws/*workspace-root* base]
+                        (ws/stash! store state-id))
+                      (expect (= base (:root (ws/for-session store state-id))))
+                      (expect (= [draft-id] (mapv :id (ws/list-drafts store (:repo-id draft)))))
+                      ;; re-entering restores the pin AND the clone's uncommitted work
+                      (ws/resume! store {:session-state-id state-id :workspace-id draft-id})
+                      (expect (= draft-id (:id (ws/for-session store state-id))))
+                      (expect (= "NESTED-EDIT\n"
+                                 (slurp (io/file (:root draft) "sub" "nested.txt"))))
+                      (let [{:keys [landed changed]} (ws/apply! store {:workspace-id draft-id})]
+                        (expect (= 2 landed))
+                        (expect (= #{"sub/nested.txt" "gone.txt"} (set (map :path changed))))
+                        (expect (= #{:modify :delete} (set (map :status changed)))))
+                      ;; the deletion travelled, the nested edit landed, the rest survives
+                      (expect (not (.exists (io/file base "gone.txt"))))
+                      (expect (= "NESTED-EDIT\n" (slurp (io/file base "sub" "nested.txt"))))
+                      (expect (= "KEEP\n" (slurp (io/file base "keep.txt"))))
+                      (finally (try (ws/abandon! store {:workspace-id draft-id})
+                                    (catch Throwable _ nil)))))))))
         (finally (delete-tree! base)))))
   (it "apply! throws for an unknown workspace-id"
       (with-store (fn [store]
@@ -629,3 +626,142 @@
                                  (try (ws/abandon! store {:workspace-id wid})
                                       (catch Throwable _ nil))))))))))
         (finally (delete-tree! base))))))
+
+(defdescribe
+  draft-isolation-test
+  (it
+    "per-root draft policy: isolates copy roots, withholds not-allowed, and fails CLOSED when no clone was minted"
+    (let
+      [trunk
+       (temp-dir "vis-di-trunk")
+
+       draft
+       (temp-dir "vis-di-draft")
+
+       shared
+       (temp-dir "vis-di-shared")
+
+       copy
+       (temp-dir "vis-di-copy")
+
+       copy-clone
+       (temp-dir "vis-di-clone")
+
+       secret
+       (temp-dir "vis-di-secret")
+
+       pending
+       (temp-dir "vis-di-pending")
+
+       policy
+       {:sandbox true :draft-policies {copy :copy-and-apply secret :not-allowed pending :copy-only}}
+
+       configured
+       [shared copy secret pending]]
+
+      (try (let
+             [entries
+              (ws/env-filesystem-roots {:security-policy policy
+                                        :workspace {:repo-root trunk
+                                                    :root draft
+                                                    :filesystem-roots [{:trunk copy
+                                                                        :clone copy-clone
+                                                                        :policy "copy-and-apply"
+                                                                        :backend "rift"}]}
+                                        :security/filesystem-roots configured
+                                        :security/no-search-roots []})
+
+              by-trunk
+              (into {} (map (juxt :trunk identity)) entries)]
+
+             ;; The session's OWN trunk↔clone pair comes FIRST, so an absolute trunk
+             ;; path remaps into the clone before any broad root can accept it verbatim.
+             (expect (= {:trunk trunk :clone draft :draft :copy-and-apply :primary? true}
+                        (first entries)))
+             (expect (= :shared (:draft (by-trunk shared))))
+             (expect (nil? (:denied? (by-trunk shared))))
+             (expect (= copy-clone (:clone (by-trunk copy))))
+             (expect (nil? (:denied? (by-trunk copy))))
+             (expect (true? (:denied? (by-trunk secret))))
+             ;; copy policy + NO clone for this draft ⇒ withheld, never written through
+             (expect (true? (:denied? (by-trunk pending))))
+             (binding
+               [ws/*workspace-root*
+                draft
+
+                ws/*filesystem-roots*
+                entries]
+
+               (expect (= #{secret pending} (ws/denied-roots)))
+               (expect (contains? (set (ws/allowed-roots)) copy-clone))
+               (expect (not-any? #{secret pending} (ws/allowed-roots)))
+               (expect (not-any? #{secret pending} (map :trunk (ws/filesystem-root-mappings))))))
+           ;; A TRUNK session isolates nothing, but plans what a new draft must copy.
+           (binding
+             [ws/*filesystem-roots* (ws/env-filesystem-roots {:security-policy policy
+                                                              :workspace {:repo-root trunk
+                                                                          :root trunk}
+                                                              :security/filesystem-roots configured
+                                                              :security/no-search-roots []})]
+             (expect (empty? (ws/denied-roots)))
+             (expect (= [{:trunk copy :policy :copy-and-apply} {:trunk pending :policy :copy-only}]
+                        (ws/draft-isolation-plan))))
+           (finally (run! delete-tree! [trunk draft shared copy copy-clone secret pending])))))
+  (it
+    "create! mints a private clone per copy-policy root, apply! lands copy-and-apply, abandon! releases it"
+    (let
+      [base
+       (temp-dir "vis-di-base")
+
+       extra
+       (temp-dir "vis-di-extra")]
+
+      (try
+        (if-not (ws/isolated-workspaces-supported? base)
+          ;; No copy-on-write backend here — same guard as the rift round-trip.
+          (expect (not (ws/isolated-workspaces-supported? base)))
+          (do (spit (io/file base "a.txt") "original\n")
+              (spit (io/file extra "e.txt") "extra original\n")
+              (with-store
+                (fn [store]
+                  (let
+                    [seed
+                     (seed-workspace! store base)
+
+                     draft
+                     (ws/create! store
+                                 {:from seed
+                                  :filesystem-roots [{:trunk extra :policy :copy-and-apply}]})
+
+                     draft-id
+                     (:id draft)
+
+                     entry
+                     (first (ws/extra-root-entries draft))
+
+                     clone
+                     (:clone entry)]
+
+                    (try (expect (= extra (:trunk entry)))
+                         (expect (= :copy-and-apply (:policy entry)))
+                         ;; a real, distinct clone carrying the extra root's tree
+                         (expect (not= extra clone))
+                         (expect (= "extra original\n" (slurp (io/file clone "e.txt"))))
+                         (Thread/sleep 8)
+                         (spit (io/file clone "e.txt") "EDITED IN DRAFT\n")
+                         ;; the REAL root stays untouched until apply!
+                         (expect (= "extra original\n" (slurp (io/file extra "e.txt"))))
+                         (let [{:keys [changed]} (ws/apply! store {:workspace-id draft-id})]
+                           (expect (contains? (set (map :path changed)) "e.txt"))
+                           (expect (contains? (set (map :root changed)) extra))
+                           (expect (= "EDITED IN DRAFT\n" (slurp (io/file extra "e.txt")))))
+                         (let [done (ws/abandon! store {:workspace-id draft-id :reason "done"})]
+                           (some-> (:discard-future done)
+                                   deref)
+                           (expect (= :discarded (:state done)))
+                           ;; both the primary clone and the extra-root clone are released
+                           (expect (not (.exists (io/file clone))))
+                           (expect (not (.exists (io/file (:root draft))))))
+                         (finally (try (ws/abandon! store {:workspace-id draft-id})
+                                       (catch Throwable _ nil)))))))))
+        (finally (delete-tree! base) (delete-tree! extra))))))

@@ -374,28 +374,54 @@
      (.toPath (.getCanonicalFile
                 (.toFile (.normalize (.toAbsolutePath (fs/path cwd (paths/expand-home (str p))))))))
 
+     ;; A root this draft may not touch is refused OUTRIGHT — before any root
+     ;; acceptance. With the jail disabled every host root is granted, so this
+     ;; is the only thing standing between a drafted session and a `not-allowed`
+     ;; root (or a copy-policy root with no clone minted for this draft).
+     _denied
+     (when (some (fn [denied]
+                   (let [^java.nio.file.Path dp (canon denied)]
+                     (.startsWith canonical dp)))
+                 (workspace/denied-roots))
+       (throw
+         (ex-info
+           (str
+             "Path '"
+             p
+             "' lies in a filesystem root this draft may not touch (workspace.filesystem `draft` policy)")
+           {:type :ext.foundation.editing/path-denied :path (str p)})))
+
      mappings
      (workspace/filesystem-root-mappings)
 
-     ;; The model addresses a context file by its REAL (trunk) path; remap it
-     ;; transparently onto the rift clone where edits land. The remapped
-     ;; target is ALWAYS under an allowed clone root, so confinement holds.
+     ;; Roots the session works on through a PRIVATE copy: the model addresses a
+     ;; context file by its REAL (trunk) path, and the edit must land in the
+     ;; clone. Kept separate — and checked FIRST — because a broad allowed root
+     ;; (`/` when the jail is disabled) would otherwise accept the trunk path
+     ;; verbatim and let a drafted session write straight into the real tree.
+     isolated
+     (filterv (fn [{:keys [trunk clone]}]
+                (and trunk clone (not= (str (canon trunk)) (str (canon clone)))))
+       mappings)
+
      ^java.nio.file.Path target
-     (or (when (.startsWith canonical cwd-canon) canonical)
+     (or (some (fn [{:keys [trunk clone]}]
+                 (let
+                   [^java.nio.file.Path cp
+                    (canon clone)
+
+                    ^java.nio.file.Path tp
+                    (canon trunk)]
+
+                   ;; Already inside the clone → keep it (a clone nested under
+                   ;; its own trunk must never remap twice).
+                   (cond (.startsWith canonical cp) canonical
+                         (.startsWith canonical tp) (.resolve cp (.relativize tp canonical)))))
+               isolated)
+         (when (.startsWith canonical cwd-canon) canonical)
          (some (fn [{:keys [clone]}]
                  (let [^java.nio.file.Path cp (canon clone)]
                    (when (.startsWith canonical cp) canonical)))
-               mappings)
-         (some (fn [{:keys [trunk clone]}]
-                 (let
-                   [^java.nio.file.Path tp
-                    (canon trunk)
-
-                    ^java.nio.file.Path cp
-                    (canon clone)]
-
-                   (when (and (not= tp cp) (.startsWith canonical tp))
-                     (.resolve cp (.relativize tp canonical)))))
                mappings)
          ;; system temp dirs (/tmp, $TMPDIR) + Vis's own ~/.vis tree are ALWAYS
          ;; reachable, independent of workspace roots — config and diagnostics work.
@@ -4080,9 +4106,11 @@
                      (map? e) (get e "path")
                      :else nil)]
             (when-not (and (string? p) (seq (str/trim p)))
-              (throw (ex-info
-                       (str tool " `" arg-key "` entries must be a path string or a {\"path\": …} object")
-                       {:type err-type :got e})))
+              (throw (ex-info (str tool
+                                   " `"
+                                   arg-key
+                                   "` entries must be a path string or a {\"path\": …} object")
+                              {:type err-type :got e})))
             (assoc (merge shared (when (map? e) (dissoc e "path"))) "path" p)))
         entries))
 
@@ -5205,11 +5233,12 @@
                        ;; only a `package` clause plus directives indexes to nil). Say
                        ;; both — blaming the language sends the caller away from
                        ;; struct_index for a language it fully supports.
-                       language (assoc base
-                                  "language" language
-                                  "note"
-                                  (str "No top-level definitions or imports here — the file may hold "
-                                       "none, or the language has no structural index yet. Use cat(path)."))
+                       language
+                       (assoc base
+                         "language" language
+                         "note"
+                         (str "No top-level definitions or imports here — the file may hold "
+                              "none, or the language has no structural index yet. Use cat(path)."))
                        :else (assoc base "note" "Unknown language — use cat(path).")))})))
 
 (declare occurrences-data occurrence->wire symbol-rename-tool)
@@ -5286,17 +5315,17 @@
                     scans)
 
               by-name
-              (reduce
-                (fn [acc {:keys [path occurrences]}]
-                  (reduce-kv
-                    (fn [m name occ]
-                      (update m name (fnil conj [])
-                              {"path" path
-                               "occurrences" (mapv #(occurrence->wire name %) occ)}))
-                    acc
-                    occurrences))
-                {}
-                scans)]
+              (reduce (fn [acc {:keys [path occurrences]}]
+                        (reduce-kv (fn [m name occ]
+                                     (update m
+                                             name
+                                             (fnil conj [])
+                                             {"path" path
+                                              "occurrences" (mapv #(occurrence->wire name %) occ)}))
+                                   acc
+                                   occurrences))
+                      {}
+                      scans)]
 
              (mapv #(occurrences-data % paths (get by-name % []) failed) names))))]
 
@@ -7287,21 +7316,21 @@
                      (fn [path nm]
                        (structural/occurrences path (slurp (safe-path path)) nm))))
   ([name paths trace]
-   (let [{:keys [per failed]}
-         (reduce
-           (fn [acc path]
-             (try
-               (let [occ (trace path name)]
-                 (cond-> acc
-                   (seq occ)
-                   (update :per
-                           conj
-                           {"path" path "occurrences" (mapv #(occurrence->wire name %) occ)})))
-               (catch Exception e
-                 (update acc :failed conj
-                         {"path" path "error" (or (ex-message e) (str (class e)))}))))
-           {:per [] :failed []}
-           paths)]
+   (let
+     [{:keys [per failed]}
+      (reduce
+        (fn [acc path]
+          (try
+            (let [occ (trace path name)]
+              (cond-> acc
+                (seq occ)
+                (update :per
+                        conj
+                        {"path" path "occurrences" (mapv #(occurrence->wire name %) occ)})))
+            (catch Exception e
+              (update acc :failed conj {"path" path "error" (or (ex-message e) (str (class e)))}))))
+        {:per [] :failed []}
+        paths)]
      (occurrences-data name paths per failed)))
   ([name paths per failed]
    (let
