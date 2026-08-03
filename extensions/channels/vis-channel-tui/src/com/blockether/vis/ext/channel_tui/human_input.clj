@@ -18,6 +18,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
+            [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
@@ -408,7 +409,7 @@
            (= :checkbox type) (let [idx (stop-index #(= id (:field-id %)))]
                                 [{:kind :checkbox
                                   :field-id id
-                                  :text (:label field)
+                                  :text (label-text field)
                                   :is-checked (boolean value)
                                   :is-focused (= idx focus)}])
            (contains? choice-types type)
@@ -423,7 +424,9 @@
                    (field-options field)))
            :else [])]
 
-    (cond-> (into [{:kind :label :text (label-text field)}] rows)
+    ;; A checkbox row already carries its own label — a separate bold label row
+    ;; above it would say the same word twice, which no other dialog does.
+    (cond-> (if (= :checkbox type) (vec rows) (into [{:kind :label :text (label-text field)}] rows))
       (:help field)
       (conj {:kind :help :text (:help field)})
 
@@ -474,27 +477,32 @@
       (min start label-idx))))
 
 (defn hint
-  "Hint-bar pairs for `form` — the chord list changes with the focused field."
+  "Hint-bar pairs for `form` — the chord list changes with the focused field.
+   Spelled the canonical dialog way: `↑/↓` chords and lowercase actions."
   [form]
   (let
     [stop
      (focused-stop form)
 
      multi?
-     (multiline-focus? form)]
+     (multiline-focus? form)
 
-    (cond-> [["↑↓" "Move"]]
+     action
+     (fn [label fallback]
+       (str/lower-case (or (not-empty (str label)) fallback)))]
+
+    (cond-> [["↑/↓" "move"]]
       (contains? #{:checkbox :select-option :multi-option} (:kind stop))
-      (conj ["Space" "Toggle"])
+      (conj ["Space" "toggle"])
 
       multi?
-      (conj ["Enter" "Newline"])
+      (conj ["Enter" "newline"])
 
       true
-      (conj [(if multi? "^S" "Enter") (get-in form [:request :submit-label] "Submit")])
+      (conj [(if multi? "^S" "Enter") (action (get-in form [:request :submit-label]) "submit")])
 
       (get-in form [:request :is-cancellable] true)
-      (conj ["Esc" (get-in form [:request :cancel-label] "Cancel")]))))
+      (conj ["Esc" (action (get-in form [:request :cancel-label]) "cancel")]))))
 
 ;; =============================================================================
 ;; Painting
@@ -506,67 +514,13 @@
   (p/fill-rect! g (inc (long left)) row inner-w 1)
   (p/put-str! g (inc (long left)) row (dialogs/ellipsize (str text) (max 0 (- (long inner-w) 2)))))
 
-(defn- paint-marked-row!
-  "One selectable row: `• ` cursor prefix, an optional `[✓]`/`( )` mark, label."
-  [g left row inner-w {:keys [is-focused is-checked text mark]}]
-  (let
-    [prefix
-     (str (p/selection-prefix is-focused)
-          (case mark
-            :check
-            (str "[" (if is-checked "✓" " ") "] ")
 
-            :radio
-            (str (if is-checked "●" "○") " ")
-
-            ""))
-
-     draw-text
-     (dialogs/ellipsize (str prefix text) (max 0 (- (long inner-w) 2)))]
-
-    (p/set-colors! g t/dialog-fg t/dialog-bg)
-    (p/fill-rect! g (inc (long left)) row inner-w 1)
-    (if is-focused
-      (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row draw-text))
-      (p/put-str! g (inc (long left)) row draw-text))))
-
-(defn- paint-input-row!
-  "Borderless `› text` field. Returns the terminal cursor position when this
-   row owns the cursor."
-  [g left row inner-w {:keys [text cursor is-focused placeholder]}]
-  (let
-    [prompt
-     "› "
-
-     field-left
-     (inc (long left))
-
-     text-left
-     (+ field-left (count prompt))
-
-     text-w
-     (max 1 (- (long inner-w) 2 (count prompt) 1))
-
-     cursor
-     (clamp (long (or cursor 0)) 0 (count text))
-
-     h-off
-     (max 0 (- cursor (dec (long text-w))))
-
-     visible
-     (subs text h-off (min (count text) (+ (long h-off) (long text-w))))]
-
-    (p/set-colors! g t/dialog-fg t/dialog-bg)
-    (p/fill-rect! g field-left row inner-w 1)
-    (p/set-colors! g t/dialog-hint t/dialog-bg)
-    (p/put-str! g field-left row prompt)
-    (if (and placeholder (zero? (count text)))
-      (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-          (p/put-str! g text-left row (dialogs/ellipsize (str placeholder) text-w)))
-      (do (p/set-colors! g t/dialog-fg t/dialog-bg) (p/put-str! g text-left row visible)))
-    (when is-focused (p/cursor-pos (+ (long text-left) (- cursor (long h-off))) row))))
 
 (defn- paint-row!
+  "Paint one plan row. Selectable rows go through the SHARED dialog painters
+   (`dialogs/draw-checkbox-item!`, `dialogs/draw-radio-item!`,
+   `dialogs/draw-text-input-field!`) so this dialog cannot drift from the rest
+   of the TUI. Returns the terminal cursor position when the row owns it."
   [g left row inner-w entry]
   (case (:kind entry)
     :blank
@@ -595,27 +549,58 @@
     (do (paint-plain! g left row inner-w t/footer-error-fg (:text entry)) nil)
 
     :checkbox
-    (do (paint-marked-row! g left row inner-w (assoc entry :mark :check)) nil)
+    (do (dialogs/draw-checkbox-item! g
+                                     left
+                                     row
+                                     inner-w
+                                     (:is-focused entry)
+                                     (:is-checked entry)
+                                     (:text entry))
+        nil)
 
     :option
-    (do (paint-marked-row! g left row inner-w (assoc entry :mark :radio)) nil)
+    (do (dialogs/draw-radio-item! g
+                                  left
+                                  row
+                                  inner-w
+                                  (:is-focused entry)
+                                  (:is-checked entry)
+                                  (:text entry))
+        nil)
 
     :input
-    (paint-input-row! g left row inner-w entry)
+    (let
+      [text
+       (str (:text entry))
+
+       cursor
+       (clamp (long (or (:cursor entry) 0)) 0 (count text))
+
+       pos
+       (dialogs/draw-text-input-field! g left row inner-w text cursor (:placeholder entry))]
+
+      (when (:is-focused entry) pos))
 
     nil))
 
 (defn paint!
   "Draw the human-input dialog for `form` over the whole screen. Returns the
    `TerminalPosition` the caller should place the terminal cursor at (the
-   focused text field), or nil when no text field has focus."
+   focused text field), or nil when no text field has focus.
+
+   Sized and decorated like every other dialog: shared chrome, a box wide
+   enough for the whole hint bar, and a scrollbar in the right gutter once the
+   form is taller than the content area."
   [g ^long cols ^long rows form]
   (let
     [plan
      (form-rows form)
 
+     bar
+     (hint form)
+
      content-w
-     (dialogs/default-content-width cols)
+     (dialogs/footer-content-width cols bar (dialogs/default-content-width cols))
 
      content-h
      (dialogs/adaptive-content-height rows (count plan))
@@ -638,20 +623,37 @@
      visible
      (max 1 (long (:content-h layout)))
 
+     total
+     (count plan)
+
      start
      (window-start plan visible)
 
+     is-overflowing
+     (> total visible)
+
+     row-w
+     (if is-overflowing (dec inner-w) inner-w)
+
      shown
-     (subvec (vec plan) (min start (count plan)) (min (count plan) (+ start visible)))
+     (subvec (vec plan) (min start total) (min total (+ start visible)))
 
      cursor
      (reduce (fn [acc [i entry]]
-               (or (paint-row! g left (+ content-top (long i)) inner-w entry) acc))
+               (or (paint-row! g left (+ content-top (long i)) row-w entry) acc))
              nil
              (map-indexed vector shown))]
 
     (doseq [i (range (count shown) visible)]
-      (paint-row! g left (+ content-top (long i)) inner-w {:kind :blank}))
-    (dialogs/draw-hint-bar! g left (:hint-row layout) inner-w (hint form))
+      (paint-row! g left (+ content-top (long i)) row-w {:kind :blank}))
+    (when is-overflowing
+      (scrollbar/draw! g
+                       {:col (+ left inner-w)
+                        :top content-top
+                        :track-h visible
+                        :total-h total
+                        :inner-h visible
+                        :scroll start}))
+    (dialogs/draw-hint-bar! g left (:hint-row layout) inner-w bar)
     (p/clear-styles! g)
     cursor))

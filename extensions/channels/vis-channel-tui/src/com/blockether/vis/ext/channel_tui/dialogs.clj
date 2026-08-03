@@ -566,7 +566,10 @@
        (p/put-str! g (- (+ (long left) (long inner-w)) (p/display-width hint)) row hint)
        (p/set-colors! g t/dialog-fg t/dialog-bg)))))
 
-(defn- draw-checkbox-item!
+(defn draw-checkbox-item!
+  "MULTI-choice row — cursor glyph, a `[✓]`/`[ ]` box, then the label. The one
+   checkbox row painter in the TUI: list dialogs and the human-input form both
+   draw through it so the vocabulary never drifts."
   ;; `> [✓] label` when selected, `  [✓] label` otherwise. The cursor
   ;; glyph and the checkbox glyph carry independent meaning: the
   ;; first says "this row is the cursor", the second says "this
@@ -590,7 +593,29 @@
       (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row draw-text))
       (p/put-str! g (inc (long left)) row draw-text))))
 
-(defn- draw-text-input-field!
+(defn draw-radio-item!
+  "SINGLE-choice twin of `draw-checkbox-item!` — `• ● label` / `  ○ label`.
+   The cursor glyph says which row the cursor is on; the shared status mark
+   (`p/STATUS_ON` picked, `p/STATUS_OFF` not) says which option is chosen, the
+   same on/off glyph pair the settings rows and the footer already speak.
+   Anchored at `(inc left)` like every other dialog row."
+  [g left row inner-w selected? checked? label]
+  (let
+    [prefix
+     (str (p/selection-prefix selected?) (if checked? p/STATUS_ON p/STATUS_OFF) " ")
+
+     draw-text
+     (ellipsize (str prefix label) (max 0 (- (long inner-w) 2)))]
+
+    (p/set-colors! g t/dialog-fg t/dialog-bg)
+    (p/fill-rect! g (inc (long left)) row inner-w 1)
+    (if selected?
+      (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row draw-text))
+      (p/put-str! g (inc (long left)) row draw-text))))
+
+(defn draw-text-input-field!
+  "Borderless `› text` input row with an optional dim `placeholder`. Returns the
+   `TerminalPosition` the caller should park the terminal cursor at."
   ;; BORDERLESS query field (opencode-style dialog input): a single prompt line,
   ;; no box. A dim "›" leads it; `placeholder` fills it while the text is empty.
   ;; Drawn on `row`; the caller reserves the surrounding rows as margin.

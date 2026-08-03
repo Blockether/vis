@@ -7,6 +7,7 @@
    harness `dialogs-test` uses."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
             [com.blockether.vis.ext.channel-tui.human-input :as hi]
             [com.blockether.vis.ext.channel-tui.screen :as screen]
             [com.blockether.vis.ext.channel-tui.state :as state]
@@ -233,15 +234,15 @@
 (defdescribe hint-test
              (it "offers Enter as submit outside a multiline field"
                  (let [pairs (hi/hint (hi/init-form (request)))]
-                   (expect (some #{["Enter" "Submit"]} pairs))
-                   (expect (some #{["Esc" "Cancel"]} pairs))))
+                   (expect (some #{["Enter" "submit"]} pairs))
+                   (expect (some #{["Esc" "cancel"]} pairs))))
              (it "swaps Enter for a newline chord inside a multiline field"
                  (let [pairs (hi/hint (assoc (hi/init-form (request)) :focus 7))]
-                   (expect (some #{["Enter" "Newline"]} pairs))
-                   (expect (some #{["^S" "Submit"]} pairs))))
+                   (expect (some #{["Enter" "newline"]} pairs))
+                   (expect (some #{["^S" "submit"]} pairs))))
              (it "drops the cancel chord when the request forbids cancelling"
                  (let [pairs (hi/hint (hi/init-form (assoc (request) :is-cancellable false)))]
-                   (expect (not-any? #{["Esc" "Cancel"]} pairs)))))
+                   (expect (not-any? #(= "Esc" (first %)) pairs)))))
 
 (defdescribe paint-test
              (it "paints the title, the description and every field label"
@@ -393,3 +394,80 @@
           (#'screen/human-input-key! @state/app-db (KeyStroke. KeyType/Escape))
           (expect (= "req-1" @cancelled))
           (expect (nil? (:human-input @state/app-db)))))))
+
+(defn- canonical-row
+  "Row text a CANONICAL `dialogs` row painter produces, trimmed. The dialog
+   must paint the very same characters for the same row."
+  [draw!]
+  (let [{:keys [screen g]} (virtual-screen)]
+    (draw! g)
+    (str/trim (screen-row screen 0))))
+
+(defn- painted-rows
+  "Every painted human-input row containing `needle`, with the dialog frame and
+   padding stripped, so a row compares directly against a canonical painter."
+  [form needle]
+  (let
+    [{:keys [screen g]}
+     (virtual-screen)
+
+     _
+     (hi/paint! g 80 30 form)]
+
+    (into []
+          (keep (fn [y]
+                  (let [row (str/trim (str/replace (screen-row screen y) "│" " "))]
+                    (when (str/includes? row needle) row))))
+          (range 30))))
+
+(defdescribe
+  canonical-presentation-test
+  "Cross-validation against the canonical TUI dialog vocabulary: the same row
+   painters, the same hint-bar spelling, the same scrollbar gutter."
+  (it "paints checkbox rows exactly like every other dialog checkbox"
+      (let [rows (painted-rows (assoc (hi/init-form (request)) :focus 6) "Confirm")]
+        (expect (some #{(canonical-row
+                          (fn [g]
+                            (dialogs/draw-checkbox-item! g 0 0 40 true false "Confirm")))}
+                      rows))
+        ;; The checkbox row IS the label — no duplicate bold label row above it.
+        (expect (= 1 (count rows)))))
+  (it "paints select options with the shared ●/○ status marks"
+      (expect (some #{(canonical-row (fn [g]
+                                       (dialogs/draw-radio-item! g 0 0 40 true true "Dev")))}
+                    (painted-rows (assoc (hi/init-form (request)) :focus 2) "Dev")))
+      (expect (some #{(canonical-row (fn [g]
+                                       (dialogs/draw-radio-item! g 0 0 40 false false "Prod")))}
+                    (painted-rows (assoc (hi/init-form (request)) :focus 2) "Prod"))))
+  (it "paints text fields with the shared borderless input row"
+      (expect (some #{(canonical-row (fn [g]
+                                       (dialogs/draw-text-input-field! g 0 0 40 "" 0 "who")))}
+                    (painted-rows (assoc (hi/init-form (request)) :focus 0) "who"))))
+  (it "spells its hint bar the canonical way — ↑/↓ chords, lowercase actions"
+      (let
+        [{:keys [screen g]}
+         (virtual-screen)
+
+         _
+         (hi/paint! g 80 30 (hi/init-form (request)))
+
+         text
+         (screen-text screen)]
+
+        (expect (str/includes? text "↑/↓ move"))
+        (expect (str/includes? text "Enter submit"))
+        (expect (str/includes? text "Esc cancel"))))
+  (it "puts a scrollbar thumb in the gutter once the form outgrows the box"
+      (let [{:keys [screen g]} (virtual-screen)]
+        (hi/paint! g 80 30 (assoc (hi/init-form (request)) :focus 7))
+        (expect (str/includes? (screen-text screen) "█"))))
+  (it "leaves the gutter clean when the whole form fits"
+      (let [{:keys [screen g]} (virtual-screen)]
+        (hi/paint! g
+                   80
+                   30
+                   (hi/init-form {:id "r"
+                                  :title "Tiny"
+                                  :fields [{:id "a" :type :checkbox :label "Yes"}]
+                                  :is-cancellable true}))
+        (expect (not (str/includes? (screen-text screen) "█"))))))
