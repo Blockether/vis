@@ -1,5 +1,5 @@
 def __vis_install_httpx__():
-    import sys as _sys, types as _types
+    import sys as _sys, types as _types, datetime as _dt, time as _time
 
     _bi = _sys.modules["builtins"]
 
@@ -149,7 +149,7 @@ def __vis_install_httpx__():
             self.response = response
 
     class Response:
-        def __init__(self, rr, req_url=None):
+        def __init__(self, rr, req_url=None, elapsed=None):
             self._rr = rr
             self.status_code = rr.status_code
             self.headers = Headers(
@@ -157,6 +157,13 @@ def __vis_install_httpx__():
             )
             self.url = URL(getattr(rr, "url", req_url) or req_url)
             self.encoding = getattr(rr, "encoding", "utf-8")
+            # httpx reports the round trip as a timedelta. The dispatcher times the
+            # whole call; a hand-built Response falls back to the wrapped response.
+            if elapsed is None:
+                elapsed = getattr(rr, "elapsed", None)
+            self.elapsed = (
+                elapsed if isinstance(elapsed, _dt.timedelta) else _dt.timedelta(0)
+            )
 
         @property
         def content(self):
@@ -231,6 +238,7 @@ def __vis_install_httpx__():
         follow = kw.pop("follow_redirects", None)
         if follow is None:
             follow = kw.pop("allow_redirects", True)
+        started = _time.monotonic()
         try:
             rr = rq.request(
                 str(method).upper(),
@@ -256,7 +264,9 @@ def __vis_install_httpx__():
             if "Connection" in en:
                 raise ConnectError(msg, request=None)
             raise RequestError(msg, request=None)
-        return Response(rr, str(url))
+        return Response(
+            rr, str(url), _dt.timedelta(seconds=_time.monotonic() - started)
+        )
 
     class Timeout:
         def __init__(

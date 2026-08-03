@@ -107,6 +107,30 @@ _rq.request = _fake
                                 "r = httpx.post('http://svc/b', json={'x': 5})\n"
                                 "r.status_code == 201 and r.json()['json'] == {'x': 5}")))))))
 
+;; `httpx.Response` carried no `.elapsed`: timing a request raised AttributeError
+;; even though the wrapped requests response already measured the round trip.
+(defdescribe httpx-elapsed-test
+             (it "reports the round-trip duration as a timedelta"
+                 (with-python-context
+                   (expect (true? (ev python-context
+                                      (str fake
+                                           "import datetime, time\n" "_orig = _rq.request\n"
+                                           "def _sleepy(*a, **kw):\n" "    time.sleep(0.02)\n"
+                                           "    return _orig(*a, **kw)\n" "_rq.request = _sleepy\n"
+                                           "try:\n" "    r = httpx.get('http://svc/a')\n"
+                                           "finally:\n" "    _rq.request = _orig\n"
+                                           "isinstance(r.elapsed, datetime.timedelta) "
+                                           "and r.elapsed.total_seconds() >= 0.02"))))))
+             (it "measures the whole dispatch, not just the wrapped response"
+                 (with-python-context
+                   (expect (true? (ev python-context
+                                      (str fake
+                                           "import datetime\n"
+                                           "r = httpx.post('http://svc/b', json={'x': 5})\n"
+                                           ;; the canned Response leaves elapsed at 0
+                                           "isinstance(r.elapsed, datetime.timedelta) "
+                                           "and r.elapsed.total_seconds() >= 0")))))))
+
 (defdescribe
   httpx-client-test
   (it

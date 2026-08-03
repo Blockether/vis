@@ -9,8 +9,8 @@
    surface agents actually reach for: module-level `get/post/put/patch/delete/
    head/options/request`, a `Client` (with `base_url`, default headers/params,
    context-manager support), an httpx-style `Response` (`.status_code`, `.text`,
-   `.content`, `.json()`, `.headers`, `.url`, `.is_success/.is_error/.is_redirect`,
-   `.raise_for_status()`), `Headers`, `URL`, `Timeout`, and the `httpx` exception
+   `.content`, `.json()`, `.headers`, `.url`, `.elapsed`, `.is_success/.is_error/
+   .is_redirect`, `.raise_for_status()`), `Headers`, `URL`, `Timeout`, and the `httpx` exception
    tree (`HTTPError`, `RequestError`, `HTTPStatusError`, `TimeoutException`,
    `ConnectError`). Async is supported too: an `AsyncClient` whose `request/get/
    post/put/patch/delete/head/options` are awaitable coroutines (with `aclose` and
