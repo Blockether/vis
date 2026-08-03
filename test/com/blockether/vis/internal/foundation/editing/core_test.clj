@@ -1627,6 +1627,30 @@
         (doseq [bad [70 true {"start" 1 "end" 70}]]
           (expect (string/includes? (msg {"ranges" bad}) "expects [[start, end], ...]"))
           (expect (not (string/includes? (msg {"ranges" bad}) "nth not supported"))))))
+  (it "cat names the OFFENDING window when a `ranges` pair is reversed or non-positive"
+      (let
+        [path
+         (write-temp! "range/reversed.txt" "L1\nL2\nL3\n")
+
+         cat-tool
+         (private-fn "cat-tool")
+
+         msg
+         (fn [arg]
+           (try (cat-tool path arg) nil (catch clojure.lang.ExceptionInfo e (.getMessage e))))
+
+         reversed
+         (msg {"ranges" [[1 2] [5288 3400]]})]
+
+        ;; The real failure: ONE mistyped end line among several good windows.
+        ;; A generic "start <= end" rule cannot say WHICH pair broke, so the
+        ;; message quotes the offending pair and never the healthy sibling.
+        (expect (string/includes? reversed "[5288, 3400]"))
+        (expect (string/includes? reversed "AFTER"))
+        (expect (not (string/includes? reversed "[1, 2]")))
+        ;; a half-sentinel is not the whole-file opt-out: it names the pair too
+        (expect (string/includes? (msg {"ranges" [[0 5]]}) "[0, 5]"))
+        (expect (string/includes? (msg {"ranges" [[0 5]]}) "1-based"))))
   (it
     "path/src/edits tools unwrap the collapsed all-kwargs spec map, never stringify it"
     (let

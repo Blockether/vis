@@ -1185,16 +1185,28 @@
                     {:type :ext.foundation.editing/invalid-cat-args :limit n}))))
 
 (defn- validate-cat-range!
+  "Reject an invalid `[start end]` window, naming the OFFENDING pair and its
+   exact defect. A caller that mistypes ONE end line (`[5288, 3400]`) otherwise
+   reads a generic rule, cannot tell WHICH of several windows broke it, and
+   retries the same pair."
   [start end]
-  (when-not (and (integer? start)
-                 (integer? end)
-                 (pos? (long start))
-                 (pos? (long end))
-                 (<= (long start) (long end)))
-    (throw (ex-info (str
-                      "cat \"range\"/\"ranges\" start/end must be positive ints with start <= end"
-                      " — pass [-1, -1] (any non-positive pair) to read the WHOLE file")
-                    {:type :ext.foundation.editing/invalid-cat-args :start start :end end}))))
+  (let
+    [defect
+     (cond (not (and (integer? start) (integer? end))) "start and end must be integer line numbers"
+           (or (not (pos? (long start))) (not (pos? (long end))))
+           "line numbers are 1-based, so start and end must be positive"
+           (> (long start) (long end))
+           (str "start " (long start) " comes AFTER end " (long end) " (a window must ascend)")
+           :else nil)]
+    (when defect
+      (throw (ex-info (str "cat \"range\"/\"ranges\" window ["
+                           (pr-str start)
+                           ", "
+                           (pr-str end)
+                           "] is invalid: "
+                           defect
+                           " — pass [-1, -1] (any non-positive pair) to read the WHOLE file")
+                      {:type :ext.foundation.editing/invalid-cat-args :start start :end end})))))
 
 (defn- cat-range-scalar
   "Coerce a range component to a long. Accepts an int or a numeric string like
