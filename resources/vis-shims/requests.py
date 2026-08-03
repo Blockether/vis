@@ -364,6 +364,18 @@ def __vis_install_requests_compat__():
             return url
         return url + ("&" if "?" in url else "?") + q
 
+    def _is_form_body(data):
+        # requests' own rule: text, bytes, a mapping, or a list/tuple of pairs is a
+        # FORM to urlencode. Anything else iterable -- a generator, an iterator, an
+        # open file -- is a STREAM the transport sends as it is.
+        return isinstance(data, (list, tuple)) or hasattr(data, "items")
+
+    def _stream_chunks(data):
+        # urllib hands each chunk straight to the socket, so str chunks (which
+        # requests and urllib3 both accept) have to become bytes right here.
+        for chunk in data:
+            yield chunk.encode("utf-8") if isinstance(chunk, str) else chunk
+
     def _encode_body(data, json_body):
         auto = {}
         body = None
@@ -375,6 +387,14 @@ def __vis_install_requests_compat__():
                 body = bytes(data)
             elif isinstance(data, str):
                 body = data.encode("utf-8")
+            elif hasattr(data, "read"):
+                # An open file: urllib sizes it with fstat, so hand it over whole
+                # and let Content-Length rather than chunked encoding carry it.
+                body = data
+            elif hasattr(data, "__iter__") and not _is_form_body(data):
+                # A streamed body. urlencode() would raise "not a valid non-string
+                # sequence or mapping object" on it; urllib sends it chunked.
+                body = _stream_chunks(data)
             else:
                 pairs = list(data.items()) if hasattr(data, "items") else list(data)
                 body = _up.urlencode(pairs, doseq=True).encode("utf-8")

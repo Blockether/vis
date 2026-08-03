@@ -217,6 +217,12 @@ def __vis_install_httpx__():
         content = kw.pop("content", None)
         if content is not None and data is None:
             data = content
+            if not isinstance(content, (bytes, bytearray, str)) and not hasattr(
+                content, "read"
+            ):
+                # httpx `content=` is RAW: an Iterable[bytes] is a streamed body,
+                # never a form -- even when it is a plain list of chunks.
+                data = iter(content)
         timeout = kw.pop("timeout", None)
         if not isinstance(timeout, (int, float, type(None))):
             timeout = getattr(timeout, "connect", None) or None

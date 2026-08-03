@@ -157,3 +157,66 @@ _rq.request = _fake
                                 "import httpx\n"
                                 "httpx.AsyncClient is not None "
                                 "and isinstance(httpx.AsyncClient(), httpx.AsyncClient)")))))))
+
+;; A streamed body is sent, not form-encoded. `httpx.post(url, content=<generator>)`
+;; (and any iterator or open file) reached the requests shim's `_encode_body`, which
+;; treated every non-str/bytes body as a form and handed it to `urlencode`, so a
+;; chunked upload died instantly with `RequestError: not a valid non-string sequence
+;; or mapping object` instead of streaming.
+(def ^:private urlopen-probe
+  "import urllib.request as _u, email.message
+class _Fake:
+    status = 200
+    reason = 'OK'
+    def __init__(self):
+        h = email.message.Message()
+        h['Content-Type'] = 'text/plain'
+        self.headers = h
+    def geturl(self): return 'http://svc/x'
+    def read(self): return b'ok'
+    def close(self): pass
+sent = {}
+def _fake_urlopen(req, timeout=None):
+    body = req.data
+    if hasattr(body, 'read'):
+        body = body.read()
+    elif body is not None and not isinstance(body, (bytes, bytearray)):
+        body = b''.join(body)
+    sent['body'] = body
+    sent['content_type'] = req.get_header('Content-type')
+    return _Fake()
+_u.urlopen = _fake_urlopen
+import httpx
+")
+
+(defdescribe
+  httpx-streamed-body-test
+  (it "streams a generator body instead of form-encoding it"
+      (with-fresh-python-context (expect
+                                   (= ["abcd" 200]
+                                      (ev python-context
+                                          (str urlopen-probe
+                                               "def chunks():\n"
+                                               "    yield b'ab'\n" "    yield 'cd'\n"
+                                               "r = httpx.post('http://svc/x', content=chunks())\n"
+                                               "[sent['body'].decode(), r.status_code]"))))))
+  (it "streams an iterable of chunks and an open file untouched"
+      (with-fresh-python-context
+        (expect (= ["aabb" "filebody"]
+                   (ev python-context
+                       (str urlopen-probe
+                            "import io\n"
+                            "httpx.post('http://svc/x', content=[b'aa', b'bb'])\n"
+                            "first = sent['body'].decode()\n"
+                            "httpx.post('http://svc/x', content=io.BytesIO(b'filebody'))\n"
+                            "[first, sent['body'].decode()]"))))))
+  (it "still urlencodes a mapping or a list of pairs as a form"
+      (with-fresh-python-context
+        (expect (= ["a=1&b=2" "application/x-www-form-urlencoded" "a=1&b=2"]
+                   (ev python-context
+                       (str urlopen-probe
+                            "import requests\n"
+                            "httpx.post('http://svc/x', data={'a': '1', 'b': '2'})\n"
+                            "form = [sent['body'].decode(), sent['content_type']]\n"
+                            "requests.post('http://svc/x', data=[('a', '1'), ('b', '2')])\n"
+                            "form + [sent['body'].decode()]")))))))
