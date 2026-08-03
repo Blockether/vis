@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import appSource from '../App.tsx?raw';
+import sessionScreenSource from '../screens/SessionScreen.tsx?raw';
 import { isShellChromeVisible, shellScreen, type ShellState } from './shell';
 
 const state = (over: Partial<ShellState> = {}): ShellState => ({
@@ -70,5 +72,33 @@ describe('shell screen', () => {
 
   it('falls back to the list when an open session has no transport yet', () => {
     expect(shellScreen(state({ isSessionOpen: true, isSessionReady: false }))).toBe('sessions');
+  });
+});
+
+// The chrome is allowed to disappear on exactly one screen, so that screen has
+// to bring the status-bar padding itself: the session's own header is the first
+// child of its section, and everything else there (the scroller and the loading
+// veil, which is scoped to the wrapper BELOW the header) sits under it. Vitest
+// runs with no DOM, so the padding is asserted where it is written: in source.
+const screenHeaderClass = (source: string, component: string): string => {
+  const declared = source.indexOf(component);
+  if (declared < 0) throw new Error(`${component} is gone`);
+  const header = /<header[^>]*className="([^"]*)"/.exec(source.slice(declared));
+  if (!header) throw new Error(`${component} no longer renders a <header>`);
+  return header[1];
+};
+
+describe('status bar padding', () => {
+  it('pads the status bar from the shell chrome', () => {
+    expect(screenHeaderClass(appSource, 'function Header({')).toContain(
+      'pt-[env(safe-area-inset-top)]',
+    );
+  });
+
+  it('pads the status bar from the session, the one screen the chrome leaves', () => {
+    expect(isShellChromeVisible('session')).toBe(false);
+    expect(screenHeaderClass(sessionScreenSource, 'export function SessionScreen({')).toContain(
+      'pt-[env(safe-area-inset-top)]',
+    );
   });
 });
