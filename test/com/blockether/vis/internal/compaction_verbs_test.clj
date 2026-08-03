@@ -1050,6 +1050,44 @@
       (expect (= "folded t2/i9 · saved ~0 tokens · context 44% (42k/96k tokens) → fresh"
                  (sf ["t2/i9"] "fresh")))))
   (it
+    "a fold reaching over off-wire scopes says so and names the whole-turn shape that reclaims them"
+    ;; Issue #88: every iteration of a NORMALLY COMPLETED turn is priced 0 by
+    ;; `off-wire-seed?` — its raw results never replay, only the turn's Q/A recap
+    ;; does, and ONLY a whole-turn token (`tN`) charges and removes that recap.
+    ;; Folding 44 `tN/iM` ids and reading `saved ~946` looked like broken
+    ;; accounting; the card now names the weightless share and the shape that
+    ;; would actually reclaim it. The numbers themselves are unchanged.
+    (let
+      [mk (fn []
+            (atom {"session_turn" 3
+                   "engine_iter_universe" ["t1/i1" "t1/i2" "t2/i1" "t2/i2"]
+                   ;; turn 1 completed normally: its iterations are off the wire
+                   "engine_iter_weights" {"t1/i1" 0 "t1/i2" 0 "t2/i1" 8000 "t2/i2" 4000}
+                   "engine_turn_weights" {1 5000}
+                   "engine_utilization" {"saturation" 30
+                                         "last_request_tokens" 30000
+                                         "auto_compress_above" 60000
+                                         "model_input_limit" 100000}}))]
+      ;; The #88 shape: 3 enumerated iteration ids, 2 of them weightless.
+      (expect
+        (= (str "folded t1/i1, t1/i2, t2/i1 · saved ~8k tokens · ~13% of budget"
+                " · context 30%→~22% (30k→22k tokens)"
+                " · 2/3 scopes already off-wire — fold t1 to drop their recaps → enumerated")
+           ((get (compaction-verbs (mk)) 'session-fold) ["t1/i1" "t1/i2" "t2/i1"] "enumerated")))
+      ;; A fold that frees nothing at all still names the shape that would.
+      (expect (= (str "folded t1/i1, t1/i2 · saved ~0 tokens · context 30% (30k/100k tokens)"
+                      " · 2/2 scopes already off-wire — fold t1 to drop their recaps → nothing")
+                 ((get (compaction-verbs (mk)) 'session-fold) ["t1/i1" "t1/i2"] "nothing")))
+      ;; The whole-turn shape DOES charge and remove the recap, so it needs no nudge.
+      (expect (= (str "folded t1 · saved ~5k tokens · ~8% of budget"
+                      " · context 30%→~25% (30k→25k tokens) → whole turn")
+                 ((get (compaction-verbs (mk)) 'session-fold) ["t1"] "whole turn")))
+      ;; A `through` selector that fully covers a turn is promoted to that turn
+      ;; (recap charged), so it is already the reclaiming shape — also no nudge.
+      (expect (= (str "folded through t2/i1 · saved ~13k tokens · ~22% of budget"
+                      " · context 30%→~17% (30k→17k tokens) → spanned")
+                 ((get (compaction-verbs (mk)) 'session-fold) {"through" "t2/i1"} "spanned")))))
+  (it
     "a later, bigger request can't inflate the card — the reduction is the fold's own"
     ;; The scary regression (fold → tool call → fold → % climbs): a projected
     ;; level subtracts cumulative-saved from the GROWING `last_request_tokens`, so
@@ -1217,9 +1255,10 @@
       ;; line instead of one unwrappable run-on.
       (let
         [card (session-fold-card
-                (str "folded t1/i1 · recover ntr[\"toolu_A\"] shell: $ bash -n ~/vis/bin/vis-agent; "
-                     "ntr[\"toolu_B\"] cat"
-                     " · IMPORTANT 3 more folded results stay recoverable"))]
+                (str
+                  "folded t1/i1 · recover ntr[\"toolu_A\"] shell: $ bash -n ~/vis/bin/vis-agent; "
+                  "ntr[\"toolu_B\"] cat"
+                  " · IMPORTANT 3 more folded results stay recoverable"))]
         (expect (str/includes? (:body card)
                                "\n  - `ntr[\"toolu_A\"]` `shell: $ bash -n ~/vis/bin/vis-agent`"))
         (expect (str/includes? (:body card) "\n  - `ntr[\"toolu_B\"]`"))

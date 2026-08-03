@@ -3206,6 +3206,51 @@
             sat
             (get util "saturation")
 
+            ;; A fold can legitimately cover scopes that already left the wire:
+            ;; iterations of a turn that COMPLETED normally replay no results at
+            ;; all (`off-wire-seed?` above), so only that turn's Q/A recap still
+            ;; resides — and ONLY a whole-turn token (`tN`) charges and removes a
+            ;; recap. Folding those `tN/iM` ids is an honest no-op, but a card
+            ;; listing 44 folded scopes beside a small `saved ~` reads as broken
+            ;; accounting (issue #88). So name the weightless share and point at
+            ;; the shape that WOULD reclaim it. A scope MISSING from `weights`
+            ;; is merely unsent (never priced yet), not off-wire.
+            off-wire
+            (if (map? weights)
+              (filterv #(and (contains? scopes %)
+                             (contains? weights %)
+                             (zero? (long (get weights %))))
+                (or universe []))
+              [])
+
+            recap-turns
+            (let
+              [tw
+               (get ctx "engine_turn_weights")
+
+               folded?
+               (into already-turns new-turns)]
+
+              (into []
+                    (comp (keep #(some-> (second (re-matches #"t(\d+)/i\d+" %))
+                                         parse-long))
+                          (distinct)
+                          (remove folded?)
+                          (filter #(pos? (long (get tw % 0)))))
+                    off-wire))
+
+            ;; Only advise when a whole-turn fold really would reclaim something:
+            ;; recap-less or already-whole-turn-folded scopes need no nudge.
+            off-wire-note
+            (when (seq recap-turns)
+              (str " · "
+                   (count off-wire)
+                   "/"
+                   (count scopes)
+                   " scopes already off-wire — fold "
+                   (str/join ", " (map #(str "t" %) recap-turns))
+                   " to drop their recaps"))
+
             saved
             (cond (pos? (long toks)) (str " · saved ~" (fmt-tok toks)
                                           " tokens" (when pct (str " · ~" pct "% of budget")))
@@ -3270,7 +3315,7 @@
                       (str " · context " sat "% (" (fmt-tok lrt) "/" (fmt-tok lim) " tokens)")
                       :else (str " · context " sat "%"))))]
 
-           {:note (str saved ctx-pct) :reclaimed-tokens toks})
+           {:note (str saved ctx-pct off-wire-note) :reclaimed-tokens toks})
          (catch Throwable _ {:note "" :reclaimed-tokens 0})))
 
      recover-hint
