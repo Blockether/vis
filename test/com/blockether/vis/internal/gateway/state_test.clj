@@ -1167,14 +1167,14 @@
                           sid
                           {:current-turn tid
                            :turns {tid {:turn_id tid :status "running" :cancel-token :token}}})
-                        (with-redefs-fn {#'cancellation/cancel! (fn [token]
+                        (with-redefs-fn {#'cancellation/cancel! (fn [token source]
                                                                   (swap! order conj
-                                                                    [:cancel token]))
+                                                                    [:cancel token source]))
                                          #'state/persist-cancel-stamp!
                                          (fn [persisted-sid]
                                            (swap! order conj [:persist persisted-sid]))}
                           #(expect (= {:status "cancelling"} (state/cancel-turn! sid tid))))
-                        (expect (= [[:cancel :token] [:persist sid]] @order))
+                        (expect (= [[:cancel :token :client-cancel-turn] [:persist sid]] @order))
                         (finally (swap! registry dissoc sid))))))
 
 (defdescribe turn-terminal-claim-per-run-test
@@ -2774,3 +2774,45 @@
                (expect (not (contains? ids "gateway-dup")))
                (expect (contains? ids "gateway-own"))))
            (finally (reset! registry saved))))))
+
+(defdescribe cancel-source-test
+             ;; A cancelled turn surfaces everywhere as a bare interrupt, and the daemon
+             ;; used to record NOTHING about its origin: a stall force-cancel, the
+             ;; shutdown sweep and a user stop were indistinguishable in a post mortem.
+             ;; Each entry point now stamps itself on the turn's cancellation token.
+             (it
+               "stamps the origin of every cancel entry point on the token"
+               (let
+                 [sid
+                  (str "cancel-source-" (java.util.UUID/randomUUID))
+
+                  token-a
+                  (cancellation/cancellation-token)
+
+                  token-b
+                  (cancellation/cancellation-token)
+
+                  token-c
+                  (cancellation/cancellation-token)
+
+                  registry
+                  (atom {sid {:current-turn "b"
+                              :turns {"a" {:turn_id "a" :status "running" :cancel-token token-a}
+                                      "b" {:turn_id "b" :status "running" :cancel-token token-b}
+                                      "c"
+                                      {:turn_id "c" :status "running" :cancel-token token-c}}}})]
+
+                 (with-redefs-fn {#'state/registry registry
+                                  #'state/persist-cancel-stamp! (fn [_]
+                                                                  nil)}
+                   (fn []
+                     (expect (= {:status "cancelling"} (state/cancel-turn! sid "a")))
+                     (expect (= :client-cancel-turn (cancellation/cancel-reason token-a)))
+                     (expect (= "b" (:turn_id (state/cancel-current-turn! sid))))
+                     (expect (= :client-cancel-current (cancellation/cancel-reason token-b)))
+                     (expect (= 3 (state/cancel-all-running!)))
+                     (expect (= :gateway-shutdown (cancellation/cancel-reason token-c)))
+                     ;; The shutdown sweep does not relabel the two already-attributed
+                     ;; cancels.
+                     (expect (= :client-cancel-turn (cancellation/cancel-reason token-a)))
+                     (expect (= :client-cancel-current (cancellation/cancel-reason token-b))))))))

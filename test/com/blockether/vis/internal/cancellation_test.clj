@@ -88,3 +88,32 @@
                    (cancellation/cancel! token)
                    ;; Future was hard-cancelled — isCancelled flips true.
                    (expect (true? (.isCancelled task))))))
+
+(defdescribe cancel-reason-test
+             ;; Downstream a cancel is just a thread interrupt, so the token is the only
+             ;; place that can remember WHO fired it. Without this the daemon could not
+             ;; tell its own stall/shutdown cancel from a user pressing Esc.
+             (it "records the reason of the FIRST cancel! and never rewrites it"
+                 (let [token (cancellation/cancellation-token)]
+                   (expect (nil? (cancellation/cancel-reason token)))
+                   (cancellation/cancel! token :stall-watchdog)
+                   (expect (= :stall-watchdog (cancellation/cancel-reason token)))
+                   ;; A shutdown sweep landing on an already-cancelled turn must not
+                   ;; overwrite the origin that actually stopped it.
+                   (cancellation/cancel! token :gateway-shutdown)
+                   (expect (= :stall-watchdog (cancellation/cancel-reason token)))))
+             (it "records :unspecified for an unattributed cancel"
+                 (let [token (cancellation/cancellation-token)]
+                   (cancellation/cancel! token)
+                   (expect (= :unspecified (cancellation/cancel-reason token)))
+                   (expect (true? (cancellation/cancelled? token)))))
+             (it "still cancels a hand-built token that carries no reason atom"
+                 (let
+                   [token {:com.blockether.vis.internal.cancellation/flag (atom false)
+                           :com.blockether.vis.internal.cancellation/callbacks (atom [])}]
+                   (cancellation/cancel! token :client-cancel-turn)
+                   (expect (true? (cancellation/cancelled? token)))
+                   (expect (nil? (cancellation/cancel-reason token)))))
+             (it "is nil for a token nobody cancelled"
+                 (expect (nil? (cancellation/cancel-reason (cancellation/cancellation-token))))
+                 (expect (nil? (cancellation/cancel-reason nil)))))

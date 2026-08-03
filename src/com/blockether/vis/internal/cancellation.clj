@@ -14,6 +14,8 @@
      `(cancellation-atom token)`  - cooperative flag atom (pass to `turn!`)
      `(cancellation-set-future! token fut)` - register the worker future
      `(cancel! token)`            - set flag + interrupt registered future
+     `(cancel! token reason)`     - same, stamping WHO cancelled
+     `(cancel-reason token)`      - the recorded origin of the cancel
      `(cancelled? token)`         - true once `cancel!` has been called
      `(cancellation? throwable)`  - true if exception was caused by `cancel!`
 
@@ -78,7 +80,7 @@
 (defn cancellation-token
   "Construct a fresh cancellation token.
 
-   The token bundles two things every cancellable boundary needs:
+   The token bundles three things every cancellable boundary needs:
      - `::flag`      — cooperative boolean atom, polled at iteration
                         boundaries by callers that can return
                         gracefully.
@@ -86,12 +88,17 @@
                         any number of in-flight workers (provider
                         HTTP call, Python eval future, voice recorder)
                         can register their own hard-cancel hook.
+     - `::reason`    — WHO fired the cancel, stamped by `cancel!` and read
+                        back with `cancel-reason`. Downstream every cancel
+                        looks identical (a thread interrupt), so without
+                        this stamp a self-inflicted cancel (stall watchdog,
+                        shutdown) is indistinguishable from a user Esc.
 
    `cancellation-set-future!` (legacy single-future API) is kept for
    call sites that have not migrated yet; it now routes through the
    callback registry too so behaviour stays identical."
   []
-  {::flag (atom false) ::callbacks (atom [])})
+  {::flag (atom false) ::callbacks (atom []) ::reason (atom nil)})
 
 (defn cancellation-atom
   "Cooperative flag atom — read with `@` at iteration boundaries when
@@ -105,6 +112,18 @@
   (boolean (some-> token
                    ::flag
                    deref)))
+
+(defn cancel-reason
+  "Why this token was cancelled — the `reason` of the FIRST `cancel!` call,
+   or nil when it was never cancelled (or came from a hand-built token).
+
+   Cancellation is the one turn outcome with no stack trace worth reading:
+   the loop only sees an interrupt. Callers log this so a post mortem can
+   tell a user stop from the daemon cancelling its own turn."
+  [token]
+  (some-> token
+          ::reason
+          deref))
 
 (defn on-cancel!
   "Register a no-arg `thunk` to fire the moment `cancel!` is invoked
@@ -158,13 +177,23 @@
    own `try`/`catch` so one bad consumer cannot starve the rest.
    Safe to call multiple times — on the second call the flag is
    already set, and the callback list has typically drained because
-   workers disposed themselves."
-  [token]
-  (when token
-    (try (reset! (::flag token) true) (catch Throwable _ nil))
-    (doseq [[_ thunk] @(::callbacks token)]
-      (try (thunk) (catch Throwable _ nil))))
-  nil)
+   workers disposed themselves.
+
+   `reason` names the ORIGIN (`:client-cancel-turn`, `:stall-watchdog`,
+   `:gateway-shutdown`, …). The first one wins — a shutdown that lands on
+   an already user-cancelled turn must not rewrite history — and it is read
+   back with [[cancel-reason]]. The one-arity call records `:unspecified`
+   rather than nothing, so an unattributed cancel is still visibly a cancel."
+  ([token] (cancel! token :unspecified))
+  ([token reason]
+   (when token
+     (try (swap! (::reason token) (fn [old]
+                                    (or old reason :unspecified)))
+          (catch Throwable _ nil))
+     (try (reset! (::flag token) true) (catch Throwable _ nil))
+     (doseq [[_ thunk] @(::callbacks token)]
+       (try (thunk) (catch Throwable _ nil))))
+   nil))
 
 (defn ^:private cancellation-cause?
   "Walk an exception's cause chain looking for an `InterruptedException`.

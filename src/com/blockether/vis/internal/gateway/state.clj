@@ -2027,7 +2027,7 @@
                                         ["gateway: provider stream stalled — force-cancelling turn"
                                          tid (str idle-ms "ms idle in phase " phase)])
                                       (swap! stall assoc :stalled? true)
-                                      (cancellation/cancel! cancel-token))
+                                      (cancellation/cancel! cancel-token :stall-watchdog))
                                   (recur)))))
                           (catch InterruptedException _ nil)
                           (catch Throwable _ nil)))
@@ -3577,24 +3577,31 @@
 
 (defn cancel-turn!
   "Fire the cancellation token of a running turn. Returns
-   `{:status \"cancelling\"}` or `{:error ...}`."
-  [sid tid]
-  (let [turn (get-in @registry [sid :turns tid])]
-    (cond (nil? turn) {:error :turn-not-found}
-          (not= "running" (:status turn)) {:error :not-running :status (:status turn)}
-          :else
-          (do ;; Stamp the cancel wall-clock BEFORE firing the token so the
-            ;; unwinding worker can tell post-cancel submissions (drain
-            ;; them: "stop that, run THIS") from the pre-cancel backlog
-            ;; (dropped) — see `drop-cancelled-backlog!`.
-            (swap! registry assoc-in [sid :turns tid :cancelling_at] (System/currentTimeMillis))
-            ;; Interrupt live work before touching persistence. The durable stamp may
-            ;; scan/update the session DB and must never postpone cancellation itself.
-            ;; It still completes before this endpoint ACKs; only the ordering changes.
-            (some-> (:cancel-token turn)
-                    cancellation/cancel!)
-            (persist-cancel-stamp! sid)
-            {:status "cancelling"}))))
+   `{:status \"cancelling\"}` or `{:error ...}`.
+
+   `source` is stamped on the token and logged. Every cancel reads downstream
+   as one interrupt, so an unattributed cancel leaves a post mortem unable to
+   tell a user stop from the daemon stopping its own turn — this line is the
+   only durable record of WHO stopped it."
+  ([sid tid] (cancel-turn! sid tid :client-cancel-turn))
+  ([sid tid source]
+   (let [turn (get-in @registry [sid :turns tid])]
+     (cond (nil? turn) {:error :turn-not-found}
+           (not= "running" (:status turn)) {:error :not-running :status (:status turn)}
+           :else
+           (do (tel/log! :info ["gateway: cancelling turn" tid (str "source=" (name source))])
+               ;; Stamp the cancel wall-clock BEFORE firing the token so the
+               ;; unwinding worker can tell post-cancel submissions (drain
+               ;; them: "stop that, run THIS") from the pre-cancel backlog
+               ;; (dropped) — see `drop-cancelled-backlog!`.
+               (swap! registry assoc-in [sid :turns tid :cancelling_at] (System/currentTimeMillis))
+               ;; Interrupt live work before touching persistence. The durable stamp may
+               ;; scan/update the session DB and must never postpone cancellation itself.
+               ;; It still completes before this endpoint ACKs; only the ordering changes.
+               (some-> (:cancel-token turn)
+                       (cancellation/cancel! source))
+               (persist-cancel-stamp! sid)
+               {:status "cancelling"})))))
 
 (defn cancel-current-turn!
   "Tid-less twin of `cancel-turn!`: fire the cancellation token of WHATEVER
@@ -3607,7 +3614,7 @@
    `{:error :no-running-turn}`."
   [sid]
   (if-let [tid (get-in @registry [sid :current-turn])]
-    (let [res (cancel-turn! sid tid)]
+    (let [res (cancel-turn! sid tid :client-cancel-current)]
       (if (:error res) res (assoc res :turn_id tid)))
     {:error :no-running-turn}))
 
@@ -3622,7 +3629,7 @@
   (reduce (fn [n sess]
             (reduce (fn [n turn]
                       (if (and (= "running" (:status turn)) (:cancel-token turn))
-                        (do (try (cancellation/cancel! (:cancel-token turn))
+                        (do (try (cancellation/cancel! (:cancel-token turn) :gateway-shutdown)
                                  (catch Throwable _ nil))
                             (inc (long n)))
                         n))

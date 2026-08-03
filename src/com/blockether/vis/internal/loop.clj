@@ -8227,23 +8227,27 @@
           (let [{:keys [iteration messages trace trailer-iters llm-provider]} loop-state]
             (ctx-loop/set-turn-state! environment :iteration (inc (long iteration)))
             (cond
-              (when cancel-atom @cancel-atom) (do (log-stage! :error iteration {:reason :cancelled})
-                                                  ;; Sticky best-answer: surface the latest non-blank answer
-                                                  ;; this turn produced instead of a blank answer.
-                                                  (let
-                                                    [sticky (some-> (:turn-state-atom environment)
-                                                                    deref
-                                                                    :best-answer
-                                                                    :value)
-                                                     result (merge {:answer sticky
-                                                                    :status :cancelled
-                                                                    :status-id (status->id
-                                                                                 :cancelled)
-                                                                    :trace trace
-                                                                    :iteration-count iteration}
-                                                                   (finalize-cost))]
+              (when cancel-atom @cancel-atom)
+              (do (log-stage! :error
+                              iteration
+                              {:reason :cancelled
+                               :cancel-source (cancellation/cancel-reason (:cancel-token
+                                                                            environment))})
+                  ;; Sticky best-answer: surface the latest non-blank answer
+                  ;; this turn produced instead of a blank answer.
+                  (let
+                    [sticky (some-> (:turn-state-atom environment)
+                                    deref
+                                    :best-answer
+                                    :value)
+                     result (merge {:answer sticky
+                                    :status :cancelled
+                                    :status-id (status->id :cancelled)
+                                    :trace trace
+                                    :iteration-count iteration}
+                                   (finalize-cost))]
 
-                                                    result))
+                    result))
               :else
               (let
                 [raw-reasoning-level (when has-reasoning? base-reasoning-level)
@@ -8682,7 +8686,11 @@
                   ;; \"_Cancelled by user._\"). Bail straight to the cancel
                   ;; result that the top-of-loop branch would have produced.
                   (if (and cancel-atom @cancel-atom)
-                    (do (log-stage! :error iteration {:reason :cancelled})
+                    (do (log-stage! :error
+                                    iteration
+                                    {:reason :cancelled
+                                     :cancel-source (cancellation/cancel-reason (:cancel-token
+                                                                                  environment))})
                         (let
                           [sticky (some-> (:turn-state-atom environment)
                                           deref
