@@ -148,6 +148,21 @@
    the generic 120s watchdog and lose the run's result."
   300)
 
+(def HTTP_CALL_FLOOR_SECS
+  "Floor for an eval that reaches the NETWORK through the HTTP shims (`requests`,
+   `httpx`, `urllib3`, `urlopen`).
+
+   A request's budget is invisible to a text scan in the way that matters: the
+   shim's own per-call default is 30s, the block usually loops over N hosts, and
+   the helper doing the fetching is typically defined in an EARLIER block. So a
+   perfectly ordinary crawl raced the 120s watchdog, and the watchdog won — a
+   bare `Timeout (120s)` for work that was progressing normally, which is the
+   defect `DEFAULT_SHELL_TIMEOUT_SECS` describes, spelled in sockets.
+
+   Unlike shell's, this floor does NOT drop when the block spells a literal
+   `timeout=`: that number bounds ONE request, never the loop around it."
+  300)
+
 (def ^:private timeout-secs-re
   #"[\"']?(?:timeout_secs|timeout)[\"']?\s*(?::|=)\s*([0-9]+(?:\.[0-9]+)?)")
 
@@ -156,6 +171,9 @@
 (def ^:private shell-call-re #"\bshell\s*\(|\bsubprocess\.")
 
 (def ^:private run-tests-call-re #"\brun_tests\s*\(")
+
+(def ^:private http-call-re
+  #"\b(?:requests|httpx|urllib3)\s*\.|\b(?:import|from)\s+(?:requests|httpx|urllib3)\b|\burlopen\s*\(")
 
 (defn- max-of
   [xs]
@@ -194,11 +212,15 @@
    A `shell` call the scan cannot read may legally own the FULL cap — a ten-minute
    `wait` — so that is its floor. When the block DOES spell a second budget out the
    scan already reads it, and the floor drops back to shell's default so a second,
-   unannotated call in the same block still cannot race the watchdog."
+   unannotated call in the same block still cannot race the watchdog.
+
+   An HTTP call keeps its floor either way: a literal `timeout=` bounds ONE
+   request, and the block is almost always a LOOP of them."
   [code]
   (let [code (str code)]
     (max-of
       [(when (re-find run-tests-call-re code) RUN_TESTS_FLOOR_SECS)
+       (when (re-find http-call-re code) HTTP_CALL_FLOOR_SECS)
        (when (re-find shell-call-re code)
          (if (re-find timeout-secs-re code) DEFAULT_SHELL_TIMEOUT_SECS MAX_SHELL_TIMEOUT_SECS))])))
 

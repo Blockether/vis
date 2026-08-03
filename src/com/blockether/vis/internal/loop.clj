@@ -911,10 +911,25 @@
           ;; Eval timeout: the worker future is cancelled, but the guest frame is
           ;; only unwound by a Truffle safepoint interrupt.
           (interrupt-guest! python-context)
-          {:result nil
-           :lru {}
-           :error {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}
-           :timeout? true})
+          ;; What the block PRINTED before the wall is real work — progress lines
+          ;; of a fetch loop, results already computed. The guest never reaches
+          ;; its own `{:stdout}` outcome here, so drain the capture buffer onto
+          ;; the envelope instead of answering with a bare `Timeout (120s)` and
+          ;; nothing else: that is unactionable, and the model re-runs the whole
+          ;; block blind.
+          (let
+            [envelope
+             {:result nil
+              :lru {}
+              :error {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}
+              :timeout? true}
+
+             out
+             (env/partial-stdout python-context)]
+
+            (cond-> envelope
+              out
+              (assoc :stdout out))))
       execution-result)))
 
 (defn- run-with-timing
@@ -4128,6 +4143,15 @@
                  str
                  not-empty)
 
+         ;; Partial output the block PRINTED before the wall fired. A backstop
+         ;; timeout is exactly when it matters: the work is gone, so the lines
+         ;; that did print are all that is left of it.
+         out
+         (some-> (:stdout result*)
+                 str
+                 str/trim
+                 not-empty)
+
          ;; Prefer the tool's OWN renderer so a backstop timeout reads
          ;; EXACTLY like an in-band one (form-chip preview + labeled FORM /
          ;; TIMEOUT sections), not a bare fence. Synthesize the timeout
@@ -4143,6 +4167,7 @@
           card
           (let
             [detail (->> [(when code (str "**FORM**\n" (strutil/fenced (clip code) lang)))
+                          (when out (str "**STDOUT**\n" (strutil/fenced (clip out))))
                           (when msg (str "**TIMEOUT**\n" (strutil/fenced msg)))]
                          (remove nil?)
                          (str/join "\n\n")

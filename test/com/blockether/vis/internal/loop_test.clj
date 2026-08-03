@@ -600,6 +600,28 @@
                       (finally (try (.close ^org.graalvm.polyglot.Context pc true)
                                     (catch Throwable _ nil)))))))
 
+(defdescribe eval-timeout-keeps-partial-stdout-test
+             ;; REGRESSION: the wall-clock BACKSTOP answered with `{:result nil :error
+             ;; "Timeout (120s)"}` and NOTHING else. The guest never reaches its own
+             ;; `{:stdout}` outcome, so every line the block had already printed — the
+             ;; progress log of a long fetch loop, results already computed — died with
+             ;; the frame. The model then re-ran the whole block blind, which is how a
+             ;; serial `httpx` sweep burned two turns instead of one.
+             (it
+               "surfaces what the block printed before the wall fired"
+               (let
+                 [pc
+                  (:python-context (env/create-python-context {}))]
+
+                 (try (let
+                        [result (binding [rt/*eval-timeout-ms* 3000]
+                                  ((deref #'lp/run-python-code) pc "print('fetched 1')\nwhile True:\n    pass"))]
+
+                        (expect (true? (:timeout? result)))
+                        (expect (some? (re-find #"fetched 1" (str (:stdout result))))))
+                      (finally (try (.close ^org.graalvm.polyglot.Context pc true)
+                                    (catch Throwable _ nil)))))))
+
 (defdescribe parallel-sub-loops-child-error-isolation-test
              ;; REGRESSION: the settle loop only cancelled siblings on InterruptedException,
              ;; and nothing guarded the child body beyond `run-spec!`'s own catch. An Error
@@ -2458,6 +2480,24 @@
                             (eval-timeout-ms-for-code 120000 "r = await run_tests(\"clojure\", namespaces=[\"a.b-test\"])")))
                  ;; Prose that merely mentions the word must not widen anything.
                  (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('shell is bounded')"))))
+             (it "floors the watchdog above a block that reaches the network"
+                 ;; REGRESSION: HTTP was not a bounded-call FAMILY at all. The shims'
+                 ;; own per-request default is 30s, a sweep loops over N hosts, and the
+                 ;; fetch helper usually lives in an EARLIER block — so an ordinary
+                 ;; crawl raced the 120s watchdog and lost, with no output to show for
+                 ;; it.
+                 (expect (= (+ (* 1000 rt/HTTP_CALL_FLOOR_SECS) 10000)
+                            (eval-timeout-ms-for-code 120000 "r = httpx.post(url, json=payload)")))
+                 (expect (= 310000 (eval-timeout-ms-for-code 120000 "import requests\nfetch_all(hosts)")))
+                 (expect (= 310000 (eval-timeout-ms-for-code 120000 "urlopen(u).read()")))
+                 ;; A literal `timeout=` bounds ONE request, never the loop around it,
+                 ;; so it must NOT shrink the floor the way a shell budget does.
+                 (expect (= 310000
+                            (eval-timeout-ms-for-code 120000 "for u in urls:\n    requests.get(u, timeout=5)")))
+                 ;; …but a longer explicitly requested budget still wins outright.
+                 (expect (= 610000 (eval-timeout-ms-for-code 120000 "requests.get(u, timeout=600)")))
+                 ;; Prose that merely mentions a client must not widen anything.
+                 (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('requests are bounded')"))))
              (it "splits + evals multi-form blocks whose statements contain astral chars (emoji)"
                  ;; Regression: GraalPy's ast.get_source_segment truncates
                  ;; the per-form source when a statement carries a non-BMP char (emoji 👆),

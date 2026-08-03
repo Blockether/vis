@@ -1556,6 +1556,20 @@
   ^String [^java.io.ByteArrayOutputStream baos]
   (.replace (.toString baos "UTF-8") "\r\n" "\n"))
 
+(defn partial-stdout
+  "Whatever the block currently running in `ctx` has PRINTED so far, or nil when
+   it printed nothing.
+
+   The eval watchdog kills a block from OUTSIDE the guest, so the flat
+   `{:stdout}` | `{:error}` outcome `run-python-block` builds is never reached
+   and everything printed before the wall — every progress line of a long fetch
+   loop — used to be dropped with the frame. The capture buffer outlives the
+   interrupt, so the timeout envelope drains it from here."
+  [^Context ctx]
+  (when-let [baos (ctx-stdout-baos ctx)]
+    (let [s (baos->str baos)]
+      (when-not (str/blank? s) s))))
+
 (defn- module-value?
   "True when `v` is the GraalPy `__main__` module Value. A bare statement
    (`print(...)`, `import os`, …) eval'd as an expression yields the module
