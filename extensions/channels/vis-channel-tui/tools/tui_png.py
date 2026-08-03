@@ -39,9 +39,9 @@ CELL_W, CELL_H = 18, 34
 # over the limit. `_capped_cell` shrinks the cell (and `font` refits the glyphs
 # to that smaller cell) until both dimensions fit, so the image stays legible
 # instead of being scaled after the fact. Below MIN_CELL_* text stops being
-# readable at all, so a capture bigger than 500x250 cells is rendered oversized
+# readable at all, so a capture bigger than 256x128 cells is rendered oversized
 # rather than illegibly small.
-MAX_PNG_PX = 2000
+MAX_PNG_PX = 1024
 MIN_CELL_W, MIN_CELL_H = 4, 8
 
 # Descending preference: JetBrains Mono first — round, wide-countered, easy to
