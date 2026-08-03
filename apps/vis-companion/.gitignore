@@ -6,6 +6,10 @@ dist-ssr
 /build
 *.local
 
+# tsc --build incremental state (tsconfig.*.tsbuildinfo): a regenerated build
+# artifact, rewritten by every `npm run build`. Never version it.
+*.tsbuildinfo
+
 # Capacitor native projects are generated with `cap add`; keep them out of VCS
 # until the platform is intentionally committed. Anchored to this directory:
 # unanchored `ios` also swallowed the TRACKED native/ios/ sources that
