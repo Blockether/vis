@@ -1309,6 +1309,7 @@
        initial-db
        {:active-tab-id :main
         :session {:id "s1"}
+        :input (input/empty-input)
         :loading? true
         :cancelling? true
         :cancelling-at-ms cancel-key
@@ -1333,12 +1334,119 @@
 
       (expect (true? (:loading? local-db)))
       (expect (true? (:cancelling? local-db)))
-      (expect (empty? (:fx local-result)))
+      (expect (= cancel-key (:cancelling-at-ms local-db)))
+      ;; ...but ONLY the invisible send gate stays armed. The turn the user was
+      ;; watching is over: no live progress, no elapsed clock ticking on under a
+      ;; transcript whose rows were already dropped and whose prompt is back in
+      ;; the composer. Anything else reads as a frozen, mismatched frame.
+      (expect (nil? (:progress local-db)))
+      (expect (nil? (:turn-start-ms local-db)))
+      (expect (nil? (:submitted-input local-db)))
+      (expect (empty? (:messages local-db)))
+      (expect (= "first" (input/input->text (:input local-db))))
+      ;; The queued backlog comes back WITH the prompt, not one ACK later.
+      (expect (= [[:dispatch [:restore-pending-to-input :main]]] (:fx local-result)))
       (expect (false? (:loading? (:db ack-result))))
       (expect (false? (:cancelling? (:db ack-result))))
       (expect (= [[:notify "Cancellation accepted. You can send again." :info 2500]
                   [:dispatch [:restore-pending-to-input :main]]]
                  (:fx ack-result))))))
+
+(defdescribe cancel-settles-once-test
+             ;; REGRESSION: a cancel settles in two halves — the LOCAL attach worker's
+             ;; synthetic `:cancelled` result and the daemon's `:gateway-cancel-result`
+             ;; ACK — and their order is not guaranteed. Only the local half restored the
+             ;; editor, so when the ACK won the race the turn was released (`:loading?`
+             ;; false, sends allowed) while the composer stayed EMPTY, the submitted
+             ;; prompt sat unreachable in `:submitted-input` and a pending assistant
+             ;; placeholder no event would resolve stayed in the transcript. Either half
+             ;; must now produce the same settled frame.
+             (let
+               [handler
+                (fn [id]
+                  (-> #'state/event-registry
+                      deref
+                      deref
+                      (get id)
+                      :fn))
+
+                pending-id
+                "client-1"
+
+                cancel-key
+                1000
+
+                cancelling-db
+                (fn [iterations]
+                  {:active-tab-id :main
+                   :session {:id "s1"}
+                   :loading? true
+                   :cancelling? true
+                   :cancelling-at-ms cancel-key
+                   :cancel-token :token
+                   :gateway-turn-id "turn-1"
+                   :live-turn-client-id pending-id
+                   :turn-start-ms 1000
+                   :input (input/empty-input)
+                   :messages [{:role :user :text "first" :client-turn-id pending-id}
+                              {:role :assistant :pending? true :client-turn-id pending-id}]
+                   :progress {:iterations iterations}
+                   :submitted-input {:text "first" :pastes {} :paste-counter 0}
+                   :pending-sends []})]
+
+               (it "hands the prompt back when the gateway ACK beats the local result"
+                   (let
+                     [acked
+                      (:db ((handler :gateway-cancel-result)
+                             (cancelling-db [])
+                             [:gateway-cancel-result cancel-key {:status "cancelling"}]))
+
+                      ;; The late local result must find nothing left to settle.
+                      settled
+                      (:db ((handler :message-received)
+                             acked
+                             [:message-received :main
+                              [:ast {} [:p {} [:span {} "Cancelled by user."]]]
+                              {:status :cancelled :client-turn-id pending-id}]))]
+
+                     (expect (= "first" (input/input->text (:input acked))))
+                     (expect (empty? (:messages acked)))
+                     (expect (nil? (:submitted-input acked)))
+                     (expect (false? (:loading? acked)))
+                     (expect (nil? (:progress acked)))
+                     (expect (= "first" (input/input->text (:input settled))))
+                     (expect (empty? (:messages settled)))))
+               (it "keeps the bubble and only refills the editor when the cancel had work"
+                   (let
+                     [acked (:db ((handler :gateway-cancel-result)
+                                   (cancelling-db [{:n 1 :blocks [{:kind :tool}]}])
+                                   [:gateway-cancel-result cancel-key {:status "cancelling"}]))]
+                     (expect (= 2 (count (:messages acked))))
+                     (expect (= [{:n 1 :blocks [{:kind :tool}]}]
+                                (get-in acked [:messages 1 :terminal-pending :trace])))
+                     (expect (= "first" (input/input->text (:input acked))))
+                     (expect (nil? (:submitted-input acked)))))
+               (it "hands the prompt back when the cancel self-heals"
+                   (let
+                     [healed (:db ((handler :cancel-self-heal-tick)
+                                    (cancelling-db [])
+                                    [:cancel-self-heal-tick (+ cancel-key 60000)]))]
+                     (expect (= "first" (input/input->text (:input healed))))
+                     (expect (empty? (:messages healed)))
+                     (expect (nil? (:submitted-input healed)))
+                     (expect (false? (:cancelling? healed)))))
+               (it "never overwrites a newer draft typed while the cancel settles"
+                   (let
+                     [typed
+                      (assoc (cancelling-db []) :input (#'state/text->input-state "new idea"))
+
+                      acked
+                      (:db ((handler :gateway-cancel-result)
+                             typed
+                             [:gateway-cancel-result cancel-key {:status "cancelling"}]))]
+
+                     (expect (= "new idea" (input/input->text (:input acked))))
+                     (expect (nil? (:submitted-input acked)))))))
 
 
 (defdescribe cancel-self-heal-test

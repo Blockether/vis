@@ -1876,6 +1876,15 @@
   [:loading? :cancelling? :cancelling-at-ms :progress :turn-start-ms :cancel-token :gateway-turn-id
    :live-turn-client-id :liveness-probed-at-ms])
 
+(def ^:private cancel-gate-state-keys
+  "The ONLY turn keys a locally-settled cancel keeps armed while it waits for the
+   gateway ACK — the invisible send gate and the identity needed to match that
+   ACK. Re-arming the full `active-turn-state-keys` instead kept `:progress`,
+   `:turn-start-ms` and `:liveness-probed-at-ms` alive after the transcript rows
+   were already dropped and the prompt handed back, so the composer read 'ready'
+   while the rest of the frame still painted a live turn with a running clock."
+  [:loading? :cancelling? :cancelling-at-ms :cancel-token :gateway-turn-id :live-turn-client-id])
+
 (defn- session-running?
   [session]
   (or (= "running" (:status session))
@@ -2665,6 +2674,38 @@
       false :pastes
       (or pastes {}) :paste-counter
       (or paste-counter 0))))
+
+(defn- settle-cancelled-turn
+  "Settle a cancel confirmed by the daemon ACK (or given up on by the self-heal)
+   while the local worker's terminal result has not landed yet.
+
+   Clearing the turn WITHOUT touching the editor left one cancel half-settled:
+   sends flowed again, yet the composer stayed empty, the prompt sat unreachable
+   in `:submitted-input`, and the transcript kept a pending assistant placeholder
+   that no later event would resolve. Settle exactly like the worker's terminal —
+   a stray Esc that ran nothing drops its placeholder pair and hands the prompt
+   back, a cancel with visible work keeps the bubble and only refills the editor —
+   so whichever half arrives first leaves the same frame."
+  [db]
+  (let
+    [submitted
+     (:submitted-input db)
+
+     messages
+     (vec (:messages db))
+
+     idx
+     (pending-assistant-index messages (:live-turn-client-id db))
+
+     trace
+     (or (not-empty (vec (get-in db [:progress :iterations])))
+         (when idx (not-empty (vec (get-in messages [idx :terminal-pending :trace])))))]
+
+    (cond (nil? submitted) (clear-active-turn-state db)
+          (empty? trace) (restore-submitted-input db submitted)
+          :else (-> db
+                    clear-active-turn-state
+                    (restore-editor-only submitted)))))
 
 (reg-event-fx
   :history-up
@@ -4310,7 +4351,7 @@
                            (= cancel-key (:cancelling-at-ms db))
                            (or accepted? terminal?))
                     (let [workspace-id (current-tab-id db)]
-                      {:db (clear-active-turn-state (park-live-trace db))
+                      {:db (settle-cancelled-turn db)
                        :fx (cond->
                              [[:notify
                                (if terminal?
@@ -4387,7 +4428,7 @@
 
                       ;; Release input immediately. Server cancellation is best effort on
                       ;; the dedicated cancel lane; it must not stall this heartbeat.
-                      {:db (clear-active-turn-state (park-live-trace db))
+                      {:db (settle-cancelled-turn db)
                        :fx (cond->
                              [[:cancel-local-turn token] [:gateway-cancel-active sid tid nil]
                               [:notify "Cancel timed out — cleared locally. You can send again."
@@ -4665,13 +4706,16 @@
                  (let [ws (restore-submitted-input workspace (:submitted-input workspace))]
                    ;; A cancel must NOT auto-send the backlog — pull it back into
                    ;; the editor instead (see :restore-pending-to-input).
-                   (when (and (not awaiting-gateway-cancel?) (some :mine? (:pending-sends ws)))
-                     (vreset! restore-pending? true))
+                   ;; Restore it NOW, together with the prompt: the backlog is the same
+                   ;; editor state, and deferring it to the ACK refilled the composer twice.
+                   (when (some :mine? (:pending-sends ws)) (vreset! restore-pending? true))
                    ;; `restore-submitted-input` normally clears the completed local turn.
                    ;; A synthetic local cancellation is not completion of the SERVER turn:
                    ;; retain the exact cancellation generation until its gateway ACK arrives.
+                   ;; ONLY the gate (see `cancel-gate-state-keys`) — the visible turn is over,
+                   ;; so progress, the elapsed clock and the liveness probe stay cleared.
                    (if awaiting-gateway-cancel?
-                     (merge ws (select-keys workspace active-turn-state-keys))
+                     (merge ws (select-keys workspace cancel-gate-state-keys))
                      ws))
                  (let
                    [start
@@ -4710,7 +4754,15 @@
                         :cancelling-at-ms (when awaiting-gateway-cancel?
                                             (:cancelling-at-ms workspace)))
                       (and (not still-pending?) (not awaiting-gateway-cancel?))
-                      clear-active-turn-state)
+                      clear-active-turn-state
+
+                      ;; The cancelled bubble is already painted; only the send gate is
+                      ;; still waiting on the ACK. Stop painting a live turn under it.
+                      (and (not still-pending?) awaiting-gateway-cancel?)
+                      (assoc :progress
+                        nil :turn-start-ms
+                        nil :liveness-probed-at-ms
+                        nil))
 
                     ;; Cancelled-with-work: keep the bubble we just
                     ;; built AND refill the editor from the snapshot so
@@ -4723,7 +4775,8 @@
                         (not still-pending?)
                         (dissoc :submitted-input)))]
 
-                   (when (and (not (:loading? ws-final)) (seq (:pending-sends ws-final)))
+                   (when (and (or (not (:loading? ws-final)) awaiting-gateway-cancel?)
+                              (seq (:pending-sends ws-final)))
                      ;; Normal completion drains the next queued turn; a cancel
                      ;; restores the AUTHORED backlog to the editor instead of
                      ;; firing it. Mirrored sibling entries are never restored
