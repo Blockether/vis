@@ -2326,6 +2326,9 @@
       (do
         (stdout!
           "Drafts need a workspace backend with isolation, rollback, merge-back, and retained revisions.")
+        (stdout! (str "  "
+                      (workspace/isolation-unavailable-hint
+                        (or (:root (workspace/for-session d state-id)) (workspace/trunk-root)))))
         (shutdown-agents)
         (System/exit 1))
       :else (let [current (workspace/for-session d state-id)]

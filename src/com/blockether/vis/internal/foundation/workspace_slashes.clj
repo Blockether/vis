@@ -126,10 +126,12 @@
       ;; get this explicit nudge instead of a silent "draft" default.
       (nil? label) (err (str "Name the draft: " usage))
       (not (workspace/isolated-workspaces-supported? (or (:root current) (workspace/trunk-root))))
-      (err "No workspace backend can create an isolated draft here"
-           :slash/body "Drafts require isolation, rollback, merge-back, and retained revisions."
-           :slash/data {:capability-matrix (workspace/workspace-capability-matrix
-                                             (or (:root current) (workspace/trunk-root)))})
+      (let [root (or (:root current) (workspace/trunk-root))]
+        (err "No workspace backend can create an isolated draft here"
+             :slash/body (str "Drafts require isolation, rollback, merge-back, and retained "
+                              "revisions. "
+                              (workspace/isolation-unavailable-hint root))
+             :slash/data {:capability-matrix (workspace/workspace-capability-matrix root)}))
       :else
       (try
         (let

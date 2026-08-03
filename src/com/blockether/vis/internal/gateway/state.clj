@@ -798,7 +798,9 @@
 
            (when-not (workspace/isolated-workspaces-supported? repo-root)
              (throw (ex-info "No workspace backend can create an isolated draft here"
-                             {:type :workspace/isolation-unavailable :root repo-root})))
+                             {:type :workspace/isolation-unavailable
+                              :root repo-root
+                              :hint (workspace/isolation-unavailable-hint repo-root)})))
            (when (workspace/draft? current) (workspace/stash! db state-id))
            (let [trunk (resolve-workspace db sid)]
              (workspace/create! db

@@ -503,6 +503,50 @@
   ([] (isolated-workspaces-supported? (trunk-root)))
   ([root] (supports? root (draft-store-root root) draft-required-capabilities)))
 
+(defn cow-platform-hint
+  "The copy-on-write requirement for `os-name` (a raw `os.name` value), as one
+   actionable sentence.
+
+   A draft is a COW CLONE, never a recursive copy: on macOS the rift backend
+   clones through APFS `clonefile`; on Linux — WSL2 included — `rift/init`
+   turns the source directory into a **btrfs subvolume** and clones that. So an
+   ext4/xfs/zfs root, or a Windows drive mounted into WSL under `/mnt/…`, has
+   nothing to clone and drafts stay unavailable there until BOTH the workspace
+   root and the draft store live on a copy-on-write filesystem."
+  [os-name]
+  (let [os (str/lower-case (str os-name))]
+    (cond (str/includes? os "mac")
+          (str "Drafts are copy-on-write clones: the workspace root and the draft store "
+               "(~/.vis/drafts, or -Dvis.drafts.dir) must both sit on an APFS volume.")
+          (str/includes? os "linux")
+          (str "Drafts are copy-on-write clones, and on Linux/WSL2 that means btrfs: put the "
+               "workspace root AND the draft store on a btrfs filesystem — ext4, xfs, zfs, and "
+               "Windows drives mounted under /mnt cannot be cloned — then point the store at that "
+               "volume with -Dvis.drafts.dir=/path/on/btrfs.")
+          :else (str "Drafts need a copy-on-write filesystem (APFS on macOS, btrfs on Linux/WSL2); "
+                     "this platform has no copy-on-write workspace backend."))))
+
+(defn isolation-unavailable-hint
+  "One actionable sentence explaining why no backend can fork
+   `workspace-or-root` and what the user must change. Derived from the live
+   capability matrix first (no backend registered, an unforkable source), and
+   otherwise from the platform's copy-on-write requirement. Only meaningful
+   when `isolated-workspaces-supported?` is false."
+  ([] (isolation-unavailable-hint (trunk-root)))
+  ([workspace-or-root]
+   (let
+     [matrix
+      (workspace-capability-matrix workspace-or-root)
+
+      reasons
+      (into #{} (keep :reason) matrix)]
+
+     (cond (empty? matrix)
+           "No workspace backend is registered — the workspace-rift extension is not loaded."
+           (contains? reasons :linked-git-worktree)
+           "A linked Git worktree cannot be forked — start the session from the main worktree."
+           :else (cow-platform-hint (System/getProperty "os.name"))))))
+
 (def
   ^{:dynamic true
     :doc

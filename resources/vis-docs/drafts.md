@@ -346,9 +346,45 @@ Drafts require a workspace backend that can provide isolation, rollback,
 merge-back, and retained revisions for the current root. Vis never silently
 falls back to editing trunk when those capabilities are unavailable.
 
+The bundled `workspace-rift` backend clones **copy-on-write**, so the filesystem
+under the workspace decides whether drafts work at all. There is no draft switch
+in `vis.yml`: a copy-on-write filesystem *is* the configuration.
+
+| Platform | What a draft clone needs |
+| --- | --- |
+| macOS | APFS (`clonefile`). The default system volume qualifies. |
+| Linux, including WSL2 | **btrfs.** Creating a draft turns the source directory into a btrfs subvolume and snapshots it. ext4, xfs, and zfs cannot clone, so drafts are unavailable on them. |
+| A Windows drive seen from WSL2 (`/mnt/c`, drvfs/9p) | Nothing to clone — keep the repository inside the Linux filesystem. |
+| Native Windows | No copy-on-write workspace backend. |
+
+**Two trees must qualify, not just the repository:**
+
+- the **workspace root** the session works in, and
+- the **draft store** — `~/.vis/drafts` by default, overridable with the
+  `vis.drafts.dir` JVM system property on the gateway.
+
+On Linux/WSL2 the practical setup is one btrfs volume holding both. Either put
+the repository on a btrfs disk (WSL2: `wsl --mount --vhd <file.vhdx>` a
+btrfs-formatted disk, or `mkfs.btrfs` a loopback image and mount it), or keep the
+repository where it is and accept that drafts stay unavailable — Vis will say so
+instead of quietly editing trunk. Point the store at the same volume:
+
+```bash
+mkdir -p /srv/vis/drafts        # on the btrfs mount
+vis-agent -J-Dvis.drafts.dir=/srv/vis/drafts   # JVM launcher (see Configuration)
+```
+
+The Linux sandbox packages (`bubblewrap`, `passt`) are a **separate** concern:
+they confine model-spawned child processes and neither enable nor block drafts.
+See [Process sandbox and gateway egress](sandbox.md).
+
+A **linked Git worktree** (a `.git` *file* pointing at another directory) is also
+not forkable; run the session from the main worktree.
+
 If creation fails with `No workspace backend can create an isolated draft here`,
-the session remains on trunk and the command result includes the backend
-capability matrix. Fix or install an appropriate backend, then retry.
+the session remains on trunk and the command result carries the backend
+capability matrix plus a platform-specific hint naming the filesystem it needs.
+Fix that, then retry.
 
 ## Troubleshooting
 
@@ -360,6 +396,7 @@ capability matrix. Fix or install an appropriate backend, then retry.
 | `Draft is in use by another session` | Another session is pinned to that workspace. | Leave it from that session before resuming here. |
 | A draft vanished from the list | It was applied or abandoned, or the session now points at a different repo root. | Check the root and local transcript history. |
 | Trunk changed while a draft was parked | Apply has no automatic conflict resolver. | Review both trees and reconcile before applying. |
+| `No workspace backend can create an isolated draft here` | The workspace root or the draft store is not on a copy-on-write filesystem, or the source is a linked Git worktree. | See [Requirements](#requirements): APFS on macOS, btrfs on Linux/WSL2 — for the root **and** `~/.vis/drafts`. |
 
 ## Command reference
 

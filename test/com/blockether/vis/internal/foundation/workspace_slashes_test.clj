@@ -299,8 +299,11 @@
                      (let [out (dispatch! env store state-id "/draft new test")]
                        (expect (= :error (get-in out [:result :slash/status])))
                        (expect (= :rift
-                                  (get-in out
-                                          [:result :slash/data :capability-matrix 0 :backend]))))))
+                                  (get-in out [:result :slash/data :capability-matrix 0 :backend])))
+                       ;; …and the body says WHAT to fix: drafts are CoW clones,
+                       ;; so the filesystem (APFS / btrfs) is the requirement.
+                       (expect (str/includes? (get-in out [:result :slash/body])
+                                              "copy-on-write")))))
                  (finally (delete-tree! base))))))))
 
 (defdescribe dispatch-root-test
