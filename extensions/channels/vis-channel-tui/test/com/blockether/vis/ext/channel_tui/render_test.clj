@@ -849,7 +849,44 @@
 
         (expect (some? command-line))
         (expect (nil? json-line))
-        (expect (= p/MARKER_CODE (marker-of command-line))))))
+        (expect (= p/MARKER_CODE (marker-of command-line)))))
+  (it "wears its op-card HEADLINE above the command band while the call is running"
+      ;; REGRESSION: a running `shell` painted a naked bash band and only grew its
+      ;; badge once the result landed — the same call reading as two different
+      ;; components. The awaiting card is the SAME card, minus the outcome.
+      (let
+        [lines
+         (format-iteration-entry {:iteration 0
+                                  :forms [{:vis/tool-name "shell"
+                                           :tool-color-role :tool-color/shell
+                                           :code "shell({\"commands\": [\"sleep 30\"]})"
+                                           :display-code "sleep 30"
+                                           :display-language "bash"
+                                           ;; the headline `shell`'s `:render-call` authored
+                                           :pending-summary "$ sleep 30 (running)"
+                                           :started-at-ms 1000
+                                           :success? nil}]}
+                                 80
+                                 1
+                                 {:now-ms 2500})
+
+         idx-of
+         (fn [pred]
+           (first (keep-indexed (fn [i l]
+                                  (when (pred l) i))
+                                lines)))
+
+         headline-idx
+         (idx-of #(str/includes? (strip-ansi %) "$ sleep 30 (running)"))
+
+         band-idx
+         (idx-of #(and (= p/MARKER_CODE (marker-of %)) (str/includes? (strip-ansi %) "sleep 30")))]
+
+        (expect (some? headline-idx))
+        (expect (some? band-idx))
+        ;; Badge + headline FIRST, the submitted command beneath it as the body.
+        (expect (< headline-idx band-idx))
+        (expect (some? (idx-of #(str/includes? (strip-ansi %) "SHELL")))))))
 
 (defdescribe
   provider-auth-error-test

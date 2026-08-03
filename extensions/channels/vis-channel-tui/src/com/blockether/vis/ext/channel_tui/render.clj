@@ -5024,18 +5024,28 @@
                           (when (seq inline-error-message-lines) inline-error-message-lines)
                           ;; Bottom band edge. No per-form status
                           ;; footer; code blocks stay source-only.
-                          [(line-entry (str c-pad ""))])))]
+                          [(line-entry (str c-pad ""))])))
 
-         ;; A code band already closes with its one blank bottom edge. Python
-         ;; results begin immediately after that edge, rather than adding a
-         ;; second visually blank row from the result band.
-         (vec (concat code-block
-                      (when (seq result-lines)
-                        (concat (when-not (= "python_execution"
-                                             (some-> (:vis/tool-name form)
-                                                     name))
-                                  [(line-entry (str result-marker ""))])
-                                result-lines))))))
+          ;; A code band already closes with its one blank bottom edge. Python
+          ;; results begin immediately after that edge, rather than adding a
+          ;; second visually blank row from the result band.
+          result-block
+          (when (seq result-lines)
+            (concat (when-not (= "python_execution"
+                                 (some-> (:vis/tool-name form)
+                                         name))
+                      [(line-entry (str result-marker ""))])
+                    result-lines))]
+
+         ;; A RUNNING native call wears its op-card HEADLINE FIRST — exactly where
+         ;; the finished card's headline sits — with the submitted command band
+         ;; beneath it as that card's body. Otherwise `shell` painted a naked code
+         ;; band while it ran and only grew its badge once it finished: the same
+         ;; call reading as two different components. A COMPLETED call keeps code
+         ;; above its result — the reading order of a program and its output.
+         (vec (if (and running? (seq result-block))
+                (concat result-block code-block)
+                (concat code-block result-block)))))
 
      ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
      ;; rows joined into the one card. Phase-5 dropped per-form result

@@ -2333,10 +2333,14 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
 ;; =============================================================================
 
 (defn- render-shell-call
-  "PENDING-call display for a `shell` invocation: the bash this call is ABOUT to
-   run, so a RUNNING shell block reads as its command instead of the raw
-   `shell({\"commands\": …})` invocation JSON the model submitted. `run` /
-   `background` show the ordered command lines, pretty-printed exactly like the
+  "PENDING-call display for a `shell` invocation — the op-card the block WEARS while
+   it runs, so a running shell call reads as a shell card in its awaiting state
+   instead of raw `shell({\"commands\": …})` invocation JSON.
+
+   `:summary` is the SAME headline shape the finished card uses, with the outcome
+   replaced by what the call is currently doing: `$ npm test (running)`,
+   `◷ \\`dev\\` waiting · until Local:.*http`, `▸ background starting`. `:code` /
+   `:language` are the bash it is about to run, pretty-printed exactly like the
    completed card's COMMAND section; a lifecycle stage names itself and the
    background id it targets. nil when the arguments carry neither — the raw
    invocation stays the honest fallback."
@@ -2358,11 +2362,11 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
      commands
      (opt input :commands)
 
-     lines
+     cmds
      (when (some? commands)
        ;; A malformed batch is the CALL's error to report, never this preview's:
        ;; fall through to the raw invocation instead of throwing before the run.
-       (try (mapv format-shell-command (ordered-lines commands)) (catch Throwable _ nil)))
+       (try (vec (ordered-lines commands)) (catch Throwable _ nil)))
 
      until
      (some-> (opt input :until)
@@ -2373,8 +2377,12 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
      timeout-secs
      (opt input :timeout_secs)
 
+     keys-lbl
+     (some-> (opt input :text)
+             keys-label)
+
      code
-     (cond (seq lines) (str/join "\n" lines)
+     (cond (seq cmds) (str/join "\n" (mapv format-shell-command cmds))
            ;; A lifecycle stage runs no command of its own: it names the stage and
            ;; the background shell it acts on. A `wait` also names WHAT it is
            ;; waiting for — the `until` regex, and the backstop it gives up after,
@@ -2387,9 +2395,33 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
                      (str "\n# until: "
                           until
                           (when timeout-secs (str "  (timeout " timeout-secs "s)")))))
-           :else nil)]
+           :else nil)
 
-    (when code {:code code :language "bash"})))
+     summary
+     (cond
+       ;; A background START is its own lifecycle card even though it carries
+       ;; commands — mirror the finished `▸ background `id` started · pid N`.
+       (= "background" op) (str "▸ background " (when id (str "`" id "` ")) "starting")
+       (seq cmds) (str "$ "
+                       (clip-chip (shell-one-line (first cmds)) shell-chip-max)
+                       (when (next cmds) (str " · +" (dec (count cmds)) " more"))
+                       " (running)")
+       (nil? id) nil
+       (= "wait" op) (str "◷ `"
+                          id
+                          "` waiting"
+                          (when until
+                            (str " · until " (clip-chip (shell-one-line until) shell-chip-max)))
+                          (when timeout-secs (str " · timeout " timeout-secs "s")))
+       (= "logs" op) (str "◷ `" id "` reading logs")
+       (= "send" op) (str "↵ `" id
+                          "` sending" (when keys-lbl
+                                        (str " "
+                                             (clip-chip (shell-one-line keys-lbl) shell-chip-max))))
+       (= "stop" op) (str "✕ background `" id "` stopping")
+       :else (str "◷ `" id "` " op))]
+
+    (when code {:code code :language "bash" :summary summary})))
 
 (def shell-symbol
   (vis/symbol

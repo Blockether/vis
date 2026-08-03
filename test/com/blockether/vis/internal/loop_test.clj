@@ -4231,7 +4231,13 @@
 
         (expect (= "bash" (:display-language display)))
         (expect (= "# shell wait svar-verify\n# until: VERIFY_EXIT=  (timeout 600s)"
-                   (:display-code display))))))
+                   (:display-code display)))
+        ;; …and the op-card HEADLINE that band sits under, so the running block is
+        ;; the shell CARD in its awaiting state rather than a naked bash band.
+        (expect (= "◷ `svar-verify` waiting · until VERIFY_EXIT= · timeout 600s"
+                   (:pending-summary display)))
+        ;; A pending headline is never mistaken for an outcome.
+        (expect (nil? (:result-summary display))))))
 
 (defn- env-root
   "The sandbox's primary allowed root — where cat is confined for a :memory env.

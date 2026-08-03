@@ -1072,16 +1072,28 @@
         ;; already the shell block the result completes.
         (expect (= (str/join "\n" (map format-shell-command commands)) (:code display)))
         (expect (str/includes? (:code display) "echo one"))
-        (expect (not (str/includes? (:code display) "{")))))
+        (expect (not (str/includes? (:code display) "{")))
+        ;; …under the SAME headline the finished card wears, with the outcome
+        ;; replaced by what the call is doing; a batch counts the rest.
+        (expect (= "$ echo one && echo two · +1 more (running)" (:summary display)))))
   (it "accepts the ONE-COMMAND spelling and keyword-keyed input"
-      (expect (= {:code "ls -1" :language "bash"} (render-shell-call {:commands "ls -1"}))))
+      (expect (= {:code "ls -1" :language "bash" :summary "$ ls -1 (running)"}
+                 (render-shell-call {:commands "ls -1"}))))
+  (it "wears the background START headline even when the call carries commands"
+      ;; A background start is a lifecycle card, not a run: it reports the handle
+      ;; the session will keep, exactly like the finished `▸ background … started`.
+      (expect (= "▸ background `dev` starting"
+                 (:summary (render-shell-call
+                             {"op" "background" "id" "dev" "commands" ["npm run dev"]})))))
   (it "names the stage and its target for a lifecycle call that carries no commands"
-      (expect (= {:code "# shell logs sh-1" :language "bash"}
+      (expect (= {:code "# shell logs sh-1" :language "bash" :summary "◷ `sh-1` reading logs"}
                  (render-shell-call {"op" "logs" "id" "sh-1"}))))
   (it "says what a `wait` is WAITING FOR, not merely which shell it targets"
       ;; The wall a wait puts up IS its `until` regex plus the backstop it gives
       ;; up after; a bare "# shell wait <id>" left the running block mute.
-      (expect (= {:code "# shell wait dev\n# until: Local:.*http  (timeout 600s)" :language "bash"}
+      (expect (= {:code "# shell wait dev\n# until: Local:.*http  (timeout 600s)"
+                  :language "bash"
+                  :summary "◷ `dev` waiting · until Local:.*http · timeout 600s"}
                  (render-shell-call
                    {"op" "wait" "id" "dev" "until" "Local:.*http" "timeout_secs" 600}))))
   (it "keeps the raw invocation when there is neither a command nor a target"

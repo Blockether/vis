@@ -560,6 +560,12 @@ export interface TranscriptForm {
   result?: JsonValue;
   result_render?: string;
   result_summary?: string;
+  /**
+   * The op-card headline WHILE the call runs, authored by the tool's own
+   * renderer (`shell`'s `$ npm test (running)`). Its own key, never
+   * `result_summary`: a pending card must not read as an outcome.
+   */
+  pending_summary?: string;
   result_kind?: string;
   result_detail?: Record<string, JsonValue>;
   render_segments?: JsonValue[];

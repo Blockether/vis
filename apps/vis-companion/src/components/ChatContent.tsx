@@ -883,7 +883,14 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
       : form.result_summary?.trim() || (failed ? 'Failed' : '');
   const running =
     !failed && !hasOutcome && (!form.result_summary || placeholderSummary);
-  const summary = compactToolSummary(form.tool_name, rawSummary);
+  // A RUNNING call wears the headline its own tool authored (`shell`'s
+  // `$ npm test (running)`) instead of the generic wait: the awaiting card is the
+  // same card as the finished one, only its outcome is still missing.
+  const pendingSummary = form.pending_summary?.trim();
+  const summary = compactToolSummary(
+    form.tool_name,
+    running && pendingSummary ? pendingSummary : rawSummary,
+  );
   const duration = formatDuration(form.duration_ms);
   // A COLLAPSED result body is not in the DOM at all. Measured on device on a
   // real transcript: those bodies were 52k of the screen's 72k elements, and

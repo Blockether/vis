@@ -38,6 +38,10 @@
    ;; result surfaces — the raw value, the pre-rendered op-card body, and the
    ;; op-card HEADLINE (a tool-authored summary, never a first-line body slice)
    [:result "result"] [:result-render "result_render"] [:result-summary "result_summary"]
+   ;; the same HEADLINE while the call is still RUNNING, authored by the tool's
+   ;; `:render-call`. Its own key: a pending card must never look like an outcome,
+   ;; so channels still read "running" off the absent `:result-*` fields.
+   [:pending-summary "pending_summary"]
    ;; MULTI-card: canonical MINI-FORMS, recursively normalized by `<-wire`.
    [:cards "cards"]
    ;; native-tool op-card badge identity; wire keys intentionally drop namespaces
@@ -110,18 +114,26 @@
       :collapsible? true}                — true ⇔ there's a body to fold under
                                            the summary (a chevron/`<details>`)
 
+   A call still RUNNING has no result yet, so the headline falls back to the
+   tool-authored `:pending-summary` (`shell`'s `$ npm test (running)`): the SAME
+   card, in its awaiting state, rather than a bare unlabeled code band.
+
    `nil` for a NON-tool form (no `:vis/tool-name`) — its result rendering stays
    channel-specific (raw value / stdout). The badge is whatever the tool's
    `:summary` already produced; no first-line-of-body heuristic."
-  [{:keys [tool-color-role result-summary result-render] tool-name :vis/tool-name}]
+  [{:keys [tool-color-role result-summary pending-summary result-render] tool-name :vis/tool-name}]
   (when (some? tool-name)
     (let
       [summary
-       (some-> result-summary
-               str
-               str/trim
-               not-empty
-               (compact-tool-summary tool-name))
+       (or (some-> result-summary
+                   str
+                   str/trim
+                   not-empty
+                   (compact-tool-summary tool-name))
+           (some-> pending-summary
+                   str
+                   str/trim
+                   not-empty))
 
        body
        (some-> result-render
