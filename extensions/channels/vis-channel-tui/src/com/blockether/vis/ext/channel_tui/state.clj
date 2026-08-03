@@ -112,10 +112,10 @@
    could never time the stuck cancel out and `:cancelling?` wedged input forever."
   [:session :workspace :workspace/root :title :messages :utilization :scroll :layout :input
    :input-history :input-history-index :input-history-draft :slash-command-index
-   :slash-command-hidden? :submitted-input :pending-sends :submissions-in-flight :queue-paused
-   :pastes :paste-counter :loading? :cancel-token :cancelling? :cancelling-at-ms
-   :cancel-awaiting-client-id :gateway-turn-id :live-turn-client-id :progress :turn-start-ms
-   :detail-expansions :mouse-selection :session-model-pref])
+   :slash-command-hidden? :submitted-input :pending-sends :queue-paused :pastes :paste-counter
+   :loading? :cancel-token :cancelling? :cancelling-at-ms :cancel-awaiting-client-id
+   :gateway-turn-id :live-turn-client-id :progress :turn-start-ms :detail-expansions
+   :mouse-selection :session-model-pref])
 
 (defn- empty-tab-state
   []
@@ -135,7 +135,6 @@
    :submitted-input nil
    :utilization nil
    :pending-sends []
-   :submissions-in-flight []
    :queue-paused nil
    :pastes {}
    :paste-counter 0
@@ -3301,19 +3300,14 @@
      session
      (:session source-db)
 
-     ;; DOUBLE-SUBMIT GUARD. `:pending-sends` mirrors GATEWAY truth, so it is
-     ;; still EMPTY for the whole enqueue round-trip: comparing against it alone
-     ;; let a second Enter inside that window (key repeat, or a terminal that
-     ;; delivers CR and LF) mint a second correlation id and register the SAME
-     ;; text as a SECOND queued turn — seen in the wild 7 ms apart, both drained
-     ;; and both answered. A submission that is sent but not yet acked counts as
-     ;; queued here; `:submission-settled` releases it when the round-trip ends.
-     in-flight
-     (vec (or (:submissions-in-flight source-db) []))
-
+     ;; DOUBLE-SUBMIT GUARD. Enter paints the row into `:pending-sends` BEFORE the
+     ;; gateway round-trip starts, so what the user SEES is also what this compares
+     ;; against: a second Enter inside that window (key repeat, or a terminal that
+     ;; delivers CR and LF) can no longer mint a second correlation id and register
+     ;; the SAME text as a second queued turn — seen in the wild 7 ms apart, both
+     ;; drained and both answered.
      dup?
-     (or (= text (:text (peek (vec (or (:pending-sends source-db) [])))))
-         (boolean (some #(= text (:text %)) in-flight)))]
+     (= text (:text (peek (vec (or (:pending-sends source-db) [])))))]
 
     (cond
       ;; The user asked to STOP the current turn (`:cancelling?`). A submission in
@@ -3340,26 +3334,26 @@
          client-id
          (mint-client-id workspace-id)
 
-         entry
-         {:text text
-          :preview-text preview-text
-          :agent-text agent-text
-          :client-id client-id
-          :mine? true
-          :pastes pastes
-          :paste-counter (:paste-counter source-db)
-          :queued-at-ms (System/currentTimeMillis)}
-
-         ;; NO OPTIMISTIC QUEUE ROW. The gateway is the ONE queue of record, so a
-         ;; busy-time submission is registered THERE and the row is painted only
-         ;; from gateway truth - the ack of this enqueue or the `turn.queued`
-         ;; broadcast, both flowing through the single `:sync-queued-turn` writer
-         ;; and keyed by the gateway turn id. An HTTP round-trip is milliseconds;
-         ;; a locally invented row (no id yet) had to be reconciled against the
-         ;; gateway by request TEXT, and that reconciliation is what produced the
-         ;; duplicate / ghost "Queued" lines.
+         ;; A submission bound for the gateway needs a session AND expanded text.
          gateway?
          (boolean (and session agent-text))
+
+         entry
+         (cond->
+           {:text text
+            :preview-text preview-text
+            :agent-text agent-text
+            :client-id client-id
+            :mine? true
+            :pastes pastes
+            :paste-counter (:paste-counter source-db)
+            :queued-at-ms (System/currentTimeMillis)}
+           ;; Registered with the gateway but NOT acked yet. The row is on screen from
+           ;; this instant, so `:drain-pending` must not ALSO send it locally: the ack
+           ;; binds the gateway turn id into this very row, a failure flips it to
+           ;; `:unsent?`, and either way the flag is gone once the round-trip ends.
+           gateway?
+           (assoc :awaiting-ack? true))
 
          gw-fx
          (when gateway?
@@ -3370,29 +3364,24 @@
         {:db (update-tab db
                          workspace-id
                          (fn [w]
-                           (cond-> w
-                             ;; In flight until the gateway answers — the ONLY record of
-                             ;; this submission until the ack or the `turn.queued`
-                             ;; broadcast paints the real row.
-                             gateway?
-                             (update :submissions-in-flight
-                                     (fn [q]
-                                       (conj (vec (or q [])) entry)))
-
-                             ;; The correlation id we are about to send as the gateway
-                             ;; A submission with NOWHERE to go (session still being
-                             ;; created, so there is no gateway queue yet) is the ONLY
-                             ;; locally staged row; it drains as soon as the session binds.
-                             (not gateway?)
-                             (update :pending-sends
-                                     (fn [q]
-                                       (conj (vec (or q [])) entry)))
-
-                             :always
-                             (update :input-history
-                                     (fn [xs]
-                                       (let [xs (vec (or xs []))]
-                                         (if (= text (last xs)) xs (conj xs text))))))))
+                           (-> w
+                               ;; PAINT THE QUEUE ROW NOW, on Enter, before the network.
+                               ;; The gateway stays the queue of RECORD, but a submission
+                               ;; the user cannot SEE is the bug this exists to prevent:
+                               ;; the message looked swallowed, so it was typed again and
+                               ;; the gateway registered it twice. The row is never
+                               ;; duplicated, because gateway truth reconciles INTO it —
+                               ;; matched by `:client-id`, the correlation id we send as
+                               ;; the idempotency key — in the one `:sync-queued-turn`
+                               ;; writer (this enqueue's ack or the `turn.queued`
+                               ;; broadcast, whichever lands first).
+                               (update :pending-sends
+                                       (fn [q]
+                                         (conj (vec (or q [])) entry)))
+                               (update :input-history
+                                       (fn [xs]
+                                         (let [xs (vec (or xs []))]
+                                           (if (= text (last xs)) xs (conj xs text))))))))
          :fx (cond-> [[:notify "Queued — will send after current turn" :info 1500]]
                gw-fx
                (into gw-fx))}))))
@@ -3513,41 +3502,45 @@
               (fn [db [_ text workspace-id]]
                 (enqueue-message-result db workspace-id text)))
 
-(reg-event-db :submission-settled
-              ;; One submission's gateway round-trip ENDED — queued, already running, or
-              ;; failed. Drop it from the in-flight double-submit guard: the text is now
-              ;; either a real queued row (mirrored through the one `:sync-queued-turn`
-              ;; writer), a live turn, or staged locally, and the next identical text is
-              ;; a NEW intent that must go through.
-              (fn [db [_ workspace-id client-id]]
-                (if-not client-id
-                  db
-                  (update-tab db
-                              (or workspace-id (current-tab-id db))
-                              (fn [w]
-                                (assoc w
-                                  :submissions-in-flight (vec (remove #(= client-id (:client-id %))
-                                                                (or (:submissions-in-flight w)
-                                                                    [])))))))))
-
 (reg-event-db :stage-queued-locally
-              ;; FAILURE PATH ONLY: the gateway enqueue never landed, so there is no
-              ;; server record to mirror and nothing would show the text again. Keep it
-              ;; as a LOCAL staged row (no `:turn-id`) so the submission is never lost.
-              ;; Rows without a turn id are the only ones this channel owns outright -
-              ;; every row that HAS one is written and removed by the gateway.
+              ;; FAILURE PATH ONLY: the gateway enqueue never landed, so nothing on the
+              ;; server backs this row. The row is ALREADY on screen (Enter painted it),
+              ;; so flip THAT row — found by correlation id — to `:unsent?` so the strip
+              ;; says so instead of implying the server has it, and clear
+              ;; `:awaiting-ack?` so the local drain may send it. Rows without a turn id
+              ;; are the only ones this channel owns outright; every row that HAS one is
+              ;; written and removed by the gateway. Appends only when the row is gone
+              ;; (cleared meanwhile), because a submission must never vanish silently.
               (fn [db [_ workspace-id entry]]
-                (let [wid (or workspace-id (current-tab-id db))]
+                (let
+                  [wid
+                   (or workspace-id (current-tab-id db))
+
+                   client-id
+                   (:client-id entry)
+
+                   staged
+                   (-> entry
+                       (assoc :mine? true
+                              :unsent? true)
+                       (dissoc :awaiting-ack?))
+
+                   same?
+                   (fn [e]
+                     (boolean (and client-id (= client-id (:client-id e)))))]
+
                   (update-tab db
                               wid
                               (fn [w]
                                 (update w
                                         :pending-sends
                                         (fn [q]
-                                          (conj (vec (or q []))
-                                                (assoc entry
-                                                  :mine? true
-                                                  :unsent? true)))))))))
+                                          (let [q (vec (or q []))]
+                                            (if (some same? q)
+                                              (mapv (fn [e]
+                                                      (if (same? e) (merge e staged) e))
+                                                    q)
+                                              (conj q staged))))))))))
 
 (reg-event-fx
   :sync-turn-clock
@@ -3878,7 +3871,11 @@
                      mine?
                      (assoc :mine? true))
                live? (live-turn-mirror? w turn-id client-id)
-               mirrored (first (filter #(= turn-id (:turn-id %)) (:pending-sends w)))
+               ;; The row Enter already painted for THIS submission, found by the
+               ;; correlation id we sent as the idempotency key — the only handle that
+               ;; exists before the gateway turn id does. Gateway truth is merged INTO
+               ;; it, which is what keeps one submission at exactly one row.
+               mirrored (first (filter #(same-submission? % turn-id client-id) (:pending-sends w)))
                ;; A USER CANCEL drops the ENTIRE pre-cancel backlog server-side
                ;; and broadcasts one `turn.queued.deleted` per row carrying
                ;; `reason "cancelled"` and the row's text (gateway
@@ -3902,18 +3899,31 @@
                           (fn [q]
                             (let
                               [q (vec (or q []))
-                               mirrored? (boolean (some #(= turn-id (:turn-id %)) q))]
+                               same? #(same-submission? % turn-id client-id)
+                               mirrored? (boolean (some same? q))]
 
                               (if live?
-                                (vec (remove #(= turn-id (:turn-id %)) q))
+                                (vec (remove same? q))
                                 (case op
                                   :add
-                                  (if mirrored? q (conj q row))
+                                  ;; Bind gateway truth into the row the user has been
+                                  ;; looking at since Enter — never append a second one.
+                                  (if mirrored?
+                                    (mapv (fn [e]
+                                            (if (same? e)
+                                              (-> (merge e
+                                                         (into {}
+                                                               (filter (comp some? val)
+                                                                       (dissoc row :queued-at-ms))))
+                                                  (dissoc :awaiting-ack? :unsent?))
+                                              e))
+                                          q)
+                                    (conj q row))
 
                                   :update
                                   (if mirrored?
                                     (mapv (fn [e]
-                                            (if (= turn-id (:turn-id e))
+                                            (if (same? e)
                                               (assoc e
                                                 :text text
                                                 :preview-text (or preview-text text)
@@ -3923,7 +3933,7 @@
                                     (conj q row))
 
                                   :delete
-                                  (vec (remove #(= turn-id (:turn-id %)) q))
+                                  (vec (remove same? q))
 
                                   q)))))]
 
@@ -3979,6 +3989,13 @@
                    (first q)]
 
                   (cond (or (nil? head)
+                            ;; The head is still mid-round-trip to the gateway
+                            ;; (`:awaiting-ack?`). Sending it locally now would submit the
+                            ;; same text TWICE — once from here, once as the queued turn
+                            ;; the ack is about to confirm. The ack binds a turn id (the
+                            ;; gateway owns the send from then on), and the failure path
+                            ;; marks the row `:unsent?` and nudges this drain again.
+                            (:awaiting-ack? head)
                             ;; A turn is ALREADY streaming into this tab (e.g. the
                             ;; persistent event listener attached a sibling-started turn
                             ;; first): draining now would double-attach the same turn.
@@ -5312,63 +5329,64 @@
             (when sid
               (gateway-queue-io!
                 (fn []
-                  (try (let
-                         [res
-                          (submit-queued-turn! sid
-                                               (cond->
-                                                 {:request agent-text
-                                                  ;; The gateway echoes this back on
-                                                  ;; turn.queued and every wire view of the
-                                                  ;; turn: the ONE key that tells us the row
-                                                  ;; it broadcasts is our own submission —
-                                                  ;; and the key that makes the retry above
-                                                  ;; idempotent.
-                                                  :idempotency-key client-id}
-                                                 reasoning-level
-                                                 (assoc :reasoning-default reasoning-level)
+                  (try
+                    (let
+                      [res
+                       (submit-queued-turn! sid
+                                            (cond->
+                                              {:request agent-text
+                                               ;; The gateway echoes this back on
+                                               ;; turn.queued and every wire view of the
+                                               ;; turn: the ONE key that tells us the row
+                                               ;; it broadcasts is our own submission —
+                                               ;; and the key that makes the retry above
+                                               ;; idempotent.
+                                               :idempotency-key client-id}
+                                              reasoning-level
+                                              (assoc :reasoning-default reasoning-level)
 
-                                                 extra-body
-                                                 (assoc :extra-body extra-body)
+                                              extra-body
+                                              (assoc :extra-body extra-body)
 
-                                                 (seq turn-features)
-                                                 (assoc :turn-features turn-features)
+                                              (seq turn-features)
+                                              (assoc :turn-features turn-features)
 
-                                                 display-text
-                                                 (assoc :display-request display-text)
+                                              display-text
+                                              (assoc :display-request display-text)
 
-                                                 (seq workspace)
-                                                 (assoc :workspace workspace)))
+                                              (seq workspace)
+                                              (assoc :workspace workspace)))
 
-                          turn
-                          (:turn res)
+                       turn
+                       (:turn res)
 
-                          tid
-                          (get turn "turn_id")]
+                       tid
+                       (get turn "turn_id")]
 
-                         (cond (and tid (= "queued" (get turn "status")))
-                               (dispatch [:sync-queued-turn workspace-id
-                                          {:op :add
-                                           :turn-id tid
-                                           :client-id client-id
-                                           :text (or (get turn "request") agent-text)
-                                           :preview-text (or (get turn "request_preview")
-                                                             display-text
-                                                             (get turn "request")
-                                                             agent-text)}])
-                               ;; Accepted but already RUNNING: not a queue row.
-                               tid nil
-                               :else (stage!)))
-                       (catch Throwable t
-                         (stage!)
-                         (try (vis/notify! (str "Queueing failed — kept locally: "
-                                                (or (ex-message t) (str t)))
-                                           :level :warn
-                                           :ttl-ms 3000)
-                              (catch Throwable _ nil)))
-                       ;; Release the double-submit guard on the ONE path every outcome
-                       ;; passes through, so an identical follow-up message is never
-                       ;; swallowed once this round-trip is over.
-                       (finally (dispatch [:submission-settled workspace-id client-id])))))))))
+                      (cond (and tid (= "queued" (get turn "status")))
+                            (dispatch [:sync-queued-turn workspace-id
+                                       {:op :add
+                                        :turn-id tid
+                                        :client-id client-id
+                                        :text (or (get turn "request") agent-text)
+                                        :preview-text (or (get turn "request_preview")
+                                                          display-text
+                                                          (get turn "request")
+                                                          agent-text)}])
+                            ;; Accepted but already RUNNING (the session went idle
+                            ;; inside the round-trip): there is no queue row to keep.
+                            ;; Drop the optimistic row through the ONE writer — the
+                            ;; attach machinery paints it as the live turn instead.
+                            tid (dispatch [:sync-queued-turn workspace-id
+                                           {:op :delete :turn-id tid :client-id client-id}])
+                            :else (stage!)))
+                    (catch Throwable t
+                      (stage!)
+                      (try (vis/notify! (str "Queueing failed — kept locally: "
+                                             (or (ex-message t) (str t)))
+                                        :level :warn
+                                        :ttl-ms 3000)
+                           (catch Throwable _ nil))))))))))
 
 (reg-fx :gateway-delete-queued
         ;; Drop a gateway queued record. The local row is removed by the caller as a

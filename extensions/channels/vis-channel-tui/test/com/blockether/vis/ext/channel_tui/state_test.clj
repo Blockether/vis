@@ -2239,10 +2239,11 @@
 
 (defdescribe
   pending-send-queue-test
-  (it "registers a busy-tab submission with the gateway instead of inventing a row"
-      ;; NO OPTIMISTIC ROW: the gateway is the queue of record, so the submission
-      ;; goes out as a real queued turn and the "Queued" row is painted only from
-      ;; gateway truth (ack / broadcast, both through `:sync-queued-turn`).
+  (it "registers a busy-tab submission with the gateway and shows it in the queue"
+      ;; The gateway stays the queue of RECORD — the submission goes out as a real
+      ;; queued turn, with its paste snapshot — while the row is painted locally at
+      ;; once, and reconciled from gateway truth (ack / broadcast, both through
+      ;; `:sync-queued-turn`) into the SAME row.
       (let
         [enqueue-fn
          (-> #'state/event-registry
@@ -2269,7 +2270,8 @@
          queued
          (get-in result [:db :tab-locals :a :pending-sends])]
 
-        (expect (empty? queued))
+        (expect (= ["queued"] (mapv :text queued)))
+        ;; It belongs to tab :a, not to the ACTIVE tab's root state.
         (expect (empty? (:pending-sends (:db result))))
         (let
           [gw
@@ -2283,13 +2285,13 @@
           (expect (= :a (nth gw 1)))
           (expect (= "queued" (:text entry)))
           (expect (= {1 {:id 1 :content "payload"}} (:pastes entry))))))
-  (it "registers ONE gateway turn when the same text is submitted twice inside the round-trip"
-      ;; REGRESSION (real session): the SAME text landed as TWO queued gateway turns
-      ;; 7 ms apart — both drained, both answered, the second one paid for. The old
-      ;; guard compared against `:pending-sends`, which mirrors GATEWAY truth and is
-      ;; therefore still EMPTY for the whole enqueue round-trip, so a second Enter in
-      ;; that window minted a fresh correlation id and registered a second turn. The
-      ;; in-flight record guards the window; `:submission-settled` releases it.
+  (it "paints ONE visible queued row on Enter and reconciles the gateway ack into it"
+      ;; REGRESSION (real session): a message submitted while a turn was running got
+      ;; registered with the gateway but NOTHING appeared in the TUI — the channel
+      ;; painted no row until the ack came back. Invisible reads as swallowed: the user
+      ;; pressed Enter again and the SAME text landed as TWO queued gateway turns 7 ms
+      ;; apart, both drained, both answered, the second one paid for. So the row is
+      ;; painted on Enter and gateway truth is merged INTO it, by correlation id.
       (let
         [registry
          (-> #'state/event-registry
@@ -2299,12 +2301,19 @@
          enqueue-fn
          (:fn (get registry :enqueue-message))
 
-         settled-fn
-         (:fn (get registry :submission-settled))
+         sync-fn
+         (:fn (get registry :sync-queued-turn))
+
+         drain-fn
+         (:fn (get registry :drain-pending))
 
          gw-fx
          (fn [result]
            (filterv #(= :gateway-enqueue (first %)) (:fx result)))
+
+         rows
+         (fn [db]
+           (get-in db [:tab-locals :a :pending-sends]))
 
          db
          {:active-tab-id :b
@@ -2322,28 +2331,45 @@
          (enqueue-fn db [:enqueue-message "double tap" :a])
 
          second-result
-         (enqueue-fn (:db first-result) [:enqueue-message "double tap" :a])]
+         (enqueue-fn (:db first-result) [:enqueue-message "double tap" :a])
 
-        ;; The first Enter registers exactly one queued turn …
+         row
+         (first (rows (:db first-result)))
+
+         client-id
+         (:client-id (nth (first (gw-fx first-result)) 3))]
+
+        ;; VISIBLE the instant Enter is pressed: one queued row, ours, still awaiting
+        ;; the gateway ack (so it carries no turn id yet).
+        (expect (= ["double tap"] (mapv :text (rows (:db first-result)))))
+        (expect (true? (:mine? row)))
+        (expect (true? (:awaiting-ack? row)))
+        (expect (nil? (:turn-id row)))
+        ;; The first Enter registers exactly one gateway turn …
         (expect (= 1 (count (gw-fx first-result))))
-        ;; … and the second, still inside the round-trip, registers NOTHING.
+        ;; … and the second, still inside the round-trip, registers neither a turn nor
+        ;; a second row.
         (expect (empty? (gw-fx second-result)))
-        (expect (empty? (get-in second-result [:db :tab-locals :a :pending-sends])))
+        (expect (= 1 (count (rows (:db second-result)))))
+        ;; A row still in flight is NEVER drained locally: that would send the same
+        ;; text twice, once from here and once as the queued turn being confirmed.
+        (let [idle (assoc-in (:db first-result) [:tab-locals :a :loading?] false)]
+          (expect (empty? (:fx (drain-fn idle [:drain-pending :a])))))
+        ;; The ack carries the correlation id we sent as the idempotency key, so it
+        ;; upgrades THAT row rather than appending a second one.
         (let
-          [client-id
-           (:client-id (nth (first (gw-fx first-result)) 3))
+          [acked
+           (sync-fn (:db first-result)
+                    [:sync-queued-turn :a
+                     {:op :add :turn-id "t-9" :client-id client-id :text "double tap"}])
 
-           settled
-           (settled-fn (:db first-result) [:submission-settled :a client-id])
-
-           again
-           (enqueue-fn settled [:enqueue-message "double tap" :a])]
+           acked-row
+           (first (rows acked))]
 
           (expect (string? client-id))
-          (expect (seq (get-in first-result [:db :tab-locals :a :submissions-in-flight])))
-          ;; Once the round-trip settles, the same text is a NEW intent again.
-          (expect (empty? (get-in settled [:tab-locals :a :submissions-in-flight])))
-          (expect (= 1 (count (gw-fx again)))))))
+          (expect (= 1 (count (rows acked))))
+          (expect (= "t-9" (:turn-id acked-row)))
+          (expect (nil? (:awaiting-ack? acked-row))))))
   (it "never queues a submission while a cancel is in flight (:cancelling?)"
       ;; REGRESSION: pressing Esc to cancel, then typing a new message, parked that
       ;; message in the queue (`:pending-sends`) behind the turn being torn down —
