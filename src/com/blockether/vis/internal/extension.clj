@@ -1044,32 +1044,64 @@
                  (when (and (:active? t) (:replay t)) [(:name t) (:replay t)]))
                (native-tools-for active-extensions env)))))
 
-(def ^:private wire-schema-constraint-keys
-  "Validation-only JSON-schema keys STRIPPED from the model-facing tool schemas.
-   NOTHING re-validates an inbound tool input against `:ext.symbol/schema`: the
-   schema is a DECLARATION to the provider (plus prose for `doc`), and a provider
-   only guarantees conformance under opt-in grammar-constrained `strict` tools,
-   which svar does not send — so every tool coerces and checks its OWN arguments.
-   On the wire these keys are pure token cost the model cannot act on.
-   `additionalProperties` is deliberately KEPT — strict-tools provider modes
-   rely on it."
-  [:minLength :maxLength :minItems :maxItems :minimum :maximum :minProperties :maxProperties])
+(def ^:private wire-schema-prose-keys
+  "Constraint keys OUTSIDE the Anthropic strict-tool subset, in wire order. They
+   are INLINED into the enclosing `description` — the same transform the official
+   Anthropic SDK applies — never dropped: the model still reads the bound, and a
+   strict tool call cannot 400 on an unsupported keyword. Nothing re-validates an
+   inbound tool input against `:ext.symbol/schema`, so every tool still coerces
+   and checks its OWN arguments.
 
-(defn- strip-schema-constraints
-  "Recursively drop `wire-schema-constraint-keys` from a JSON-schema tree."
+   `minItems`/`maxItems` and `additionalProperties` are deliberately ABSENT here:
+   both strict-tool subsets (Anthropic's supported-key list, OpenAI structured
+   outputs) accept them, so they travel as REAL constraints — with `strict` on,
+   `minItems` is what makes an array argument impossible to sample as a JSON
+   STRING."
+  [:minLength :maxLength :minimum :maximum :minProperties :maxProperties])
+
+(defn- schema-constraint-prose
+  "Compact `{minLength: 1, minimum: 0}` for ONE schema node's prose-only
+   constraints, or nil when it declares none."
+  [m]
+  (let
+    [pairs (keep (fn [k]
+                   (when-some [v (get m k)]
+                     (str (name k) ": " v)))
+                 wire-schema-prose-keys)]
+    (when (seq pairs) (str "{" (str/join ", " pairs) "}"))))
+
+(defn- wire-schema
+  "Recursively rewrite a JSON-schema tree for the model-facing wire:
+   `wire-schema-prose-keys` move into the node's own `description`; every other
+   key, array bounds included, stays a real provider-enforceable constraint."
   [x]
-  (cond (map? x) (into {}
-                       (map (fn [[k v]]
-                              [k (strip-schema-constraints v)]))
-                       (apply dissoc x wire-schema-constraint-keys))
-        (sequential? x) (mapv strip-schema-constraints x)
+  (cond (map? x) (let
+                   [prose
+                    (schema-constraint-prose x)
+
+                    base
+                    (apply dissoc x wire-schema-prose-keys)
+
+                    base
+                    (if prose
+                      (assoc base
+                        :description (if-some [d (:description base)]
+                                       (str d " " prose)
+                                       prose))
+                      base)]
+
+                   (into {}
+                         (map (fn [[k v]]
+                                [k (wire-schema v)]))
+                         base))
+        (sequential? x) (mapv wire-schema x)
         :else x))
 
 (defn native-tool-schemas
   "The model-facing `:tools` surface: `{:name :description :schema}` for every
    ACTIVE native tool, in extension/symbol order. Each description automatically
-   includes the symbol's mandatory raw-result contract. Validation-only schema
-   constraints are stripped at this wire boundary."
+   includes the symbol's mandatory raw-result contract. Schema constraints no
+   provider can enforce are inlined into their own `description` here."
   ([active-extensions] (native-tool-schemas active-extensions nil))
   ([active-extensions env]
    (->> (native-tools-for active-extensions env)
@@ -1077,7 +1109,7 @@
         (mapv (fn [{:keys [name description result schema]}]
                 {:name name
                  :description (str description "\n\nRaw result: " result)
-                 :schema (strip-schema-constraints schema)})))))
+                 :schema (wire-schema schema)})))))
 
 (defn native-tool-handlers
   "Map wire-name → `:handler` `(fn [env input] -> result)` for every ACTIVE native

@@ -531,3 +531,51 @@
       ;; empty / multi-arg / non-map — never touched.
       (expect (= [] (folded->pos {:pos ["id"]} [])))
       (expect (= ["x" {"n" 1}] (folded->pos {:pos ["id"]} ["x" {"n" 1}])))))
+
+(defn constrained-native-tool
+  "A native tool whose schema carries JSON-schema validation constraints."
+  [_input]
+  {:ok true})
+
+(defdescribe
+  wire-schema-constraints-test
+  (it
+    "array bounds survive as real constraints; provider-unenforceable bounds become description prose"
+    (let
+      [sym
+       (extension/symbol #'constrained-native-tool
+                         {:tag :observation
+                          :native-tool? true
+                          :name "constrained_tool"
+                          :description "Edits files."
+                          :result "One row per edit."
+                          :schema {:type "object"
+                                   :properties {"edits" {:type "array"
+                                                         :minItems 1
+                                                         :maxItems 8
+                                                         :description "Edit maps."
+                                                         :items {:type "object"
+                                                                 :properties {"path" {:type "string"
+                                                                                      :minLength
+                                                                                      1}}}}
+                                                "depth" {:type "integer" :minimum 1 :maximum 9}}
+                                   :required ["edits"]}})
+
+       schema
+       (:schema (first (filter #(= "constrained_tool" (:name %))
+                               (extension/native-tool-schemas [(ext-with sym)]))))
+
+       edits
+       (get-in schema [:properties "edits"])]
+
+      ;; `minItems`/`maxItems` are inside BOTH strict-tool subsets: they stay.
+      (expect (= 1 (:minItems edits)))
+      (expect (= 8 (:maxItems edits)))
+      (expect (= "Edit maps." (:description edits)))
+      ;; Outside the Anthropic subset ⇒ inlined into the node's own description,
+      ;; never dropped, appended after an existing description.
+      (expect (= {:type "string" :description "{minLength: 1}"}
+                 (get-in edits [:items :properties "path"])))
+      (expect (= {:type "integer" :description "{minimum: 1, maximum: 9}"}
+                 (get-in schema [:properties "depth"])))
+      (expect (= ["edits"] (:required schema))))))
