@@ -1,29 +1,43 @@
-# Import roots a Python project DECLARES, read for `vis python`.
+# Project layout a Python project DECLARES, read for `vis python` and `run_tests`.
 #
 # Parsed with Python's own parsers -- `tomllib` for `pyproject.toml`,
 # `configparser` for `setup.cfg` / `pytest.ini` / `tox.ini` -- never a regex
-# over the file text. Returns the RAW paths, in declaration order, exactly as
-# written; existence checks, `~` expansion and canonicalisation stay on the vis
-# side. Unreadable or absent metadata yields an empty list, never an error.
+# over the file text. Returns `[import_roots, testpaths]`: RAW paths, in
+# declaration order, exactly as written; existence checks, `~` expansion and
+# canonicalisation stay on the vis side. Unreadable or absent metadata yields
+# empty lists, never an error.
 
 
-def __vis_declared_import_roots__(project_dir):
+def __vis_project_config__(project_dir):
     import configparser
     import os
     import tomllib
 
     roots = []
+    testpaths = []
 
-    def add(value):
-        if isinstance(value, str) and value.strip():
-            roots.append(value.strip())
+    def adder(acc):
+        def add(value):
+            if isinstance(value, str) and value.strip():
+                acc.append(value.strip())
 
-    def add_each(value):
-        if isinstance(value, str):
-            add(value)
-        elif isinstance(value, (list, tuple)):
-            for item in value:
-                add(item)
+        return add
+
+    def each_adder(acc):
+        add = adder(acc)
+
+        def add_each(value):
+            if isinstance(value, str):
+                add(value)
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    add(item)
+
+        return add_each
+
+    add = adder(roots)
+    add_each = each_adder(roots)
+    add_test_each = each_adder(testpaths)
 
     def table(data, *path):
         for key in path:
@@ -57,7 +71,11 @@ def __vis_declared_import_roots__(project_dir):
         add_each(table(tool, "pdm", "build").get("package-dir"))
 
         # [tool.pytest.ini_options]  pythonpath = ["src"] -- pytest's own option.
-        add_each(table(tool, "pytest", "ini_options").get("pythonpath"))
+        ini_options = table(tool, "pytest", "ini_options")
+        add_each(ini_options.get("pythonpath"))
+
+        # [tool.pytest.ini_options]  testpaths = ["tests"] -- where pytest looks.
+        add_test_each(ini_options.get("testpaths"))
 
         # [tool.poetry]  packages = [{include = "pkg", from = "src"}]
         packages = table(tool, "poetry").get("packages")
@@ -103,13 +121,17 @@ def __vis_declared_import_roots__(project_dir):
         if line.strip():
             add(line.rsplit("=", 1)[-1])
 
-    # pytest's `pythonpath` wherever pytest accepts it outside pyproject.toml.
-    for parser, section in (
+    # pytest's `pythonpath` / `testpaths` wherever pytest accepts them outside
+    # pyproject.toml. Both are whitespace/comma separated lists.
+    ini_pytest = (
         (setup_cfg, "tool:pytest"),
         (sections("pytest.ini"), "pytest"),
         (sections("tox.ini"), "pytest"),
-    ):
+    )
+    for parser, section in ini_pytest:
         for entry in option(parser, section, "pythonpath").replace(",", " ").split():
             add(entry)
+        for entry in option(parser, section, "testpaths").replace(",", " ").split():
+            testpaths.append(entry)
 
-    return roots
+    return [roots, testpaths]

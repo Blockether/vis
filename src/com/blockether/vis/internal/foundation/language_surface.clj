@@ -919,7 +919,7 @@
   (dispatch! env :lint-fn args))
 
 (defn run-tests
-  "Run through a pack: `run_tests(language,arg)`. `arg` is a module string or map: `namespaces`/`paths` choose loading/discovery; `only`, `include`, `exclude`, and `filter` narrow tests; `cwd` chooses the project. List selectors stay lists, even one. Omit `arg` for all tests."
+  "Run through a pack: `run_tests(language,arg)`. `arg` is a module string or map: `namespaces`/`paths` choose loading/discovery; `only`, `include`, `exclude`, and `filter` narrow tests; `cwd` chooses the project; `runner` picks a pack backend (python: `graalpy` default, or `project` for the project interpreter's own pytest). List selectors stay lists, even one. Omit `arg` for all tests."
   [env & args]
   ;; Park outside the generic 30s native wall. Language packs own the test budget.
   (let [started-at (System/nanoTime)]
@@ -1059,7 +1059,12 @@
                "include" {:type "array" :items {:type "string"} :description "Required tags."}
                "exclude" {:type "array" :items {:type "string"} :description "Skipped tags."}
                "cwd" {:type "string" :description "Project dir; root default."}
-               "filter" {:type "string" :description "Name filter if supported."}}
+               "filter" {:type "string" :description "Name filter if supported."}
+               "runner" {:type "string"
+                         :description
+                         (str "Pack-specific backend. python: `graalpy` (default, hermetic) "
+                              "or `project` (shells the project interpreter's pytest, so "
+                              "installed deps are visible).")}}
               :required ["language"]
               :additionalProperties false}
      :inject-env? true

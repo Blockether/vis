@@ -472,49 +472,57 @@
           (expect (str/includes? body "**FORM**"))
           (expect (str/includes? body "(loop [] (recur))"))))))
 
-(defdescribe format-schema-advertises-recursion-test
-             (it "format_code schema + doc advertise directory recursion and the omit-all default"
-                 (let
-                   [props
-                    (get-in language-surface/format-symbol [:ext.symbol/schema :properties])
+(defdescribe
+  format-schema-advertises-recursion-test
+  (it "format_code schema + doc advertise directory recursion and the omit-all default"
+      (let
+        [props
+         (get-in language-surface/format-symbol [:ext.symbol/schema :properties])
 
-                    paths-desc
-                    (get props "paths" ::missing)
+         paths-desc
+         (get props "paths" ::missing)
 
-                    doc
-                    (:ext.symbol/doc language-surface/format-symbol)]
+         doc
+         (:ext.symbol/doc language-surface/format-symbol)]
 
-                   ;; a directory in :paths is walked recursively for source files
-                   (expect (re-find #"(?i)recursiv" (:description paths-desc)))
-                   (expect (re-find #"(?i)director" (:description paths-desc)))
-                   ;; omitting everything formats the workspace default source paths
-                   (expect (re-find #"(?i)OMIT" (:description paths-desc)))
-                   ;; PLURAL ONLY: no singular `path` twin beside `paths`
-                   (expect (nil? (get props "path")))
-                   ;; the facade docstring documents both behaviours too
-                   (expect (re-find #"(?i)recursiv" doc))
-                   (expect (re-find #"(?i)default source paths" doc))))
-             (it "lint_code + run_tests schemas already advertise dirs/files"
-                 (let
-                   [lint-paths
-                    (get-in language-surface/lint-symbol
-                            [:ext.symbol/schema :properties "paths" :description])
+        ;; a directory in :paths is walked recursively for source files
+        (expect (re-find #"(?i)recursiv" (:description paths-desc)))
+        (expect (re-find #"(?i)director" (:description paths-desc)))
+        ;; omitting everything formats the workspace default source paths
+        (expect (re-find #"(?i)OMIT" (:description paths-desc)))
+        ;; PLURAL ONLY: no singular `path` twin beside `paths`
+        (expect (nil? (get props "path")))
+        ;; the facade docstring documents both behaviours too
+        (expect (re-find #"(?i)recursiv" doc))
+        (expect (re-find #"(?i)default source paths" doc))))
+  (it "lint_code + run_tests schemas already advertise dirs/files"
+      (let
+        [lint-paths
+         (get-in language-surface/lint-symbol [:ext.symbol/schema :properties "paths" :description])
 
-                    test-paths
-                    (get-in language-surface/test-symbol
-                            [:ext.symbol/schema :properties "paths" :description])]
+         test-paths
+         (get-in language-surface/test-symbol
+                 [:ext.symbol/schema :properties "paths" :description])]
 
-                   (expect (str/includes? lint-paths "files/dirs"))
-                   (expect (re-find #"(?i)dirs/files" test-paths))
-                   ;; PLURAL ONLY here too
-                   (expect (nil? (get-in language-surface/lint-symbol
-                                         [:ext.symbol/schema :properties "path"])))))
-             (it "run_tests is a direct native handler, not Python-watchdog-bound"
-                 (let
-                   [handlers (extension/native-tool-handlers
-                               [{:ext/engine {:ext.engine/symbols [language-surface/test-symbol]}}]
-                               (fake-env []))]
-                   (expect (contains? handlers "run_tests")))))
+        (expect (str/includes? lint-paths "files/dirs"))
+        (expect (re-find #"(?i)dirs/files" test-paths))
+        ;; PLURAL ONLY here too
+        (expect (nil? (get-in language-surface/lint-symbol
+                              [:ext.symbol/schema :properties "path"])))))
+  (it "run_tests is a direct native handler, not Python-watchdog-bound"
+      (let
+        [handlers (extension/native-tool-handlers [{:ext/engine {:ext.engine/symbols
+                                                                 [language-surface/test-symbol]}}]
+                                                  (fake-env []))]
+        (expect (contains? handlers "run_tests"))))
+  ;; REGRESSION #93: the graalpy backend's own hint tells the agent to
+  ;; re-run with {"runner": "project"} — a strict schema that omits
+  ;; `runner` rejects the call that hint asks for.
+  (it "run_tests advertises the pack-backend `runner` selector"
+      (let [schema (:ext.symbol/schema language-surface/test-symbol)]
+        (expect (false? (:additionalProperties schema)))
+        (expect (= "string" (get-in schema [:properties "runner" :type])))
+        (expect (re-find #"(?i)graalpy" (get-in schema [:properties "runner" :description]))))))
 
 (defdescribe
   render-lint-result-names-target-test

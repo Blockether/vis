@@ -8,6 +8,7 @@
   (:require [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.main]
+            [com.blockether.vis.internal.python-project]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private python-cli-context #'com.blockether.vis.internal.main/python-cli-context)
@@ -279,8 +280,7 @@
                     (.delete (.toFile src))
                     (.delete (.toFile dir)))))))
 
-(def ^:private python-project-import-roots
-  #'com.blockether.vis.internal.main/python-project-import-roots)
+(def ^:private python-project-import-roots com.blockether.vis.internal.python-project/import-roots)
 
 (defn- write-project!
   "Materialise a throwaway project: `pyproject.toml` plus the `dirs` that its

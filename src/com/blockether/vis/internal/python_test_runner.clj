@@ -90,38 +90,48 @@
 (defn- test-sys-path
   "sys.path entries for a test file, NUL-joined into one string (a NUL can't
    occur in a path, and a plain string crosses the polyglot boundary cleanly —
-   a host array is not iterable under `PolyglotAccess/NONE`): the test file's
-   own dir and every ancestor up to and INCLUDING the extension scan dir — so
-   both `from mypkg.core import x` (package root) and `from core import x` (same
-   dir) resolve regardless of how deep the test sits."
-  [^File scan-dir ^File test-file]
-  (let [scan (.getCanonicalPath scan-dir)]
-    (str/join "\u0000"
-              (loop
-                [^File d (.getParentFile (.getCanonicalFile test-file))
-                 acc []]
+   a host array is not iterable under `PolyglotAccess/NONE`): `extra` (the
+   project's own declared import roots, e.g. a `src` layout) first, then the
+   test file's own dir and every ancestor up to and INCLUDING the extension
+   scan dir — so `from mypkg.core import x` (package root), `from core import x`
+   (same dir) and `import mypkg` (declared `src` root) all resolve regardless of
+   how deep the test sits.
 
-                (if (nil? d)
-                  acc
-                  (let
-                    [p (.getCanonicalPath d)
-                     acc (conj acc p)]
+   The driver inserts these at `sys.path[0]` in order, so entries listed FIRST
+   end up with the LOWEST precedence: the project roots never shadow a module
+   sitting next to the test."
+  ([^File scan-dir ^File test-file] (test-sys-path scan-dir test-file nil))
+  ([^File scan-dir ^File test-file extra]
+   (let [scan (.getCanonicalPath scan-dir)]
+     (str/join "\u0000"
+               (distinct (concat (remove str/blank? (map str extra))
+                                 (loop
+                                   [^File d (.getParentFile (.getCanonicalFile test-file))
+                                    acc []]
 
-                    (if (= p scan) acc (recur (.getParentFile d) acc))))))))
+                                   (if (nil? d)
+                                     acc
+                                     (let
+                                       [p (.getCanonicalPath d)
+                                        acc (conj acc p)]
+
+                                       (if (= p scan) acc (recur (.getParentFile d) acc)))))))))))
 
 (def ^:private run-test-src
   "Python driver: prepend the bound `sys.path` roots (a NUL-joined string), exec
    the test source under the `<prog>` co_filename (so the shim's linecache-based
-   assert introspection lights up), then run `pytest.main` over that module's
-   own globals with stdout captured into `__vis_test_output__`, the exit code in
-   `__vis_test_rc__`, and — the source of truth — the shim's PER-TEST record
-   list serialized into `__vis_test_report__` (records RS-joined, fields
-   US-joined: nodeid, outcome, message)."
+   assert introspection lights up) with `__file__` bound to the test file's real
+   path (so `Path(__file__).parent` fixtures work), then run `pytest.main` over
+   that module's own globals with stdout captured into `__vis_test_output__`,
+   the exit code in `__vis_test_rc__`, and — the source of truth — the shim's
+   PER-TEST record list serialized into `__vis_test_report__` (records RS-joined,
+   fields US-joined: nodeid, outcome, message)."
   (str "import sys as __vis_ts__, io as __vis_tio__\n"
        "for __vis_tp__ in __vis_test_paths__.split(chr(0)):\n"
        "    if __vis_tp__ and __vis_tp__ not in __vis_ts__.path:\n"
        "        __vis_ts__.path.insert(0, __vis_tp__)\n"
-       "__vis_test_ns__ = {'__vis_src__': __vis_src__, '__name__': '__vis_pytest__'}\n"
+       "__vis_test_ns__ = {'__vis_src__': __vis_src__, '__name__': '__vis_pytest__',"
+       " '__file__': __vis_test_file__}\n"
        "exec(compile(__vis_src__, '<prog>', 'exec'), __vis_test_ns__)\n"
        "import pytest as __vis_pt__\n"
        "__vis_tbuf__ = __vis_tio__.StringIO()\n" "__vis_told__ = __vis_ts__.stdout\n"
@@ -152,11 +162,12 @@
 
 (defn- run-test-file!
   "Run ONE test file in a fresh trusted context: bootstrap the `vis` module,
-   install the pytest shim, then drive `run-test-src`. Returns
-   `{:file :rc :ok? :output :tests}` where `:tests` is the per-test record list.
-   Never throws — a broken test file is one `:errored` result, never a host
-   crash."
-  [^String shim-src ^File scan-dir ^File test-file]
+   install the pytest shim, then drive `run-test-src`. `sys-path` is the extra
+   import roots the project declares (a `src` layout), added below the test's
+   own dirs. Returns `{:file :rc :ok? :output :tests}` where `:tests` is the
+   per-test record list. Never throws — a broken test file is one `:errored`
+   result, never a host crash."
+  [^String shim-src sys-path ^File scan-dir ^File test-file]
   (let
     [path
      (.getCanonicalPath test-file)
@@ -165,7 +176,7 @@
      (slurp test-file)
 
      paths
-     (test-sys-path scan-dir test-file)
+     (test-sys-path scan-dir test-file sys-path)
 
      ^Context ctx
      (pyx/build-context)]
@@ -176,6 +187,7 @@
            (.eval ctx "python" shim-src)
            (let [g (.getBindings ctx "python")]
              (.putMember g "__vis_test_paths__" paths)
+             (.putMember g "__vis_test_file__" ^String path)
              (.putMember g "__vis_src__" ^String source)
              (.eval ctx "python" ^String run-test-src)
              (let [tests (parse-report (.asString (.getMember g "__vis_test_report__")))]
@@ -204,9 +216,13 @@
    :tests [{:file :nodeid :outcome :message}] :results [{:file :ok? :tests …}]}`.
    Counts are DERIVED from `:tests` (the flat per-test list) — the single source
    of truth. Never throws: a file that blows up at import is one `:errored`
-   result, not a crash."
+   result, not a crash.
+
+   `:sys-path` adds extra import roots (the project's own declared `src` layout)
+   below each test's own dirs, so a test that imports the package under test
+   resolves it the way the project's packaging metadata says it should."
   ([] (test-python-extensions! nil))
-  ([{:keys [dirs]}]
+  ([{:keys [dirs sys-path]}]
    (let
      [dirs
       (or dirs (pyx/default-extension-dirs))
@@ -222,7 +238,7 @@
        (let
          [results
           (mapv (fn [[d f]]
-                  (run-test-file! shim-src d f))
+                  (run-test-file! shim-src sys-path d f))
                 pairs)
 
           tests

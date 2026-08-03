@@ -163,3 +163,50 @@
                (expect (false? (get res "ok")))
                (expect (string? (get res "error"))))
              (finally (cleanup root))))))
+
+(defdescribe
+  project-layout-test
+  "Issue #93: the hermetic backend must see what the project DECLARES about
+   itself — a `src` import root on `sys.path`, pytest's own `testpaths` as the
+   default target, and a real `__file__` for tests that read fixtures sitting
+   beside them."
+  (it "imports a src-layout package, honors testpaths, and binds __file__"
+      (let [root (tmp-dir)]
+        (try (.mkdirs (io/file root "src" "einmal"))
+             (.mkdirs (io/file root "suite"))
+             ;; `suite/`, not `tests/`: only the declared testpaths can find it.
+             (spit (io/file root "pyproject.toml")
+                   (str "[project]\n"
+                        "name = \"einmal\"\n" "version = \"0.1.0\"\n\n"
+                        "[tool.setuptools]\n" "package-dir = {\"\" = \"src\"}\n\n"
+                        "[tool.pytest.ini_options]\n" "testpaths = [\"suite\"]\n"))
+             (spit (io/file root "src" "einmal" "__init__.py") "")
+             (spit (io/file root "src" "einmal" "core.py") "def add(a, b):\n    return a + b\n")
+             (spit (io/file root "suite" "fixture.txt") "42\n")
+             (spit (io/file root "suite" "test_core.py")
+                   (str "import pathlib\n"
+                        "from einmal.core import add\n\n" "def test_add():\n"
+                        "    assert add(1, 2) == 3\n\n" "def test_reads_a_file_beside_it():\n"
+                        "    here = pathlib.Path(__file__).parent\n"
+                        "    assert (here / 'fixture.txt').read_text().strip() == '42'\n"))
+             (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)} {}))]
+               (expect (= 1 (get res "files")))
+               (expect (= 2 (get res "passed")))
+               (expect (= 0 (get res "failed")))
+               (expect (= 0 (get res "errored")))
+               (expect (true? (get res "ok")))
+               (expect (some #{(.getCanonicalPath (io/file root "src"))} (get res "sys_path"))))
+             (finally (cleanup root)))))
+  (it "an explicit {paths} still wins over declared testpaths"
+      (let [root (tmp-dir)]
+        (try (.mkdirs (io/file root "a"))
+             (expect (= [(.getCanonicalPath (io/file root "a"))]
+                        (resolve-test-paths (.getPath root) {"paths" ["a"]} ["/declared"])))
+             (expect (= ["/declared"] (resolve-test-paths (.getPath root) {} ["/declared"])))
+             (finally (cleanup root)))))
+  (it "a project declaring nothing keeps the tests/ then cwd fallback"
+      (let [root (tmp-dir)]
+        (try (.mkdirs (io/file root "tests"))
+             (expect (= [(.getCanonicalPath (io/file root "tests"))]
+                        (resolve-test-paths (.getPath root) {} nil)))
+             (finally (cleanup root))))))
