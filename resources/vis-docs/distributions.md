@@ -130,22 +130,36 @@ archive per platform:
 
 ```text
 vis-agent-<os>-<arch>-community.tar.gz
-├── vis-agent          # public Bash wrapper
-├── vis-agent-native   # private GraalVM native-image runtime
-└── install-vis-agent  # installer for the same bundle shape
+├── vis-agent             # public Bash wrapper
+├── vis-agent-native      # private GraalVM native-image runtime
+├── vis-agent-resources/  # GraalPy/Truffle language resources
+└── install-vis-agent     # installer for the same bundle shape
 ```
 
-The two executables travel together — `vis-agent update --native` replaces both
-— so the launcher and runtime contract can never drift across versions.
+All of it travels together — `vis-agent update --native` replaces the wrapper, the
+runtime and the resources directory in one step — so the launcher, the runtime and
+the Python stdlib can never drift across versions. The resources directory is not
+optional: the image keeps those resources beside itself instead of inside itself
+(see [JVM & native-image](jvm-native-image.md)), and the wrapper starts the runtime
+with `-Dpolyglot.engine.resourcePath` pointing at it. `VIS_NATIVE_RESOURCES`
+points at a different copy when several installs share one.
 
-Release CI builds and smoke-tests:
+`bin/stage-release-bundle` is the single definition of that layout, used by both
+release CI and local builds, so a hand-built asset and a CI asset are identical.
 
-| Platform | Bundle |
-|---|---|
-| Linux x86-64 | `vis-agent-linux-x64-community.tar.gz` |
-| Linux ARM64 | `vis-agent-linux-arm64-community.tar.gz` |
+| Platform | Bundle | Built by |
+|---|---|---|
+| Linux x86-64 | `vis-agent-linux-x64-community.tar.gz` | release CI |
+| Linux ARM64 | `vis-agent-linux-arm64-community.tar.gz` | release CI, or a local container build |
+| macOS ARM64 | `vis-agent-macos-arm64-community.tar.gz` | an Apple-silicon machine — no hosted macOS runner has the RAM |
 
-Elsewhere — macOS today — use `jvm`, or build a sidecar locally with
-`vis-agent update --jvm --rebuild`. Native builds require GraalVM Community
-Edition 25.1.3 exactly (the repository pin is authoritative) and at least
-16 GB of RAM.
+Building the image needs GraalVM Community Edition 25.1.3 exactly (the repository
+pin is authoritative) and a machine with **32 GB of RAM**: the points-to analysis
+live set is ~14 GiB, and a 16 GB host spends most of the build in GC. On such a
+machine, `bin/release-native` builds every asset that host can produce (macOS
+natively, Linux ARM64 through docker/podman with no emulation), smoke-tests each
+one, and with `--tag vX.Y.Z --upload` attaches them to the release. Linux x86-64
+stays on CI — under emulation that analysis takes hours and usually dies.
+
+On a platform with no published bundle, use `jvm`, or build a sidecar locally with
+`vis-agent update --jvm --rebuild`.

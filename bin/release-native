@@ -21,7 +21,7 @@
 #
 # Targets:
 #   macos-arm64  `clojure -T:build native` on this Mac  (>= 32 GB RAM)
-#   linux-arm64  docker buildx --target native-export --platform linux/arm64
+#   linux-arm64  docker/podman --target native-export --platform linux/arm64
 #   linux-x64    NOT built here. Under qemu the same analysis emulates for many
 #                hours and usually dies; that asset stays on CI:
 #                  gh workflow run native-release.yml -f tag=vX.Y.Z
@@ -119,34 +119,67 @@ build_macos_arm64() {
   built_asset="$asset"
 }
 
-# ── linux-arm64 (docker, native on Apple silicon) ────────────────────────────
+# ── linux-arm64 (container build, native on Apple silicon) ───────────────────
+# `docker` on this host may BE podman (podman ships a `docker` shim) and podman
+# has no `buildx` subcommand, so resolve the engine first and then speak its
+# dialect. `VIS_CONTAINER_CLI` forces one.
+container_engine() {
+  local candidate
+  for candidate in ${VIS_CONTAINER_CLI:+"$VIS_CONTAINER_CLI"} docker podman; do
+    command -v "$candidate" >/dev/null 2>&1 || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+
 build_linux_arm64() {
   local asset="vis-agent-linux-arm64-community.tar.gz"
   local out="target/native-export/linux-arm64"
-  command -v docker >/dev/null 2>&1 || die "linux-arm64 needs docker"
-  # The builder JVM needs ~14 GiB INSIDE the VM. Docker Desktop defaults to far
-  # less and the build dies in [4/8] with an OOM after ~40 wasted minutes.
-  local mem
-  mem="$(docker info --format '{{.MemTotal}}' 2>/dev/null || echo 0)"
-  if [[ "$mem" =~ ^[0-9]+$ ]] && (( mem > 0 && mem < 16000000000 )); then
-    die "docker only has $((mem / 1000000000)) GB of RAM; this build needs >= 16 GB" \
-        "Docker Desktop -> Settings -> Resources -> Memory, then rerun."
+  local engine flavor mem
+  engine="$(container_engine)" || die "linux-arm64 needs docker or podman on PATH"
+  flavor=docker
+  "$engine" --version 2>/dev/null | grep -qi podman && flavor=podman
+  "$engine" info >/dev/null 2>&1 || \
+    die "$engine is installed but its Linux VM is not reachable" \
+        "podman: podman machine init (once), then podman machine start" \
+        "docker: start Docker Desktop"
+  # The builder JVM needs ~14 GiB INSIDE the VM. Both engines default to far less
+  # and the build dies in [4/8] with an OOM after ~40 wasted minutes.
+  if [[ "$flavor" == podman ]]; then
+    mem="$("$engine" info --format '{{.Host.MemTotal}}' 2>/dev/null || echo 0)"
+  else
+    mem="$("$engine" info --format '{{.MemTotal}}' 2>/dev/null || echo 0)"
   fi
-  say "building linux-arm64 (docker buildx, native on this host)"
+  if [[ "$mem" =~ ^[0-9]+$ ]] && (( mem > 0 && mem < 16000000000 )); then
+    die "$engine only has $((mem / 1000000000)) GB of RAM; this build needs >= 16 GB" \
+        "podman: podman machine stop && podman machine set --memory 24576 --cpus 8 && podman machine start" \
+        "docker: Docker Desktop -> Settings -> Resources -> Memory, then rerun."
+  fi
+  say "building linux-arm64 ($engine, native on this host)"
   rm -rf "$out"
-  docker buildx build \
-    --target native-export \
-    --platform linux/arm64 \
-    --build-arg GRAAL_ARCH=aarch64 \
-    --output "type=local,dest=$out" \
-    .
+  if [[ "$flavor" == podman ]]; then
+    "$engine" build \
+      --target native-export \
+      --platform linux/arm64 \
+      --build-arg GRAAL_ARCH=aarch64 \
+      -o "type=local,dest=$out" \
+      .
+  else
+    "$engine" buildx build \
+      --target native-export \
+      --platform linux/arm64 \
+      --build-arg GRAAL_ARCH=aarch64 \
+      --output "type=local,dest=$out" \
+      .
+  fi
   bin/stage-release-bundle --from-dir "$out" "$asset"
   say "smoke: help inside a linux/arm64 container"
-  docker run --rm --platform linux/arm64 \
+  "$engine" run --rm --platform linux/arm64 \
     -v "$repo_root/target/release-bundle:/bundle:ro" \
     debian:bookworm-slim /bundle/vis-agent --native help >/dev/null
   say "smoke: GraalPy stdlib inside that container"
-  docker run --rm --platform linux/arm64 \
+  "$engine" run --rm --platform linux/arm64 \
     -v "$repo_root/target/release-bundle:/bundle:ro" \
     debian:bookworm-slim /bundle/vis-agent --native python -c "import ast; print('py-ok')" \
     | grep -qx 'py-ok' || die "the linux-arm64 bundle cannot import the Python stdlib"
