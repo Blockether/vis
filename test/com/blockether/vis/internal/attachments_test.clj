@@ -661,41 +661,66 @@
             (it "returns nil for a non-image artifact, which is not a failure"
                 (expect (nil? (attachments/wire-image {:base64 (b64 (.getBytes "a,b\n1,2" "UTF-8"))
                                                        :media-type "text/csv"})))))
-  (describe "the wire size limit"
-            (it "refuses an image past it, naming both sizes"
-                (expect (re-find #"exceeds the"
-                                 (str (:reason (attachments/wire-image {:base64 tiny-png-b64
-                                                                        :media-type "image/png"}
-                                                                       {:max-bytes 8}))))))
-            (it "optimizes an oversize image UNDER the cap instead of dropping it"
-                (let
-                  [png
-                   (noisy-png 400 300)
+  (describe
+    "the wire size limit"
+    (it "refuses an image past it, naming both sizes"
+        (expect (re-find #"exceeds the"
+                         (str (:reason (attachments/wire-image {:base64 tiny-png-b64
+                                                                :media-type "image/png"}
+                                                               {:max-bytes 8}))))))
+    (it "optimizes an oversize image UNDER the cap instead of dropping it"
+        (let
+          [png
+           (noisy-png 400 300)
 
-                   cap
-                   (long (* 0.4 (alength png)))
+           cap
+           (long (* 0.4 (alength png)))
 
-                   wired
-                   (attachments/wire-image {:base64 (b64 png) :media-type "image/png"}
-                                           {:max-bytes cap})
+           wired
+           (attachments/wire-image {:base64 (b64 png) :media-type "image/png"} {:max-bytes cap})
 
-                   ;; a third decoder again: the rescued bytes must still be a
-                   ;; picture, not merely small.
-                   decoded
-                   (ImageIO/read (ByteArrayInputStream. (.decode (Base64/getDecoder)
-                                                                 ^String (:base64 wired))))]
+           ;; a third decoder again: the rescued bytes must still be a
+           ;; picture, not merely small.
+           decoded
+           (ImageIO/read (ByteArrayInputStream. (.decode (Base64/getDecoder)
+                                                         ^String (:base64 wired))))]
 
-                  (expect (> (alength png) cap))
-                  (expect (nil? (:reason wired)))
-                  (expect (= "image/png" (:media-type wired)))
-                  (expect (<= (long (:size wired)) cap))
-                  (expect (some? decoded))
-                  (expect (pos? (.getWidth decoded)))
-                  (expect (pos? (.getHeight decoded)))))
-            (it "never re-encodes a payload that already fits"
-                (expect (= tiny-png-b64
-                           (:base64 (attachments/wire-image {:base64 tiny-png-b64
-                                                             :media-type "image/png"}))))))
+          (expect (> (alength png) cap))
+          (expect (nil? (:reason wired)))
+          (expect (= "image/png" (:media-type wired)))
+          (expect (<= (long (:size wired)) cap))
+          (expect (some? decoded))
+          (expect (pos? (.getWidth decoded)))
+          (expect (pos? (.getHeight decoded)))))
+    (it "measures the BASE64 payload, which is what a provider weighs"
+        ;; A picture whose DECODED bytes fit the cap and whose base64 does
+        ;; not is exactly Anthropic's `image exceeds 5 MB maximum: 5994492
+        ;; bytes > 5242880 bytes` — a 400 that then replays on every later
+        ;; turn, plain-text ones included, until the row leaves the session.
+        (let
+          [png
+           (noisy-png 220 220)
+
+           ;; Room to spare for the picture; none once it is encoded.
+           cap
+           (long (* 1.1 (alength png)))
+
+           wired
+           (attachments/wire-image {:base64 (b64 png) :media-type "image/png"} {:max-bytes cap})
+
+           decoded
+           (ImageIO/read (ByteArrayInputStream. (.decode (Base64/getDecoder)
+                                                         ^String (:base64 wired))))]
+
+          (expect (<= (alength png) cap))
+          (expect (> (count (b64 png)) cap))
+          (expect (nil? (:reason wired)))
+          (expect (<= (count (str (:base64 wired))) cap))
+          (expect (some? decoded))))
+    (it "never re-encodes a payload that already fits"
+        (expect (= tiny-png-b64
+                   (:base64 (attachments/wire-image {:base64 tiny-png-b64
+                                                     :media-type "image/png"}))))))
   (describe "the wire PIXEL limit"
             (it "downscales a picture no provider accepts at that size, ratio intact"
                 ;; A 4K screenshot weighs a couple of hundred KB and clears every

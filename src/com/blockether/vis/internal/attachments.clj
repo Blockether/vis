@@ -44,9 +44,14 @@
 ;; =============================================================================
 
 (def max-image-bytes
-  "Per-image byte cap. Anthropic's API limit is 5MB/image; OpenAI allows
-   more, but the smallest common bound keeps one attachment valid on
-   every wire."
+  "Per-image cap on the WIRE PAYLOAD, in bytes of BASE64 -- which is what a
+   provider measures, not the picture that decodes out of it (see
+   `wire-byte-budget`, so the picture itself gets 3/4 of this).
+
+   Anthropic's API limit is 5MB/image and it is enforced on the base64 string
+   (`image exceeds 5 MB maximum: 5994492 bytes > 5242880 bytes`); OpenAI and
+   Gemini bound the whole request far more generously. The smallest common
+   bound keeps one attachment valid on every wire."
   (* 5 1024 1024))
 
 (def max-video-bytes
@@ -737,6 +742,30 @@
                           {:order order :entries entries :bytes total}))))
   verdict)
 
+(defn- base64-length
+  "How many CHARACTERS the base64 encoding of `n` raw bytes occupies -- 4 per 3,
+   padded to a multiple of 4. This, not the decoded length, is the number a
+   provider measures the payload by."
+  ^long [^long n]
+  (* 4 (quot (+ n 2) 3)))
+
+(defn- wire-byte-budget
+  "The largest RAW byte count whose base64 encoding still fits `max-bytes`.
+
+   Every wire carries an inline image as base64 and enforces its size cap on
+   THAT string, not on the picture it decodes to:
+
+     messages.0.content.1.image.source.base64: image exceeds 5 MB maximum:
+     5994492 bytes > 5242880 bytes
+
+   Base64 costs 4 characters per 3 bytes, so a 4.5MB PNG -- comfortably under a
+   5MB cap by every local measure -- leaves as a 6MB payload and is refused.
+   And since attachments REPLAY, that 400 comes back on every later turn,
+   including plain-text ones, until the row leaves the session. So the byte
+   ladder is aimed at 3/4 of the cap and the picture really fits."
+  ^long [^long max-bytes]
+  (max 0 (* 3 (quot max-bytes 4))))
+
 (defn- video-verdict
   "The send verdict for a CLIP, which no vision wire accepts in any container.
    The clip is sampled across its whole length into a small animated GIF
@@ -746,12 +775,19 @@
    about. Refused only when the track cannot be decoded (HEVC/AV1/VP9, a
    corrupt container) or the GIF still does not fit."
   [^bytes raw media-type ^long max-bytes]
-  (let [gif (image-convert/video->wire-gif raw nil)]
+  (let
+    [gif
+     (image-convert/video->wire-gif raw nil)
+
+     ;; The cap is on the BASE64 payload, not on the GIF ([[wire-byte-budget]]).
+     budget
+     (wire-byte-budget max-bytes)]
+
     (cond (nil? gif) {:reason (str media-type " cannot be turned into a picture on this build")}
           (:reason gif) {:reason (:reason gif)}
-          :else (let [fitted (image-convert/fit-within ^bytes (:bytes gif) max-bytes)]
-                  (if (> (alength ^bytes fitted) max-bytes)
-                    {:reason (str (size-label (alength ^bytes fitted))
+          :else (let [fitted (image-convert/fit-within ^bytes (:bytes gif) budget)]
+                  (if (> (alength ^bytes fitted) budget)
+                    {:reason (str (size-label (base64-length (alength ^bytes fitted)))
                                   " exceeds the "
                                   (size-label max-bytes)
                                   " attachment limit")}
@@ -788,12 +824,15 @@
          scaled (some-> safe
                         :bytes
                         (image-convert/fit-dimensions max-dimension))
+         ;; What a provider weighs is the BASE64 string, which is 4/3 of the
+         ;; picture ([[wire-byte-budget]]), so the ladder aims at 3/4 of the cap.
+         budget (wire-byte-budget max-bytes)
          ;; Over the cap is NOT the same as unsendable. The real optimisers get
          ;; one shot at it (lossless first, then the imaging library's own
          ;; ladder) instead of the picture being dropped; a payload that already
          ;; fits comes back IDENTICAL, so nothing under the cap is re-encoded.
          fitted (some-> ^bytes (:bytes scaled)
-                        (image-convert/fit-within max-bytes))]
+                        (image-convert/fit-within budget))]
 
         (cond video? (video-verdict raw mt max-bytes)
               ;; Conversion unavailable (a build with no imaging cdylib): a container
@@ -805,11 +844,11 @@
               (not (provider-image-media-type? (:media-type safe)))
               {:reason (or (:reason safe) (unsupported-media-reason mt))}
               (:reason scaled) {:reason (:reason scaled)}
-              (> (alength ^bytes fitted) max-bytes) {:reason (str (size-label (alength ^bytes
-                                                                                       fitted))
-                                                                  " exceeds the "
-                                                                  (size-label max-bytes)
-                                                                  " attachment limit")}
+              (> (alength ^bytes fitted) budget)
+              {:reason (str (size-label (base64-length (alength ^bytes fitted)))
+                            " exceeds the "
+                            (size-label max-bytes)
+                            " attachment limit")}
               ;; Byte-identical: the payload was already wire-safe AND decoded, so
               ;; the caller's base64 is reused rather than re-encoded.
               (identical? fitted raw) {:media-type (:media-type safe) :size (alength ^bytes raw)}
@@ -841,9 +880,11 @@
      * any side over `max-dimension` — DOWNSCALED to fit, because a provider
        refuses an oversized picture outright once a request carries many images
        (`image-convert/max-wire-dimension`), whatever it weighs
-     * anything over `max-bytes` — OPTIMIZED first (the imaging library's
-       oxipng / jpegtran / gifsicle pass, then its bounded ladder) and refused
-       only when even that does not fit
+     * anything whose BASE64 payload passes `max-bytes` — OPTIMIZED first (the
+       imaging library's oxipng / jpegtran / gifsicle pass, then its bounded
+       ladder) and refused only when even that does not fit. The cap is on the
+       encoded string every wire actually weighs, so the picture is held to 3/4
+       of it
      * a non-image artifact (csv/pdf/wav/…) — nil: not an image, not a failure
 
    Returns the attachment with `:media-type`/`:base64`/`:size`/`:size-label`
