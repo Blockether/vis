@@ -54,6 +54,44 @@ export function normalizeAddress(url: string): string {
   }
 }
 
+/**
+ * A gateway address the way a human types it into the connect form:
+ * `10.0.0.5:7890`, `my-mac.local:7890`, `gateway.example.com`, or a full URL.
+ * Returns an absolute http(s) URL, or null when the input cannot become one.
+ *
+ * A missing scheme is SUPPLIED, never rejected — typing a host is the obvious
+ * thing to do and refusing it teaches nothing. Plain HTTP for addresses that
+ * only exist on a private network (IP literal, `localhost`, `*.local`) or that
+ * name an explicit port, HTTPS for a bare public hostname, which is what a
+ * tunnel terminates.
+ */
+export function normalizeGatewayUrl(input: string): string | null {
+  const trimmed = String(input ?? '')
+    .trim()
+    .replace(/\/+$/, '');
+  if (!trimmed || /\s/.test(trimmed)) return null;
+  const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed);
+  if (hasScheme && !/^https?:\/\//i.test(trimmed)) return null;
+  const probe = hasScheme ? trimmed : `http://${trimmed}`;
+  let u: URL;
+  try {
+    u = new URL(probe);
+  } catch {
+    return null;
+  }
+  if (!u.hostname) return null;
+  if (!hasScheme && !isPlainHttpHost(u.hostname) && !u.port) u.protocol = 'https:';
+  return u.toString().replace(/\/+$/, '');
+}
+
+/** Hosts that no public certificate can cover, so they are served over plain HTTP. */
+function isPlainHttpHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
+  if (host.startsWith('[')) return true; // IPv6 literal
+  return ipv4(host) !== null;
+}
+
 export function hostOf(url: string): string {
   try {
     return new URL(url).host;

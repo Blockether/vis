@@ -2,7 +2,13 @@ import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import type { GatewayConn } from '../lib/types';
 import { GatewayClient, GatewayError } from '../lib/gateway';
 import { parsePairing } from '../lib/pairing';
-import { REACH_LABEL, bestAddress, mergeAddresses, reachOf } from '../lib/endpoints';
+import {
+  REACH_LABEL,
+  bestAddress,
+  mergeAddresses,
+  normalizeGatewayUrl,
+  reachOf,
+} from '../lib/endpoints';
 import { Banner, Button, Input } from '../components/ui';
 
 // The QR scanner drags in jsqr (~250 kB of source, a fifth of the launch chunk)
@@ -254,11 +260,12 @@ export function ConnectScreen({
   }
 
   async function addManual() {
-    if (!/^https?:\/\//i.test(url.trim())) {
-      setMsg({ kind: 'err', text: 'URL must start with http:// or https://' });
+    // A typed address may skip the scheme: supply it instead of refusing.
+    const u = normalizeGatewayUrl(url);
+    if (!u) {
+      setMsg({ kind: 'err', text: `"${url.trim()}" is not a machine address` });
       return;
     }
-    const u = url.trim();
     await tryConn({ url: u, token: token.trim() || undefined, label: hostOf(u) });
   }
 
@@ -407,7 +414,7 @@ export function ConnectScreen({
             </header>
             <div className="space-y-2.5 p-3">
               <Input
-                placeholder="https://my-machine.example.com"
+                placeholder="my-machine.example.com or 10.0.0.5:7890"
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
                 autoCapitalize="none"
