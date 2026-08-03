@@ -2385,25 +2385,21 @@
   "Open the full provider manager (add / sign in / pick models / remove) and
    commit whatever it saved.
 
-   Settings hands this in as its `:provider-manage` and `:provider-open`
-   callbacks and calls it from INSIDE its own dialog loop, which already holds
-   `draw-lock` via `with-dialog-lock`; so this must NOT re-grab the lock.
-   Top-level callers wrap it themselves. `focus-provider-id` opens the manager
-   already parked on one provider, so a Settings row leads straight to that
-   provider instead of to a list the user has to search again. Returns nil."
-  ([^TerminalScreen screen] (open-provider-modal! screen nil))
-  ([^TerminalScreen screen focus-provider-id]
-   (when-let [c (provider/show-provider-dialog! screen
-                                                (:config @state/app-db)
-                                                {:focus-provider-id focus-provider-id})]
-     (state/dispatch [:set-config c])
-     (state/dispatch [:force-provider-limits-refresh]))
-   nil))
+   Settings hands this in as its `:provider-add` callback and calls it from
+   INSIDE its own dialog loop, which already holds `draw-lock` via
+   `with-dialog-lock`; so this must NOT re-grab the lock. Top-level callers wrap
+   it themselves. Returns nil."
+  [^TerminalScreen screen]
+  (when-let [c (provider/show-provider-dialog! screen (:config @state/app-db))]
+    (state/dispatch [:set-config c])
+    (state/dispatch [:force-provider-limits-refresh]))
+  nil)
 
 (defn- open-settings-modal!
   "Open Settings: the one hub for everything configurable, providers included.
 
-   Its own callbacks (`:provider-manage`, `:provider-open`, `:mcp-manage`) run
+   Its own callbacks (`:provider-add`, `:provider-transient`, `:mcp-add`,
+   `:mcp-action`) run
    from INSIDE the settings dialog loop, which already holds `draw-lock` via
    `with-dialog-lock`; so neither this nor they may re-grab the lock.
    Top-level callers (command palette, C-x o) wrap it in
@@ -2414,8 +2410,8 @@
 
    `focus-section` parks the cursor on one section label: the palette's MCP
    entry opens Settings on `MCP Servers` and its Providers entry on
-   `Providers`, where every provider is a row into its own menu and
-   `:mcp-manage` / `:provider-manage` open the full managers. Returns nil."
+   `Providers`, where every provider row runs its OWN magit transient inside the
+   settings frame and `:mcp-add` / `:provider-add` add a new entry. Returns nil."
   ([^TerminalScreen screen] (open-settings-modal! screen nil))
   ([^TerminalScreen screen focus-section]
    (when-let [s (dlg/settings-dialog!
@@ -2423,14 +2419,22 @@
                   (:settings @state/app-db)
                   {:focus-section focus-section
 
-                   :mcp-manage
-                   (fn [_] (mcp/show-mcp-dialog! screen))
+                   :mcp-add
+                   (fn [_] (mcp/save-server! screen nil))
 
-                   :provider-manage
+                   ;; One verb the server's transient fired — the manager runs
+                   ;; it and reports its own failures; Settings just reloads.
+                   :mcp-action
+                   (fn [{:keys [server action]}] (mcp/run-action! screen server action))
+
+                   :provider-add
                    (fn [_] (open-provider-modal! screen))
 
-                   :provider-open
-                   (fn [provider-id] (open-provider-modal! screen provider-id))
+                   ;; The provider's transient paints INSIDE the settings frame,
+                   ;; so it borrows that frame's graphics and geometry.
+                   :provider-transient
+                   (fn [{:keys [provider-id g region]}]
+                     (provider/provider-transient! screen g region provider-id))
 
                    :on-change
                    (fn [settings]

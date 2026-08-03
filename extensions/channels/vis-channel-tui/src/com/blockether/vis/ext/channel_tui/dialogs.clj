@@ -3418,9 +3418,9 @@
 
 (defn- provider-settings-rows
   "The `Providers` settings section: one row per provider — auth state, model,
-   default tag on the same line — opening that provider's own menu, plus one
-   action row into the full manager (add / sign in / models / remove). Empty
-   until `load-provider-inventory!` has run."
+   default tag on the same line — opening that provider's own magit transient
+   INSIDE this frame, plus one row that adds a new provider. Empty until
+   `load-provider-inventory!` has run."
   []
   (let [{:keys [status providers error]} @provider-inventory]
     (when-not (= :unloaded status)
@@ -3442,9 +3442,9 @@
               :label "No providers yet"
               :description "Add one below, or declare them under providers: in vis.yml."}])
           [{:type :action
-            :id :provider-manage
-            :label "Manage providers…"
-            :description "Add, sign in, pick models, remove"}])))))
+            :id :provider-add
+            :label "Add provider…"
+            :description "Sign in and configure a new one"}])))))
 
 (def ^:private mcp-inventory
   "Cached gateway MCP inventory rendered INSIDE Settings.
@@ -3462,54 +3462,18 @@
                              (catch Exception e
                                {:status :error :servers [] :error (ex-message e)}))))
 
-(defn- toggle-mcp-server!
-  "Flip one server's on/off straight from its Settings row.
-
-   Three separate states collapse into that one switch, so the verb has to be
-   chosen, not guessed: the `enabled` flag the gateway PERSISTS, the kill brake
-   it holds only at RUNTIME, and the hand-written config tier it refuses to
-   rewrite at all (`409`). Hence: a killed-but-enabled server is started —
-   never re-saved — a gateway-managed one has its flag persisted, and a
-   config-file one toggles by kill/start only. Turning a config-file server
-   that its own file declares off back on is that file's business; say so
-   instead of quietly killing an already-stopped server."
-  [row]
-  (let
-    [server
-     (str (get row "name"))
-
-     managed?
-     (mcp-model/flag row "is_managed")
-
-     killed?
-     (mcp-model/flag row "is_killed")
-
-     enabled?
-     (mcp-model/flag row "enabled")]
-
-    (cond (mcp-model/server-on? row) (if managed?
-                                       (vis/gateway-mcp-set-server-enabled! server false)
-                                       (vis/gateway-mcp-kill-server! server))
-          ;; Only the runtime brake is down: release it, no config write.
-          (and enabled? killed?) (vis/gateway-mcp-start-server! server)
-          ;; Enabling a managed server also lifts a kill (the gateway revives it
-          ;; on save), so this one call is the whole verb.
-          managed? (vis/gateway-mcp-set-server-enabled! server true)
-          :else (throw (ex-info (str server
-                                     " is disabled in a config file — edit that file to enable it")
-                                {:type :mcp/read-only :server server})))))
-
 (defn- mcp-settings-rows
-  "The `MCP Servers` settings section: one togglable row per server — its live
-   status riding the same line — plus one action row into the full manager
-   (add / edit / sign in / remove). Empty until `load-mcp-inventory!` has run."
+  "The `MCP Servers` settings section: one row per server — its live status
+   riding the same line — opening that server's own magit transient INSIDE this
+   frame, plus one row that adds a new server. Empty until `load-mcp-inventory!`
+   has run."
   []
   (let [{:keys [status servers error]} @mcp-inventory]
     (when-not (= :unloaded status)
       (vec
         (concat [{:type :section :label "MCP Servers"}]
                 (mapv (fn [row]
-                        {:type :mcp-toggle
+                        {:type :mcp
                          :label (str (get row "name"))
                          :description (mcp-model/server-status row)
                          :inline-description true
@@ -3522,9 +3486,9 @@
                     :label "No MCP servers yet"
                     :description "Add one below, or declare them under mcp: in vis.yml."}])
                 [{:type :action
-                  :id :mcp-manage
-                  :label "Manage MCP servers…"
-                  :description "Add, edit, sign in, remove"}])))))
+                  :id :mcp-add
+                  :label "Add MCP server…"
+                  :description "Register a new one with the gateway"}])))))
 
 (defn- settings-rows
   "Every settings row in ONE flat, grouped list — no tabs (mirrors the web
@@ -3668,7 +3632,7 @@
               :else off))
 
       ;; an MCP server reads its on/off off the live gateway row
-      :mcp-toggle
+      :mcp
       (if (mcp-model/server-on? server) on off)
 
       ;; a provider's dot is the GATEWAY's auth verdict, never a local guess
@@ -3730,7 +3694,7 @@
 
 (defn- settings-selectable?
   [{:keys [type]}]
-  (contains? #{:toggle :choice :action :set-toggle :registry-toggle :mcp-toggle :provider} type))
+  (contains? #{:toggle :choice :action :set-toggle :registry-toggle :mcp :provider} type))
 
 (defn- first-selectable-index
   [rows]
@@ -3908,32 +3872,46 @@
       (preview! selected)
       (preview! original))))
 
+(defn- settings-transient!
+  "Run ONE magit transient as a band INSIDE the Settings frame — same box, same
+   hint bar, no second window — and return the action it fired, or nil on Esc.
+
+   `region` is already in `tr/run!` geometry (`:left`, `:inner-w`, `:hint-row`,
+   `:text-w`, `:min-row`); the band floors itself under the row list so the rows
+   it is about stay painted above it."
+  [^TerminalScreen screen g region spec]
+  (:action (tr/run! (transient-host screen g) (assoc region :clear-above? true) spec)))
+
 (defn- activate-settings-row!
-  [screen values callbacks row]
+  [^TerminalScreen screen g region values callbacks row]
   (case (:type row)
     :action
     (when-let [f (get callbacks (:id row))]
       (let [result (f @values)]
-        ;; The MCP and provider managers can add, remove or authorize an entry;
-        ;; re-read that inventory so the rows underneath it are never stale.
-        (when (= :mcp-manage (:id row)) (load-mcp-inventory!))
-        (when (= :provider-manage (:id row)) (load-provider-inventory!))
+        ;; Adding an entry changes what every row under it says; re-read that
+        ;; inventory instead of trusting the cached one.
+        (when (= :mcp-add (:id row)) (load-mcp-inventory!))
+        (when (= :provider-add (:id row)) (load-provider-inventory!))
         result))
 
-    :mcp-toggle
-    (do (try (toggle-mcp-server! (:server row))
-             (load-mcp-inventory!)
-             (catch Exception e
-               (load-mcp-inventory!)
-               (swap! mcp-inventory assoc :error (ex-message e))))
+    ;; An MCP row IS its verbs — start, kill, enable, disable, sign in, edit,
+    ;; remove — offered as a magit transient band in THIS frame, each on the key
+    ;; the verb itself carries. No manager dialog stacked on top of Settings.
+    :mcp
+    (do (when-let
+          [action
+           (settings-transient! screen g region (mcp-model/server-transient-spec (:server row)))]
+          (when-let [f (:mcp-action callbacks)]
+            (f {:server (:server row) :action action}))
+          (load-mcp-inventory!))
         @values)
 
-    ;; A provider row opens that provider's own menu (sign in, models, remove)
-    ;; and re-reads the fleet, since any of those can change what the row says.
+    ;; Same for a provider row: default, fallback, sign in, status, log out are
+    ;; a transient here, and picking a model is a second one — never a dialog.
     :provider
-    (do (when-let [f (:provider-open callbacks)]
-          (f (:id (:provider row))))
-        (load-provider-inventory!)
+    (do (when-let [f (:provider-transient callbacks)]
+          (f {:provider-id (:id (:provider row)) :g g :region region})
+          (load-provider-inventory!))
         @values)
 
     (if (= :theme-name (:key row))
@@ -4119,9 +4097,10 @@
    `settings` is the persisted TUI settings map (see
    `state/default-settings`). `callbacks` also carries `:focus-section` (a
    section label to park the cursor on, e.g. `MCP Servers` or `Providers`),
-   `:mcp-manage` / `:provider-manage` (the full managers, reached from their
-   section's action row) and `:provider-open` (one provider's own menu, reached
-   from its row). Esc clears an active search first, then closes and returns the
+   `:mcp-add` / `:provider-add` (the add row of each section), `:mcp-action`
+   (the verb a server's transient fired) and `:provider-transient` (one
+   provider's transient, handed the graphics and the region it paints into).
+   Esc clears an active search first, then closes and returns the
    current settings map."
   ([^TerminalScreen screen settings] (settings-dialog! screen settings nil))
   ([^TerminalScreen screen settings callbacks]
@@ -4609,7 +4588,16 @@
                                            (recur))
                                        (recur)))
                  KeyType/Enter (do (when selected-row
-                                     (activate-settings-row! screen values callbacks selected-row))
+                                     (activate-settings-row! screen
+                                                             g
+                                                             {:left left
+                                                              :inner-w inner-w
+                                                              :hint-row hint-row
+                                                              :text-w (max 1 (- (long inner-w) 2))
+                                                              :min-row list-top}
+                                                             values
+                                                             callbacks
+                                                             selected-row))
                                    (recur))
                  (recur))))))))))
 

@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.dialogs-test
   (:require [clojure.string :as str]
-            [lazytest.core :refer [defdescribe expect it throws?]]
+            [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.table :as table]
@@ -687,6 +687,8 @@
          (atom [])]
 
         (activate-settings-row! nil
+                                nil
+                                nil
                                 values
                                 {:on-change #(do (reset! changed %) (swap! calls conj [:change %]))
                                  :redraw-ui #(swap! calls conj [:redraw @values])}
@@ -722,7 +724,7 @@
          entries
          (settings-render-entries
            [{:type :info :tone :bad :label "MCP unavailable" :description "connection refused"}
-            {:type :mcp-toggle
+            {:type :mcp
              :label "filesystem"
              :description "connected · 12 tools"
              :inline-description true}]
@@ -1353,13 +1355,13 @@
            (mcp-rows)
 
            toggles
-           (filterv #(= :mcp-toggle (:type %)) rows)]
+           (filterv #(= :mcp (:type %)) rows)]
 
-          (expect (= [:section :mcp-toggle :mcp-toggle :mcp-toggle :action] (mapv :type rows)))
+          (expect (= [:section :mcp :mcp :mcp :action] (mapv :type rows)))
           (expect (= "MCP Servers" (:label (first rows))))
           (expect (= ["fs" "gh" "hand"] (mapv :label toggles)))
           (expect (= "connected · 3 tools" (:description (first toggles))))
-          (expect (= :mcp-manage (:id (last rows))))
+          (expect (= :mcp-add (:id (last rows))))
           ;; a server's live status rides its own row, so the section reads as a
           ;; table instead of costing a wrapped description row per server
           (expect (every? :inline-description toggles))
@@ -1402,7 +1404,7 @@
                 (settings-rows)
 
                 row
-                (first (filter #(= :mcp-toggle (:type %)) rows))]
+                (first (filter #(= :mcp (:type %)) rows))]
 
                (expect (some #{"MCP Servers"}
                              (->> rows
@@ -1414,44 +1416,47 @@
                (expect (not= (initial-index rows "MCP Servers") (initial-index rows nil)))))
            (finally (reset! inventory original)))))
   (it
-    "one Enter picks the RIGHT verb: runtime for a kill, config for a managed flag"
+    "Enter on an MCP row runs that server's verbs as a transient band, not a toggle"
     (let
-      [toggle!
-       (var-get #'dlg/toggle-mcp-server!)
+      [activate!
+       (var-get #'dlg/activate-settings-row!)
 
-       calls
-       (atom [])
+       inventory
+       (var-get #'dlg/mcp-inventory)
 
-       record
-       (fn [verb]
-         (fn [& args]
-           (swap! calls conj (into [verb] args))
-           nil))]
+       original
+       @inventory
 
-      (with-redefs
-        [vis/gateway-mcp-set-server-enabled!
-         (record :enabled)
+       server
+       {"name" "fs" "enabled" true "is_managed" true}
 
-         vis/gateway-mcp-kill-server!
-         (record :kill)
+       spec
+       (atom nil)
 
-         vis/gateway-mcp-start-server!
-         (record :start)]
+       fired
+       (atom [])]
 
-        (toggle! {"name" "fs" "enabled" true "is_managed" true})
-        ;; killed but still enabled: release the brake, never re-save the spec
-        (toggle! {"name" "fs" "enabled" true "is_managed" true "is_killed" true})
-        (toggle! {"name" "gh" "enabled" false "is_managed" true})
-        ;; a config-file server is read-only, so its switch is kill/start
-        (toggle! {"name" "hand" "enabled" true "is_managed" false})
-        (toggle! {"name" "hand" "enabled" true "is_managed" false "is_killed" true})
-        (expect (= [[:enabled "fs" false] [:start "fs"] [:enabled "gh" true] [:kill "hand"]
-                    [:start "hand"]]
-                   @calls))
-        ;; and one its own file declares off says so instead of killing it again
-        (expect (throws? clojure.lang.ExceptionInfo
-                         #(toggle! {"name" "hand" "enabled" false "is_managed" false})))
-        (expect (= 5 (count @calls)))))))
+      (try (with-redefs-fn {#'dlg/settings-transient! (fn [_screen _g _region s]
+                                                        (reset! spec s)
+                                                        :kill)}
+             (fn []
+               (with-redefs [vis/gateway-mcp-servers (constantly [server])]
+                 (reset! inventory {:status :unloaded :servers [] :error nil})
+                 (activate! nil
+                            nil
+                            {:left 0 :inner-w 40 :hint-row 20 :text-w 38 :min-row 3}
+                            (atom {})
+                            {:mcp-action #(swap! fired conj %)}
+                            {:type :mcp :label "fs" :server server})
+                 ;; the band IS this server: its live status in the title, its own
+                 ;; verbs grouped the way magit groups a popup
+                 (expect (= "fs \u00b7 idle" (:title @spec)))
+                 (expect (= ["Runtime" "Configuration" "Inspect"] (mapv :title (:groups @spec))))
+                 ;; the picked verb reaches the manager verbatim
+                 (expect (= [{:server server :action :kill}] @fired))
+                 ;; and it changes what the row says, so the inventory is re-read
+                 (expect (= :ok (:status @inventory))))))
+           (finally (reset! inventory original))))))
 
 ;; ---------------------------------------------------------------------------
 ;; `transient-dialog!`: a magit popup hosted in its OWN modal.
@@ -1555,7 +1560,7 @@
 
           (expect (= [:section :provider :provider :provider :action] (mapv :type rows)))
           (expect (= "Providers" (:label (first rows))))
-          (expect (= :provider-manage (:id (last rows))))
+          (expect (= :provider-add (:id (last rows))))
           ;; the row carries the provider itself, so Enter can open ITS menu
           (expect (= [:anthropic :openai :ollama] (mapv #(:id (:provider %)) providers)))
           (expect (= "signed in · claude · default" (:description (first providers))))
@@ -1647,7 +1652,7 @@
              (expect (= "boom" (:error @inventory))))
            (finally (reset! inventory original)))))
   (it
-    "Enter on a provider row opens THAT provider's menu, then re-reads the fleet"
+    "Enter on a provider row runs THAT provider's transient, then re-reads the fleet"
     (let
       [activate!
        (var-get #'dlg/activate-settings-row!)
@@ -1659,7 +1664,10 @@
        (atom [])
 
        original
-       @inventory]
+       @inventory
+
+       region
+       {:left 0 :inner-w 40 :hint-row 20 :text-w 38 :min-row 3}]
 
       (try (with-redefs
              [vis/load-config
@@ -1673,10 +1681,14 @@
 
              (reset! inventory {:status :unloaded :providers [] :error nil})
              (activate! nil
+                        ::graphics
+                        region
                         (atom {})
-                        {:provider-open #(swap! opened conj %)}
+                        {:provider-transient #(swap! opened conj %)}
                         {:type :provider :provider {:id :openai}})
-             (expect (= [:openai] @opened))
+             ;; the transient paints INSIDE the settings frame, so it is handed
+             ;; that frame's own graphics and geometry instead of opening a dialog
+             (expect (= [{:provider-id :openai :g ::graphics :region region}] @opened))
              ;; signing in or picking a model changes what the row says: re-read it
              (expect (= :ok (:status @inventory)))
              (expect (= [:openai] (mapv #(:id (:provider %)) (:providers @inventory)))))

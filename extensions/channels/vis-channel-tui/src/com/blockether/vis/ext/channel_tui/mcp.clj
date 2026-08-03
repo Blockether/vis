@@ -9,10 +9,10 @@
    gateway adds, edits and authorizes servers exactly like the phone app does,
    and the terminal never holds a token, a PKCE verifier, or a child process.
 
-   `server-status`, `server-rows`, `server-actions`, `tokenize-command`,
-   `parse-kv`, `row->form`, `form->spec` and `spec-problem` are pure so the row
-   text, the offered verbs and the wire spec are unit-testable without a
-   screen."
+   `server-status`, `tokenize-command`, `parse-kv`, `row->form`, `form->spec`
+   and `spec-problem` are pure so the row text and the wire spec are
+   unit-testable without a screen; the verbs themselves, and the transient band
+   that offers them, are pure in `mcp-model`."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
@@ -24,71 +24,13 @@
 
 (def ^:private title "MCP Servers")
 
-;; Row reading moved to `mcp-model` so the Settings dialog can describe a
-;; server without a require cycle through this namespace; re-exported here so
-;; `mcp/flag` and `mcp/server-status` stay the manager's own vocabulary.
+;; Row reading and the verb list moved to `mcp-model` so the Settings transient
+;; can describe a server and offer its verbs without a require cycle through
+;; this namespace; re-exported here so `mcp/flag` and `mcp/server-status` stay
+;; the manager's own vocabulary.
 (def flag mcp-model/flag)
 
 (def server-status mcp-model/server-status)
-
-(defn server-rows
-  "Selection rows for the inventory, names column-aligned so the status reads
-   down the list."
-  [servers]
-  (let [width (long (reduce max 0 (map #(count (str (get % "name"))) servers)))]
-    (mapv (fn [row]
-            (let
-              [nm (str (get row "name"))
-               pad (apply str (repeat (- width (count nm)) \space))]
-
-              {:label (str nm pad "   " (server-status row)) :server row}))
-          servers)))
-
-(defn server-actions
-  "The verbs offered for one row, in the order they matter.
-
-   Kill/start are RUNTIME and always available (they work on hand-written
-   servers too); enable/disable/remove persist and therefore only appear for
-   gateway-managed ones; the OAuth verbs only for HTTP servers."
-  [row]
-  (let
-    [http?
-     (some? (get row "url"))
-
-     managed?
-     (flag row "is_managed")
-
-     authorized?
-     (flag row "is_authorized")]
-
-    (cond-> []
-      (flag row "is_killed")
-      (conj {:id :start :label "Start — release the kill"})
-
-      (not (flag row "is_killed"))
-      (conj {:id :kill :label "Kill — stop the server now"})
-
-      (and managed? (flag row "enabled"))
-      (conj {:id :disable :label "Disable — persist off"})
-
-      (and managed? (not (flag row "enabled")))
-      (conj {:id :enable :label "Enable — persist on"})
-
-      http?
-      (conj {:id :auth
-             :label (if authorized? "Re-authorize — browser sign-in" "Sign in — browser OAuth")})
-
-      (and http? authorized?)
-      (conj {:id :logout :label "Sign out — forget tokens"})
-
-      managed?
-      (conj {:id :edit :label "Edit — command, url, env, headers…"})
-
-      managed?
-      (conj {:id :remove :label "Remove server"})
-
-      :always
-      (conj {:id :details :label "Details"}))))
 
 (defn server-details
   "Read-only detail lines for one row."
@@ -333,7 +275,7 @@
                            (field-prompts screen heading transport))]
           [server (form->spec filled)])))))
 
-(defn- save-server!
+(defn save-server!
   "Add or edit ONE gateway-managed server. The candidate is dialed BY THE GATEWAY
    before anything is persisted, so a wrong command or an unreachable URL is
    reported while it is still just a form. Nothing is written on this machine —
@@ -421,7 +363,7 @@
                     title
                     [(str "Auth failed: " (or (get verdict "error") "authorization failed"))])))))))
 
-(defn- run-action!
+(defn run-action!
   "Execute one palette verb against one server. Every gateway rejection (409 for
    a hand-written server, 404 for an unknown one) surfaces as a dialog instead of
    a crashed TUI."
@@ -463,40 +405,3 @@
         nil)
       nil
       (catch Exception e (dlg/text-view-dialog! screen title [(str "MCP: " (ex-message e))]) nil))))
-
-(defn show-mcp-dialog!
-  "Open the MCP manager. Loops on the LIVE gateway inventory so every verb's
-   effect — an add, an edit, a kill, a sign-in, a removal — is visible on the
-   next pass. Returns nil when the user closes it."
-  [^TerminalScreen screen]
-  (loop []
-
-    (let
-      [servers (try (vec (vis/gateway-mcp-servers))
-                    (catch Exception e
-                      (dlg/text-view-dialog! screen title [(str "MCP: " (ex-message e))])
-                      nil))]
-      (cond (nil? servers) nil
-            (empty? servers) (when (dlg/confirm-dialog!
-                                     screen
-                                     title
-                                     ["No MCP servers configured." ""
-                                      "Add one here — the gateway stores it, runs it, and every"
-                                      "vis client sees it — or declare it under `mcp:` in vis.yml."
-                                      "" "Add a server now?"])
-                               (save-server! screen nil)
-                               (recur))
-            :else (when-let
-                    [pick (dlg/select-dialog! screen
-                                              title
-                                              (conj (server-rows servers)
-                                                    {:label "+ Add a server…" :is-add true}))]
-                    (if (:is-add pick)
-                      (save-server! screen nil)
-                      (let [row (:server pick)]
-                        (when-let
-                          [action (dlg/select-dialog! screen
-                                                      (str "MCP · " (get row "name"))
-                                                      (server-actions row))]
-                          (run-action! screen row (:id action)))))
-                    (recur))))))

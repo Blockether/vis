@@ -1273,6 +1273,136 @@
                                     "Provider stays configured; sign in again anytime."])
             true)))))
 
+(defn- choose-router-model!
+  "Pick the model that completes a routing tag for `provider` and hand the pair to
+   the daemon: `:primary` re-points the default root, `:fallback` the second one.
+
+   The model list is its OWN transient — a magit popup picks a command, and the
+   command that needs an argument opens the popup that supplies it. A daemon
+   refusal (a fallback naming the primary's own provider is a 400) explains
+   itself and returns `::rejected` instead of killing the caller's loop; nil
+   means the user backed out."
+  [^TerminalScreen screen g region provider role default-selection fallback-selection]
+  (let
+    [current
+     (if (= role :fallback) fallback-selection default-selection)
+
+     preferred
+     (when (same-id? (:id provider) (:provider-id current)) [(:model current)])
+
+     rows
+     (max 1 (- (long (:hint-row region)) (long (:min-row region)) 1))
+
+     choice
+     (run-model-transient!
+       screen
+       g
+       region
+       provider
+       (build-model-list provider preferred false)
+       preferred
+       {:default (when (same-id? (:id provider) (:provider-id default-selection))
+                   (:model default-selection))
+        :fallback (when (tagged? provider fallback-selection) (:model fallback-selection))}
+       (model-transient-page-size rows))]
+
+    (when choice
+      (try (if (= role :fallback)
+             (vis/gateway-set-router-fallback! (:id provider) choice)
+             (vis/gateway-set-router-default! (:id provider) choice))
+           (catch Exception e
+             (dlg/text-view-dialog! screen
+                                    (if (= role :fallback) "Fallback rejected" "Default rejected")
+                                    [(or (ex-message e) (str e))])
+             ::rejected)))))
+
+(defn provider-transient!
+  "Run ONE provider's magit transient inside the CALLER's frame — the same
+   commands `show-provider-dialog!` offers on Enter, reachable straight from a
+   Settings row so a provider needs no dialog of its own.
+
+   The fleet, the default tag and the fallback tag are re-read from the LIVE
+   config on every call, so the popup reasons about what the daemon persisted and
+   not about a snapshot the caller carried in. Returns true when something
+   changed and the caller should reload its inventory."
+  [^TerminalScreen screen g region provider-id]
+  (let
+    [config
+     (or (vis/load-config) {:providers []})
+
+     base
+     (vec (or (:providers config) []))
+
+     configured-ids
+     (into #{} (map :id) base)
+
+     fleet
+     (into base
+           (remove #(contains? configured-ids (:id %)))
+           (try (vis/authenticated-preset-providers) (catch Throwable _ nil)))
+
+     provider
+     (first (filter #(same-id? (:id %) provider-id) fleet))
+
+     default-selection
+     {:provider-id (some-> (:default-provider config)
+                           name
+                           keyword)
+      :model (:default-model config)}
+
+     fallback-selection
+     (when-let [pid (:fallback-provider config)]
+       {:provider-id (keyword (name pid)) :model (:fallback-model config)})]
+
+    (when provider
+      (let
+        [actions
+         (provider-action-items provider
+                                (gateway-provider-status-safe provider)
+                                (tagged? provider fallback-selection)
+                                (tagged? provider default-selection))
+
+         picked
+         (:action (run-transient! screen
+                                  g
+                                  region
+                                  (str (vis/display-label (:id provider)) " — actions")
+                                  (provider-transient-spec actions)))
+
+         action
+         (some #(when (= picked (:id %)) %) actions)]
+
+        (case (:id action)
+          (:default :fallback)
+          (let
+            [selection (choose-router-model! screen
+                                             g
+                                             region
+                                             provider
+                                             (if (= (:id action) :fallback) :fallback :primary)
+                                             default-selection
+                                             fallback-selection)]
+            (boolean (and (some? selection) (not= selection ::rejected))))
+
+          :clear-fallback
+          (try
+            (vis/gateway-set-router-fallback!)
+            true
+            (catch Exception e
+              (dlg/text-view-dialog! screen "Clear fallback failed" [(or (ex-message e) (str e))])
+              false))
+
+          :authenticate
+          (boolean (authenticate-provider! screen provider (:force? action)))
+
+          :status
+          (do (show-provider-status! screen provider) false)
+
+          :logout
+          (boolean (logout-provider! screen provider))
+
+          false)))))
+
 (defn auth-provider-items
   "One row per auth-capable provider, labelled with its GATEWAY auth verdict.
 
@@ -1426,25 +1556,6 @@
                 (recur))
             (recur)))))))
 
-(defn- focus-provider-index
-  "Row index of `provider-id` in `providers`, else 0.
-
-   A caller can point straight at one provider — a Settings provider row does —
-   so the dialog opens parked on it instead of on a list to search again. Ids
-   are compared by NAME: config carries strings, the registry keywords."
-  [providers provider-id]
-  (let
-    [focus (some-> provider-id
-                   name)]
-    (or (when focus
-          (first (keep-indexed (fn [i provider]
-                                 (when (= focus
-                                          (some-> (:id provider)
-                                                  name))
-                                   i))
-                               providers)))
-        0)))
-
 (def ^:private provider-dialog-title "Providers")
 
 (defn show-provider-dialog!
@@ -1452,11 +1563,11 @@
    Esc saves and closes. Provider order has no routing semantics; choose exactly
    one default provider/model pair.
 
-   `opts` may carry `:focus-provider-id`, which opens the dialog already parked
-   on that provider — how a Settings provider row leads straight to its menu."
-  ([^TerminalScreen screen] (show-provider-dialog! screen nil nil))
-  ([^TerminalScreen screen current-config] (show-provider-dialog! screen current-config nil))
-  ([^TerminalScreen screen current-config opts]
+   A provider's OWN commands no longer live here: `provider-transient!` runs them
+   as a magit band inside whatever frame asks, which is how Settings reaches
+   them."
+  ([^TerminalScreen screen] (show-provider-dialog! screen nil))
+  ([^TerminalScreen screen current-config]
    (let
      [seed
       (or current-config (vis/load-config) {:providers []})
@@ -1520,7 +1631,7 @@
                   @items))
 
       selected
-      (atom (focus-provider-index @items (:focus-provider-id opts)))
+      (atom 0)
 
       scroll
       (atom 0)
@@ -1861,41 +1972,16 @@
                            (:default :fallback)
                            (let
                              [role (if (= (:id action) :fallback) :fallback :primary)
-                              current (if (= role :fallback) @fallback-selection @default-selection)
-                              preferred (when (same-id? (:id provider) (:provider-id current))
-                                          [(:model current)])
-                              ;; A model list needs the whole panel, so this one
-                              ;; transient reclaims the card's rows and pages
-                              ;; whatever still will not fit.
-                              rows (max 1 (- (long hint-row) (long content-top) 1))
-                              choice (run-model-transient!
-                                       screen
-                                       g
-                                       (assoc geom :min-row content-top)
-                                       provider
-                                       (build-model-list provider preferred false)
-                                       preferred
-                                       {:default (when (same-id? (:id provider)
-                                                                 (:provider-id @default-selection))
-                                                   (:model @default-selection))
-                                        :fallback (when (tagged? provider @fallback-selection)
-                                                    (:model @fallback-selection))}
-                                       (model-transient-page-size rows))
-                              ;; A rejected tag (fallback on the primary's own
-                              ;; provider) is a 400 from the daemon — show its
-                              ;; reason instead of killing the dialog loop.
-                              selection
-                              (when choice
-                                (try (if (= role :fallback)
-                                       (vis/gateway-set-router-fallback! (:id provider) choice)
-                                       (vis/gateway-set-router-default! (:id provider) choice))
-                                     (catch Exception e
-                                       (dlg/text-view-dialog! screen
-                                                              (if (= role :fallback)
-                                                                "Fallback rejected"
-                                                                "Default rejected")
-                                                              [(or (ex-message e) (str e))])
-                                       ::rejected)))]
+                              ;; A model list needs the whole panel, so the tag
+                              ;; and the argument it needs are TWO popups: this
+                              ;; one reclaims the card's rows and pages the rest.
+                              selection (choose-router-model! screen
+                                                              g
+                                                              (assoc geom :min-row content-top)
+                                                              provider
+                                                              role
+                                                              @default-selection
+                                                              @fallback-selection)]
 
                              (when (and (some? selection) (not= selection ::rejected))
                                (if (= role :fallback)

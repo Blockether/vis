@@ -6,6 +6,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.mcp :as mcp]
+            [com.blockether.vis.ext.channel-tui.mcp-model :as mcp-model]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private managed-stdio
@@ -55,46 +56,55 @@
       (expect (= "idle · needs sign-in" (mcp/server-status http-server)))
       (expect (= "idle · signed in" (mcp/server-status (assoc http-server "is_authorized" true)))))
   (it "marks hand-written servers so the read-only verbs are not a surprise"
-      (expect (= "connected · 2 tools · config file" (mcp/server-status handwritten))))
-  (it "column-aligns names so the status reads down the list"
-      (let [rows (mcp/server-rows [managed-stdio handwritten])]
-        (expect (= 2 (count rows)))
-        (expect (= [managed-stdio handwritten] (mapv :server rows)))
-        (expect (= "files   connected · 7 tools" (:label (first rows))))
-        (expect (= "repo    connected · 2 tools · config file" (:label (second rows))))
-        (expect (apply = (map #(.indexOf ^String (:label %) "connected") rows))))))
+      (expect (= "connected \u00b7 2 tools \u00b7 config file" (mcp/server-status handwritten)))))
 
 (defdescribe
   mcp-actions-test
   (it "offers kill on a live server and start on a killed one, never both"
       (expect (= [:kill :disable :edit :remove :details]
-                 (mapv :id (mcp/server-actions managed-stdio))))
+                 (mapv :id (mcp-model/server-actions managed-stdio))))
       (expect (= [:start :disable :edit :remove :details]
-                 (mapv :id (mcp/server-actions (assoc managed-stdio "is_killed" true))))))
+                 (mapv :id (mcp-model/server-actions (assoc managed-stdio "is_killed" true))))))
   (it "offers kill/start for hand-written servers but no persisting verb"
       ;; Kill is runtime-only, so it works on a server the gateway must not rewrite.
-      (expect (= [:kill :details] (mapv :id (mcp/server-actions handwritten))))
+      (expect (= [:kill :details] (mapv :id (mcp-model/server-actions handwritten))))
       (expect (= [:start :details]
-                 (mapv :id (mcp/server-actions (assoc handwritten "is_killed" true))))))
+                 (mapv :id (mcp-model/server-actions (assoc handwritten "is_killed" true))))))
   (it "offers enable instead of disable when a managed server is off"
       (expect (= [:kill :enable :edit :remove :details]
-                 (mapv :id (mcp/server-actions (assoc managed-stdio "enabled" false))))))
+                 (mapv :id (mcp-model/server-actions (assoc managed-stdio "enabled" false))))))
   (it "offers OAuth only for HTTP servers, and sign-out only once signed in"
-      (expect (= [:kill :disable :auth :edit :remove :details]
-                 (mapv :id (mcp/server-actions http-server))))
-      (expect (= "Sign in — browser OAuth"
-                 (->> (mcp/server-actions http-server)
+      (expect (= [:kill :disable :edit :remove :auth :details]
+                 (mapv :id (mcp-model/server-actions http-server))))
+      (expect (= "Sign in"
+                 (->> (mcp-model/server-actions http-server)
                       (filter #(= :auth (:id %)))
                       first
                       :label)))
-      (let [signed (mcp/server-actions (assoc http-server "is_authorized" true))]
-        (expect (= [:kill :disable :auth :logout :edit :remove :details] (mapv :id signed)))
-        (expect (= "Re-authorize — browser sign-in"
+      (let [signed (mcp-model/server-actions (assoc http-server "is_authorized" true))]
+        (expect (= [:kill :disable :edit :remove :auth :logout :details] (mapv :id signed)))
+        (expect (= "Re-authorize"
                    (->> signed
                         (filter #(= :auth (:id %)))
                         first
                         :label))))
-      (expect (empty? (filter (comp #{:auth :logout} :id) (mcp/server-actions managed-stdio)))))
+      (expect (empty? (filter (comp #{:auth :logout} :id)
+                              (mcp-model/server-actions managed-stdio)))))
+  (it "binds ONE magit key per verb, and never the same key twice on a row"
+      (let [ks (mapv :key (mcp-model/server-actions (assoc http-server "is_authorized" true)))]
+        (expect (= ["k" "d" "c" "x" "a" "o" "v"] ks))
+        (expect (= (count ks) (count (set ks))))))
+  (it "groups the verbs by what they touch, and drops a group with nothing in it"
+      (let [spec (mcp-model/server-transient-spec (assoc http-server "is_authorized" true))]
+        ;; the popup names the server AND its live state, so the band is self-describing
+        (expect (= "notion \u00b7 idle \u00b7 signed in" (:title spec)))
+        (expect (= ["Runtime" "Configuration" "Account" "Inspect"] (mapv :title (:groups spec))))
+        (expect (= [{:key "a" :type :action :id :auth :label "Re-authorize"}
+                    {:key "o" :type :action :id :logout :label "Sign out"}]
+                   (:items (nth (:groups spec) 2))))
+        ;; nothing about a hand-written server is persisted here: no Configuration
+        (expect (= ["Runtime" "Inspect"]
+                   (mapv :title (:groups (mcp-model/server-transient-spec handwritten)))))))
   (it "shows the managed tier and the runtime flags in the details view"
       (let [lines (mcp/server-details handwritten)]
         (expect (some #(= "name       repo" %) lines))
