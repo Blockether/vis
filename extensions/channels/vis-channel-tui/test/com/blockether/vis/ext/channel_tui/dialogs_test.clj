@@ -261,14 +261,25 @@
     {:ret (dlg/magit-transient! screen g 0 78 28 70 "Commit" spec (constantly nil))
      :rows (painted-rows terminal)}))
 
+(defn- terminal-grid
+  "EVERY terminal row as a string, blanks KEPT."
+  [^DefaultVirtualTerminal terminal]
+  (vec (for [y (range 30)]
+         (apply str
+           (for [x (range 80)]
+             (let [^TextCharacter ch (.getCharacter terminal (TerminalPosition. (int x) (int y)))]
+               (if ch (.getCharacterString ch) " ")))))))
+
 (defn- transient-grid!
   "EVERY terminal row (blanks KEPT) after one paint of `magit-transient!` at the
    host-dialog geometry `magit-status-buffer!` hands it, so the popup's own
    band geometry — its full-width rule, its margin rows, the row its hint bar
    lands on — is inspectable. `opts` goes straight through, so the BOXED variant
-   a host dialog runs it in is inspectable exactly the same way."
+   a host dialog runs it in is inspectable exactly the same way. `pre!` paints
+   the HOST buffer first, so whatever the popup fails to cover shows up."
   ([spec left inner-w hint-row] (transient-grid! spec left inner-w hint-row nil))
-  ([spec left inner-w hint-row opts]
+  ([spec left inner-w hint-row opts] (transient-grid! spec left inner-w hint-row opts nil))
+  ([spec left inner-w hint-row opts pre!]
    (let
      [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
       (virtual-screen)
@@ -276,14 +287,10 @@
       g
       (.newTextGraphics screen)]
 
+     (when pre! (pre! g))
      (.addInput terminal (transient-key :esc))
      (dlg/magit-transient! screen g left inner-w hint-row 70 "Commit" spec (constantly nil) opts)
-     (vec (for [y (range 30)]
-            (apply str
-              (for [x (range 80)]
-                (let
-                  [^TextCharacter ch (.getCharacter terminal (TerminalPosition. (int x) (int y)))]
-                  (if ch (.getCharacterString ch) " ")))))))))
+     (terminal-grid terminal))))
 
 (defn- row-with [rows needle] (some #(when (str/includes? (:text %) needle) %) rows))
 
@@ -390,10 +397,38 @@
         ;; The hint bar lands one row BELOW the host's hint row, on its bottom
         ;; border, swallowing it instead of leaving a border under the popup.
         (expect (str/includes? (nth grid 28) "toggle flag"))
-        (expect (str/blank? (nth grid 27)))
+        ;; The band is CONTIGUOUS: the last command sits directly on the hint
+        ;; bar, never one row above it with a host row left showing between.
+        (expect (str/includes? (nth grid 27) "Amend last commit"))
         ;; Margin-top: title, blank, first group header.
         (expect (str/blank? (nth grid (dec args-y))))
         (expect (str/includes? (nth grid (- args-y 2)) "Commit"))))
+  (it "the band wipes every host row it covers, hint bar and box borders alike"
+      ;; The status buffer paints its OWN hint bar on `hint-row`, framed by the
+      ;; dialog's box borders. Full-bleed the popup's hint bar drops one row
+      ;; lower, so any row it fails to own reads as a SECOND hint bar stacked
+      ;; between the transient's commands and its footer.
+      (let
+        [host!
+         (fn [g]
+           (doseq [y (range 30)]
+             (p/put-str! g 0 y (apply str (repeat 80 \H)))))
+
+         grid
+         (transient-grid! commit-transient-spec 3 74 27 nil host!)
+
+         rule-y
+         (first (keep-indexed (fn [i s]
+                                (when (str/includes? s "────") i))
+                              grid))]
+
+        (expect (some? rule-y))
+        ;; Above the rule the host buffer is untouched — the popup never wipes
+        ;; the status rows it is supposed to leave visible.
+        (expect (str/includes? (nth grid (dec (long rule-y))) "HHH"))
+        ;; From the rule down to its own hint bar the popup owns every column.
+        (expect (every? #(not (str/includes? % "H")) (subvec grid (long rule-y) 29)))
+        (expect (str/includes? (nth grid 28) "toggle flag"))))
   (it "pressing a flag key arms it and pressing it again disarms it"
       (let
         [on

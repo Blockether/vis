@@ -2367,15 +2367,6 @@
       n
       (count display-rows)
 
-      ;; Anchor the popup to the BOTTOM: body rows sit just above the hint row,
-      ;; the bold title one row above them. Clamp so a short terminal — or a
-      ;; boxed host's reserved header — never paints above the top edge.
-      body-top
-      (max (if boxed? (inc top-limit) 1) (- (long hint-row) n))
-
-      title-row
-      (max (if boxed? top-limit 0) (dec (long body-top)))
-
       footer
       [["-key" "toggle flag"] ["key" "run command"] ["Esc" "cancel"]]
 
@@ -2387,6 +2378,20 @@
       ;; the host's own hint row, so the frame survives.
       foot-row
       (if boxed? (long hint-row) (inc (long hint-row)))
+
+      ;; Anchor the popup to the bottom of its OWN band — the last body row
+      ;; sits DIRECTLY on the hint bar, the bold title one row above the body.
+      ;; Anchoring to `foot-row` rather than the host's `hint-row` is what keeps
+      ;; the band CONTIGUOUS: full-bleed the hint bar drops one row lower, so
+      ;; anchoring to `hint-row` skipped that row and left the host's OWN hint
+      ;; bar — and the box borders framing it — alive INSIDE the popup, between
+      ;; its commands and its footer. Clamp so a short terminal — or a boxed
+      ;; host's reserved header — never paints above the top edge.
+      body-top
+      (max (if boxed? (inc top-limit) 1) (- (long foot-row) n))
+
+      title-row
+      (max (if boxed? top-limit 0) (dec (long body-top)))
 
       band-x
       (if boxed? (inc (long left)) 0)
@@ -2410,10 +2415,10 @@
       wipe-top
       (if boxed? top-limit sep-row)
 
-      ;; Boxed, the host's hint row is the floor: a page taller than the box
-      ;; must lose its overflow rows rather than paint over the frame.
+      ;; The hint bar is the floor: a page taller than the band it was given
+      ;; loses its overflow rows rather than painting over the host's frame.
       visible
-      (if boxed? (min (long n) (max 1 (- (long hint-row) (long body-top)))) (long n))]
+      (min (long n) (max 1 (- (long foot-row) (long body-top))))]
 
      (loop [state {:switches #{} :options {}}]
        (dotimes [i (max 1 (- (long body-top) (long wipe-top)))]
