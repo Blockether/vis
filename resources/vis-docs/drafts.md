@@ -353,7 +353,7 @@ in `vis.yml`: a copy-on-write filesystem *is* the configuration.
 | Platform | What a draft clone needs |
 | --- | --- |
 | macOS | APFS (`clonefile`). The default system volume qualifies. |
-| Linux, including WSL2 | **btrfs.** Creating a draft turns the source directory into a btrfs subvolume and snapshots it. ext4, xfs, and zfs cannot clone, so drafts are unavailable on them. |
+| Linux, including WSL2 | **btrfs.** Creating a draft turns the source directory into a btrfs subvolume and snapshots it. ext4, xfs, and zfs cannot clone, so drafts are unavailable on them. A btrfs mount over one subdirectory is enough — the whole disk need not be btrfs. |
 | A Windows drive seen from WSL2 (`/mnt/c`, drvfs/9p) | Nothing to clone — keep the repository inside the Linux filesystem. |
 | Native Windows | No copy-on-write workspace backend. |
 
@@ -363,16 +363,31 @@ in `vis.yml`: a copy-on-write filesystem *is* the configuration.
 - the **draft store** — `~/.vis/drafts` by default, overridable with the
   `vis.drafts.dir` JVM system property on the gateway.
 
-On Linux/WSL2 the practical setup is one btrfs volume holding both. Either put
-the repository on a btrfs disk (WSL2: `wsl --mount --vhd <file.vhdx>` a
-btrfs-formatted disk, or `mkfs.btrfs` a loopback image and mount it), or keep the
-repository where it is and accept that drafts stay unavailable — Vis will say so
-instead of quietly editing trunk. Point the store at the same volume:
+On Linux/WSL2 the practical setup is **one btrfs filesystem holding both — and it
+may be mounted over a single directory.** Converting the whole disk is never
+required: `mkfs.btrfs` a loopback image (WSL2 alternative: `wsl --mount --vhd
+<file.vhdx>` a btrfs-formatted disk), mount it at something like `/srv/vis`, and
+keep the repository *and* the draft store inside that one mount.
 
 ```bash
-mkdir -p /srv/vis/drafts        # on the btrfs mount
-vis-agent -J-Dvis.drafts.dir=/srv/vis/drafts   # JVM launcher (see Configuration)
+# once, as root: a btrfs image mounted over a single directory
+fallocate -l 60G /var/lib/vis-btrfs.img
+mkfs.btrfs /var/lib/vis-btrfs.img
+mkdir -p /srv/vis
+mount -o loop,compress=zstd /var/lib/vis-btrfs.img /srv/vis   # persist via /etc/fstab
+mkdir -p /srv/vis/code /srv/vis/drafts
+git clone <repo> /srv/vis/code/<repo>          # repository on the btrfs mount
+vis-agent -J-Dvis.drafts.dir=/srv/vis/drafts   # store on the SAME mount
 ```
+
+**Two btrfs mounts are not one filesystem.** A clone never crosses a filesystem
+boundary, so a btrfs repository plus an ext4 `~/.vis/drafts` — or a second
+loopback image — still leaves drafts unavailable. Everything else on the machine
+can stay ext4.
+
+Vis does not guess from the mount table: the backend probes the actual pair of
+directories by cloning a throwaway directory from the root into the store, so
+what it reports for your layout is measured, not assumed.
 
 The Linux sandbox packages (`bubblewrap`, `passt`) are a **separate** concern:
 they confine model-spawned child processes and neither enable nor block drafts.

@@ -509,20 +509,21 @@
 
    A draft is a COW CLONE, never a recursive copy: on macOS the rift backend
    clones through APFS `clonefile`; on Linux — WSL2 included — `rift/init`
-   turns the source directory into a **btrfs subvolume** and clones that. So an
-   ext4/xfs/zfs root, or a Windows drive mounted into WSL under `/mnt/…`, has
-   nothing to clone and drafts stay unavailable there until BOTH the workspace
-   root and the draft store live on a copy-on-write filesystem."
+   turns the source directory into a **btrfs subvolume** and clones that. A
+   clone never crosses a filesystem boundary, so the workspace root and the
+   draft store must share ONE copy-on-write filesystem — mounting it over a
+   single directory is enough, the whole disk never has to be converted."
   [os-name]
   (let [os (str/lower-case (str os-name))]
     (cond (str/includes? os "mac")
           (str "Drafts are copy-on-write clones: the workspace root and the draft store "
-               "(~/.vis/drafts, or -Dvis.drafts.dir) must both sit on an APFS volume.")
+               "(~/.vis/drafts, or -Dvis.drafts.dir) must sit on the same APFS volume.")
           (str/includes? os "linux")
-          (str "Drafts are copy-on-write clones, and on Linux/WSL2 that means btrfs: put the "
-               "workspace root AND the draft store on a btrfs filesystem — ext4, xfs, zfs, and "
-               "Windows drives mounted under /mnt cannot be cloned — then point the store at that "
-               "volume with -Dvis.drafts.dir=/path/on/btrfs.")
+          (str "Drafts are copy-on-write clones, and on Linux/WSL2 that means btrfs: the "
+               "workspace root AND the draft store must sit on the same btrfs filesystem — "
+               "ext4, xfs, zfs, and Windows drives mounted under /mnt cannot be cloned. A "
+               "btrfs mount over one directory is enough: keep the repository inside it and "
+               "point the store at that same mount with -Dvis.drafts.dir=/path/on/that/mount.")
           :else (str "Drafts need a copy-on-write filesystem (APFS on macOS, btrfs on Linux/WSL2); "
                      "this platform has no copy-on-write workspace backend."))))
 

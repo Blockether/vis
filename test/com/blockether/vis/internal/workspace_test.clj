@@ -868,6 +868,12 @@
       ;; WSL2 reports a plain Linux `os.name`; the btrfs requirement is identical.
       (expect (re-find #"(?i)btrfs"
                        (ws/cow-platform-hint "Linux 5.15.153.1-microsoft-standard-WSL2")))
+      ;; A clone never crosses a filesystem boundary: btrfs (or APFS) over ONE
+      ;; directory is enough, but root and store must share that single mount.
+      (expect (re-find #"(?i)same APFS" (ws/cow-platform-hint "Mac OS X")))
+      (expect (re-find #"(?i)same btrfs" (ws/cow-platform-hint "Linux")))
+      (expect (re-find #"(?i)one directory is enough" (ws/cow-platform-hint "Linux")))
+      (expect (re-find #"vis\.drafts\.dir" (ws/cow-platform-hint "Linux")))
       (expect (re-find #"(?i)copy-on-write" (ws/cow-platform-hint "Windows 11"))))
   (it "blames a missing backend registry before the filesystem"
       (with-redefs [ws/workspace-capability-matrix (constantly [])]
