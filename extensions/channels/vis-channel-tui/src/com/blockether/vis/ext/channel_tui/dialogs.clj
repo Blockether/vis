@@ -2352,15 +2352,23 @@
    canvas instead of allocating its own screen."
   [^TerminalScreen screen g left inner-w hint-row text-w title spec read-option]
   (let
-    [display-rows
-     (vec (butlast (into []
-                         (mapcat (fn [{:keys [title items]}]
-                                   (concat [{:kind :header :text title}]
-                                           (map (fn [it]
-                                                  {:kind :item :item it})
-                                                items)
-                                           [{:kind :blank}]))
-                                 (:groups spec)))))
+    [cols
+     (long (.getColumns ^com.googlecode.lanterna.TerminalSize (.getTerminalSize screen)))
+
+     ;; A leading blank row gives the first group header its MARGIN-TOP, so
+     ;; `Arguments` breathes under the transient's bold title instead of
+     ;; sitting glued to it (groups after it already get one from the
+     ;; trailing blank of the group before).
+     display-rows
+     (into [{:kind :blank}]
+           (butlast (into []
+                          (mapcat (fn [{:keys [title items]}]
+                                    (concat [{:kind :header :text title}]
+                                            (map (fn [it]
+                                                   {:kind :item :item it})
+                                                 items)
+                                            [{:kind :blank}])))
+                          (:groups spec))))
 
      n
      (count display-rows)
@@ -2377,12 +2385,17 @@
      footer
      [["-key" "toggle flag"] ["key" "run command"] ["Esc" "cancel"]]
 
-     ;; Right border column of the host status dialog. Its left/right/bottom
-     ;; borders already frame this bottom region; a top separator one row
-     ;; above the title CAPS it into a compact box sized to the transient's
-     ;; own height — no empty status void floating above the popup.
-     box-right
-     (+ (long left) (long inner-w) 1)
+     ;; FULL-BLEED band. The popup owns EVERY column of the terminal and its
+     ;; hint bar lands on the host dialog's bottom border row, swallowing it:
+     ;; nothing frames the transient on the left, right, or bottom. Only the
+     ;; top separator caps it, one row above the title.
+     foot-row
+     (inc (long hint-row))
+
+     clear-row!
+     (fn [row]
+       (p/set-colors! g t/dialog-fg t/dialog-bg)
+       (p/fill-rect! g 0 row cols 1))
 
      layout
      (transient-layout spec)
@@ -2391,12 +2404,10 @@
      (max 0 (dec (long title-row)))]
 
     (loop [state {:switches #{} :options {}}]
-      (p/set-colors! g t/dialog-fg t/dialog-bg)
-      (p/fill-rect! g (inc (long left)) sep-row inner-w 1)
+      (clear-row! sep-row)
       (p/set-colors! g t/dialog-border t/dialog-bg)
-      (p/draw-separator! g left box-right sep-row)
-      (p/set-colors! g t/dialog-fg t/dialog-bg)
-      (p/fill-rect! g (inc (long left)) title-row inner-w 1)
+      (p/draw-separator! g -1 cols sep-row)
+      (clear-row! title-row)
       (p/set-colors! g t/dialog-hint-key t/dialog-bg)
       (p/styled g
                 [p/BOLD]
@@ -2406,18 +2417,16 @@
           [r (nth display-rows i)
            row (+ (long body-top) (long i))]
 
+          (clear-row! row)
           (case (:kind r)
             :header
-            (do (p/set-colors! g t/dialog-fg t/dialog-bg)
-                (p/fill-rect! g (inc (long left)) row inner-w 1)
-                (p/set-colors! g t/dialog-hint t/dialog-bg)
+            (do (p/set-colors! g t/dialog-hint t/dialog-bg)
                 (p/styled g
                           [p/BOLD]
                           (p/put-str! g (+ (long left) 2) row (ellipsize (str (:text r)) text-w))))
 
             :blank
-            (do (p/set-colors! g t/dialog-fg t/dialog-bg)
-                (p/fill-rect! g (inc (long left)) row inner-w 1))
+            nil
 
             :item
             (let
@@ -2433,7 +2442,7 @@
                value (when (= type :option) (get (:options state) id))]
 
               (draw-transient-item! g left row inner-w layout it active? value)))))
-      (draw-hint-bar! g left hint-row inner-w footer)
+      (draw-hint-bar! g -1 foot-row cols footer)
       (.setCursorPosition screen nil)
       (.refresh screen Screen$RefreshType/DELTA)
       (let [key (read-modal-key! screen)]

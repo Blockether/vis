@@ -261,6 +261,27 @@
     {:ret (dlg/magit-transient! screen g 0 78 28 70 "Commit" spec (constantly nil))
      :rows (painted-rows terminal)}))
 
+(defn- transient-grid!
+  "EVERY terminal row (blanks KEPT) after one paint of `magit-transient!` at the
+   host-dialog geometry `magit-status-buffer!` hands it, so the popup's own
+   band geometry — its full-width rule, its margin rows, the row its hint bar
+   lands on — is inspectable."
+  [spec left inner-w hint-row]
+  (let
+    [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+     (virtual-screen)
+
+     g
+     (.newTextGraphics screen)]
+
+    (.addInput terminal (transient-key :esc))
+    (dlg/magit-transient! screen g left inner-w hint-row 70 "Commit" spec (constantly nil))
+    (vec (for [y (range 30)]
+           (apply str
+             (for [x (range 80)]
+               (let [^TextCharacter ch (.getCharacter terminal (TerminalPosition. (int x) (int y)))]
+                 (if ch (.getCharacterString ch) " "))))))))
+
 (defn- row-with [rows needle] (some #(when (str/includes? (:text %) needle) %) rows))
 
 (defdescribe
@@ -343,6 +364,30 @@
         ;; A command is a BOLD key plus its description — never dim.
         (expect (str/includes? (:text command) "c  Commit staged"))
         (expect (= "c" (:bold command)))))
+  (it "the popup is a full-bleed band with a margin row under its title"
+      (let
+        [grid
+         (transient-grid! commit-transient-spec 3 74 27)
+
+         rule-y
+         (first (keep-indexed (fn [i s]
+                                (when (str/includes? s "────") i))
+                              grid))
+
+         args-y
+         (first (keep-indexed (fn [i s]
+                                (when (str/includes? s "Arguments") i))
+                              grid))]
+
+        ;; The capping rule spans EVERY column — no host box borders survive it.
+        (expect (= (apply str (repeat 80 "─")) (nth grid rule-y)))
+        ;; The hint bar lands one row BELOW the host's hint row, on its bottom
+        ;; border, swallowing it instead of leaving a border under the popup.
+        (expect (str/includes? (nth grid 28) "toggle flag"))
+        (expect (str/blank? (nth grid 27)))
+        ;; Margin-top: title, blank, first group header.
+        (expect (str/blank? (nth grid (dec args-y))))
+        (expect (str/includes? (nth grid (- args-y 2)) "Commit"))))
   (it "pressing a flag key arms it and pressing it again disarms it"
       (let
         [on
