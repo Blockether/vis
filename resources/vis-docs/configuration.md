@@ -431,6 +431,11 @@ plus `package_dir` under `setup.cfg`'s `[options]` and pytest's `pythonpath`
 under `setup.cfg` `[tool:pytest]`, `pytest.ini` `[pytest]` and `tox.ini`
 `[pytest]`.
 
+A read that *fails* — a broken interpreter, a transient I/O error — is not the
+same as a project that declares nothing. It is retried once and then reported as
+a `warning` on the `run_tests` result, so the run continues with no inferred
+roots instead of failing outright or degrading silently.
+
 When that is wrong, absent, or simply not how you lay a project out, say it
 outright:
 
@@ -461,6 +466,11 @@ of all detection. A list is the argv prefix verbatim; a bare string is **one**
 argument and is never word-split, so a path may contain spaces. A path-like
 entry resolves against the project directory, `~` expands, and a bare name is
 looked up on `PATH`.
+
+Without a pin, a detected project `.venv` interpreter is invoked by its absolute
+path, and by the venv's own executable — never canonicalized into the base
+installation, which would leave `pyvenv.cfg` unread and the venv's packages
+(`pytest` among them) missing.
 
 `runner` chooses the default `run_tests("python")` backend: `graalpy`, the
 hermetic stdlib-only sandbox, or `project`, the interpreter's own pytest, where
