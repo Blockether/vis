@@ -78,16 +78,22 @@ question is never "is this caller allowed" but "what does this cost me".
 | mint junk grants | `MINT_LIMIT`, 5/min per address — and a grant is a string the relay immediately forgets, so junk grants occupy nothing |
 | mint many grants for one phone | nothing: `PUSH_DEVICE_LIMIT` is keyed by a **hash of the device token**, so all the grants for one phone share one 20/min budget |
 | POST a 100 MB body | `413` from `content-length` before parsing, and again on what actually arrived (a chunked body declares no length) |
-| stuff a payload | 4 KiB per field, ≤32 data keys, 16 KiB per request |
+| stuff a payload | 16 KiB per request (`MAX_REQUEST_BYTES`, which may only *tighten* it), 4 KiB per field, ≤32 data keys — and the **provider's** 4 KiB is measured here, before the round trip: a too-long preview is trimmed (`is_truncated`), a too-long `data` map is `413 payload_too_large` |
 | put `../` or a URL in a device token | refused at mint time by platform-specific alphabets (Apple: hex; Google: url-safe base64 + `:`), and the APNs path is `encodeURIComponent`-escaped anyway |
 | make the relay hang on a provider | every provider call carries a 10 s `AbortSignal.timeout` |
 | steal a grant off a gateway | pushes to that one phone, ≤20/min, until it expires. A stolen `.p8` is none of those things |
 
 **Volumetric DDoS is Cloudflare's problem, not yours** — unmetered DDoS
-mitigation is on the free plan. Two things still worth doing in the dashboard:
-a WAF **rate-limiting rule** on `/v1/*` stops a flood before it reaches the
-Worker at all, and if you move to paid Workers, set a **spend limit**. On the
-free plan the worst case is a degraded relay for a day; it cannot become a bill.
+mitigation is on the free plan. What Cloudflare will *not* do for you is the
+size of a single request: the body limit belongs to your **account plan** (100
+MB on Free) and no setting lowers it, and a `workers.dev` subdomain is not a
+zone, so WAF custom rules and rate limiting rules never run in front of the
+Worker. Every cap in the table above is therefore enforced by `src/index.ts`
+itself, before the body is pulled. Put the relay on a **custom domain** and the
+dashboard rules do apply — a WAF custom rule on `http.request.body.size` then
+refuses a flood without invoking the Worker at all. If you move to paid
+Workers, set a **spend limit**; on the free plan the worst case is a degraded
+relay for a day, and it cannot become a bill.
 
 What a stranger cannot obtain at any volume: a device token (never returned by
 any route), an alert body (encrypt it app-side and even the relay operator
@@ -104,9 +110,10 @@ npm run deploy
 ```
 
 Public configuration lives in `wrangler.jsonc` `vars`: `APNS_KEY_ID`,
-`APNS_TEAM_ID`, `APNS_TOPIC`, `APNS_DEFAULT_ENV`, `GRANT_TTL_DAYS`. Set the
-Apple three for iOS, `FCM_SERVICE_ACCOUNT` for Android; either alone is fine —
-`/healthz` reports which are live.
+`APNS_TEAM_ID`, `APNS_TOPIC`, `APNS_DEFAULT_ENV`, `GRANT_TTL_DAYS`,
+`MAX_REQUEST_BYTES`. Set the Apple three for iOS, `FCM_SERVICE_ACCOUNT` for
+Android; either alone is fine — `/healthz` reports which are live, and under
+`limits` the caps this relay enforces.
 
 Then point a gateway at it:
 

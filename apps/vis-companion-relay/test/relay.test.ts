@@ -223,7 +223,13 @@ describe("pushing", () => {
 
     const response = await handle(pushRequest(grant, { badge: 3, thread_id: "s-1", is_mutable: true }), env, deps);
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ is_delivered: true, status: 200, reason: "", environment: "production" });
+    expect(await response.json()).toEqual({
+      is_delivered: true,
+      status: 200,
+      reason: "",
+      is_truncated: false,
+      environment: "production",
+    });
 
     expect(apns.calls).toHaveLength(1);
     const call = apns.calls[0];
@@ -495,6 +501,71 @@ describe("what an unwelcome caller costs", () => {
     } as RequestInit);
     expect((await handle(request, makeEnv(), makeDeps(fakeFetch(ok).fn))).status).toBe(413);
     expect(body.pulled).toBe(1);
+  });
+
+  /**
+   * Cloudflare's own request cap is the ACCOUNT PLAN's (100 MB on Free) and no
+   * configuration lowers it; a `workers.dev` subdomain is not a zone, so no WAF
+   * rule runs in front of this Worker either. The cap the relay enforces itself
+   * is therefore the only one, and a var may tighten it but never loosen it.
+   */
+  it("lets an operator lower the request cap and refuses to let one raise it", async () => {
+    const deps = makeDeps(fakeFetch(ok).fn);
+
+    const tight = makeEnv({ MAX_REQUEST_BYTES: "512" });
+    const tightGrant = await mint(tight, deps);
+    expect((await handle(pushRequest(tightGrant, { body: "b".repeat(2000) }), tight, deps)).status).toBe(413);
+
+    const greedy = makeEnv({ MAX_REQUEST_BYTES: "1048576" });
+    const greedyGrant = await mint(greedy, deps);
+    expect((await handle(pushRequest(greedyGrant, { body: "b".repeat(20000) }), greedy, deps)).status).toBe(413);
+  });
+
+  /**
+   * Apple refuses a payload over 4 KiB with `PayloadTooLarge`, and that verdict
+   * is final: the round trip is spent and the alert is lost. A title and body
+   * are a preview that a lock screen truncates anyway, so the relay sends the
+   * preview that fits rather than one Apple will throw away.
+   */
+  it("trims a preview the provider would refuse instead of losing the alert", async () => {
+    const apns = fakeFetch(ok);
+    const env = makeEnv();
+    const deps = makeDeps(apns.fn);
+    const grant = await mint(env, deps);
+
+    const response = await handle(pushRequest(grant, { body: "b".repeat(6000) }), env, deps);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ is_delivered: true, is_truncated: true });
+
+    const sent = apns.calls[0].body;
+    expect(new TextEncoder().encode(sent).length).toBeLessThanOrEqual(4096);
+    const alert = (JSON.parse(sent) as { aps: { alert: { body: string } } }).aps.alert;
+    expect(alert.body.endsWith("\u2026")).toBe(true);
+  });
+
+  /**
+   * `data` is machine-readable and may be ciphertext for the Notification
+   * Service Extension: half of it decrypts to nothing. It is never trimmed, so
+   * a data map that cannot fit is answered here, not by Apple.
+   */
+  it("refuses a data map too big for the provider without asking the provider", async () => {
+    const apns = fakeFetch(ok);
+    const env = makeEnv();
+    const deps = makeDeps(apns.fn);
+    const grant = await mint(env, deps);
+
+    const response = await handle(pushRequest(grant, { data: { sealed: "z".repeat(6000) } }), env, deps);
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: { code: "payload_too_large" } });
+    expect(apns.calls.length).toBe(0);
+  });
+
+  it("publishes every cap it enforces", async () => {
+    const env = makeEnv({ MAX_REQUEST_BYTES: "8192" });
+    const response = await handle(new Request("https://relay.example.com/healthz"), env, makeDeps(fakeFetch(ok).fn));
+    expect(await response.json()).toMatchObject({
+      limits: { max_request_bytes: 8192, max_apns_payload_bytes: 4096, max_fcm_payload_bytes: 4096 },
+    });
   });
 
   it("caps the custom data keys that reach a provider", async () => {

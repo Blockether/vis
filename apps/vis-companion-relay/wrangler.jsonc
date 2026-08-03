@@ -37,6 +37,12 @@
     "APNS_TEAM_ID": "",
     "APNS_TOPIC": "",
     "APNS_DEFAULT_ENV": "production",
-    "GRANT_TTL_DAYS": "90"
+    "GRANT_TTL_DAYS": "90",
+    // The request body cap, in bytes. Cloudflare's own limit is the account
+    // plan's (100 MB on Free) and nothing lowers it, and a workers.dev
+    // subdomain is not a zone, so no WAF rule runs in front of the Worker:
+    // this is the only cap there is. It may only TIGHTEN the 16384 ceiling
+    // compiled into src/index.ts — a bigger number changes nothing.
+    "MAX_REQUEST_BYTES": "16384"
   }
 }

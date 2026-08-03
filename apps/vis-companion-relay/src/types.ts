@@ -11,6 +11,12 @@ export interface Env {
   RELAY_SEAL_KEY_PREVIOUS?: string;
   /** How long a freshly minted grant stays valid. Default 90 days. */
   GRANT_TTL_DAYS?: string;
+  /**
+   * The transport cap, in bytes. It may only TIGHTEN the ceiling compiled into
+   * `index.ts`: a var is public configuration, and no configuration should be
+   * able to hand this isolate a bigger buffer than the code was reviewed for.
+   */
+  MAX_REQUEST_BYTES?: string;
 
   /** The whole `AuthKey_<kid>.p8` PEM. A SECRET — `wrangler secret put`. */
   APNS_KEY_P8?: string;

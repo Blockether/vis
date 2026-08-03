@@ -27,9 +27,10 @@
  * Nothing accumulates anywhere, so nothing has to be swept.
  */
 
-import { apnsConfig, APNS_DEAD_REASONS, sendApns } from "./apns";
-import { fcmConfig, FCM_DEAD_REASONS, sendFcm } from "./fcm";
+import { APNS_DEAD_REASONS, APNS_MAX_PAYLOAD_BYTES, apnsConfig, apnsPayload, sendApns } from "./apns";
+import { FCM_DEAD_REASONS, FCM_MAX_PAYLOAD_BYTES, fcmConfig, fcmPayload, sendFcm } from "./fcm";
 import { sha256Hex } from "./jwt";
+import { fitNotification } from "./payload";
 import { seal, unseal } from "./seal";
 import type { Deps, Env, Notification, Platform } from "./types";
 import { PLATFORMS } from "./types";
@@ -40,10 +41,26 @@ export const defaultDeps: Deps = {
 };
 
 const MAX_BODY_CHARS = 4096;
-/** An alert is a few hundred bytes; APNs itself refuses more than 4 KiB. */
-const MAX_REQUEST_BYTES = 16384;
 const MAX_DATA_KEYS = 32;
 const DEFAULT_GRANT_TTL_DAYS = 90;
+
+/**
+ * The transport cap, and the only one there is. Cloudflare's own request body
+ * limit belongs to the ACCOUNT PLAN — 100 MB on Free — and no configuration
+ * lowers it; a `workers.dev` subdomain is not a zone, so no WAF rule and no
+ * rate limiting rule runs in front of this Worker either. Whatever the edge
+ * refuses, this file is what refuses it, which is why the refusal happens
+ * before a byte of the body is pulled.
+ *
+ * `MAX_REQUEST_BYTES` lets an operator tighten it and nothing loosen it: a var
+ * is public configuration, and configuration must not be able to hand this
+ * isolate a bigger buffer than the code was reviewed for.
+ */
+const REQUEST_BYTES_CEILING = 16384;
+
+function maxRequestBytes(env: Env): number {
+  return Math.min(intVar(env.MAX_REQUEST_BYTES, REQUEST_BYTES_CEILING), REQUEST_BYTES_CEILING);
+}
 
 /**
  * A device token is interpolated into the APNs request path, so its shape is a
@@ -114,13 +131,13 @@ function unsealed(): Response {
 /** A body big enough to cost CPU is refused before a single byte is parsed. */
 const TOO_LARGE = Symbol("too_large");
 
-function isOversized(request: Request): boolean {
+function isOversized(request: Request, limit: number): boolean {
   const declared = Number.parseInt(request.headers.get("content-length") ?? "0", 10);
-  return Number.isFinite(declared) && declared > MAX_REQUEST_BYTES;
+  return Number.isFinite(declared) && declared > limit;
 }
 
-function oversized(): Response {
-  return fail(413, "too_large", `a request body may not exceed ${MAX_REQUEST_BYTES} bytes`);
+function oversized(limit: number): Response {
+  return fail(413, "too_large", `a request body may not exceed ${limit} bytes`);
 }
 
 /**
@@ -138,6 +155,7 @@ function oversized(): Response {
  */
 async function readJson(
   request: Request,
+  limit: number,
 ): Promise<Record<string, unknown> | typeof TOO_LARGE | null> {
   const stream = request.body;
   if (!stream) return null;
@@ -149,7 +167,7 @@ async function readJson(
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
-      if (total > MAX_REQUEST_BYTES) {
+      if (total > limit) {
         await reader.cancel();
         return TOO_LARGE;
       }
@@ -213,6 +231,13 @@ async function health(env: Env): Promise<Response> {
       environment: apns?.defaultEnvironment ?? null,
     },
     fcm: { is_available: fcm !== null, project_id: fcm?.projectId ?? null },
+    // Published so a caller can size a notification up front rather than
+    // discover a cap by being refused by it.
+    limits: {
+      max_request_bytes: maxRequestBytes(env),
+      max_apns_payload_bytes: APNS_MAX_PAYLOAD_BYTES,
+      max_fcm_payload_bytes: FCM_MAX_PAYLOAD_BYTES,
+    },
   });
 }
 
@@ -223,8 +248,9 @@ async function createGrantHandler(request: Request, env: Env, deps: Deps): Promi
   const keys = sealKeys(env);
   if (keys.length === 0) return unsealed();
 
-  const body = await readJson(request);
-  if (body === TOO_LARGE) return oversized();
+  const limit = maxRequestBytes(env);
+  const body = await readJson(request, limit);
+  if (body === TOO_LARGE) return oversized(limit);
   if (!body) return fail(400, "bad_request", "a JSON object body is required");
 
   const deviceToken = str(body.device_token);
@@ -262,8 +288,9 @@ async function pushHandler(request: Request, env: Env, deps: Deps): Promise<Resp
   const keys = sealKeys(env);
   if (keys.length === 0) return unsealed();
 
-  const parsed = await readJson(request);
-  if (parsed === TOO_LARGE) return oversized();
+  const limit = maxRequestBytes(env);
+  const parsed = await readJson(request, limit);
+  if (parsed === TOO_LARGE) return oversized(limit);
   const body = parsed ?? {};
   const presented = bearer(request) || str(body.grant);
   if (!presented) {
@@ -299,13 +326,34 @@ async function pushHandler(request: Request, env: Env, deps: Deps): Promise<Resp
     return fail(503, "provider_unconfigured", `this relay cannot push to ${grant.platform}`);
   }
 
+  /**
+   * A provider's size verdict is final — Apple's `PayloadTooLarge`, Google's
+   * `INVALID_ARGUMENT`, which this relay would even read as a dead device — so
+   * the bytes are measured here instead of learned there. A preview is trimmed
+   * to what fits; a `data` map that does not fit is the caller's own bug and is
+   * answered without spending a round trip on it.
+   */
+  const payloadLimit = isApple ? APNS_MAX_PAYLOAD_BYTES : FCM_MAX_PAYLOAD_BYTES;
+  const fitted = fitNotification(
+    notification,
+    isApple ? apnsPayload : (n: Notification) => fcmPayload(grant.deviceToken, n),
+    payloadLimit,
+  );
+  if (!fitted) {
+    return fail(
+      413,
+      "payload_too_large",
+      `a ${grant.platform} push may carry ${payloadLimit} bytes and this notification's data alone exceeds them`,
+    );
+  }
+
   const result = apns
     ? await sendApns(
         apns,
-        { deviceToken: grant.deviceToken, environment: grant.environment, notification },
+        { deviceToken: grant.deviceToken, environment: grant.environment, notification: fitted },
         deps,
       )
-    : await sendFcm(fcm!, { deviceToken: grant.deviceToken, notification }, deps);
+    : await sendFcm(fcm!, { deviceToken: grant.deviceToken, notification: fitted }, deps);
 
   const isDead =
     result.status === 410 ||
@@ -329,6 +377,7 @@ async function pushHandler(request: Request, env: Env, deps: Deps): Promise<Resp
     is_delivered: true,
     status: 200,
     reason: "",
+    is_truncated: fitted !== notification,
     environment: result.environment ?? grant.environment,
   });
 }
@@ -351,7 +400,8 @@ async function route(request: Request, env: Env, deps: Deps): Promise<Response> 
   const path = url.pathname.replace(/\/+$/, "") || "/";
   const method = request.method.toUpperCase();
 
-  if (isOversized(request)) return oversized();
+  const limit = maxRequestBytes(env);
+  if (isOversized(request, limit)) return oversized(limit);
 
   if (method === "OPTIONS") return preflight();
   if (method === "GET" && (path === "/healthz" || path === "/")) return await health(env);

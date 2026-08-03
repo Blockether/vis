@@ -73,11 +73,18 @@ export async function accessToken(cfg: FcmConfig, deps: Deps): Promise<string | 
   return parsed.access_token;
 }
 
+/**
+ * Google's ceiling for one message. Over it FCM answers `INVALID_ARGUMENT`,
+ * which this relay reads as a dead registration — so an oversized payload must
+ * never reach Google, or a long notification would unregister a live phone.
+ */
+export const FCM_MAX_PAYLOAD_BYTES = 4096;
+
 /** FCM rejects a `data` map whose values are not strings. */
-function message(deviceToken: string, notification: Notification): unknown {
+export function fcmPayload(deviceToken: string, notification: Notification): string {
   const data: Record<string, string> = {};
   for (const [key, value] of Object.entries(notification.data ?? {})) data[key] = String(value);
-  return {
+  return JSON.stringify({
     message: {
       token: deviceToken,
       notification: { title: notification.title, body: notification.body },
@@ -88,7 +95,7 @@ function message(deviceToken: string, notification: Notification): unknown {
         ...(notification.collapseId ? { collapse_key: notification.collapseId } : {}),
       },
     },
-  };
+  });
 }
 
 export const FCM_DEAD_REASONS = new Set(["UNREGISTERED", "NOT_FOUND", "INVALID_ARGUMENT"]);
@@ -106,7 +113,7 @@ async function postFcm(
       {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify(message(args.deviceToken, args.notification)),
+        body: fcmPayload(args.deviceToken, args.notification),
         signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
       },
     );

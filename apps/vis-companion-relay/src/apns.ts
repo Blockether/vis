@@ -76,6 +76,13 @@ export function apnsHost(environment: string): string {
 }
 
 /**
+ * Apple's hard ceiling for an alert notification. A payload over it is refused
+ * with `PayloadTooLarge` — final, not retryable: the alert is gone rather than
+ * late, which is why `payload.ts` measures before the round trip is spent.
+ */
+export const APNS_MAX_PAYLOAD_BYTES = 4096;
+
+/**
  * The `aps` keys Apple defines are kebab-case and it SILENTLY ignores anything
  * else, so `thread-id` and `mutable-content` must be spelled exactly.
  */
