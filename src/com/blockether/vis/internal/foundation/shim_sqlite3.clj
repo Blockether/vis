@@ -216,8 +216,21 @@
     (try (doseq [p seq-params]
            (bind-params! ps p names)
            (.addBatch ps))
-         (.executeBatch ps)
-         {"description" nil "rows" [] "rowcount" -1 "lastrowid" nil}
+         ;; CPython reports the rows the whole batch changed; JDBC hands back one
+         ;; update count per statement, and -2 (SUCCESS_NO_INFO) for "unknown".
+         (let
+           [^ints counts
+            (.executeBatch ps)
+
+            n
+            (areduce counts
+                     i
+                     acc
+                     0
+                     (let [u (aget counts i)]
+                       (if (neg? u) acc (+ acc u))))]
+
+           {"description" nil "rows" [] "rowcount" n "lastrowid" nil})
          (finally (.close ps)))))
 
 (defn- op-executescript

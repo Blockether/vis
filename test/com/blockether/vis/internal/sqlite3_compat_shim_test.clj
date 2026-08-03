@@ -134,3 +134,19 @@
               "import sqlite3\nc=sqlite3.connect(':memory:')\n"
               "c.executescript('create table a(x); insert into a values (1); insert into a values (2);')\n"
               "c.execute('select sum(x) from a').fetchone()[0]")))))))
+
+;; CPython sets `cursor.rowcount` to the number of rows an executemany changed;
+;; the shim hardcoded -1 for every batch, so callers could not tell 0 from 3.
+(defdescribe
+  sqlite3-executemany-rowcount-test
+  (it "reports how many rows the batch changed"
+      (with-python-context
+        (expect (= [3 2 0 3]
+                   (ev python-context
+                       (str "import sqlite3\nc=sqlite3.connect(':memory:')\n"
+                            "c.execute('create table t(x integer)')\n"
+                            "ins = c.executemany('insert into t values (?)', [(1,),(2,),(3,)])\n"
+                            "upd = c.executemany('update t set x=x+10 where x=?', [(1,),(2,)])\n"
+                            "nop = c.executemany('delete from t where x=?', [(99,)])\n"
+                            "[ins.rowcount, upd.rowcount, nop.rowcount, "
+                            " c.execute('select count(*) from t').fetchone()[0]]")))))))
