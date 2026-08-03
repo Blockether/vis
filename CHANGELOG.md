@@ -38,6 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   that did not mount as written: `info` for a conditional root the host skipped,
   a warning for an admitted root whose path is missing. Documented in
   `resources/vis-docs/sandbox.md`.
+- config: `jail.mach_services` opens macOS Mach lookups to a confined child.
+  `keychain: true` allows `com.apple.SecurityServer`, `com.apple.ocspd` and
+  `com.apple.trustd.agent` and grants read access to `~/Library/Keychains` and
+  `/Library/Keychains` (kept out of the default search sweep) — which is what
+  makes `security`, `gh auth token` and `git credential-osxkeychain get` work
+  inside a Seatbelt jail; `allow` names any further service by global name.
+  Deny stays the default, and a command that fails on a lookup the jail did not
+  grant now carries a `note` naming the denial and the setting that lifts it,
+  instead of only the opaque Security-framework message. Documented in
+  `resources/vis-docs/sandbox.md`.
 
 ### Changed
 

@@ -62,6 +62,8 @@
                  {"id" "cache" "path" "~/.m2" "search" false "description" "maven cache"}]}
    "jail" {"enabled" true
            "filesystem" {"allow" ["svar" "ref" "gen" "cache"]}
+           ;; #90: macOS Mach lookups — an explicit allow list plus the keychain bundle.
+           "mach_services" {"allow" ["com.example.agent"] "keychain" false}
            "env" ["CI" "MY_TOKEN"]
            "deny_exec" ["definitely-not-a-real-binary-xyz"]
            "network" {"inbound_ports" [5273 8080]
@@ -208,6 +210,7 @@
                   :no-search ["~/.m2" "~/.vis"]
                   :inbound-ports [5273 8080]
                   :env-passthrough ["CI" "MY_TOKEN"]
+                  :mach-services ["com.example.agent"]
                   :path-descriptions {"/opt/svar" "a sibling repo"
                                       "~/.m2" "maven cache"
                                       "~/.vis" (get config-spec/vis-home-entry "description")}}
@@ -337,7 +340,8 @@
                     :router-network :budget :tokens :router :workspace-entry :workspace-entries
                     :workspace :jail-filesystem :jail :network-rule-allow :network-rule-allows
                     :network-rule :network-rules :network :prompt-map :system-prompt :grep :db-spec
-                    :tui-settings :mcp-server :mcp-servers :mcp :workspace-when]]
+                    :tui-settings :mcp-server :mcp-servers :mcp :workspace-when
+                    :jail-mach-services]]
         (expect (s/get-spec (keyword "com.blockether.vis.internal.config-spec" (name spec-name))))))
   (it
     "keeps every declared key set, schema, and exhaustive fixture in sync"
@@ -395,6 +399,8 @@
         [config-spec/workspace-keys config-spec/workspace-schema (set (keys workspace))]
         [config-spec/jail-filesystem-keys config-spec/jail-filesystem-schema
          (set (keys filesystem))] [config-spec/jail-keys config-spec/jail-schema (set (keys jail))]
+        [config-spec/jail-mach-services-keys config-spec/jail-mach-services-schema
+         (set (keys (get jail "mach_services")))]
         [config-spec/network-rule-allow-keys config-spec/network-rule-allow-schema
          (set (keys rule-allow))]
         [config-spec/network-rule-keys config-spec/network-rule-schema (set (keys rule))]
@@ -588,3 +594,40 @@
                      {"workspace" {"filesystem"
                                    [{"id" "x" "path" "~/ok" "when" {"nope" true}}]}}))))))
 
+;; ── macOS Mach services / Keychain (#90) ─────────────────────────────────────
+
+(defdescribe
+  jail-mach-services-test
+  (it "keychain: true grants the three Security services and the keychain databases"
+      (let
+        [pol (config-spec/process-jail-config (assoc-in full-config
+                                                ["jail" "mach_services"]
+                                                {"keychain" true "allow" ["com.example.agent"]}))]
+        (expect (= ["com.apple.SecurityServer" "com.apple.ocspd" "com.apple.trustd.agent"]
+                   config-spec/keychain-mach-services))
+        (expect (= ["com.apple.SecurityServer" "com.apple.ocspd" "com.apple.trustd.agent"
+                    "com.example.agent"]
+                   (:mach-services pol)))
+        ;; Reading the databases is what actually completes a lookup; they stay
+        ;; out of the search sweep so credentials never surface in results.
+        (expect (= ["~/Library/Keychains" "/Library/Keychains"] config-spec/keychain-read-paths))
+        (expect (every? (set (:allow-read pol)) config-spec/keychain-read-paths))
+        (expect (every? (set (:no-search pol)) config-spec/keychain-read-paths))))
+  (it "without the opt-in nothing is granted and nothing is added to the filesystem"
+      (let
+        [pol (config-spec/process-jail-config (update full-config "jail" dissoc "mach_services"))]
+        (expect (= [] (:mach-services pol)))
+        (expect (= ["~/reference"] (:allow-read pol)))
+        (expect (not-any? (set (:no-search pol)) config-spec/keychain-read-paths))))
+  (it "mach_services is a closed block: a string list and a boolean"
+      (expect (config-spec/valid?
+                (assoc-in full-config ["jail" "mach_services"] {"allow" [] "keychain" true})))
+      (expect (not (config-spec/valid? (assoc-in full-config
+                                         ["jail" "mach_services"]
+                                         {"allow" "com.apple.SecurityServer"}))))
+      (expect (not (config-spec/valid?
+                     (assoc-in full-config ["jail" "mach_services"] {"keychain" "true"}))))
+      (expect (not (config-spec/valid?
+                     (assoc-in full-config ["jail" "mach_services"] {"allow" [""]}))))
+      (expect (not (config-spec/valid?
+                     (assoc-in full-config ["jail" "mach_services"] {"mach" ["x"]}))))))

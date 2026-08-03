@@ -316,6 +316,19 @@
         (throw (ex-info "Shell process denied: session jail policy is unavailable"
                         {:type ::jail-policy-missing :session-id (:session-id env)})))))
 
+(defn- command-note
+  "The single advisory line a command result carries. Truncation wins — it changes
+   whether the text parses at all; otherwise a denied macOS Keychain lookup is
+   named, since a confined `gh`/`git`/`security` otherwise fails with an opaque
+   Security-framework message and no mention of the jail."
+  [env out err]
+  (or (truncation-note out err)
+      (when (process-jail/keychain-denial? (:text out) (:text err))
+        ;; No policy fn means no jail: an opaque Security failure is then a real
+        ;; Keychain miss and blaming confinement would send the caller the wrong way.
+        (when-let [policy (try (jail-policy env) (catch Throwable _ nil))]
+          (process-jail/keychain-denial-hint policy (:text out) (:text err))))))
+
 (defn- fd-exhaustion?
   "True when `t` (or any cause under it) is the OS refusing a spawn because THIS
    process ran out of file descriptors (EMFILE).
@@ -684,7 +697,7 @@
                        "stderr_omitted_chars" (long (or (:omitted err) 0))
                        ;; A dropped middle makes the stream unparseable: name it here rather
                        ;; than let a caller's parser fail with an opaque message.
-                       "note" (truncation-note out err)})
+                       "note" (command-note env out err)})
            ;; Request scope, IDENTICAL for every entry of a batch: carried as metadata
            ;; so the group summarises one `cwd`/`timeout_secs` instead of every entry
            ;; repeating them, and nothing extra crosses to Python. A relative dir is

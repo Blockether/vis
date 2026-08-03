@@ -269,6 +269,30 @@ override that (e.g. `access: read-only`).
 `workspace.filesystem` catalog in `vis.yml` and run `/reload`; `jail.filesystem.allow`
 independently controls which catalog entries a sandbox may access.
 
+## macOS Keychain and Mach services
+
+Seatbelt denies Mach lookups by default, so a confined `security`, `gh auth token`
+or `git credential-osxkeychain get` fails with an opaque Security-framework
+message (`SecKeychainSearchCreateFromAttributes: … parameters … not valid`) that
+never mentions the sandbox. `jail.mach_services` grants those lookups explicitly:
+
+```yaml
+jail:
+  mach_services:
+    keychain: true               # credential helpers may read the Keychain
+    allow: [com.example.agent]   # any other global-name Mach service
+```
+
+`keychain: true` allows `com.apple.SecurityServer`, `com.apple.ocspd` and
+`com.apple.trustd.agent`, and grants read access to `~/Library/Keychains` and
+`/Library/Keychains` (kept out of the default search sweep). `allow` names any
+further service by global name. The default is deny — an unlisted service stays
+unreachable — and both keys are macOS-only, ignored on other hosts.
+
+When a command fails this way inside a jail that did not grant it, the shell
+result's `note` names the denial and the setting that lifts it, instead of leaving
+the opaque Security message as the only evidence.
+
 ## Environment scrubbing
 
 A confined child does **not** inherit the operator's environment. Only an

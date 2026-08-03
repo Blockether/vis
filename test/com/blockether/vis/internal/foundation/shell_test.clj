@@ -1418,3 +1418,33 @@
                                (expect (not= 0 (get r "exit")))))
                            ;; Still running after the group signal — the whole point.
                            (expect (= "alive\n" (get (shell-run* {} "echo alive") "stdout"))))))))))
+
+;; ── Keychain advisory (#90) ──────────────────────────────────────────────────
+;; A confined `gh`/`git`/`security` fails with an opaque Security-framework line
+;; and no mention of the jail; the command result says what to turn on.
+
+(def ^:private command-note @#'shell/command-note)
+
+(defdescribe
+  shell-keychain-note-test
+  (it "names the config key when a live jail denied the Mach lookup"
+      (let
+        [note (command-note {:jail-policy-fn (constantly {:disabled? false :mach-services []})}
+                            {:text ""}
+                            {:text (str "security: SecKeychainSearchCreateFromAttributes:"
+                                        " The specified item could not be found")})]
+        (expect (str/includes? note "jail.mach_services.keychain"))))
+  (it "silent when the grant is present, the jail is off, or there is no jail at all"
+      (let [err {:text "SecKeychainSearchCreateFromAttributes: nope"}]
+        (expect (nil? (command-note {:jail-policy-fn (constantly {:disabled? false
+                                                                  :mach-services
+                                                                  ["com.apple.SecurityServer"]})}
+                                    {:text ""}
+                                    err)))
+        (expect (nil?
+                  (command-note {:jail-policy-fn (constantly {:disabled? true})} {:text ""} err)))
+        (expect (nil? (command-note {} {:text ""} err)))))
+  (it "ordinary output carries no note"
+      (expect (nil? (command-note {:jail-policy-fn (constantly {:disabled? false})}
+                                  {:text "hello"}
+                                  {:text ""})))))

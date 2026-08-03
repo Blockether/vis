@@ -1081,3 +1081,48 @@
                     (io/delete-file lib true)
                     (io/delete-file outside true)
                     (io/delete-file ws true))))))
+
+;; ── macOS Mach services (#90) ────────────────────────────────────────────────
+;; Seatbelt denies EVERY Mach lookup by default, which is what makes `security`,
+;; `gh auth token` and `git credential-osxkeychain` fail inside the jail with an
+;; opaque Security-framework message.
+
+(deftest macos-profile-mach-services
+  (testing "no grant => no mach-lookup rule at all"
+    (is (not (str/includes? (pj/macos-profile {:rw [] :net-enabled? false}) "mach-lookup"))))
+  (testing "granted services become one global-name each inside a single allow"
+    (let
+      [p (pj/macos-profile {:rw []
+                            :net-enabled? false
+                            :mach-services ["com.apple.SecurityServer" "com.apple.ocspd"]})]
+      (is (str/includes? p "(allow mach-lookup"))
+      (is (str/includes? p "(global-name \"com.apple.SecurityServer\")"))
+      (is (str/includes? p "(global-name \"com.apple.ocspd\")"))))
+  (testing "compile-policy sanitizes: strings only, blanks and duplicates dropped"
+    (is (= ["com.apple.SecurityServer"]
+           (:mach-services (pj/compile-policy {:roots-fn (constantly [])
+                                               :mach-services ["com.apple.SecurityServer"
+                                                               "com.apple.SecurityServer" "" nil
+                                                               7]}))))
+    (is (= [] (:mach-services (pj/compile-policy {:roots-fn (constantly [])}))))))
+
+(deftest keychain-denial-hint-explains-a-denied-lookup
+  (testing "a Security-framework failure under a live jail names the config key"
+    (let
+      [hint (pj/keychain-denial-hint
+              {:disabled? false :mach-services []}
+              ""
+              "SecKeychainSearchCreateFromAttributes: parameters passed are not valid")]
+      (is (str/includes? hint "jail.mach_services.keychain"))
+      (is (str/includes? hint "com.apple.SecurityServer"))))
+  (testing "silent when the jail is off or the keychain services are already granted"
+    (is (nil? (pj/keychain-denial-hint {:disabled? true}
+                                       ""
+                                       "SecKeychainSearchCreateFromAttributes: nope")))
+    (is (nil? (pj/keychain-denial-hint {:disabled? false
+                                        :mach-services ["com.apple.SecurityServer"]}
+                                       ""
+                                       "SecKeychainSearchCreateFromAttributes: nope"))))
+  (testing "unrelated output is never annotated"
+    (is (false? (pj/keychain-denial? "hello" "world")))
+    (is (nil? (pj/keychain-denial-hint {:disabled? false :mach-services []} "hello" "world")))))

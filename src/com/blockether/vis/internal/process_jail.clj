@@ -20,6 +20,7 @@
       :deny-write       [<path> …]           ; protect within writable (deny wins)
       :allow-read       [<path> …]           ; additional read-only paths
       :deny-read        [<path> …]           ; protect a read region (deny wins)
+      :mach-services    [<name> …]           ; macOS Mach services a child may look up
       :inbound-ports    [<int> …]}           ; extra local ports a child may ACCEPT on
                                              ; (bind is local-only; accept is port-gated)
 
@@ -235,8 +236,8 @@
    outs so `:deny-write`/`:deny-read` win over the allows. One-line string for
    `sandbox-exec -p`."
   ^String
-  [{:keys [rw ro deny-write deny-read deny-exec net-enabled? proxy-port loopback-port
-           inbound-ports]}]
+  [{:keys [rw ro deny-write deny-read deny-exec net-enabled? proxy-port loopback-port inbound-ports
+           mach-services]}]
   (let
     [rw
      (->> rw
@@ -278,6 +279,13 @@
       ;; macOS. Without this narrow IPC permission, tools such as spel and bb abort
       ;; during VM startup before their main function runs.
       "(allow ipc-posix-sem)"
+      ;; Seatbelt denies EVERY Mach lookup by default, which is what breaks macOS
+      ;; Keychain reads (`security`, `gh auth token`, `git credential-osxkeychain`)
+      ;; inside the jail. Only the services the operator granted are opened.
+      (when-let [ms (seq (distinct (remove str/blank? (filter string? mach-services))))]
+        (str "(allow mach-lookup"
+             (apply str (map #(str "(global-name " (sbpl-quote %) ")") ms))
+             ")"))
       "(allow file-read-metadata"
       (apply str
         (map #(str "(literal " (sbpl-quote %) ")")
@@ -337,7 +345,7 @@
    model-writable project config. `:allow-read-write` is the concise equivalent of
    granting the same path through both legacy allow lists."
   [{:keys [roots-fn net-enabled? allow-read-write allow-write allow-read deny-write deny-read
-           deny-exec proxy-port loopback-port inbound-ports]}]
+           deny-exec proxy-port loopback-port inbound-ports mach-services]}]
   (let
     [session-roots
      (when roots-fn (try (roots-fn) (catch Throwable _ nil)))
@@ -378,7 +386,38 @@
      :net-enabled? (boolean net-enabled?)
      :proxy-port proxy-port
      :loopback-port loopback-port
-     :inbound-ports inbound-ports}))
+     :inbound-ports inbound-ports
+     :mach-services
+     (into [] (comp (filter string?) (remove str/blank?) (distinct)) mach-services)}))
+
+(def ^:private keychain-denial-markers
+  "How the macOS Security framework reports a lookup it could not complete. The
+   first two are exactly what a DENIED Mach lookup produces under Seatbelt."
+  ["SecKeychainSearchCreateFromAttributes" "SecKeychainItemCopyContent"
+   "errSecInteractionNotAllowed" "User interaction is not allowed"
+   "could not be found in the keychain"])
+
+(defn keychain-denial?
+  "True when captured output shows a macOS Keychain lookup that failed the way a
+   denied Mach lookup fails. Pure text test; `keychain-denial-hint` decides
+   whether confinement is the explanation."
+  [out err]
+  (let [text (str out "\n" err)]
+    (boolean (some #(str/includes? text %) keychain-denial-markers))))
+
+(defn keychain-denial-hint
+  "One actionable line when a command's output shows a Keychain lookup THIS jail
+   denied, else nil. Silent when the jail is off (`:disabled?`) or the keychain
+   services are already granted — the failure is then a real Keychain miss and
+   naming the sandbox would send the caller the wrong way."
+  [{:keys [disabled? mach-services]} out err]
+  (when (and (not disabled?)
+             (not (some #{"com.apple.SecurityServer"} mach-services))
+             (keychain-denial? out err))
+    (str "Keychain lookup blocked by the sandbox: Seatbelt denies every Mach lookup by default."
+         " Set jail.mach_services.keychain: true in config to grant com.apple.SecurityServer,"
+         " com.apple.ocspd and com.apple.trustd.agent plus read access to the keychain"
+         " databases.")))
 
 (defn linux-bwrap-args
   "Compile the bubblewrap flag vector (ending in `--`) from a RESOLVED policy map

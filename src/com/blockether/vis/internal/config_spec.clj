@@ -241,13 +241,37 @@
 (def jail-filesystem-schema {"allow" #(and (vector? %) (every? non-blank-string? %))})
 (s/def ::jail-filesystem #(closed-map? jail-filesystem-schema %))
 
-(def jail-keys #{"enabled" "filesystem" "network" "env" "deny_exec"})
+;; ── Jail Mach services (macOS) ───────────────────────────────────────────────
+;; Seatbelt denies every Mach lookup by default, which is what breaks Keychain
+;; reads (`security`, `gh auth token`, `git credential-osxkeychain`) inside the
+;; jail. `keychain: true` grants EXACTLY the services and keychain directories a
+;; Keychain read needs; `allow` is the escape hatch for anything else.
+(def jail-mach-services-keys #{"allow" "keychain"})
+(def jail-mach-services-schema
+  {"allow" #(and (vector? %) (every? non-blank-string? %)) "keychain" boolean?})
+(s/def ::jail-mach-services #(closed-map? jail-mach-services-schema %))
+
+(def keychain-mach-services
+  "The Mach services a confined child must reach to read the macOS Keychain:
+   the security server itself plus the trust/revocation daemons it calls into.
+   Verified against `security`, `gh auth token` and `git credential-osxkeychain`
+   under `sandbox-exec`; without them the lookup fails with
+   `SecKeychainSearchCreateFromAttributes: … parameters … not valid`."
+  ["com.apple.SecurityServer" "com.apple.ocspd" "com.apple.trustd.agent"])
+
+(def keychain-read-paths
+  "Keychain databases the same lookup reads. Kept OUT of the search sweep — they
+   are credentials, never grep fodder."
+  ["~/Library/Keychains" "/Library/Keychains"])
+
+(def jail-keys #{"enabled" "filesystem" "network" "env" "deny_exec" "mach_services"})
 (def jail-schema
   {"enabled" boolean?
    "filesystem" (spec-pred ::jail-filesystem)
    "network" (spec-pred ::network)
    "env" env-var-name-list?
-   "deny_exec" string-list?})
+   "deny_exec" string-list?
+   "mach_services" (spec-pred ::jail-mach-services)})
 (s/def ::jail #(closed-map? jail-schema %))
 
 (def network-rule-allow-keys #{"method" "path"})
@@ -446,7 +470,9 @@
                   "tokens" [token-schema #{} :map]}
    workspace-schema {"filesystem" [workspace-entry-schema #{"id" "path"} :vector]}
    workspace-entry-schema {"when" [workspace-when-schema #{} :map]}
-   jail-schema {"filesystem" [jail-filesystem-schema #{} :map] "network" [network-schema #{} :map]}
+   jail-schema {"filesystem" [jail-filesystem-schema #{} :map]
+                "network" [network-schema #{} :map]
+                "mach_services" [jail-mach-services-schema #{} :map]}
    network-schema {"rules" [network-rule-schema #{"host"} :vector]}
    network-rule-schema {"allow" [network-rule-allow-schema #{"method"} :vector]}
    mcp-schema {"servers" [mcp-server-schema #{} :map-of]}
@@ -594,7 +620,7 @@
 
 (def process-jail-config-keys
   #{:disabled? :allow-read-write :allow-read :allow-write :deny-read :deny-write :deny-exec
-    :no-search :inbound-ports :env-passthrough :path-descriptions})
+    :no-search :inbound-ports :env-passthrough :path-descriptions :mach-services})
 
 (s/def ::process-jail-config
   (s/and map?
@@ -606,6 +632,7 @@
          #(rooted-path-list? (or (:deny-exec %) []))
          #(s/valid? (get network-schema "inbound_ports") (:inbound-ports %))
          #(env-var-name-list? (or (:env-passthrough %) []))
+         #(string-list? (or (:mach-services %) []))
          #(let
             [d
              (:path-descriptions %)]
@@ -881,6 +908,11 @@
    `when`-gated id may be listed in `allow` on every machine; pass an explicit
    `env` to resolve against something other than the live host.
 
+   `jail.mach_services` opens macOS Mach lookups. `keychain: true` additionally
+   grants read access to the keychain databases (kept out of the search sweep),
+   which is what makes `security`, `gh auth token` and
+   `git credential-osxkeychain` work inside the jail.
+
    Vis's own session folder (`vis-home-entry`, `~/.vis`) is ALWAYS appended to the
    admitted set — engine-level, so it survives both an undeclared catalog and a
    live jail's deny-by-omission. A catalog entry for the same path wins."
@@ -931,6 +963,15 @@
                       [(get e "path") d])))
             allowed)
 
+      mach
+      (get jail "mach_services" {})
+
+      keychain?
+      (true? (get mach "keychain"))
+
+      mach-services
+      (into [] (distinct) (concat (when keychain? keychain-mach-services) (get mach "allow" [])))
+
       read-only
       (into [] (comp (filter entry-read-only?) (map #(get % "path"))) allowed)
 
@@ -940,14 +981,15 @@
      (assert-process-jail-config!
        {:disabled? (not (true? (get jail "enabled")))
         :allow-read-write (into [] (comp (remove entry-read-only?) (map #(get % "path"))) allowed)
-        :allow-read read-only
+        :allow-read (into [] (distinct) (concat read-only (when keychain? keychain-read-paths)))
         :allow-write []
         :deny-read []
         :deny-write []
         :deny-exec (resolve-exec-denies (get jail "deny_exec"))
-        :no-search no-search
+        :no-search (into [] (distinct) (concat no-search (when keychain? keychain-read-paths)))
         :inbound-ports (vec (get-in jail ["network" "inbound_ports"]))
         :env-passthrough (vec (get jail "env"))
+        :mach-services mach-services
         :path-descriptions descriptions}))))
 
 (defn- network-allow->runtime
