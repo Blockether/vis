@@ -1184,29 +1184,51 @@
     (throw (ex-info "cat limit must be a positive integer line count."
                     {:type :ext.foundation.editing/invalid-cat-args :limit n}))))
 
-(defn- validate-cat-range!
-  "Reject an invalid `[start end]` window, naming the OFFENDING pair and its
-   exact defect. A caller that mistypes ONE end line (`[5288, 3400]`) otherwise
-   reads a generic rule, cannot tell WHICH of several windows broke it, and
-   retries the same pair."
+(defn- coerce-cat-range
+  "Normalize ONE requested `[start end]` window instead of refusing it: a reversed
+   pair is swapped and a non-positive endpoint clamps to line 1. A caller that
+   mistypes ONE end line (`[5288, 3400]`) among several good windows keeps the
+   whole atomic read instead of losing all of them — and the read is never
+   silent: the coerced pair ships back as the window's `range` beside a `note`
+   saying what was corrected.
+
+   Only a pair carrying no usable line number still throws: non-integer
+   components, or the whole-file sentinel (both ends non-positive), which every
+   caller resolves before a REAL window is built."
   [start end]
-  (let
-    [defect
-     (cond (not (and (integer? start) (integer? end))) "start and end must be integer line numbers"
-           (or (not (pos? (long start))) (not (pos? (long end))))
-           "line numbers are 1-based, so start and end must be positive"
-           (> (long start) (long end))
-           (str "start " (long start) " comes AFTER end " (long end) " (a window must ascend)")
-           :else nil)]
-    (when defect
-      (throw (ex-info (str "cat \"range\"/\"ranges\" window ["
-                           (pr-str start)
-                           ", "
-                           (pr-str end)
-                           "] is invalid: "
-                           defect
-                           " — pass [-1, -1] (any non-positive pair) to read the WHOLE file")
-                      {:type :ext.foundation.editing/invalid-cat-args :start start :end end})))))
+  (letfn [(fail! [defect]
+            (throw (ex-info
+                     (str "cat \"range\"/\"ranges\" window ["
+                          (pr-str start)
+                          ", "
+                          (pr-str end)
+                          "] is invalid: "
+                          defect
+                          " — pass [-1, -1] (any non-positive pair) to read the WHOLE file")
+                     {:type :ext.foundation.editing/invalid-cat-args :start start :end end})))]
+    (when-not (and (integer? start) (integer? end))
+      (fail! "start and end must be integer line numbers"))
+    (when (and (not (pos? (long start))) (not (pos? (long end))))
+      (fail! "both line numbers are non-positive, which is the WHOLE-FILE sentinel, not a window"))
+    (let
+      [s
+       (max 1 (long start))
+
+       e
+       (max 1 (long end))]
+
+      (if (> s e) [e s] [s e]))))
+
+(defn- cat-range-note
+  "One-line report of a window `cat` corrected, so a coerced read is never silent:
+   the caller sees the pair it asked for, the pair actually read, and can re-read
+   when the correction is not the region it meant."
+  [[requested-start requested-end] [start end]]
+  (str "requested window [" requested-start
+       ", " requested-end
+       "] was normalized to [" start
+       ", " end
+       "] (windows are 1-based and must ascend)" " — re-read if that is not the region you meant"))
 
 (defn- cat-range-scalar
   "Coerce a range component to a long. Accepts an int or a numeric string like
@@ -1322,7 +1344,10 @@
                (and (sequential? ranges) (seq ranges) (some cat-whole-file-pair? ranges))
                (and (string? ranges) (some cat-whole-file-pair? (cat-ranges-from-string ranges))))))
 
-(defn- normalize-cat-ranges
+(defn- cat-range-pairs
+  "Every `ranges` entry as the raw `[start end]` long pair the caller REQUESTED —
+   no swap, no clamp — so a reader can coerce each window and still report what it
+   corrected. Throws only on shapes that carry no pair at all."
   [ranges]
   (let
     [flat
@@ -1369,11 +1394,16 @@
       (throw (ex-info "cat \"ranges\" expects at least one range"
                       {:type :ext.foundation.editing/invalid-cat-args :ranges ranges})))
     (mapv (fn [pair]
-            (let [p (normalize-cat-pair pair)]
-              (when-not p (cat-pair-error! pair))
-              (validate-cat-range! (first p) (second p))
-              p))
+            (or (normalize-cat-pair pair) (cat-pair-error! pair)))
           pairs)))
+
+(defn- normalize-cat-ranges
+  "Requested windows as REAL, ascending, 1-based `[start end]` pairs — every entry
+   coerced by `coerce-cat-range`."
+  [ranges]
+  (mapv (fn [[s e]]
+          (coerce-cat-range s e))
+        (cat-range-pairs ranges)))
 
 (defn- hidden-relative-path?
   "True when `relative-path` has a hidden filesystem segment below `root`. This
@@ -1818,21 +1848,24 @@
    channel display / diagnostics."
   [path ranges]
   (let
-    [pairs
-     (normalize-cat-ranges ranges)
+    [requested
+     (cat-range-pairs ranges)
 
      windows
-     (mapv (fn [[start end]]
+     (mapv (fn [[requested-start requested-end]]
              (let
-               [n
-                (inc (- (long end) (long start)))
+               [[start end]
+                (coerce-cat-range requested-start requested-end)
 
                 out
-                (read-file path start n)]
+                (read-file path start (inc (- (long end) (long start))))]
 
-               (assoc (select-keys out [:lines :next-offset :eof? :truncated?])
-                 :range [start end])))
-           pairs)
+               (cond->
+                 (assoc (select-keys out [:lines :next-offset :eof? :truncated?])
+                   :range [start end])
+                 (not= [requested-start requested-end] [start end])
+                 (assoc :note (cat-range-note [requested-start requested-end] [start end])))))
+           requested)
 
      f
      (ensure-existing-file! (safe-path path))]
@@ -4049,6 +4082,9 @@
          (:stale? m)
          (assoc "anchors_stale" true)
 
+         (contains? m :note)
+         (assoc "note" (:note m))
+
          (contains? m :range)
          (assoc "range" (:range m))))]
     ;; TOTAL: `ranges` ships on every read — nil for a single window, a vector of
@@ -4280,21 +4316,24 @@
    (case mode
      ;; (cat path :range start end) — INCLUSIVE start..end (both 1-based).
      :range
-     (do (validate-cat-range! start end)
-         (let
-           [n
-            (inc (- (long end) (long start)))
+     (let
+       [[s e]
+        (coerce-cat-range start end)
 
-            out
-            (read-file path start n)]
+        raw
+        (read-file path s (inc (- (long e) (long s))))
 
-           (tool-success {:op :cat
-                          :path path
-                          :kind :file
-                          :result (cat-result->model out)
-                          :metadata {:next-offset (:next-offset out)
-                                     :truncated? (:truncated? out)
-                                     :range [start end]}})))
+        out
+        (cond-> raw
+          (not= [start end] [s e])
+          (assoc :note (cat-range-note [start end] [s e])))]
+
+       (tool-success
+         {:op :cat
+          :path path
+          :kind :file
+          :result (cat-result->model out)
+          :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :range [s e]}}))
 
      ;; (cat path :anchor from_anchor to_anchor) — INCLUSIVE window between the
      ;; lines anchored from_anchor..to_anchor, addressed by content.
@@ -5195,10 +5234,11 @@
      (cat-whole-file-ranges? ranges)
 
      ;; Coerced by cat's own normalizer so `struct_index` accepts every `ranges`
-     ;; shape `cat` does and REJECTS the same bad ones — a HALF sentinel like
-     ;; `[[-1, 60]]` must not slip through as a real window. Only nil/empty means
-     ;; "no windows"; a non-collection scalar (`3`) is FORWARDED so cat's guidance
-     ;; is thrown instead of a raw `Don't know how to create ISeq from Long`.
+     ;; shape `cat` does and CORRECTS the same sloppy ones — a reversed pair or a
+     ;; HALF sentinel like `[[-1, 60]]` normalizes to `[[1, 60]]` rather than
+     ;; indexing a nonsense window. Only nil/empty means "no windows"; a
+     ;; non-collection scalar (`3`) is FORWARDED so cat's guidance is thrown
+     ;; instead of a raw `Don't know how to create ISeq from Long`.
      windows
      (when (and (some? ranges) (not whole-file?) (not (and (coll? ranges) (empty? ranges))))
        (normalize-cat-ranges ranges))

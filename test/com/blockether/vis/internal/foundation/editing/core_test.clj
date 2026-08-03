@@ -1447,17 +1447,28 @@
              :result)]
 
         (expect (= [[7 "L7"]] (patch/anchor-map->tuples (get out "anchors"))))))
-  (it ":range rejects start > end, non-positive ints, and the wrong kw"
+  (it ":range COERCES a reversed or non-positive window and rejects the wrong kw"
       (let
         [path
          (write-temp! "range/invalid.txt" "a\nb\nc\n")
 
          cat-tool
-         (private-fn "cat-tool")]
+         (private-fn "cat-tool")
 
-        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :range 10 5)))
-        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :range 0 5)))
-        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :range -1 5)))
+         lines
+         (fn [& args]
+           (patch/anchor-map->tuples (get (:result (apply cat-tool path args)) "anchors")))]
+
+        ;; a reversed window is swapped and a non-positive endpoint clamps to 1,
+        ;; so one mistyped line number still reads instead of failing the call
+        (expect (= [[1 "a"] [2 "b"] [3 "c"]] (lines :range 3 1)))
+        (expect (= [[1 "a"] [2 "b"]] (lines :range 0 2)))
+        (expect (= [[1 "a"] [2 "b"]] (lines :range -1 2)))
+        ;; ... and the result says what it actually read
+        (expect (string/includes? (get (:result (cat-tool path :range 3 1)) "note") "[3, 1]"))
+        (expect (nil? (get (:result (cat-tool path :range 1 2)) "note")))
+        ;; the whole-file sentinel is not a window, and the kw must be known
+        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :range -1 -1)))
         (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :not-range 1 5)))))
   (it "(cat path :ranges [[start end] ...]) reads several ranges in one result"
       (let
@@ -1547,11 +1558,14 @@
                       [:result "results"])]
         (expect (= [[2 "L2"]] (patch/anchor-map->tuples (get (first rows) "anchors"))))
         (expect (= whole (second rows))))
-      ;; a real window still narrows, and a HALF sentinel is still an error
+      ;; a real window still narrows, and a HALF sentinel is not the whole-file
+      ;; opt-out: it COERCES to a real 1-based window instead of failing the read
       (expect (= [[2 4]]
                  (mapv #(get % "range")
                        (get (:result (cat-tool path {"ranges" [[2 4]]})) "ranges"))))
-      (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path {"ranges" [[-1 5]]})))))
+      (expect (= [[1 5]]
+                 (mapv #(get % "range")
+                       (get (:result (cat-tool path {"ranges" [[-1 5]]})) "ranges"))))))
   (it
     "cat coerces stringy/flat `ranges` shapes models mis-pass"
     (let
@@ -1627,7 +1641,7 @@
         (doseq [bad [70 true {"start" 1 "end" 70}]]
           (expect (string/includes? (msg {"ranges" bad}) "expects [[start, end], ...]"))
           (expect (not (string/includes? (msg {"ranges" bad}) "nth not supported"))))))
-  (it "cat names the OFFENDING window when a `ranges` pair is reversed or non-positive"
+  (it "cat COERCES a reversed or non-positive `ranges` window and reports the fix"
       (let
         [path
          (write-temp! "range/reversed.txt" "L1\nL2\nL3\n")
@@ -1635,22 +1649,29 @@
          cat-tool
          (private-fn "cat-tool")
 
-         msg
+         wins
          (fn [arg]
-           (try (cat-tool path arg) nil (catch clojure.lang.ExceptionInfo e (.getMessage e))))
+           (get (:result (cat-tool path arg)) "ranges"))
 
-         reversed
-         (msg {"ranges" [[1 2] [5288 3400]]})]
+         ;; The real failure: ONE mistyped end line among several good windows.
+         ;; The call is atomic, so refusing it lost every healthy window too —
+         ;; the reversed pair is swapped, read, and named in that window's note.
+         rows
+         (wins {"ranges" [[1 2] [3 1]]})]
 
-        ;; The real failure: ONE mistyped end line among several good windows.
-        ;; A generic "start <= end" rule cannot say WHICH pair broke, so the
-        ;; message quotes the offending pair and never the healthy sibling.
-        (expect (string/includes? reversed "[5288, 3400]"))
-        (expect (string/includes? reversed "AFTER"))
-        (expect (not (string/includes? reversed "[1, 2]")))
-        ;; a half-sentinel is not the whole-file opt-out: it names the pair too
-        (expect (string/includes? (msg {"ranges" [[0 5]]}) "[0, 5]"))
-        (expect (string/includes? (msg {"ranges" [[0 5]]}) "1-based"))))
+        (expect (= [[1 2] [1 3]] (mapv #(get % "range") rows)))
+        (expect (nil? (get (first rows) "note")))
+        (expect (string/includes? (get (second rows) "note") "[3, 1]"))
+        (expect (string/includes? (get (second rows) "note") "[1, 3]"))
+        ;; the text actually read follows the COERCED window
+        (expect (= [[1 "L1"] [2 "L2"] [3 "L3"]]
+                   (patch/anchor-map->tuples (get (:result (cat-tool path {"ranges" [[3 1]]}))
+                                                  "anchors"))))
+        ;; a non-positive endpoint clamps to line 1 rather than failing
+        (expect (= [[1 2]] (mapv #(get % "range") (wins {"ranges" [[0 2]]}))))
+        (expect (string/includes? (get (first (wins {"ranges" [[0 2]]})) "note") "1-based"))
+        ;; components that are not line numbers at all are still an error
+        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path {"ranges" [[1 :hi]]})))))
   (it
     "path/src/edits tools unwrap the collapsed all-kwargs spec map, never stringify it"
     (let
@@ -1702,7 +1723,7 @@
       ;; `patch(edits=[…])` unwraps to the edits vector — empty is a CLEAN rejection,
       ;; not a map cast error.
       (expect (throws? clojure.lang.ExceptionInfo #(patch-tool {"edits" []})))))
-  (it ":ranges rejects empty or malformed range specs"
+  (it ":ranges rejects empty or malformed specs and coerces a reversed pair"
       (let
         [path
          (write-temp! "range/bad-multi.txt" "a\nb\nc\n")
@@ -1711,8 +1732,10 @@
          (private-fn "cat-tool")]
 
         (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :ranges [])))
-        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :ranges [[2 1]])))
-        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :ranges [1 2 3]))))))
+        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :ranges [1 2 3])))
+        (expect (= [[1 2]]
+                   (mapv #(get % "range")
+                         (get (:result (cat-tool path :ranges [[2 1]])) "ranges")))))))
 
 (defdescribe
   vis-cat-line-passthrough-test
@@ -3939,10 +3962,11 @@
           (let [unsliced (index {"paths" [{"path" f "ranges" [[-1 -1]]}]})]
             (expect (= ["a" "b" "c"] (names unsliced)))
             (expect (nil? (get-in unsliced [:result "results" 0 "ranges"]))))
-          ;; a HALF sentinel is NOT the sentinel: struct_index rejects it exactly
-          ;; like cat instead of indexing a nonsense window
-          (expect (throws? clojure.lang.ExceptionInfo
-                           #(index {"paths" [{"path" f "ranges" [[-1 3]]}]})))
+          ;; a HALF sentinel is NOT the sentinel: it coerces to a real 1-based
+          ;; window exactly like cat instead of indexing a nonsense one
+          (let [half (index {"paths" [{"path" f "ranges" [[-1 3]]}]})]
+            (expect (= ["a" "b" "c"] (names half)))
+            (expect (= [[1 3]] (get-in half [:result "results" 0 "ranges"]))))
           ;; every other cat `ranges` shape coerces here too, echoed normalized
           (let [stringy (index {"paths" [{"path" f "ranges" "2, 2"}]})]
             (expect (= ["b"] (names stringy)))
