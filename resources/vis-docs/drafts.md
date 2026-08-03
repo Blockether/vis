@@ -177,7 +177,34 @@ Once entered, file tools, searches, shell commands, and the agent's cwd resolve
 to the draft root. Relative paths cannot silently fall back to trunk.
 
 Configured `workspace.filesystem` catalog entries remain available after `/reload`.
-They are not draft-specific and drafts only isolate the active workspace root.
+By default only the active workspace root is forked, so those extra roots are
+**shared**: the draft reads and writes the real directory. Give a root a `draft`
+policy in `vis.yml` when that is not what you want:
+
+| `draft` | Inside a draft |
+| --- | --- |
+| `shared` (default) | The draft works on the real root directly. |
+| `copy-only` | The root is forked per draft; `/draft apply` never lands the copy back. |
+| `copy-and-apply` | The root is forked per draft, and apply lands the copy into the real root. |
+| `not-allowed` | The root is withheld from a drafted session on read and write. |
+
+```yaml
+# vis.yml
+workspace:
+  filesystem:
+    - id: sibling
+      path: ~/sibling-repository
+      draft: copy-and-apply
+    - id: production-notes
+      path: ~/production-notes
+      draft: not-allowed
+```
+
+The policy is enforced by Vis's own path guard, so it holds whether or not the
+process jail is enabled, and a copy policy whose fork fails withholds the root
+instead of quietly writing through to the real tree. `/draft abandon` releases
+the extra clones with the draft. The session's own project root is always forked
+and always landed by apply; `draft` only governs the *other* catalog roots.
 
 Use bare `/draft` at any time to check whether the session is on trunk or in a
 draft.

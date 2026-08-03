@@ -767,20 +767,23 @@
             :else (recur (inc i))))))
 
 (defn- fork-ignored-paths
-  "Repo-relative paths trunk's OWN repository ignores and does not track — exactly
-   what a gitignore-aware fork leaves out of the clone. The backend consults the
-   source repository's ignore rules and keeps every index-recorded path, so a
-   force-added ignored file IS cloned and is therefore not in this set. Whole
-   ignored directories come back collapsed (`dist/`, `apps/web/ios/`), so the walk
-   prunes the subtree on a hit instead of listing thousands of files.
+  "Repo-relative paths the repository at `dir` ignores and does not track —
+   exactly what a gitignore-aware fork leaves out of a clone of it. The backend
+   consults the source repository's ignore rules and keeps every index-recorded
+   path, so a force-added ignored file IS cloned and is therefore not in this
+   set. Whole ignored directories come back collapsed (`dist/`,
+   `apps/web/ios/`), so a walk prunes the subtree on a hit instead of listing
+   thousands of files.
 
-   These paths are absent from the clone BY CONSTRUCTION, never by the agent.
-   Without the guard, `apply!` reads every ignored tree the fork skipped as a
-   deletion and erases it from the user's real repo — local env files, generated
-   native projects, build output. Not a git repo (or git unavailable) → `#{}`,
-   which leaves the pre-existing behavior untouched."
-  [trunk]
-  (let [dir (io/file trunk)]
+   Read against TRUNK these paths are absent from the clone BY CONSTRUCTION,
+   never by the agent: without the guard, `apply!` reads every ignored tree the
+   fork skipped as a deletion and erases it from the user's real repo — local
+   env files, generated native projects, build output. Read against the CLONE
+   they are the draft's own generated output, which must not land either. Not a
+   git repo (or git unavailable) → `#{}`, which leaves the pre-existing behavior
+   untouched."
+  [dir]
+  (let [dir (io/file dir)]
     (if-not (.isDirectory (io/file dir ".git"))
       #{}
       (into #{}
@@ -795,11 +798,28 @@
    (`clonefile` preserves source mtimes, so untouched files stay older).
    Prunes VCS/build/cache dirs (`prune-dir?`) — landing `.git/` would corrupt
    trunk's repo, and tool caches would flood the result. Returns a vec
-   of strings."
+   of strings.
+
+   Whatever the CLONE's own repository ignores and does not track
+   (`fork-ignored-paths`) is pruned on the same principle. A gitignore-aware
+   fork never copied those trees, so anything ignored inside the clone was
+   GENERATED IN THE DRAFT: a rebuilt `dist`, a regenerated native project, a
+   tool-written `.env`. Landing it would dump the draft's build output into the
+   user's real repo — this repository alone regenerates over ten thousand such
+   files — and flood `changed_files` and every sub_loop result built from it. A
+   force-added ignored file is TRACKED, so it is not in that set and still
+   lands."
   [clone fork-ms]
   (let
     [root
      (.toPath (io/file clone))
+
+     ignored
+     (fork-ignored-paths clone)
+
+     skip?
+     (fn [^Path rel]
+       (or (prune-dir? rel) (contains? ignored (paths/unixify rel))))
 
      acc
      (java.util.ArrayList.)]
@@ -807,12 +827,12 @@
     (Files/walkFileTree root
                         (proxy [SimpleFileVisitor] []
                           (preVisitDirectory [dir ^BasicFileAttributes _a]
-                            (if (prune-dir? (.relativize root ^Path dir))
+                            (if (skip? (.relativize root ^Path dir))
                               FileVisitResult/SKIP_SUBTREE
                               FileVisitResult/CONTINUE))
                           (visitFile [file ^BasicFileAttributes attrs]
                             (let [rel (.relativize root ^Path file)]
-                              (when (and (not (prune-dir? rel))
+                              (when (and (not (skip? rel))
                                          (> (.toMillis (.lastModifiedTime attrs)) (long fork-ms)))
                                 ;; Repo-relative DISPLAY paths are `/`-separated on every OS.
                                 (.add acc (paths/unixify rel))))

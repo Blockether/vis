@@ -17,6 +17,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   repository. Trunk paths the backend cannot have cloned are now excluded from the
   deletion diff, and `resources/vis-docs/drafts.md` documents what a fork copies.
 
+- fix(drafts): a draft's own generated output is no longer reported as an agent
+  change. `changed-paths` now prunes whatever the CLONE's repository ignores and
+  does not track: a gitignore-aware fork never copies those trees, so an ignored
+  file inside a draft was built there — a regenerated native project alone pushed
+  one session to 8,426 changed files, all of which `/draft apply` would have
+  dumped into the real repository. Force-added ignored files stay tracked and
+  still land.
+
+### Documentation
+
+- docs: document the per-root `draft` policy (`shared`, `copy-only`,
+  `copy-and-apply`, `not-allowed`) in `resources/vis-docs/configuration.md`,
+  `resources/vis-docs/sandbox.md`, and `resources/vis-docs/drafts.md`, replacing
+  the stale claim that filesystem roots are not draft-specific.
+
 ## [v0.1.25] - 2026-08-03
 
 ### Changed

@@ -176,9 +176,17 @@ by id.
 Each catalog entry has an `id`, a `path` (absolute `/…` or home-relative `~`/`~/…`
 — a bare-relative path is rejected when the config is read), an optional
 `description` (shown in the session access view), an `access` of `read-write`
-(default) or `read-only`, and `search` (default `true`; `search: false` keeps the
-root out of the default `grep` sweep while explicit paths still reach
-it).
+(default) or `read-only`, a `search` flag (default `true`; `search: false` keeps the
+root out of the default `grep` sweep while explicit paths still reach it), and a
+`draft` policy (default `shared`).
+
+`draft` decides what an isolated draft may do with the root: `shared` writes
+through to the real root, `copy-only` forks a private copy that `/draft apply`
+never lands back, `copy-and-apply` lands that copy on apply, and `not-allowed`
+withholds the root from a drafted session on read and write. This check is
+enforced by the engine's own path guard, so it holds with `jail.enabled: false`
+as well; a copy policy whose fork fails withholds the root rather than writing
+through. See [Drafts](drafts.md).
 
 `jail.filesystem.allow` then lists the ids that enter the OS jail
 (deny-by-omission — a catalog root NOT listed is not confined-granted); RW vs
@@ -190,6 +198,7 @@ workspace:
     - id: shared
       path: ~/shared-repository
       description: shared code the agent may edit
+      draft: copy-and-apply    # forked per draft, landed by /draft apply
     - id: reference
       path: ~/reference-data
       access: read-only

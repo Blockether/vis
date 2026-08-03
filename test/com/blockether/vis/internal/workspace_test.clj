@@ -159,6 +159,27 @@
                (spit (io/file dir "apps" "web" "src" "app.ts") "edit\n")
                (expect (= #{"real.txt" "apps/web/src/app.ts" "packages/p/.clj-kondo/config.edn"}
                           (set (ws/changed-paths dir fork-ms)))))
+             (finally (delete-tree! dir)))))
+  (it "never reports what the clone's OWN repository ignores as an agent change"
+      ;; Regression: a gitignore-aware fork never copies an ignored tree, so every
+      ;; ignored file INSIDE a draft was generated there — a rebuilt dist, a
+      ;; regenerated native project. Reporting them made `apply!` dump thousands
+      ;; of build artifacts into the user's real repo.
+      (let [dir (temp-dir "vis-changed-ignored")]
+        (try (let [fork-ms (do (Thread/sleep 8) (System/currentTimeMillis))]
+               (git! (io/file dir) "init" "-q")
+               (Thread/sleep 8)
+               (spit (io/file dir ".gitignore") "dist/\nlocal.env\n")
+               (.mkdirs (io/file dir "dist"))
+               (spit (io/file dir "dist" "bundle.js") "GENERATED IN THE DRAFT\n")
+               (spit (io/file dir "local.env") "TOKEN=1\n")
+               (spit (io/file dir "src.txt") "the agent's real edit\n")
+               ;; A force-added ignored file is TRACKED, so it still lands.
+               (spit (io/file dir "pinned.env") "PINNED=1\n")
+               (spit (io/file dir ".gitignore") "dist/\nlocal.env\n*.env\n")
+               (git! (io/file dir) "add" "-f" "pinned.env")
+               (expect (= #{".gitignore" "src.txt" "pinned.env"}
+                          (set (ws/changed-paths dir fork-ms)))))
              (finally (delete-tree! dir))))))
 
 (defdescribe

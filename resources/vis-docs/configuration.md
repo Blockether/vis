@@ -281,8 +281,14 @@ egress proxy. Shell access has a separate `toggles.shell` switch. Unsupported ho
 currently have no OS boundary and a requested `jail.enabled: true` fails loud.
 
 Filesystem roots are declared once in the `workspace.filesystem` catalog (`id`,
-`path`, optional `description`, `access` = `read-write`/`read-only`, `search`),
-and `jail.filesystem.allow` lists the ids that enter the jail (deny-by-omission).
+`path`, optional `description`, `access` = `read-write`/`read-only`, `search`,
+`draft`), and `jail.filesystem.allow` lists the ids that enter the jail
+(deny-by-omission). `draft` is that root's isolation policy for a drafted
+session: `shared` (default) writes through to the real root, `copy-only` forks a
+private copy the draft never lands back, `copy-and-apply` lands that private copy
+on `/draft apply`, and `not-allowed` withholds the root from a drafted session on
+read and write. Draft isolation is independent of the jail and applies with
+`jail.enabled: false` too — see [Drafts](drafts.md).
 Vis's own session folder `~/.vis` is granted implicitly (read/write, `search: false`)
 whatever the catalog and the allow list say; declare it to override that.
 
@@ -292,6 +298,7 @@ workspace:
   filesystem:
     - id: sibling
       path: ~/sibling-repository
+      draft: copy-and-apply      # forked per draft, landed by /draft apply
     - id: reference
       path: ~/shared-reference
       access: read-only
