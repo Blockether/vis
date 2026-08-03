@@ -1376,9 +1376,10 @@ def ask_key():
     'Ask for deploy details.'
     answer = vis.ask(
         'Deploy',
-        [{'id': 'env', 'type': 'select', 'options': ['staging', 'prod'], 'is_required': True},
-         {'id': 'token', 'type': 'password'},
-         {'id': 'dry', 'type': 'checkbox', 'default': True}],
+        [{'name': 'env', 'label': 'Target', 'description': 'Where this deploy lands.',
+          'type': 'select', 'options': ['staging', 'prod'], 'is_required': True},
+         {'name': 'token', 'label': 'Deploy token', 'type': 'password'},
+         {'name': 'dry', 'type': 'checkbox', 'default': True}],
         description='Pick a target',
         timeout_ms=20000,
     )
@@ -1392,39 +1393,62 @@ def ask_key():
 
 def ask_cancelled():
     'Ask for confirmation.'
-    answer = vis.ask('Confirm', [{'id': 'yes', 'type': 'checkbox'}], timeout_ms=20000)
+    answer = vis.ask('Confirm', [{'name': 'yes', 'type': 'checkbox'}], timeout_ms=20000)
     return {'ok': bool(answer), 'reason': answer.reason, 'values': answer.values}
 
+def ask_camel_case():
+    'Ask with a camelCase field key.'
+    try:
+        vis.ask('Typo', [{'name': 'env', 'isRequired': True}], timeout_ms=5000)
+    except BaseException as e:
+        return {'raised': True, 'message': str(e)}
+    return {'raised': False, 'message': ''}
+
 vis.extension(name='asker', description='asker', alias='a',
-              symbols=[vis.symbol(ask_key), vis.symbol(ask_cancelled)])
+              symbols=[vis.symbol(ask_key), vis.symbol(ask_cancelled),
+                       vis.symbol(ask_camel_case)])
 ")
 
 (defdescribe
   python-human-input-test
-  (it "vis.ask pauses the extension, then returns typed values with the password kept opaque"
-      (with-loaded {"asker.py" asker-py}
-                   (fn [_ _]
-                     (let
-                       [ask-key
-                        (symbol-fn (registered "asker") 'ask_key)
+  (it
+    "vis.ask pauses the extension, then returns typed values with the password kept opaque"
+    (with-loaded
+      {"asker.py" asker-py}
+      (fn [_ _]
+        (let
+          [ask-key
+           (symbol-fn (registered "asker") 'ask_key)
 
-                        answered
-                        (answer-pending! "Deploy"
-                                         #(human-input/submit! % {"env" "prod" "token" "hunter2"}))
+           drawn
+           (atom nil)
 
-                        result
-                        (:result (ask-key))]
+           answered
+           (answer-pending! "Deploy"
+                            (fn [id]
+                              (reset! drawn (human-input/pending-request id))
+                              (human-input/submit! id {"env" "prod" "token" "hunter2"})))
 
-                       (expect (= {:is-accepted true} @answered))
-                       (expect (= {"ok" true
-                                   "reason" "submitted"
-                                   "env" "prod"
-                                   "dry" true
-                                   "is_handle" true
-                                   "token" "hunter2"
-                                   "forgotten" true}
-                                  result))
-                       (expect (empty? (human-input/pending-requests)))))))
+           result
+           (:result (ask-key))]
+
+          (expect (= {:is-accepted true} @answered))
+          ;; The snake_case string spec a Python extension writes is
+          ;; exactly what the dialog draws — name, label, description.
+          (let [[env] (:fields @drawn)]
+            (expect (= "env" (:name env)))
+            (expect (= "Target" (:label env)))
+            (expect (= "Where this deploy lands." (:description env)))
+            (expect (true? (:is-required env))))
+          (expect (= {"ok" true
+                      "reason" "submitted"
+                      "env" "prod"
+                      "dry" true
+                      "is_handle" true
+                      "token" "hunter2"
+                      "forgotten" true}
+                     result))
+          (expect (empty? (human-input/pending-requests)))))))
   (it "a cancelled request returns a falsey answer instead of raising"
       (with-loaded {"asker.py" asker-py}
                    (fn [_ _]
@@ -1439,4 +1463,14 @@ vis.extension(name='asker', description='asker', alias='a',
                         (:result (ask-cancelled))]
 
                        (expect (true? @answered))
-                       (expect (= {"ok" false "reason" "dismissed" "values" {}} result)))))))
+                       (expect (= {"ok" false "reason" "dismissed" "values" {}} result))))))
+  (it "refuses a camelCase field key instead of leaving the field optional"
+      ;; A key the engine did not recognise used to be dropped in silence, so
+      ;; `isRequired` opened a dialog whose mandatory field was optional. The
+      ;; request must never open at all.
+      (with-loaded {"asker.py" asker-py}
+                   (fn [_ _]
+                     (let [result (:result ((symbol-fn (registered "asker") 'ask_camel_case)))]
+                       (expect (true? (get result "raised")))
+                       (expect (some? (re-find #"is_required" (str (get result "message")))))
+                       (expect (empty? (human-input/pending-requests))))))))

@@ -295,10 +295,10 @@ active, so the same call works in the TUI, the web UI, or the companion app.
 
 ```python
 answer = vis.ask("Deploy", [
-    {"id": "env", "type": "select", "options": ["staging", "prod"],
-     "is_required": True},
-    {"id": "notes", "type": "multiline", "label": "Release notes"},
-    {"id": "token", "type": "password", "label": "Deploy token"},
+    {"name": "env", "label": "Target", "description": "Where this deploy lands.",
+     "type": "select", "options": ["staging", "prod"], "is_required": True},
+    {"name": "notes", "type": "multiline", "label": "Release notes"},
+    {"name": "token", "type": "password", "label": "Deploy token"},
 ], description="Pick a target", timeout_ms=120000)
 
 if answer:                       # falsey when cancelled or timed out
@@ -307,10 +307,21 @@ else:
     vis.log("info", "deploy skipped: " + answer.reason)
 ```
 
+Every key is a **snake_case string** — `is_required`, `max_length`, `timeout_ms`.
+A camelCase or kebab-case key (`isRequired`, `is-required`) is **refused** with an
+error naming the right spelling; it is never accepted and quietly ignored, so a
+mandatory field can never turn optional behind your back. (Clojure callers write
+the same names as kebab keywords: `:is-required`.)
+
+Three names, three jobs: `name` keys the answer in `answer.values`, `label` is
+what the dialog shows above the input, and `description` is the italic line under
+that label. `id` and `help` are the legacy spellings of `name` and `description`
+and still work.
+
 Field `type` is one of `plaintext`, `password`, `multiline`, `select`,
-`multiselect`, `checkbox`. A field may also carry `label`, `description`,
-`placeholder`, `default`, `is_required`, and — for the two `select` types —
-`options` (strings, or `{"value": ..., "label": ...}` maps). Request options:
+`multiselect`, `checkbox`. A field may also carry `placeholder`, `default`,
+`is_required`, `max_length`, and — for the two `select` types — `options`
+(strings, or `{"value": ..., "label": ...}` maps). Request options:
 `description`, `submit_label`, `cancel_label`, `is_cancellable`, and
 `timeout_ms` (default 5 minutes, capped at 1 hour).
 

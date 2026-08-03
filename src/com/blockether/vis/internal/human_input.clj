@@ -144,8 +144,70 @@
   (throw (ex-info (str "Invalid human-input request: " message)
                   {:type :vis/human-input-invalid-request :reason message})))
 
+(def ^:private field-keys
+  "Every key a field spec may carry, in its canonical snake_case spelling.
+   `id` and `help` are the legacy names of `name` and `description`."
+  #{"name" "id" "type" "label" "description" "help" "is_required" "placeholder" "options"
+    "max_length" "default"})
+
+(def ^:private option-keys "Every key one `:options` entry may carry." #{"value" "label"})
+
+(def ^:private request-keys
+  "Every key a request spec may carry, in its canonical snake_case spelling."
+  #{"id" "title" "description" "source" "fields" "submit_label" "cancel_label" "is_cancellable"
+    "timeout_ms" "session_id" "channel_id" "channel_ids"})
+
+(defn- snake-key
+  "`k` as the canonical snake_case name it is reaching for: `:is-required`,
+   `\"is-required\"` and `\"isRequired\"` all canonicalize to `\"is_required\"`."
+  [k]
+  (-> (if (keyword? k) (subs (str k) 1) (str k))
+      (str/replace #"([a-z0-9])([A-Z])" "$1_$2")
+      (str/replace "-" "_")
+      str/lower-case))
+
+(defn- kebab-key [canonical] (str/replace canonical "_" "-"))
+
+(defn- accepted-spelling?
+  "Two spellings, one meaning: the snake_case STRING a Python/JSON spec writes,
+   or the kebab-case KEYWORD a Clojure caller writes. Nothing else."
+  [k canonical]
+  (cond (string? k) (= k canonical)
+        (keyword? k) (and (nil? (namespace k)) (= (name k) (kebab-key canonical)))
+        :else false))
+
+(defn- check-keys!
+  "Refuse a spec key that is not in `allowed`, or one spelled any way other than
+   the snake_case string / kebab-case keyword pair.
+
+   Silence was the bug: `{'isRequired': True}` from a Python extension parsed as
+   clean JSON, matched nothing, and left a mandatory field optional on every
+   surface — the human simply skipped it. A misspelled key now names its own
+   fix instead of disappearing."
+  [what allowed m fail!]
+  (doseq
+    [k
+     (keys m)
+
+     :let [canonical
+           (snake-key k)]]
+
+    (cond (not (contains? allowed canonical)) (fail! (str "unknown " what
+                                                          " key " (pr-str k)
+                                                          " — expected one of "
+                                                          (str/join ", " (sort allowed))))
+          (not (accepted-spelling? k canonical)) (fail! (str what
+                                                             " key "
+                                                             (pr-str k)
+                                                             " is misspelled — write \""
+                                                             canonical
+                                                             "\" (Python/JSON) or :"
+                                                             (kebab-key canonical)
+                                                             " (Clojure)")))))
+
 (defn- normalize-option
   [field-id option]
+  (when (map? option) (check-keys! "option" option-keys option #(invalid-field! field-id %)))
   (let
     [[value label]
      (if (map? option) [(pick option "value" :value) (pick option "label" :label)] [option option])
@@ -198,6 +260,7 @@
        dialog (`:help` is its legacy alias)."
   [field]
   (when-not (map? field) (invalid-field! nil "field must be a map"))
+  (check-keys! "field" field-keys field #(invalid-field! nil %))
   (let
     [field-id
      (trimmed (pick field "name" :name "id" :id))
@@ -315,6 +378,7 @@
    `:vis/human-input-invalid-field`) on a bad spec."
   [request]
   (when-not (map? request) (invalid-request! "request must be a map"))
+  (check-keys! "request" request-keys request invalid-request!)
   (let
     [title
      (trimmed (pick request "title" :title))

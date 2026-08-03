@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.human-input-test
-  (:require [clojure.string :as str]
+  (:require [charred.api :as json]
+            [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as ce]
             [com.blockether.vis.internal.human-input :as hi]
             [lazytest.core :refer [defdescribe expect it throws?]]))
@@ -183,6 +184,144 @@
       (expect (false? (:is-cancellable (hi/normalize-request {"title" "t"
                                                               "fields" [{"id" "a"}]
                                                               "is_cancellable" false}))))))
+
+(defn- refusal
+  "The message a spec the engine must refuse throws, or nil when it wrongly
+   accepted the spec."
+  [thunk]
+  (try (thunk) nil (catch clojure.lang.ExceptionInfo e (ex-message e))))
+
+(defn- await-pending-id
+  "Block until a request titled `title` is pending, then return its id."
+  [title]
+  (loop [attempts 0]
+    (if-let [request (first (filter #(= title (:title %)) (hi/pending-requests)))]
+      (:id request)
+      (if (< attempts 400)
+        (do (Thread/sleep 10) (recur (inc attempts)))
+        (throw (ex-info "no pending human-input request" {:title title}))))))
+
+(defdescribe
+  spec-key-spelling-test
+  (it
+    "takes the snake_case string spelling a Python spec writes"
+    (let
+      [request
+       (hi/normalize-request {"title" "Deploy"
+                              "description" "Pick a target"
+                              "submit_label" "Go"
+                              "cancel_label" "Stop"
+                              "is_cancellable" false
+                              "timeout_ms" 20000
+                              "session_id" "sid-1"
+                              "source" "asker"
+                              "fields"
+                              [{"name" "env"
+                                "label" "Target"
+                                "description" "Where it lands."
+                                "type" "select"
+                                "options" [{"value" "prod" "label" "Production"}]
+                                "is_required" true}
+                               {"name" "note" "placeholder" "why" "max_length" 5 "default" "ok"}]})
+
+       [env note]
+       (:fields request)]
+
+      (expect (= "Go" (:submit-label request)))
+      (expect (= "Stop" (:cancel-label request)))
+      (expect (false? (:is-cancellable request)))
+      (expect (= 20000 (:timeout-ms request)))
+      (expect (= "sid-1" (:session-id request)))
+      (expect (= "asker" (:source request)))
+      (expect (= {:id "env" :name "env" :label "Target" :description "Where it lands."}
+                 (select-keys env [:id :name :label :description])))
+      (expect (true? (:is-required env)))
+      (expect (= [{:value "prod" :label "Production"}] (:options env)))
+      (expect (= "why" (:placeholder note)))
+      (expect (= 5 (:max-length note)))
+      (expect (= "ok" (:default note)))))
+  (it "refuses a camelCase key instead of quietly ignoring it"
+      ;; This is the whole point. `{'isRequired': True}` from Python parsed as
+      ;; clean JSON, matched no key at all, and left a MANDATORY field optional
+      ;; on every surface — the human just skipped it and the run went on.
+      (let [message (refusal #(normalized-fields {"name" "env" "isRequired" true}))]
+        (expect (some? message))
+        (expect (str/includes? message "is_required")))
+      (expect (some? (refusal #(normalized-fields {"name" "env" "maxLength" 5}))))
+      (expect (some? (refusal #(hi/normalize-request
+                                 {"title" "t" "fields" [{"name" "a"}] "timeoutMs" 10})))))
+  (it "refuses a kebab-case STRING and a snake_case KEYWORD"
+      ;; Each half of the contract, spelled the other half's way: strings are
+      ;; snake_case (Python/JSON), keywords are kebab-case (Clojure).
+      (expect (some? (refusal #(normalized-fields {"name" "env" "is-required" true}))))
+      (expect (some? (refusal #(normalized-fields {:name "env" :is_required true}))))
+      (expect (some? (refusal #(hi/normalize-request
+                                 {:title "t" :fields [{:name "a"}] :timeout_ms 10})))))
+  (it "refuses an unknown key, in a field, a request or an option"
+      (let [message (refusal #(normalized-fields {:name "env" :requried true}))]
+        (expect (some? message))
+        (expect (str/includes? message "unknown field key")))
+      (expect (some? (refusal #(hi/normalize-request
+                                 {:title "t" :fields [{:name "a"}] :retries 3}))))
+      (expect (some? (refusal #(normalized-fields {:name "env"
+                                                   :type "select"
+                                                   :options [{"value" "a" "Label" "A"}]})))))
+  (it "still takes both legacy spellings"
+      (let [[field] (normalized-fields {"id" "env" "help" "legacy prose"})]
+        (expect (= "env" (:name field)))
+        (expect (= "legacy prose" (:description field))))))
+
+(defdescribe
+  python-json-seam-test
+  (it
+    "takes snake_case strings in and hands snake_case strings back"
+    (let
+      [title
+       (str "Deploy " (random-uuid))
+
+       answer-json
+       (future (hi/request-json! (json/write-json-str {"title" title
+                                                       "description" "Pick a target"
+                                                       ;; Channel routing is host-side — a guest cannot aim the
+                                                       ;; dialog anywhere, so this key is dropped, not honoured.
+                                                       "channel_ids" ["nowhere"]
+                                                       "timeout_ms" 20000
+                                                       "fields" [{"name" "env"
+                                                                  "label" "Target"
+                                                                  "description" "Where it lands."
+                                                                  "type" "select"
+                                                                  "options" ["staging" "prod"]
+                                                                  "is_required" true}
+                                                                 {"name" "note"
+                                                                  "type" "plaintext"}]})))
+
+       request-id
+       (await-pending-id title)
+
+       [env]
+       (:fields (hi/pending-request request-id))]
+
+      ;; The dialog sees exactly what the Python spec asked for.
+      (expect (= "env" (:name env)))
+      (expect (= "Target" (:label env)))
+      (expect (= "Where it lands." (:description env)))
+      (expect (true? (:is-required env)))
+      ;; Required is enforced for a JSON caller too, not just a dialog.
+      (expect (false? (:is-accepted (hi/submit! request-id {"note" "hi"}))))
+      (expect (true? (:is-accepted (hi/submit! request-id {"env" "prod" "note" "hi"}))))
+      (let [answer (json/read-json @answer-json :key-fn identity)]
+        (expect (= #{"is_submitted" "reason" "request_id" "values"} (set (keys answer))))
+        (expect (true? (get answer "is_submitted")))
+        (expect (= "submitted" (get answer "reason")))
+        (expect (= request-id (get answer "request_id")))
+        (expect (= {"env" "prod" "note" "hi"} (get answer "values"))))))
+  (it "reports a misspelled key from the JSON seam instead of dropping it"
+      (let
+        [message (refusal #(hi/request-json! (json/write-json-str
+                                               {"title" "t"
+                                                "fields" [{"name" "env" "isRequired" true}]})))]
+        (expect (some? message))
+        (expect (str/includes? message "is_required")))))
 
 (defdescribe
   coerce-values-test

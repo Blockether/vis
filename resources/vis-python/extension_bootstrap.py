@@ -231,7 +231,7 @@ def shell(opts):
 
 class Answer:
     # The outcome of `vis.ask(...)`. Truthy only when the human submitted.
-    # `values` is keyed by field id and always carries every field; a
+    # `values` is keyed by each field's `name` and always carries every field; a
     # `password` field holds an opaque `vis-secret:` handle, never plaintext.
     def __init__(self, raw):
         raw = raw or {}
@@ -243,19 +243,19 @@ class Answer:
     def __bool__(self):
         return self.is_submitted
 
-    def __contains__(self, field_id):
-        return str(field_id) in self.values
+    def __contains__(self, name):
+        return str(name) in self.values
 
-    def __getitem__(self, field_id):
-        return self.values[str(field_id)]
+    def __getitem__(self, name):
+        return self.values[str(name)]
 
-    def get(self, field_id, default=None):
-        v = self.values.get(str(field_id))
+    def get(self, name, default=None):
+        v = self.values.get(str(name))
         return default if v is None else v
 
-    def reveal(self, field_id):
+    def reveal(self, name):
         # Plaintext behind a password field's handle — trusted side only.
-        return reveal(self.values.get(str(field_id)))
+        return reveal(self.values.get(str(name)))
 
     def __repr__(self):
         return 'Answer(is_submitted=%r, reason=%r, fields=%r)' % (
@@ -268,13 +268,21 @@ def ask(title, fields, **options):
     # Pause and ask the human for typed values, then BLOCK until they answer.
     #
     #   answer = vis.ask('Deploy', [
-    #       {'id': 'env', 'type': 'select', 'options': ['staging', 'prod'],
-    #        'is_required': True},
-    #       {'id': 'token', 'type': 'password', 'label': 'Deploy token'},
+    #       {'name': 'env', 'label': 'Target', 'type': 'select',
+    #        'description': 'Where this deploy lands.',
+    #        'options': ['staging', 'prod'], 'is_required': True},
+    #       {'name': 'token', 'label': 'Deploy token', 'type': 'password'},
     #   ], description='Pick a target', timeout_ms=120000)
     #   if answer:
     #       deploy(answer['env'], answer.reveal('token'))
     #
+    # EVERY key is a snake_case STRING: 'is_required', 'max_length',
+    # 'timeout_ms'. A camelCase or kebab-case key is REFUSED with an error that
+    # names the right spelling — it is never accepted and quietly ignored.
+    #
+    # Field keys: name (keys the answer in `values`), label (shown above the
+    # input), description (the italic line under that label), type, default,
+    # is_required, placeholder, options, max_length.
     # Field types: plaintext, password, multiline, select, multiselect,
     # checkbox. Options: description, submit_label, cancel_label,
     # is_cancellable, timeout_ms (default 5 min, capped at 1 hour).
@@ -283,9 +291,14 @@ def ask(title, fields, **options):
     import json
     if not isinstance(fields, (list, tuple)) or not fields:
         raise TypeError('ask needs a non-empty list of field specs')
-    request = dict(options)
+    specs = []
+    for f in fields:
+        if not isinstance(f, dict):
+            raise TypeError('each field spec is a dict of snake_case string keys')
+        specs.append(dict((str(k), v) for k, v in f.items()))
+    request = dict((str(k), v) for k, v in options.items())
     request['title'] = str(title)
-    request['fields'] = [dict(f) for f in fields]
+    request['fields'] = specs
     return Answer(json.loads(_host['request_input'](json.dumps(request))))
 
 def reveal(handle):
