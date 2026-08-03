@@ -4243,3 +4243,30 @@
       (let [locals (get-in @state/app-db [:tab-locals :tab-1])]
         (expect (= [] (vec (:pending-sends locals))))
         (expect (= "background words" (input/input->text (:input locals)))))))
+
+(defdescribe human-input-dialog-test
+             (it "queues a second request behind the open one and reopens it on close"
+                 (reset! state/app-db {:render-version 0})
+                 (state/dispatch [:human-input-open {:request {:id "r1"}}])
+                 (expect (= {:request {:id "r1"}} (:human-input @state/app-db)))
+                 ;; A second engine request must not steal the dialog mid-answer.
+                 (state/dispatch [:human-input-open {:request {:id "r2"}}])
+                 (expect (= {:request {:id "r1"}} (:human-input @state/app-db)))
+                 (expect (= [{:request {:id "r2"}}] (:human-input-queue @state/app-db)))
+                 (state/dispatch [:human-input-close "r1"])
+                 (expect (= {:request {:id "r2"}} (:human-input @state/app-db)))
+                 (expect (= [] (:human-input-queue @state/app-db))))
+             (it "drops a QUEUED request the engine closed before it was ever shown"
+                 (reset! state/app-db {:render-version 0})
+                 (state/dispatch [:human-input-open {:request {:id "r1"}}])
+                 (state/dispatch [:human-input-open {:request {:id "r2"}}])
+                 (state/dispatch [:human-input-close "r2"])
+                 (expect (= {:request {:id "r1"}} (:human-input @state/app-db)))
+                 (expect (= [] (:human-input-queue @state/app-db))))
+             (it "stores each edited form and clears the dialog on an unaddressed close"
+                 (reset! state/app-db {:render-version 0})
+                 (state/dispatch [:human-input-open {:request {:id "r1"} :focus 0}])
+                 (state/dispatch [:human-input-form {:request {:id "r1"} :focus 2}])
+                 (expect (= 2 (get-in @state/app-db [:human-input :focus])))
+                 (state/dispatch [:human-input-close nil])
+                 (expect (nil? (:human-input @state/app-db)))))
