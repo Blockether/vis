@@ -6965,8 +6965,9 @@
 
 (defn- auth-refreshable-error?
   "True when exception `e` is a provider auth rejection (401/403 or an
-   auth-shaped message) AND the failing provider exposes a force-refresh
-   hook we can use to recover."
+   auth-shaped message) AND the failing provider can still produce a NEW
+   credential: a registered force-refresh hook, or an `api_key_command` helper
+   that can simply be asked again."
   [^Throwable e resolved-model]
   (let
     [d
@@ -6987,12 +6988,21 @@
                       ;; an expired OAuth token deserves its refresh before the
                       ;; provider is cooled down.
                       (perr/auth-exhausted-attempts? e))
-                  (some-> (registry/provider-by-id pid)
-                          :provider/refresh-token-fn)))))
+                  (or (some-> (registry/provider-by-id pid)
+                              :provider/refresh-token-fn)
+                      ;; A short-lived SSO token minted by `api_key_command` is
+                      ;; the same recoverable rejection: re-run the helper.
+                      (config/command-backed? pid))))))
 
 (defn- hydrate-router-credentials
-  "Return an attempt-local copy of `router` with every registry-backed provider's
-   current credential fields resolved immediately before request dispatch.
+  "Return an attempt-local copy of `router` with every provider's current
+   credential fields resolved immediately before request dispatch.
+
+   Two credential sources are hydrated here: a registry-backed
+   `:provider/get-token-fn` (OAuth and friends), and a command-backed
+   `api_key_command`, whose token is re-read from the credential cache so an
+   `invalidate-credential-command!` on a 401 actually reaches the wire instead of
+   waiting for the next router build.
 
    Router health, budget and retry state are preserved by sharing the original
    map and replacing only `:providers`. A provider token lookup failure is
@@ -7027,7 +7037,14 @@
                                             id
                                             "; retaining the previous request snapshot"))
                              provider-entry))
-                      provider-entry))
+                      ;; Command-backed: the cache serves the same token in the
+                      ;; steady state (no fork per request) and re-execs the
+                      ;; helper exactly once after a 401 invalidated it. A helper
+                      ;; that is failing right now yields nil and keeps the
+                      ;; snapshot, so the provider error stays authoritative.
+                      (if-let [token (config/command-token id)]
+                        (assoc provider-entry :api-key token)
+                        provider-entry)))
                   provider-entries))))
 
 (defn- hydrate-environment-router
@@ -7048,7 +7065,11 @@
    budget, resolve current storage once: if a peer already installed a different
    token, simply retry and let request-bound hydration adopt it. Otherwise force
    one persisted refresh. The next attempt hydrates from storage; no global
-   rebuild or cached-environment reseat is involved."
+   rebuild or cached-environment reseat is involved.
+
+   A command-backed provider has no OAuth hook at all: its refresh is dropping
+   the memoized `api_key_command` token so the next request boundary re-runs the
+   helper. Same budget, same one-retry contract."
   [attempt-router resolved-model]
   (let
     [pid
@@ -7073,7 +7094,27 @@
           (catch Throwable _ nil))]
 
     (boolean
-      (cond (not f) false
+      (cond (and (not f) (config/command-backed? pid))
+            (if (auth-refresh-allowed? pid)
+              (do (config/invalidate-credential-command! pid)
+                  ;; Mark the attempt like an OAuth refresh so a SECOND 401 takes
+                  ;; the propagation backoff instead of re-forking the helper.
+                  (swap! auth-last-refreshed assoc pid {:at (System/currentTimeMillis)})
+                  (tel/log! {:level :warn :id ::credential-command-refreshed :data {:provider pid}}
+                            (str "Auth 401 for " pid
+                                 " — re-running its credential command; retrying with"
+                                 " request-bound credential hydration"))
+                  true)
+              (do (tel/log! {:level :error
+                             :id ::auth-refresh-circuit-open
+                             :data {:provider pid
+                                    :window-ms AUTH_REFRESH_WINDOW_MS
+                                    :max AUTH_REFRESH_WINDOW_MAX}}
+                            (str "Auth 401 — credential-command refresh circuit OPEN for "
+                                 pid
+                                 "; NOT re-running the helper — surfacing provider error"))
+                  false))
+            (not f) false
             ;; A concurrent request/process already won the rotation. Do not
             ;; touch either the breaker or token endpoint; retry hydration will
             ;; pick this value up at the request boundary.

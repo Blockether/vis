@@ -9,6 +9,7 @@
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.config-spec :as config-spec]
             [com.blockether.vis.internal.credential-command :as cred]
+            [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.providers :as providers]
             [lazytest.core :refer [defdescribe expect it]]
             [yamlstar.core :as yamlstar]))
@@ -246,3 +247,104 @@
                      (expect (= av (:api-key-command persisted)))
                      (expect (nil? (:api-key persisted)))
                      (expect (not (str/includes? (pr-str persisted) secret)))))))
+
+(defn- rotating-script
+  "A helper that mints a DIFFERENT token on every invocation, so a stale token is
+   distinguishable from a freshly re-minted one."
+  []
+  (script! "rotate.sh"
+           (str "echo x >> " counter-file "\n" "echo tok-$(wc -l < " counter-file " | tr -d ' ')")))
+
+(def ^:private unauthorized
+  (ex-info "unauthorized" {:status 401 :body "{\"error\":\"invalid api key\"}"}))
+
+(defn- router-with [built] {:providers [(select-keys built [:id :api-key :models :base-url])]})
+
+(defdescribe
+  command-credential-validity-test
+  (it "a built router records the ARGV as the refresh seam, never the token"
+      (fresh!)
+      (let
+        [av
+         (rotating-script)
+
+         built
+         (config/->svar-provider {:id :sso-seam
+                                  :api-key-command av
+                                  :models [{:name "m1"}]
+                                  :base-url "https://gateway.example.com/v1"})]
+
+        (expect (= "tok-1" (:api-key built)))
+        (expect (config/command-backed? :sso-seam))
+        (expect (= "tok-1" (config/command-token :sso-seam)))
+        ;; The argv map is the only thing that survives the build.
+        (expect (not (str/includes? (pr-str @config/router-credential-argv) "tok-1")))
+        (expect (= 1 (exec-count)))))
+  (it "an auth rejection is recoverable with NO OAuth hook, by re-running the helper"
+      (fresh!)
+      (let
+        [built
+         (config/->svar-provider {:id :sso-401
+                                  :api-key-command (rotating-script)
+                                  :models [{:name "m1"}]
+                                  :base-url "https://gateway.example.com/v1"})
+
+         router
+         (router-with built)]
+
+        ;; Steady state: the request boundary re-reads the CACHE, never forks.
+        (expect (= "tok-1"
+                   (-> (#'lp/hydrate-router-credentials router)
+                       :providers
+                       first
+                       :api-key)))
+        (expect (= 1 (exec-count)))
+        (expect (#'lp/auth-refreshable-error? unauthorized {:provider :sso-401}))
+        (expect (#'lp/try-refresh-provider-token! router {:provider :sso-401}))
+        ;; …and the retry actually SENDS the freshly minted token: a short-lived
+        ;; SSO credential that expired mid-session heals without a restart.
+        (expect (= "tok-2"
+                   (-> (#'lp/hydrate-router-credentials router)
+                       :providers
+                       first
+                       :api-key)))
+        (expect (= 2 (exec-count)))))
+  (it "a helper that is failing right now keeps the previous request snapshot"
+      (fresh!)
+      (let
+        [av
+         (script! "flaky.sh"
+                  (str "echo x >> "
+                       counter-file
+                       "\n"
+                       "if [ $(wc -l < " counter-file
+                       ") -gt 1 ]; then echo 'not logged in' >&2; exit 1; fi\n" "echo tok-1"))
+
+         built
+         (config/->svar-provider {:id :sso-flaky :api-key-command av :models [{:name "m1"}]})
+
+         router
+         (router-with built)]
+
+        (expect (= "tok-1" (:api-key built)))
+        (config/invalidate-credential-command! :sso-flaky)
+        (expect (nil? (config/command-token :sso-flaky)))
+        (expect (= "tok-1"
+                   (-> (#'lp/hydrate-router-credentials router)
+                       :providers
+                       first
+                       :api-key)))))
+  (it "a provider that stops being command-backed is no longer refreshed that way"
+      (fresh!)
+      (let [av (rotating-script)]
+        (config/->svar-provider {:id :sso-literal :api-key-command av :models [{:name "m1"}]})
+        (config/->svar-provider {:id :sso-literal :api-key "literal-key" :models [{:name "m1"}]})
+        (expect (not (config/command-backed? :sso-literal)))
+        (expect (nil? (config/command-token :sso-literal)))
+        (expect (not (#'lp/auth-refreshable-error? unauthorized {:provider :sso-literal})))
+        (expect (= "literal-key"
+                   (-> (#'lp/hydrate-router-credentials
+                        {:providers [{:id :sso-literal :api-key "literal-key"}]})
+                       :providers
+                       first
+                       :api-key))))))

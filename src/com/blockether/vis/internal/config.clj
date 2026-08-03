@@ -487,6 +487,44 @@
   [pid]
   (get @router-baked-tokens pid))
 
+(defonce
+  ^{:doc
+    "Argv of the `api_key_command` a built router last resolved for a provider,
+  keyed by provider id. `->svar-provider` records it (and drops it again when the
+  provider stops being command-backed) so the RUNTIME can re-run the same helper
+  on a 401: the durable provider map is not in hand at the request boundary, and
+  the token itself lives only in the credential cache."}
+  router-credential-argv
+  (atom {}))
+
+(defn command-backed?
+  "True when provider `pid`'s live router credential came from an
+   `api_key_command`. This is what makes an auth rejection RECOVERABLE for such a
+   provider: a short-lived SSO token that expired mid-session can be re-minted by
+   asking the helper again, with no OAuth hook involved."
+  [pid]
+  (contains? @router-credential-argv pid))
+
+(defn command-token
+  "Provider `pid`'s CURRENT command-backed token, served from the credential
+   cache — the helper re-runs only after `invalidate-credential-command!` or a
+   TTL lapse, so this is cheap at request frequency.
+
+   nil when `pid` is not command-backed or its helper is currently failing, so a
+   caller keeps whatever credential it already holds and normal error handling
+   stays authoritative."
+  [pid]
+  (when-let [argv (get @router-credential-argv pid)]
+    (:token (cred/resolve! pid argv))))
+
+(defn- forget-credential-argv!
+  "Stop treating `pid` as command-backed: it now resolves its credential some
+   other way (a literal key, an OAuth hook, or not at all). Without this a
+   removed `api_key_command` would keep overriding the new credential."
+  [pid]
+  (swap! router-credential-argv dissoc pid)
+  nil)
+
 (defn provider-credential-message
   "The message shown when a provider's `api_key_command` cannot produce a token.
 
@@ -531,14 +569,19 @@
      ;; onto the provider map, so no write path can persist it.
      api-key
      (if-let [literal (:api-key provider)]
-       literal
-       (when-let [argv (:api-key-command provider)]
+       (do (forget-credential-argv! pid) literal)
+       (if-let [argv (:api-key-command provider)]
          (let [{:keys [token error]} (cred/resolve! pid argv)]
            (when error
              (throw (ex-info (provider-credential-message pid error)
                              {:type :vis/credential-command-failed :provider pid})))
+           ;; Remember the ARGV (never the token): a mid-turn 401 must be able to
+           ;; ask THIS helper again at the next request boundary, exactly as an
+           ;; OAuth provider force-refreshes its token.
+           (swap! router-credential-argv assoc pid argv)
            (swap! router-baked-tokens assoc pid token)
-           token)))
+           token)
+         (forget-credential-argv! pid)))
 
      ;; Local no-auth presets (ollama, lmstudio) ship a dummy api-key in
      ;; svar's catalog; svar's `models!` sends it as an HTTP header, and a
