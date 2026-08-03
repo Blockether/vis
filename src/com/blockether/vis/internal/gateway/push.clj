@@ -546,6 +546,26 @@
                                (fn [_ _]
                                  nil))))
 
+(defonce ^:private gateway-id
+  ;; This gateway's own instance id — injected by the server, same value
+  ;; `/healthz` reports. A phone can be paired with several machines and a
+  ;; session id only means anything on the gateway that minted it, so every
+  ;; alert has to say which one it came from.
+  (atom nil))
+
+(defn set-gateway-id!
+  "Install this gateway's stable instance id; every alert carries it as
+   `gateway_id` so a tap opens the session on the gateway that sent it."
+  [id]
+  (reset! gateway-id (not-empty (str id))))
+
+(defn- with-gateway
+  "Stamp a notification payload with the sending gateway, when known."
+  [data]
+  (if-let [gid @gateway-id]
+    (assoc data :gateway_id gid)
+    data))
+
 (def ^:private BODY_LIMIT
   ;; iOS shows ~2 lines on the lock screen and ~4 expanded; past this the tail is
   ;; never read, and a huge alert payload only risks APNs' 4KB limit.
@@ -606,7 +626,9 @@
                (if (= "failed" status) "Turn failed." "Turn finished."))
      :thread-id (str sid)
      :collapse-id (str sid)
-     :data {:session_id (str sid) :turn_id (get event "turn_id") :status status :type "turn.end"}}))
+     :data
+     (with-gateway
+       {:session_id (str sid) :turn_id (get event "turn_id") :status status :type "turn.end"})}))
 
 (defn- human-input-notification
   "Alert for a run BLOCKED on a human. The only push that says \"vis is waiting
@@ -634,8 +656,9 @@
      ;; Its own collapse lane: an input request must not be swallowed by the
      ;; session's last turn banner.
      :collapse-id (str sid ":human-input")
-     :data
-     {:session_id (str sid) :request_id (str (get request "id")) :type "human_input.request"}}))
+     :data (with-gateway {:session_id (str sid)
+                          :request_id (str (get request "id"))
+                          :type "human_input.request"})}))
 
 (defn on-event!
   "Event tap: push exactly on a terminal turn event or on a human-input request

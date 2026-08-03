@@ -3280,6 +3280,10 @@
                                                ;; vis said rather than that it said something.
                                                :answer (state/turn-answer-text sid tid)}
                                               (catch Throwable _ nil))))
+          ;; Which gateway the alert came from: a phone paired with several
+          ;; machines must open the tapped session on THIS one, and a session id
+          ;; only means anything on the gateway that minted it.
+          (push/set-gateway-id! (gateway-instance-id db host port))
           (state/add-event-tap! ::push push/on-event!)
           ;; Human-input bridge: a `request-human-input!` raised inside a
           ;; session becomes a session event, so the companion app sees the

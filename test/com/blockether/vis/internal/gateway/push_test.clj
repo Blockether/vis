@@ -246,6 +246,51 @@
           (is (= [] @sent))))
       (push/set-session-describer! nil))))
 
+(deftest alerts-name-the-sending-gateway-test
+  (with-push-home
+    [_home]
+    (let
+      [sid
+       (random-uuid)
+
+       sent
+       (atom [])]
+
+      (push/register-device! {:token (apply str (repeat 64 "c")) :environment "sandbox"})
+      (with-redefs
+        [push/configured?
+         (fn []
+           true)
+
+         push/broadcast!
+         (fn [n]
+           (swap! sent conj n)
+           [])]
+
+        (testing "with no gateway id installed the payload simply omits the key"
+          (push/set-gateway-id! nil)
+          (push/on-event! sid {"type" "turn.completed" "turn_id" "t1" "status" "completed"})
+          (is (await-count sent 1) "push arrives")
+          (is (not (contains? (:data (first @sent)) :gateway_id))))
+        (testing "an empty id is no id at all"
+          (reset! sent [])
+          (push/set-gateway-id! "")
+          (push/on-event! sid {"type" "turn.completed" "turn_id" "t1" "status" "completed"})
+          (is (await-count sent 1) "push arrives")
+          (is (not (contains? (:data (first @sent)) :gateway_id))))
+        ;; The whole point: a phone paired with several machines cannot tell which
+        ;; gateway a session id belongs to, and opening it on the wrong one is a 404.
+        (testing "both alert kinds name the gateway that sent them"
+          (reset! sent [])
+          (push/set-gateway-id! "0123456789abcdef")
+          (push/on-event! sid {"type" "turn.completed" "turn_id" "t1" "status" "completed"})
+          (push/on-event! sid
+                          {"type" "human_input.request" "request" {"id" "r1" "title" "Pick one"}})
+          (is (await-count sent 2) "both pushes arrive")
+          (is (= #{"turn.end" "human_input.request"} (set (map (comp :type :data) @sent))))
+          (is (= ["0123456789abcdef" "0123456789abcdef"] (mapv (comp :gateway_id :data) @sent)))))
+      (push/set-gateway-id! nil))))
+
 (deftest answer-body-is-lock-screen-shaped-test
   (testing "markdown is written for a renderer, not a banner: it is stripped, not shown"
     (let [body #(@#'push/answer-body %)]

@@ -13,7 +13,16 @@ import type { GatewayConn } from './types';
 const laptop: GatewayConn = { url: 'http://10.0.0.5:7890', id: 'gw-laptop' };
 const desktop: GatewayConn = { url: 'http://10.0.0.6:7890', id: 'gw-desktop' };
 
-const TAP = { sessionId: 'sess-42', turnId: 'turn-7', status: 'completed', type: 'turn.end' };
+const TAP = {
+  sessionId: 'sess-42',
+  gatewayId: 'gw-laptop',
+  turnId: 'turn-7',
+  status: 'completed',
+  type: 'turn.end',
+};
+
+/** An alert whose sender installed no gateway id. */
+const ANONYMOUS_TAP = { ...TAP, gatewayId: undefined };
 
 function state(over: Partial<PushIntentState> = {}): PushIntentState {
   return { isRouteApplied: true, conns: [], active: null, now: 1_000, ...over };
@@ -32,7 +41,12 @@ function shippedHandler(tap: typeof TAP, s: PushIntentState): { url: string; sid
 
 describe('pushIntentFrom', () => {
   it('carries the session the alert was about', () => {
-    expect(pushIntentFrom(TAP, 1_000)).toEqual({ sessionId: 'sess-42', at: 1_000 });
+    expect(pushIntentFrom(TAP, 1_000)).toEqual({
+      sessionId: 'sess-42',
+      gatewayId: 'gw-laptop',
+      at: 1_000,
+    });
+    expect(pushIntentFrom(ANONYMOUS_TAP, 1_000)?.gatewayId).toBeNull();
   });
 
   it('ignores a notification that names no session', () => {
@@ -42,17 +56,33 @@ describe('pushIntentFrom', () => {
 });
 
 describe('resolvePushIntent', () => {
-  it('opens the session on the active gateway', () => {
+  it('opens the session on the gateway that SENT the alert, not the active one', () => {
+    // Session ids are minted per gateway: `sess-42` on the desktop is a 404 at
+    // best, and somebody else's session at worst.
     const intent = pushIntentFrom(TAP, 1_000);
+    expect(resolvePushIntent(intent, state({ conns: [laptop, desktop], active: desktop }))).toEqual({
+      action: 'open',
+      conn: laptop,
+      sid: 'sess-42',
+    });
+  });
+
+  it('opens on the sending machine before any of them is made active', () => {
+    const intent = pushIntentFrom(TAP, 1_000);
+    expect(resolvePushIntent(intent, state({ conns: [laptop] }))).toEqual({
+      action: 'open',
+      conn: laptop,
+      sid: 'sess-42',
+    });
+  });
+
+  it('falls back to the active machine when the alert names no gateway', () => {
+    const intent = pushIntentFrom(ANONYMOUS_TAP, 1_000);
     expect(resolvePushIntent(intent, state({ conns: [laptop, desktop], active: desktop }))).toEqual({
       action: 'open',
       conn: desktop,
       sid: 'sess-42',
     });
-  });
-
-  it('falls back to the only paired machine before one is made active', () => {
-    const intent = pushIntentFrom(TAP, 1_000);
     expect(resolvePushIntent(intent, state({ conns: [laptop] }))).toEqual({
       action: 'open',
       conn: laptop,
@@ -79,6 +109,24 @@ describe('resolvePushIntent', () => {
 
   it('has nothing to do without an intent', () => {
     expect(resolvePushIntent(null, state({ conns: [laptop], active: laptop }))).toEqual({
+      action: 'wait',
+    });
+  });
+
+  it('drops an alert from a machine this phone is not paired with', () => {
+    // Every paired machine has reported its id and none of them is the sender,
+    // so nothing here can serve that session.
+    const intent = pushIntentFrom(TAP, 1_000);
+    expect(resolvePushIntent(intent, state({ conns: [desktop], active: desktop }))).toEqual({
+      action: 'drop',
+    });
+  });
+
+  it('waits while a paired machine has not reported its id yet', () => {
+    // Hydration, not a verdict: the id lands with the next /healthz.
+    const unidentified: GatewayConn = { url: 'http://10.0.0.7:7890' };
+    const intent = pushIntentFrom(TAP, 1_000);
+    expect(resolvePushIntent(intent, state({ conns: [unidentified, desktop] }))).toEqual({
       action: 'wait',
     });
   });
@@ -174,6 +222,7 @@ describe('a tapped notification ends on the session screen', () => {
     expect(appSource).toContain('const sessionConn = openTarget?.conn ?? active;');
     const s = state({ conns: [laptop, desktop], active: desktop });
     const outcome = resolvePushIntent(pushIntentFrom(TAP, 1_000), s);
+    expect(outcome).toEqual({ action: 'open', conn: laptop, sid: 'sess-42' });
     expect(screenAfter(outcome, s)).toBe('session');
   });
 });

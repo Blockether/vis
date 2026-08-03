@@ -233,8 +233,11 @@ companion's `lib/compat.ts`) only for a breaking wire change, and raise
 The gateway pushes exactly **one alert per finished turn** — `turn.completed` or
 `turn.failed` — to every device registered with it, so you can leave the app and
 still learn when the model is done. Nothing else is pushed, and the alert carries
-only the session title plus `session_id`, `turn_id`, `status`; the transcript
-never leaves the gateway. iOS devices are delivered through **APNs**, Android
+only the session title plus `session_id`, `turn_id`, `status` and the sending
+gateway's own `gateway_id` (the opaque id `/healthz` reports, so a phone paired
+with several machines opens the tapped session on the machine that raised it);
+the transcript never leaves the gateway. iOS devices are delivered through
+**APNs**, Android
 devices through **FCM**; each half is configured independently and either can be
 left off.
 

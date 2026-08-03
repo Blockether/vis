@@ -14,9 +14,13 @@
 // it with. The gateway is resolved at DRAIN time for the same reason — it does
 // not exist yet at tap time.
 //
-// Push payloads carry no gateway id (see `gateway/push.clj`: `session_id`,
-// `turn_id`, `status`, `type`), so the intent opens on the active gateway, or
-// the only paired one when the active gateway has not been chosen yet.
+// WHICH gateway matters as soon as the phone is paired with more than one. A
+// session id is minted by one gateway and means nothing on any other, so the
+// payload names its sender (`gateway_id`, see `gateway/push.clj`) and a named
+// gateway is matched by id — never "whichever one is active", which would open
+// the wrong machine's session, or a 404 where that id does not exist. An alert
+// from a gateway this phone no longer has is dropped rather than opened
+// somewhere wrong; ids that have not been read back yet only mean "not yet".
 
 import type { GatewayConn } from './types';
 import type { PushTap } from './push';
@@ -33,6 +37,8 @@ export const RESUMABLE_PUSH_MS = 5 * 60 * 1000;
 export interface PushIntent {
   /** Session the alert was about. */
   sessionId: string;
+  /** Gateway that sent it, when the payload named one. */
+  gatewayId: string | null;
   /** When the tap arrived, for staleness. */
   at: number;
 }
@@ -64,15 +70,17 @@ export type PushIntentOutcome =
 /** The intent a tap carries, or null when it names no session. */
 export function pushIntentFrom(tap: PushTap, at: number): PushIntent | null {
   const sessionId = (tap.sessionId ?? '').trim();
-  return sessionId ? { sessionId, at } : null;
+  const gatewayId = (tap.gatewayId ?? '').trim();
+  return sessionId ? { sessionId, gatewayId: gatewayId || null, at } : null;
 }
 
 /**
  * What to do with a parked tap right now.
  *
  * Waiting is the answer to every "not yet" — no machines read back, no route
- * applied — because those all resolve moments later during a cold start, and
- * that window is exactly where the tap used to be dropped.
+ * applied, an id still missing off a paired machine — because those all resolve
+ * moments later during a cold start, and that window is exactly where the tap
+ * used to be dropped.
  */
 export function resolvePushIntent(
   intent: PushIntent | null,
@@ -81,6 +89,15 @@ export function resolvePushIntent(
   if (!intent) return { action: 'wait' };
   if (state.now - intent.at > RESUMABLE_PUSH_MS) return { action: 'drop' };
   if (!state.isRouteApplied) return { action: 'wait' };
+  if (intent.gatewayId) {
+    const named = state.conns.find((conn) => conn.id === intent.gatewayId);
+    if (named) return { action: 'open', conn: named, sid: intent.sessionId };
+    // Every paired machine has answered `/healthz` and none of them is the
+    // sender: this phone is not paired with that gateway, and no other machine
+    // can serve the session. Anything less than that is still hydrating.
+    const isEveryConnIdentified = state.conns.length > 0 && state.conns.every((conn) => conn.id);
+    return isEveryConnIdentified ? { action: 'drop' } : { action: 'wait' };
+  }
   const conn = state.active ?? state.conns[0] ?? null;
   if (!conn) return { action: 'wait' };
   return { action: 'open', conn, sid: intent.sessionId };

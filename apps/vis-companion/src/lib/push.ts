@@ -24,6 +24,12 @@ export type PushPermission = 'granted' | 'denied' | 'prompt' | 'unsupported';
 /** What a tapped notification tells the app to open. */
 export interface PushTap {
   sessionId?: string;
+  /**
+   * Gateway instance id (`/healthz` `id`) that sent the alert. A session id
+   * only means anything on the gateway that minted it, so this is what decides
+   * WHICH paired machine the tap opens.
+   */
+  gatewayId?: string;
   turnId?: string;
   status?: string;
   type?: string;
@@ -147,6 +153,7 @@ export function onPushTap(handler: (tap: PushTap) => void): () => void {
     const data = (action?.notification?.data ?? {}) as Record<string, unknown>;
     handler({
       sessionId: str(data.session_id),
+      gatewayId: str(data.gateway_id),
       turnId: str(data.turn_id),
       status: str(data.status),
       type: str(data.type),
