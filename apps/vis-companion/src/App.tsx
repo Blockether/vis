@@ -49,6 +49,7 @@ import {
   pushPermission,
 } from './lib/push';
 import { syncPushRegistrations } from './lib/notify';
+import { isShellChromeVisible, shellScreen } from './lib/shell';
 
 type Tab = 'sessions' | 'connect';
 
@@ -751,10 +752,25 @@ export function App() {
   // list, not about the transcript you are reading.
   const blocked = !!offline && !openTarget;
   const hasConn = conns.length > 0 && !!active && !blocked;
+  const isIncompatible = !!sessionConn && !!compat && !compat.isCompatible;
+
+  // One decision drives both halves of the shell: which screen fills it, and
+  // therefore whether the shell still owns the header and the tab bar. Deciding
+  // those apart is what let a session opened from a notification — a cold start
+  // parks the shell on `connect` before the saved machines load — render the
+  // Machines screen stripped of its chrome, riding under the status bar.
+  const shellView = shellScreen({
+    isSessionOpen: !!openTarget,
+    isSessionReady: !!client && !!subscriptions,
+    isIncompatible,
+    hasConn,
+    tab,
+  });
+  const isChromeVisible = isShellChromeVisible(shellView);
 
   return (
     <Shell>
-      {!openTarget && (
+      {isChromeVisible && (
         <Header
           tab={hasConn ? tab : 'connect'}
           hasConn={hasConn}
@@ -763,8 +779,8 @@ export function App() {
         />
       )}
 
-      <main className={`min-h-0 flex-1 overflow-x-hidden overscroll-contain ${openTarget ? 'overflow-hidden' : 'overflow-y-auto'}`}>
-        {!hasConn || tab === 'connect' ? (
+      <main className={`min-h-0 flex-1 overflow-x-hidden overscroll-contain ${shellView === 'session' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+        {shellView === 'connect' ? (
           <ConnectScreen
             conns={conns}
             active={active}
@@ -774,7 +790,7 @@ export function App() {
             offlineError={blocked ? offline : null}
             onRetry={() => setOffline(null)}
           />
-        ) : sessionConn && compat && !compat.isCompatible ? (
+        ) : shellView === 'incompatible' && sessionConn && compat ? (
           <IncompatibleScreen
             compat={compat}
             conn={sessionConn}
@@ -785,7 +801,7 @@ export function App() {
               setTab('connect');
             }}
           />
-        ) : openTarget && client && subscriptions ? (
+        ) : shellView === 'session' && openTarget && client && subscriptions ? (
           <SessionScreen
             key={`${openTarget.conn.url}:${openTarget.sid}`}
             client={client}
@@ -807,7 +823,7 @@ export function App() {
         )}
       </main>
 
-      {hasConn && !openTarget && <TabBar tab={tab} onTab={setTab} />}
+      {hasConn && isChromeVisible && <TabBar tab={tab} onTab={setTab} />}
 
       {settingsTarget && settingsClient && (
         <GatewaySettingsDialog
