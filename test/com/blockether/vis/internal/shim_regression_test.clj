@@ -17,6 +17,13 @@
   `(let [~(with-meta 'python-context {:tag `Context}) (:python-context @python-context*)]
      ~@body))
 
+;; A monkeypatched transport must not leak into the shared context.
+(defmacro with-fresh-python-context
+  [& body]
+  `(let
+     [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context {}))]
+     (try ~@body (finally (.close ~'python-context)))))
+
 (defdescribe
   sqlite3-bind-guards-test
   (it
@@ -265,3 +272,94 @@
                                 "try:\n" "    urllib3.request('GET','notaurl')\n"
                                 "    ok = False\n" "except urllib3.exceptions.HTTPError:\n"
                                 "    ok = (r.total == 3)\n" "ok")))))))
+
+;; Regression: the requests shim's own transport fidelity. Each `it` names the
+;; wrong behavior it pins down -- all four shipped silently, corrupting bodies,
+;; query strings and streamed lines instead of raising.
+(def ^:private urlopen-fake
+  "import urllib.request as _ur, gzip as _gz, email.message as _em
+_seen = {}
+def _serve(status=200, body=b'', headers=()):
+    def _open(req, timeout=None):
+        _seen['url'] = req.full_url
+        _seen['headers'] = {k.lower(): v for k, v in req.header_items()}
+        b = req.data
+        if hasattr(b, 'read'):
+            b = b.read()
+        elif b is not None and not isinstance(b, (bytes, bytearray)):
+            b = b''.join(b)
+        _seen['body'] = b
+        m = _em.Message()
+        for k, v in headers:
+            m[k] = v
+        class _Raw:
+            def __init__(self):
+                self.status = status
+                self.reason = 'OK'
+                self.headers = m
+            def geturl(self):
+                return req.full_url
+            def read(self):
+                return body
+            def close(self):
+                return None
+        return _Raw()
+    _ur.urlopen = _open
+    _ur.OpenerDirector.open = lambda self, r, data=None, timeout=None: _open(r, timeout)
+import requests
+")
+
+(defdescribe
+  requests-transport-fidelity-test
+  (it
+    "decodes a gzip/deflate body instead of handing back the compressed bytes (was: mojibake .text, JSONDecodeError on .json())"
+    (with-fresh-python-context
+      (expect
+        (= [1 true "gzip, deflate"]
+           (ev
+             python-context
+             (str
+               urlopen-fake
+               "_serve(200, _gz.compress(b'{\"a\": 1}'),\n"
+               "       [('Content-Type', 'application/json'), ('Content-Encoding', 'gzip')])\n"
+               "r = requests.get('http://svc/g')\n"
+               "[r.json()['a'], r.text.startswith('{'), _seen['headers']['accept-encoding']]"))))))
+  (it
+    "drops None-valued params and keeps the query BEFORE the fragment (was: '?y=None' appended after '#frag')"
+    (with-fresh-python-context
+      (expect (= ["http://svc/a?x=1#frag" "x=1"]
+                 (ev python-context
+                     (str urlopen-fake
+                          "_serve()\n"
+                          "requests.get('http://svc/a#frag', params={'x': '1', 'y': None})\n"
+                          "url = _seen['url']\n"
+                          "requests.post('http://svc/a', data={'x': '1', 'y': None})\n"
+                          "[url, _seen['body'].decode()]"))))))
+  (it
+    "iter_lines yields bytes unless decode_unicode is asked for (was: str, so every line.decode() blew up)"
+    (with-fresh-python-context
+      (expect
+        (=
+          [["a" "b"] ["a" "b"] ["a" "b"]]
+          (ev
+            python-context
+            (str
+              urlopen-fake
+              "_serve(200, b'a\\nb\\n', [('Content-Type', 'text/plain')])\n"
+              "r = requests.get('http://svc/l')\n" "raw = list(r.iter_lines())\n"
+              "assert all(isinstance(x, bytes) for x in raw)\n"
+              "txt = list(r.iter_lines(decode_unicode=True))\n"
+              "assert all(isinstance(x, str) for x in txt)\n"
+              "[[x.decode() for x in raw], txt, [x.decode() for x in r.iter_lines(delimiter=b'\\n') if x]]"))))))
+  (it
+    "multipart keeps a list-of-pairs data= next to files=, and json() forwards its kwargs (was: fields dropped, kwargs ignored)"
+    (with-fresh-python-context
+      (expect (= [true true "1.0"]
+                 (ev python-context
+                     (str urlopen-fake
+                          "_serve()\n"
+                          "requests.post('http://svc/u', data=[('k', 'v')], files={'f': b'D'})\n"
+                          "body = _seen['body']\n"
+                          "_serve(200, b'{\"n\": 1}', [('Content-Type', 'application/json')])\n"
+                          "[b'name=\"k\"' in body, b'name=\"f\"' in body,\n"
+                          " repr(requests.get('http://svc/j').json(parse_int=float)['n'])]")))))))

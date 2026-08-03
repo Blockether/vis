@@ -350,6 +350,11 @@ def __vis_install_requests_compat__():
                 return val or None
         return None
 
+    def _drop_none(pairs):
+        # requests omits a param/field whose value is None entirely; urlencode
+        # would otherwise ship the literal string "None".
+        return [(k, v) for (k, v) in pairs if v is not None]
+
     def _apply_params(url, params):
         if not params:
             return url
@@ -359,10 +364,48 @@ def __vis_install_requests_compat__():
             q = bytes(params).decode("utf-8").lstrip("?&")
         else:
             pairs = list(params.items()) if hasattr(params, "items") else list(params)
-            q = _up.urlencode(pairs, doseq=True)
+            q = _up.urlencode(_drop_none(pairs), doseq=True)
         if not q:
             return url
-        return url + ("&" if "?" in url else "?") + q
+        # The query belongs BEFORE the fragment -- appending after a "#" hides it
+        # from the server entirely.
+        base, sep, frag = url.partition("#")
+        base = base + ("&" if "?" in base else "?") + q
+        return base + sep + frag
+
+    def _decompress(raw, headers):
+        # urllib hands the body over exactly as the socket delivered it. requests
+        # advertises gzip/deflate and transparently decodes, so anything that
+        # arrives encoded must be decoded here or .text/.json() are garbage.
+        enc = (headers.get("Content-Encoding") or "") if headers else ""
+        steps = [e.strip().lower() for e in str(enc).split(",") if e.strip()]
+        for step in reversed(steps):
+            if step in ("identity", ""):
+                continue
+            try:
+                if step in ("gzip", "x-gzip"):
+                    import gzip as _gz
+
+                    raw = _gz.decompress(raw)
+                elif step == "deflate":
+                    import zlib as _zl
+
+                    try:
+                        raw = _zl.decompress(raw)
+                    except Exception:
+                        raw = _zl.decompress(raw, -_zl.MAX_WBITS)
+                elif step in ("br", "brotli"):
+                    import brotli as _brotli
+
+                    raw = _brotli.decompress(raw)
+                elif step == "zstd":
+                    import zstandard as _zstd
+
+                    raw = _zstd.ZstdDecompressor().decompress(raw)
+            except Exception:
+                # An undecodable body stays raw rather than killing the call.
+                return raw
+        return raw
 
     def _is_form_body(data):
         # requests' own rule: text, bytes, a mapping, or a list/tuple of pairs is a
@@ -397,7 +440,7 @@ def __vis_install_requests_compat__():
                 body = _stream_chunks(data)
             else:
                 pairs = list(data.items()) if hasattr(data, "items") else list(data)
-                body = _up.urlencode(pairs, doseq=True).encode("utf-8")
+                body = _up.urlencode(_drop_none(pairs), doseq=True).encode("utf-8")
                 auto["Content-Type"] = "application/x-www-form-urlencoded"
         return body, auto
 
@@ -408,8 +451,13 @@ def __vis_install_requests_compat__():
         def add(s):
             chunks.append(s.encode("utf-8") if isinstance(s, str) else s)
 
-        if fields and hasattr(fields, "items"):
-            for k, v in fields.items():
+        if fields:
+            # requests accepts a mapping OR a list of (name, value) pairs next to
+            # files=; a list used to be dropped on the floor.
+            field_items = fields.items() if hasattr(fields, "items") else fields
+            for k, v in field_items:
+                if v is None:
+                    continue
                 add("--" + boundary + _CRLF)
                 add(
                     "Content-Disposition: form-data; name="
@@ -542,7 +590,7 @@ def __vis_install_requests_compat__():
 
         def json(self, **kwargs):
             try:
-                return _json.loads(self.text or "null")
+                return _json.loads(self.text or "null", **kwargs)
             except ValueError as e:
                 raise JSONDecodeError(str(e), response=self)
 
@@ -567,8 +615,19 @@ def __vis_install_requests_compat__():
             for i in range(0, len(data), step):
                 yield data[i : i + step]
 
-        def iter_lines(self, **kwargs):
-            for line in self.text.splitlines():
+        def iter_lines(self, chunk_size=512, decode_unicode=False, delimiter=None):
+            # requests yields bytes here unless decode_unicode is asked for; a str
+            # made every `line.decode()` in caller code blow up.
+            src = self.text if decode_unicode else self.content
+            if delimiter is not None:
+                if decode_unicode and isinstance(delimiter, (bytes, bytearray)):
+                    delimiter = bytes(delimiter).decode("utf-8", "replace")
+                elif not decode_unicode and isinstance(delimiter, str):
+                    delimiter = delimiter.encode("utf-8")
+                parts = src.split(delimiter)
+            else:
+                parts = src.splitlines()
+            for line in parts:
                 yield line
 
         def __iter__(self):
@@ -646,6 +705,12 @@ def __vis_install_requests_compat__():
         h = prep.headers
         if "User-Agent" not in h:
             h["User-Agent"] = _UA
+        if "Accept-Encoding" not in h:
+            # requests advertises compression by default; the decoder below undoes
+            # it. urllib would otherwise force "identity" on every call.
+            h["Accept-Encoding"] = "gzip, deflate"
+        if "Accept" not in h:
+            h["Accept"] = "*/*"
 
         if isinstance(timeout, (tuple, list)):
             timeout = timeout[-1] if timeout else None
@@ -680,7 +745,7 @@ def __vis_install_requests_compat__():
             except Exception:
                 pass
             try:
-                resp.content = e.read()
+                resp.content = _decompress(e.read(), resp.headers)
             except Exception:
                 resp.content = b""
             resp.encoding = _charset(resp.headers) or "utf-8"
@@ -709,7 +774,7 @@ def __vis_install_requests_compat__():
             except Exception:
                 pass
             resp.url = raw.geturl() or full
-            resp.content = raw.read()
+            resp.content = _decompress(raw.read(), resp.headers)
             resp.encoding = _charset(resp.headers) or "utf-8"
             resp.cookies = _parse_set_cookie(src_headers)
         finally:
@@ -981,7 +1046,7 @@ def __vis_install_requests_compat__():
         return CaseInsensitiveDict(
             {
                 "User-Agent": _UA,
-                "Accept-Encoding": "identity",
+                "Accept-Encoding": "gzip, deflate",
                 "Accept": "*/*",
                 "Connection": "keep-alive",
             }

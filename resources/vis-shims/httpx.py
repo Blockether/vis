@@ -70,6 +70,44 @@ def __vis_install_httpx__():
         def path(self):
             return self._parts.path or "/"
 
+        @property
+        def query(self):
+            # httpx hands the raw query back as BYTES.
+            return (self._parts.query or "").encode("ascii", "ignore")
+
+        @property
+        def params(self):
+            from urllib.parse import parse_qsl as _q
+
+            return dict(_q(self._parts.query or ""))
+
+        @property
+        def raw_path(self):
+            p = self._parts.path or "/"
+            if self._parts.query:
+                p = p + "?" + self._parts.query
+            return p.encode("ascii", "ignore")
+
+        @property
+        def netloc(self):
+            return (self._parts.netloc or "").encode("ascii", "ignore")
+
+        @property
+        def fragment(self):
+            return self._parts.fragment or ""
+
+        @property
+        def username(self):
+            return self._parts.username or ""
+
+        @property
+        def password(self):
+            return self._parts.password or ""
+
+        @property
+        def is_relative_url(self):
+            return not self._parts.scheme
+
         def join(self, url):
             # Resolve a relative reference against this URL, like httpx.URL.join
             # — the call every scraper makes on hrefs pulled out of a page.
@@ -124,6 +162,15 @@ def __vis_install_httpx__():
     class TimeoutException(RequestError):
         pass
 
+    class TooManyRedirects(RequestError):
+        pass
+
+    class DecodingError(RequestError):
+        pass
+
+    class StreamError(RuntimeError):
+        pass
+
     class ConnectTimeout(TimeoutException):
         pass
 
@@ -142,14 +189,48 @@ def __vis_install_httpx__():
     class NetworkError(RequestError):
         pass
 
+    class ReadError(NetworkError):
+        pass
+
+    class WriteError(NetworkError):
+        pass
+
+    class ProxyError(ConnectError):
+        pass
+
+    class WriteTimeout(TimeoutException):
+        pass
+
+    class PoolTimeout(TimeoutException):
+        pass
+
+    class RemoteProtocolError(RequestError):
+        pass
+
+    class LocalProtocolError(RequestError):
+        pass
+
     class HTTPStatusError(HTTPError):
         def __init__(self, message, request=None, response=None):
             super().__init__(message)
             self.request = request
             self.response = response
 
+    class Request:
+        def __init__(self, method="GET", url="", headers=None, content=None, **_kw):
+            self.method = str(method).upper()
+            self.url = url if isinstance(url, URL) else URL(url)
+            self.headers = Headers(headers or {})
+            self.content = content if content is not None else b""
+
+        def read(self):
+            return self.content
+
+        def __repr__(self):
+            return "<Request(" + self.method + ", " + str(self.url) + ")>"
+
     class Response:
-        def __init__(self, rr, req_url=None, elapsed=None):
+        def __init__(self, rr, req_url=None, elapsed=None, request=None):
             self._rr = rr
             self.status_code = rr.status_code
             self.headers = Headers(
@@ -164,6 +245,13 @@ def __vis_install_httpx__():
             self.elapsed = (
                 elapsed if isinstance(elapsed, _dt.timedelta) else _dt.timedelta(0)
             )
+            # httpx always carries the originating request and the cookie jar; both
+            # used to be missing outright (AttributeError on r.request / r.cookies).
+            self.request = request
+            self.cookies = getattr(rr, "cookies", None) or {}
+            self.history = list(getattr(rr, "history", None) or [])
+            self.http_version = "HTTP/1.1"
+            self.next_request = None
 
         @property
         def content(self):
@@ -186,8 +274,19 @@ def __vis_install_httpx__():
             return self.status_code >= 400
 
         @property
+        def has_redirect_location(self):
+            return self.status_code in (301, 302, 303, 307, 308) and (
+                "location" in self.headers
+            )
+
+        @property
         def is_redirect(self):
-            return self.status_code in (301, 302, 303, 307, 308)
+            # httpx only calls it a redirect when a Location actually came back.
+            return self.has_redirect_location
+
+        @property
+        def charset_encoding(self):
+            return self.encoding
 
         @property
         def is_client_error(self):
@@ -200,17 +299,59 @@ def __vis_install_httpx__():
         def json(self, **kw):
             return self._rr.json(**kw)
 
+        def read(self):
+            return self.content
+
+        def close(self):
+            return None
+
+        @property
+        def num_bytes_downloaded(self):
+            return len(self.content or b"")
+
+        def iter_bytes(self, chunk_size=None):
+            data = self.content or b""
+            step = max(1, int(chunk_size or len(data) or 1))
+            for i in range(0, len(data), step):
+                yield data[i : i + step]
+
+        def iter_raw(self, chunk_size=None):
+            return self.iter_bytes(chunk_size)
+
+        def iter_text(self, chunk_size=None):
+            data = self.text or ""
+            step = max(1, int(chunk_size or len(data) or 1))
+            for i in range(0, len(data), step):
+                yield data[i : i + step]
+
+        def iter_lines(self):
+            # httpx yields decoded text lines here (requests yields bytes).
+            for line in (self.text or "").splitlines():
+                yield line
+
         def raise_for_status(self):
-            if self.status_code >= 400:
-                raise HTTPStatusError(
-                    "Client error "
-                    + str(self.status_code)
-                    + " for url "
-                    + str(self.url),
-                    request=None,
-                    response=self,
-                )
-            return self
+            if self.is_success:
+                return self
+            # httpx raises for EVERY non-2xx, and names the class of failure --
+            # a 500 reported as "Client error" sent people hunting the wrong bug.
+            error_types = {
+                1: "Informational response",
+                3: "Redirect response",
+                4: "Client error",
+                5: "Server error",
+            }
+            error_type = error_types.get(self.status_code // 100, "Invalid status code")
+            message = (
+                error_type
+                + " '"
+                + str(self.status_code)
+                + " "
+                + str(self.reason_phrase or "")
+                + "' for url '"
+                + str(self.url)
+                + "'"
+            )
+            raise HTTPStatusError(message, request=self.request, response=self)
 
         def __repr__(self):
             return "<Response [" + str(self.status_code) + "]>"
@@ -221,6 +362,7 @@ def __vis_install_httpx__():
         headers = kw.pop("headers", None)
         json_body = kw.pop("json", None)
         data = kw.pop("data", None)
+        files = kw.pop("files", None)
         content = kw.pop("content", None)
         if content is not None and data is None:
             data = content
@@ -232,12 +374,18 @@ def __vis_install_httpx__():
                 data = iter(content)
         timeout = kw.pop("timeout", None)
         if not isinstance(timeout, (int, float, type(None))):
-            timeout = getattr(timeout, "connect", None) or None
+            # httpx.Timeout carries four legs; the transport takes one number, and
+            # the READ leg is the one callers actually set.
+            read = getattr(timeout, "read", None)
+            connect = getattr(timeout, "connect", None)
+            timeout = read if read is not None else connect
         cookies = kw.pop("cookies", None)
         auth = kw.pop("auth", None)
         follow = kw.pop("follow_redirects", None)
         if follow is None:
-            follow = kw.pop("allow_redirects", True)
+            # httpx does NOT follow redirects unless asked -- unlike requests.
+            follow = kw.pop("allow_redirects", False)
+        request = Request(method, url, headers=headers, content=content)
         started = _time.monotonic()
         try:
             rr = rq.request(
@@ -245,6 +393,7 @@ def __vis_install_httpx__():
                 str(url),
                 params=params,
                 data=data,
+                files=files,
                 json=json_body,
                 headers=headers,
                 cookies=cookies,
@@ -257,16 +406,59 @@ def __vis_install_httpx__():
         except Exception as e:
             en = type(e).__name__
             msg = str(e) or en
-            if "Timeout" in en:
-                raise ConnectTimeout(msg, request=None)
-            if "Schema" in en or "URL" in en:
-                raise InvalidURL(msg, request=None)
-            if "Connection" in en:
-                raise ConnectError(msg, request=None)
-            raise RequestError(msg, request=None)
+            # Map the requests-shim exception onto its httpx counterpart by CLASS,
+            # so a read timeout is not reported as a connect timeout.
+            mapped = {
+                "ConnectTimeout": ConnectTimeout,
+                "ReadTimeout": ReadTimeout,
+                "Timeout": TimeoutException,
+                "ConnectionError": ConnectError,
+                "ProxyError": ConnectError,
+                "SSLError": ConnectError,
+                "InvalidSchema": UnsupportedProtocol,
+                "MissingSchema": InvalidURL,
+                "InvalidURL": InvalidURL,
+                "URLRequired": InvalidURL,
+                "ChunkedEncodingError": NetworkError,
+                "ContentDecodingError": NetworkError,
+                "TooManyRedirects": TooManyRedirects,
+            }.get(en)
+            if mapped is None:
+                if "Timeout" in en:
+                    mapped = TimeoutException
+                elif "Schema" in en or "URL" in en:
+                    mapped = InvalidURL
+                elif "Connection" in en:
+                    mapped = ConnectError
+                else:
+                    mapped = RequestError
+            raise mapped(msg, request=request)
         return Response(
-            rr, str(url), _dt.timedelta(seconds=_time.monotonic() - started)
+            rr,
+            str(url),
+            _dt.timedelta(seconds=_time.monotonic() - started),
+            request=request,
         )
+
+    class _StreamContext:
+        # httpx hands `client.stream(...)` back as a context manager; the shim has
+        # no streaming transport, so the body is already read when it opens.
+        def __init__(self, response):
+            self._response = response
+
+        def __enter__(self):
+            return self._response
+
+        def __exit__(self, *a):
+            self._response.close()
+            return False
+
+        async def __aenter__(self):
+            return self._response
+
+        async def __aexit__(self, *a):
+            self._response.close()
+            return False
 
     class Timeout:
         def __init__(
@@ -284,7 +476,7 @@ def __vis_install_httpx__():
             headers=None,
             params=None,
             timeout=None,
-            follow_redirects=True,
+            follow_redirects=False,
             auth=None,
             cookies=None,
             **_ignored,
@@ -306,13 +498,17 @@ def __vis_install_httpx__():
             return u
 
         def _merged(self, kw):
+            # Header names are case-insensitive: "x-a" from the call REPLACES
+            # "X-A" from the client instead of being sent next to it.
             hdr = {}
             for k, v in self.headers.items():
-                hdr[k] = v
-            for k, v in (kw.get("headers") or {}).items():
-                hdr[k] = v
+                hdr[str(k).lower()] = (k, v)
+            over = kw.get("headers") or {}
+            over = over.items() if hasattr(over, "items") else over
+            for k, v in over:
+                hdr[str(k).lower()] = (k, v)
             if hdr:
-                kw["headers"] = hdr
+                kw["headers"] = {k: v for (k, v) in hdr.values()}
             prm = dict(self._params)
             prm.update(kw.get("params") or {})
             if prm:
@@ -347,6 +543,9 @@ def __vis_install_httpx__():
         def options(self, url, **kw):
             return self.request("OPTIONS", url, **kw)
 
+        def stream(self, method, url, **kw):
+            return _StreamContext(self.request(method, url, **kw))
+
         def close(self):
             return None
 
@@ -364,7 +563,7 @@ def __vis_install_httpx__():
             headers=None,
             params=None,
             timeout=None,
-            follow_redirects=True,
+            follow_redirects=False,
             auth=None,
             cookies=None,
             **_ignored,
@@ -411,6 +610,9 @@ def __vis_install_httpx__():
         async def options(self, url, **kw):
             return self._client.request("OPTIONS", url, **kw)
 
+        def stream(self, method, url, **kw):
+            return _StreamContext(self._client.request(method, url, **kw))
+
         async def aclose(self):
             return None
 
@@ -445,6 +647,71 @@ def __vis_install_httpx__():
     def _options(url, **kw):
         return _dispatch("OPTIONS", url, kw)
 
+    class Auth:
+        pass
+
+    class BasicAuth(Auth):
+        # The requests shim reads .username/.password off any auth object.
+        def __init__(self, username, password):
+            self.username = username
+            self.password = password
+
+    class DigestAuth(BasicAuth):
+        pass
+
+    class _Codes:
+        @staticmethod
+        def is_informational(code):
+            return 100 <= int(code) < 200
+
+        @staticmethod
+        def is_success(code):
+            return 200 <= int(code) < 300
+
+        @staticmethod
+        def is_redirect(code):
+            return 300 <= int(code) < 400
+
+        @staticmethod
+        def is_client_error(code):
+            return 400 <= int(code) < 500
+
+        @staticmethod
+        def is_server_error(code):
+            return 500 <= int(code) < 600
+
+        @staticmethod
+        def is_error(code):
+            return 400 <= int(code) < 600
+
+    codes = _Codes()
+    try:
+        import http as _http
+
+        for _st in _http.HTTPStatus:
+            setattr(codes, _st.name, int(_st.value))
+    except Exception:
+        for _n, _c in (
+            ("OK", 200),
+            ("CREATED", 201),
+            ("NO_CONTENT", 204),
+            ("MOVED_PERMANENTLY", 301),
+            ("FOUND", 302),
+            ("NOT_MODIFIED", 304),
+            ("BAD_REQUEST", 400),
+            ("UNAUTHORIZED", 401),
+            ("FORBIDDEN", 403),
+            ("NOT_FOUND", 404),
+            ("TOO_MANY_REQUESTS", 429),
+            ("INTERNAL_SERVER_ERROR", 500),
+            ("BAD_GATEWAY", 502),
+            ("SERVICE_UNAVAILABLE", 503),
+        ):
+            setattr(codes, _n, _c)
+
+    def _stream(method, url, **kw):
+        return _StreamContext(_dispatch(method, url, kw))
+
     mod = _types.ModuleType("httpx")
     mod.__doc__ = (
         "vis sandbox httpx-compat shim (sync + async wrapper over the requests shim)."
@@ -465,6 +732,22 @@ def __vis_install_httpx__():
     mod.InvalidURL = InvalidURL
     mod.UnsupportedProtocol = UnsupportedProtocol
     mod.NetworkError = NetworkError
+    mod.TooManyRedirects = TooManyRedirects
+    mod.DecodingError = DecodingError
+    mod.StreamError = StreamError
+    mod.ReadError = ReadError
+    mod.WriteError = WriteError
+    mod.WriteTimeout = WriteTimeout
+    mod.PoolTimeout = PoolTimeout
+    mod.ProxyError = ProxyError
+    mod.RemoteProtocolError = RemoteProtocolError
+    mod.LocalProtocolError = LocalProtocolError
+    mod.Request = Request
+    mod.Auth = Auth
+    mod.BasicAuth = BasicAuth
+    mod.DigestAuth = DigestAuth
+    mod.codes = codes
+    mod.stream = _stream
     mod.request = _mod_request
     mod.get = _get
     mod.post = _post

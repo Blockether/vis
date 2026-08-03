@@ -210,6 +210,7 @@ def _fake_urlopen(req, timeout=None):
     sent['content_type'] = req.get_header('Content-type')
     return _Fake()
 _u.urlopen = _fake_urlopen
+_u.OpenerDirector.open = lambda self, req, data=None, timeout=None: _fake_urlopen(req, timeout)
 import httpx
 ")
 
@@ -244,3 +245,135 @@ import httpx
                             "form = [sent['body'].decode(), sent['content_type']]\n"
                             "requests.post('http://svc/x', data=[('a', '1'), ('b', '2')])\n"
                             "form + [sent['body'].decode()]")))))))
+
+;; Regression: httpx-surface fidelity. The echo transport below reports what the
+;; wrapper actually handed to the requests shim, which is where `files=` used to
+;; vanish and where every request used to be sent with redirects followed.
+(def ^:private echo-fake
+  "import requests as _rq, json as _json
+def _echo(method, url, params=None, data=None, files=None, json=None, headers=None,
+          cookies=None, auth=None, timeout=None, allow_redirects=True, **kw):
+    if '/raise/' in url:
+        raise getattr(_rq, url.rsplit('/raise/', 1)[1])('boom')
+    resp = _rq.Response()
+    code = int(url.rsplit('/status/', 1)[1]) if '/status/' in url else 200
+    resp.status_code = code
+    resp.url = url
+    resp.reason = {500: 'Internal Server Error', 302: 'Found'}.get(code, 'OK')
+    resp.encoding = 'utf-8'
+    resp.headers['Content-Type'] = 'application/json'
+    if code == 302:
+        resp.headers['Location'] = '/next'
+    resp.content = _json.dumps({'files': repr(files), 'follow': allow_redirects,
+                                'timeout': timeout, 'auth': type(auth).__name__,
+                                'headers': dict(headers) if headers else {}}).encode('utf-8')
+    return resp
+_rq.request = _echo
+")
+
+(defdescribe
+  httpx-transport-fidelity-test
+  (it "forwards files= to the transport (was: silently dropped, so an upload sent an empty body)"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str echo-fake
+                                "r = httpx.post('http://svc/u', files={'f': ('a.txt', b'D')})\n"
+                                "'a.txt' in r.json()['files']"))))))
+  (it
+    "does not follow redirects unless asked, like httpx itself (was: allow_redirects=True on every call)"
+    (with-python-context
+      (expect
+        (= [false true true]
+           (ev python-context
+               (str echo-fake
+                    "a = httpx.get('http://svc/a').json()['follow']\n"
+                    "b = httpx.get('http://svc/a', follow_redirects=True).json()['follow']\n"
+                    "c = httpx.Client(follow_redirects=True).get('http://svc/a').json()['follow']\n"
+                    "[a, b, c]"))))))
+  (it
+    "uses the READ leg of an httpx.Timeout (was: only connect, so Timeout(read=5) meant no timeout)"
+    (with-python-context
+      (expect
+        (=
+          ["5.0" "3.0"]
+          (ev
+            python-context
+            (str
+              echo-fake
+              "a = httpx.get('http://svc/a', timeout=httpx.Timeout(None, read=5.0)).json()['timeout']\n"
+              "b = httpx.get('http://svc/a', timeout=httpx.Timeout(3.0)).json()['timeout']\n"
+              "[repr(a), repr(b)]"))))))
+  (it "lets a per-call header REPLACE a client default of different case (was: both sent)"
+      (with-python-context
+        (expect (= [["x-a" "2"]]
+                   (ev python-context
+                       (str echo-fake
+                            "c = httpx.Client(headers={'X-A': '1'})\n"
+                            "h = c.get('http://svc/a', headers={'x-a': '2'}).json()['headers']\n"
+                            "[[k.lower(), v] for k, v in h.items() if k.lower() == 'x-a']"))))))
+  (it "maps a read timeout to httpx.ReadTimeout (was: every timeout became ConnectTimeout)"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str echo-fake
+                                "import httpx\n"
+                                "def kind(name):\n" "    try:\n"
+                                "        httpx.get('http://svc/raise/' + name)\n"
+                                "    except httpx.RequestError as e:\n"
+                                "        return type(e).__name__\n"
+                                "ok = (kind('ReadTimeout') == 'ReadTimeout'\n"
+                                "      and kind('ConnectTimeout') == 'ConnectTimeout'\n"
+                                "      and kind('SSLError') == 'ConnectError'\n"
+                                "      and kind('InvalidSchema') == 'UnsupportedProtocol')\n"
+                                "ok")))))))
+
+(defdescribe
+  httpx-response-surface-test
+  (it
+    "raise_for_status names the failure class and raises on 3xx too (was: 'Client error 500', 3xx silently OK)"
+    (with-python-context
+      (expect (= ["Server error '500 Internal Server Error' for url 'http://svc/status/500'" "GET"
+                  500 true]
+                 (ev python-context
+                     (str echo-fake
+                          "def caught(u):\n"
+                          "    try:\n" "        httpx.get(u).raise_for_status()\n"
+                          "    except httpx.HTTPStatusError as e:\n" "        return e\n"
+                          "e = caught('http://svc/status/500')\n"
+                          "red = caught('http://svc/status/302')\n"
+                          "[str(e), e.request.method, e.response.status_code,\n"
+                          " str(red).startswith('Redirect response')]"))))))
+  (it
+    "carries request/cookies/read/iter_bytes/http_version (was: AttributeError on each)"
+    (with-python-context
+      (expect
+        (=
+          ["GET" "http://svc/a" true "HTTP/1.1" true]
+          (ev
+            python-context
+            (str
+              echo-fake
+              "r = httpx.get('http://svc/a')\n"
+              "[r.request.method, str(r.request.url), r.read() == r.content,\n"
+              " r.http_version, b''.join(r.iter_bytes(4)) == r.content and r.cookies is not None]"))))))
+  (it "is_redirect requires a Location header, like httpx (was: status code alone)"
+      (with-python-context (expect (= [true false]
+                                      (ev python-context
+                                          (str
+                                            echo-fake
+                                            "[httpx.get('http://svc/status/302').is_redirect,\n"
+                                            " httpx.get('http://svc/status/200').is_redirect]"))))))
+  (it "publishes codes, BasicAuth, Request, stream and URL query parts (was: AttributeError)"
+      (with-python-context
+        (expect
+          (= [404 200 "BasicAuth" "b'x=1'" "landed" "/a?x=1"]
+             (ev
+               python-context
+               (str
+                 echo-fake
+                 "import httpx\n"
+                 "auth = httpx.get('http://svc/a', auth=httpx.BasicAuth('u', 'p')).json()['auth']\n"
+                 "u = httpx.URL('http://svc/a?x=1#f')\n"
+                 "with httpx.Client().stream('GET', 'http://svc/a') as s:\n"
+                 "    streamed = 'landed' if s.status_code == 200 else 'no'\n"
+                 "[httpx.codes.NOT_FOUND, httpx.codes.OK, auth, str(u.query), streamed,\n"
+                 " u.raw_path.decode()]")))))))
