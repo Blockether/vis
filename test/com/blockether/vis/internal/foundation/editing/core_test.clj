@@ -3129,10 +3129,22 @@
     (it "treats a serializer-default empty to_anchor as omission"
         (let [out (coerce [{"path" "p.txt" "from_anchor" "12:abc" "to_anchor" "" "replace" "new"}])]
           (expect (= {"path" "p.txt" "from_anchor" "12:abc" "replace" "new"} (first out)))))
-    (it "accepts only a non-empty vector of edit maps"
+    (it "coerces the shapes a serializer produces instead of a real batch"
+        ;; Every one of these aborted a real call in the wire journal: the whole batch
+        ;; stringified (`patch("[{…}]")`), that same string with one brace too many
+        ;; trailing the array, the kwargs spec map, and ONE bare edit map.
+        (let
+          [edit {"path" "p.txt" "from_anchor" "12:abc" "replace" "new"}
+           wire "[{\"path\": \"p.txt\", \"from_anchor\": \"12:abc\", \"replace\": \"new\"}]"]
+
+          (expect (= [edit] (coerce wire)))
+          (expect (= [edit] (coerce (str wire "}"))))
+          (expect (= [edit] (coerce {"edits" [edit]})))
+          (expect (= [edit] (coerce edit)))))
+    (it "still refuses an empty batch and a string holding no edit map"
         (expect (throws? clojure.lang.ExceptionInfo #(coerce [])))
-        (expect (throws? clojure.lang.ExceptionInfo
-                         #(coerce {"path" "p.txt" "from_anchor" "12:abc" "replace" "new"}))))
+        (expect (throws? clojure.lang.ExceptionInfo #(coerce "not a batch at all")))
+        (expect (throws? clojure.lang.ExceptionInfo #(coerce "[]"))))
     (it "rejects unknown edit keys"
         (let
           [ex (try (coerce [{"path" "p.txt" "from_anchor" "1:abc" "replace" "new" "typo" true}])

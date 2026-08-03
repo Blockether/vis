@@ -34,6 +34,7 @@
    Hard guard: every path must stay inside the session's working
    directory (`fs/cwd`); `..` traversal is rejected before any I/O."
   (:require [babashka.fs :as fs]
+            [charred.api :as json]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.set :as set]
@@ -718,18 +719,94 @@
 
 (defn- first-two-arg-paths [args] (take 2 args))
 
+(defn- balanced-json-prefix
+  "The substring of `s` from its first `[`/`{` through the bracket that closes it,
+   nil when nothing balances. Lets a stringified argument with trailing junk
+   (`\"[{…}]}\"` — one brace too many) still parse as the list it meant."
+  [^String s]
+  (let
+    [array
+     (str/index-of s "[")
+
+     object
+     (str/index-of s "{")
+
+     start
+     (if (and array object) (min (long array) (long object)) (or array object))]
+
+    (when start
+      (loop
+        [i
+         (long start)
+
+         depth
+         0
+
+         in-string?
+         false
+
+         escaped?
+         false]
+
+        (when (< i (count s))
+          (let [c (.charAt s i)]
+            (cond escaped? (recur (inc i) depth in-string? false)
+                  (= \\ c) (recur (inc i) depth in-string? true)
+                  (= \" c) (recur (inc i) depth (not in-string?) false)
+                  in-string? (recur (inc i) depth true false)
+                  (or (= \[ c) (= \{ c)) (recur (inc i) (inc depth) false false)
+                  (or (= \] c) (= \} c)) (if (<= depth 1)
+                                           (subs s (long start) (inc i))
+                                           (recur (inc i) (dec depth) false false))
+                  :else (recur (inc i) depth false false))))))))
+
+(defn- edit-maps-from-string
+  "Edit maps recovered from an `edits` argument that arrived STRINGIFIED instead of
+   as a real list — `patch(\"[{\\\"path\\\": …}]\")` is a recurring serializer slip.
+   Parses the first BALANCED JSON array/object (trailing junk cannot lose the batch)
+   and returns its maps as a vector; nil when nothing map-shaped parses."
+  [s]
+  (when-let [fragment (balanced-json-prefix s)]
+    (let [parsed (try (json/read-json fragment) (catch Throwable _ nil))]
+      (cond (map? parsed) [parsed]
+            (and (sequential? parsed) (seq parsed) (every? map? parsed)) (vec parsed)
+            :else nil))))
+
+(defn- normalize-edits-arg
+  "The `edits` batch as a REAL vector of edit maps, whatever shape it arrived in: the
+   whole batch stringified, the kwargs spec map (`{\"edits\": [...]}`), ONE bare edit
+   map, or a vector holding stringified entries. Pure coercion — every map is the
+   caller's own and nothing is invented — so path guards, `coerce-patch-edits`, and
+   `struct_patch`'s batch path all read the same shape. An unrecognisable value is
+   returned unchanged so the caller's own validation still speaks."
+  [edits]
+  (let
+    [unwrapped
+     (if (and (map? edits) (contains? edits "edits")) (get edits "edits") edits)
+
+     batch
+     (cond (string? unwrapped) (or (edit-maps-from-string unwrapped) unwrapped)
+           (map? unwrapped) [unwrapped]
+           :else unwrapped)]
+
+    (if (and (sequential? batch) (some string? batch))
+      (mapv (fn [entry]
+              (if (string? entry) (or (first (edit-maps-from-string entry)) entry) entry))
+            batch)
+      batch)))
+
 (defn- patch-arg-paths
   [args]
   (let
     [edits
-     (first args)
+     (normalize-edits-arg (first args))
 
      edits
      (cond (map? edits) [edits]
            (sequential? edits) edits
            :else [])]
 
-    (keep #(get % "path") edits)))
+    (keep #(when (map? %) (get % "path")) edits)))
 
 (defn- write-arg-paths
   "Every path a write-side call touches: the lone `path`, plus every path an
@@ -741,8 +818,9 @@
                             [path])
                       ;; struct_patch's PROJECT-wide rename scopes with `paths`.
                       scoped (when (sequential? (get a "paths")) (get a "paths"))
-                      batch (when (sequential? (get a "edits"))
-                              (keep #(when (map? %) (get % "path")) (get a "edits")))]
+                      batch (let [batch-edits (normalize-edits-arg (get a "edits"))]
+                              (when (sequential? batch-edits)
+                                (keep #(when (map? %) (get % "path")) batch-edits)))]
 
                      (seq (distinct (concat own scoped batch))))
           (string? a) [a]
@@ -3280,49 +3358,56 @@
 (defn- coerce-patch-edits
   "Validate the canonical vector of anchor-located edit maps.
    it must carry `:from_anchor` (and optionally `:to_anchor` for a range).
-   A missing anchor, or an unknown key, throws."
+   A missing anchor, or an unknown key, throws.
+
+   `normalize-edits-arg` runs first, so a batch that was stringified by a
+   serializer (`patch(\"[{…}]\")`) or a lone edit map passed bare still arrives
+   here as a vector instead of failing the call."
   [edits]
-  (when-not (sequential? edits)
-    (throw (ex-info "patch expects a vector of edit maps"
-                    {:type :ext.foundation.editing/invalid-patch-edits :got (type edits)})))
-  (when (empty? edits)
-    (throw (ex-info "patch expects at least one edit"
-                    {:type :ext.foundation.editing/invalid-patch-edits :got edits})))
-  (mapv
-    (fn [edit]
-      (when-not (map? edit)
-        (throw (ex-info "patch edit must be a map"
-                        {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
-      (let
-        [missing
-         (seq (remove #(contains? edit %) patch-required-keys))
+  (let [edits (normalize-edits-arg edits)]
+    (when-not (sequential? edits)
+      (throw (ex-info
+               (if (string? edits)
+                 (str "patch \"edits\" arrived as a STRING that is not a JSON list of edit maps: "
+                      (subs edits 0 (min 120 (count edits)))
+                      " — pass the real list: "
+                      "[{\"path\": …, \"from_anchor\": \"12:ab3\", \"replace\": …}]")
+                 "patch expects a vector of edit maps")
+               {:type :ext.foundation.editing/invalid-patch-edits :got (type edits)})))
+    (when (empty? edits)
+      (throw (ex-info "patch expects at least one edit"
+                      {:type :ext.foundation.editing/invalid-patch-edits :got edits})))
+    (mapv (fn [edit]
+            (when-not (map? edit)
+              (throw (ex-info "patch edit must be a map"
+                              {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
+            (let
+              [missing (seq (remove #(contains? edit %) patch-required-keys))
+               unknown (seq (remove patch-allowed-keys (keys edit)))]
 
-         unknown
-         (seq (remove patch-allowed-keys (keys edit)))]
-
-        (when missing
-          (throw (ex-info (str "patch edit missing required keys: "
-                               (str/join ", " (map #(str "'" % "'") missing))
-                               ". Use a fresh lineno:hash from cat as from_anchor.")
-                          {:type :ext.foundation.editing/invalid-patch-edit
-                           :missing (vec missing)
-                           :edit edit})))
-        (when unknown
-          (throw (ex-info (str "patch edit has unknown keys: "
-                               (str/join ", " (map #(str "'" % "'") unknown))
-                               ". Allowed: "
-                               (str/join ", " (sort patch-allowed-keys))
-                               ".")
-                          {:type :ext.foundation.editing/invalid-patch-edit
-                           :unknown (vec unknown)
-                           :allowed (vec patch-allowed-keys)
-                           :edit edit}))))
-      ;; Generated callers can serialize an omitted optional anchor as "".
-      ;; That is equivalent to omitting the single-line range endpoint.
-      (cond-> (update edit "path" str)
-        (= "" (get edit "to_anchor"))
-        (dissoc "to_anchor")))
-    edits))
+              (when missing
+                (throw (ex-info (str "patch edit missing required keys: "
+                                     (str/join ", " (map #(str "'" % "'") missing))
+                                     ". Use a fresh lineno:hash from cat as from_anchor.")
+                                {:type :ext.foundation.editing/invalid-patch-edit
+                                 :missing (vec missing)
+                                 :edit edit})))
+              (when unknown
+                (throw (ex-info (str "patch edit has unknown keys: "
+                                     (str/join ", " (map #(str "'" % "'") unknown))
+                                     ". Allowed: "
+                                     (str/join ", " (sort patch-allowed-keys))
+                                     ".")
+                                {:type :ext.foundation.editing/invalid-patch-edit
+                                 :unknown (vec unknown)
+                                 :allowed (vec patch-allowed-keys)
+                                 :edit edit}))))
+            ;; Generated callers can serialize an omitted optional anchor as "".
+            ;; That is equivalent to omitting the single-line range endpoint.
+            (cond-> (update edit "path" str)
+              (= "" (get edit "to_anchor"))
+              (dissoc "to_anchor")))
+          edits)))
 
 ;; -----------------------------------------------------------------------------
 ;; Per-path consecutive-failure tracker (Roo-style loop detector)
@@ -6990,7 +7075,9 @@
 
    `paths` (in place of `path`) with op \"rename\" is the PROJECT-wide rename."
   [& {:as args}]
-  (let [edits (get args "edits")]
+  ;; Same `edits` coercion as patch: a batch a serializer stringified, or a lone edit
+  ;; map, becomes a real vector instead of being silently ignored as a single call.
+  (let [edits (normalize-edits-arg (get args "edits"))]
     (cond (contains? args "paths") (struct-patch-project-rename args)
           (not (and (sequential? edits) (seq edits))) (struct-patch-one args)
           :else
