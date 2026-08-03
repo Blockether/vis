@@ -202,6 +202,56 @@
                          (finally (try (ws/abandon! store {:workspace-id draft-id})
                                        (catch Throwable _ nil))))))))) ; close fn/with-store, then do + if-not
            (finally (delete-tree! base)))))
+  (it
+    "apply! lands nested edits AND deletions; stash!/resume! keep the clone intact"
+    (let [base (temp-dir "vis-ws-del")]
+      (try
+        (if-not (ws/isolated-workspaces-supported? base)
+          ;; No copy-on-write backend here (CI) — the live round-trip can't run.
+          (expect (not (ws/isolated-workspaces-supported? base)))
+          (do
+            (spit (io/file base "keep.txt") "KEEP\n")
+            (spit (io/file base "gone.txt") "DOOMED\n")
+            (.mkdirs (io/file base "sub"))
+            (spit (io/file base "sub" "nested.txt") "NESTED\n")
+            (with-store
+              (fn [store]
+                (let
+                  [seed (seed-workspace! store base)
+
+                   state-id (pin-session! store (str (random-uuid)) (:id seed))
+
+                   draft (ws/create! store {:session-state-id state-id :from seed})
+
+                   draft-id (:id draft)]
+
+                  (try
+                    ;; the clone carries trunk's whole tree, nested dirs included
+                    (expect (= "NESTED\n" (slurp (io/file (:root draft) "sub" "nested.txt"))))
+                    ;; edit a NESTED file and delete a trunk file inside the draft
+                    (Thread/sleep 20)
+                    (spit (io/file (:root draft) "sub" "nested.txt") "NESTED-EDIT\n")
+                    (io/delete-file (io/file (:root draft) "gone.txt"))
+                    ;; parking the draft repoints the session at trunk and lists it as parked
+                    (binding [ws/*workspace-root* base]
+                      (ws/stash! store state-id))
+                    (expect (= base (:root (ws/for-session store state-id))))
+                    (expect (= [draft-id] (mapv :id (ws/list-drafts store (:repo-id draft)))))
+                    ;; re-entering restores the pin AND the clone's uncommitted work
+                    (ws/resume! store {:session-state-id state-id :workspace-id draft-id})
+                    (expect (= draft-id (:id (ws/for-session store state-id))))
+                    (expect (= "NESTED-EDIT\n" (slurp (io/file (:root draft) "sub" "nested.txt"))))
+                    (let [{:keys [landed changed]} (ws/apply! store {:workspace-id draft-id})]
+                      (expect (= 2 landed))
+                      (expect (= #{"sub/nested.txt" "gone.txt"} (set (map :path changed))))
+                      (expect (= #{:modify :delete} (set (map :status changed)))))
+                    ;; the deletion travelled, the nested edit landed, the rest survives
+                    (expect (not (.exists (io/file base "gone.txt"))))
+                    (expect (= "NESTED-EDIT\n" (slurp (io/file base "sub" "nested.txt"))))
+                    (expect (= "KEEP\n" (slurp (io/file base "keep.txt"))))
+                    (finally (try (ws/abandon! store {:workspace-id draft-id})
+                                  (catch Throwable _ nil)))))))))
+        (finally (delete-tree! base)))))
   (it "apply! throws for an unknown workspace-id"
       (with-store (fn [store]
                     (expect (try (ws/apply! store {:workspace-id "nope"})
