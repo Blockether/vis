@@ -293,6 +293,44 @@
    (let [s (str/trim (str s))]
      (if (> (count s) max-len) (str (str/trimr (subs s 0 (max 0 (dec max-len)))) "\u2026") s))))
 
+(defn- git-command-line
+  "The `git <args…>` line a card shows for one command — the same text whether it
+   is about to run or already ran."
+  [args]
+  (str "git " (str/join " " args)))
+
+(defn- git-headline
+  "The collapsed HEADLINE args for one git command. A `commit` lifts its SUBJECT
+   (first message line) out of `-m` and onto the line after an em-dash
+   (`commit — subject`) when `show-subject?`, dropping the now-redundant `-m`
+   flags; any OTHER flag (`--amend`, `-a`, …) survives. Shared by the finished
+   card and the pending one, so a running git call already wears the headline it
+   keeps — a failure just turns the subject off so the `(exit N)` note stays the
+   focus."
+  [args show-subject?]
+  (let
+    [msg
+     (commit-message args)
+
+     subject
+     (some-> msg
+             str/split-lines
+             first
+             str/trim
+             not-empty)
+
+     show?
+     (boolean (and subject show-subject?))
+
+     base
+     (cond->> (if msg (strip-commit-message args) args)
+       show?
+       (remove #{"-m" "--message"}))]
+
+    (cond-> (str/join " " base)
+      show?
+      (str " \u2014 " (clip-subject subject)))))
+
 (defn- render-git-result
   [r]
   (let
@@ -313,33 +351,6 @@
      msg
      (commit-message args)
 
-     ;; A commit lifts its SUBJECT (first message line) onto the headline
-     ;; after an em-dash — `commit — <subject>` — so the collapsed card
-     ;; shows WHAT was committed while the full message still renders as the
-     ;; blockquote body below. The now-redundant `-m` flags are dropped (the
-     ;; subject already says it's a message commit); any OTHER flag
-     ;; (`--amend`, `-a`, …) survives. Dropped on failure so the `(exit N)`
-     ;; note stays the headline's focus.
-     subject
-     (some-> msg
-             str/split-lines
-             first
-             str/trim
-             not-empty)
-
-     show?
-     (and subject (not failed?))
-
-     base
-     (cond->> (if msg (strip-commit-message args) args)
-       show?
-       (remove #{"-m" "--message"}))
-
-     head
-     (cond-> (str/join " " base)
-       show?
-       (str " \u2014 " (clip-subject subject)))
-
      status
      (kv-lines [["status"
                  (cond (get r "timed_out") "timed out"
@@ -353,13 +364,13 @@
                 ["timeout" (when (get r "timed_out") (str default-timeout-secs "s"))]])
 
      body
-     (->> [(section "COMMAND" (str "git " (str/join " " args)) "bash") (section "STATUS" status)
+     (->> [(section "COMMAND" (git-command-line args) "bash") (section "STATUS" status)
            (when msg (prose-section "MESSAGE" (quote-block msg)))
            (section "STDOUT" (get r "stdout")) (section "STDERR" (get r "stderr"))]
           (remove nil?)
           (str/join "\n\n"))]
 
-    {:summary (str "⎇ " head note) :body (when (seq body) body)}))
+    {:summary (str "⎇ " (git-headline args (not failed?)) note) :body (when (seq body) body)}))
 
 (defn- render-git-batch-result
   "Render one expandable result card with each command's own stdout/stderr intact.
@@ -367,6 +378,58 @@
   [r]
   (batch/card
     {:icon "⎇" :noun "git" :results (get r batch/commands-key) :render-one render-git-result}))
+
+(defn- render-git-call
+  "PENDING-call display for a `git` invocation: the SAME op-card the finished call
+   wears, assembled by the SAME builders, out of what is known BEFORE the run.
+
+   `:summary` is the finished headline with the outcome replaced by what the call
+   is doing (`⎇ commit — fix the thing (running)`), `:render` is that card's BODY
+   — the `**COMMAND**` bash the batch is about to run plus, for a commit, the
+   `**MESSAGE**` blockquote it will author. There is no pending dialect: a
+   running git block and the block it becomes are one card.
+
+   nil when the arguments name no command — a malformed batch is the CALL's error
+   to report, not this preview's, so the raw invocation stays the fallback."
+  [input]
+  (let
+    [argvs
+     (when-let [commands (or (get input "commands") (get input :commands))]
+       ;; The SAME coercion the run does — `batch/ordered` + `normalize-batch` +
+       ;; per-command `normalize-args` — so the preview shows the very tokens git
+       ;; will receive, one-line spellings split included.
+       (try (let [argvs (mapv normalize-args (normalize-batch (batch/ordered "git" commands)))]
+              (when (every? seq argvs) argvs))
+            (catch Throwable _ nil)))
+
+     msgs
+     (into [] (keep commit-message) argvs)
+
+     summary
+     (when-let
+       [head (some-> (first argvs)
+                     (git-headline true)
+                     not-empty)]
+       (str "⎇ " head (when (next argvs) (str " · +" (dec (count argvs)) " more")) " (running)"))
+
+     body
+     (->> [(section "COMMAND"
+                    (some->> argvs
+                             seq
+                             (map git-command-line)
+                             (str/join "\n"))
+                    "bash")
+           (when (seq msgs) (prose-section "MESSAGE" (str/join "\n\n" (map quote-block msgs))))]
+          (remove nil?)
+          (str/join "\n\n"))]
+
+    (when (or summary (seq body))
+      (cond-> {}
+        summary
+        (assoc :summary summary)
+
+        (seq body)
+        (assoc :render body)))))
 
 ;; =============================================================================
 ;; Symbol + extension. Built-in ⇒ binds BARE as `git` in the sandbox ns.
@@ -398,6 +461,7 @@ Run host Git serially from the workspace root. Pass ONE map whose non-empty `com
      (str "Run SERIAL host Git only when `session[\"workspace\"]` lacks VCS facts or to act. "
           "ONE options map; non-zero exits are data; later commands still run.")
      :render render-git-batch-result
+     :render-call render-git-call
      :color-role :tool-color/shell
      ;; Native calls dispatch straight to this two-argument handler. Python keeps
      ;; the same implementation through :inject-env?, so both paths have exactly
