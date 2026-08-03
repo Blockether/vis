@@ -1059,7 +1059,7 @@
 
 (defdescribe
   shell-pending-call-render-test
-  (it "renders a PENDING run batch as the bash it is about to run, not invocation JSON"
+  (it "renders a PENDING run batch with the finished card's own COMMAND section"
       (let
         [commands
          ["echo one && echo two" "ls -1"]
@@ -1067,35 +1067,58 @@
          display
          (render-shell-call {"commands" commands "op" "run"})]
 
-        (expect (= "bash" (:language display)))
-        ;; EXACTLY the finished card's COMMAND formatting, so the running block is
-        ;; already the shell block the result completes.
-        (expect (= (str/join "\n" (map format-shell-command commands)) (:code display)))
-        (expect (str/includes? (:code display) "echo one"))
-        (expect (not (str/includes? (:code display) "{")))
+        ;; Built by the SAME section builder as the completed card, so the running
+        ;; block IS the block it becomes — no pending dialect, no comment band.
+        (expect (= (str "**COMMAND**\n```bash\n"
+                        (str/join "\n" (map format-shell-command commands))
+                        "\n```")
+                   (:render display)))
+        (expect (not (str/includes? (:render display) "#")))
+        (expect (not (str/includes? (:render display) "{")))
         ;; …under the SAME headline the finished card wears, with the outcome
         ;; replaced by what the call is doing; a batch counts the rest.
         (expect (= "$ echo one && echo two · +1 more (running)" (:summary display)))))
   (it "accepts the ONE-COMMAND spelling and keyword-keyed input"
-      (expect (= {:code "ls -1" :language "bash" :summary "$ ls -1 (running)"}
+      (expect (= {:summary "$ ls -1 (running)" :render "**COMMAND**\n```bash\nls -1\n```"}
                  (render-shell-call {:commands "ls -1"}))))
   (it "wears the background START headline even when the call carries commands"
       ;; A background start is a lifecycle card, not a run: it reports the handle
       ;; the session will keep, exactly like the finished `▸ background … started`.
-      (expect (= "▸ background `dev` starting"
-                 (:summary (render-shell-call
-                             {"op" "background" "id" "dev" "commands" ["npm run dev"]})))))
-  (it "names the stage and its target for a lifecycle call that carries no commands"
-      (expect (= {:code "# shell logs sh-1" :language "bash" :summary "◷ `sh-1` reading logs"}
-                 (render-shell-call {"op" "logs" "id" "sh-1"}))))
-  (it "says what a `wait` is WAITING FOR, not merely which shell it targets"
+      (expect (= {:summary "▸ background `dev` starting"
+                  :render (str "**COMMAND**\n```bash\nnpm run dev\n```\n\n"
+                               "**STATUS**\n```\nid: dev\n```")}
+                 (render-shell-call {"op" "background" "id" "dev" "commands" ["npm run dev"]}))))
+  (it "puts what a `wait` is waiting for in the card's STATUS rows"
       ;; The wall a wait puts up IS its `until` regex plus the backstop it gives
-      ;; up after; a bare "# shell wait <id>" left the running block mute.
-      (expect (= {:code "# shell wait dev\n# until: Local:.*http  (timeout 600s)"
-                  :language "bash"
-                  :summary "◷ `dev` waiting · until Local:.*http · timeout 600s"}
+      ;; up after — the same rows the finished wait card reports.
+      (expect (= {:summary "◷ `dev` waiting · until Local:.*http · timeout 600s"
+                  :render "**STATUS**\n```\nid: dev\nuntil: Local:.*http\ntimeout: 600s\n```"}
                  (render-shell-call
                    {"op" "wait" "id" "dev" "until" "Local:.*http" "timeout_secs" 600}))))
+  (it "reports a `send` by its keystroke label, never a byte count"
+      (expect (= {:summary "↵ `dev` sending \"y\" ↵"
+                  :render "**STATUS**\n```\nid: dev\nkeys: \"y\" ↵\n```"}
+                 (render-shell-call {"op" "send" "id" "dev" "text" "y\n"}))))
+  (it "shows a lifecycle target's OWN command, read live from the registry"
+      ;; A wait/logs/send/stop runs no command of its own, but the bash it acts on
+      ;; is right there in `bg-procs` — so its pending card carries a real COMMAND
+      ;; section too instead of narrating the stage in prose.
+      (let
+        [sid
+         (str (random-uuid))
+
+         id
+         "pending-live-shell"]
+
+        (try
+          (swap! @#'shell/bg-procs assoc-in [sid id] {:script "npm run dev"})
+          (expect
+            (= (str "**COMMAND**\n```bash\nnpm run dev\n```\n\n" "**STATUS**\n```\nid: " id "\n```")
+               (:render (render-shell-call {"op" "logs" "id" id}))))
+          (finally (swap! @#'shell/bg-procs dissoc sid)))
+        ;; No live shell answers to that id: the STATUS rows stand alone.
+        (expect (= (str "**STATUS**\n```\nid: " id "\n```")
+                   (:render (render-shell-call {"op" "logs" "id" id}))))))
   (it "keeps the raw invocation when there is neither a command nor a target"
       (expect (nil? (render-shell-call {"op" "run"})))
       ;; A malformed batch is the CALL's error to report, never this preview's.

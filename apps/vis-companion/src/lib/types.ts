@@ -566,6 +566,12 @@ export interface TranscriptForm {
    * `result_summary`: a pending card must not read as an outcome.
    */
   pending_summary?: string;
+  /**
+   * The op-card BODY while the call runs, authored by the tool's own renderer
+   * (`shell`'s `**COMMAND**` section): the same sections its finished body is
+   * built from, minus the outcome. Its own key, never `result_render`.
+   */
+  pending_render?: string;
   result_kind?: string;
   result_detail?: Record<string, JsonValue>;
   render_segments?: JsonValue[];

@@ -850,20 +850,21 @@
         (expect (some? command-line))
         (expect (nil? json-line))
         (expect (= p/MARKER_CODE (marker-of command-line)))))
-  (it "wears its op-card HEADLINE above the command band while the call is running"
+  (it "wears its op-card HEADLINE above the tool-authored card body while running"
       ;; REGRESSION: a running `shell` painted a naked bash band and only grew its
       ;; badge once the result landed — the same call reading as two different
-      ;; components. The awaiting card is the SAME card, minus the outcome.
+      ;; components. The awaiting card is the SAME card, minus the outcome: the
+      ;; tool's own `:pending-render` sections stand in for the result body, and
+      ;; the raw invocation JSON never shows up beside them.
       (let
         [lines
          (format-iteration-entry {:iteration 0
                                   :forms [{:vis/tool-name "shell"
                                            :tool-color-role :tool-color/shell
                                            :code "shell({\"commands\": [\"sleep 30\"]})"
-                                           :display-code "sleep 30"
-                                           :display-language "bash"
-                                           ;; the headline `shell`'s `:render-call` authored
+                                           ;; the card `shell`'s own `:render-call` authored
                                            :pending-summary "$ sleep 30 (running)"
+                                           :pending-render "**COMMAND**\n```bash\nsleep 30\n```"
                                            :started-at-ms 1000
                                            :success? nil}]}
                                  80
@@ -873,20 +874,22 @@
          idx-of
          (fn [pred]
            (first (keep-indexed (fn [i l]
-                                  (when (pred l) i))
+                                  (when (pred (strip-ansi l)) i))
                                 lines)))
 
          headline-idx
-         (idx-of #(str/includes? (strip-ansi %) "$ sleep 30 (running)"))
+         (idx-of #(str/includes? % "$ sleep 30 (running)"))
 
-         band-idx
-         (idx-of #(and (= p/MARKER_CODE (marker-of %)) (str/includes? (strip-ansi %) "sleep 30")))]
+         body-idx
+         (idx-of #(and (str/includes? % "sleep 30") (not (str/includes? % "running"))))]
 
         (expect (some? headline-idx))
-        (expect (some? band-idx))
-        ;; Badge + headline FIRST, the submitted command beneath it as the body.
-        (expect (< headline-idx band-idx))
-        (expect (some? (idx-of #(str/includes? (strip-ansi %) "SHELL")))))))
+        (expect (some? body-idx))
+        ;; Badge + headline FIRST, the tool's card sections beneath it as the body.
+        (expect (< headline-idx body-idx))
+        (expect (some? (idx-of #(str/includes? % "SHELL"))))
+        ;; The invocation JSON the card replaces is gone, not shown twice.
+        (expect (nil? (idx-of #(str/includes? % "commands")))))))
 
 (defdescribe
   provider-auth-error-test
@@ -3606,38 +3609,46 @@
                    (let [base {:thinking "planning" :forms []}]
                      (expect (not= (fp base) (fp (assoc base :content-stream "live text"))))))))
 
-(defdescribe form-fingerprint-pending-display-test
-             ;; Regression: the live progress body is memoized by `form-fingerprint`.
-             ;; A RUNNING native call paints its tool-authored band (`:display-code` /
-             ;; `:display-language`) and its pending headline (`:pending-summary`), yet
-             ;; none of the three were in the key — so the same `:code` served the
-             ;; pre-display body forever and the op-card never appeared until the call
-             ;; finished. Caught by capturing the same frame before/after the display
-             ;; fields land: the two paints were byte-identical.
-             (let
-               [fp
-                #'render/form-fingerprint
+(defdescribe
+  form-fingerprint-pending-display-test
+  ;; Regression: the live progress body is memoized by `form-fingerprint`.
+  ;; A RUNNING native call paints its tool-authored band (`:display-code` /
+  ;; `:display-language`) and its pending headline (`:pending-summary`), yet
+  ;; none of the three were in the key — so the same `:code` served the
+  ;; pre-display body forever and the op-card never appeared until the call
+  ;; finished. Caught by capturing the same frame before/after the display
+  ;; fields land: the two paints were byte-identical.
+  (let
+    [fp
+     #'render/form-fingerprint
 
-                base
-                {:code "shell({\"op\": \"wait\", \"id\": \"verify\"})" :vis/tool-name "shell"}]
+     base
+     {:code "shell({\"op\": \"wait\", \"id\": \"verify\"})" :vis/tool-name "shell"}]
 
-               (it "display-code busts the fingerprint"
-                   (expect (not= (fp base) (fp (assoc base :display-code "# shell wait verify"))))
-                   (expect (not= (fp (assoc base :display-code "# a"))
-                                 (fp (assoc base :display-code "# b")))))
-               (it "display-language busts the fingerprint"
-                   (expect (not= (fp base) (fp (assoc base :display-language "bash")))))
-               (it "pending-summary busts the fingerprint"
-                   (expect (not= (fp base) (fp (assoc base :pending-summary "◷ `verify` waiting"))))
-                   (expect (not= (fp (assoc base :pending-summary "◷ `verify` waiting"))
-                                 (fp (assoc base :pending-summary "◷ `verify` reading logs")))))
-               (it "identical display fields still hit the same fingerprint"
-                   (let
-                     [full (assoc base
-                             :display-code "# shell wait verify"
-                             :display-language "bash"
-                             :pending-summary "◷ `verify` waiting")]
-                     (expect (= (fp full) (fp full)))))))
+    (it "display-code busts the fingerprint"
+        (expect (not= (fp base) (fp (assoc base :display-code "# shell wait verify"))))
+        (expect (not= (fp (assoc base :display-code "# a")) (fp (assoc base :display-code "# b")))))
+    (it "display-language busts the fingerprint"
+        (expect (not= (fp base) (fp (assoc base :display-language "bash")))))
+    (it "pending-summary busts the fingerprint"
+        (expect (not= (fp base) (fp (assoc base :pending-summary "◷ `verify` waiting"))))
+        (expect (not= (fp (assoc base :pending-summary "◷ `verify` waiting"))
+                      (fp (assoc base :pending-summary "◷ `verify` reading logs")))))
+    (it "pending-render busts the fingerprint"
+        ;; The pending BODY is the running card's whole content: a stale
+        ;; hit would keep painting the card with nothing under its headline.
+        (expect (not= (fp base)
+                      (fp (assoc base :pending-render "**STATUS**\n```\nid: verify\n```"))))
+        (expect (not= (fp (assoc base :pending-render "**STATUS**\n```\nid: a\n```"))
+                      (fp (assoc base :pending-render "**STATUS**\n```\nid: b\n```")))))
+    (it "identical display fields still hit the same fingerprint"
+        (let
+          [full (assoc base
+                  :display-code "sleep 30"
+                  :display-language "bash"
+                  :pending-summary "◷ `verify` waiting"
+                  :pending-render "**STATUS**\n```\nid: verify\n```")]
+          (expect (= (fp full) (fp full)))))))
 
 (defdescribe
   message-detail-expansions-key-test

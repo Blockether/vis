@@ -867,12 +867,12 @@ function ToolSummary({ children, className }: { children: string; className: str
 
 const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
   const role = toolRole(form.tool_color_role);
-  const body = resultBody(form);
+  const resultText = resultBody(form);
   const failed = form.error != null;
   // Once any real outcome has arrived (body/result/render/duration) a stale
   // "Running…" placeholder from the gateway must not linger — the op is done.
   const hasOutcome =
-    body !== '' ||
+    resultText !== '' ||
     form.result != null ||
     form.result_render != null ||
     form.duration_ms != null;
@@ -885,8 +885,12 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
     !failed && !hasOutcome && (!form.result_summary || placeholderSummary);
   // A RUNNING call wears the headline its own tool authored (`shell`'s
   // `$ npm test (running)`) instead of the generic wait: the awaiting card is the
-  // same card as the finished one, only its outcome is still missing.
+  // same card as the finished one, only its outcome is still missing…
   const pendingSummary = form.pending_summary?.trim();
+  // …and it paints that tool's own pending BODY underneath — the same sections
+  // its finished body is built from — so the card never changes shape when the
+  // result lands, and no pending-only dialect exists.
+  const body = resultText || (running ? (form.pending_render?.trimEnd() ?? '') : '');
   const summary = compactToolSummary(
     form.tool_name,
     running && pendingSummary ? pendingSummary : rawSummary,
@@ -999,6 +1003,11 @@ function showFormCode(form: TranscriptForm, code: string): boolean {
   // command IS the most important fact on screen, and `block.started` carries that
   // exact source plus the Running… sentinel. Python remains evidence after
   // completion as well, whether it passed or failed.
+  // …and never once the tool AUTHORED its own pending card body
+  // (`pending_render`, mirroring `form/show-running-tool-code?`): that body
+  // already IS the submitted command, rendered the way the card renders it, so a
+  // raw invocation beside it would say the same thing twice in JSON.
+  if (form.pending_render?.trim()) return false;
   return (
     form.tool_name === 'python_execution'
     || (formIsRunning(form) && RUNNING_CODE_TOOLS.has(form.tool_name))

@@ -41,7 +41,9 @@
    ;; the same HEADLINE while the call is still RUNNING, authored by the tool's
    ;; `:render-call`. Its own key: a pending card must never look like an outcome,
    ;; so channels still read "running" off the absent `:result-*` fields.
-   [:pending-summary "pending_summary"]
+   ;; …and the BODY it paints under that headline while it runs: the tool's own
+   ;; card sections, built by the same renderers its finished body uses.
+   [:pending-summary "pending_summary"] [:pending-render "pending_render"]
    ;; MULTI-card: canonical MINI-FORMS, recursively normalized by `<-wire`.
    [:cards "cards"]
    ;; native-tool op-card badge identity; wire keys intentionally drop namespaces
@@ -121,7 +123,8 @@
    `nil` for a NON-tool form (no `:vis/tool-name`) — its result rendering stays
    channel-specific (raw value / stdout). The badge is whatever the tool's
    `:summary` already produced; no first-line-of-body heuristic."
-  [{:keys [tool-color-role result-summary pending-summary result-render] tool-name :vis/tool-name}]
+  [{:keys [tool-color-role result-summary pending-summary result-render pending-render]
+    tool-name :vis/tool-name}]
   (when (some? tool-name)
     (let
       [summary
@@ -135,11 +138,18 @@
                    str/trim
                    not-empty))
 
+       ;; A RUNNING call has no result body yet, so the card shows the tool's own
+       ;; PENDING body — the same sections its result renderer builds, minus the
+       ;; outcome — and simply swaps it for the real one when the call lands.
        body
-       (some-> result-render
-               str
-               str/trimr
-               not-empty)]
+       (or (some-> result-render
+                   str
+                   str/trimr
+                   not-empty)
+           (some-> pending-render
+                   str
+                   str/trimr
+                   not-empty))]
 
       {:tool? true
        :label (tool-label tool-name)
@@ -203,12 +213,16 @@
   "Should a channel show a STILL-RUNNING form's invocation source even though
    `hide-tool-code?` would drop it once the call completes? Only for
    `running-code-tools` (and non-tool forms, which have no op-card to hide
-   behind). This is the shared TUI/channel policy; web mirrors it."
+   behind) — and never when the tool AUTHORED its own pending card body
+   (`:pending-render`): that body already IS the submitted command, rendered as
+   the card renders it, so the raw invocation beside it would say the same thing
+   twice in JSON. This is the shared TUI/channel policy; web mirrors it."
   [form]
-  (boolean (or (not (native-tool-form? form))
-               (contains? running-code-tools
-                          (some-> (:vis/tool-name form)
-                                  name)))))
+  (boolean (and (str/blank? (str (:pending-render form)))
+                (or (not (native-tool-form? form))
+                    (contains? running-code-tools
+                               (some-> (:vis/tool-name form)
+                                       name))))))
 
 (def ^:private same-path-coalescable-tools
   "Native tools whose ADJACENT op-cards fold only when they target the SAME file."

@@ -2332,18 +2332,36 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
 ;; flat Python sandbox next to `git` / `cat` / `grep`.
 ;; =============================================================================
 
-(defn- render-shell-call
-  "PENDING-call display for a `shell` invocation — the op-card the block WEARS while
-   it runs, so a running shell call reads as a shell card in its awaiting state
-   instead of raw `shell({\"commands\": …})` invocation JSON.
+(defn- live-bg-script
+  "The bash the LIVE background shell `id` is already running. A `wait`/`logs`/
+   `send`/`stop` runs no command of its OWN, but the command it acts on is right
+   there in the registry — the same lines the finished card renders out of its
+   result — so a pending lifecycle card shows a real COMMAND section instead of
+   narrating the stage in prose.
 
-   `:summary` is the SAME headline shape the finished card uses, with the outcome
-   replaced by what the call is currently doing: `$ npm test (running)`,
-   `◷ \\`dev\\` waiting · until Local:.*http`, `▸ background starting`. `:code` /
-   `:language` are the bash it is about to run, pretty-printed exactly like the
-   completed card's COMMAND section; a lifecycle stage names itself and the
-   background id it targets. nil when the arguments carry neither — the raw
-   invocation stays the honest fallback."
+   nil when no live shell answers to that id, or when two sessions both do and the
+   answer would be a guess."
+  [id]
+  (when id
+    (let [hits (into [] (keep #(get % id)) (vals @bg-procs))]
+      (when (= 1 (count hits)) (present-str (:script (first hits)))))))
+
+(defn- render-shell-call
+  "PENDING-call display for a `shell` invocation: the SAME op-card the finished
+   call wears, assembled by the SAME section builders, out of what is known BEFORE
+   the run instead of out of a result.
+
+   `:summary` is the finished headline with the outcome replaced by what the call
+   is doing (`$ npm test (running)`, `◷ \\`dev\\` waiting · until Local:.*http`).
+   `:render` is that card's BODY: a `**COMMAND**` section holding the bash — the
+   lines about to run, or, for a lifecycle stage, the bash its target background
+   shell is already running — plus the `**STATUS**` rows the request itself
+   carries (id / cwd / until / timeout / keys). There is no pending dialect: a
+   running block and the block it becomes are one card, and nothing is a
+   hand-written comment band.
+
+   nil when the arguments name neither a command nor a target — the raw invocation
+   stays the honest fallback."
   [input]
   (let
     [op
@@ -2381,21 +2399,11 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
      (some-> (opt input :text)
              keys-label)
 
-     code
-     (cond (seq cmds) (str/join "\n" (mapv format-shell-command cmds))
-           ;; A lifecycle stage runs no command of its own: it names the stage and
-           ;; the background shell it acts on. A `wait` also names WHAT it is
-           ;; waiting for — the `until` regex, and the backstop it gives up after,
-           ;; ARE that call — so the running block says what the wall is for.
-           id (str "# shell "
-                   op
-                   " "
-                   id
-                   (when until
-                     (str "\n# until: "
-                          until
-                          (when timeout-secs (str "  (timeout " timeout-secs "s)")))))
-           :else nil)
+     script
+     (or (some->> cmds
+                  seq
+                  (str/join "\n"))
+         (live-bg-script id))
 
      summary
      (cond
@@ -2419,9 +2427,27 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
                                         (str " "
                                              (clip-chip (shell-one-line keys-lbl) shell-chip-max))))
        (= "stop" op) (str "✕ background `" id "` stopping")
-       :else (str "◷ `" id "` " op))]
+       :else (str "◷ `" id "` " op))
 
-    (when code {:code code :language "bash" :summary summary})))
+     body
+     (->> [(shell-section "COMMAND"
+                          (some-> script
+                                  format-shell-command)
+                          "bash")
+           (shell-section "STATUS"
+                          (kv-lines [["id" id] ["cwd" (opt input :cwd)] ["until" until]
+                                     ["timeout" (when timeout-secs (str timeout-secs "s"))]
+                                     ["keys" keys-lbl]]))]
+          (remove nil?)
+          (str/join "\n\n"))]
+
+    (when (or summary (seq body))
+      (cond-> {}
+        summary
+        (assoc :summary summary)
+
+        (seq body)
+        (assoc :render body)))))
 
 (def shell-symbol
   (vis/symbol

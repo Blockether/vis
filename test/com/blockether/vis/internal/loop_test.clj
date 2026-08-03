@@ -4215,9 +4215,9 @@
 
         (expect (not (contains? block :vis/native-input)))
         (expect (str/includes? (:source block) "raise ValueError("))))
-  (it "renders a pending `shell` wait as its own bash block, not the call JSON"
+  (it "renders a pending `shell` wait as the op-card it becomes, not the call JSON"
       ;; End to end over the real seam: the block's input reaches the tool's own
-      ;; `:render-call`, so the running form is the shell block its result card
+      ;; `:render-call`, so the running form is the shell CARD its result card
       ;; completes instead of `shell({\"op\": \"wait\", …})`.
       (let
         [renderers (extension/native-tool-call-renderers [sh/vis-extension])
@@ -4229,15 +4229,27 @@
                                        (:vis/tool-name block)
                                        (:vis/native-input block))]
 
-        (expect (= "bash" (:display-language display)))
-        (expect (= "# shell wait svar-verify\n# until: VERIFY_EXIT=  (timeout 600s)"
-                   (:display-code display)))
-        ;; …and the op-card HEADLINE that band sits under, so the running block is
-        ;; the shell CARD in its awaiting state rather than a naked bash band.
+        ;; The card BODY, built by the very sections the finished card uses — no
+        ;; comment band invented for pending calls…
+        (expect (= "**STATUS**\n```\nid: svar-verify\nuntil: VERIFY_EXIT=\ntimeout: 600s\n```"
+                   (:pending-render display)))
+        ;; …and therefore no separate code band saying the same thing in JSON.
+        (expect (nil? (:display-code display)))
+        (expect (nil? (:display-language display)))
+        ;; …under the op-card HEADLINE, so the running block is the shell CARD in
+        ;; its awaiting state rather than a naked band.
         (expect (= "◷ `svar-verify` waiting · until VERIFY_EXIT= · timeout 600s"
                    (:pending-summary display)))
-        ;; A pending headline is never mistaken for an outcome.
-        (expect (nil? (:result-summary display))))))
+        ;; A pending display is never mistaken for an outcome.
+        (expect (nil? (:result-summary display)))
+        (expect (nil? (:result-render display)))))
+  (it "still hands a plain code band to a tool that renders one"
+      ;; Card sections are `shell`'s choice, not the seam's: a tool that would
+      ;; rather preview source keeps `:display-code`/`:display-language`.
+      (expect (= {:display-code "SELECT 1" :display-language "sql"}
+                 (pending-call-display {"q" (fn [_] {:code "SELECT 1" :language "sql"})}
+                                       "q"
+                                       {})))))
 
 (defn- env-root
   "The sandbox's primary allowed root — where cat is confined for a :memory env.

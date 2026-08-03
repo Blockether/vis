@@ -3991,13 +3991,16 @@
 
 (defn- pending-call-display
   "The DISPLAY a native call carries WHILE it runs: the tool's own `:render-call`
-   rendering of its INPUT, as `{:display-code :display-language :pending-summary}`.
-   `shell` renders the bash it is about to run PLUS the op-card headline that bash
-   sits under (`$ npm test (running)`), so the pending block is already the shell
-   card its result completes instead of the raw `shell({…})` invocation JSON.
+   rendering of its INPUT, as `{:display-code :display-language :pending-summary
+   :pending-render}`. `shell` hands back the very op-card its result will complete
+   — the headline (`$ npm test (running)`) plus that card's BODY, built by the same
+   section renderers the finished body uses — so a running block is that card in
+   its awaiting state instead of raw `shell({…})` invocation JSON, and no preview
+   dialect exists only for pending calls.
 
-   The headline rides its OWN `:pending-summary` — never `:result-summary` — so a
-   running call never looks like a finished one to any channel.
+   Both surfaces ride their OWN keys, never `:result-summary`/`:result-render`, so
+   a running call never looks finished to any channel. A tool that would rather
+   show a plain code band still gets `:display-code`/`:display-language`.
 
    nil for a tool without a `:render-call`; a throwing renderer degrades to that raw
    invocation rather than failing the call it was only previewing."
@@ -4005,25 +4008,30 @@
   (when-let [render (and tool-name (get call-renderers (name tool-name)))]
     (let
       [display (try (render input) (catch Throwable _ nil))
-       code (some-> (:code display)
+       trimmed (fn [k]
+                 (some-> (k display)
+                         str
+                         str/trim
+                         not-empty))
+       code (trimmed :code)
+       summary (trimmed :summary)
+       body (some-> (:render display)
                     str
-                    str/trim
-                    not-empty)
-       summary (some-> (:summary display)
-                       str
-                       str/trim
-                       not-empty)]
+                    str/trimr
+                    not-empty)]
 
-      (when code
-        (cond->
-          {:display-code code
-           :display-language (or (some-> (:language display)
-                                         str
-                                         str/trim
-                                         not-empty)
-                                 "text")}
+      (when (or code summary body)
+        (cond-> {}
+          code
+          (assoc :display-code
+            code :display-language
+            (or (trimmed :language) "text"))
+
           summary
-          (assoc :pending-summary summary))))))
+          (assoc :pending-summary summary)
+
+          body
+          (assoc :pending-render body))))))
 
 (defn- tool-result-display
   "The human-channel DISPLAY for one executed TOOL CALL as `{:summary :body}` —

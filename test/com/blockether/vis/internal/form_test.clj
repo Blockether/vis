@@ -140,6 +140,11 @@
       (expect (form/show-running-tool-code? {:vis/tool-name "python_execution"}))
       (expect (not (form/show-running-tool-code? {:vis/tool-name "cat"})))
       (expect (not (form/show-running-tool-code? {:vis/tool-name "run_tests"})))
+      ;; …and NOT even then once the tool authored its own pending card body: that
+      ;; body already IS the submitted command, rendered as the card renders it.
+      (expect (not (form/show-running-tool-code? {:vis/tool-name "shell"
+                                                  :pending-render
+                                                  "**COMMAND**\n```bash\nnpm test\n```"})))
       ;; A non-tool form has no op-card to hide behind, so it always shows.
       (expect (form/show-running-tool-code? {:result {:k 1}})))
   (it "removes redundant mutation verbs from new and persisted tool summaries"
@@ -150,21 +155,31 @@
                                   ["cat" "update `literal.txt`" "update `literal.txt`"]]]
         (expect (= expected
                    (:summary (form/result-card {:vis/tool-name tool :result-summary summary}))))))
-  (it "falls back to the tool-authored PENDING headline while a call is still running"
+  (it "falls back to the tool-authored PENDING card while a call is still running"
       ;; A running call has no result yet, but it is the SAME card: it wears the
-      ;; headline its own `:render-call` authored (`$ npm test (running)`) instead
-      ;; of collapsing to an unlabeled code band until the result lands.
+      ;; headline AND the body its own `:render-call` authored (`$ npm test
+      ;; (running)` over a COMMAND section) instead of collapsing to a bare band.
       (let
         [running (form/result-card {:vis/tool-name "shell"
-                                    :pending-summary "$ npm test (running)"})]
+                                    :pending-summary "$ npm test (running)"
+                                    :pending-render "**COMMAND**\n```bash\nnpm test\n```"})]
         (expect (= "$ npm test (running)" (:summary running)))
-        (expect (nil? (:body running)))
-        (expect (not (:collapsible? running))))
+        (expect (= "**COMMAND**\n```bash\nnpm test\n```" (:body running)))
+        (expect (:collapsible? running)))
+      ;; Summary-only pending card: nothing to fold under it yet.
+      (let
+        [bare (form/result-card {:vis/tool-name "shell" :pending-summary "◷ `dev` reading logs"})]
+        (expect (nil? (:body bare)))
+        (expect (not (:collapsible? bare))))
       ;; The moment the result lands it wins — a finished card never says "running".
-      (expect (= "exit 0 · 12 lines"
-                 (:summary (form/result-card {:vis/tool-name "shell"
-                                              :pending-summary "$ npm test (running)"
-                                              :result-summary "exit 0 · 12 lines"})))))
+      (let
+        [done (form/result-card {:vis/tool-name "shell"
+                                 :pending-summary "$ npm test (running)"
+                                 :pending-render "**COMMAND**\n```bash\nnpm test\n```"
+                                 :result-summary "exit 0 · 12 lines"
+                                 :result-render "**OUTPUT**\n```\nok\n```"})]
+        (expect (= "exit 0 · 12 lines" (:summary done)))
+        (expect (= "**OUTPUT**\n```\nok\n```" (:body done)))))
   (it "->display drops nils so a merge never stamps empty keys"
       (expect (= {} (form/->display {:result nil :vis/tool-name nil})))
       (expect (= {:vis/tool-name "rg"} (form/->display {:vis/tool-name "rg" :result-render nil}))))

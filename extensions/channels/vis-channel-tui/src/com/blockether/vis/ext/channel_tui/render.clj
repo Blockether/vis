@@ -3503,8 +3503,9 @@
 (defn- form-fingerprint
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
-  [{:keys [code comment display-code display-language pending-summary render-segments result-render
-           result-summary result-kind result-detail error success? silent? tool-color-role cards]
+  [{:keys [code comment display-code display-language pending-summary pending-render render-segments
+           result-render result-summary result-kind result-detail error success? silent?
+           tool-color-role cards]
     tool-name :vis/tool-name}]
   [(text-fingerprint code) (text-fingerprint comment) render-segments
    (text-fingerprint result-render) (text-fingerprint result-summary) result-kind
@@ -3516,6 +3517,7 @@
    ;; invocation renders differently once the tool's own `:render-call` lands,
    ;; and without these the live bubble keeps the pre-display body forever.
    (text-fingerprint display-code) display-language (text-fingerprint pending-summary)
+   (text-fingerprint pending-render)
    ;; The native-tool BADGE identity the renderer paints (label + color); without
    ;; these in the key, a form that gains them renders from a STALE cache entry.
    tool-name tool-color-role
@@ -4837,7 +4839,10 @@
           result-text
           (let
             [rendered
-             (when tool-name* (:result-render form))
+             ;; The CARD's body, not `:result-render` straight off the form: a call
+             ;; still RUNNING has no result yet and paints its tool-authored
+             ;; pending body instead — one field, decided once in `result-card`.
+             (when tool-name* (:body card))
 
              v
              (:result form)]

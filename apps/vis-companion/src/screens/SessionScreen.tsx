@@ -410,6 +410,8 @@ function formFromEvent(event: SseEvent, running = false): TranscriptForm {
     // The tool-authored headline for a call still in flight; `Running…` above stays
     // the sentinel the placeholder logic keys on, this is what the card SHOWS.
     pending_summary: stringField(event, 'pending_summary') || undefined,
+    // …and the body it paints under that headline while it runs.
+    pending_render: stringField(event, 'pending_render') || undefined,
     result_render: stringField(event, 'result_render') || undefined,
     result_kind: stringField(event, 'result_kind') || undefined,
     result: event.result as TranscriptForm['result'],
