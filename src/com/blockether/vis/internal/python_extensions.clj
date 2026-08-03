@@ -328,15 +328,27 @@
 (defn- call-py-ext
   "Invoke a Python callable with the extension identity bound (so `vis.state`
    host callbacks own their aggregate rows) and the live session env threaded
-   through `*state-env*` (so state uses the session's own DB when available).
+   through `*state-env*` (so state uses the session's own DB when available)
+   and through `extension/*current-environment*` (so `vis.shell` and `vis.ask`
+   run against the session that triggered the callback).
+
    Only an env that actually carries :db-info overrides the ambient
    `*state-env*` — a db-less env (or nil) keeps it, so global state still
-   resolves through the shared connection / the test binding.
+   resolves through the shared connection / the test binding. The session env
+   follows the same rule on :session-id: symbol calls arrive with the ambient
+   binding already installed by `extension/invoke-symbol-wrapper` and pass nil
+   here, while hook adapters (activation, prompt, ctx, slash, op hooks) are
+   handed a real env — without this binding those callbacks ran session-less,
+   so `vis.shell` threw \"available only while handling a session\" and
+   `vis.ask` requests were dropped by the gateway bridge.
    Returns the `->clj` view of the result."
   [ext-name env ^Context ctx ^Value f args]
   (binding
     [extension/*current-extension*
      (or extension/*current-extension* {:ext/name ext-name})
+
+     extension/*current-environment*
+     (if (:session-id env) env extension/*current-environment*)
 
      *state-env*
      (if (:db-info env) env *state-env*)]

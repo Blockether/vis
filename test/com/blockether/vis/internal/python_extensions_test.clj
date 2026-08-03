@@ -1525,3 +1525,48 @@ vis.extension(name='asker', description='asker', alias='a',
                        (expect (true? (get result "raised")))
                        (expect (some? (re-find #"is_required" (str (get result "message")))))
                        (expect (empty? (human-input/pending-requests))))))))
+
+;; =============================================================================
+;; Hook callbacks run inside the caller's session env
+;; =============================================================================
+
+(def ^:private hook-asker-py
+  "
+import vis
+
+def hook_prompt(env):
+    answer = vis.ask('HookAsk', [{'name': 'go', 'type': 'checkbox'}], timeout_ms=20000)
+    return 'hook:' + str(answer.reason)
+
+vis.extension(name='hookasker', description='hookasker', alias='hk', prompt=hook_prompt)
+")
+
+(defdescribe python-hook-environment-test
+             (it "a hook callback's vis.ask names the session the hook was invoked for"
+                 ;; Hook adapters (prompt/activation/ctx/slash/op) are HANDED the live env,
+                 ;; but used to drop it: the Python callable ran with no
+                 ;; `extension/*current-environment*`, so `vis.ask` raised a session-less
+                 ;; request that the gateway bridge discards and `vis.shell` refused to run
+                 ;; at all. The env has to reach the callable.
+                 (with-loaded {"hookasker.py" hook-asker-py}
+                              (fn [_ _]
+                                (let
+                                  [prompt-fn
+                                   (:ext/prompt-fn (registered "hookasker"))
+
+                                   drawn
+                                   (atom nil)
+
+                                   _
+                                   (answer-pending! "HookAsk"
+                                                    (fn [id]
+                                                      (reset! drawn (human-input/pending-request
+                                                                      id))
+                                                      (human-input/submit! id {"go" true})))
+
+                                   result
+                                   (prompt-fn {:session-id "sess-hook"})]
+
+                                  (expect (= "hook:submitted" result))
+                                  (expect (= "sess-hook" (:session-id @drawn)))
+                                  (expect (empty? (human-input/pending-requests))))))))
