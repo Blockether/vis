@@ -917,6 +917,20 @@
       ;; a simple command comes back unchanged
       (expect (= "ls -la" (format-shell-command "ls -la")))
       (expect (= "" (format-shell-command nil))))
+  (it "keeps the line structure a multi-line command was written with"
+      ;; REGRESSION: the COMMAND pretty-printer trimmed every line and deleted
+      ;; every blank one, so a script's paragraph break was welded shut and a
+      ;; block's indentation was flattened. Only the whitespace the SPLIT itself
+      ;; introduces may go.
+      ;; a blank line between two paragraphs survives, exactly once
+      (expect (= "set -e\n\necho hi\n\necho bye"
+                 (format-shell-command "set -e\n\necho hi\n\n\necho bye")))
+      ;; indentation inside a block is the author's, not noise
+      (expect (= "if [ -f x ];\nthen\n  echo yes\nfi"
+                 (format-shell-command "if [ -f x ]; then\n  echo yes\nfi")))
+      ;; blank head/tail never reaches the card, and an operator break does not
+      ;; indent the line it creates
+      (expect (= "a &&\nb" (format-shell-command "\n\na && b\n\n"))))
   (it "surfaces shell failures and timeouts on the collapsed chip"
       (expect (str/includes? (:summary (render-shell-run-result
                                          {"command" "grep nope missing" "exit" 2 "duration_ms" 34}))

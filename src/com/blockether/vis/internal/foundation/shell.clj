@@ -1950,20 +1950,52 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
           (< (long ms) 60000) (str/replace (format "%.1fs" (/ (double ms) 1000.0)) "," ".")
           :else (str/replace (format "%.1fm" (/ (double ms) 60000.0)) "," "."))))
 
+(defn- squeeze-blank-lines
+  "Display-tidy the lines of a rendered command: trailing whitespace off every
+   line, no blank head or tail, and an interior run of blanks collapsed to ONE.
+   A blank line the CALLER wrote is authored structure — the paragraph break in a
+   multi-line script — so it survives instead of being welded shut."
+  [lines]
+  (->> lines
+       (map str/trimr)
+       (partition-by str/blank?)
+       (mapcat (fn [g]
+                 (if (str/blank? (first g)) [""] g)))
+       (drop-while str/blank?)
+       reverse
+       (drop-while str/blank?)
+       reverse))
+
+(defn- skip-inline-space
+  "First index at or after `i` that is neither a space nor a tab. An operator
+   break ends its own line, so the continuation must not start indented by the
+   split — that is the ONLY whitespace this pretty-printer may drop."
+  ^long [^String s ^long i ^long n]
+  (loop [i i]
+    (if (and (< i n)
+             (let [c (.charAt s i)]
+               (or (= c \space) (= c \tab))))
+      (recur (inc i))
+      i)))
+
 (defn- format-shell-command
   "Pretty-print a shell command for the COMMAND card so a compound one-liner
    reads as separated statements instead of one crammed blob. Break onto its
    own line at TOP-LEVEL `;`, `&&`, `||` operators, keeping the operator at the
    end of its line. Quote- AND paren-aware: separators inside `'…'` / `\"…\"`
    or nested `$(…)` / `(…)` stay put (so `$(f || g)` and `2>&1 &` are never
-   split), and a simple command comes back unchanged."
+   split), and a simple command comes back unchanged.
+
+   The command's OWN line structure is display: a multi-line script keeps its
+   indentation, and a blank line between two of its paragraphs survives as one
+   blank row (see [[squeeze-blank-lines]])."
   [s]
   (let
     [s
      (str s)
 
      n
-     (count s)
+     (long (count s))
 
      sb
      (StringBuilder.)]
@@ -1982,11 +2014,7 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
        0]
 
       (if (>= i n)
-        (let
-          [out (->> (str/split-lines (str sb))
-                    (map str/trim)
-                    (remove str/blank?)
-                    (str/join "\n"))]
+        (let [out (str/join "\n" (squeeze-blank-lines (str/split-lines (str sb))))]
           (if (str/blank? out) (str/trim s) out))
         (let
           [c
@@ -2004,11 +2032,12 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
             (or sq dq) (do (.append sb c) (recur (inc i) sq dq depth))
             (= c \() (do (.append sb c) (recur (inc i) sq dq (inc depth)))
             (= c \)) (do (.append sb c) (recur (inc i) sq dq (max 0 (dec depth))))
-            (and (zero? depth) (= c \&) (= nxt \&)) (do (.append sb "&&\n")
-                                                        (recur (+ i 2) sq dq depth))
-            (and (zero? depth) (= c \|) (= nxt \|)) (do (.append sb "||\n")
-                                                        (recur (+ i 2) sq dq depth))
-            (and (zero? depth) (= c \;)) (do (.append sb ";\n") (recur (inc i) sq dq depth))
+            (and (zero? depth) (= c \&) (= nxt \&))
+            (do (.append sb "&&\n") (recur (skip-inline-space s (+ i 2) n) sq dq depth))
+            (and (zero? depth) (= c \|) (= nxt \|))
+            (do (.append sb "||\n") (recur (skip-inline-space s (+ i 2) n) sq dq depth))
+            (and (zero? depth) (= c \;)) (do (.append sb ";\n")
+                                             (recur (skip-inline-space s (inc i) n) sq dq depth))
             :else (do (.append sb c) (recur (inc i) sq dq depth))))))))
 
 (def ^:private non-printing-control-re #"[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]")
