@@ -12,7 +12,7 @@
 import { DataTable } from '../components/DataTable';
 
 /** Build a fence body exactly as `resources/vis-shims/attach.py` emits it. */
-function fence(name: string, label: string, csv: string): string {
+export function fence(name: string, label: string, csv: string): string {
   const grid = csv.trim().split('\n');
   const cols = (grid[0] ?? '').split(',').length;
   const rows = grid.length - 1;

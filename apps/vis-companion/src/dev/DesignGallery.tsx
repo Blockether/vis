@@ -16,6 +16,8 @@ import { BUNDLED_DARK, BUNDLED_LIGHT } from '../lib/palettes';
 import { applyTheme } from '../lib/theme';
 import { ChipHeaderVariant, FleetStripVariant, MachineFirstVariant } from './variants';
 import { DataTableVariant } from './tableVariants';
+import { InspectGridVariant, RuledGridVariant } from './gridVariants';
+import { TallyBadgesVariant, TallyHeaderVariant, TallyStripVariant } from './tallyVariants';
 
 export interface DesignVariant {
   id: string;
@@ -58,6 +60,43 @@ export const DESIGN_VARIANTS: DesignVariant[] = [
       'An attached CSV is data: filter, click-to-sort, multi-select and Copy CSV, in the same fence the TUI paints as a grid.',
     states: ['default', 'wide', 'tall', 'solo'],
     render: (state) => <DataTableVariant state={state} />,
+  },
+  {
+    id: 'grid-ruled',
+    title: 'Grid 1 · Ruled sheet',
+    blurb:
+      'Columns sized to content, a `#` gutter that owns selection, a head you can actually see, and a page that FILLS the box.',
+    states: ['default', 'sorted', 'wide', 'tall', 'solo'],
+    render: (state) => <RuledGridVariant state={state} />,
+  },
+  {
+    id: 'grid-inspect',
+    title: 'Grid 2 · Cell inspector',
+    blurb:
+      'The same sheet, plus the one thing every good SQL client has: press a cell and read the WHOLE value.',
+    states: ['cell', 'blob', 'rows'],
+    render: (state) => <InspectGridVariant state={state} />,
+  },
+  {
+    id: 'tally-header',
+    title: 'Tally A · Header says it (shipped)',
+    blurb: 'Live and unread are stated three times: the fleet line, the chip strip, and every machine header.',
+    states: ['default', 'solo'],
+    render: (state) => <TallyHeaderVariant state={state} />,
+  },
+  {
+    id: 'tally-badges',
+    title: 'Tally B · Two badges, header quiet',
+    blurb: 'Live becomes a filled green block beside the amber one and the header line drops both counts.',
+    states: ['default', 'solo'],
+    render: (state) => <TallyBadgesVariant state={state} />,
+  },
+  {
+    id: 'tally-strip',
+    title: 'Tally C · The strip is the tally',
+    blurb: 'Chips own both counts while the strip exists; with one machine paired the header line takes them back.',
+    states: ['default', 'solo'],
+    render: (state) => <TallyStripVariant state={state} />,
   },
 ];
 
