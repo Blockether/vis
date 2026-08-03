@@ -253,6 +253,85 @@
                           (expect (= "initial" (:head-subject (magit/status-model dir)))))
                         (finally (extension/deregister-extension! extension-name))))))
 
+(defn- block-commit-hook!
+  "Install a pre-commit githook in `dir` that ALWAYS fails, so any commit that
+   still runs githooks is rejected by git itself."
+  [dir]
+  (let [^java.io.File hook (io/file dir ".git" "hooks" "pre-commit")]
+    (io/make-parents hook)
+    (spit hook "#!/bin/sh\necho 'pre-commit hook says no' >&2\nexit 1\n")
+    (.setExecutable hook true false)
+    hook))
+
+(defdescribe
+  commit-no-verify-test
+  (it "a failing pre-commit githook blocks a normal commit"
+      (let [dir (init-repo!)]
+        (block-commit-hook! dir)
+        (spit (str dir "/a.txt") "one\ntwo\n")
+        (magit/stage-file! dir "a.txt")
+        (let [r (magit/commit! dir "hooked" {})]
+          (expect (false? (:ok? r)))
+          (expect (= "initial" (:head-subject (magit/status-model dir)))))))
+  (it "no-verify? commits straight through the failing githook"
+      (let [dir (init-repo!)]
+        (block-commit-hook! dir)
+        (spit (str dir "/a.txt") "one\ntwo\n")
+        (magit/stage-file! dir "a.txt")
+        (let [r (magit/commit! dir "hooked" {:no-verify? true})]
+          (expect (:ok? r))
+          (expect (str/includes? (:msg r) "hooks skipped"))
+          (let [m (magit/status-model dir)]
+            (expect (= "hooked" (:head-subject m)))
+            (expect (empty? (:staged m)))))))
+  (it "amend + no-verify? rewords HEAD through the failing githook"
+      (let [dir (init-repo!)]
+        (block-commit-hook! dir)
+        (expect (:ok? (magit/commit! dir "initial, reworded" {:amend? true :no-verify? true})))
+        (let [m (magit/status-model dir)]
+          (expect (= "initial, reworded" (:head-subject m)))
+          (expect (= 1 (count (:commits m)))))))
+  (it "the commit transient's n switch reaches git — c commit with --no-verify"
+      (let
+        [dir
+         (init-repo!)
+
+         mini
+         {:transient!
+          (fn [title spec _read-option]
+            (expect (= "Commit" title))
+            (expect (= {:key "n" :type :switch :id :no-verify :label "Disable hooks (--no-verify)"}
+                       (dialogs/transient-item-by-key spec \n)))
+            (expect (= :commit (:id (dialogs/transient-item-by-key spec \c))))
+            (expect (= :amend (:id (dialogs/transient-item-by-key spec \a))))
+            {:action :commit :switches #{:no-verify} :options {}})
+          :read! (fn [_label _opts]
+                   "via transient")}]
+
+        (block-commit-hook! dir)
+        (spit (str dir "/a.txt") "one\ntwo\n")
+        (magit/stage-file! dir "a.txt")
+        (let [r ((var-get #'dialogs/magit-commit-flow!) mini dir (magit/status-model dir))]
+          (expect (:ok? r))
+          (expect (= "via transient" (:head-subject (magit/status-model dir)))))))
+  (it "the commit transient without the n switch leaves githooks in force"
+      (let
+        [dir
+         (init-repo!)
+
+         mini
+         {:transient! (fn [_title _spec _read-option]
+                        {:action :commit :switches #{} :options {}})
+          :read! (fn [_label _opts]
+                   "via transient")}]
+
+        (block-commit-hook! dir)
+        (spit (str dir "/a.txt") "one\ntwo\n")
+        (magit/stage-file! dir "a.txt")
+        (let [r ((var-get #'dialogs/magit-commit-flow!) mini dir (magit/status-model dir))]
+          (expect (false? (:ok? r)))
+          (expect (= "initial" (:head-subject (magit/status-model dir))))))))
+
 ;;; ── branches ────────────────────────────────────────────────────────────────
 
 (defdescribe branch-test

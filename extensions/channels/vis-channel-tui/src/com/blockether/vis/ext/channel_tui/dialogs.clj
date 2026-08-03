@@ -1856,7 +1856,7 @@
                Home/End top/bottom · TAB fold diff · RET visit · q/Esc close
    Staging     s/u stage/unstage at point · S/U stage/unstage ALL
    Discard     x/k discard at point (asks first)
-   Commit      c commit flow (prompt; amend)
+   Commit      c commit transient (c commit · a amend · n --no-verify)
    History     l log graph · C-w copy sha/path/ref
    Remote      P push · F pull · f fetch
    Branch      b branch flow      Stash  z stash flow
@@ -2137,13 +2137,27 @@
       (magit/discard-file! root row))))
 
 (defn- magit-commit-flow!
+  "Magit's `c` commit transient (`magit-transient!`), keyed exactly like Emacs
+   magit's commit popup. SWITCHES: `n` Disable hooks (`--no-verify`) — the
+   escape hatch for a repo whose pre-commit/commit-msg githook is broken or
+   irrelevant. ACTIONS: `c` commit the staged index, `a` amend the last commit
+   (magit's `c c` / `c a`). The message is then read INLINE, as before."
   [mini root model]
   (when-let
-    [id ((:choose! mini)
-          "Commit:"
-          [{:key \c :label "commit staged" :id :commit}
-           {:key \a :label "amend last commit" :id :amend}])]
-    (let [amend? (= :amend id)]
+    [{:keys [action switches]}
+     ((:transient! mini)
+       "Commit"
+       {:groups [{:title "Arguments"
+                  :items
+                  [{:key "n" :type :switch :id :no-verify :label "Disable hooks (--no-verify)"}]}
+                 {:title "Commit"
+                  :items [{:key "c" :type :action :id :commit :label "Commit staged"}
+                          {:key "a" :type :action :id :amend :label "Amend last commit"}]}]}
+       (constantly nil))]
+    (let
+      [amend? (= :amend action)
+       no-verify? (contains? switches :no-verify)]
+
       (if (and (not amend?) (empty? (:staged model)))
         {:ok? false :msg "Nothing staged — stage with s/S first"}
         (when-let
@@ -2152,7 +2166,7 @@
                  {:initial (if amend? (or (magit/last-commit-message root) "") "")})]
           (if (str/blank? msg)
             {:ok? false :msg "Empty message — commit aborted"}
-            (magit/commit! root msg {:amend? amend?})))))))
+            (magit/commit! root msg {:amend? amend? :no-verify? no-verify?})))))))
 
 (defn transient-item-by-key
   "PURE: the transient spec item bound to single character `ch` (a Character or

@@ -52,7 +52,7 @@
 ;;
 ;; ── Discarding / committing ─────────────────────────────────────────────────
 ;;   x / k        discard the change at point (throw it away — asks first)
-;;   c            commit flow (message prompt; supports amend)
+;;   c            commit transient (message prompt; amend; n disables githooks)
 ;;
 ;; ── History / inspection ────────────────────────────────────────────────────
 ;;   l            log — the graph log viewer
@@ -445,18 +445,27 @@
    non-amend commit over a clean index (a bare `git commit` failure would echo
    a whole status dump). The index guard only applies when HEAD resolves:
    `diff --cached --quiet` reports clean on an unborn branch even with staged
-   files."
-  [root message {:keys [amend?]}]
+   files.
+
+   `opts`: :amend? adds `--amend`, :no-verify? adds `--no-verify` so the
+   pre-commit / commit-msg githooks are skipped (magit's commit transient
+   `-n Disable hooks`). :no-verify? never relaxes vis' OWN `:git/commit`
+   authorization boundary — it only silences git's hooks."
+  [root message {:keys [amend? no-verify?]}]
   (cond (str/blank? (str message)) {:ok? false :msg "Empty commit message"}
         (and (not amend?)
              (head-exists? root)
              (= 0 (:exit (git! root ["diff" "--cached" "--quiet"]))))
         {:ok? false :msg "Nothing staged (stage with s/S first)"}
-        :else (action-result (if amend? "Amended commit" "Committed")
+        :else (action-result (str (if amend? "Amended commit" "Committed")
+                                  (when no-verify? " (hooks skipped)"))
                              (git/commit! (as-file root)
                                           (cond-> ["commit" "-m" (str message)]
                                             amend?
-                                            (conj "--amend"))
+                                            (conj "--amend")
+
+                                            no-verify?
+                                            (conj "--no-verify"))
                                           nil))))
 
 (defn push!
