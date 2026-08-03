@@ -6817,6 +6817,19 @@
                          {:type :ext.foundation.editing/struct-anchor-error
                           :reason (get-in resolved [:error :reason])})))))))
 
+(defn- subexpression-count
+  "How many non-overlapping times the literal `needle` occurs in `s`."
+  ^long [^String s ^String needle]
+  (loop
+    [from
+     0
+
+     n
+     0]
+
+    (let [i (.indexOf s needle (int from))]
+      (if (neg? i) n (recur (+ i (count needle)) (inc n))))))
+
 (defn- struct-patch-one
   "Structural edit via tree-sitter (every language). Locate the node EITHER by
    NAME or by a zipper PATH, then edit — the file is re-parsed and the write is
@@ -6837,7 +6850,7 @@
      cut-and-paste:
        await struct_patch({\"path\": P, \"op\": \"move_after\", \"target\": \"helper\", \"anchor\": \"dep\"})
      `kind` (function/class/method/…) disambiguates same-named defs; `replace_node`
-     swaps the UNIQUE sub-expr equal to `match` (scope with `target`).
+     swaps the UNIQUE sub-expr equal to `match` (scope it with `target`, `anchor`, or `at`).
    ops (by PATH/`at`/node anchor): replace | replace_node (alias) | insert_before |
      insert_after | append_child | prepend_child (child ops insert inside the node,
      after last / before first child; delete = replace with \"\"). `at` is the
@@ -6944,18 +6957,39 @@
                              :reason (get-in nav [:error :reason])})))
 
           match
-          (get args "match")
+          (str (get args "match"))
 
-          _
-          ;; A locator chooses ONE node. `match` then becomes an optimistic
-          ;; concurrency guard, never a silently ignored second selector.
-          (when (and (= raw-op :replace-node) (not (str/blank? (str match))))
-            (let [actual (:text (zipper/inspect lang source at))]
-              (when (not= match actual)
-                (throw
-                  (ex-info
-                    "struct_patch: `match` does not equal the node selected by `anchor`/`at`; inspect the node or omit `match`."
-                    {:type :ext.foundation.editing/struct-locator-match-mismatch :at at})))))
+          code
+          ;; `match` means ONE thing under BOTH locators: the unique sub-expression
+          ;; of the located node to swap. Naming the whole node is the degenerate
+          ;; case, so it still reads as an optimistic concurrency guard.
+          (if (and (= raw-op :replace-node) (not (str/blank? match)))
+            (let
+              [node
+               (zipper/inspect lang source at)
+
+               actual
+               (str (:text node))
+
+               hits
+               (subexpression-count actual match)]
+
+              (cond (= match actual) code
+                    (= 1 hits) (str/replace actual match code)
+                    :else
+                    (throw (ex-info
+                             (str "struct_patch: `match` "
+                                  (if (zero? hits) "does not occur in" "is not unique in")
+                                  " the `"
+                                  (:kind node)
+                                  "` node selected by `anchor`/`at` — inspect it with struct_nodes,"
+                                  " or omit `match` to replace the node whole.\n  node: "
+                                  (if (> (count actual) 300) (str (subs actual 0 300) " …") actual))
+                             {:type :ext.foundation.editing/struct-locator-match-mismatch
+                              :at at
+                              :kind (:kind node)
+                              :occurrences hits}))))
+            code)
 
           r
           (zipper/edit lang source at op code)]
@@ -7175,7 +7209,9 @@
        "target" {:type "string" :description "Definition NAME; also container for child appends."}
        "code" {:type "string" :description "Source to replace/insert, or rename's new name."}
        "kind" {:type "string" :description "Disambiguates same-named defs."}
-       "match" {:type "string" :description "`replace_node`: unique subexpression text to swap."}
+       "match" {:type "string"
+                :description
+                "`replace_node`: unique subexpression text to swap inside the located node."}
        "anchor"
        {:type "string"
         :description

@@ -3461,7 +3461,42 @@
 
           (expect (:success? r))
           (expect (clojure.string/includes? (slurp (fs/file path)) "(+ y 2)"))))
-    (it "refuses a locator/match mismatch instead of replacing the located node"
+    (it "replace_node swaps a sub-expression INSIDE the node a path locator selected"
+        (let
+          [path
+           (write-temp! "anchor-zipper/match-subexpr.clj"
+                        "(ns my.app)\n\n(defn f [x]\n  (+ x 1))\n")
+
+           anchor
+           (patch/line-anchor 3 "(defn f [x]")
+
+           r
+           (struct-patch
+             {"path" path "op" "replace_node" "anchor" anchor "match" "(+ x 1)" "code" "(+ x 2)"})]
+
+          (expect (:success? r))
+          (expect (= "(ns my.app)\n\n(defn f [x]\n  (+ x 2))\n" (slurp (fs/file path))))))
+    (it "refuses an ambiguous `match` under a path locator"
+        (let
+          [path
+           (write-temp! "anchor-zipper/match-ambiguous.clj"
+                        "(ns my.app)\n\n(defn f [x]\n  (+ (inc x) (inc x)))\n")
+
+           anchor
+           (patch/line-anchor 3 "(defn f [x]")
+
+           error
+           (try
+             (struct-patch
+               {"path" path "op" "replace_node" "anchor" anchor "match" "(inc x)" "code" "(dec x)"})
+             nil
+             (catch clojure.lang.ExceptionInfo e e))]
+
+          (expect (= 2 (:occurrences (ex-data error))))
+          (expect (clojure.string/includes? (ex-message error) "is not unique"))
+          (expect (= "(ns my.app)\n\n(defn f [x]\n  (+ (inc x) (inc x)))\n"
+                     (slurp (fs/file path))))))
+    (it "refuses a `match` that occurs nowhere in the located node"
         (let
           [path
            (write-temp! "anchor-zipper/match-mismatch.clj"
@@ -3480,6 +3515,8 @@
                 (catch clojure.lang.ExceptionInfo e e))]
 
           (expect (= :ext.foundation.editing/struct-locator-match-mismatch (:type (ex-data error))))
+          (expect (clojure.string/includes? (ex-message error) "does not occur in"))
+          (expect (= 0 (:occurrences (ex-data error))))
           (expect (= "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n" (slurp (fs/file path))))))
     (it "an anchor wins over a serializer-default empty at path"
         (let
