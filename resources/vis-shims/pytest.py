@@ -1855,12 +1855,145 @@ def __vis_install_pytest_compat__():
                 )
         return None
 
-    def main(args=None, ns=None):
+    def _xml_text(value):
+        # XML 1.0 text escaping that also DROPS the control characters XML
+        # forbids: a traceback must never yield an unparseable report file.
+        chars = []
+        for ch in str(value):
+            if ch == "&":
+                chars.append("&amp;")
+            elif ch == "<":
+                chars.append("&lt;")
+            elif ch == ">":
+                chars.append("&gt;")
+            elif ch == '"':
+                chars.append("&quot;")
+            elif ch in ("\t", "\n", "\r") or ord(ch) >= 32:
+                chars.append(ch)
+        return "".join(chars)
+
+    def _junit_names(nodeid):
+        # `tests/test_x.py::Cls::name[id]` -> ("tests.test_x.Cls", "name[id]"):
+        # the classname/name split every junit consumer expects.
+        fpath, _found, rest = nodeid.partition("::")
+        if fpath.endswith(".py"):
+            fpath = fpath[:-3]
+        cls = fpath.replace("\\", "/").strip("/").replace("/", ".")
+        name = rest
+        if "::" in rest:
+            head, _s, name = rest.rpartition("::")
+            cls = cls + "." + head.replace("::", ".")
+        return cls, (name or cls.rsplit(".", 1)[-1])
+
+    # xfail is reported as a skip, exactly like pytest's own junit family.
+    _JUNIT_TAG = {
+        "failed": "failure",
+        "error": "error",
+        "skipped": "skipped",
+        "xfailed": "skipped",
+    }
+
+    def _junit_xml(results, elapsed):
+        counts = {}
+        for r in results:
+            counts[r.outcome] = counts.get(r.outcome, 0) + 1
+        body = []
+        for r in results:
+            cls, name = _junit_names(r.nodeid)
+            body.append(
+                '    <testcase classname="'
+                + _xml_text(cls)
+                + '" name="'
+                + _xml_text(name)
+                + '" time="'
+                + ("%.3f" % float(getattr(r, "duration", 0.0) or 0.0))
+                + '"'
+            )
+            tag = _JUNIT_TAG.get(r.outcome)
+            if tag is None:
+                body.append(" />" + _NL)
+                continue
+            detail = r.longrepr or ""
+            msg = r.outcome
+            for line in detail.splitlines():
+                if line.strip():
+                    msg = line.strip()
+                    break
+            body.append(
+                ">"
+                + _NL
+                + "      <"
+                + tag
+                + ' message="'
+                + _xml_text(msg)
+                + '">'
+                + _xml_text(detail)
+                + "</"
+                + tag
+                + ">"
+                + _NL
+                + "    </testcase>"
+                + _NL
+            )
+        return (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            + _NL
+            + "<testsuites>"
+            + _NL
+            + '  <testsuite name="pytest" errors="'
+            + str(counts.get("error", 0))
+            + '" failures="'
+            + str(counts.get("failed", 0))
+            + '" skipped="'
+            + str(counts.get("skipped", 0) + counts.get("xfailed", 0))
+            + '" tests="'
+            + str(len(results))
+            + '" time="'
+            + ("%.3f" % elapsed)
+            + '">'
+            + _NL
+            + "".join(body)
+            + "  </testsuite>"
+            + _NL
+            + "</testsuites>"
+            + _NL
+        )
+
+    def _write_junit(path, results, elapsed):
+        # Returns None on success, else the reason. NEVER raises: `--junitxml`
+        # is a reporting side channel, not something that may kill a run (a
+        # sandbox context can have no writable filesystem at all).
+        try:
+            d = os.path.dirname(path)
+            if d and not os.path.isdir(d):
+                os.makedirs(d, exist_ok=True)
+            fh = open(path, "w")
+            try:
+                fh.write(_junit_xml(results, elapsed))
+            finally:
+                fh.close()
+            return None
+        except Exception as _e:
+            return type(_e).__name__ + ": " + str(_e)
+
+    # Options whose VALUE is a separate token. Consuming it keeps a value like
+    # `no:cacheprovider` in `-p no:cacheprovider` from being read as a PATH.
+    _VALUE_OPTS = (
+        "--junitxml",
+        "--junit-xml",
+        "-p",
+        "-o",
+        "--override-ini",
+        "--rootdir",
+    )
+
+    def _main_run(args, ns, out, _buf):
         verbose = False
         specs = []
         kexpr = None
         maxfail = 0
         collect_only = False
+        junitxml = None
         if args:
             if isinstance(args, str):
                 args = [args]
@@ -1892,6 +2025,12 @@ def __vis_install_pytest_compat__():
                         maxfail = int(a.split("=", 1)[1])
                     except ValueError:
                         pass
+                elif a in _VALUE_OPTS:
+                    _i += 1
+                    if a in ("--junitxml", "--junit-xml") and _i < len(args):
+                        junitxml = args[_i]
+                elif a.startswith("--junitxml=") or a.startswith("--junit-xml="):
+                    junitxml = a.split("=", 1)[1]
                 elif not a.startswith("-"):
                     # `path::name` / `path::Class::method` / `path::name[p]`:
                     # the FILE part drives discovery, the rest selects nodes.
@@ -1899,8 +2038,6 @@ def __vis_install_pytest_compat__():
                     specs.append((_p, _sel if _found else None))
                 _i += 1
         paths = [p for p, _s in specs]
-        if ns is None:
-            ns = sys._getframe(1).f_globals
         groups = []
         load_errors = []
         missing = []
@@ -1936,8 +2073,8 @@ def __vis_install_pytest_compat__():
         if missing:
             # pytest's EXIT_USAGEERROR: a path the user named does not exist.
             for p in missing:
-                sys.stdout.write("ERROR: file or directory not found: " + p + _NL)
-            sys.stdout.flush()
+                out.write("ERROR: file or directory not found: " + p + _NL)
+            out.flush()
             return 4
         # pytest counts COLLECTED CASES: every parametrize / parametrized-fixture
         # combination is one item, not one per test function. Node-ID selection
@@ -1952,7 +2089,6 @@ def __vis_install_pytest_compat__():
                 ]
             )
         total = sum(len(ids) for ids in selected)
-        _buf = []
         write = _buf.append
         write(_NL + _sep("=", "test session starts") + _NL)
         write(
@@ -1998,8 +2134,9 @@ def __vis_install_pytest_compat__():
                 + " collected"
                 + _NL
             )
-            sys.stdout.write("".join(_buf))
-            sys.stdout.flush()
+            out.write("".join(_buf))
+            out.flush()
+            del _buf[:]
             mod._vis_last_report = []
             mod._vis_last_deselected = 0
             return 0 if total else 5
@@ -2031,6 +2168,17 @@ def __vis_install_pytest_compat__():
             _flush_progress(write, ctl)
         elapsed = time.time() - t_start
         rc = _summary(results, write, elapsed, ctl["deselected"], ctl)
+        if junitxml:
+            _jerr = _write_junit(junitxml, results, elapsed)
+            write(
+                _sep(
+                    "-",
+                    ("generated xml file: " + junitxml)
+                    if _jerr is None
+                    else ("could not write xml file " + junitxml + " (" + _jerr + ")"),
+                )
+                + _NL
+            )
         _hint = _import_root_hint(load_errors)
         if _hint:
             write(_hint + _NL)
@@ -2039,8 +2187,9 @@ def __vis_install_pytest_compat__():
             # a pass: a mistyped node id must never look like a green suite.
             rc = 5
         mod._vis_last_deselected = ctl["deselected"]
-        sys.stdout.write("".join(_buf))
-        sys.stdout.flush()
+        out.write("".join(_buf))
+        out.flush()
+        del _buf[:]
         # Publish the PER-TEST records (nodeid, outcome, longrepr) as the ONE
         # source of truth. The host derives counts from THIS list, so a bad
         # internal tally can never disagree with what actually ran.
@@ -2048,6 +2197,39 @@ def __vis_install_pytest_compat__():
             (_r.nodeid, _r.outcome, (_r.longrepr or "")) for _r in results
         ]
         return rc
+
+    def main(args=None, ns=None):
+        # The terminal report IS the run's product, so it goes to the stream the
+        # run STARTED on and is written even when the run blows up:
+        #   - a test (or a capture fixture whose teardown never happened) can
+        #     leave `sys.stdout` pointing at a StringIO, which used to swallow
+        #     the whole report while the tests' own prints still showed up;
+        #   - an internal error used to propagate out of `main`, losing every
+        #     line of the report with it.
+        # The streams the caller had are restored on the way out, so one bad
+        # test cannot silence the rest of the process either.
+        out = sys.stdout
+        err = sys.stderr
+        if ns is None:
+            ns = sys._getframe(1).f_globals
+        _buf = []
+        mod._vis_last_report = []
+        mod._vis_last_deselected = 0
+        try:
+            return _main_run(args, ns, out, _buf)
+        except Exception as _e:
+            # pytest's EXIT_INTERNALERROR (3): say what happened, never vanish.
+            try:
+                out.write("".join(_buf))
+                out.write(_NL + _sep("!", "INTERNALERROR") + _NL)
+                out.write(_render_failure(_e, None) + _NL)
+                out.flush()
+            except Exception:
+                pass
+            return 3
+        finally:
+            sys.stdout = out
+            sys.stderr = err
 
     # ---- publish module -----------------------------------------------------
     mod = types.ModuleType("pytest")

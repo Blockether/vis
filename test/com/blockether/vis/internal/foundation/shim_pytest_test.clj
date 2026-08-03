@@ -560,3 +560,125 @@
         (with-fs-context d
                          (expect (= "NONE"
                                     (hint? python-context "" (str d "/tests/test_bad.py"))))))))
+
+(defn- captured
+  "Run `pytest.main(<args-src>)` with the caller's stdout redirected into a
+   buffer, and return `\"<rc>\\u0000<stdout>\"` — the terminal report exactly as
+   the stream the run STARTED on saw it."
+  [^Context c args-src]
+  (ev c
+      (str "import pytest, io, contextlib\n" "_b = io.StringIO()\n"
+           "with contextlib.redirect_stdout(_b):\n" "    _rc = pytest.main(" args-src ")\n"
+           "str(_rc) + chr(0) + _b.getvalue()\n")))
+
+(defdescribe
+  terminal-report-test
+  "Issue #95: a run's terminal report is its product, so it must reach the
+   stream the run STARTED on. A test that leaves `sys.stdout` swapped (an
+   unrestored capture, an escaped `redirect_stdout`) used to swallow the whole
+   report — tests' own prints showed, `N failed` / FAILURES did not — and an
+   internal error used to propagate out of `main`, losing the report with it.
+   `--junitxml` is the machine-readable half of the same contract."
+  (it "reports even when a test leaves sys.stdout pointing elsewhere"
+      (let
+        [d
+         (tmp-dir)
+
+         f
+         (str d "/test_swap.py")]
+
+        (spit f
+              (str "import sys, io\n" "def test_ok():\n    print('own output')\n    assert True\n"
+                   "def test_swap():\n    sys.stdout = io.StringIO()\n    assert 1 == 2\n"))
+        (with-fs-context d
+                         (let
+                           [[rc restored out]
+                            (str/split (ev python-context
+                                           (str "import pytest, io, contextlib, sys\n"
+                                                "_b = io.StringIO()\n"
+                                                "with contextlib.redirect_stdout(_b):\n"
+                                                "    _rc = pytest.main(['" f "'])\n"
+                                                "    _ok = sys.stdout is _b\n"
+                                                "str(_rc) + chr(0) + ('RESTORED' if _ok else 'LEAKED')"
+                                                " + chr(0) + _b.getvalue()\n"))
+                                       #"\x00"
+                                       3)]
+
+                           (expect (= "1" rc))
+                           (expect (= "RESTORED" restored))
+                           (expect (str/includes? out "own output"))
+                           (expect (str/includes? out "1 failed, 1 passed"))
+                           (expect (str/includes? out "FAILED"))))))
+  (it "consumes the value of a value-taking option instead of collecting it"
+      (let
+        [d
+         (tmp-dir)
+
+         f
+         (str d "/test_p.py")]
+
+        (spit f "def test_one():\n    assert True\n")
+        (with-fs-context d
+                         (let
+                           [[rc out]
+                            (str/split (captured python-context
+                                                 (str "['-p', 'no:cacheprovider', '" f "']"))
+                                       #"\x00"
+                                       2)]
+
+                           (expect (= "0" rc))
+                           (expect (str/includes? out "1 passed"))))))
+  (it "--junitxml writes a JUnit report file and says so"
+      (let
+        [d
+         (tmp-dir)
+
+         f
+         (str d "/test_j.py")
+
+         x
+         (str d "/j.xml")]
+
+        (spit f "def test_pass():\n    assert True\ndef test_fail():\n    assert 1 == 2\n")
+        (with-fs-context d
+                         (let
+                           [[rc out]
+                            (str/split (captured python-context
+                                                 (str "['" f "', '--junitxml=" x "']"))
+                                       #"\x00"
+                                       2)
+
+                            xml
+                            (slurp x)]
+
+                           (expect (= "1" rc))
+                           (expect (str/includes? out (str "generated xml file: " x)))
+                           (expect (str/includes? xml "<testsuite name=\"pytest\""))
+                           (expect (str/includes? xml "tests=\"2\""))
+                           (expect (str/includes? xml "failures=\"1\""))
+                           (expect (str/includes? xml "name=\"test_fail\""))
+                           (expect (str/includes? xml "<failure message="))))))
+  (it "reports an unwritable --junitxml target without failing the run"
+      (let
+        [d
+         (tmp-dir)
+
+         f
+         (str d "/test_ju.py")]
+
+        (spit f "def test_one():\n    assert True\n")
+        (with-fs-context d
+                         (let
+                           [[rc out]
+                            (str/split (captured python-context
+                                                 (str "['" f "', '--junitxml=" d "']"))
+                                       #"\x00"
+                                       2)]
+
+                           (expect (= "0" rc))
+                           (expect (str/includes? out "1 passed"))
+                           (expect (str/includes? out "could not write xml file"))))))
+  (it "turns an internal error into EXIT_INTERNALERROR with a visible report"
+      (with-context (let [[rc out] (str/split (captured python-context "[], ns=5") #"\x00" 2)]
+                      (expect (= "3" rc))
+                      (expect (str/includes? out "INTERNALERROR"))))))
