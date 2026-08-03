@@ -2878,7 +2878,9 @@ def __vis_install_bs4__():
             # into the single NavigableString bs4 produces.
             _hp.HTMLParser.__init__(self, convert_charrefs=False)
             self.on_duplicate_attribute = (
-                self.REPLACE if on_duplicate_attribute is None else on_duplicate_attribute
+                self.REPLACE
+                if on_duplicate_attribute is None
+                else on_duplicate_attribute
             )
             self.builder = builder
             self.root = Tag(None, builder, "[document]")
@@ -3196,8 +3198,7 @@ def __vis_install_bs4__():
             if value is None:
                 raise SelectorSyntaxError(
                     _css_position_message(
-                        "Undefined custom selector '%s' found"
-                        % _css_ascii_lower(name),
+                        "Undefined custom selector '%s' found" % _css_ascii_lower(name),
                         pattern,
                         match.end(),
                     )
@@ -3281,7 +3282,9 @@ def __vis_install_bs4__():
             return _ss_compile(select, namespaces, flags, **kwargs)
 
         def select_one(self, select, namespaces=None, flags=0, **kwargs):
-            return self._compiled(select, namespaces, flags, kwargs).select_one(self.tag)
+            return self._compiled(select, namespaces, flags, kwargs).select_one(
+                self.tag
+            )
 
         def select(self, select, namespaces=None, limit=0, flags=0, **kwargs):
             sieve = self._compiled(select, namespaces, flags, kwargs)
