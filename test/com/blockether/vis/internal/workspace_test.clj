@@ -646,8 +646,11 @@
            (spit (io/file trunk "src.txt") "source\n")
            (git! (io/file trunk) "add" "-A")
            (git! (io/file trunk) "-c" "user.email=t@t" "-c" "user.name=t" "commit" "-qm" "init")
-           ;; rift's built-in artifact list drops these names at any depth
-           ;; whatever git thinks of them, so the clone never had them.
+           ;; The fork filtered these regenerable trees out whatever git thinks
+           ;; of them, and RECORDED that in the clone's workspace marker: the
+           ;; id, then one `excluded <path>` line per tree it never copied.
+           (spit (io/file clone ".rift")
+                 "01JRIFTWORKSPACEID\nexcluded dist\nexcluded apps/web/coverage\n")
            (spit (io/file clone "src.txt") "source\n")
            (Thread/sleep 8)
            (expect (= [] (ws/deleted-paths clone trunk (System/currentTimeMillis))))
@@ -669,8 +672,9 @@
            (spit (io/file trunk ".yarn/releases/old.cjs") "the agent really deleted this\n")
            (git! (io/file trunk) "add" "-A")
            (git! (io/file trunk) "-c" "user.email=t@t" "-c" "user.name=t" "commit" "-qm" "init")
-           ;; The backend matches the `.yarn/<artifact>` PAIR, so `cache` never
-           ;; reaches the clone while `releases` does.
+           ;; The backend dropped the `.yarn/cache` PAIR and recorded exactly
+           ;; that path in the marker, so `releases` still reaches the clone.
+           (spit (io/file clone ".rift") "01JRIFTWORKSPACEID\nexcluded .yarn/cache\n")
            (.mkdirs (io/file clone ".yarn/releases"))
            (spit (io/file clone ".yarn/releases/yarn.cjs") "runner\n")
            (Thread/sleep 8)

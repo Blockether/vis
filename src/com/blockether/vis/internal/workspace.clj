@@ -790,41 +790,42 @@
             true
             (recur (inc i))))))))
 
-(def ^:private fork-artifact-dir-names
-  "Directory names a FILTERED CoW fork never copies, whatever git thinks of them:
-   the backend's built-in regenerable-artifact list (rift's `CopyFilter`, matched
-   at any depth). Only the DELETION side consults this. A tree the clone never
-   received must not read as an agent deletion — `apply!` would erase it from the
-   user's real repo — and skipping a path here can only ever leave a real file
-   alone, never destroy one."
-  #{"node_modules" ".pnpm-store" "target" ".venv" "venv" ".tox" ".nox" "__pycache__" ".pytest_cache"
-    ".mypy_cache" ".ruff_cache" ".next" ".nuxt" ".svelte-kit" ".turbo" ".vite" ".parcel-cache"
-    ".cache" "dist" "build" "coverage"})
+(def ^:private fork-marker-name
+  "Marker file a CoW backend writes at the root of every workspace it creates.
+   Line one names the workspace; each following `excluded <path>` line is a
+   source-relative path the fork did not copy."
+  ".rift")
 
-(def ^:private fork-yarn-artifact-names
-  "Second segment of a `.yarn/<artifact>` PAIR the fork drops. The backend
-   matches the pair, never the bare name, so `.yarn/patches` and
-   `.yarn/releases` — which repositories commit — stay. A Yarn zero-install
-   repository COMMITS `.yarn/cache`, and the backend drops it all the same, so
-   the git-tracked side of this guard is load-bearing: without it `apply!`
-   reads a whole committed cache as an agent deletion and erases it."
-  #{"cache" "unplugged" "install-state.gz" "build-state.yml"})
+(defn- fork-excluded-paths
+  "Repo-relative paths a filtered fork left OUT of `clone`, as the BACKEND
+   ITSELF recorded them in `fork-marker-name`. Only the DELETION side consults
+   this. Whole trees come back collapsed (`node_modules`, `apps/web/dist`), so a
+   walk prunes the subtree on a hit instead of listing thousands of files.
 
-(defn- fork-artifact-path?
-  "True when any segment of the trunk-relative `rel` names a filtered-out
-   regenerable artifact tree, or opens a filtered `.yarn/<artifact>` pair."
-  [^Path rel]
-  (let [c (.getNameCount rel)]
-    (loop [i 0]
-      (if (>= i c)
-        false
-        (let [s (str (.getName rel i))]
-          (if (or (contains? fork-artifact-dir-names s)
-                  (and (= ".yarn" s)
-                       (< (inc i) c)
-                       (contains? fork-yarn-artifact-names (str (.getName rel (inc i))))))
-            true
-            (recur (inc i))))))))
+   A filtered fork skips regenerable artifact trees and whatever the source
+   repository ignores. vis used to MIRROR that rule set to recognize them, and
+   the copy drifted from the original — a rule only the backend knew turned a
+   never-copied tree into an apparent agent deletion, and `apply!` erases those
+   from the user's real repo. Asking the clone what it is missing cannot drift.
+
+   A workspace with no marker — a backend that writes none, or a clone made
+   before backends recorded exclusions — yields `#{}`, which leaves the
+   pre-existing behavior untouched."
+  [clone]
+  (let
+    [f
+     (io/file clone fork-marker-name)
+
+     prefix
+     "excluded "]
+
+    (if-not (.isFile f)
+      #{}
+      (into #{}
+            (comp (keep #(when (str/starts-with? % prefix) (subs % (count prefix))))
+                  (map #(str/replace % #"/+$" ""))
+                  (remove str/blank?))
+            (str/split-lines (slurp f))))))
 
 (defn- fork-ignored-paths
   "Repo-relative paths the repository at `dir` ignores and does not track —
@@ -925,12 +926,13 @@
    is the SEED's doing and applying it must not delete them from trunk.
 
    Paths the FORK itself never copied are excluded on the same principle. A
-   filtered CoW clone omits the source repository's ignored trees
-   (`fork-ignored-paths`) and the built-in regenerable artifact names
-   (`fork-artifact-path?`), so their absence from the clone is the BACKEND's
-   doing. Reading it as an agent deletion would let `apply!` erase a user's
-   ignored files — `.env`, a generated native project, build output — from
-   their real repo."
+   filtered CoW clone omits regenerable artifact trees and the source
+   repository's ignored trees, and RECORDS what it skipped in its workspace
+   marker (`fork-excluded-paths`); trunk's own ignore rules
+   (`fork-ignored-paths`) still cover clones taken before backends recorded it.
+   Either way their absence from the clone is the BACKEND's doing. Reading it as
+   an agent deletion would let `apply!` erase a user's ignored files — `.env`, a
+   generated native project, build output — from their real repo."
   [clone trunk fork-ms]
   (if-not (pos? (long fork-ms))
     []
@@ -948,12 +950,12 @@
        ;; Absent from the clone BY CONSTRUCTION, never by the agent.
        (clean-seed-skips clone)
 
-       ignored
-       (fork-ignored-paths trunk)
+       omitted
+       (into (fork-ignored-paths trunk) (fork-excluded-paths clone))
 
        fork-omitted?
        (fn [^Path rel]
-         (or (prune-dir? rel) (fork-artifact-path? rel) (contains? ignored (paths/unixify rel))))
+         (or (prune-dir? rel) (contains? omitted (paths/unixify rel))))
 
        acc
        (java.util.ArrayList.)]

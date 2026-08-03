@@ -126,17 +126,20 @@ The fork is **gitignore-aware**. Whatever your repository ignores is not copied
 into the draft, and neither are regenerable artifact directories at any depth
 (`node_modules`, `target`, `dist`, `build`, `coverage`, `__pycache__`,
 virtualenvs, Yarn Berry's `.yarn/cache` and `.yarn/unplugged`, and framework
-caches such as `.next`, `.turbo`, or `.vite`) — even when your repository
-happens to track one. A file git tracks despite an ignore
-rule is still copied, and the repository itself (`.git`) is always copied.
+caches such as `.next`, `.turbo`, or `.vite`). Your repository's index wins over
+that list: a directory git tracks is copied even when it carries one of those
+names, as is a file git tracks despite an ignore rule, and the repository itself
+(`.git`) is always copied.
 
 That is what makes forking a large repository fast: this repository clones about
 2,400 entries instead of about 20,000. Anything the draft needs but did not
 receive is regenerable — run the install or build inside the draft.
 
-Because those trees were never copied, Vis never reads their absence from the
-draft as a deletion: `/draft apply` leaves your real `node_modules`, build
-output, and ignored local files (`.env` and friends) exactly where they are.
+The draft records every path its fork skipped in a `.rift` marker at its root, so
+Vis never reads their absence as a deletion: `/draft apply` leaves your real
+`node_modules`, build output, and ignored local files (`.env` and friends)
+exactly where they are. Vis reads that record instead of second-guessing the
+rules, so the two can never disagree.
 
 A label is required. Vis may add a numeric suffix when the corresponding draft
 directory name already exists; use the displayed label when resuming it.

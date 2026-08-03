@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- change(drafts): the draft itself now says what its fork skipped. rift 0.0.10-9
+  records every pruned path in the workspace marker at the clone root, and
+  `deleted-paths` reads that record instead of mirroring the backend's filter
+  rules, which vis had to keep in sync by hand and twice failed to (a tracked
+  `dist`, a committed `.yarn/cache`). Same release keeps a git-TRACKED artifact
+  directory in the clone, so a draft's `git status` matches its source's. The
+  mirrored name lists are gone; a clone with no marker falls back to trunk's own
+  ignore rules, so older drafts behave exactly as before.
+
 ### Fixed
 
 - fix(drafts): `/draft apply` no longer deletes the trees the fork never copied.
