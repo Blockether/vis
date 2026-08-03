@@ -225,6 +225,10 @@
             :details {:error (or (ex-message t) (str t))}}))))
 
 (defn- fork!
+  "Clone `source-root` into `store-root` and report HOW rift made the clone:
+   `{:root <path> :mechanism :btrfs|:reflink|:apfs|:worktree|:copy}`. The
+   mechanism is nil against a native library older than kind reporting; vis
+   persists it so a draft can say it is worktree-backed rather than guess."
   [{:keys [source-root store-root name] :as opts}]
   (try (when (linked-git-worktree-source? source-root)
          (throw (ex-info "Linked Git worktrees are not supported as Rift sources"
@@ -233,8 +237,12 @@
                           :source (file-path source-root)})))
        (rift/init {:at source-root})
        (Files/createDirectories (.toPath (io/file store-root)) (make-array FileAttribute 0))
-       (with-source-writable source-root
-                             #(rift/create {:from source-root :name name :into store-root}))
+       (let
+         [{:keys [path kind]} (with-source-writable source-root
+                                                    #(rift/create-detailed {:from source-root
+                                                                            :name name
+                                                                            :into store-root}))]
+         {:root path :mechanism kind})
        (catch Throwable t
          (tel/log! {:level :warn :id ::fork-failed :data (failure-data opts t)}
                    (str "Rift workspace fork failed: " (or (ex-message t) (str t))))

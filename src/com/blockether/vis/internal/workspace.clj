@@ -65,6 +65,16 @@
         (string? value) (keyword value)
         :else :live))
 
+(defn- mechanism-id
+  "Normalize a backend-reported clone MECHANISM (`:apfs`, `\"worktree\"`, ...) to a
+   keyword, nil when the backend reported none. Unlike the backend id there is
+   no default: the mechanism is descriptive, so an unreported one is recorded as
+   absent rather than guessed."
+  [value]
+  (cond (keyword? value) value
+        (and (string? value) (seq value)) (keyword value)
+        :else nil))
+
 (def draft-policies
   "Closed per-root DRAFT isolation vocabulary — the `draft` key of a
    `workspace.filesystem` catalog entry.
@@ -102,14 +112,15 @@
 
 (defn- root-entry
   "Normalize one persisted filesystem-root entry to
-   `{:trunk :clone :fork-ms :backend :policy}`. Entries are maps (string or
-   keyword keys): `:trunk` is the real dir, `:clone` its backend working copy
-   (== `:trunk` when live), `:fork-ms` the since-fork mtime baseline (nil =
-   live), `:policy` the `draft` policy the clone was minted for. A bare path
-   string is accepted as a live, shared root. Returns nil for junk."
+   `{:trunk :clone :fork-ms :backend :mechanism :policy}`. Entries are maps
+   (string or keyword keys): `:trunk` is the real dir, `:clone` its backend
+   working copy (== `:trunk` when live), `:fork-ms` the since-fork mtime
+   baseline (nil = live), `:mechanism` how the clone was physically made (nil
+   when unreported), `:policy` the `draft` policy the clone was minted for. A
+   bare path string is accepted as a live, shared root. Returns nil for junk."
   [e]
   (cond (string? e) (when-let [t (normalize-root e)]
-                      {:trunk t :clone t :fork-ms nil :backend nil :policy :shared})
+                      {:trunk t :clone t :fork-ms nil :backend nil :mechanism nil :policy :shared})
         (map? e) (let
                    [t
                     (normalize-root (entry-val e :trunk))
@@ -122,6 +133,7 @@
                       :clone (or c t)
                       :fork-ms (entry-val e :fork-ms)
                       :backend (backend-id (entry-val e :backend))
+                      :mechanism (mechanism-id (entry-val e :mechanism))
                       :policy (draft-policy-id (entry-val e :policy))}))))
 
 (defn- draft-policy-for
@@ -389,7 +401,10 @@
      :workspace.backend/capabilities  capability set
      :workspace.backend/available-fn  ({:source-root :store-root} -> bool or
                                       {:available? bool :reason keyword :details map})
-     :workspace.backend/fork-fn       ({:source-root :store-root :name} -> path)
+     :workspace.backend/fork-fn       ({:source-root :store-root :name} -> path
+                                      OR {:root <path> :mechanism <keyword>},
+                                      where :mechanism names HOW the clone was
+                                      physically made, e.g. :apfs / :worktree)
      :workspace.backend/discard-fn    ({:root} -> nil)"
   [backend]
   (let
@@ -585,6 +600,10 @@
                LinkOption/NOFOLLOW_LINKS]))
 
 (defn- backend-fork!
+  "Fork `source-root` with the strongest backend providing `required`. Returns
+   `{:root <clone path> :backend <id> :mechanism <keyword|nil>}` — `:mechanism`
+   is HOW the clone was physically made (rift: `:btrfs` `:reflink` `:apfs`
+   `:worktree` `:copy`), nil for a backend that does not report one."
   [source-root store-root name required]
   (let
     [store-root
@@ -600,9 +619,17 @@
                        :source-root (file-path source-root)
                        :capability-matrix (capability-matrix source-root store-root)})))
     (let
-      [root ((:workspace.backend/fork-fn backend)
-              {:source-root (file-path source-root) :store-root (file-path store-root) :name name})]
-      {:root (file-path root) :backend (:workspace.backend/id backend)})))
+      [forked
+       ((:workspace.backend/fork-fn backend)
+         {:source-root (file-path source-root) :store-root (file-path store-root) :name name})
+
+       ;; A backend returns either a bare clone path or `{:root :mechanism}`.
+       root
+       (if (map? forked) (:root forked) forked)]
+
+      {:root (file-path root)
+       :backend (:workspace.backend/id backend)
+       :mechanism (when (map? forked) (mechanism-id (:mechanism forked)))})))
 
 (defn- git*
   "Run `git <args>` inside `dir` and return `{:exit :out}` — `:exit` is nil when
@@ -1309,19 +1336,24 @@
 
 (defn- fork-extra-roots!
   "Mint one private clone per planned extra root (`[{:trunk :policy}]`, from
-   `draft-isolation-plan`). Returns persistable entries. Best-effort per root: a
-   root that cannot be forked yields NO entry, and `env-filesystem-roots` then
-   marks that copy-policy root `:denied?` — the draft loses access rather than
-   silently writing through to the real tree."
+   `draft-isolation-plan`). Returns persistable entries, each recording the
+   backend AND the mechanism that physically made the clone. Best-effort per
+   root: a root that cannot be forked yields NO entry, and `env-filesystem-roots`
+   then marks that copy-policy root `:denied?` — the draft loses access rather
+   than silently writing through to the real tree."
   [plan name required]
   (into []
         (keep (fn [{:keys [trunk policy]}]
-                (try (let [{:keys [root backend]} (backend-fork! trunk trunk name required)]
-                       {:trunk trunk
-                        :clone (file-path root)
-                        :fork-ms (System/currentTimeMillis)
-                        :backend (clojure.core/name (backend-id backend))
-                        :policy (clojure.core/name (draft-policy-id policy))})
+                (try (let
+                       [{:keys [root backend mechanism]} (backend-fork! trunk trunk name required)]
+                       (cond->
+                         {:trunk trunk
+                          :clone (file-path root)
+                          :fork-ms (System/currentTimeMillis)
+                          :backend (clojure.core/name (backend-id backend))
+                          :policy (clojure.core/name (draft-policy-id policy))}
+                         mechanism
+                         (assoc :mechanism (clojure.core/name mechanism))))
                      (catch Throwable _ nil))))
         plan))
 
@@ -1378,7 +1410,7 @@
      nm
      (free-workspace-name trunk label)
 
-     {:keys [root backend]}
+     {:keys [root backend mechanism]}
      (backend-fork! parent trunk nm (or required-capabilities draft-required-capabilities))
 
      ;; BEFORE the baseline below: the revert rewrites mtimes, and a clone
@@ -1421,6 +1453,7 @@
                               :root root
                               :workspace-kind :draft
                               :workspace-backend backend
+                              :workspace-mechanism mechanism
                               :parent-workspace-id (:id from)
                               :state :active
                               :fork-ms fork-ms

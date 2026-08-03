@@ -798,6 +798,9 @@
       (:workspace_backend row)
       (assoc :workspace-backend (->kw-back (:workspace_backend row)))
 
+      (:workspace_mechanism row)
+      (assoc :workspace-mechanism (->kw-back (:workspace_mechanism row)))
+
       (:parent_workspace_id row)
       (assoc :parent-workspace-id (->uuid (:parent_workspace_id row)))
 
@@ -826,12 +829,13 @@
 
    Required: :repo-id :repo-root :root
    Optional: :id (defaults to a new UUID), :label, :fork-ms, :apply-fork-ms,
-             :workspace-kind, :workspace-backend, :parent-workspace-id, :state
+             :workspace-kind, :workspace-backend, :workspace-mechanism (how the
+             backend made the clone), :parent-workspace-id, :state
              (defaults to :active), :filesystem-roots (extra per-root draft
              clones, persisted as a JSON array)"
   [db-info
    {:keys [id repo-id repo-root root label fork-ms apply-fork-ms workspace-kind workspace-backend
-           parent-workspace-id state filesystem-roots]}]
+           workspace-mechanism parent-workspace-id state filesystem-roots]}]
   (when (ds db-info)
     (let
       [ws-id
@@ -854,6 +858,8 @@
                                :apply_fork_ms apply-fork-ms
                                :workspace_kind (->kw (or workspace-kind (if fork-ms :draft :trunk)))
                                :workspace_backend (->kw (or workspace-backend :live))
+                               :workspace_mechanism (some-> workspace-mechanism
+                                                            ->kw)
                                :parent_workspace_id (some-> parent-workspace-id
                                                             ->ref)
                                :state (->kw (or state :active))

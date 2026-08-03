@@ -289,7 +289,7 @@ _Rift workspace/FFM integration._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `com.blockether/rift` | `0.0.10-8` | MIT | 11 KB | Blockether (in-house) |
+| `com.blockether/rift` | `0.0.10-10` | MIT | 11 KB | Blockether (in-house) |
 
 ---
 

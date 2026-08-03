@@ -63,6 +63,23 @@
     store
     {:id (str (random-uuid)) :repo-id "rt" :repo-root base :root base :state :active :fork-ms 1}))
 
+(defn- mechanism-backend
+  "Fake backend whose fork-fn reports HOW it made the clone. `mechanism` nil
+   returns a BARE path, exactly like a backend written before mechanism
+   reporting existed."
+  [mechanism]
+  (ws/workspace-backend {:workspace.backend/id :live
+                         :workspace.backend/capabilities ws/workspace-capabilities
+                         :workspace.backend/available-fn (constantly true)
+                         :workspace.backend/fork-fn (fn [{:keys [store-root name]}]
+                                                      (let [root (io/file store-root name)]
+                                                        (.mkdirs root)
+                                                        (if mechanism
+                                                          {:root (.getCanonicalPath root)
+                                                           :mechanism mechanism}
+                                                          (.getCanonicalPath root))))
+                         :workspace.backend/discard-fn (constantly nil)}))
+
 (defn- pin-session!
   "Insert a session_soul + session_state pinned 1:1 to `workspace-id`, so
    `discard-session-clones!` can resolve soul → state → workspace."
@@ -893,3 +910,58 @@
          (constantly [{:backend :rift :available? false :reason :probe-failed}])]
         (expect (= (ws/cow-platform-hint (System/getProperty "os.name"))
                    (ws/isolation-unavailable-hint "/tmp"))))))
+
+(defdescribe
+  workspace-mechanism-test
+  (it "persists the mechanism the backend reports, and nil when it reports none"
+      (let
+        [base
+         (temp-dir "vis-ws-mech")
+
+         drafts
+         (temp-dir "vis-ws-mech-drafts")]
+
+        (try (spit (io/file base "a.txt") "x\n")
+             (binding [ws/*drafts-home* (io/file drafts)]
+               (with-store
+                 (fn [store]
+                   (let
+                     [seed (seed-workspace! store base)
+                      reported (with-redefs
+                                 [ws/select-backend (fn [_ _ _]
+                                                      (mechanism-backend :worktree))]
+                                 (ws/create! store {:from seed}))
+                      ;; a backend from before mechanism reporting returns a BARE path
+                      legacy (with-redefs
+                               [ws/select-backend (fn [_ _ _]
+                                                    (mechanism-backend nil))]
+                               (ws/create! store {:from seed}))]
+
+                     (expect (= :worktree (:workspace-mechanism reported)))
+                     ;; and it survives the sqlite column, not just the in-memory return
+                     (expect (= :worktree (:workspace-mechanism (ws/get store (:id reported)))))
+                     (expect (nil? (:workspace-mechanism legacy)))
+                     (expect (nil? (:workspace-mechanism (ws/get store (:id legacy)))))))))
+             (finally (delete-tree! base) (delete-tree! drafts)))))
+  (it "rift names the real mechanism it used for the clone"
+      (let [base (temp-dir "vis-ws-mech-rift")]
+        (try (if-not (ws/isolated-workspaces-supported? base)
+               ;; No copy-on-write backend here (CI: ext4/NTFS) — the real clone can't run.
+               (expect (not (ws/isolated-workspaces-supported? base)))
+               (do (spit (io/file base "a.txt") "x\n")
+                   (with-store
+                     (fn [store]
+                       (let
+                         [seed (seed-workspace! store base)
+                          draft (ws/create! store {:from seed})
+                          mech (:workspace-mechanism draft)]
+
+                         (try
+                           ;; rift always names the mechanism it actually used
+                           (expect (contains? #{:btrfs :reflink :apfs :worktree :copy} mech))
+                           ;; a worktree-backed clone is a LINKED git worktree: .git is a FILE
+                           (expect (= (= :worktree mech) (.isFile (io/file (:root draft) ".git"))))
+                           (expect (= mech (:workspace-mechanism (ws/get store (:id draft)))))
+                           (finally (try (ws/abandon! store {:workspace-id (:id draft)})
+                                         (catch Throwable _ nil)))))))))
+             (finally (delete-tree! base))))))

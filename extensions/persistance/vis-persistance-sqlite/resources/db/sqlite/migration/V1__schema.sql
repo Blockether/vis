@@ -163,6 +163,12 @@ CREATE TABLE workspace (
 
   workspace_backend    TEXT NOT NULL DEFAULT 'live',
 
+  -- HOW the backend physically made this workspace: rift reports 'btrfs',
+  -- 'reflink', 'apfs', 'worktree' (linked Git worktree fallback) or 'copy'.
+  -- NULL when the backend does not report a mechanism (live roots, older
+  -- native libraries).
+  workspace_mechanism  TEXT,
+
   -- Lineage: draft -> its trunk parent. RESTRICT so a parent can't vanish under
   -- a child. NULL for trunks.
   parent_workspace_id  TEXT REFERENCES workspace(id) ON DELETE RESTRICT,

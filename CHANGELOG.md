@@ -51,6 +51,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- change(drafts): a draft now records HOW it was physically made, not just who
+  made it. rift 0.0.10-10 reports the copy mechanism it actually used
+  (`btrfs`, `reflink`, `apfs`, `worktree`, `copy`) and vis persists it as the
+  workspace's `workspace_mechanism`, so a clone on a filesystem without
+  copy-on-write is labelled `worktree` — the linked Git worktree it really is —
+  instead of being described by the backend's name. A backend that reports no
+  mechanism (or an older native library) stores NULL, and every existing draft
+  keeps working unchanged.
+
 - change(drafts): the draft itself now says what its fork skipped. rift 0.0.10-9
   records every pruned path in the workspace marker at the clone root, and
   `deleted-paths` reads that record instead of mirroring the backend's filter
