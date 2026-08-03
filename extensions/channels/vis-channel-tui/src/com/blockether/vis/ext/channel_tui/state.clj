@@ -3778,11 +3778,12 @@
   "True when local queue-mirror entry `e` and a gateway queued turn are the SAME
    submission. THE one identity rule for the mirror, and it is ID-ONLY:
 
-     1. gateway `turn-id` - every mirrored row carries one, because rows are
-        painted from gateway truth (enqueue ack or `turn.queued` broadcast) and
-        never invented locally;
+     1. gateway `turn-id` - carried by every row the gateway has already
+        acknowledged (enqueue ack, `turn.queued` broadcast, attach snapshot);
      2. `client-id` - the correlation id this tab minted and sent as the gateway
-        `idempotency_key`, for the window where only one side knows the turn id.
+        `idempotency_key`. THE handle for the row Enter paints BEFORE the
+        network, which has no turn id until the round-trip answers, and for the
+        window where only one side knows that id.
 
    Request TEXT is deliberately NOT a fallback: two identical prompts are
    indistinguishable by text, so matching on it is exactly how a queued turn got
