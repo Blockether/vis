@@ -26,6 +26,7 @@ import 'prismjs/components/prism-jsx';
 import 'prismjs/components/prism-tsx';
 import 'prismjs/components/prism-yaml';
 import ReactMarkdown from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { parseUserMessage } from '../lib/paste';
 import {
@@ -496,7 +497,10 @@ export const Markdown = memo(function Markdown({
   return (
     <div className="min-w-0 break-words [&>:first-child]:mt-0 [&>:last-child]:mb-0">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        // A newline the model authored is a HARD break in reasoning: the engine's
+        // `reasoning->ast` emits `[:br]` for it and the TUI paints it as its own row.
+        // CommonMark would otherwise flow those lines into one paragraph.
+        remarkPlugins={hardBreaks ? [remarkGfm, remarkBreaks] : [remarkGfm]}
         components={{
           a: ({ children: label, ...props }) => (
             <a
@@ -589,7 +593,7 @@ export const Markdown = memo(function Markdown({
           ),
         }}
       >
-        {hardBreaks ? children.replace(/\n/g, ' \n') : children}
+        {children}
       </ReactMarkdown>
     </div>
   );

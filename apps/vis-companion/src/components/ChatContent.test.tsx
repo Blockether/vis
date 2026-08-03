@@ -1,0 +1,68 @@
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it } from 'vitest';
+import { Markdown } from './ChatContent';
+
+/** Visible text of a rendered chunk: tags out, entities back. */
+const text = (html: string) =>
+  html
+    .replace(/<[^>]+>/g, '')
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&gt;/g, '>')
+    .replace(/&lt;/g, '<')
+    .replace(/&amp;/g, '&');
+
+/** One entry per PAINTED code row — the code block gives every line its own div. */
+const codeRows = (html: string) =>
+  (html.match(/<div class="flex w-fit[^"]*">.*?<\/div>/g) ?? []).map(text);
+
+const count = (html: string, pattern: RegExp) => (html.match(pattern) ?? []).length;
+
+describe('Markdown thinking breaks', () => {
+  // The engine's `reasoning->ast` turns a single authored newline into `[:br]`, and the
+  // TUI paints it as its own row. `hardBreaks` is how the web card honours that contract.
+  it('keeps every authored newline as its own line', () => {
+    const html = renderToStaticMarkup(
+      <Markdown compact hardBreaks>
+        {'**Plan**\nfirst line\nsecond line\n\nnext para'}
+      </Markdown>,
+    );
+    expect(count(html, /<br\s*\/?>/g)).toBe(2);
+    // Still real paragraphs — a blank line is a break BETWEEN blocks, not a third `<br>`.
+    expect(count(html, /<p class=/g)).toBe(2);
+    expect(text(html)).toContain('Plan\nfirst line\nsecond line');
+    expect(text(html)).not.toContain('Planfirst');
+  });
+
+  it('flows soft newlines when hard breaks are off', () => {
+    const html = renderToStaticMarkup(<Markdown compact>{'first line\nsecond line'}</Markdown>);
+    expect(html).not.toContain('<br');
+    expect(count(html, /<p class=/g)).toBe(1);
+  });
+});
+
+describe('Markdown tool card body', () => {
+  it('keeps blank lines and indentation inside a COMMAND block', () => {
+    const html = renderToStaticMarkup(
+      <Markdown compact>{'**COMMAND**\n\n```bash\nset -e\n\nif [ -f x ]; then\n  npm test\nfi\n```\n'}</Markdown>,
+    );
+    expect(codeRows(html)).toEqual(['set -e', ' ', 'if [ -f x ]; then', '  npm test', 'fi']);
+  });
+
+  it('keeps a blank line between two phases of STDOUT', () => {
+    const html = renderToStaticMarkup(
+      <Markdown compact>{'**STDOUT**\n\n```\nphase one ok\n\nphase two ok\n```\n'}</Markdown>,
+    );
+    expect(codeRows(html)).toEqual(['phase one ok', ' ', 'phase two ok']);
+  });
+
+  it('splits a quoted commit MESSAGE into subject and body', () => {
+    const html = renderToStaticMarkup(
+      <Markdown compact>{'**MESSAGE**\n\n> feat: thing\n>\n> body line\n'}</Markdown>,
+    );
+    const quote = html.slice(html.indexOf('<blockquote'), html.indexOf('</blockquote>'));
+    expect(quote).not.toBe('');
+    expect(count(quote, /<p class=/g)).toBe(2);
+    expect(text(quote).replace(/\n+/g, '\n').trim()).toBe('feat: thing\nbody line');
+  });
+});
