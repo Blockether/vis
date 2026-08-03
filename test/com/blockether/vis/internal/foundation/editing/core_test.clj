@@ -3461,6 +3461,10 @@
 
           (expect (:success? r))
           (expect (clojure.string/includes? (slurp (fs/file path)) "(+ y 2)"))))
+    ;; Regression, issue #100: `match` meant two different things — the unique
+    ;; sub-expression to swap under `target`, but a whole-node equality check under
+    ;; `anchor`/`at`, so the documented use always failed with `match does not equal
+    ;; the node selected by anchor/at`.
     (it "replace_node swaps a sub-expression INSIDE the node a path locator selected"
         (let
           [path

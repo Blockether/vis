@@ -1528,7 +1528,7 @@ vis.extension(name='asker', description='asker', alias='a',
                        (expect (empty? (human-input/pending-requests))))))))
 
 ;; =============================================================================
-;; Hook callbacks run inside the caller's session env
+;; Hook callbacks run inside the caller's session env (issue #101)
 ;; =============================================================================
 
 (def ^:private hook-asker-py
@@ -1544,6 +1544,8 @@ vis.extension(name='hookasker', description='hookasker', alias='hk', prompt=hook
 
 (defdescribe python-hook-environment-test
              (it "a hook callback's vis.ask names the session the hook was invoked for"
+                 ;; Regression, issue #101: a hook callback's `vis.ask` raised a
+                 ;; session-less request that never reached the caller's session.
                  ;; Hook adapters (prompt/activation/ctx/slash/op) are HANDED the live env,
                  ;; but used to drop it: the Python callable ran with no
                  ;; `extension/*current-environment*`, so `vis.ask` raised a session-less
@@ -1573,7 +1575,7 @@ vis.extension(name='hookasker', description='hookasker', alias='hk', prompt=hook
                                   (expect (empty? (human-input/pending-requests))))))))
 
 ;; =============================================================================
-;; Torn-down contexts heal instead of dying (issue #103)
+;; Torn-down contexts heal instead of dying (issues #102, #103)
 ;; =============================================================================
 
 (def ^:private rebuilder-py

@@ -28,6 +28,14 @@ Read only the section relevant to the change. Keep this file for durable, repo-w
 - Setup/check with `bin/require-graalvm --install`, `sdk env`, or `eval "$(bin/require-graalvm --export)"`; `clojure -T:build native` auto-installs/re-execs unless explicitly disabled.
 - **Only Android Gradle is different:** `apps/vis-companion` needs stock JDK 21; do not switch it to GraalVM.
 
+## Fixing a reported bug: reproduce, RED, then GREEN
+
+- Reproduce first, from the report's own steps, before touching the implementation. If it does not reproduce, that IS the finding: narrow or refute the report instead of fixing something adjacent.
+- Turn the reproduction into a test in the suite and watch it **fail against the unfixed code** (RED), for the reported reason — not for a typo, a missing require, or a different error. A regression test nobody saw red proves nothing.
+- Then apply the fix and rerun the same test unchanged (GREEN). In a managed REPL: load the pre-fix namespace, run the test, keep the failure text, reload the fixed namespace, rerun. Report both.
+- Every regression test names its issue in a comment **on the test** — `;; Regression, issue #N: <what used to happen>` directly above the `defdescribe`/`it` (or a section banner carrying `(issue #N)`). The comment describes the wrong behavior, not what the code now does; it is the only link back to the report after the branch is merged.
+- The fix and its test ship in the same commit. A fix without a red-then-green test is unfinished and stays uncommitted.
+
 ## Clojure tests: Lazytest
 
 - Prefer the smallest relevant `run_tests` namespace; `only` takes fully qualified top-level Lazytest vars.
