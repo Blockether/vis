@@ -13,6 +13,10 @@ export interface Env {
   PUSH_RATE_LIMIT?: string;
   PUSH_RATE_WINDOW_MS?: string;
   GRANT_RATE_LIMIT?: string;
+  /** Push attempts per client address per window — the cap on made-up grants. */
+  IP_PUSH_RATE_LIMIT?: string;
+  /** How long a grant that was never pushed to survives the cron sweep. */
+  UNUSED_GRANT_TTL_MS?: string;
   MAX_GRANTS_PER_DEVICE?: string;
 }
 

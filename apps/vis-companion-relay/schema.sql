@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS grants (
 );
 
 CREATE INDEX IF NOT EXISTS grants_device_idx ON grants (platform, device_token, created_at);
+-- The cron sweep asks exactly one question: which grants were minted and never
+-- used? Anyone can mint one, so that question must stay cheap forever.
+CREATE INDEX IF NOT EXISTS grants_unused_idx ON grants (push_count, created_at);
 
 -- One fixed-window counter per subject: `grant:<id>` for pushes, `ip:<addr>`
 -- for grant creation. One row per subject, so a busy relay stays inside D1's
@@ -26,3 +29,5 @@ CREATE TABLE IF NOT EXISTS quota (
   window_start INTEGER NOT NULL,
   count        INTEGER NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS quota_window_idx ON quota (window_start);

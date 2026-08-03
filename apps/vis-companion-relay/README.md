@@ -111,6 +111,41 @@ leaves a Worker's secrets untouched. The run stamps the D1 id into the checkout'
 manual step), deploys, and curls `/healthz`. Without the three Cloudflare values
 the job verifies and stands down with a notice, so a fork stays green.
 
+## Abuse, quotas and cost
+
+Every route is public — nobody authenticates to *ask* for a grant, and a gateway
+only ever proves it already holds one. So the design question is not who may
+call, it is what an unwelcome caller costs.
+
+| a stranger can | and it costs |
+|---|---|
+| flood `/v1/push` with invented grants | `IP_PUSH_RATE_LIMIT` (600/h) per address, then `429` **without** a grant lookup and **without** a counter write |
+| guess a grant | 256 bits of entropy, stored as `sha256(grant)`; unguessable, and a database dump contains no usable capability |
+| mint grants for junk device tokens | `GRANT_RATE_LIMIT` (30/h) per address, ≤ `MAX_GRANTS_PER_DEVICE` rows per token, and the hourly cron deletes any grant never pushed to within `UNUSED_GRANT_TTL_MS` (30 days) |
+| POST a huge body | refused `413` on `content-length` before parsing, and again on what actually arrived |
+| stuff a payload | title/body/each value capped at 4 KiB, at most 32 custom data keys |
+| steal a grant off a gateway | pushes to that one phone, ≤ `PUSH_RATE_LIMIT` (120/h), until the owner deletes it — a stolen `.p8` is none of those things |
+
+What a stranger **cannot** get at any volume: a device token (never returned),
+an alert body (encrypt it app-side and the relay cannot read it either), a
+session, or your signing key.
+
+Volumetric DDoS is Cloudflare's problem, not yours — the Worker is behind their
+edge, and unmetered DDoS mitigation is on the free plan. What is *your* problem
+is an application-layer flood spending the daily budget: Workers requests, and
+D1 rows read/written. Every route above answers a refused request from one
+indexed read and no write, so a flood is throttled at the edge of your own
+quota rather than inside it. Two things worth doing anyway:
+
+- Add a WAF **rate-limiting rule** on `/v1/*` (per IP, e.g. 20 requests / 10 s).
+  It stops the flood before it reaches the Worker at all, which the in-Worker
+  quota by definition cannot.
+- If you ever move to the paid Workers plan, set a **spend limit**. On the free
+  plan a flood degrades the relay for a day; it cannot generate a bill.
+
+The knobs are plain `vars` in `wrangler.jsonc` — tighten them and redeploy; the
+cron (`triggers.crons`) runs the sweep hourly and needs no configuration.
+
 ## Pointing a gateway at it
 
 ```bash

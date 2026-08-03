@@ -15,6 +15,14 @@
  * transcript, and no gateway credential. The gateway never learns the device
  * token; the relay never learns which gateway pushed, only that a grant did.
  * Encrypt the alert body app-side and the relay cannot read it either.
+ *
+ * Abuse budget. Every route is public, so each one is metered before it can
+ * cost anything: a request body is refused by Content-Length before it is
+ * parsed, grant creation and push are both capped per client address, push is
+ * capped per grant, and an over-limit subject is answered from a single
+ * indexed read with no write at all (`consumeQuota` returns before the
+ * INSERT). Nothing here accumulates for free either — `scheduled` sweeps
+ * expired quota windows and grants that were minted and never used.
  */
 
 import { apnsConfig, APNS_DEAD_REASONS, sendApns } from "./apns";
@@ -25,6 +33,7 @@ import {
   deleteGrantById,
   findGrant,
   notePush,
+  purgeExpired,
   randomGrant,
   revokeGrant,
   setEnvironment,
@@ -40,6 +49,9 @@ export const defaultDeps: Deps = {
 
 const MAX_DEVICE_TOKEN_CHARS = 4096;
 const MAX_BODY_CHARS = 4096;
+/** An alert is a few hundred bytes; APNs itself refuses more than 4 KiB. */
+const MAX_REQUEST_BYTES = 16384;
+const MAX_DATA_KEYS = 32;
 
 function json(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -62,13 +74,37 @@ function bearer(request: Request): string {
   return header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : "";
 }
 
+/**
+ * Cloudflare sets `cf-connecting-ip` itself and a client cannot forge or strip
+ * it; `x-forwarded-for` is only the fallback for a non-Cloudflare front.
+ */
 function clientKey(request: Request): string {
   return request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for") ?? "anon";
 }
 
-async function readJson(request: Request): Promise<Record<string, unknown> | null> {
+/** A body big enough to cost CPU is refused before a single byte is parsed. */
+const TOO_LARGE = Symbol("too_large");
+
+function isOversized(request: Request): boolean {
+  const declared = Number.parseInt(request.headers.get("content-length") ?? "0", 10);
+  return Number.isFinite(declared) && declared > MAX_REQUEST_BYTES;
+}
+
+function oversized(): Response {
+  return fail(413, "too_large", `a request body may not exceed ${MAX_REQUEST_BYTES} bytes`);
+}
+
+/**
+ * `content-length` is the cheap check and a chunked body has none, so the size
+ * is enforced twice: on the declaration, then on what actually arrived.
+ */
+async function readJson(
+  request: Request,
+): Promise<Record<string, unknown> | typeof TOO_LARGE | null> {
+  const text = await request.text();
+  if (text.length > MAX_REQUEST_BYTES) return TOO_LARGE;
   try {
-    const parsed = await request.json();
+    const parsed = JSON.parse(text) as unknown;
     return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
   } catch {
     return null;
@@ -86,7 +122,7 @@ function notificationFrom(body: Record<string, unknown>): Notification | null {
   const data: Record<string, string> = {};
   const raw = body.data;
   if (raw && typeof raw === "object") {
-    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>).slice(0, MAX_DATA_KEYS)) {
       data[key] = String(value).slice(0, MAX_BODY_CHARS);
     }
   }
@@ -118,7 +154,17 @@ async function health(env: Env): Promise<Response> {
 }
 
 async function createGrantHandler(request: Request, env: Env, deps: Deps): Promise<Response> {
+  const quota = await consumeQuota(
+    env.DB,
+    `grant-ip:${clientKey(request)}`,
+    intVar(env.GRANT_RATE_LIMIT, 30),
+    intVar(env.PUSH_RATE_WINDOW_MS, 3600000),
+    deps.now(),
+  );
+  if (!quota.isAllowed) return fail(429, "rate_limited", "too many grants from this address");
+
   const body = await readJson(request);
+  if (body === TOO_LARGE) return oversized();
   if (!body) return fail(400, "bad_request", "a JSON object body is required");
 
   const deviceToken = str(body.device_token);
@@ -129,15 +175,6 @@ async function createGrantHandler(request: Request, env: Env, deps: Deps): Promi
   if (!PLATFORMS.includes(platform)) {
     return fail(400, "bad_request", `platform must be one of ${PLATFORMS.join(", ")}`);
   }
-
-  const quota = await consumeQuota(
-    env.DB,
-    `ip:${clientKey(request)}`,
-    intVar(env.GRANT_RATE_LIMIT, 30),
-    intVar(env.PUSH_RATE_WINDOW_MS, 3600000),
-    deps.now(),
-  );
-  if (!quota.isAllowed) return fail(429, "rate_limited", "too many grants from this address");
 
   const { grant, row } = await createGrant(
     env.DB,
@@ -161,7 +198,28 @@ async function createGrantHandler(request: Request, env: Env, deps: Deps): Promi
 }
 
 async function pushHandler(request: Request, env: Env, deps: Deps): Promise<Response> {
-  const body = (await readJson(request)) ?? {};
+  /**
+   * Before the grant lookup, not after: a flood of made-up grants must not buy
+   * one database read each. Over the limit this answers from a single indexed
+   * read and writes nothing.
+   */
+  const address = await consumeQuota(
+    env.DB,
+    `push-ip:${clientKey(request)}`,
+    intVar(env.IP_PUSH_RATE_LIMIT, 600),
+    intVar(env.PUSH_RATE_WINDOW_MS, 3600000),
+    deps.now(),
+  );
+  if (!address.isAllowed) {
+    return json(429, {
+      error: { code: "rate_limited", message: "too many push attempts from this address" },
+      reset_at: address.resetAt,
+    });
+  }
+
+  const parsed = await readJson(request);
+  if (parsed === TOO_LARGE) return oversized();
+  const body = parsed ?? {};
   const grant = bearer(request) || str(body.grant);
   if (!grant) return fail(401, "no_grant", "an Authorization: Bearer <grant> header is required");
 
@@ -240,6 +298,8 @@ export async function handle(request: Request, env: Env, deps: Deps = defaultDep
   const path = url.pathname.replace(/\/+$/, "") || "/";
   const method = request.method.toUpperCase();
 
+  if (isOversized(request)) return oversized();
+
   if (method === "GET" && (path === "/healthz" || path === "/")) return await health(env);
   if (method === "POST" && path === "/v1/grants") return await createGrantHandler(request, env, deps);
   if (method === "POST" && path === "/v1/push") return await pushHandler(request, env, deps);
@@ -249,8 +309,26 @@ export async function handle(request: Request, env: Env, deps: Deps = defaultDep
   return fail(404, "not_found", `${method} ${path} is not a route of this relay`);
 }
 
+/**
+ * The cron sweep. Public grant creation means anyone can leave rows behind, so
+ * rows must expire on their own: quota windows long past, and grants nobody
+ * ever pushed to. A grant in real use is never touched, whatever its age.
+ */
+export async function sweep(env: Env, deps: Deps = defaultDeps): Promise<{
+  quota: number;
+  grants: number;
+}> {
+  return await purgeExpired(env.DB, deps.now(), {
+    quotaWindowMs: intVar(env.PUSH_RATE_WINDOW_MS, 3600000),
+    unusedGrantMs: intVar(env.UNUSED_GRANT_TTL_MS, 30 * 24 * 3600000),
+  });
+}
+
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
     return handle(request, env, defaultDeps);
+  },
+  async scheduled(_controller: unknown, env: Env): Promise<void> {
+    await sweep(env, defaultDeps);
   },
 };

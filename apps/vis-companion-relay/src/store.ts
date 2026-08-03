@@ -150,3 +150,30 @@ export async function consumeQuota(
     .run();
   return { isAllowed: true, remaining: limit - count, resetAt };
 }
+
+/**
+ * The sweep behind the cron trigger. Grant creation is public, so anything a
+ * stranger can create has to expire without anyone watching: a quota window
+ * that is already over is dead weight, and a grant that was minted and never
+ * pushed to is a signup nobody completed. A grant that is actually in use has
+ * `push_count > 0` and is never swept, however old it is — expiry here is
+ * about garbage, not about rotating live capabilities.
+ */
+export async function purgeExpired(
+  db: D1Database,
+  now: number,
+  ttl: { quotaWindowMs: number; unusedGrantMs: number },
+): Promise<{ quota: number; grants: number }> {
+  const quota = await db
+    .prepare("DELETE FROM quota WHERE window_start < ?")
+    .bind(now - ttl.quotaWindowMs)
+    .run();
+  const grants = await db
+    .prepare("DELETE FROM grants WHERE push_count = 0 AND created_at < ?")
+    .bind(now - ttl.unusedGrantMs)
+    .run();
+  return {
+    quota: quota.meta?.changes ?? 0,
+    grants: grants.meta?.changes ?? 0,
+  };
+}

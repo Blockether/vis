@@ -20,6 +20,9 @@
       "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
     }
   ],
+  // Every hour: drop quota windows that have already reset and grants nobody
+  // ever pushed to. Public signup means garbage arrives on its own.
+  "triggers": { "crons": ["23 * * * *"] },
   // Public configuration only. Key material is a secret, never a var:
   //   wrangler secret put APNS_KEY_P8 / FCM_SERVICE_ACCOUNT
   "vars": {
@@ -30,6 +33,8 @@
     "PUSH_RATE_LIMIT": "120",
     "PUSH_RATE_WINDOW_MS": "3600000",
     "GRANT_RATE_LIMIT": "30",
+    "IP_PUSH_RATE_LIMIT": "600",
+    "UNUSED_GRANT_TTL_MS": "2592000000",
     "MAX_GRANTS_PER_DEVICE": "10"
   }
 }

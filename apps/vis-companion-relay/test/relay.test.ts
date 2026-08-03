@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { resetProviderTokens } from "../src/apns";
 import { resetAccessTokens } from "../src/fcm";
 import { sha256Hex } from "../src/jwt";
-import { handle } from "../src/index";
+import { handle, sweep } from "../src/index";
 import type { Deps, Env } from "../src/types";
 import { openTestDb, type TestDb } from "./d1";
 import { decodeJwt, generateEs256, generateRs256, verifyJwt } from "./keys";
@@ -406,5 +406,112 @@ describe("routing", () => {
       makeDeps(fetchImpl),
     );
     expect(response.status).toBe(404);
+  });
+});
+
+// Every route is public: nobody authenticates to ASK for a grant, and a gateway
+// only ever proves it holds one. So the question these pin is not "is the
+// caller allowed" but "what does an unwelcome caller cost".
+describe("abuse", () => {
+  it("caps push attempts per address, so made-up grants cost nothing to refuse", async () => {
+    const { fetchImpl } = recorder(() => new Response("", { status: 200 }));
+    const env = makeEnv({ IP_PUSH_RATE_LIMIT: "2" });
+    const deps = makeDeps(fetchImpl);
+    const attempt = (ip: string) =>
+      handle(
+        post("/v1/push", ALERT, { authorization: "Bearer made-up", "cf-connecting-ip": ip }),
+        env,
+        deps,
+      );
+
+    expect((await attempt("198.51.100.9")).status).toBe(404);
+    expect((await attempt("198.51.100.9")).status).toBe(404);
+    const blocked = await attempt("198.51.100.9");
+    expect(blocked.status).toBe(429);
+    expect(await blocked.json()).toMatchObject({ error: { code: "rate_limited" } });
+
+    // The flood is charged to the address that made it, and to nobody else.
+    expect((await attempt("203.0.113.99")).status).toBe(404);
+
+    // A refused request must not even write its own counter, or the flood pays
+    // for itself in D1 writes.
+    const counter = db.query("SELECT count FROM quota WHERE subject = 'push-ip:198.51.100.9'");
+    expect(counter[0].count).toBe(2);
+  });
+
+  it("refuses an oversized body on its declaration, before parsing or storing", async () => {
+    const { fetchImpl } = recorder(() => new Response("", { status: 200 }));
+    const env = makeEnv();
+    const deps = makeDeps(fetchImpl);
+    const request = new Request("https://relay.example.com/v1/grants", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "cf-connecting-ip": "203.0.113.7",
+        "content-length": "1048576",
+      },
+      body: JSON.stringify({ device_token: "a".repeat(64) }),
+    });
+
+    expect((await handle(request, env, deps)).status).toBe(413);
+    expect(db.query("SELECT id FROM grants")).toHaveLength(0);
+    expect(db.query("SELECT subject FROM quota")).toHaveLength(0);
+  });
+
+  it("refuses an oversized body that declared no length at all", async () => {
+    const { fetchImpl } = recorder(() => new Response("", { status: 200 }));
+    const env = makeEnv();
+    const deps = makeDeps(fetchImpl);
+    const request = new Request("https://relay.example.com/v1/grants", {
+      method: "POST",
+      headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.7" },
+      body: JSON.stringify({ device_token: "a".repeat(64), label: "x".repeat(20000) }),
+    });
+    expect(request.headers.get("content-length")).toBeNull();
+
+    expect((await handle(request, env, deps)).status).toBe(413);
+    expect(db.query("SELECT id FROM grants")).toHaveLength(0);
+  });
+
+  it("caps how many custom data keys reach the provider", async () => {
+    const { calls, fetchImpl } = recorder(() => new Response("", { status: 200 }));
+    const env = makeEnv();
+    const deps = makeDeps(fetchImpl);
+    const grant = await createGrant(env, deps);
+    const data = Object.fromEntries(
+      Array.from({ length: 100 }, (_, index) => [`k${index}`, String(index)]),
+    );
+
+    const response = await handle(
+      post("/v1/push", { ...ALERT, data }, { authorization: `Bearer ${grant}` }),
+      env,
+      deps,
+    );
+
+    expect(response.status).toBe(200);
+    const payload = JSON.parse(calls[0].body) as Record<string, unknown>;
+    expect(Object.keys(payload).filter((key) => key.startsWith("k"))).toHaveLength(32);
+  });
+
+  it("sweeps spent quota windows and grants nobody ever used, keeping live ones", async () => {
+    const { fetchImpl } = recorder(() => new Response("", { status: 200 }));
+    const env = makeEnv({ UNUSED_GRANT_TTL_MS: "86400000" });
+    const deps = makeDeps(fetchImpl);
+    const used = await createGrant(env, deps);
+    await createGrant(env, deps, { device_token: "b".repeat(64) });
+    expect(
+      (await handle(post("/v1/push", ALERT, { authorization: `Bearer ${used}` }), env, deps))
+        .status,
+    ).toBe(200);
+    expect(db.query("SELECT id FROM grants")).toHaveLength(2);
+
+    clock += 8 * 86_400_000;
+    const swept = await sweep(env, deps);
+
+    expect(swept.grants).toBe(1);
+    expect(swept.quota).toBeGreaterThan(0);
+    expect(db.query("SELECT id FROM grants")).toHaveLength(1);
+    expect(db.query("SELECT id FROM grants")[0].id).toBe(await sha256Hex(used));
+    expect(db.query("SELECT subject FROM quota")).toHaveLength(0);
   });
 });
