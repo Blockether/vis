@@ -1881,7 +1881,7 @@
                Home/End top/bottom · TAB fold diff · RET visit · q/Esc close
    Staging     s/u stage/unstage at point · S/U stage/unstage ALL
    Discard     x/k discard at point (asks first)
-   Commit      c commit transient (c commit · a amend · n --no-verify)
+   Commit      c commit transient (flag -h --no-verify · c commit · a amend)
    History     l log graph · C-w copy sha/path/ref
    Remote      P push · F pull · f fetch
    Branch      b branch flow      Stash  z stash flow
@@ -2163,21 +2163,23 @@
 
 (defn- magit-commit-flow!
   "Magit's `c` commit transient (`magit-transient!`), keyed exactly like Emacs
-   magit's commit popup. SWITCHES: `n` Disable hooks (`--no-verify`) — the
-   escape hatch for a repo whose pre-commit/commit-msg githook is broken or
-   irrelevant. ACTIONS: `c` commit the staged index, `a` amend the last commit
-   (magit's `c c` / `c a`). The message is then read INLINE, as before."
+   magit's commit popup. FLAGS: `-h` Disable hooks (`--no-verify`) — a TOGGLE (press
+   `h` to arm it, press it again to disarm it), the escape hatch for a repo whose
+   pre-commit/commit-msg githook is broken or irrelevant. COMMANDS: `c` commit the
+   staged index, `a` amend the last commit (magit's `c c` / `c a`). The message is
+   then read INLINE, as before."
   [mini root model]
   (when-let
     [{:keys [action switches]}
      ((:transient! mini)
        "Commit"
-       {:groups [{:title "Arguments"
-                  :items
-                  [{:key "n" :type :switch :id :no-verify :label "Disable hooks (--no-verify)"}]}
-                 {:title "Commit"
-                  :items [{:key "c" :type :action :id :commit :label "Commit staged"}
-                          {:key "a" :type :action :id :amend :label "Amend last commit"}]}]}
+       {:groups
+        [{:title "Arguments"
+          :items
+          [{:key "h" :type :switch :id :no-verify :label "Disable hooks" :arg "--no-verify"}]}
+         {:title "Commit"
+          :items [{:key "c" :type :action :id :commit :label "Commit staged"}
+                  {:key "a" :type :action :id :amend :label "Amend last commit"}]}]}
        (constantly nil))]
     (let
       [amend? (= :amend action)
@@ -2228,36 +2230,101 @@
       {:kind :continue :state state})
     {:kind :continue :state state}))
 
+(defn transient-key-glyph
+  "PURE: the key column glyph magit paints for one transient item. FLAGS
+   (`:switch` / `:option`) carry magit's leading `-` — `-h`, `-t` — so a toggle can
+   never be mistaken for a fire-once verb; COMMANDS (`:action`) show the bare key."
+  [{:keys [type key]}]
+  (if (= :action type) (str key) (str "-" key)))
+
+(defn transient-item-arg
+  "PURE: the trailing git-argument cell magit shows for a FLAG: `(--no-verify)` for
+   a switch, `(%topic=fix)` for an option carrying `value`. nil for actions (a
+   command contributes no argument) and for flags that name none."
+  [{:keys [type arg]} value]
+  (let [v (when (and value (not (str/blank? (str value)))) (str value))]
+    (cond (= :action type) nil
+          (and arg (= :option type)) (str "(" arg v ")")
+          arg (str "(" arg ")")
+          v (str "(" v ")")
+          :else nil)))
+
+(defn transient-layout
+  "PURE: `{:key-w :label-w}` column widths for the transient grid. Every group's
+   items share one key column and one description column, so flags and commands
+   line up as a grid exactly like magit's popup."
+  [spec]
+  (let [items (mapcat :items (:groups spec))]
+    {:key-w (reduce max 0 (map #(long (p/display-width (transient-key-glyph %))) items))
+     :label-w (reduce max 0 (map #(long (p/display-width (str (:label %)))) items))}))
+
 (defn- draw-transient-item!
-  "One transient row: `key` glyph (accented, BOLD when active) + label. An active
-   switch or a set option shows in full `dialog-fg`; inactive rows dim to
-   `dialog-hint`, so live switches visibly pop. An option's value trails in parens."
-  [g left row inner-w {:keys [key label]} active? value]
+  "One transient row as a GRID cell: key glyph column, description column, and the
+   git-argument column.
+
+   A FLAG (`:switch` / `:option`) reads dim while OFF and turns BOLD `dialog-fg`
+   with its argument accented while ON, so pressing its key visibly toggles it.
+   A COMMAND (`:action`) always shows a BOLD accented key with its description in
+   full `dialog-fg` — a command is never `off`."
+  [g left row inner-w {:keys [key-w label-w]} {:keys [type label] :as it} active? value]
   (let
-    [keytxt
-     (str key)
+    [action?
+     (= :action type)
+
+     keytxt
+     (transient-key-glyph it)
+
+     argtxt
+     (transient-item-arg it value)
 
      x
      (+ (long left) 2)
 
      lx
-     (+ (long x) (p/display-width keytxt) 2)
+     (+ (long x) (long key-w) 1)
 
-     has-val?
-     (and value (not (str/blank? (str value))))
+     right
+     (+ (long left) (long inner-w))
 
-     body
-     (str label (when has-val? (str "  (" value ")")))
+     label-txt
+     (str label)
+
+     ;; Argument column: aligned past the widest description when it fits, else
+     ;; trailing the description inline, else dropped (a very narrow buffer).
+     arg-x
+     (when argtxt
+       (let
+         [w
+          (long (p/display-width argtxt))
+
+          col
+          (+ (long lx) (long label-w) 2)
+
+          inline
+          (+ (long lx) (long (p/display-width label-txt)) 2)]
+
+         (cond (<= (+ col w) (dec (long right))) col
+               (<= (+ inline w) (dec (long right))) inline)))
 
      shown
-     (ellipsize body (max 0 (- (+ (long left) (long inner-w)) (long lx) 1)))]
+     (ellipsize label-txt (max 0 (- (long (or arg-x right)) (long lx) 1)))
+
+     fg
+     (if (or action? active?) t/dialog-fg t/dialog-hint)]
 
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc (long left)) row inner-w 1)
     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-    (if active? (p/styled g [p/BOLD] (p/put-str! g x row keytxt)) (p/put-str! g x row keytxt))
-    (p/set-colors! g (if active? t/dialog-fg t/dialog-hint) t/dialog-bg)
+    (if (or action? active?)
+      (p/styled g [p/BOLD] (p/put-str! g x row keytxt))
+      (p/put-str! g x row keytxt))
+    (p/set-colors! g fg t/dialog-bg)
     (if active? (p/styled g [p/BOLD] (p/put-str! g lx row shown)) (p/put-str! g lx row shown))
+    (when arg-x
+      (p/set-colors! g (if active? t/dialog-hint-key t/dialog-hint) t/dialog-bg)
+      (if active?
+        (p/styled g [p/BOLD] (p/put-str! g arg-x row argtxt))
+        (p/put-str! g arg-x row argtxt)))
     (p/set-colors! g t/dialog-fg t/dialog-bg)))
 
 (defn magit-transient!
@@ -2266,10 +2333,15 @@
    SWITCHES / value OPTIONS / fire-once ACTIONS + a hint row on `hint-row`), NOT
    a centered modal dialog box. The status buffer stays fully visible above it,
    exactly like Emacs magit's transient popup / minibuffer. There is NO moving
-   cursor — you press an item's `:key` directly. Switches highlight while active;
-   options display their value inline. `spec` is
-   `{:groups [{:title str :items [{:key :type :id :label}]}]}` where `:type` is
-   `:switch` | `:option` | `:action`. `read-option` (impure) fetches an option's
+   cursor — you press an item's `:key` directly, CASE-SENSITIVELY (`-f` ≠ `-F`),
+   exactly like magit. FLAGS (`:switch` / `:option`) render with magit's leading
+   `-` and TOGGLE: the first press turns the argument on, the next turns it back
+   off; the popup stays open either way. COMMANDS (`:action`) fire once and close.
+   `spec` is
+   `{:groups [{:title str :items [{:key :type :id :label :arg}]}]}` where `:type` is
+   `:switch` | `:option` | `:action` and the optional `:arg` is the literal git
+   argument the flag contributes (`--no-verify`), shown in its own grid column.
+   `read-option` (impure) fetches an option's
    value: `(read-option item current) -> str|nil` — nil (Esc) leaves it unchanged;
    it too should read INLINE (via the buffer's `:read!` minibuffer), never a box.
    Returns `{:action id :switches #{…} :options {id val}}` when an action fires,
@@ -2303,7 +2375,7 @@
      (max 0 (dec (long body-top)))
 
      footer
-     [["key" "toggle/run"] ["Esc" "cancel"]]
+     [["-key" "toggle flag"] ["key" "run command"] ["Esc" "cancel"]]
 
      ;; Right border column of the host status dialog. Its left/right/bottom
      ;; borders already frame this bottom region; a top separator one row
@@ -2311,6 +2383,9 @@
      ;; own height — no empty status void floating above the popup.
      box-right
      (+ (long left) (long inner-w) 1)
+
+     layout
+     (transient-layout spec)
 
      sep-row
      (max 0 (dec (long title-row)))]
@@ -2357,7 +2432,7 @@
                          false)
                value (when (= type :option) (get (:options state) id))]
 
-              (draw-transient-item! g left row inner-w it active? value)))))
+              (draw-transient-item! g left row inner-w layout it active? value)))))
       (draw-hint-bar! g left hint-row inner-w footer)
       (.setCursorPosition screen nil)
       (.refresh screen Screen$RefreshType/DELTA)
@@ -2368,7 +2443,7 @@
             KeyType/Escape nil
             KeyType/Character
             (let
-              [ch (lower-key-character key)
+              [ch (key-character key)
                r (transient-toggle spec state ch)]
 
               (case (:kind r)
@@ -2422,12 +2497,12 @@
 
      arg-items
      (cond->
-       [{:key "f" :type :switch :id :force :label "Force with lease (--force-with-lease)"}
-        {:key "n" :type :switch :id :dry-run :label "Dry run (--dry-run)"}
-        {:key "h" :type :switch :id :no-verify :label "Disable hooks (--no-verify)"}
-        {:key "u" :type :switch :id :set-upstream :label "Set upstream (-u)"}]
+       [{:key "f" :type :switch :id :force :label "Force with lease" :arg "--force-with-lease"}
+        {:key "n" :type :switch :id :dry-run :label "Dry run" :arg "--dry-run"}
+        {:key "h" :type :switch :id :no-verify :label "Disable hooks" :arg "--no-verify"}
+        {:key "u" :type :switch :id :set-upstream :label "Set upstream" :arg "-u"}]
        gerrit?
-       (conj {:key "t" :type :option :id :topic :label "Topic"}))
+       (conj {:key "t" :type :option :id :topic :label "Topic" :arg "%topic="}))
 
      primary
      (if gerrit?

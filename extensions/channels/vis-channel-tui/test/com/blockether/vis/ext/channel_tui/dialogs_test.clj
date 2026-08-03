@@ -8,7 +8,7 @@
             ;; Loaded for its side effect: registers the :shell/enabled toggle
             ;; (internal foundation, at ns load), which the settings-rows test asserts.
             [com.blockether.vis.internal.foundation.shell])
-  (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
+  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize TextCharacter]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
@@ -202,14 +202,75 @@
 
         (expect (= 5 (:selected (on-key s0 burst geom)))))))
 
+(def ^:private commit-transient-spec
+  "The spec `magit-commit-flow!` hands the transient: one FLAG group and one
+   COMMAND group, exactly like Emacs magit's commit popup."
+  {:groups [{:title "Arguments"
+             :items
+             [{:key "h" :type :switch :id :no-verify :label "Disable hooks" :arg "--no-verify"}]}
+            {:title "Commit"
+             :items [{:key "c" :type :action :id :commit :label "Commit staged"}
+                     {:key "a" :type :action :id :amend :label "Amend last commit"}]}]})
+
+(defn- transient-key
+  [c]
+  (if (= :esc c)
+    (KeyStroke. KeyType/Escape)
+    (KeyStroke. (Character/valueOf (char c)) false false false)))
+
+(defn- painted-rows
+  "Non-blank rows of the virtual terminal as `{:text :bold}`. `:bold` keeps only the
+   cells carrying SGR/BOLD, so an ARMED flag is distinguishable from a dim one."
+  [^DefaultVirtualTerminal terminal]
+  (->> (range 30)
+       (map (fn [y]
+              (reduce (fn [acc x]
+                        (let
+                          [^TextCharacter ch
+                           (.getCharacter terminal (TerminalPosition. (int x) (int y)))
+
+                           s
+                           (if ch (.getCharacterString ch) " ")]
+
+                          (-> acc
+                              (update :text str s)
+                              (update
+                                :bold
+                                str
+                                (if (and ch (contains? (set (.getModifiers ch)) SGR/BOLD)) s "")))))
+                      {:text "" :bold ""}
+                      (range 80))))
+       (map #(update % :text str/trimr))
+       (remove #(str/blank? (:text %)))
+       vec))
+
+(defn- drive-transient!
+  "Run `magit-transient!` on a virtual terminal, feeding `keys` (characters, `:esc`
+   for Escape). Returns `{:ret … :rows …}` — the transient's result plus its LAST
+   paint, which is what the user is looking at when the key lands."
+  [spec keys]
+  (let
+    [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+     (virtual-screen)
+
+     g
+     (.newTextGraphics screen)]
+
+    (doseq [c keys]
+      (.addInput terminal (transient-key c)))
+    {:ret (dlg/magit-transient! screen g 0 78 28 70 "Commit" spec (constantly nil))
+     :rows (painted-rows terminal)}))
+
+(defn- row-with [rows needle] (some #(when (str/includes? (:text %) needle) %) rows))
+
 (defdescribe
   magit-transient-toggle-test
   (let
     [spec
      {:groups [{:title "Arguments"
-                :items [{:key "f" :type :switch :id :force :label "Force"}
-                        {:key "u" :type :switch :id :set-upstream :label "Upstream"}
-                        {:key "t" :type :option :id :topic :label "Topic"}]}
+                :items [{:key "f" :type :switch :id :force :label "Force" :arg "--force-with-lease"}
+                        {:key "u" :type :switch :id :set-upstream :label "Upstream" :arg "-u"}
+                        {:key "t" :type :option :id :topic :label "Topic" :arg "%topic="}]}
                {:title "Push" :items [{:key "p" :type :action :id :push :label "Push"}]}]}
 
      init
@@ -246,6 +307,75 @@
         (let [r (dlg/transient-toggle spec {:switches #{:force} :options {}} \p)]
           (expect (= :action (:kind r)))
           (expect (= :push (:id (:item r))))))))
+
+(defdescribe
+  magit-transient-grid-test
+  (it "flags carry magit's leading dash; commands show the bare key"
+      (expect (= "-h" (dlg/transient-key-glyph {:type :switch :key "h"})))
+      (expect (= "-t" (dlg/transient-key-glyph {:type :option :key "t"})))
+      (expect (= "c" (dlg/transient-key-glyph {:type :action :key "c"}))))
+  (it "the argument cell names the git flag, with an option's value inline"
+      (expect (= "(--no-verify)" (dlg/transient-item-arg {:type :switch :arg "--no-verify"} nil)))
+      (expect (= "(%topic=fix)" (dlg/transient-item-arg {:type :option :arg "%topic="} "fix")))
+      (expect (nil? (dlg/transient-item-arg {:type :action :arg "--nope"} nil)))
+      (expect (nil? (dlg/transient-item-arg {:type :switch} nil))))
+  (it "one shared key + description column aligns every group into a grid"
+      (expect (= {:key-w 2 :label-w (count "Amend last commit")}
+                 (dlg/transient-layout commit-transient-spec)))))
+
+(defdescribe
+  magit-transient-render-test
+  (it "a flag and a command render as two visibly different grid rows"
+      (let
+        [rows
+         (:rows (drive-transient! commit-transient-spec [:esc]))
+
+         flag
+         (row-with rows "Disable hooks")
+
+         command
+         (row-with rows "Commit staged")]
+
+        (expect (str/includes? (:text flag) "-h Disable hooks"))
+        (expect (str/includes? (:text flag) "(--no-verify)"))
+        ;; A flag starts OFF: dim, nothing bold.
+        (expect (str/blank? (:bold flag)))
+        ;; A command is a BOLD key plus its description — never dim.
+        (expect (str/includes? (:text command) "c  Commit staged"))
+        (expect (= "c" (:bold command)))))
+  (it "pressing a flag key arms it and pressing it again disarms it"
+      (let
+        [on
+         (row-with (:rows (drive-transient! commit-transient-spec [\h :esc])) "Disable hooks")
+
+         off
+         (row-with (:rows (drive-transient! commit-transient-spec [\h \h :esc])) "Disable hooks")]
+
+        (expect (str/includes? (:bold on) "--no-verify"))
+        (expect (str/blank? (:bold off)))))
+  (it "the flag toggles the argument the command finally runs with"
+      (expect (= {:action :commit :switches #{:no-verify} :options {}}
+                 (:ret (drive-transient! commit-transient-spec [\h \c]))))
+      (expect (= {:action :commit :switches #{} :options {}}
+                 (:ret (drive-transient! commit-transient-spec [\h \h \c]))))
+      (expect (= {:action :commit :switches #{:no-verify} :options {}}
+                 (:ret (drive-transient! commit-transient-spec [\h \h \h \c])))))
+  (it "transient keys are case-sensitive, exactly like magit"
+      (expect (= {:action :commit :switches #{} :options {}}
+                 (:ret (drive-transient! commit-transient-spec [\H \c]))))
+      (let
+        [spec
+         {:groups
+          [{:title "Arguments"
+            :items
+            [{:key "f" :type :switch :id :lease :label "Force with lease" :arg "--force-with-lease"}
+             {:key "F" :type :switch :id :force :label "Force" :arg "--force"}]}
+           {:title "Push" :items [{:key "p" :type :action :id :push :label "Push"}]}]}]
+        (expect (= #{:lease} (:switches (:ret (drive-transient! spec [\f \p])))))
+        (expect (= #{:force} (:switches (:ret (drive-transient! spec [\F \p])))))
+        (expect (= #{:force :lease} (:switches (:ret (drive-transient! spec [\f \F \p])))))))
+  (it "Esc cancels the transient, armed flags and all"
+      (expect (nil? (:ret (drive-transient! commit-transient-spec [\h :esc]))))))
 
 
 (defdescribe session-dialog-wheel-test

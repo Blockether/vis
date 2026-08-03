@@ -52,7 +52,7 @@
 ;;
 ;; ── Discarding / committing ─────────────────────────────────────────────────
 ;;   x / k        discard the change at point (throw it away — asks first)
-;;   c            commit transient (message prompt; amend; n disables githooks)
+;;   c            commit transient (message prompt; amend; -h flag disables githooks)
 ;;
 ;; ── History / inspection ────────────────────────────────────────────────────
 ;;   l            log — the graph log viewer

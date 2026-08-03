@@ -291,7 +291,7 @@
         (let [m (magit/status-model dir)]
           (expect (= "initial, reworded" (:head-subject m)))
           (expect (= 1 (count (:commits m)))))))
-  (it "the commit transient's n switch reaches git — c commit with --no-verify"
+  (it "the commit transient's -h flag reaches git — c commit with --no-verify"
       (let
         [dir
          (init-repo!)
@@ -300,8 +300,11 @@
          {:transient!
           (fn [title spec _read-option]
             (expect (= "Commit" title))
-            (expect (= {:key "n" :type :switch :id :no-verify :label "Disable hooks (--no-verify)"}
-                       (dialogs/transient-item-by-key spec \n)))
+            (expect
+              (= {:key "h" :type :switch :id :no-verify :label "Disable hooks" :arg "--no-verify"}
+                 (dialogs/transient-item-by-key spec \h)))
+            ;; magit's transients are case-sensitive: `n` is NOT the hooks flag.
+            (expect (nil? (dialogs/transient-item-by-key spec \n)))
             (expect (= :commit (:id (dialogs/transient-item-by-key spec \c))))
             (expect (= :amend (:id (dialogs/transient-item-by-key spec \a))))
             {:action :commit :switches #{:no-verify} :options {}})
@@ -314,7 +317,7 @@
         (let [r ((var-get #'dialogs/magit-commit-flow!) mini dir (magit/status-model dir))]
           (expect (:ok? r))
           (expect (= "via transient" (:head-subject (magit/status-model dir)))))))
-  (it "the commit transient without the n switch leaves githooks in force"
+  (it "the commit transient without the -h flag leaves githooks in force"
       (let
         [dir
          (init-repo!)
