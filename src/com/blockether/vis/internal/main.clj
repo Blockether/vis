@@ -3024,19 +3024,6 @@
 
 
 
-(defn- launcher-owned!
-  "`runtime` and `update` are executed by the `vis-agent` launcher, which never
-   forwards them to this binary. They stay in the command tree so `--help`
-   documents the real product surface; reaching this body means the runtime
-   binary was invoked directly, so name the command that does work."
-  [command]
-  (fn [_parsed _residual]
-    (throw (ex-info
-             (str "`vis-agent " command
-                  "` is handled by the vis-agent launcher, not by this runtime binary."
-                  " Run it through the `vis-agent` wrapper on your PATH.")
-             {:type :vis.cli/launcher-owned-command :vis/user-error true :command command}))))
-
 (defn- cli-gateway-start!
   "Run the HTTP/SSE gateway daemon. Lazy resolve keeps
    Ring/Jetty class loading off every other command's startup path."
@@ -3440,21 +3427,6 @@
      :cmd/doc "Inspect, scaffold, or run an extension-contributed CLI command."
      :cmd/usage "vis-agent extension <list|scaffold|...> [args...]"
      :cmd/subcommands #(registry/registered-under ["extension"])}
-    ;; `runtime` and `update` belong to the launcher, which intercepts them
-    ;; before this binary starts. They are registered here so `--help` lists
-    ;; the whole product surface instead of half of it.
-    {:cmd/name "runtime"
-     :cmd/doc "Show or persist which runtime this installation runs on."
-     :cmd/usage "vis-agent runtime [show | use native|jvm|dev|auto]"
-     :cmd/examples ["vis-agent runtime show" "vis-agent runtime use jvm"
-                    "vis-agent runtime use auto"]
-     :cmd/run-fn (launcher-owned! "runtime")}
-    {:cmd/name "update"
-     :cmd/doc "Update the vis-agent command and the runtime it launches."
-     :cmd/usage "vis-agent update [native|jvm|dev] [--rebuild] [vX.Y.Z|<sha>]"
-     :cmd/examples ["vis-agent update" "vis-agent update native" "vis-agent update dev"
-                    "vis-agent update jvm v1.2.3"]
-     :cmd/run-fn (launcher-owned! "update")}
     {:cmd/name "gateway"
      :cmd/doc "Start, inspect, or stop the long-lived gateway daemon."
      :cmd/usage "vis-agent gateway <start|status|stop|pair> [--db PATH]"

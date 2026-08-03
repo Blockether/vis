@@ -331,27 +331,18 @@
              (expect (= :vis.cli/unknown-toggle (:type (ex-data e))))
              (expect (true? (:vis/user-error (ex-data e))))))))
 
-(defdescribe launcher-owned-commands-test
-             (let [by-name (into {} (map (juxt :cmd/name identity)) (registry/registered-under []))]
-               (it "lists the launcher's runtime and update commands in the binary's help"
-                   (doseq [nm ["runtime" "update"]]
-                     (let [cmd (get by-name nm)]
-                       (expect (some? cmd))
-                       (expect (not (str/blank? (:cmd/doc cmd))))
-                       (expect (str/starts-with? (:cmd/usage cmd) (str "vis-agent " nm))))))
-               (it "documents exactly the launcher's own words, not a source-checkout updater"
-                   (expect (= "vis-agent runtime [show | use native|jvm|dev|auto]"
-                              (:cmd/usage (get by-name "runtime"))))
-                   (expect (= "vis-agent update [native|jvm|dev] [--rebuild] [vX.Y.Z|<sha>]"
-                              (:cmd/usage (get by-name "update"))))
-                   ;; The launcher accepts the bare runtime word, so the help shows it.
-                   (expect (some #{"vis-agent update dev"} (:cmd/examples (get by-name "update"))))
-                   (expect (not (str/includes? (:cmd/usage (get by-name "update")) "--reset"))))
-               (it "refuses to run them inside the binary and names the launcher instead"
-                   (doseq [nm ["runtime" "update"]]
-                     (try ((:cmd/run-fn (get by-name nm)) {} [])
-                          (expect false)
-                          (catch clojure.lang.ExceptionInfo e
-                            (expect (= :vis.cli/launcher-owned-command (:type (ex-data e))))
-                            (expect (true? (:vis/user-error (ex-data e))))
-                            (expect (str/includes? (ex-message e) "vis-agent launcher"))))))))
+(defdescribe
+  launcher-owned-commands-test
+  (it "keeps the launcher's runtime and update out of the binary's command tree"
+      ;; The `vis-agent` wrapper runs both itself and never forwards them,
+      ;; so registering them here only advertised commands this runtime
+      ;; cannot execute.
+      (let [by-name (into {} (map (juxt :cmd/name identity)) (registry/registered-under []))]
+        (doseq [nm ["runtime" "update"]]
+          (expect (nil? (get by-name nm))))))
+  (it "still documents them where the launcher owns them: the RUNTIME help section"
+      (let [^String help (commandline/render-tree (#'main/root-command))]
+        (expect (str/includes? help "RUNTIME (WHICH DISTRIBUTION RUNS)"))
+        (doseq
+          [row ["vis-agent runtime show" "vis-agent runtime use NAME" "vis-agent update [RUNTIME]"]]
+          (expect (str/includes? help row))))))
