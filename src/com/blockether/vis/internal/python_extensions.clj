@@ -380,16 +380,55 @@
   ([op-kw args] (stringify-deep {"op" (name op-kw) "args" (vec args)}))
   ([op-kw args result] (stringify-deep {"op" (name op-kw) "args" (vec args) "result" result})))
 
+(def ^:private ^:dynamic *healing-symbol*
+  "True while a healed retry is in flight, so one torn-down context triggers at
+   most ONE rebuild + retry instead of recursing through fresh adapters."
+  false)
+
+(defn- context-gone?
+  "True when `t` (or one of its causes) is GraalVM's bare cancelled/closed-context
+   failure - what a callable bound to a torn-down GraalPy context throws. Same
+   shape `env-python/map-polyglot-error` flags as `:context-cancelled?`."
+  [^Throwable t]
+  (loop
+    [^Throwable e
+     t
+
+     depth
+     0]
+
+    (cond (or (nil? e) (> depth 8)) false
+          (re-find #"Context execution was cancelled|Context is closed|Context is already closed"
+                   (str (ex-message e)))
+          true
+          :else (recur (.getCause e) (inc depth)))))
+
+(declare live-symbol-fn)
+
 (defn- tool-adapter
   "Observed-tool fn for one Python-backed symbol. Return value = success
    payload; a raised Python exception = failure envelope (message + trace
-   via `normalize-error`) — Python authors never construct envelopes."
+   via `normalize-error`) - Python authors never construct envelopes.
+
+   SELF-HEALING (issue #103): a sandbox binding - and every cached session env
+   row - captures THIS closure over the context that was alive at load time. A
+   `/reload` (or any other rebuild) closes that context, and nothing re-binds
+   the already-captured fns, so every later call died with \"Context execution
+   was cancelled\" until the whole session was restarted. On exactly that
+   failure we re-resolve the freshest fn for `[ext-name sym]` - rebuilding the
+   file's context when the registry itself is stale - and retry the call ONCE."
   [ext-name sym ^Context ctx ^Value pyfn]
   (fn [& args]
-    (try (extension/success {:result (call-py-ext ext-name nil ctx pyfn (vec args))})
-         (catch Throwable t
-           (extension/failure
-             {:result nil :throwable t :metadata {:extension ext-name :tool (str sym)}})))))
+    (let [argv (vec args)]
+      (try (extension/success {:result (call-py-ext ext-name nil ctx pyfn argv)})
+           (catch Throwable t
+             (if-let
+               [fresh
+                (and (not *healing-symbol*) (context-gone? t) (live-symbol-fn ext-name sym ctx))]
+               (binding [*healing-symbol* true]
+                 (apply fresh argv))
+               (extension/failure
+                 {:result nil :throwable t :metadata {:extension ext-name :tool (str sym)}})))))))
 
 (defn- activation-adapter
   [ext-name ^Context ctx ^Value pyfn]
@@ -1221,6 +1260,48 @@
                         :msg (str "Python extension '" (:ext/name spec) "' loaded from " path)})
              {:path path :sha sha :ext-name (:ext/name spec) :ext validated :context ctx}))
          (catch Throwable t (try (.close ctx true) (catch Throwable _)) (throw t)))))
+
+(defn- live-symbol-fn
+  "The CURRENTLY registered fn for `[ext-name sym]`, after `dead-ctx` was torn
+   down underneath an already-captured binding (issue #103).
+
+   `loaded` is the loader's own truth. When its entry for this extension still
+   points at `dead-ctx` the registry is stale too - a cached session env, a
+   sandbox binding and the registry can all hold the very same closed context -
+   so the file is re-evaluated HERE: `load-python-extensions!` would refuse,
+   because its fingerprint gate sees an unchanged file. Change listeners are
+   notified so the other live surfaces pick the fresh rows up as well.
+
+   Returns nil when the extension is gone or the rebuild fails; the caller then
+   reports the original failure."
+  [ext-name sym ^Context dead-ctx]
+  (try
+    (when-let
+      [[path entry] (first (filter (fn [[_ e]]
+                                     (= ext-name (:ext-name e)))
+                                   @loaded))]
+      (let
+        [entry
+         (if-not (identical? dead-ctx (:context entry))
+           entry
+           (let [rebuilt (load-file! (io/file path))]
+             (swap! loaded assoc path (dissoc rebuilt :path))
+             (try (.close ^Context dead-ctx true) (catch Throwable _))
+             (tel/log! {:level :info
+                        :id ::context-rebuilt
+                        :data {:extension ext-name :file path :symbol (str sym)}
+                        :msg (str "Rebuilt torn-down context for Python extension '" ext-name "'")})
+             (notify-change-listeners! {:extensions (vec (keep :ext (vals @loaded))) :removed []})
+             rebuilt))]
+        (some (fn [e]
+                (when (= sym (:ext.symbol/symbol e)) (:ext.symbol/fn e)))
+              (get-in (:ext entry) [:ext/engine :ext.engine/symbols]))))
+    (catch Throwable t
+      (tel/log! {:level :warn
+                 :id ::heal-failed
+                 :data {:extension ext-name :symbol (str sym) :error (ex-message t)}
+                 :msg (str "Could not recover Python extension '" ext-name "' - " (ex-message t))})
+      nil)))
 
 (declare register-loader-extension!)
 

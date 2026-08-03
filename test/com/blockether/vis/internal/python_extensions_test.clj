@@ -19,7 +19,8 @@
             [com.blockether.vis.internal.python-test-runner :as runner]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]))
+           [java.nio.file.attribute FileAttribute]
+           [org.graalvm.polyglot Context]))
 
 ;; =============================================================================
 ;; Harness
@@ -1570,3 +1571,52 @@ vis.extension(name='hookasker', description='hookasker', alias='hk', prompt=hook
                                   (expect (= "hook:submitted" result))
                                   (expect (= "sess-hook" (:session-id @drawn)))
                                   (expect (empty? (human-input/pending-requests))))))))
+
+;; =============================================================================
+;; Torn-down contexts heal instead of dying (issue #103)
+;; =============================================================================
+
+(def ^:private rebuilder-py
+  "import vis
+
+def ping():
+    '''await ping() -> str — answer pong.'''
+    return 'pong'
+
+vis.extension(name='rebuilder', description='rebuilder', alias='rb',
+              symbols=[vis.symbol(ping)])
+")
+
+(defdescribe python-extension-context-heal-test
+             (it "a symbol captured before a reload keeps working after the rebuild"
+                 ;; Sandbox bindings and cached session env rows capture the symbol fn ONCE,
+                 ;; over the context that was alive then. A `/reload` builds new contexts and
+                 ;; closes the old ones without re-binding anything, so every captured symbol
+                 ;; died with "Context execution was cancelled" until the session restarted.
+                 (with-loaded {"rebuilder.py" rebuilder-py}
+                              (fn [_ {:keys [ext-dir]}]
+                                (let [captured (symbol-fn (registered "rebuilder") 'ping)]
+                                  (expect (= "pong" (:result (captured))))
+                                  (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
+                                  (expect (= "pong" (:result (captured))))))))
+             (it "a symbol whose context was torn down rebuilds that context and answers"
+                 ;; Nothing reloaded — the context itself is gone (host teardown, cancel).
+                 ;; The loader's fingerprint gate would call a reload a no-op here, so the
+                 ;; failing call has to rebuild its own file.
+                 (with-loaded
+                   {"rebuilder.py" rebuilder-py}
+                   (fn [_ _]
+                     (let
+                       [captured
+                        (symbol-fn (registered "rebuilder") 'ping)
+
+                        ^Context dead
+                        (:context (first (vals @@#'pyx/loaded)))]
+
+                       (.close dead true)
+                       (expect (= "pong" (:result (captured))))
+                       ;; the heal re-registered a LIVE context, so the freshly resolved
+                       ;; symbol goes straight through
+                       (expect (not (identical? dead (:context (first (vals @@#'pyx/loaded))))))
+                       (expect (= "pong"
+                                  (:result ((symbol-fn (registered "rebuilder") 'ping))))))))))
