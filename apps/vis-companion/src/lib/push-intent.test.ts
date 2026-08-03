@@ -4,8 +4,10 @@ import {
   pushIntentFrom,
   resolvePushIntent,
   RESUMABLE_PUSH_MS,
+  type PushIntentOutcome,
   type PushIntentState,
 } from './push-intent';
+import { isShellChromeVisible, shellScreen, type ShellScreen } from './shell';
 import type { GatewayConn } from './types';
 
 const laptop: GatewayConn = { url: 'http://10.0.0.5:7890', id: 'gw-laptop' };
@@ -115,5 +117,63 @@ describe('App wiring', () => {
   it('parks the tap and drains it through this module', () => {
     expect(appSource).toContain('pushIntentFrom');
     expect(appSource).toContain('resolvePushIntent');
+  });
+});
+
+describe('a tapped notification ends on the session screen', () => {
+  /**
+   * What `App.tsx` renders once the drain has answered: `openGatewaySession`
+   * sets `openTarget`, `sessionConn` is `openTarget?.conn ?? active`, and the
+   * client + subscription hub are memos over its url/token — so the transport
+   * exists on the SAME render the session opens, and `shellScreen` reaches
+   * `'session'` without another round trip.
+   */
+  function screenAfter(outcome: PushIntentOutcome, s: PushIntentState): ShellScreen {
+    const openTarget = outcome.action === 'open' ? { conn: outcome.conn, sid: outcome.sid } : null;
+    const sessionConn = openTarget?.conn ?? s.active;
+    return shellScreen({
+      isSessionOpen: !!openTarget,
+      isSessionReady: !!sessionConn,
+      isIncompatible: false,
+      hasConn: s.conns.length > 0 && !!s.active,
+      // The cold start's own tab, i.e. the worst case: the Machines tab is what
+      // used to win the screen switch.
+      tab: 'connect',
+    });
+  }
+
+  it('opens the session the alert was about, chrome yielded to it', () => {
+    const boot: PushIntentState[] = [
+      state({ isRouteApplied: false }),
+      state({ isRouteApplied: false, conns: [laptop] }),
+      state({ conns: [laptop] }),
+      state({ conns: [laptop], active: laptop }),
+    ];
+    const intent = pushIntentFrom(TAP, 1_000);
+    const screens = boot.map((s) => screenAfter(resolvePushIntent(intent, s), s));
+
+    // The launch paints the machine list for a beat, then the tapped session
+    // takes the shell and keeps it.
+    expect(screens).toEqual(['connect', 'connect', 'session', 'session']);
+    // And it is the only screen allowed to take the chrome, because it brings
+    // its own header and status-bar padding.
+    expect(screens.map(isShellChromeVisible)).toEqual([true, true, false, false]);
+  });
+
+  it('never reached the session on the shipped handler', () => {
+    const cold = state({ isRouteApplied: false });
+    // The tap was answered at boot, with no gateway resolved: nothing opened,
+    // and the retained tap was gone.
+    expect(shippedHandler(TAP, cold)).toBeNull();
+    expect(screenAfter({ action: 'drop' }, cold)).toBe('connect');
+  });
+
+  it('keeps the transport pinned to the tapped gateway, not the active one', () => {
+    // `sessionConn` prefers `openTarget.conn`, so opening a session on a machine
+    // that is not the active one still has a client the instant it renders.
+    expect(appSource).toContain('const sessionConn = openTarget?.conn ?? active;');
+    const s = state({ conns: [laptop, desktop], active: desktop });
+    const outcome = resolvePushIntent(pushIntentFrom(TAP, 1_000), s);
+    expect(screenAfter(outcome, s)).toBe('session');
   });
 });
