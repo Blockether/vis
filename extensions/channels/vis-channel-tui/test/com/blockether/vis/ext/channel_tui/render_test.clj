@@ -4179,3 +4179,95 @@
                  (expect (true? (:collapsed? hit)))
                  ;; and it is the HEADER row that answers, not a peek line
                  (expect (str/includes? (str (:line (nth entries toggle-i))) "PYTHON")))))
+
+(defdescribe
+  markdown-table-link-click-region-test
+  ;; vis/91: `[label](url)` inside a GFM table cell rendered as dead text — the
+  ;; grid row carried no link meta, so the PAINTER registered no `:url` click
+  ;; region for it while the same link in a paragraph was clickable. This pins
+  ;; the whole app path: markdown → layout → `draw-chat-bubble!` → click
+  ;; regions, painted into a real Lanterna virtual terminal so the registered
+  ;; rectangle is checked against the glyphs actually on screen.
+  (it
+    "registers a :url region over exactly the label painted inside the cell"
+    (let
+      [markdown
+       (str "| Repo | Ticket |\n" "| --- | --- |\n"
+            "| glms-web | [CARS-9862](https://example.com/browse/CARS-9862) |\n\n"
+            "Outside: [CARS-9862](https://example.com/browse/CARS-9862)\n")
+
+       rendered
+       (render/format-answer-markdown-data (vis/markdown->ast markdown) 60 nil)
+
+       terminal
+       (com.googlecode.lanterna.terminal.virtual.DefaultVirtualTerminal.
+         (com.googlecode.lanterna.TerminalSize. 80 40))
+
+       screen
+       (doto (com.googlecode.lanterna.screen.TerminalScreen. terminal) (.startScreen))
+
+       g
+       (.newTextGraphics screen)
+
+       _
+       (do (cr/reset!) (cr/begin-frame!))
+
+       _
+       (render/draw-chat-bubble! g
+                                 {:role :assistant
+                                  :text ""
+                                  :prewrapped-lines (:lines rendered)
+                                  :line-meta (:line-meta rendered)}
+                                 0 2
+                                 60 {:viewport-top 0 :viewport-h 60})
+
+       _
+       (cr/commit-frame!)
+
+       cell
+       (fn [col row]
+         (.getBackCharacter screen (int col) (int row)))
+
+       row-text
+       (fn [row]
+         (apply str
+           (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter (cell % row))
+                (range 0 40))))
+
+       url-hit
+       (fn [col row]
+         (let [h (cr/lookup col row)]
+           (when (= :url (:kind h)) h)))
+
+       table-row
+       (first (filter #(str/includes? (row-text %) "glms-web") (range 0 20)))
+
+       prose-row
+       (first (filter #(str/includes? (row-text %) "Outside:") (range 0 20)))
+
+       hit
+       (first (keep #(url-hit % table-row) (range 0 40)))
+
+       {:keys [col width]}
+       (:bounds hit)]
+
+      (expect (some? table-row))
+      (expect (some? prose-row))
+      (expect (some? hit))
+      (expect (= "https://example.com/browse/CARS-9862" (:url hit)))
+      ;; The rectangle covers the LABEL and nothing else - no grid chrome,
+      ;; no cell padding, and the neighbouring columns stay unclickable.
+      (expect (= "CARS-9862" (subs (row-text table-row) col (+ (long col) (long width)))))
+      (expect (nil? (url-hit (dec (long col)) table-row)))
+      (expect (nil? (url-hit (+ (long col) (long width)) table-row)))
+      ;; Rest-state affordance: the label is underlined on screen, exactly like
+      ;; the same link in prose (which gets it from the INLINE_LINK sentinels).
+      (expect (every? (fn [dc]
+                        (.contains (.getModifiers ^com.googlecode.lanterna.TextCharacter
+                                                  (cell (+ (long col) (long dc)) table-row))
+                                   com.googlecode.lanterna.SGR/UNDERLINE))
+                      (range width)))
+      ;; And the paragraph link keeps working - the fix added a case, it did
+      ;; not move the prose one.
+      (expect (some? (first (keep #(url-hit % prose-row) (range 0 40)))))
+      (.stopScreen screen))))

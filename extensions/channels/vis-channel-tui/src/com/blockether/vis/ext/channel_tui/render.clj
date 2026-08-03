@@ -3097,7 +3097,16 @@
                     (let
                       [abs-row (+ (long viewport-top) (long y))
                        hovered (cr/hovered)
-                       hover-url? (= :url (:kind hovered))]
+                       hover-url? (= :url (:kind hovered))
+                       ;; A markdown TABLE row is one flat `:table` run: its cells are
+                       ;; flattened for the grid painter, so a link inside a cell carries
+                       ;; no INLINE_LINK sentinel and would read as plain text even though
+                       ;; it is clickable. Underline its span here instead (3-arity keeps
+                       ;; the cell's own colour), so a table link wears the SAME rest-state
+                       ;; chrome the sentinels give a prose link.
+                       table-row? (boolean (some #(str/starts-with? line %)
+                                                 [md-table-head-marker md-table-row-marker
+                                                  th-md-table-head-marker th-md-table-row-marker]))]
 
                       (doseq [{:keys [col width url]} links]
                         (let [abs-col (+ (long x) (long col))]
@@ -3108,12 +3117,15 @@
                           ;; link span, brighten its already-underlined cells
                           ;; to the link-chrome hover fg so the link lights up
                           ;; under the cursor. At rest the static underline
-                          ;; (INLINE_LINK sentinels) still marks it as a link.
-                          (when (and hover-url?
+                          ;; (INLINE_LINK sentinels, or the table branch above)
+                          ;; still marks it as a link.
+                          (cond (and hover-url?
                                      (= abs-row (:row (:bounds hovered)))
                                      (= abs-col (:col (:bounds hovered))))
-                            (dotimes [dc (long width)]
-                              (p/underline-cell! g (+ abs-col dc) y t/link-chrome-hover-fg)))))))
+                                (dotimes [dc (long width)]
+                                  (p/underline-cell! g (+ abs-col dc) y t/link-chrome-hover-fg))
+                                table-row? (dotimes [dc (long width)]
+                                             (p/underline-cell! g (+ abs-col dc) y)))))))
                   (when user?
                     (p/clear-styles! g)
                     (p/set-colors! g role-fg bg-color)
