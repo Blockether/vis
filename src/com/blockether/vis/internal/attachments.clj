@@ -66,6 +66,19 @@
    a shrink attempt. Bounds the memory one pathological drop can cost."
   4)
 
+(def ^:const upload-rescue-factor
+  "How far past `max-image-bytes` a STILL may sit and still be accepted for
+   storage. A phone photo or a retina screenshot is routinely tens of megabytes
+   while the provider ceiling is 5MB, and [[wire-image]] shrinks whatever it is
+   given on the way OUT — so refusing the upload only loses the picture."
+  5)
+
+(def max-upload-image-bytes
+  "Per-still INTAKE cap (25MB): the largest image the gateway accepts and the
+   session stores. Distinct from [[max-image-bytes]], which is the PROVIDER cap
+   applied to the bytes that actually go on the wire."
+  (* (long upload-rescue-factor) (long max-image-bytes)))
+
 (def ^:private sniff-bytes
   "Bytes read from the file head for MIME sniffing (pi parity: enough for
    the PNG chunk walk that rejects animated PNGs)."
@@ -375,20 +388,22 @@
    :reason (str (size-label (.length f)) " exceeds the " (size-label limit) " attachment limit")})
 
 (defn- storable-limit
-  "Byte ceiling for STORING one attachment of `media-type`. A container the wire
-   takes verbatim must already fit the per-image cap. A container that is
-   rasterized on the way OUT (BMP, SVG) is allowed `oversize-rescue-factor` x
-   that, because rendering it routinely lands far under the cap -- and the cap
-   that decides is the one applied to the bytes that actually go on the wire
-   (see [[wire-image]]).
+  "Byte ceiling for STORING one attachment of `media-type`. A still is allowed
+   `upload-rescue-factor` x the per-image cap ([[max-upload-image-bytes]] by
+   default): the per-image cap is a PROVIDER limit, and an oversize still is
+   squeezed under it at SEND time rather than refused at intake. A container
+   that is rasterized on the way OUT (BMP, SVG) is allowed
+   `oversize-rescue-factor` x that cap, because rendering it routinely lands far
+   under it -- and the cap that decides is the one applied to the bytes that
+   actually go on the wire (see [[wire-image]]).
 
-   A CLIP answers to [[max-video-bytes]] instead: the per-image cap is a
-   PROVIDER limit, and no clip ever reaches a provider in its own container --
-   it leaves as a small GIF, which is the payload the cap then judges."
+   A CLIP answers to [[max-video-bytes]] instead: no clip ever reaches a
+   provider in its own container -- it leaves as a small GIF, which is the
+   payload the cap then judges."
   ^long [media-type ^long max-bytes]
-  (cond (provider-image-media-type? media-type) max-bytes
+  (cond (provider-image-media-type? media-type) (* (long upload-rescue-factor) max-bytes)
         (video-media-type? media-type) max-video-bytes
-        :else (* oversize-rescue-factor max-bytes)))
+        :else (* (long oversize-rescue-factor) max-bytes)))
 
 (defn- attach-file
   "Read one image file and keep it EXACTLY as it sits on disk: original bytes,

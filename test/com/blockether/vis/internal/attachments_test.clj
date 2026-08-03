@@ -143,7 +143,32 @@
       (expect (attachments/video-media-type? " Video/QuickTime "))
       (expect (not (attachments/video-media-type? "image/png"))))
   (it "a clip may be far larger than a still, because it never ships verbatim"
-      (expect (> attachments/max-video-bytes attachments/max-image-bytes))))
+      (expect (> attachments/max-video-bytes attachments/max-image-bytes)))
+  (it "a still is ACCEPTED far past the provider cap — 25MB in, 5MB out"
+      (expect (= (* 25 1024 1024) attachments/max-upload-image-bytes))
+      (expect (= (* 5 1024 1024) attachments/max-image-bytes)))
+  (it "keeps a 20MB PNG upload that is four times over the per-image wire cap"
+      (let
+        [big
+         (byte-array (concat (seq tiny-png-bytes) (repeat (* 20 1024 1024) (byte 0))))
+
+         out
+         (attachments/prepare-inline-attachments [{:base64 (.encodeToString (Base64/getEncoder) big)
+                                                   :filename "huge.png"}])]
+
+        (expect (empty? (:skipped out)))
+        (expect (= ["image/png"] (mapv :media-type (:attached out))))))
+  (it "still refuses a still past the 25MB intake cap, naming that ceiling"
+      (let
+        [huge
+         (byte-array (concat (seq tiny-png-bytes) (repeat (* 26 1024 1024) (byte 0))))
+
+         out
+         (attachments/prepare-inline-attachments
+           [{:base64 (.encodeToString (Base64/getEncoder) huge) :filename "huge.png"}])]
+
+        (expect (empty? (:attached out)))
+        (expect (str/includes? (:reason (first (:skipped out))) "exceeds")))))
 
 (defdescribe
   collect-user-videos-test

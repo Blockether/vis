@@ -3091,7 +3091,7 @@ export function SessionScreen({
     try {
       const result = await pickMediaAttachments({
         maxFiles: remaining,
-        maxFileBytes: limits?.max_file_bytes ?? 5 * 1024 * 1024,
+        maxFileBytes: limits?.max_file_bytes ?? 25 * 1024 * 1024,
         maxVideoBytes: limits?.max_video_bytes,
         mediaTypes: limits?.media_types,
       });
@@ -3119,7 +3119,7 @@ export function SessionScreen({
     const restoreKeyboard = holdKeyboardAcrossSheet(composerRef.current);
     try {
       const result = await capturePhotoAttachment({
-        maxFileBytes: limits?.max_file_bytes ?? 5 * 1024 * 1024,
+        maxFileBytes: limits?.max_file_bytes ?? 25 * 1024 * 1024,
         mediaTypes: limits?.media_types,
       });
       setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
@@ -3148,7 +3148,7 @@ export function SessionScreen({
     try {
       const result = await attachmentsFromFiles(files, {
         maxFiles: remaining,
-        maxFileBytes: limits?.max_file_bytes ?? 5 * 1024 * 1024,
+        maxFileBytes: limits?.max_file_bytes ?? 25 * 1024 * 1024,
         maxVideoBytes: limits?.max_video_bytes,
         mediaTypes: limits?.media_types,
       });
@@ -3238,7 +3238,7 @@ export function SessionScreen({
     try {
       const result = await attachmentsFromFiles(files, {
         maxFiles: remaining,
-        maxFileBytes: limits?.max_file_bytes ?? 5 * 1024 * 1024,
+        maxFileBytes: limits?.max_file_bytes ?? 25 * 1024 * 1024,
         maxVideoBytes: limits?.max_video_bytes,
         mediaTypes: limits?.media_types,
       });

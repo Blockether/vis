@@ -2540,7 +2540,7 @@
                                                            "video/quicktime"]
                                              :video-media-types ["video/mp4" "video/quicktime"]
                                              :max-files attachments/max-image-count
-                                             :max-file-bytes attachments/max-image-bytes
+                                             :max-file-bytes attachments/max-upload-image-bytes
                                              :max-video-bytes attachments/max-video-bytes}
                                :voice voice
                                :push (push/status)}})))

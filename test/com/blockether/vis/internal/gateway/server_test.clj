@@ -358,7 +358,9 @@
           (is (= 1 (get body "version")))
           (is (true? (get-in body ["features" "attachments" "enabled"])))
           (is (= 8 (get-in body ["features" "attachments" "max_files"])))
-          (is (= (* 5 1024 1024) (get-in body ["features" "attachments" "max_file_bytes"])))
+          ;; INTAKE ceiling (25MB), not the 5MB provider cap: an oversize still is
+          ;; squeezed on the way OUT rather than refused at upload.
+          (is (= (* 25 1024 1024) (get-in body ["features" "attachments" "max_file_bytes"])))
           ;; Clips are advertised as ATTACHABLE media with their own ceiling, so a
           ;; companion knows to offer the gallery's videos and how big one may be.
           (is (= ["image/jpeg" "image/png" "image/gif" "image/webp" "image/bmp" "video/mp4"

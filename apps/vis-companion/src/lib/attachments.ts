@@ -30,7 +30,10 @@ const DEFAULT_VIDEO_MEDIA_TYPES = ['video/mp4', 'video/quicktime'];
 
 const DEFAULT_MEDIA_TYPES = [...DEFAULT_IMAGE_MEDIA_TYPES, ...DEFAULT_VIDEO_MEDIA_TYPES];
 
-const DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024;
+// Intake ceiling, not the provider's: the gateway shrinks an oversize still on
+// the way out, so a phone photo is worth uploading. `max_file_bytes` from the
+// handshake wins; this only backstops an older gateway.
+const DEFAULT_MAX_FILE_BYTES = 25 * 1024 * 1024;
 // A clip is megabytes where a screenshot is kilobytes; the gateway advertises
 // its own ceiling (`max_video_bytes`) and this only backstops an older one.
 const DEFAULT_MAX_VIDEO_BYTES = 32 * 1024 * 1024;
