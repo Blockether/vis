@@ -24,6 +24,7 @@ import {
   type PushPermission,
 } from '../lib/push';
 import { applyTheme, dedupeThemes, resolveLocalTheme } from '../lib/theme';
+import { applyGatewayNotify } from '../lib/notify';
 import {
   DEFAULT_SESSION_PAGE_SIZE,
   getGatewayNotify,
@@ -31,7 +32,6 @@ import {
   getThemePalette,
   getThemePref,
   loadConnections,
-  setGatewayNotify,
   setSessionsPerPage,
   setThemePalette,
   setThemePref,
@@ -1392,12 +1392,16 @@ function NotificationsPanel({
     setNote(null);
     try {
       const fresh = await acquirePushToken();
-      await client.registerDevice(deviceRegistration(fresh));
-      await setGatewayNotify(gateway.url, true);
+      await applyGatewayNotify(gateway.url, true, () =>
+        client.registerDevice(deviceRegistration(fresh)),
+      );
       setNotify(true);
       setNote('This device will be notified when a turn finishes on this machine.');
       await load();
     } catch (e) {
+      // The switch may already be stored even though the machine refused the
+      // call, so show what this device WILL do once it can reach it again.
+      setNotify(await getGatewayNotify(gateway.url));
       setErr(e instanceof GatewayError ? e.message : (e as Error).message);
     } finally {
       setBusy(null);
@@ -1411,12 +1415,12 @@ function NotificationsPanel({
     setErr(null);
     setNote(null);
     try {
-      await client.unregisterDevice(current);
-      await setGatewayNotify(gateway.url, false);
+      await applyGatewayNotify(gateway.url, false, () => client.unregisterDevice(current));
       setNotify(false);
       setNote('This device will no longer be notified by this machine.');
       await load();
     } catch (e) {
+      setNotify(await getGatewayNotify(gateway.url));
       setErr(e instanceof GatewayError ? e.message : (e as Error).message);
     } finally {
       setBusy(null);

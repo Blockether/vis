@@ -26,7 +26,7 @@ vi.mock('@capacitor/preferences', () => ({
   },
 }));
 
-import { syncPushRegistrations, type PushRegistrar } from './notify';
+import { applyGatewayNotify, syncPushRegistrations, type PushRegistrar } from './notify';
 import {
   getGatewayNotify,
   removeConnection,
@@ -153,5 +153,40 @@ describe('syncPushRegistrations', () => {
     const second = recorder();
     await syncPushRegistrations(paired, 'tok', second.registrar, () => true);
     expect(second.calls.registered).toEqual([]);
+  });
+});
+
+// The answer is the durable half: a machine that is unreachable exactly when you
+// silence it must still end up silenced.
+describe('applyGatewayNotify', () => {
+  const unreachable = () => Promise.reject(new Error('machine unreachable'));
+
+  it('stores the stop even when that machine cannot be reached', async () => {
+    await expect(applyGatewayNotify(BUILDBOX, false, unreachable)).rejects.toThrow(
+      'machine unreachable',
+    );
+    expect(await getGatewayNotify(BUILDBOX)).toBe(false);
+
+    // ...and the next sweep is what finally lands it on that machine.
+    const { calls, registrar } = recorder();
+    await syncPushRegistrations(paired, 'tok', registrar);
+    expect(calls.unregistered).toEqual([BUILDBOX]);
+    expect(calls.registered).toEqual([LAPTOP]);
+  });
+
+  it('stores a start that failed, so the sweep retries it', async () => {
+    await setGatewayNotify(LAPTOP, false);
+    await expect(applyGatewayNotify(LAPTOP, true, unreachable)).rejects.toThrow(
+      'machine unreachable',
+    );
+    expect(await getGatewayNotify(LAPTOP)).toBe(true);
+  });
+
+  it('stores the answer before asking the gateway, never after', async () => {
+    const seen: boolean[] = [];
+    await applyGatewayNotify(BUILDBOX, false, async () => {
+      seen.push(await getGatewayNotify(BUILDBOX));
+    });
+    expect(seen).toEqual([false]);
   });
 });

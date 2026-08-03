@@ -11,7 +11,7 @@
 // machine was unreachable never landed. Re-asserting both directions is cheap,
 // idempotent, and heals both.
 
-import { getGatewayNotify } from './storage';
+import { getGatewayNotify, setGatewayNotify } from './storage';
 import type { GatewayConn } from './types';
 
 /** How this device's token is handed to (or taken from) one gateway. */
@@ -61,4 +61,25 @@ export async function syncPushRegistrations(
     }
   }
   return result;
+}
+
+/**
+ * Record one gateway's switch, THEN try to assert it on that gateway.
+ *
+ * The order is the whole point. The durable half is the answer, not the call:
+ * the moment you most want to silence a machine is often the moment it is
+ * unreachable, and if the network call went first its failure would throw the
+ * answer away — the machine would keep buzzing forever. Storing first means
+ * `syncPushRegistrations` lands the choice on the next launch or wake.
+ *
+ * The failure is still raised, so the caller can say the machine has not caught
+ * up yet.
+ */
+export async function applyGatewayNotify(
+  url: string,
+  on: boolean,
+  assert: () => Promise<unknown>,
+): Promise<void> {
+  await setGatewayNotify(url, on);
+  await assert();
 }

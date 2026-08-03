@@ -647,7 +647,7 @@ export function App() {
   useEffect(() => {
     if (notifyTargets.length === 0 || !isPushSupported()) return;
     let cancelled = false;
-    void (async () => {
+    const sweep = async () => {
       if ((await pushPermission()) !== 'granted') return;
       let token: string;
       try {
@@ -666,9 +666,14 @@ export function App() {
         },
         () => cancelled,
       );
-    })();
+    };
+    void sweep();
+    // A switch flipped while its machine was unreachable is stored but not yet
+    // asserted, and waking is exactly when that machine tends to come back.
+    const off = onWake(() => void sweep());
     return () => {
       cancelled = true;
+      off();
     };
   }, [notifyTargets]);
 
