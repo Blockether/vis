@@ -829,19 +829,13 @@
      {:workspace/root root}
 
      discovery
-     (profile-discovery (workspace-root env) {})]
+     (profile-discovery-at-root root)]
 
-    (cond
-      (:selection-ambiguous? discovery)
-      (throw
-        (ex-info
-          "Bridge blocked commit: multiple configured projects require an explicit verification authority."
-          {:type :vis.bridge/ambiguous-commit-authority}))
-      (not (:configured? discovery)) (next args)
-      :else
+    (if-not (:configured? discovery)
+      (next args)
       (let
         [{:keys [profile policy policy-path]}
-         (load-profile+policy env {})
+         (load-profile+policy env {"profile" (:profile-path discovery)})
 
          summary
          (try (br/check profile

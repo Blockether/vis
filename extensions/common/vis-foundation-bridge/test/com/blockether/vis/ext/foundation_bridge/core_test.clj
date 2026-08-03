@@ -106,7 +106,72 @@
                       nil
                       (catch clojure.lang.ExceptionInfo e e))]
           (expect (some? error))
-          (expect (str/includes? (ex-message error) "candidate changed")))))))
+          (expect (str/includes? (ex-message error) "candidate changed"))))))
+  (it "ignores configured child repositories when the commit root is unconfigured"
+      (let
+        [root
+         (mark-repository! (temp-root "bridge-ext-parent-commit"))
+
+         child
+         (str root "/nested")
+
+         _
+         (configure-project! root child)
+
+         called
+         (atom nil)]
+
+        (with-redefs
+          [br/check (fn [& _]
+                      (throw (ex-info "child has unmet obligations"
+                                      {:type :test/child-obligations})))]
+          (expect (= :committed
+                     (bridge-commit-gate
+                       {:root root :candidate-tree "parent-candidate" :index-preserving? true}
+                       :git/commit
+                       []
+                       (fn [args]
+                         (reset! called args)
+                         :committed))))
+          (expect (= [] @called)))))
+  (it
+    "gates commits made directly in a configured child repository"
+    (let
+      [parent
+       (mark-repository! (temp-root "bridge-ext-parent-with-child"))
+
+       child
+       (str parent "/nested")
+
+       _
+       (configure-project! parent child)
+
+       check-called?
+       (atom false)
+
+       commit-called?
+       (atom false)]
+
+      (with-redefs
+        [br/check (fn [_profile _opts]
+                    (reset! check-called? true)
+                    {:status "blocked"
+                     :issue-count 1
+                     :change-detection {:candidate-tree "child-candidate"
+                                        :approval {:status "pending"}}})]
+        (let
+          [error (try (bridge-commit-gate
+                        {:root child :candidate-tree "child-candidate" :index-preserving? true}
+                        :git/commit
+                        []
+                        (fn [_args]
+                          (reset! commit-called? true)
+                          :committed))
+                      nil
+                      (catch clojure.lang.ExceptionInfo e e))]
+          (expect (true? @check-called?))
+          (expect (false? @commit-called?))
+          (expect (= :vis.bridge/commit-not-approved (:type (ex-data error)))))))))
 
 (defdescribe
   bridge-extension-test
@@ -237,13 +302,11 @@
        ambiguous
        (bridge/check {:workspace/root root})
 
-       guard-error
-       (try (bridge-commit-gate {:root root :candidate-tree "candidate" :index-preserving? true}
-                                :git/commit
-                                []
-                                (constantly :committed))
-            nil
-            (catch clojure.lang.ExceptionInfo e e))
+       guard-result
+       (bridge-commit-gate {:root root :candidate-tree "candidate" :index-preserving? true}
+                           :git/commit
+                           []
+                           (constantly :committed))
 
        selected
        (bridge/check {:workspace/root root} {"profile" beta-profile})]
@@ -253,8 +316,7 @@
       (expect (not (contains? bridge-slice "default_profile_path")))
       (expect (false? (:success? ambiguous)))
       (expect (str/includes? (get-in ambiguous [:error :message]) "Multiple Bridge projects"))
-      (expect (some? guard-error))
-      (expect (str/includes? (ex-message guard-error) "multiple configured projects"))
+      (expect (= :committed guard-result))
       (expect (= 2 (count (get-in ambiguous [:error :details :projects]))))
       (expect (true? (:success? selected)))
       (expect (= beta-profile (get-in (result-of selected) ["profile_path"])))
