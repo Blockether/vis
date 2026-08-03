@@ -4183,11 +4183,14 @@
       (some? (:result result*)) (when-let [s (clip (env/ctx->python-str (:result result*)))]
                                   {:body (strutil/fenced s "python")})
       ;; A `vis-image` fence (matplotlib `plt.show()` → inline PNG, ASCII plot
-      ;; carried as its fallback body) rides stdout as MARKDOWN so the channel
-      ;; paints it inline; wrapping it in a ``` block would escape the 4-backtick
-      ;; fence, so pass the stdout through verbatim (unclipped — the fence is small
-      ;; and self-bounded) whenever one is present.
-      (str/includes? (str (:stdout result*)) "````vis-image") {:body (str (:stdout result*))}
+      ;; carried as its fallback body) or a `vis-table` fence (a CSV/TSV artifact
+      ;; carried as its own grid) rides stdout as MARKDOWN so the channel paints
+      ;; it inline; wrapping it in a ``` block would escape the 4-backtick
+      ;; fence, so pass the stdout through verbatim (unclipped — the fence is
+      ;; self-bounded and row-capped at the source) whenever one is present.
+      (or (str/includes? (str (:stdout result*)) "````vis-image")
+          (str/includes? (str (:stdout result*)) "````vis-table"))
+      {:body (str (:stdout result*))}
       ;; python_execution printed output → fenced so newlines are preserved verbatim
       ;; (plain stdout is NOT markdown; bare \n collapses to a space through the
       ;; CommonMark SoftLineBreak → :space path if left unwrapped).

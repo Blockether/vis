@@ -238,3 +238,238 @@
                                                                  :else (str v))))
                                                        row)))
                        q))))
+
+;;; ── CSV grids (the `vis-table` attachment viewer) ────────────────────────────
+;;
+;; A CSV/TSV attachment is DATA, not a picture: `vis_attach` emits it as a
+;; ````vis-table` fence and BOTH surfaces paint it as a real grid — the TUI
+;; through these primitives, the companion through `DataTable.tsx`. Parse,
+;; measure, align, filter, sort and render all live here as PURE functions, so
+;; the table dialog's behaviour is unit-testable without a terminal.
+
+(defn parse-csv
+  "Parse RFC-4180 `text` into a vector of row vectors of strings — quoted
+   fields, doubled `\"\"` escapes and embedded newlines included. Every row is
+   padded to the widest one, so `(nth row i)` is total across the grid."
+  [text]
+  (let
+    [^String s
+     (str/replace (str text) "\r\n" "\n")
+
+     n
+     (long (count s))]
+
+    (loop
+      [i
+       0
+
+       ^StringBuilder field
+       (StringBuilder.)
+
+       row
+       []
+
+       rows
+       []
+
+       quoted?
+       false]
+
+      (if (>= (long i) n)
+        (let
+          [rows
+           (if (and (zero? (.length field)) (empty? row))
+             rows
+             (conj rows (conj row (.toString field))))
+
+           width
+           (long (reduce max 0 (map count rows)))]
+
+          (mapv (fn [r]
+                  (into r (repeat (- width (long (count r))) "")))
+                rows))
+        (let
+          [c
+           (.charAt s (int i))
+
+           i
+           (long i)]
+
+          (cond quoted? (if (= c \")
+                          (if (and (< (inc i) n) (= \" (.charAt s (int (inc i)))))
+                            (recur (+ i 2) (.append field \") row rows true)
+                            (recur (inc i) field row rows false))
+                          (recur (inc i) (.append field c) row rows true))
+                (= c \") (recur (inc i) field row rows true)
+                (= c \,) (recur (inc i) (StringBuilder.) (conj row (.toString field)) rows false)
+                (= c \newline)
+                (recur (inc i) (StringBuilder.) [] (conj rows (conj row (.toString field))) false)
+                :else (recur (inc i) (.append field c) row rows false)))))))
+
+(def csv-max-col-width
+  "Ceiling on ONE column's natural width. A single essay-length cell must not
+   push every other column off the grid; the cell ellipsizes instead."
+  32)
+
+(defn- csv-natural-widths
+  "Per-column content widths, each capped at `csv-max-col-width`."
+  [rows]
+  (let [n (long (reduce max 0 (map count rows)))]
+    (mapv (fn [i]
+            (max 1
+                 (min (long csv-max-col-width)
+                      (long (reduce max 1 (map #(p/display-width (str (nth % i ""))) rows))))))
+          (range n))))
+
+(defn csv-natural-width
+  "Total rendered width `csv-grid-lines` wants for `rows` when nothing is
+   squeezed — borders and separators included. 0 for an empty grid."
+  ^long [rows]
+  (let
+    [ws
+     (csv-natural-widths rows)
+
+     n
+     (long (count ws))]
+
+    (if (zero? n) 0 (+ (long (reduce + 0 ws)) (* 3 n) 1))))
+
+(defn csv-widths
+  "Concrete column widths for a grid drawn with `boxed-row-line` inside
+   `table-w` columns: natural widths when they fit, otherwise shrunk in
+   proportion to them (never below one column)."
+  [rows table-w]
+  (let
+    [natural
+     (csv-natural-widths rows)
+
+     n
+     (long (count natural))]
+
+    (if (zero? n)
+      []
+      (let
+        [inner
+         (max n (- (long table-w) 2))
+
+         needed
+         (+ (long (reduce + 0 natural)) (dec (* 3 n)))]
+
+        (if (<= needed inner)
+          natural
+          (column-widths (mapv (fn [w]
+                                 {:flex w})
+                               natural)
+                         inner))))))
+
+(defn csv-stretch-widths
+  "Grow `widths` so the rendered grid FILLS `table-w` instead of leaving a ragged
+   gap on the right — what a spreadsheet pane does. Slack is spread evenly, left
+   to right; a grid already wider than `table-w` is returned untouched."
+  [widths table-w]
+  (let
+    [n
+     (long (count widths))
+
+     extra
+     (- (long table-w) (+ (long (reduce + 0 widths)) (* 3 n) 1))]
+
+    (if (or (zero? n) (neg? extra) (zero? extra))
+      (vec widths)
+      (let [base (quot extra n)
+            r (rem extra n)]
+        (vec (map-indexed (fn [i w] (+ (long w) base (if (< (long i) r) 1 0))) widths))))))
+
+(defn csv-number
+  "Parse a cell as a number for sorting/alignment. Thousands separators, a
+   leading currency mark and a trailing `%` are formatting, not text — a
+   `1,234.5` column still sorts numerically. nil when the cell is not a number."
+  [cell]
+  (some-> cell
+          str
+          str/trim
+          not-empty
+          (str/replace #"[,_\s%$€£]" "")
+          parse-double))
+
+(defn numeric-column?
+  "True when every non-blank cell of DATA rows (header excluded) under column
+   `idx` reads as a number — the test that right-aligns a column."
+  [rows idx]
+  (let
+    [vals (keep (fn [r]
+                  (not-empty (str/trim (str (nth r (long idx) "")))))
+                rows)]
+    (and (seq vals) (every? csv-number vals))))
+
+(defn csv-aligns
+  "Per-column alignment for `rows` (first row = header): numbers right, text
+   left — the convention every spreadsheet uses to make magnitudes comparable."
+  [rows]
+  (let [data (vec (rest rows))]
+    (mapv (fn [i]
+            (if (numeric-column? data i) :right :left))
+          (range (long (reduce max 0 (map count rows)))))))
+
+(defn csv-row-matches?
+  "Case-insensitive substring match of `query` against ANY cell of `row`. A
+   blank query matches everything."
+  [row query]
+  (let [q (str/lower-case (str/trim (str query)))]
+    (or (str/blank? q) (boolean (some #(str/includes? (str/lower-case (str %)) q) row)))))
+
+(defn filter-csv-rows
+  "Keep the DATA rows matching `query` (see `csv-row-matches?`), source order."
+  [rows query]
+  (if (str/blank? (str query)) (vec rows) (filterv #(csv-row-matches? % query) rows)))
+
+(defn sort-csv-rows
+  "Sort DATA rows (header excluded) by column `idx`; `dir` is `:asc`/`:desc`. A
+   column whose every non-blank cell parses as a number sorts NUMERICALLY (so 9
+   comes before 10), any other column case-insensitively; blanks sort last."
+  [rows idx dir]
+  (let
+    [i
+     (long idx)
+
+     cell
+     (fn [r]
+       (str (nth r i "")))
+
+     keyfn
+     (if (numeric-column? rows i)
+       (fn [r]
+         (or (csv-number (cell r)) Double/MAX_VALUE))
+       (fn [r]
+         (let [v (str/trim (cell r))]
+           [(if (str/blank? v) 1 0) (str/lower-case v)])))
+
+     sorted
+     (vec (sort-by keyfn compare (vec rows)))]
+
+    (if (= :desc dir) (vec (reverse sorted)) sorted)))
+
+(defn csv-grid-lines
+  "Render `rows` (first row = header) as boxed grid lines at most `table-w`
+   columns wide: top border, header, rule, one line per data row, bottom border.
+   Opts reuse a measurement or restyle the head:
+     :widths  precomputed column widths (default `csv-widths`)
+     :aligns  per-column alignment (default `csv-aligns`)
+     :header  replacement header cells (e.g. carrying a sort arrow)"
+  ([rows table-w] (csv-grid-lines rows table-w {}))
+  ([rows table-w {:keys [widths aligns header]}]
+   (when (seq rows)
+     (let
+       [widths
+        (or widths (csv-widths rows table-w))
+
+        aligns
+        (or aligns (csv-aligns rows))
+
+        head
+        (or header (first rows))]
+
+       (-> [(boxed-border-line widths :top) (boxed-row-line widths head (repeat :left))
+            (boxed-border-line widths :middle)]
+           (into (map #(boxed-row-line widths % aligns) (rest rows)))
+           (conj (boxed-border-line widths :bottom)))))))

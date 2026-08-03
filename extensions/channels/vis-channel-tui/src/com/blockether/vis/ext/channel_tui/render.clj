@@ -7,6 +7,7 @@
             [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [com.blockether.vis.ext.channel-tui.highlight :as hl]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
+            [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.provider-error :as perr])
@@ -2264,6 +2265,14 @@
                                             :width (long (max 1 (long (or (:cols img) 1))))}
                                    :kind :image
                                    :url (:path img)}))
+                  ;; Every painted row of a `vis-table` grid is a click target:
+                  ;; clicking the table opens the WHOLE data set in the sortable,
+                  ;; filterable table dialog (`:table` branch of the click case) —
+                  ;; the transcript only ever shows a preview of the rows.
+                  (when-let [tbl (:table meta)]
+                    (cr/register! {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                                   :kind :table
+                                   :table tbl}))
                   (cond
                     ;; ── Iteration header - right-aligned, subtle ──
                     (str/starts-with? line iteration-hdr-marker)
@@ -6176,7 +6185,16 @@
   [node]
   (and (vector? node) (= :code (first node)) (= "vis-image" (:lang (second node)))))
 
-(defn- disclosure-code-block? [node] (or (paste-code-block? node) (image-code-block? node)))
+(defn- table-code-block?
+  "True for a `vis-table` code node — the fence `vis_attach` emits for a CSV or
+   TSV artifact. Body lines: summary, file name, mime, `COLSxROWS`, size-label,
+   then the (row-capped) payload as normalized CSV."
+  [node]
+  (and (vector? node) (= :code (first node)) (= "vis-table" (:lang (second node)))))
+
+(defn- disclosure-code-block?
+  [node]
+  (or (paste-code-block? node) (image-code-block? node) (table-code-block? node)))
 
 (defn- image-block-parts
   "Parse a `vis-image` node body into `{:summary :path :mime :width :height
@@ -6360,6 +6378,88 @@
 
     (vec (concat header body))))
 
+(defn- table-block-parts
+  "Parse a `vis-table` node body into `{:summary :name :mime :cols :rows
+   :size-label :csv}`. Missing fields come back nil."
+  [node]
+  (let
+    [lines
+     (str/split (str (nth node 2 "")) #"\n" -1)
+
+     [summary name mime dims size-label]
+     lines
+
+     [c r]
+     (when (seq dims) (str/split (str dims) #"x"))]
+
+    {:summary (str/trim (str summary))
+     :name (str/trim (str name))
+     :mime (not-empty (str/trim (str mime)))
+     :cols (some-> c
+                   str/trim
+                   not-empty
+                   parse-long)
+     :rows (some-> r
+                   str/trim
+                   not-empty
+                   parse-long)
+     :size-label (not-empty (str/trim (str size-label)))
+     :csv (str/join "\n" (drop 5 lines))}))
+
+(def ^:private table-preview-rows
+  "Data rows a `vis-table` fence paints INLINE. The transcript shows a preview,
+   never the whole dataset: the full payload rides in every painted row's
+   `:table` meta, and the table dialog (click the grid) sorts, filters and
+   selects over ALL of it."
+  10)
+
+(defn- table-disclosure-entries
+  "Render one `vis-table` block as a real grid: the `[Table: …]` token as the
+   caption row, then a bordered preview of the first rows — numeric columns
+   right-aligned, over-wide cells ellipsized, the whole grid fitted to the
+   bubble. EVERY painted row carries the CSV in `:meta :table` so the paint loop
+   registers a click region opening the full table dialog."
+  [node content-w _opts]
+  (let
+    [{:keys [summary name cols rows csv]}
+     (table-block-parts node)
+
+     grid
+     (table/parse-csv csv)
+
+     ;; Leave room for the code chip's own 2-column inset so a fitted grid line
+     ;; is never clipped at the right border.
+     grid-w
+     (max 12 (- (long content-w) 4))
+
+     shown
+     (vec (take (inc (long table-preview-rows)) grid))
+
+     hidden
+     (long (max 0 (- (count grid) (count shown))))
+
+     lines
+     (cond-> (vec (table/csv-grid-lines shown grid-w))
+       (pos? hidden)
+       (conj (str "… "
+                  hidden
+                  " more row"
+                  (when (not= 1 hidden) "s")
+                  " — click the table to sort, filter and select")))
+
+     header
+     (vec (layout/ast->entries [:ast {} [:p {} summary]] content-w {}))
+
+     tbl
+     {:name name :csv csv :cols cols :rows rows :title (or (not-empty name) summary)}
+
+     body
+     (mapv (fn [entry]
+             (assoc-in entry [:meta :table] tbl))
+           (layout/ast->entries [:ast {} [:code {} (str/join "\n" lines)]] content-w {}))]
+
+    (vec (concat header body))))
+
 (defn- paste-aware-ast->entries
   "`layout/ast->entries`, but each top-level `vis-paste` code block becomes
    a collapsible paste disclosure instead of an inline code chip. Falls
@@ -6372,9 +6472,11 @@
            (mapcat (fn [run]
                      (if (disclosure-code-block? (first run))
                        (mapcat (fn [node]
-                                 (if (image-code-block? node)
-                                   (image-disclosure-entries node content-w opts)
-                                   (paste-disclosure-entries node content-w opts)))
+                                 (cond (image-code-block? node)
+                                       (image-disclosure-entries node content-w opts)
+                                       (table-code-block? node)
+                                       (table-disclosure-entries node content-w opts)
+                                       :else (paste-disclosure-entries node content-w opts)))
                                run)
                        (layout/ast->entries (into [:ast {}] run) content-w opts))))
            vec))))

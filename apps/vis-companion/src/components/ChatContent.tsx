@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from 'react';
 import Prism from 'prismjs';
+import { DataTable } from './DataTable';
 import { Spinner } from './ui';
 import 'prismjs/components/prism-bash';
 import 'prismjs/components/prism-clojure';
@@ -567,6 +568,11 @@ export const Markdown = memo(function Markdown({
             const language = codeLanguage(codeNode);
             if (language === 'diff' || language === 'patch' || language === 'udiff') {
               return <DiffBlock value={stripMarks(raw)} compact={compact} frameless={nested} />;
+            }
+            // A CSV/TSV artifact is DATA: `vis_attach` fences it as `vis-table` and
+            // both surfaces paint a real grid — the TUI's table dialog, this table.
+            if (language === 'vis-table') {
+              return <DataTable body={stripMarks(raw)} compact={compact} frameless={nested} />;
             }
             return <SyntaxCodeBlock value={raw} language={language} compact={compact} frameless={nested} />;
           },

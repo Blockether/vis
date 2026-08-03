@@ -59,10 +59,18 @@ def __vis_install_attach__():
             return "application/octet-stream"
 
     def __vis_caption(label):
-        # A caption is exactly ONE line: the `vis-image` fence is line-structured,
-        # so a newline inside the label would corrupt the header the renderer parses.
+        # A caption is exactly ONE line: the `vis-image`/`vis-table` fences are
+        # line-structured, so a newline inside the label would corrupt the header
+        # the renderer parses.
         text = " ".join(str(label).split()) if label is not None else ""
         return text or None
+
+    def __vis_human_bytes(n):
+        n = float(n)
+        for unit in ("B", "KB", "MB"):
+            if n < 1024.0 or unit == "MB":
+                return (str(int(n)) + " B") if unit == "B" else ("%.1f %s" % (n, unit))
+            n = n / 1024.0
 
     def __vis_emit_image_fence(disp, name, mt, nbytes, label=None):
         # A `vis-image` fence (the same shape plt.show() emits): 5 header lines
@@ -76,16 +84,7 @@ def __vis_install_attach__():
         except Exception:
             return
 
-        def _human(n):
-            n = float(n)
-            for unit in ("B", "KB", "MB"):
-                if n < 1024.0 or unit == "MB":
-                    return (
-                        (str(int(n)) + " B") if unit == "B" else ("%.1f %s" % (n, unit))
-                    )
-                n = n / 1024.0
-
-        size = _human(nbytes)
+        size = __vis_human_bytes(nbytes)
         summary = (
             "[Image: " + str(name) + " " + str(w) + "×" + str(h) + ", " + size + "]"
         )
@@ -102,6 +101,72 @@ def __vis_install_attach__():
             fence,
         ]
         print(chr(10).join(lines))
+
+    # A table fence carries at most this many DATA rows: enough to explore a
+    # result set inline, small enough that a 100k-row export cannot flood the
+    # transcript. The header line always reports the TRUE row count.
+    __vis_table_max_rows = 500
+
+    def __vis_emit_table_fence(name, mt, data, nbytes, label=None):
+        # A `vis-table` fence: a CSV/TSV artifact is DATA, not a picture, so it
+        # rides the transcript as a real grid — 5 header lines (summary / name /
+        # mime / COLSxROWS / size) then the payload as normalized CSV, which the
+        # TUI and the companion paint as a sortable, filterable, selectable
+        # table. Returns True when a fence was printed.
+        import csv as _csv
+        import io as _io
+
+        lower = str(name).lower()
+        tsv = lower.endswith(".tsv") or str(mt) == "text/tab-separated-values"
+        if not (tsv or lower.endswith(".csv") or str(mt) == "text/csv"):
+            return False
+        try:
+            text = bytes(data).decode("utf-8")
+            reader = _csv.reader(_io.StringIO(text), delimiter=chr(9) if tsv else ",")
+            rows = [r for r in reader if any(str(c).strip() for c in r)]
+        except Exception:
+            return False
+        if not rows:
+            return False
+
+        cols = max(len(r) for r in rows)
+        total = len(rows) - 1
+        shown = rows[1 : 1 + __vis_table_max_rows]
+        buf = _io.StringIO()
+        writer = _csv.writer(buf, lineterminator=chr(10))
+        for row in [rows[0]] + shown:
+            writer.writerow([str(c) for c in row] + [""] * (cols - len(row)))
+        size = __vis_human_bytes(nbytes)
+        summary = (
+            "[Table: "
+            + str(name)
+            + " "
+            + str(total)
+            + (" row" if total == 1 else " rows")
+            + " × "
+            + str(cols)
+            + (" col" if cols == 1 else " cols")
+            + ", "
+            + size
+            + "]"
+        )
+        if len(shown) < total:
+            summary = summary + " first " + str(len(shown)) + " rows"
+        if label:
+            summary = summary + " " + str(label)
+        fence = "`" * 4
+        lines = [
+            fence + "vis-table",
+            summary,
+            str(name),
+            str(mt),
+            str(cols) + "x" + str(total),
+            size,
+            buf.getvalue().rstrip(chr(10)),
+            fence,
+        ]
+        print(chr(10).join(lines))
+        return True
 
     def vis_attach_bytes(
         data, filename, kind=None, media_type=None, display_only=False, label=None
@@ -123,10 +188,12 @@ def __vis_install_attach__():
         disp = env[1] if len(env) > 1 else None
         if disp:
             __vis_emit_image_fence(disp, name, mt, len(data), cap)
-        elif cap:
-            # No inline fence (a non-image artifact, or an image the host could not
-            # probe): the caption still has to reach whoever reads the block.
-            print("[Attached: " + name + "] " + cap)
+        elif not __vis_emit_table_fence(name, mt, data, len(data), cap):
+            if cap:
+                # No inline fence (a non-image, non-tabular artifact, or an image
+                # the host could not probe): the caption still has to reach
+                # whoever reads the block.
+                print("[Attached: " + name + "] " + cap)
         return None
 
     def vis_attach(

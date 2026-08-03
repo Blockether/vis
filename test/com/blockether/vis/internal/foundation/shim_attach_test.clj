@@ -42,7 +42,7 @@
          (ctx-with-root (temp-root))
 
          out
-         (block pctx "vis_attach_bytes('a,b\\n1,2\\n', 'data.csv')\n")
+         (block pctx "vis_attach_bytes('a,b\\n1,2\\n', 'notes.txt')\n")
 
          [att]
          (:attachments out)]
@@ -53,9 +53,9 @@
         (expect (nil? (:result out)))
         (expect (empty? (str (:stdout out))))
         (expect (= 1 (count (:attachments out))))
-        (expect (= "text/csv" (:media-type att)))
+        (expect (= "text/plain" (:media-type att)))
         (expect (= "file" (:kind att)))
-        (expect (= "data.csv" (:filename att)))
+        (expect (= "notes.txt" (:filename att)))
         (expect (= 8 (:size att)))
         ;; base64 round-trips to the original bytes
         (expect (= "a,b\n1,2\n"
@@ -196,10 +196,10 @@
          (ctx-with-root (temp-root))
 
          out
-         (block pctx "vis_attach_bytes('a,b\\n1,2\\n', 'data.csv', label='fleet counts')\n")]
+         (block pctx "vis_attach_bytes('hello there', 'notes.txt', label='fleet counts')\n")]
 
         (expect (nil? (:error out)))
-        (expect (re-find #"\[Attached: data\.csv\] fleet counts" (str (:stdout out))))))
+        (expect (re-find #"\[Attached: notes\.txt\] fleet counts" (str (:stdout out))))))
   (it "vis_attach takes the same label kwarg for a file on disk"
       (let
         [root
@@ -220,7 +220,29 @@
 
         (expect (nil? (:error out)))
         (expect (some #(= "note.txt" (:filename %)) (:attachments out)))
-        (expect (re-find #"\[Attached: note\.txt\] the note" (str (:stdout out)))))))
+        (expect (re-find #"\[Attached: note\.txt\] the note" (str (:stdout out))))))
+  (it "emits a vis-table fence for a CSV artifact so it can be viewed as a table"
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
+
+         out
+         (block pctx "vis_attach_bytes('a,b\\n1,2\\nx,3\\n', 'data.csv', label='fleet counts')\n")
+
+         [att]
+         (:attachments out)]
+
+        (expect (nil? (:error out)))
+        (expect (= "text/csv" (:media-type att)))
+        ;; Tabular data is DISPLAYABLE: the fence is what the TUI table viewer
+        ;; and the companion `DataTable` parse, so the payload (header row plus
+        ;; up to 500 data rows) travels inline under five header lines.
+        (expect (= (str "````vis-table\n" "[Table: data.csv 2 rows × 2 cols, 12 B] fleet counts\n"
+                        "data.csv\n" "text/csv\n"
+                        "2x2\n" "12 B\n"
+                        "a,b\n" "1,2\n"
+                        "x,3\n" "````\n")
+                   (str (:stdout out)))))))
 
 (defdescribe vis-attach-path-test
              (it "reads a confined file from disk and captures it"

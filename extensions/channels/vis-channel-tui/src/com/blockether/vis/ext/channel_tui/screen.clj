@@ -1854,6 +1854,18 @@
                             (catch Throwable _ nil))))
   ([^TerminalScreen _screen ref] (open-click-target! ref)))
 
+(defn- open-table-viewer!
+  "Click an inline `vis-table` grid → the whole CSV as a live spreadsheet: filter
+   across every column, move the row/column cursor, sort by a column. The
+   transcript only ever paints a PREVIEW of the rows, so the full payload travels
+   in the click region's `:table`; this dialog is how the rest of it is read
+   without leaving the TUI."
+  [^TerminalScreen screen hit]
+  (when-let [tbl (:table hit)]
+    (when-not (:dialog-open? @state/app-db)
+      (with-dialog-lock #(dlg/table-view-dialog! screen tbl))))
+  nil)
+
 (defn- screen-size
   "Lanterna size + lazy resize handling. MUST be called with `draw-lock`
    held (or before the render thread is started) because
@@ -5969,6 +5981,9 @@
                                  (state/dispatch [:clear-mouse-selection])
                                  (when-let [hit (and (not already-handled?) (cr/lookup mx my))]
                                    (case (:kind hit)
+                                     :table
+                                     (open-table-viewer! screen hit)
+
                                      :toggle-help
                                      (state/dispatch [:toggle-help])
 
@@ -6276,6 +6291,9 @@
                            (when (and (not was-dragging?) (not already-handled?))
                              (if-let [hit (cr/lookup mx my)]
                                (case (:kind hit)
+                                 :table
+                                 (open-table-viewer! screen hit)
+
                                  :copy-id
                                  (copy-session-id! (:text hit))
 
