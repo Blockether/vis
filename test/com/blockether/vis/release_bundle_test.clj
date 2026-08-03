@@ -115,7 +115,7 @@
     dir))
 
 (defn- run-release-native
-  [dir args env-extra]
+  [^java.io.File dir args env-extra]
   (run-bash (into ["bash" "bin/release-native"] args)
             (merge {"PATH" (str (.getAbsolutePath dir) ":" (System/getenv "PATH"))} env-extra)))
 
@@ -264,3 +264,32 @@
         (expect (str/includes? dockerfile "ARG VIS_BUILD_SHA") dockerfile)
         (expect (str/includes? dockerfile "RUN VIS_BUILD_SHA=\"${VIS_BUILD_SHA}\"") dockerfile)
         (expect (str/includes? build-clj "(System/getenv \"VIS_BUILD_SHA\")") build-clj))))
+
+(defdescribe
+  release-native-engine-fallback-test
+  (it "steps over an installed engine whose VM is down instead of ending the run"
+      (let [mac (fake-tools! "Darwin" "arm64")]
+        ;; Exactly this workstation: Docker Desktop installed but NOT running,
+        ;; while the podman builder machine is up. `docker` resolves first on
+        ;; PATH, so a run that trusts PATH alone dies with nothing built.
+        (write-executable!
+          (io/file mac "docker")
+          (str "#!/usr/bin/env bash\n"
+               "case \"${1:-}\" in\n" "  --version) printf 'Docker version 28.0.0\\n' ;;\n"
+               "  *)         printf 'Cannot connect to the Docker daemon\\n' >&2; exit 1 ;;\n"
+               "esac\n"))
+        (write-executable! (io/file mac "podman")
+                           (str "#!/usr/bin/env bash\n" "case \"${1:-}\" in\n"
+                                "  --version) printf 'podman version 6.0.0\\n' ;;\n"
+                                "  info)      printf '25769803776\\n' ;;\n"
+                                "  *)         exit 0 ;;\n" "esac\n"))
+        (try (let
+               [{:keys [exit output]} (run-release-native mac
+                                                          ["--targets" "linux-x64"]
+                                                          {"VIS_EMULATION_MAX_SECONDS" "-1"})]
+               (expect (str/includes? output "using podman instead") output)
+               ;; It got PAST engine resolution: the run now fails on the
+               ;; emulation guard, not on a dead docker daemon.
+               (expect (str/includes? output "qemu-user") output)
+               (expect (not= 0 exit) output))
+             (finally (delete-tree! mac))))))

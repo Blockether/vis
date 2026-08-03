@@ -137,14 +137,11 @@ build_macos_arm64() {
 # It is rarely needed: when podman's default machine is too small for the
 # builder JVM, resolve_engine picks a bigger running machine by itself, so the
 # small everyday default is neither used nor disturbed.
-container_engine() {
+container_engines() {
   local candidate
   for candidate in ${VIS_CONTAINER_CLI:+"$VIS_CONTAINER_CLI"} docker podman; do
-    command -v "$candidate" >/dev/null 2>&1 || continue
-    printf '%s\n' "$candidate"
-    return 0
-  done
-  return 1
+    command -v "$candidate" >/dev/null 2>&1 && printf '%s\n' "$candidate"
+  done | awk '!seen[$0]++'
 }
 
 engine=""
@@ -177,12 +174,13 @@ engine_memory() {
 # it usually cannot, it is the small everyday one — any OTHER machine that is up
 # and big enough is taken automatically, so this script uses the dedicated
 # builder machine without having to be told about it.
-resolve_engine() {
-  [[ -z "$engine" ]] || return 0
-  engine="$(container_engine)" || die "a linux target needs docker or podman on PATH"
-  flavor=docker
-  "$engine" --version 2>/dev/null | grep -qi podman && flavor=podman
-  engine_args=()
+# Point engine_args at the machine/context to build in, for whichever engine is
+# currently in $engine/$flavor. An explicit VIS_CONTAINER_CONNECTION always
+# wins. Otherwise, when podman's DEFAULT machine cannot hold the builder JVM —
+# it usually cannot, it is the small everyday one — any OTHER machine that is up
+# and big enough is taken automatically, so this script uses the dedicated
+# builder machine without having to be told about it.
+select_connection() {
   local conn mem
   if [[ -n "${VIS_CONTAINER_CONNECTION:-}" ]]; then
     if [[ "$flavor" == podman ]]; then
@@ -201,18 +199,49 @@ resolve_engine() {
       engine_args=()
     done
   fi
-  eng info >/dev/null 2>&1 || \
-    die "$engine is installed but its Linux VM is not reachable" \
-        "podman: podman machine init (once), then podman machine start" \
-        "docker: start Docker Desktop"
+}
+
+# Why the currently selected engine cannot build this, or nothing when it can.
+engine_problem() {
+  local mem
+  eng info >/dev/null 2>&1 || {
+    printf '%s\n' "$engine is installed but its Linux VM is not reachable"
+    return 0
+  }
   mem="$(engine_memory)"
   if (( mem > 0 && mem < builder_min_mem )); then
-    die "$engine only has $((mem / 1000000000)) GB of RAM; this build needs >= 16 GB" \
-        "podman: start the builder machine, or grow this one:" \
-        "        podman machine stop && podman machine set --memory 24576 --cpus 8 && podman machine start" \
-        "        (VIS_CONTAINER_CONNECTION=<machine> forces one explicitly)" \
-        "docker: Docker Desktop -> Settings -> Resources -> Memory, then rerun."
+    printf '%s\n' "$engine only has $((mem / 1000000000)) GB of RAM; this build needs >= 16 GB"
   fi
+}
+
+# Being on PATH proves NOTHING: Docker Desktop is routinely installed and not
+# running on a Mac whose podman builder machine is up, and stopping there cost a
+# whole release round. Try every installed engine, keep the first that can
+# actually build, and only complain when none of them can.
+resolve_engine() {
+  [[ -z "$engine" ]] || return 0
+  local candidate problem first=""
+  for candidate in $(container_engines); do
+    engine="$candidate"
+    flavor=docker
+    "$engine" --version 2>/dev/null | grep -qi podman && flavor=podman
+    engine_args=()
+    select_connection
+    problem="$(engine_problem)"
+    if [[ -z "$problem" ]]; then
+      [[ -z "$first" ]] || say "$first — using $engine instead"
+      return 0
+    fi
+    [[ -n "$first" ]] || first="$problem"
+  done
+  engine=""
+  flavor=""
+  engine_args=()
+  die "${first:-a linux target needs docker or podman on PATH}" \
+      "podman: podman machine init (once), then podman machine start; grow one with" \
+      "        podman machine stop && podman machine set --memory 24576 --cpus 8 && podman machine start" \
+      "        (VIS_CONTAINER_CONNECTION=<machine> forces one explicitly)" \
+      "docker: start Docker Desktop; Settings -> Resources -> Memory >= 16 GB"
 }
 
 # How fast is this platform HERE? Nothing in `docker info` says which emulator
