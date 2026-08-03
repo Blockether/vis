@@ -353,7 +353,7 @@ in `vis.yml`: a copy-on-write filesystem *is* the configuration.
 | Platform | What a draft clone needs |
 | --- | --- |
 | macOS | APFS (`clonefile`). The default system volume qualifies. |
-| Linux, including WSL2 | **btrfs.** Creating a draft turns the source directory into a btrfs subvolume and snapshots it. ext4, xfs, and zfs cannot clone, so drafts are unavailable on them. A btrfs mount over one subdirectory is enough — the whole disk need not be btrfs. |
+| Linux, including WSL2 | **btrfs.** Creating a draft turns the source directory into a btrfs subvolume and snapshots it. That subvolume snapshot is the only Linux clone path the bundled backend implements, so ext4, xfs (even mounted with `reflink=1`), zfs, and network filesystems leave drafts unavailable. A btrfs mount over one subdirectory is enough — the whole disk need not be btrfs. |
 | A Windows drive seen from WSL2 (`/mnt/c`, drvfs/9p) | Nothing to clone — keep the repository inside the Linux filesystem. |
 | Native Windows | No copy-on-write workspace backend. |
 
@@ -397,6 +397,22 @@ that is already mounted.
 boundary, so a btrfs repository plus an ext4 `~/.vis/drafts` — or a second
 loopback image — still leaves drafts unavailable. Everything else on the machine
 can stay ext4.
+
+**No root access at all?** The privileged step above cannot be replaced by a
+userspace trick: mounting btrfs needs `CAP_SYS_ADMIN`, and an unprivileged user
+namespace may not mount it. Work through these instead:
+
+1. **Check whether you already qualify.** Run `stat -f -c %T .` in the repository
+   and `stat -f -c %T ~/.vis/drafts`, then `df --output=target . ~/.vis/drafts`.
+   Two `btrfs` answers on the *same* mount point means drafts already work and
+   there is nothing to install — several distributions ship btrfs by default.
+2. **Ask for one `/etc/fstab` line.** The whole privileged ask is a single
+   one-off: one image or partition mounted at a directory your login user owns.
+   No package, no daemon, no setuid helper, no privilege retained at runtime.
+3. **Otherwise work in trunk.** Vis runs normally without a qualifying
+   filesystem; `/draft` is what becomes unavailable, not the agent. Trunk
+   sessions keep every other guard rail, including the sandbox — process
+   jailing is a separate mechanism with no copy-on-write requirement.
 
 Vis does not guess from the mount table: the backend probes the actual pair of
 directories by cloning a throwaway directory from the root into the store, so
