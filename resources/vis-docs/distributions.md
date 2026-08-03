@@ -67,11 +67,19 @@ different one.
 |---|---|
 | `vis-agent update` | whichever runtime is in effect |
 | `vis-agent update --native` | downloads the newest release bundle — wrapper and sidecar together |
-| `vis-agent update --jvm` | fetches tags and checks the owned checkout out at the newest `vX.Y.Z` |
+| `vis-agent update --jvm` | fetches tags and checks the owned checkout out at the newest `vX.Y.Z`, then refreshes the `vis-agent` command from that source |
 | `vis-agent update --dev` | `git fetch` + `git pull --ff-only` in the dev checkout — the only update that follows a branch |
 | `vis-agent update vX.Y.Z` | that release instead of the newest: bundle for `native`, tag for `jvm` |
 | `vis-agent update <sha\|branch>` | any target that is not `vX.Y.Z` is a git ref, so it pins the owned checkout and implies `--jvm` |
 | `vis-agent update --rebuild` | after a source update, builds the sidecar locally (`clojure -T:build native`); pairs with `--jvm` or `--dev` |
+
+Every update carries the `vis-agent` command with it, because a command that is
+older than its runtime is the one drift this design refuses: `--native` replaces
+it from the release bundle, `--jvm` copies it out of the source it just pinned,
+and `dev` needs no copy — dev mode always execs your checkout's own
+`bin/vis-agent`. A wrapper that lives inside a checkout is source and is only
+ever moved by git. If the installed command is not writable, the update says so
+and leaves it alone.
 
 Name at most one runtime and at most one target per invocation; a conflict is
 an error rather than a guess. Your own checkout is never moved unless you say

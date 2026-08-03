@@ -687,6 +687,92 @@
              (expect (str/includes? output "expected a release tag") output))
            (finally (delete-tree! root))))))
 
+(defdescribe
+  wrapper-update-command-test
+  (it
+    "refreshes the installed vis-agent command from the source a jvm update pinned"
+    (let
+      [root
+       (.toFile (Files/createTempDirectory "vis-agent-update-command-test-"
+                                           (make-array FileAttribute 0)))
+
+       origin
+       (doto (io/file root "origin") .mkdirs)
+
+       install-dir
+       (doto (io/file root "install") .mkdirs)
+
+       home
+       (doto (io/file root "home") .mkdirs)
+
+       vis-home
+       (doto (io/file home ".vis") .mkdirs)
+
+       tools
+       (doto (io/file root "tools") .mkdirs)
+
+       managed-src
+       (io/file vis-home "install/src")
+
+       launcher
+       (io/file install-dir "vis-agent")
+
+       run!
+       (wrapper-runner {:launcher launcher :cwd root :home home :vis-home vis-home :tools tools})
+
+       marker
+       "# VIS_TEST_NEWER_WRAPPER"
+
+       ;; A released wrapper that differs from the installed one, and still works:
+       ;; the marker is a comment on the line after the shebang.
+       newer-wrapper
+       (str/replace-first (slurp "bin/vis-agent") "\n" (str "\n" marker "\n"))]
+
+      (try
+        (copy-launcher! launcher)
+        (git! origin "init" "-q" "-b" "main" ".")
+        (spit (io/file origin "deps.edn") "{}")
+        (.mkdirs (io/file origin "bin"))
+        (write-executable! (io/file origin "bin/vis-agent") newer-wrapper)
+        (git! origin "add" "-A")
+        (git! origin "commit" "-qm" "one")
+        (git! origin "tag" "v0.3.0")
+        (.mkdirs (io/file vis-home "install"))
+        (git! root "clone" "-q" (.getAbsolutePath origin) (.getAbsolutePath managed-src))
+        (spit (io/file vis-home "runtime") "jvm\n")
+        ;; The installed command is a COPY made at install time. Nothing but this
+        ;; sync refreshes it, so a source update must carry it along.
+        (let [{:keys [exit output]} (run! ["update"])]
+          (expect (= 0 exit) output)
+          (expect (str/includes? output "vis-agent command updated from") output))
+        (expect (str/includes? (slurp launcher) marker))
+        ;; The replacement is a working command, and an update that changes
+        ;; nothing says nothing.
+        (let [{:keys [exit output]} (run! ["update"])]
+          (expect (= 0 exit) output)
+          (expect (not (str/includes? output "vis-agent command updated from")) output))
+        ;; A wrapper that lives IN a checkout is source: git owns it, never this.
+        (let
+          [checkout-bin
+           (doto (io/file root "checkout/bin") .mkdirs)
+
+           checkout-launcher
+           (io/file checkout-bin "vis-agent")
+
+           run-checkout!
+           (do
+             (spit (io/file root "checkout/deps.edn") "{}")
+             (copy-launcher! checkout-launcher)
+             (wrapper-runner
+               {:launcher checkout-launcher :cwd root :home home :vis-home vis-home :tools tools}))
+
+           {:keys [exit output]}
+           (run-checkout! ["update"])]
+
+          (expect (= 0 exit) output)
+          (expect (not (str/includes? (slurp checkout-launcher) marker)) output))
+        (finally (delete-tree! root))))))
+
 (defn- run-wrapper
   "Run the real `bin/vis-agent` from a copy, with HOME/VIS_HOME under `root` and
    a fake native runtime that echoes the argv the app would receive."

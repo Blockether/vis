@@ -472,6 +472,32 @@ update_source() {
   [[ "$(runtime_effective)" == jvm ]] || say "run it with 'vis-agent runtime use jvm'"
 }
 
+# ── update: the vis-agent command itself ─────────────────────────────────────
+# The command and its runtime must never drift apart, so an update refreshes
+# both. A release bundle carries the wrapper beside the native runtime; a source
+# update copies the wrapper out of the source it just pinned, because an
+# installed wrapper is a COPY made at install time and nothing else refreshes
+# it. A wrapper that lives IN a checkout is source: git owns it, never this.
+sync_wrapper_from_source() {
+  local source_root="$1" incoming="$1/bin/vis-agent"
+  (( ! launcher_is_checkout )) || return 0
+  [[ -f "$incoming" ]] || return 0
+  if cmp -s "$incoming" "$launcher_path"; then return 0; fi
+  if [[ ! -w "$launcher_path" || ! -w "$bin_dir" ]]; then
+    warn "the vis-agent command at $launcher_path is not writable — it stays at its old version"
+    warn "  re-run this update with the permissions that directory needs"
+    return 0
+  fi
+  # Replacing the file in place is safe: Bash has already read this script.
+  if install -m 0755 "$incoming" "$launcher_path.tmp" 2>/dev/null \
+     && mv -f "$launcher_path.tmp" "$launcher_path" 2>/dev/null; then
+    say "vis-agent command updated from $source_root"
+  else
+    rm -f "$launcher_path.tmp" 2>/dev/null || true
+    warn "could not replace the vis-agent command at $launcher_path — it stays at its old version"
+  fi
+}
+
 # ── update: dev runtime ──────────────────────────────────────────────────────
 # The only runtime that follows a moving branch, so the only update that pulls.
 update_dev() {
@@ -593,6 +619,9 @@ Usage: vis-agent update [native|jvm|dev] [--rebuild] [vX.Y.Z|<sha>]
          dev           fast-forward your live checkout (git pull --ff-only)
          --rebuild     after a source update, build the native runtime from that source
        Every runtime word also has a flag form: --native, --jvm, --dev.
+       The vis-agent command travels with its runtime: native replaces it from the
+       release bundle, jvm from the source it just pinned, and dev mode always runs
+       your checkout's own bin/vis-agent.
 EOF
 }
 
@@ -646,6 +675,7 @@ vis_do_update() {
     jvm)
       if (( target_is_ref )); then say "pinning source to $target"; fi
       update_source "$target"
+      sync_wrapper_from_source "$managed_src"
       if (( rebuild )); then build_native_runtime "$managed_src"; fi
       ;;
     native)
