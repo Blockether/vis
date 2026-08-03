@@ -665,3 +665,91 @@
         ;; The tail of the sentence is on screen only because it wrapped.
         (expect (some? (screen-row-of screen "submit.")))
         (expect (some? (screen-row-of screen "Env"))))))
+
+(defn- squash
+  "The back buffer with every space, newline and box-drawing glyph removed, so a
+   sentence that was wrapped across rows reads back as one contiguous string."
+  [s]
+  (str/replace (str s) #"[\s│┃┌┐└┘─━█▀▄▌▐╭╮╯╰]" ""))
+
+(def ^:private url
+  "One unbreakable token far wider than any dialog row: no space to wrap at, so
+   naive wrapping ellipsizes it and silently eats the half that mattered."
+  (str "https://ci.example.com/pipelines/8127/runs/44/artifacts/"
+       "release-2026.1.4-linux-arm64.tar.zst"))
+
+(defdescribe
+  hostile-description-test
+  "The adversarial half: prose that does not fit, prose that is not prose, and
+   terminals nobody sizes on purpose. A description that is clipped, doubled or
+   fatal is worse than no description at all."
+  (it "keeps every character of an unbreakable URL description on screen"
+      ;; Wrapping and painting must agree on the width. When they disagree the
+      ;; painter clips with `…` and the operator copies a truncated URL.
+      (let
+        [{:keys [screen g]}
+         (virtual-screen)
+
+         _
+         (hi/paint! g
+                    80
+                    30
+                    (hi/init-form {:id "r"
+                                   :title "Fetch"
+                                   :description url
+                                   :fields [{:id "ok" :type :checkbox :label "Go"}]}))
+
+         painted
+         (screen-text screen)]
+
+        (expect (not (str/includes? painted "…")))
+        (expect (str/includes? (squash painted) url))))
+  (it "keeps wrapped prose whole on a terminal narrow enough to force a scrollbar"
+      ;; The gutter steals a column, so the plan has to be re-wrapped narrower
+      ;; instead of painted at the width it was measured with.
+      (let [{:keys [screen g]} (virtual-screen)]
+        (hi/paint! g
+                   46
+                   12
+                   (assoc (hi/init-form {:id "r"
+                                         :title "Deploy"
+                                         :description prose
+                                         :fields [{:id "env" :type :plaintext :label "Env"}]})
+                     :focus 0))
+        (expect (not (str/includes? (screen-text screen) "…")))))
+  (it "renders nothing at all for a description that is only whitespace"
+      ;; A blank string is not a sentence: it must cost zero rows, not a gap that
+      ;; pushes the first field out of view.
+      (let
+        [base
+         {:id "r" :title "T" :fields [{:id "ok" :type :checkbox :label "Go"}]}
+
+         plain
+         (hi/form-rows (hi/init-form base) 40)
+
+         blank
+         (hi/form-rows (hi/init-form (assoc base :description "   \t  ")) 40)]
+
+        (expect (= plain blank))
+        (expect (not-any? #(= :description (:kind %)) blank))))
+  (it "paints on every terminal size a split pane or phone can produce"
+      ;; Below eleven rows the chrome used to ask for a negative box and Lanterna
+      ;; threw, so the dialog took the whole TUI down with it.
+      (let
+        [form
+         (assoc (hi/init-form (assoc (request) :description prose)) :focus 5)
+
+         failures
+         (let [{:keys [g]} (virtual-screen)]
+           (into []
+                 (for
+                   [cols (range 1 81 5)
+                    rows (range 1 31)
+                    :let [failure (try (hi/paint! g cols rows form)
+                                       nil
+                                       (catch Throwable t [cols rows (.getMessage t)]))]
+                    :when failure]
+
+                   failure)))]
+
+        (expect (= [] failures)))))

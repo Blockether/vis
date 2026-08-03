@@ -459,11 +459,14 @@
      ;; buffer, session/copy browsers, theme picker — float with a clear
      ;; margin instead of butting flush against the window frame, header
      ;; tab bar, and footer.
+     ;; `max 1` LAST: a terminal smaller than the inset still has to produce a
+     ;; drawable box. A negative size reaches Lanterna's `TerminalSize`, which
+     ;; throws and takes the whole frame down instead of painting a cramped one.
      box-w
-     (min box-w (- cols 8))
+     (min box-w (max 3 (- cols 8)))
 
      box-h
-     (min box-h (- rows 11))]
+     (min box-h (max 3 (- rows 11)))]
 
     [box-w box-h]))
 

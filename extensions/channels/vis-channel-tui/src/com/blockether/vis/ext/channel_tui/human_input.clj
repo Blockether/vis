@@ -379,13 +379,16 @@
    explains that field. Clipping it to a single `…` row loses exactly the part
    that was worth reading, so it wraps onto as many rows as it needs. `text-w`
    nil means \"do not wrap\" — the pure plan a caller measures without a
-   terminal."
+   terminal.
+
+   Whitespace is not prose: a blank description is NO rows, never an empty one,
+   so `description: \"   \"` cannot open a hole above the first field."
   [text text-w]
   (let
     [text
-     (some-> text
-             str
-             not-empty)
+     (when-not (str/blank? (some-> text
+                                   str))
+       (str text))
 
      width
      (long (or text-w 0))]
@@ -635,6 +638,16 @@
 
     nil))
 
+(defn- prose-width
+  "Columns a plan row's TEXT actually gets out of a `row-w`-wide row.
+
+   `paint-row!` starts every row one column inside the frame and `ellipsize`s
+   it two columns short of `row-w`, so prose wrapped any wider than this is
+   wrapped to a width the painter then CLIPS — and a hard-broken token (a URL,
+   a path) silently loses the characters that fall past the cut."
+  ^long [^long row-w]
+  (max 1 (- row-w 2)))
+
 (defn paint!
   "Draw the human-input dialog for `form` over the whole screen. Returns the
    `TerminalPosition` the caller should place the terminal cursor at (the
@@ -642,7 +655,11 @@
 
    Sized and decorated like every other dialog: shared chrome, a box wide
    enough for the whole hint bar, and a scrollbar in the right gutter once the
-   form is taller than the content area."
+   form is taller than the content area.
+
+   TWO passes, because the box width is not known until the box is drawn: a
+   draft plan sizes the frame, then the real plan wraps to the width the frame
+   actually hands each row."
   [g ^long cols ^long rows form]
   (let
     [bar
@@ -651,15 +668,13 @@
      content-w
      (dialogs/footer-content-width cols bar (dialogs/default-content-width cols))
 
-     plan
-     ;; Wrap prose to what the narrowest painted row can hold: the painter
-     ;; insets every row by 2 columns and gives one more to the scrollbar lane
-     ;; once the form overflows, so a wrapped line still fits after the plan
-     ;; itself decided the box is scrolling.
-     (form-rows form (max 1 (- content-w 3)))
+     draft
+     ;; Sizing pass only: the chrome needs a content HEIGHT before it can
+     ;; report the width prose may use.
+     (form-rows form (prose-width (- content-w 2)))
 
      content-h
-     (dialogs/adaptive-content-height rows (count plan))
+     (dialogs/adaptive-content-height rows (count draft))
 
      bounds
      (dialogs/draw-dialog-chrome! g cols rows (get-in form [:request :title]) content-w content-h)
@@ -679,17 +694,26 @@
      visible
      (max 1 (long (:content-h layout)))
 
+     wide
+     ;; Painting pass: wrap to the drawn box, not to the guess that sized it.
+     (form-rows form (prose-width inner-w))
+
+     is-overflowing
+     (> (count wide) visible)
+
+     row-w
+     (if is-overflowing (dec inner-w) inner-w)
+
+     plan
+     ;; A scrollbar eats one column, so overflowing prose re-wraps one narrower
+     ;; — still overflowing, so this settles in one step.
+     (if is-overflowing (form-rows form (prose-width row-w)) wide)
+
      total
      (count plan)
 
      start
      (window-start plan visible)
-
-     is-overflowing
-     (> total visible)
-
-     row-w
-     (if is-overflowing (dec inner-w) inner-w)
 
      shown
      (subvec (vec plan) (min start total) (min total (+ start visible)))
