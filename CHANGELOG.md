@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   resolves the plaintext in-process, and `vis.forget(handle)` drops it.
   Documented in `resources/vis-docs/extending.md`.
 
+- config: a `workspace.filesystem` entry can say WHERE it mounts. `when.os`
+  (`macos`, `linux`, `wsl`, `windows`) and `when.exists: <path>` gate a root on
+  the host, and `optional: true` skips a declared root whose own path is absent,
+  so one `vis.yml` serves a laptop, a workstation and CI. A gated id may stay in
+  `jail.filesystem.allow` on every machine: roots this host does not mount are
+  dropped before the jail is built instead of failing the config as an unknown
+  id. `doctor` — and the startup hint that reuses it — now reports every root
+  that did not mount as written: `info` for a conditional root the host skipped,
+  a warning for an admitted root whose path is missing. Documented in
+  `resources/vis-docs/sandbox.md`.
+
 ### Changed
 
 - change(drafts): the draft itself now says what its fork skipped. rift 0.0.10-9

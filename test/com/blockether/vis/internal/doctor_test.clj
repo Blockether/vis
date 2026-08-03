@@ -108,3 +108,35 @@
           (expect (= [:error] (mapv :level msgs)))
           (expect (str/includes? (:message (first msgs))
                                  "Sandbox shim registry unavailable: registry exploded"))))))
+
+(defdescribe doctor-workspace-mount-test
+             (it "reports a declared workspace root this host does not have (#89)"
+                 (let
+                   [msgs
+                    (#'doctor/workspace-mount-messages
+                     {:config {"workspace" {"filesystem" [{"id" "ghost"
+                                                           "path" "/vis-doctor-no-such-root"}]}}})
+
+                    msg
+                    (first msgs)]
+
+                   (expect (= 1 (count msgs)))
+                   (expect (= :warn (:level msg)))
+                   (expect (= ::doctor/mounts (:check-id msg)))
+                   (expect (= "vis" (:ext msg)))
+                   (expect (str/includes? (:message msg) "/vis-doctor-no-such-root"))
+                   (expect (seq (:remediation msg)))
+                   ;; A warning is exactly what `doctor` exits 1 on.
+                   (expect (= 1 (doctor/exit-code msgs)))))
+             (it "a gated root is INFO, a fully mounted catalog is silent, no config is silent"
+                 (let
+                   [gated (#'doctor/workspace-mount-messages
+                           {:config {"workspace" {"filesystem" [{"id" "other-box"
+                                                                 "path" "/vis-doctor-no-such-root"
+                                                                 "optional" true}]}}})]
+                   (expect (= [:info] (mapv :level gated)))
+                   (expect (= 0 (doctor/exit-code gated)))
+                   (expect (= []
+                              (#'doctor/workspace-mount-messages
+                               {:config {"workspace" {"filesystem" [{"id" "root" "path" "/"}]}}})))
+                   (expect (= [] (#'doctor/workspace-mount-messages {:config {}}))))))

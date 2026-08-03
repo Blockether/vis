@@ -18,6 +18,7 @@
        :error); 2 if any :error.
      - TTY-detected ANSI colors. UTF-8 icons by default."
   (:require [clojure.string :as string]
+            [com.blockether.vis.internal.config-spec :as config-spec]
             [com.blockether.vis.internal.extension :as extension]
             [taoensso.telemere :as tel]))
 
@@ -264,6 +265,30 @@
            :message (str ":ext/doctor-fn threw: " (or (ex-message t) (str t)))
            :ext ext-ns}])))
 
+(defn- live-config
+  "The merged live config a mount check reads: whatever the caller handed in, else
+   the lenient on-disk merge. Resolved LATE so `doctor` keeps no load-order edge
+   on the config loader and a broken config downgrades to \"no report\"."
+  [environment]
+  (or (:config environment)
+      (try (when-let [f (requiring-resolve 'com.blockether.vis.internal.config/load-config-raw)]
+             (f))
+           (catch Throwable _ nil))))
+
+(defn- workspace-mount-messages
+  "Conditional-mount report for the `workspace.filesystem` catalog. A root that
+   points at a path this host does not have is a WARNING — the grant is dead
+   weight and usually a stale path — while a root the catalog deliberately gated
+   with `when`/`optional` is INFO: declared for another machine, skipped here.
+   One catalog can then serve every machine without lying about any of them."
+  [environment]
+  (let [config (live-config environment)]
+    (mapv #(assoc (select-keys % [:level :message :remediation])
+             :ext "vis"
+             :check-id ::mounts)
+          (try (when config (config-spec/workspace-mount-diagnostics config))
+               (catch Throwable _ nil)))))
+
 (defn run-checks
   "Walk every registered extension, invoke its `:ext/doctor-fn`,
    return a vec of message maps with `:ext` auto-injected. The
@@ -274,6 +299,7 @@
    order. Activation-fn ignored: every registered extension's fn runs."
   [environment]
   (vec (concat (host-system-messages environment)
+               (workspace-mount-messages environment)
                (sandbox-shim-messages environment)
                (mapcat (fn [ext]
                          (when-let [doctor-fn (:ext/doctor-fn ext)]

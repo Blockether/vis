@@ -282,7 +282,8 @@ currently have no OS boundary and a requested `jail.enabled: true` fails loud.
 
 Filesystem roots are declared once in the `workspace.filesystem` catalog (`id`,
 `path`, optional `description`, `access` = `read-write`/`read-only`, `search`,
-`draft`), and `jail.filesystem.allow` lists the ids that enter the jail
+`draft`, plus the conditional-mount keys `when` and `optional`), and
+`jail.filesystem.allow` lists the ids that enter the jail
 (deny-by-omission). `draft` is that root's isolation policy for a drafted
 session: `shared` (default) writes through to the real root, `copy-only` forks a
 private copy the draft never lands back, `copy-and-apply` lands that private copy
@@ -291,6 +292,13 @@ read and write. Draft isolation is independent of the jail and applies with
 `jail.enabled: false` too — see [Drafts](drafts.md).
 Vis's own session folder `~/.vis` is granted implicitly (read/write, `search: false`)
 whatever the catalog and the allow list say; declare it to override that.
+
+`when` and `optional` let ONE catalog serve several machines: `when.os` mounts a
+root only on `macos`, `linux`, `wsl` or `windows`, `when.exists` only when that
+path is present, and `optional: true` only when the root's own path is. A root
+that does not apply is dropped before the jail is built and its id may stay in
+`jail.filesystem.allow`; an admitted root whose path is missing is reported by
+`vis doctor` and the startup hint instead of failing silently.
 
 ```yaml
 # vis.yml
@@ -306,10 +314,17 @@ workspace:
       path: ~/.m2
       description: Maven/Clojure dependency cache
       search: false            # granted but kept out of the default search sweep
+    - id: cuda
+      path: /usr/local/cuda
+      when:
+        exists: /usr/local/cuda  # skipped on hosts that do not have it
+    - id: scratch
+      path: ~/scratch
+      optional: true             # mounted only when it exists
 jail:
   enabled: true
   filesystem:
-    allow: [sibling, reference, m2]
+    allow: [sibling, reference, m2, cuda, scratch]
   # Egress policy is one facet of the jail; jail.enabled is the single gate.
   network:
     allowed_domains:

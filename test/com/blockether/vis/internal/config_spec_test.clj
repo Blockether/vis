@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.config-spec-test
   (:require [clojure.java.io :as io]
             [clojure.spec.alpha :as s]
+            [clojure.string :as str]
             [com.blockether.vis.internal.config-spec :as config-spec]
             [lazytest.core :refer [defdescribe expect it]]
             [yamlstar.core :as yamlstar]))
@@ -53,6 +54,9 @@
                   "description" "a sibling repo"
                   "access" "read-write"
                   "search" true
+                  ;; #89: a root may be gated on the host OS and/or an existing path.
+                  "when" {"os" ["macos" "linux" "wsl" "windows"] "exists" "/"}
+                  "optional" false
                   "draft" "copy-and-apply"} {"id" "ref" "path" "~/reference" "access" "read-only"}
                  {"id" "gen" "path" "~/generated"}
                  {"id" "cache" "path" "~/.m2" "search" false "description" "maven cache"}]}
@@ -333,7 +337,7 @@
                     :router-network :budget :tokens :router :workspace-entry :workspace-entries
                     :workspace :jail-filesystem :jail :network-rule-allow :network-rule-allows
                     :network-rule :network-rules :network :prompt-map :system-prompt :grep :db-spec
-                    :tui-settings :mcp-server :mcp-servers :mcp]]
+                    :tui-settings :mcp-server :mcp-servers :mcp :workspace-when]]
         (expect (s/get-spec (keyword "com.blockether.vis.internal.config-spec" (name spec-name))))))
   (it
     "keeps every declared key set, schema, and exhaustive fixture in sync"
@@ -386,6 +390,8 @@
         [config-spec/token-keys config-spec/token-schema (set (keys (get router "tokens")))]
         [config-spec/router-keys config-spec/router-schema (set (keys router))]
         [config-spec/workspace-entry-keys config-spec/workspace-entry-schema (set (keys ws-entry))]
+        [config-spec/workspace-when-keys config-spec/workspace-when-schema
+         (set (keys (get ws-entry "when")))]
         [config-spec/workspace-keys config-spec/workspace-schema (set (keys workspace))]
         [config-spec/jail-filesystem-keys config-spec/jail-filesystem-schema
          (set (keys filesystem))] [config-spec/jail-keys config-spec/jail-schema (set (keys jail))]
@@ -465,3 +471,120 @@
           (expect (every? string? panel))
           (expect (some #(.contains ^String % "Invalid Vis configuration in vis.yml") panel))
           (expect (some #(.contains ^String % "grep.include-gitignored-paths") panel))))))
+
+;; ── Conditional mounts (#89) ─────────────────────────────────────────────────
+;; One catalog is shared by every machine: a mac laptop, a Linux box, and a host
+;; where half the sibling repos are simply not checked out.
+
+(def ^:private cross-machine-config
+  {"workspace" {"filesystem" [{"id" "here" "path" "/" "description" "always present"}
+                              {"id" "mac-only" "path" "/opt/mac" "when" {"os" "macos"}}
+                              {"id" "nix" "path" "/opt/nix" "when" {"os" ["linux" "windows"]}}
+                              {"id" "gated" "path" "/opt/gated" "when" {"exists" "/opt/toolchain"}}
+                              {"id" "maybe" "path" "/opt/maybe" "optional" true "draft" "copy-only"}
+                              {"id" "stale" "path" "/opt/stale"}]}})
+
+(def ^:private mac-env
+  "A macOS host on which only `/` and `/opt/mac` exist."
+  {:os "macos" :exists? #{"/" "/opt/mac"}})
+
+(defdescribe
+  workspace-conditional-mount-test
+  (it "the OS token set is closed and this host reports one of its members"
+      (expect (= #{"macos" "linux" "wsl" "windows"} config-spec/workspace-os-values))
+      (expect (contains? (conj config-spec/workspace-os-values "unknown") (config-spec/host-os)))
+      (expect (string? (:os (config-spec/mount-env))))
+      (expect (ifn? (:exists? (config-spec/mount-env)))))
+  (it "every mount status is decided against an explicit env, never this machine"
+      (let [status #(config-spec/entry-mount-status % mac-env)]
+        (expect (= :mounted (status {"id" "a" "path" "/" "when" {"os" "macos"}})))
+        (expect (= :os-mismatch (status {"id" "a" "path" "/" "when" {"os" ["linux" "windows"]}})))
+        (expect (= :when-absent (status {"id" "a" "path" "/" "when" {"exists" "/opt/nope"}})))
+        (expect (= :optional-absent (status {"id" "a" "path" "/opt/nope" "optional" true})))
+        ;; An unconditional root that is simply absent still mounts: it is
+        ;; REPORTED, never silently dropped — the historical behaviour.
+        (expect (= :missing (status {"id" "a" "path" "/opt/nope"})))
+        (expect (config-spec/entry-mounted? {"id" "a" "path" "/opt/nope"} mac-env))))
+  (it "a linux clause covers WSL, but a wsl clause is not plain linux"
+      (let
+        [wsl
+         {:os "wsl" :exists? #{"/"}}
+
+         entry
+         (fn [os]
+           {"id" "a" "path" "/" "when" {"os" os}})]
+
+        (expect (config-spec/entry-mounted? (entry "linux") wsl))
+        (expect (config-spec/entry-mounted? (entry ["wsl" "macos"]) wsl))
+        (expect (not (config-spec/entry-mounted? (entry "macos") wsl)))
+        (expect (not (config-spec/entry-mounted? (entry "wsl") {:os "linux" :exists? #{"/"}})))))
+  (it "the jail catalog keeps declaration order and drops what this host lacks"
+      (let [pol (config-spec/process-jail-config cross-machine-config mac-env)]
+        (expect (= ["/" "/opt/mac" "/opt/stale" (get config-spec/vis-home-entry "path")]
+                   (:allow-read-write pol)))
+        (expect (= ["here" "mac-only" "stale"]
+                   (mapv #(get % "id")
+                         (config-spec/applicable-entries (get-in cross-machine-config
+                                                                 ["workspace" "filesystem"])
+                                                         mac-env))))))
+  (it "draft isolation follows the same host filter"
+      (expect (= {} (config-spec/workspace-draft-policies cross-machine-config mac-env)))
+      (expect (= {"/opt/maybe" :copy-only}
+                 (config-spec/workspace-draft-policies cross-machine-config
+                                                       {:os "macos" :exists? (constantly true)}))))
+  (it "an allow list may name a root this host does not mount, but never an unknown id"
+      (let
+        [jailed (assoc cross-machine-config
+                  "jail" {"enabled" true "filesystem" {"allow" ["here" "nix" "maybe"]}})]
+        ;; `nix`/`maybe` are declared but unmounted here: skipped, not fatal — the
+        ;; same vis.yml has to work on every machine.
+        (expect (= ["/" (get config-spec/vis-home-entry "path")]
+                   (:allow-read-write (config-spec/process-jail-config jailed mac-env))))
+        ;; An id NO entry ever declared is still a hard config error.
+        (expect (= :vis/invalid-config
+                   (try (config-spec/process-jail-config
+                          (assoc-in jailed ["jail" "filesystem" "allow"] ["ghost"])
+                          mac-env)
+                        nil
+                        (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
+  (it "diagnostics explain every root that did not mount, and stay empty when all do"
+      (let
+        [msgs
+         (config-spec/workspace-mount-diagnostics cross-machine-config mac-env)
+
+         by-id
+         (into {} (map (juxt :id identity)) msgs)]
+
+        (expect (= #{"nix" "gated" "maybe" "stale"} (set (keys by-id))))
+        (expect (= :info (:level (by-id "nix"))))
+        (expect (= :os-mismatch (:reason (by-id "nix"))))
+        (expect (str/includes? (:message (by-id "nix")) "this host is macos"))
+        (expect (= :when-absent (:reason (by-id "gated"))))
+        (expect (str/includes? (:message (by-id "gated")) "/opt/toolchain"))
+        (expect (= :optional-absent (:reason (by-id "maybe"))))
+        (expect (= :info (:level (by-id "maybe"))))
+        ;; Only a root that was NOT gated at all is a warning: dead grant.
+        (expect (= :warn (:level (by-id "stale"))))
+        (expect (str/includes? (:message (by-id "stale")) "/opt/stale"))
+        (expect (every? #(seq (:remediation %)) msgs))
+        (expect (= []
+                   (config-spec/workspace-mount-diagnostics
+                     {"workspace" {"filesystem" [{"id" "here" "path" "/"}]}}
+                     mac-env)))))
+  (it "`when` and `optional` are part of the closed entry contract"
+      (let
+        [entry (fn [m]
+                 (assoc-in full-config ["workspace" "filesystem"] [m]))]
+        (expect (config-spec/valid? (entry {"id" "x" "path" "~/ok" "optional" true})))
+        (expect (config-spec/valid? (entry {"id" "x" "path" "~/ok" "when" {"os" "macos"}})))
+        (expect (config-spec/valid?
+                  (entry {"id" "x" "path" "~/ok" "when" {"os" ["linux" "wsl"] "exists" "/opt/x"}})))
+        (expect (not (config-spec/valid? (entry {"id" "x" "path" "~/ok" "optional" "yes"}))))
+        (expect (not (config-spec/valid? (entry {"id" "x" "path" "~/ok" "when" {"os" "plan9"}}))))
+        (expect (not (config-spec/valid? (entry {"id" "x" "path" "~/ok" "when" {"exists" ""}}))))
+        (expect (not (config-spec/valid? (entry {"id" "x" "path" "~/ok" "when" {"nope" true}}))))
+        (expect (= ["workspace.filesystem[0].when.nope: unknown key (config is closed)"]
+                   (config-spec/explain-problems
+                     {"workspace" {"filesystem"
+                                   [{"id" "x" "path" "~/ok" "when" {"nope" true}}]}}))))))
+

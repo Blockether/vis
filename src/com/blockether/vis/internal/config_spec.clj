@@ -192,12 +192,14 @@
 
 ;; ── Workspace filesystem catalog ─────────────────────────────────────────────
 ;; ONE documented catalog of every filesystem root. Each entry is
-;; `{id, path, description, access?, search?, draft?}`. `access` (default
-;; read-write) picks RW vs read-only; `search: false` keeps the root OUT of the
-;; default grep sweep (explicit paths still reach it); `draft` (default
-;; `shared`) is the root's ISOLATION policy for a drafted session. The catalog is
-;; the sole source of truth; `jail.filesystem.allow` references entries by id.
-(def workspace-entry-keys #{"id" "path" "description" "access" "search" "draft"})
+;; `{id, path, description, access?, search?, draft?, when?, optional?}`. `access`
+;; (default read-write) picks RW vs read-only; `search: false` keeps the root OUT
+;; of the default grep sweep (explicit paths still reach it); `draft` (default
+;; `shared`) is the root's ISOLATION policy for a drafted session; `when` mounts
+;; the root CONDITIONALLY (host OS and/or an existing path) and `optional: true`
+;; drops it silently when its own path is absent. The catalog is the sole source
+;; of truth; `jail.filesystem.allow` references entries by id.
+(def workspace-entry-keys #{"id" "path" "description" "access" "search" "draft" "when" "optional"})
 (def workspace-access-values #{"read-only" "readonly" "ro" "read-write" "readwrite" "rw"})
 (def workspace-draft-values
   "Per-root DRAFT isolation vocabulary.
@@ -207,13 +209,25 @@
    `copy-and-apply` — private copy, landed back into the real root on `apply!`.
    `not-allowed`    — the root is withheld from a drafted session entirely."
   #{"shared" "copy-only" "copy-and-apply" "not-allowed"})
+(def workspace-os-values
+  "Host tokens `when.os` may name. `wsl` is Linux under WSL: a WSL host also
+   matches a `linux` clause, but a plain Linux host never matches `wsl`."
+  #{"macos" "linux" "wsl" "windows"})
+(def workspace-when-keys #{"os" "exists"})
+(def workspace-when-schema
+  {"os" #(or (contains? workspace-os-values %)
+             (and (vector? %) (seq %) (every? workspace-os-values %)))
+   "exists" rooted-path?})
+(s/def ::workspace-when #(closed-map? workspace-when-schema %))
 (def workspace-entry-schema
   {"id" non-blank-string?
    "path" rooted-path?
    "description" non-blank-string?
    "access" (one-of workspace-access-values)
    "search" boolean?
-   "draft" (one-of workspace-draft-values)})
+   "draft" (one-of workspace-draft-values)
+   "when" (spec-pred ::workspace-when)
+   "optional" boolean?})
 (s/def ::workspace-entry #(closed-map? workspace-entry-schema #{"id" "path"} %))
 (s/def ::workspace-entries (s/coll-of ::workspace-entry :kind vector?))
 (def workspace-keys #{"filesystem"})
@@ -431,6 +445,7 @@
                   "budget" [budget-schema #{} :map]
                   "tokens" [token-schema #{} :map]}
    workspace-schema {"filesystem" [workspace-entry-schema #{"id" "path"} :vector]}
+   workspace-entry-schema {"when" [workspace-when-schema #{} :map]}
    jail-schema {"filesystem" [jail-filesystem-schema #{} :map] "network" [network-schema #{} :map]}
    network-schema {"rules" [network-rule-schema #{"host"} :vector]}
    network-rule-schema {"allow" [network-rule-allow-schema #{"method"} :vector]}
@@ -660,17 +675,163 @@
 
     :shared))
 
+;; ── Conditional mounts ───────────────────────────────────────────────────────
+;; A catalog shared across machines declares roots that only exist on some of
+;; them. `when` gates an entry on the host OS and/or an existing path; `optional`
+;; drops an entry whose own path is absent. Both are decided against an explicit
+;; `env` map, so the decision stays a pure function.
+
+(defn host-os
+  "This host's `when.os` token: `macos`, `windows`, `wsl` (Linux under WSL),
+   `linux`, or `unknown` when the platform can't be identified."
+  []
+  (let [n (str/lower-case (str (System/getProperty "os.name")))]
+    (cond (str/includes? n "mac") "macos"
+          (str/includes? n "win") "windows"
+          (str/includes? n "linux") (if (try (str/includes? (str/lower-case (slurp "/proc/version"))
+                                                            "microsoft")
+                                             (catch Throwable _ false))
+                                      "wsl"
+                                      "linux")
+          :else "unknown")))
+
+(defn- path-present?
+  [p]
+  (boolean (when (and (string? p) (seq p))
+             (.exists (java.io.File. ^String (paths/expand-home p))))))
+
+(defn mount-env
+  "The LIVE host facts a `when` clause is evaluated against:
+   `{:os \"macos\" :exists? <pred>}`. Passed explicitly everywhere so mounting is
+   testable without touching this machine."
+  []
+  {:os (host-os) :exists? path-present?})
+
+(defn- when-os-match?
+  [declared os]
+  (let
+    [wanted (cond (string? declared) #{declared}
+                  (coll? declared) (set (map str declared)))]
+    (or (nil? wanted)
+        (contains? wanted os)
+        ;; WSL *is* Linux: a `linux` clause covers it, never the other way round.
+        (and (= "wsl" os) (contains? wanted "linux")))))
+
+(defn entry-mount-status
+  "Why a catalog entry does or does not mount on this host:
+
+   `:mounted`         — declared, present, admitted.
+   `:os-mismatch`     — `when.os` names other platforms.
+   `:when-absent`     — `when.exists` names a path that is not there.
+   `:optional-absent` — `optional: true` and the root itself is missing.
+   `:missing`         — admitted, but the root does not exist yet (a warning,
+                        not a removal: the historical behaviour is preserved)."
+  ([entry] (entry-mount-status entry (mount-env)))
+  ([entry {:keys [os exists?]}]
+   (let
+     [clause
+      (get entry "when")
+
+      exists?
+      (or exists? path-present?)]
+
+     (cond (not (when-os-match? (get clause "os") os)) :os-mismatch
+           (and (contains? clause "exists") (not (exists? (get clause "exists")))) :when-absent
+           (exists? (get entry "path")) :mounted
+           (true? (get entry "optional")) :optional-absent
+           :else :missing))))
+
+(defn entry-mounted?
+  "True when the entry belongs in THIS host's catalog."
+  ([entry] (entry-mounted? entry (mount-env)))
+  ([entry env] (contains? #{:mounted :missing} (entry-mount-status entry env))))
+
+(defn applicable-entries
+  "The catalog entries that apply to this host, in declaration order: a `when`
+   that does not match and an `optional` root whose path is absent are dropped."
+  ([entries] (applicable-entries entries (mount-env)))
+  ([entries env] (into [] (filter #(entry-mounted? % env)) entries)))
+
+(defn- os-clause-str [declared] (if (string? declared) declared (str/join ", " (map str declared))))
+
+(defn workspace-mount-diagnostics
+  "One message per declared root that did NOT mount as written: conditional roots
+   the host skipped (`:info`) and admitted roots whose path is missing (`:warn`,
+   or `:info` when `optional: true`). Empty when every root is present, so it
+   doubles as the startup hint and the `doctor` check."
+  ([config] (workspace-mount-diagnostics config (mount-env)))
+  ([config env]
+   (into
+     []
+     (keep
+       (fn [entry]
+         (let
+           [id
+            (get entry "id")
+
+            path
+            (get entry "path")
+
+            base
+            {:id id :path path}]
+
+           (case (entry-mount-status entry env)
+             :os-mismatch
+             (assoc base
+               :level :info
+               :reason :os-mismatch
+               :message (str "workspace root '"
+                             id
+                             "' is not mounted: when.os is "
+                             (os-clause-str (get-in entry ["when" "os"]))
+                             " and this host is "
+                             (:os env)
+                             ".")
+               :remediation "Nothing to do — the root is meant for another platform.")
+
+             :when-absent
+             (assoc base
+               :level :info
+               :reason :when-absent
+               :message (str "workspace root '"
+                             id
+                             "' is not mounted: when.exists path "
+                             (get-in entry ["when" "exists"])
+                             " does not exist.")
+               :remediation "Create that path, or drop the when.exists clause.")
+
+             :optional-absent
+             (assoc base
+               :level :info
+               :reason :optional-absent
+               :message
+               (str "optional workspace root '" id "' is not mounted: " path " does not exist.")
+               :remediation "Create the path to mount it, or leave it optional.")
+
+             :missing
+             (assoc base
+               :level :warn
+               :reason :missing
+               :message (str "workspace root '" id "' points at " path ", which does not exist.")
+               :remediation (str "Create it, mark the entry optional: true, or gate it with a "
+                                 "when: clause."))
+
+             nil))))
+     (get-in config ["workspace" "filesystem"] []))))
+
 (defn workspace-draft-policies
   "`{catalog-path -> policy}` for every declared root that opts OUT of the default
    `:shared` behaviour. Independent of `jail.filesystem.allow`: the policy governs
-   draft isolation, which applies whether or not the OS jail is enabled."
-  [config]
-  (assert-config! config)
-  (into {}
-        (keep (fn [entry]
-                (let [policy (entry-draft-policy entry)]
-                  (when (not= :shared policy) [(get entry "path") policy]))))
-        (get-in config ["workspace" "filesystem"] [])))
+   draft isolation, which applies whether or not the OS jail is enabled. Roots
+   this host does not mount never appear."
+  ([config] (workspace-draft-policies config (mount-env)))
+  ([config env]
+   (assert-config! config)
+   (into {}
+         (keep (fn [entry]
+                 (let [policy (entry-draft-policy entry)]
+                   (when (not= :shared policy) [(get entry "path") policy]))))
+         (applicable-entries (get-in config ["workspace" "filesystem"] []) env))))
 
 (def vis-home-entry
   "Vis's OWN session folder — `~/.vis`: `state.yml`, the session DB, the gateway
@@ -716,63 +877,78 @@
    (deny-by-omission). Each admitted entry's `access` sets RW vs read-only and
    `search: false` marks it out of the default search sweep.
 
+   Roots this host does not mount are dropped FIRST (`applicable-entries`), so a
+   `when`-gated id may be listed in `allow` on every machine; pass an explicit
+   `env` to resolve against something other than the live host.
+
    Vis's own session folder (`vis-home-entry`, `~/.vis`) is ALWAYS appended to the
    admitted set — engine-level, so it survives both an undeclared catalog and a
    live jail's deny-by-omission. A catalog entry for the same path wins."
-  [config]
-  (assert-config! config)
-  (let
-    [jail
-     (get config "jail" {})
+  ([config] (process-jail-config config (mount-env)))
+  ([config env]
+   (assert-config! config)
+   (let
+     [jail
+      (get config "jail" {})
 
-     entries
-     (get-in config ["workspace" "filesystem"] [])
+      entries
+      (applicable-entries (get-in config ["workspace" "filesystem"] []) env)
 
-     by-id
-     (reduce (fn [m e]
-               (assoc m (get e "id") e))
-             {}
-             entries)
+      by-id
+      (reduce (fn [m e]
+                (assoc m (get e "id") e))
+              {}
+              entries)
 
-     allowed
-     ;; The workspace catalog is the single source of roots. When the jail is
-     ;; DISABLED it confines nothing, so the whole catalog is available and must
-     ;; still appear in the session — `jail.filesystem.allow` is irrelevant and a
-     ;; stale/renamed id in it can never deny-safe the config. Only a live
-     ;; (enabled) jail narrows to the `allow` subset and treats an unknown id as
-     ;; a hard config error.
-     (if (true? (get jail "enabled"))
-       (into []
-             (keep (fn [id]
-                     (or (get by-id id)
-                         (throw (ex-info
+      allowed
+      ;; The workspace catalog is the single source of roots. When the jail is
+      ;; DISABLED it confines nothing, so the whole catalog is available and must
+      ;; still appear in the session — `jail.filesystem.allow` is irrelevant and a
+      ;; stale/renamed id in it can never deny-safe the config. Only a live
+      ;; (enabled) jail narrows to the `allow` subset. An id this host does not
+      ;; mount is skipped; an id no catalog entry ever declared stays a hard
+      ;; config error.
+      (if (true? (get jail "enabled"))
+        (let [declared (into #{} (map #(get % "id")) (get-in config ["workspace" "filesystem"] []))]
+          (into []
+                (keep (fn [id]
+                        (or (get by-id id)
+                            (when-not (contains? declared id)
+                              (throw
+                                (ex-info
                                   (str "jail.filesystem.allow references unknown workspace id: " id)
-                                  {:type :vis/invalid-config :id id})))))
-             (get-in jail ["filesystem" "allow"] []))
-       entries)
+                                  {:type :vis/invalid-config :id id}))))))
+                (get-in jail ["filesystem" "allow"] [])))
+        entries)
 
-     allowed
-     (with-vis-home allowed)
+      allowed
+      (with-vis-home allowed)
 
-     descriptions
-     (into {}
-           (keep (fn [e]
-                   (when-let [d (get e "description")]
-                     [(get e "path") d])))
-           allowed)]
+      descriptions
+      (into {}
+            (keep (fn [e]
+                    (when-let [d (get e "description")]
+                      [(get e "path") d])))
+            allowed)
 
-    (assert-process-jail-config!
-      {:disabled? (not (true? (get jail "enabled")))
-       :allow-read-write (into [] (comp (remove entry-read-only?) (map #(get % "path"))) allowed)
-       :allow-read (into [] (comp (filter entry-read-only?) (map #(get % "path"))) allowed)
-       :allow-write []
-       :deny-read []
-       :deny-write []
-       :deny-exec (resolve-exec-denies (get jail "deny_exec"))
-       :no-search (into [] (comp (filter entry-no-search?) (map #(get % "path"))) allowed)
-       :inbound-ports (vec (get-in jail ["network" "inbound_ports"]))
-       :env-passthrough (vec (get jail "env"))
-       :path-descriptions descriptions})))
+      read-only
+      (into [] (comp (filter entry-read-only?) (map #(get % "path"))) allowed)
+
+      no-search
+      (into [] (comp (filter entry-no-search?) (map #(get % "path"))) allowed)]
+
+     (assert-process-jail-config!
+       {:disabled? (not (true? (get jail "enabled")))
+        :allow-read-write (into [] (comp (remove entry-read-only?) (map #(get % "path"))) allowed)
+        :allow-read read-only
+        :allow-write []
+        :deny-read []
+        :deny-write []
+        :deny-exec (resolve-exec-denies (get jail "deny_exec"))
+        :no-search no-search
+        :inbound-ports (vec (get-in jail ["network" "inbound_ports"]))
+        :env-passthrough (vec (get jail "env"))
+        :path-descriptions descriptions}))))
 
 (defn- network-allow->runtime
   [allow]

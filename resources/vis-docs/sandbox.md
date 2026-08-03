@@ -177,8 +177,9 @@ Each catalog entry has an `id`, a `path` (absolute `/…` or home-relative `~`/`
 — a bare-relative path is rejected when the config is read), an optional
 `description` (shown in the session access view), an `access` of `read-write`
 (default) or `read-only`, a `search` flag (default `true`; `search: false` keeps the
-root out of the default `grep` sweep while explicit paths still reach it), and a
-`draft` policy (default `shared`).
+root out of the default `grep` sweep while explicit paths still reach it), a
+`draft` policy (default `shared`), and the mount conditions `when` and `optional`
+described below.
 
 `draft` decides what an isolated draft may do with the root: `shared` writes
 through to the real root, `copy-only` forks a private copy that `/draft apply`
@@ -215,6 +216,48 @@ jail:
 Managed language dependency caches (`~/.m2`, `~/.clojure`, `~/.npm`, …) are **not**
 implicit — grant them as catalog entries (typically `search: false`) and list
 their ids under `jail.filesystem.allow`.
+
+### One catalog, several machines
+
+The same `vis.yml` usually has to serve a laptop, a workstation and CI, where some
+roots simply do not exist. Two keys make an entry conditional instead of a hard
+requirement:
+
+- `when.os` mounts the root only on the named platforms — `macos`, `linux`, `wsl`
+  (Linux under WSL) or `windows`.
+- `when.exists` mounts it only when that path is present on this host.
+- `optional: true` mounts it when its own `path` exists and stays quiet when it
+  does not.
+
+```yaml
+workspace:
+  filesystem:
+    - id: xcode
+      path: ~/Library/Developer/Xcode
+      when:
+        os: [macos]
+    - id: cuda
+      path: /usr/local/cuda
+      when:
+        exists: /usr/local/cuda
+    - id: scratch
+      path: ~/scratch
+      optional: true
+
+jail:
+  filesystem:
+    allow: [xcode, cuda, scratch]
+```
+
+An entry that does not apply is dropped before the jail is built, and keeping its
+id in `jail.filesystem.allow` stays legal — the allow list is written once for
+every machine. An id that is in no catalog entry at all is still a hard config
+error.
+
+A root that IS admitted but whose path is missing is reported, never silently
+dropped: `vis doctor` and the startup hint carry one line per root that did not
+mount as written — `warn` for a missing required root, `info` for one skipped by
+`when` or by `optional: true`.
 
 The ONE implicit root is Vis's own session folder, `~/.vis` (config, `state.yml`,
 the session database, gateway event journals, drafts and logs). The engine always
