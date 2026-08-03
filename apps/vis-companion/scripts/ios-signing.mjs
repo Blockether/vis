@@ -214,8 +214,15 @@ export async function ensureProfiles({
   log = () => {},
 }) {
   const token = ascJwt({ keyId, issuerId, privateKey });
+  // `bundleId` belongs in the fieldset as well as in `include`: App Store Connect
+  // serialises a profile's relationships only when the sparse fieldset names them,
+  // so `include=bundleId` on its own returns the bundle ids under `included` and
+  // still leaves every profile unattached to one. Nothing then matches, the release
+  // tries to CREATE the profile the portal already has, and Apple answers 409
+  // "Multiple profiles found with the name …" — after which signing falls back to
+  // automatic and the export dies on a cloud signing permission error.
   const fields =
-    "fields[profiles]=name,uuid,profileType,profileState,expirationDate,profileContent&include=bundleId&limit=200";
+    "fields[profiles]=name,uuid,profileType,profileState,expirationDate,profileContent,bundleId&include=bundleId&limit=200";
   let profiles = await request(token, `/v1/profiles?${fields}`);
   const resolved = {};
 

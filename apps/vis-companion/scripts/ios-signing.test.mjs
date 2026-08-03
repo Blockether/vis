@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ascJwt,
   distributionIdentity,
+  ensureProfiles,
   pickProfile,
   stampManualSigning,
 } from "./ios-signing.mjs";
@@ -256,5 +257,101 @@ describe("ascJwt", () => {
         raw,
       ),
     ).toBe(true);
+  });
+});
+
+describe("ensureProfiles", () => {
+  const { privateKey } = crypto.generateKeyPairSync("ec", {
+    namedCurve: "P-256",
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  });
+
+  const bundleIds = [
+    "com.blockether.viscompanion",
+    "com.blockether.viscompanion.share",
+  ];
+
+  // The portal as it really answers. `include=bundleId` lists the bundle ids under
+  // `included`, but a profile's own `relationships.bundleId` is serialised only when
+  // the sparse fieldset asks for that relationship too — ask for `include` alone and
+  // every profile comes back unattached, matching nothing. What that silence costs is
+  // the 409 below: the profile Apple already has cannot be created a second time.
+  const portal = () => {
+    const calls = [];
+    const reply = (status, body) => ({
+      ok: status < 300,
+      status,
+      json: async () => body,
+    });
+    const fetch = async (url, init = {}) => {
+      const { pathname, searchParams } = new URL(url);
+      const method = init.method ?? "GET";
+      calls.push(`${method} ${pathname}`);
+      if (method === "GET" && pathname === "/v1/profiles") {
+        const linked = (searchParams.get("fields[profiles]") ?? "")
+          .split(",")
+          .includes("bundleId");
+        return reply(200, {
+          data: bundleIds.map((identifier, index) => ({
+            id: `p-${index}`,
+            attributes: {
+              name: `${identifier} App Store`,
+              uuid: `uuid-${index}`,
+              profileType: "IOS_APP_STORE",
+              profileState: "ACTIVE",
+              expirationDate: "2027-01-01T00:00:00.000+0000",
+              profileContent: "cHJvZmlsZQ==",
+            },
+            ...(linked
+              ? { relationships: { bundleId: { data: { id: `b-${index}` } } } }
+              : {}),
+          })),
+          included: bundleIds.map((identifier, index) => ({
+            type: "bundleIds",
+            id: `b-${index}`,
+            attributes: { identifier },
+          })),
+        });
+      }
+      if (method === "POST" && pathname === "/v1/profiles") {
+        return reply(409, {
+          errors: [
+            {
+              title: "There is a problem with the request entity",
+              detail:
+                "Multiple profiles found with the name 'com blockether viscompanion App Store'.  Please remove the duplicate profiles and try again.",
+            },
+          ],
+        });
+      }
+      if (pathname === "/v1/certificates") {
+        return reply(200, {
+          data: [{ id: "c-dist", attributes: { certificateType: "IOS_DISTRIBUTION" } }],
+        });
+      }
+      return reply(200, { data: [] });
+    };
+    return { calls, fetch };
+  };
+
+  it("signs with the profiles the portal already has, creating none", async () => {
+    const { calls, fetch } = portal();
+    const original = globalThis.fetch;
+    globalThis.fetch = fetch;
+    try {
+      const resolved = await ensureProfiles({
+        keyId: "KEYID",
+        issuerId: "ISSUERID",
+        privateKey,
+        bundleIds,
+      });
+      expect(Object.keys(resolved)).toEqual(bundleIds);
+      expect(resolved["com.blockether.viscompanion"].uuid).toBe("uuid-0");
+      expect(resolved["com.blockether.viscompanion.share"].uuid).toBe("uuid-1");
+    } finally {
+      globalThis.fetch = original;
+    }
+    expect(calls).not.toContain("POST /v1/profiles");
   });
 });
