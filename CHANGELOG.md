@@ -7,6 +7,224 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.25] - 2026-08-03
+
+### Changed
+- release: v0.1.25
+- Stop the audit-doc gate failing on its own date stamp
+- perf(drafts): clone gitignore-aware trees by bumping rift to 0.0.10-8
+- Cover nested edits and deletions in the draft apply! round-trip
+- Let a provider timeout drain the queue instead of wedging it
+- Pin the wrapped-401 cooldown with a test
+- Spot the 401s a wrapped fleet failure hides on :attempts
+- Name cat's own key when a batch entry is malformed
+- Trust a corporate CA without patching the JDK
+- Prune build directories at any depth, not just the tree root
+- Drop the OPEN pill from session list rows
+- Regenerate the audit inventory for svar 0.7.96
+- Stop op hooks from killing the call they only observe
+- Name the draft that carries my uncommitted changes
+- Read the credential verdict off the attempts, not the wrapper
+- Open the app from the share extension with the modern selector
+- Speak of stopping and starting a REPL, never restarting it
+- Name the container in the git tool's raw-result contract
+- Renumber provider priority whenever the router is reordered
+- Read the routing attempts off the live throwable
+- Let a provider fetch its key from a command instead of an env var
+- Stop calling a dropped connection a rejection
+- Revert "Retry a connect timeout that arrives wearing a status code"
+- Bind skill as a Python verb beside its native tool
+- Retire the restart op from REPL and resource lifecycle
+- Stop the environment running code before the jail exists
+- Format the pack-owned scan the way zprint wants it
+- Retry a connect timeout that arrives wearing a status code
+- Let the language pack own the parallel scan
+- Stop a child's Ctrl-C from killing the gateway
+- Name what killed the gateway
+- Compile the lint target without ever running it
+- Find the needle in a 20 MB file, and stop sweeping forever
+- Never let the audit record downgrade a license it already vetted
+- Retry every App Store Connect call, not only the two that failed
+- One attachment control in the composer, not two
+- Do not lose a release to one 401 from Apple
+- Sign with the distribution identity the keychain actually has
+- Sign the archive by hand, so CI stops minting certificates
+- Name a profile for every bundle, or export automatically
+- Export the archive even when only the app has a pinned profile
+- audit: read imaging 0.1.7 license and size from the published artifact
+- Move the imaging pin to 0.1.7 and lock the pptx shim against it
+- Floor the eval watchdog above the LONGEST legal shell budget
+- Offer "Start the session in" when the TUI opens a new session
+- Test the companion share intake, and pin its dependencies exactly
+- test(pptx): lock the imaging 0.1.6 chart part, picture crop and read-back
+- Close the last descriptor doors: raw io.FileIO and host sqlite3 handles
+- Say what `n` and `until` actually bound in shell wait
+- Accept system shares into the companion composer
+- test(mcp): assert the kill brake by pool state, not by an exact connect log
+- test(sandbox): make the fd hardening cases actually discriminate
+- test(sandbox): pin fd reclamation against every open door
+- test: prove parallel OAuth refresh by overlap, not wall-clock
+- Reclaim and cap sandbox Python file descriptors
+- chore: com.blockether/imaging 0.1.6 — pptx shim round-trip asserted unconditionally
+- fix(shell): recover from descriptor exhaustion instead of blaming the JDK
+- test(editing): pin struct_index/cat ranges parity for absent, empty and bad shapes
+- refactor(prompt): keep the sleep/poll prohibition only in the tool description
+- feat(editing): accept [-1, -1] as cat/struct_index whole-file sentinel
+- refactor(python): read pyproject table headers with the tree-sitter TOML grammar
+- fix(python): detect uv by TOML table header, not substring
+- feat(python): name the undeclared src import root when pytest collection fails
+- fix(test): gate the pptx re-open assertion on the resolved imaging reader
+- fix(audit): keep the generator's prose in sync and refresh the inventory
+- test(python): lock pytest node-id selection and --collect-only
+- feat(prompt): make reproduction REPL-first and keep it as a test
+- fix(test): lock the fold card on bin/vis-agent
+- fix(python): support pytest node-id selection and --collect-only
+- fix(shell): capture streams whole and clip only the card
+- fix(python): honor explicit run_tests targets and never green an empty run
+- fix(python): re-expand folded kwargs for Python-backed tool symbols
+- fix(shell): require `until` for wait and never report a dead process as running
+- chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.38
+- fix(companion): one owner for transcript scroll anchoring
+- fix(mcp,acp): string-keyed session-server results, like every MCP surface
+- feat(shell): wait for a background job's condition, not a guessed clock
+- fix(routing): keep both halves of a session model pin canonical
+- fix(mcp): refuse an unauthorized OAuth server instead of blocking on a browser
+- fix(config,cli): render a vis.yml provider id verbatim, never capitalized
+- fix(companion): follow the gateway's session.model_updated broadcast
+- fix(mcp,routing): total JSON-RPC encoding, headless MCP OAuth, pin fixes
+- docs(site): tagline and sub say the mechanism, not the metaphor
+- fix(companion): keep the reader's line by anchoring an element, not a height
+- test(loop): pin the auth cooldown and the pinned-model router
+- fix(providers): log out a key-only provider by clearing its key, keeping its entry
+- chore(cli,structural): formatter reflow and reflection hints
+- docs(readme): lead with Clojars and license, drop build and allowlist sections
+- test(loop): mcp exposes one mcp__call verb, server-only lists schemas
+- feat(companion,install): camera capture, install script as a release asset, documented Clojars
+- fix(loop): request-bound provider credentials so a rotated OAuth token never strands a turn
+- release: update release notes for v0.1.24
+
+### Package changes
+
+#### com.blockether/vis
+- release: v0.1.25 (158cc2df0)
+- Stop the audit-doc gate failing on its own date stamp (cccd0fefd)
+- perf(drafts): clone gitignore-aware trees by bumping rift to 0.0.10-8 (3015f6ce5)
+- Cover nested edits and deletions in the draft apply! round-trip (9990742ff)
+- Let a provider timeout drain the queue instead of wedging it (346f09bed)
+- Pin the wrapped-401 cooldown with a test (3ed40ced7)
+- Spot the 401s a wrapped fleet failure hides on :attempts (086d0c166)
+- Name cat's own key when a batch entry is malformed (dd2b1d88a)
+- Trust a corporate CA without patching the JDK (ca46cc9c5)
+- Prune build directories at any depth, not just the tree root (04f8f9ef3)
+- Drop the OPEN pill from session list rows (479635c2a)
+- Regenerate the audit inventory for svar 0.7.96 (eee605167)
+- Stop op hooks from killing the call they only observe (14a594dee)
+- Name the draft that carries my uncommitted changes (a883c1d94)
+- Read the credential verdict off the attempts, not the wrapper (be3daff6a)
+- Open the app from the share extension with the modern selector (4e2876853)
+- Speak of stopping and starting a REPL, never restarting it (866b981e2)
+- Name the container in the git tool's raw-result contract (44b2b4c34)
+- Renumber provider priority whenever the router is reordered (b778185e3)
+- Read the routing attempts off the live throwable (4bcf77594)
+- Let a provider fetch its key from a command instead of an env var (2fd49ce1a)
+- Stop calling a dropped connection a rejection (4ff5d0f6d)
+- Revert "Retry a connect timeout that arrives wearing a status code" (c349c707a)
+- Bind skill as a Python verb beside its native tool (dfbb1e3b4)
+- Retire the restart op from REPL and resource lifecycle (5921c471c)
+- Stop the environment running code before the jail exists (a7c0648b0)
+- Format the pack-owned scan the way zprint wants it (3ae016e97)
+- Retry a connect timeout that arrives wearing a status code (712ee9f7a)
+- Let the language pack own the parallel scan (dfc7ed12c)
+- Stop a child's Ctrl-C from killing the gateway (56ae91192)
+- Name what killed the gateway (0e6df3101)
+- Find the needle in a 20 MB file, and stop sweeping forever (49302325b)
+- Never let the audit record downgrade a license it already vetted (5995096f0)
+- Retry every App Store Connect call, not only the two that failed (b097a6d1a)
+- One attachment control in the composer, not two (a5a2c2c61)
+- Do not lose a release to one 401 from Apple (64c6f5612)
+- Sign with the distribution identity the keychain actually has (87cb8f2c4)
+- Sign the archive by hand, so CI stops minting certificates (b5ad3c947)
+- Name a profile for every bundle, or export automatically (87dae362f)
+- Export the archive even when only the app has a pinned profile (4fc4a2136)
+- audit: read imaging 0.1.7 license and size from the published artifact (34333c540)
+- Move the imaging pin to 0.1.7 and lock the pptx shim against it (70435b2f8)
+- Floor the eval watchdog above the LONGEST legal shell budget (7c4fb70c1)
+- Test the companion share intake, and pin its dependencies exactly (0d88054b9)
+- test(pptx): lock the imaging 0.1.6 chart part, picture crop and read-back (2922d5d00)
+- Close the last descriptor doors: raw io.FileIO and host sqlite3 handles (bd08a4061)
+- Say what `n` and `until` actually bound in shell wait (a0680bbb7)
+- Accept system shares into the companion composer (1b572e7f0)
+- test(mcp): assert the kill brake by pool state, not by an exact connect log (95a072020)
+- test(sandbox): make the fd hardening cases actually discriminate (7a5daf39e)
+- test(sandbox): pin fd reclamation against every open door (746804d33)
+- test: prove parallel OAuth refresh by overlap, not wall-clock (bcaf6d840)
+- Reclaim and cap sandbox Python file descriptors (61505abe2)
+- chore: com.blockether/imaging 0.1.6 — pptx shim round-trip asserted unconditionally (e71d6dcf2)
+- fix(shell): recover from descriptor exhaustion instead of blaming the JDK (43e23a515)
+- test(editing): pin struct_index/cat ranges parity for absent, empty and bad shapes (9fd9d014c)
+- refactor(prompt): keep the sleep/poll prohibition only in the tool description (1a48581aa)
+- feat(editing): accept [-1, -1] as cat/struct_index whole-file sentinel (464dc6c86)
+- feat(python): name the undeclared src import root when pytest collection fails (194487fd3)
+- fix(test): gate the pptx re-open assertion on the resolved imaging reader (cdfaaf299)
+- fix(audit): keep the generator's prose in sync and refresh the inventory (be1c2b9d6)
+- test(python): lock pytest node-id selection and --collect-only (2c8aa3d42)
+- feat(prompt): make reproduction REPL-first and keep it as a test (e5809ae68)
+- fix(test): lock the fold card on bin/vis-agent (e22406e5d)
+- fix(python): support pytest node-id selection and --collect-only (1be741e74)
+- fix(shell): capture streams whole and clip only the card (e31fc62f9)
+- fix(python): honor explicit run_tests targets and never green an empty run (66d90e4e3)
+- fix(python): re-expand folded kwargs for Python-backed tool symbols (0fdf52d91)
+- fix(shell): require `until` for wait and never report a dead process as running (4d01e8db2)
+- chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.38 (7d7e0d625)
+- fix(companion): one owner for transcript scroll anchoring (14c0e51fd)
+- fix(mcp,acp): string-keyed session-server results, like every MCP surface (82aba80ba)
+- feat(shell): wait for a background job's condition, not a guessed clock (574cdc5a7)
+- fix(routing): keep both halves of a session model pin canonical (dcfede359)
+- fix(mcp): refuse an unauthorized OAuth server instead of blocking on a browser (0ccba71f2)
+- fix(config,cli): render a vis.yml provider id verbatim, never capitalized (a838d9ea1)
+- fix(companion): follow the gateway's session.model_updated broadcast (f8177e8db)
+- fix(mcp,routing): total JSON-RPC encoding, headless MCP OAuth, pin fixes (a10ba6158)
+- docs(site): tagline and sub say the mechanism, not the metaphor (8cfd79373)
+- fix(companion): keep the reader's line by anchoring an element, not a height (4c4c4b17e)
+- test(loop): pin the auth cooldown and the pinned-model router (aa386b0b4)
+- fix(providers): log out a key-only provider by clearing its key, keeping its entry (1a3a9c382)
+- chore(cli,structural): formatter reflow and reflection hints (fa5a4f00d)
+- docs(readme): lead with Clojars and license, drop build and allowlist sections (4718fc6b5)
+- test(loop): mcp exposes one mcp__call verb, server-only lists schemas (54f90c31e)
+- feat(companion,install): camera capture, install script as a release asset, documented Clojars (76183368d)
+- fix(loop): request-bound provider credentials so a rotated OAuth token never strands a turn (9147f7379)
+- release: update release notes for v0.1.24 (bed466948)
+
+#### com.blockether/vis-channel-tui
+- Retire the restart op from REPL and resource lifecycle (5921c471c)
+- Offer "Start the session in" when the TUI opens a new session (e902804f9)
+- fix(routing): keep both halves of a session model pin canonical (dcfede359)
+- fix(providers): log out a key-only provider by clearing its key, keeping its entry (1a3a9c382)
+- feat(companion,install): camera capture, install script as a release asset, documented Clojars (76183368d)
+
+#### com.blockether/vis-language-clojure
+- Speak of stopping and starting a REPL, never restarting it (866b981e2)
+- Retire the restart op from REPL and resource lifecycle (5921c471c)
+- Compile the lint target without ever running it (47cd48924)
+
+#### com.blockether/vis-language-python
+- Retire the restart op from REPL and resource lifecycle (5921c471c)
+- refactor(python): read pyproject table headers with the tree-sitter TOML grammar (0e78932c8)
+- fix(python): detect uv by TOML table header, not substring (a6eb925d3)
+- fix(python): honor explicit run_tests targets and never green an empty run (66d90e4e3)
+
+#### com.blockether/vis-language-typescript-bun
+- Retire the restart op from REPL and resource lifecycle (5921c471c)
+
+#### com.blockether/vis-persistance-sqlite
+- feat(companion,install): camera capture, install script as a release asset, documented Clojars (76183368d)
+
+#### com.blockether/vis-workspace-rift
+- perf(drafts): clone gitignore-aware trees by bumping rift to 0.0.10-8 (3015f6ce5)
+- Prune build directories at any depth, not just the tree root (04f8f9ef3)
+
+
+
 ### Changed
 
 - perf(drafts): bump com.blockether/rift to 0.0.10-8 — draft creation clones a
@@ -2496,7 +2714,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.24...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.25...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -2516,3 +2734,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.22]: https://github.com/Blockether/vis/releases/tag/v0.1.22
 [v0.1.23]: https://github.com/Blockether/vis/releases/tag/v0.1.23
 [v0.1.24]: https://github.com/Blockether/vis/releases/tag/v0.1.24
+[v0.1.25]: https://github.com/Blockether/vis/releases/tag/v0.1.25
