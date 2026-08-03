@@ -151,3 +151,39 @@ export function searchTally(
   }
   return { matches, machines };
 }
+
+/** A turn is running in this session right now. */
+export function sessionIsLive(session: Session): boolean {
+  return session.live ?? session.status === 'running';
+}
+
+/**
+ * Nothing has happened in this session yet: no name, no turns, nothing running.
+ * "New session" creates the row BEFORE the first message exists, so every
+ * abandoned tap leaves one of these behind and the list keeps them out.
+ */
+export function sessionIsEmpty(session: Session): boolean {
+  return (
+    !session.title?.trim() &&
+    Number(session.turn_count ?? 0) === 0 &&
+    !sessionIsLive(session)
+  );
+}
+
+/**
+ * DIRTY: empty on the gateway, but this device is still holding words typed
+ * into its composer. Hiding it as "empty" stranded them — the session was gone
+ * from the list, so there was no way back to what you wrote and no way to
+ * delete the session holding it. A dirty row is listed, badged and openable.
+ */
+export function sessionIsDirty(session: Session, hasDraftMessage: boolean): boolean {
+  return hasDraftMessage && sessionIsEmpty(session);
+}
+
+/**
+ * Rows the list paints. An empty session earns its place only by being dirty:
+ * that is what keeps abandoned taps out of the list without eating unsent work.
+ */
+export function sessionIsListed(session: Session, hasDraftMessage: boolean): boolean {
+  return !sessionIsEmpty(session) || hasDraftMessage;
+}

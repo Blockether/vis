@@ -13,6 +13,9 @@ import {
   scopedConns,
   searchTally,
   scopedSessions,
+  sessionIsDirty,
+  sessionIsEmpty,
+  sessionIsListed,
   type FleetMachine,
 } from './fleet';
 import type { GatewayConn, Session } from './types';
@@ -166,5 +169,40 @@ describe('search across the fleet', () => {
     ];
     expect(searchTally(filtered)).toEqual({ matches: 2, machines: 2 });
     expect(searchTally([])).toEqual({ matches: 0, machines: 0 });
+  });
+});
+
+// A session with a composer full of unsent words is DIRTY, not empty: the list
+// used to hide every untitled turn-less session, so tapping "New session",
+// typing, and going back left the words in a row nobody could see, reopen, or
+// delete. Dirty rows stay listed until they are sent or thrown away.
+describe('dirty sessions', () => {
+  const fresh = (extra: Partial<Session> = {}): Session => ({ id: 's1', title: '', ...extra });
+
+  it('treats an untitled, turn-less, idle session as empty', () => {
+    expect(sessionIsEmpty(fresh())).toBe(true);
+    expect(sessionIsEmpty(fresh({ title: '  ' }))).toBe(true);
+    expect(sessionIsEmpty(fresh({ turn_count: 0 }))).toBe(true);
+  });
+
+  it('never calls a named, used, or running session empty', () => {
+    expect(sessionIsEmpty(fresh({ title: 'Fix the parser' }))).toBe(false);
+    expect(sessionIsEmpty(fresh({ turn_count: 1 }))).toBe(false);
+    expect(sessionIsEmpty(fresh({ status: 'running' }))).toBe(false);
+    expect(sessionIsEmpty(fresh({ live: true }))).toBe(false);
+  });
+
+  it('is dirty only when an empty session holds unsent words', () => {
+    expect(sessionIsDirty(fresh(), true)).toBe(true);
+    expect(sessionIsDirty(fresh(), false)).toBe(false);
+    // Words in a session that already has history are just a draft reply; the
+    // row was always listed and there is nothing to warn about.
+    expect(sessionIsDirty(fresh({ turn_count: 2 }), true)).toBe(false);
+  });
+
+  it('lists a dirty session and keeps hiding the abandoned taps', () => {
+    expect(sessionIsListed(fresh(), true)).toBe(true);
+    expect(sessionIsListed(fresh(), false)).toBe(false);
+    expect(sessionIsListed(fresh({ title: 'Named' }), false)).toBe(true);
   });
 });

@@ -14,6 +14,7 @@
 // debounced (typing must not hit the disk per keystroke) and flushed on every
 // way out of the app — visibility change, pagehide, unload.
 
+import { useEffect, useSyncExternalStore } from 'react';
 import { Preferences } from '@capacitor/preferences';
 import { bridged } from './bridge';
 import type { ComposerPaste } from './paste';
@@ -35,7 +36,7 @@ export interface DraftMessage {
   at: number;
 }
 
-type DraftMessageStore = Record<string, DraftMessage>;
+export type DraftMessageStore = Record<string, DraftMessage>;
 
 export const EMPTY_DRAFT_MESSAGE: DraftMessage = {
   text: '',
@@ -60,6 +61,24 @@ let hydrated = false;
 let hydration: Promise<DraftMessageStore> | null = null;
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
 let dirty = false;
+
+// Readers outside the composer — the sessions list asks which empty rows are
+// still holding unsent words. They read a SNAPSHOT, replaced on every change,
+// because the store itself is mutated in place and its identity never moves.
+let snapshot: DraftMessageStore = {};
+const listeners = new Set<() => void>();
+
+function announce(): void {
+  snapshot = { ...(store ?? {}) };
+  for (const listener of listeners) listener();
+}
+
+export function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
 
 function parseStore(raw: string | null): DraftMessageStore {
   if (!raw) return {};
@@ -106,6 +125,7 @@ export async function hydrateDraftMessages(): Promise<DraftMessageStore> {
     // A write that landed while we were reading wins: it is newer than disk.
     store = { ...parseStore(raw), ...(store ?? {}) };
     hydrated = true;
+    announce();
     return store;
   })();
   return hydration;
@@ -150,6 +170,7 @@ export function writeDraftMessage(
   }
   dirty = true;
   schedule();
+  announce();
 }
 
 /** Forget one session's draft message (it was sent, or its session is gone). */
@@ -213,4 +234,23 @@ export function watchDraftMessageExits(): void {
   });
   globalThis.addEventListener?.('pagehide', flush);
   globalThis.addEventListener?.('beforeunload', flush);
+}
+
+/**
+ * The draft messages this device is holding, re-read on every change.
+ *
+ * The sessions list needs them: a session you typed into and left is EMPTY on
+ * the gateway, and an empty session is hidden — so without this the words (and
+ * the session that owns them) were unreachable from the list. Hydration is
+ * kicked off here too, because the list may be the first screen to ask.
+ */
+export function useDraftMessages(): DraftMessageStore {
+  useEffect(() => {
+    void hydrateDraftMessages();
+  }, []);
+  return useSyncExternalStore(
+    subscribe,
+    () => snapshot,
+    () => snapshot,
+  );
 }

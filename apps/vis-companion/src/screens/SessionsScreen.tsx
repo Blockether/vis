@@ -11,6 +11,13 @@ import { PencilIcon, SwipeActions, TrashIcon } from '../components/SwipeActions'
 import { DEFAULT_SESSION_PAGE_SIZE, getSessionsPerPage, subscribeSessionsPerPage } from '../lib/storage';
 import { hostOf } from '../lib/endpoints';
 import {
+  clearDraftMessage,
+  draftMessageKey,
+  flushDraftMessages,
+  useDraftMessages,
+  type DraftMessageStore,
+} from '../lib/draft-messages';
+import {
   creatableMachines,
   fleetError,
   isFleetLoaded,
@@ -23,6 +30,9 @@ import {
   scopedMachines,
   scopeError,
   searchTally,
+  sessionIsDirty,
+  sessionIsListed,
+  sessionIsLive,
   type FleetMachine,
 } from '../lib/fleet';
 
@@ -204,6 +214,11 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   const fleetKey = conns.map((conn) => `${conn.url}\u0000${conn.token ?? ''}`).join('|');
   // Repaint when a read mark moves — opening a session clears its badge from here.
   const readMarks = useReadMarks();
+  // Unsent words this device is holding, keyed by (gateway, session). An EMPTY
+  // session that has some is DIRTY: it stays in the list — with a way back into
+  // what you wrote, and a way to throw it away — instead of being hidden with
+  // the words locked inside it.
+  const draftMessages = useDraftMessages();
 
   // A session this device has never met is NOT unread: seed it at the turn count
   // it arrived with, so only answers that land AFTER this point raise a badge.
@@ -386,18 +401,25 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   // machines are two projects, and a folder name never merges them.
   const filtered = useMemo(() => {
     const needle = deferredQuery.trim().toLowerCase();
-    return inScope.map((machine) => ({
-      machine,
-      sessions: (machine.sessions ?? []).filter((session) => {
-        if (emptyUntitled(session)) return false;
-        return (
-          !needle ||
-          sessionSearchText(session).includes(needle) ||
-          matches?.has(session.id) === true
-        );
-      }),
-    }));
-  }, [inScope, deferredQuery, matches]);
+    return inScope.map((machine) => {
+      const base = clientFor(machine.conn).base;
+      return {
+        machine,
+        sessions: (machine.sessions ?? []).filter((session) => {
+          const unsent = draftMessages[draftMessageKey(base, session.id)]?.text.trim() ?? '';
+          if (!sessionIsListed(session, unsent !== '')) return false;
+          return (
+            !needle ||
+            sessionSearchText(session).includes(needle) ||
+            // A dirty row has no title and no transcript: the words waiting in its
+            // composer are the only thing a query could match it on.
+            unsent.toLowerCase().includes(needle) ||
+            matches?.has(session.id) === true
+          );
+        }),
+      };
+    });
+  }, [inScope, deferredQuery, matches, draftMessages]);
 
   // A filter is a FLEET question: it runs on every machine in scope, so the header
   // reports what came back and from how many of them.
@@ -616,7 +638,13 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
     try {
       const api = clientFor(rowAction.conn);
       if (rowAction.mode === 'rename') await api.renameSession(rowAction.session.id, title);
-      else await api.deleteSession(rowAction.session.id);
+      else {
+        await api.deleteSession(rowAction.session.id);
+        // The words that made this row dirty die with it: a draft message kept
+        // under a session id that no longer exists is unreachable forever.
+        clearDraftMessage(draftMessageKey(api.base, rowAction.session.id));
+        void flushDraftMessages();
+      }
       setRowAction(null);
       await load();
     } catch (cause) {
@@ -960,6 +988,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                           forceExpand={forceExpand}
                           onToggle={toggleProject}
                           pageSize={pageSize}
+                          drafts={draftMessages}
                         />
                       ))}
                 </section>
@@ -1208,6 +1237,7 @@ const ProjectGroup = memo(function ProjectGroup({
   conn,
   matches,
   needle,
+  drafts,
   onOpen,
   onRename,
   onDelete,
@@ -1223,6 +1253,8 @@ const ProjectGroup = memo(function ProjectGroup({
   conn: GatewayConn;
   matches: Map<string, SessionMatch> | null;
   needle: string;
+  /** Unsent composer text for the whole fleet; each row reads its own entry. */
+  drafts: DraftMessageStore;
   onOpen: Props['onOpen'];
   onRename: (session: Session, conn: GatewayConn) => void;
   onDelete: (session: Session, conn: GatewayConn) => void;
@@ -1232,6 +1264,7 @@ const ProjectGroup = memo(function ProjectGroup({
   pageSize: number;
 }) {
   const root = projectRoot(sessions);
+  const base = useMemo(() => clientFor(conn).base, [conn]);
   const liveSessions = useMemo(() => sessions.filter(sessionIsLive), [sessions]);
   const liveCount = liveSessions.length;
   const isOpen = expanded || forceExpand;
@@ -1298,6 +1331,7 @@ const ProjectGroup = memo(function ProjectGroup({
             <SessionRow
               key={session.id}
               session={session}
+              unsent={drafts[draftMessageKey(base, session.id)]?.text.trim() ?? ''}
               conn={conn}
               match={matches?.get(session.id) ?? null}
               needle={needle}
@@ -1328,6 +1362,7 @@ const STATS_MOTION_MS = 200;
 
 const SessionRow = memo(function SessionRow({
   session,
+  unsent,
   conn,
   match,
   needle,
@@ -1336,6 +1371,8 @@ const SessionRow = memo(function SessionRow({
   onDelete,
 }: {
   session: Session;
+  /** Unsent composer text for this session; '' when there is none. */
+  unsent: string;
   conn: GatewayConn;
   match: SessionMatch | null;
   needle: string;
@@ -1345,7 +1382,11 @@ const SessionRow = memo(function SessionRow({
 }) {
   const status = statusLabel(session);
   const timestamp = session.modified_at ?? session.last_active_at ?? session.created_at;
-  const title = session.title?.trim() || 'Untitled session';
+  // DIRTY: nothing in this session but the words left in its composer. It has no
+  // title either, so those words name the row — otherwise it reads "Untitled
+  // session" and nothing on screen says why it is worth opening.
+  const isDirty = sessionIsDirty(session, unsent !== '');
+  const title = session.title?.trim() || (isDirty ? firstLine(unsent) : '') || 'Untitled session';
   const live = sessionIsLive(session);
   const turns = Number(session.turn_count ?? 0);
   // Turns that finished while this session was closed: the one thing a relative
@@ -1437,6 +1478,14 @@ const SessionRow = memo(function SessionRow({
             {unread > 0 && (
               <span className="inline-flex items-center bg-accent px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
                 {unread > 1 ? `${unread} new` : 'new'}
+              </span>
+            )}
+            {isDirty && (
+              <span
+                className="inline-flex items-center border border-warn-strong px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-warn-strong"
+                title="Unsent message — open it to keep writing, or swipe to delete"
+              >
+                dirty
               </span>
             )}
             <span className={`inline-flex shrink-0 items-center gap-1 font-mono text-chip font-bold tracking-[0.08em] ${statusTone(session)}`}>
@@ -1854,10 +1903,6 @@ function projectPath(session: Session): string {
   return path?.replace(/\/+$/, '') || '';
 }
 
-function sessionIsLive(session: Session): boolean {
-  return session.live ?? session.status === 'running';
-}
-
 function sessionFresh(session: Session, now: number): boolean {
   // Live sessions are always shown collapsed; a session that STOPPED being live still
   // lingers for one hour so it doesn't vanish the instant it goes idle. Uses the same
@@ -1883,14 +1928,6 @@ function statusDot(session: Session): string {
   if (sessionIsLive(session)) return 'animate-pulse bg-ok motion-reduce:animate-none';
   if (session.status === 'suspended') return 'bg-warn-strong';
   return 'border border-dialog-hint';
-}
-
-function emptyUntitled(session: Session): boolean {
-  return (
-    !session.title?.trim() &&
-    Number(session.turn_count ?? 0) === 0 &&
-    !sessionIsLive(session)
-  );
 }
 
 function sessionSearchText(session: Session): string {
@@ -2043,4 +2080,11 @@ function draftHint(draft: WorkspaceDraft): string {
     ? relativeTime(new Date(draft.fork_ms).toISOString())
     : '';
   return forked ? `forked ${forked}` : homeifyPath(draft.root ?? '') || 'isolated workspace';
+}
+
+// The first line of an unsent message, short enough to sit on one row. A dirty
+// session has no other name, and a wall of pasted text must not become one.
+function firstLine(text: string): string {
+  const line = text.split('\n', 1)[0]?.trim() ?? '';
+  return line.length > 80 ? `${line.slice(0, 79)}\u2026` : line;
 }
