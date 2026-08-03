@@ -4232,7 +4232,12 @@
    markdown->entries pass emits DOUBLED blank rows around every code fence, so the
    labelled sections collapse into one un-separated wall. Drop that fence padding,
    then reinstate exactly ONE blank row before each **LABEL** section — gluing each
-   label to its own content — plus ONE trailing pad row so the card breathes."
+   label to its own content — plus ONE trailing pad row so the card breathes.
+
+   Blank rows the TOOL authored INSIDE a section survive as one row each: a commit
+   MESSAGE's subject/body split, a paragraph break in captured stdout. Only the
+   layout's own padding — a blank run touching a label, a divider, or an edge of
+   the body — is structural and goes."
   [entries]
   (let
     [blank?
@@ -4246,11 +4251,34 @@
      pad
      (or (first (filter blank? entries)) {:line (str result-marker "") :meta nil})
 
-     content
-     (into [] (remove blank?) entries)
-
      divider?
-     #(boolean (re-matches #"\s*[─-]{3,}\s*" (strip-paint-markers-line (:line %))))]
+     #(boolean (re-matches #"\s*[─-]{3,}\s*" (strip-paint-markers-line (:line %))))
+
+     structural?
+     #(or (nil? %) (section-label-entry? %) (divider? %))
+
+     runs
+     (vec (partition-by blank? entries))
+
+     content
+     (into []
+           (comp (map-indexed
+                   (fn [i run]
+                     (if-not (blank? (first run))
+                       run
+                       (let
+                         [idx
+                          (long i)
+
+                          prev
+                          (last (get runs (dec idx)))
+
+                          next-e
+                          (first (get runs (inc idx)))]
+
+                         (if (or (structural? prev) (structural? next-e)) [] [(first run)])))))
+                 cat)
+           runs)]
 
     (if (empty? content)
       []

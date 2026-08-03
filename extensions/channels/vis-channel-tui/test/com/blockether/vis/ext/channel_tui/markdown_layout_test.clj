@@ -606,7 +606,11 @@
                            ["one-unbreakable-supertoken" 5] ["" 5] [nil 4] ["🎉🎉" 1]]]
                    (expect (= (p/word-wrap (str s) (max 1 (long w)))
                               (mapv :text
-                                    (#'layout/wrap-cell-lines (mapv (fn [c] [c nil]) (str s)) w)))
+                                    (#'layout/wrap-cell-lines
+                                     (mapv (fn [c]
+                                             [c nil])
+                                           (str s))
+                                     w)))
                            (str "diverged from p/word-wrap for " (pr-str [s w]))))))
 
 ;; ---------------------------------------------------------------------------
@@ -684,3 +688,15 @@
         ;; crash the whole render frame.
         (expect (= 13 (p/display-width text)))
         (expect (= ["foo" "bar" "baz"] (str/split text #"\s+"))))))
+
+(defdescribe
+  quote-paragraph-gap-test
+  (it "collapses the margin BETWEEN quoted paragraphs to one bar-only row"
+      ;; REGRESSION: every per-paragraph outer-margin was stripped, so a commit
+      ;; message quoted into a tool card read as one run-on paragraph.
+      (let [lines (layout/ast->lines [:ast [:quote [:p "feat: thing"] [:p "body line"]]] 40)]
+        (expect (= ["│ feat: thing" "│ " "│ body line"] (texts lines)))))
+  (it "leaves no bar-only row at the head or tail of the quote"
+      ;; The bar still paints as ONE solid block: only interior gaps survive.
+      (let [lines (layout/ast->lines [:ast [:quote [:p "only"]]] 40)]
+        (expect (= ["│ only"] (texts lines))))))

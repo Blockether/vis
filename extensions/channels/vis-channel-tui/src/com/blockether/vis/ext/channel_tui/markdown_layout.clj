@@ -835,14 +835,26 @@
     [inner
      (blocks->lines children (max 1 (- (long width) 2)) opts)
 
-     ;; Strip per-paragraph outer-margin blanks the child block
-     ;; renderers append. A blockquote should paint as ONE solid
-     ;; bar block without empty `| ` rows between or below its
-     ;; paragraphs; the outer-margin row appended AFTER the whole
-     ;; quote block by `node->lines` handles the breathing space
-     ;; from following content.
+     margin?
+     #(= :outer-margin (:block-tag %))
+
+     ;; A blockquote paints as ONE solid bar, so the per-paragraph outer-margin
+     ;; blanks the child block renderers append never become naked gaps: at the
+     ;; head and tail they vanish (`node->lines` appends the breathing row after
+     ;; the whole block), and BETWEEN two paragraphs they collapse to a single
+     ;; bar-only row — the blank line the author actually wrote. A commit message
+     ;; quoted into a card therefore keeps its subject/body split instead of
+     ;; reading as one run-on paragraph.
      compact
-     (filterv #(not= :outer-margin (:block-tag %)) inner)
+     (->> inner
+          (drop-while margin?)
+          reverse
+          (drop-while margin?)
+          reverse
+          (partition-by margin?)
+          (mapcat (fn [run]
+                    (if (margin? (first run)) [(first run)] run)))
+          vec)
 
      bar
      {:text "│ " :style #{:quote} :node nil}]

@@ -4352,3 +4352,76 @@
       ;; not move the prose one.
       (expect (some? (first (keep #(url-hit % prose-row) (range 0 40)))))
       (.stopScreen screen))))
+
+(defn- card-plain
+  "One tool-card row as its bare visible text: ANSI gone, the invisible row
+   MARKERS gone, ends trimmed. A row the card left blank reads as \"\"."
+  [l]
+  (str/trim (str/replace (strip-ansi l) #"\p{C}" "")))
+
+(defn- card-index-of
+  [lines s]
+  (first (keep-indexed (fn [i l]
+                         (when (= s l) i))
+                       lines)))
+
+(defdescribe
+  tool-card-body-blank-lines-test
+  ;; REGRESSION: the card-body compactor deleted EVERY blank row and re-added a
+  ;; single pad before each `**LABEL**`, so a blank line the TOOL authored inside
+  ;; a section -- a commit message's subject/body split, the gap between two
+  ;; phases of shell output -- was welded shut. Structural padding is still
+  ;; normalized; interior blanks survive as exactly one row.
+  (it "keeps the paragraph break inside a quoted commit MESSAGE"
+      (let
+        [lines
+         (mapv card-plain
+               (format-iteration-entry
+                 {:iteration 0
+                  :forms [{:vis/tool-name "git"
+                           :tool-color-role :tool-color/shell
+                           :code "git({\"commands\": [[\"commit\"]]})"
+                           :pending-summary "commit — feat: thing (running)"
+                           :pending-render
+                           (str "**COMMAND**\n```bash\ngit commit -m feat: thing\n```\n\n"
+                                "**MESSAGE**\n> feat: thing\n>\n> body line\n")
+                           :started-at-ms 1000
+                           :success? nil}]}
+                 80
+                 1
+                 {:now-ms 2500}))
+
+         msg-idx
+         (card-index-of lines "MESSAGE")]
+
+        (expect (some? msg-idx) (str "got: " lines))
+        (expect (= ["│ feat: thing" "│" "│ body line"] (subvec lines (inc msg-idx) (+ msg-idx 4))))
+        ;; Section padding is untouched: exactly ONE blank row above the label.
+        (expect (= "" (nth lines (dec msg-idx))))
+        (expect (not= "" (nth lines (- msg-idx 2))))))
+  (it "keeps a blank line the shell wrote inside its STDOUT"
+      (let
+        [lines
+         (mapv card-plain
+               (format-iteration-entry
+                 {:iteration 0
+                  :forms [{:vis/tool-name "shell"
+                           :tool-color-role :tool-color/shell
+                           :code "shell({\"commands\": [\"run.sh\"]})"
+                           :result-summary "$ run.sh"
+                           :result-render (str
+                                            "**COMMAND**\n```bash\nrun.sh\n```\n\n"
+                                            "**STDOUT**\n```\nphase one ok\n\nphase two ok\n```\n")
+                           :started-at-ms 1000
+                           :success? true}]}
+                 80
+                 1
+                 {:now-ms 2500}))
+
+         out-idx
+         (card-index-of lines "STDOUT")]
+
+        (expect (some? out-idx) (str "got: " lines))
+        (expect (= ["phase one ok" "" "phase two ok"] (subvec lines (inc out-idx) (+ out-idx 4))))
+        (expect (= "" (nth lines (dec out-idx))))
+        (expect (not= "" (nth lines (- out-idx 2)))))))
