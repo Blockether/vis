@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- human-input: an extension can pause its run and ask the operator a typed
+  question. `vis.ask(title, fields, **options)` (Clojure:
+  `vis/request-human-input!`) blocks the calling extension until a human answers,
+  and the request rides every channel at once — the TUI paints a form dialog, the
+  gateway publishes `human_input.request` / `human_input.close` as session events
+  and serves `GET /v1/sessions/:sid/human-input` plus per-request submit and
+  cancel actions, and the companion app renders the same fields (and gets a push
+  notification for the block). Field types are `plaintext`, `password`,
+  `multiline`, `select`, `multiselect`, and `checkbox`, each with `name`,
+  `label`, `description`, `default`, `placeholder`, `max_length`, and an
+  `is_required` that both dialogs and the HTTP seam enforce. Every key is a
+  snake_case string; a camelCase or kebab-case spelling is refused with the right
+  name rather than silently ignored, so a required field can never turn optional.
+  Cancelling or timing out never raises: it returns a falsey `Answer` whose
+  `reason` says which. A `password` answers with an opaque `vis-secret:` handle —
+  transcript, logs, and the model see only the handle, `answer.reveal(name)`
+  resolves the plaintext in-process, and `vis.forget(handle)` drops it.
+  Documented in `resources/vis-docs/extending.md`.
+
 ### Changed
 
 - change(drafts): the draft itself now says what its fork skipped. rift 0.0.10-9
