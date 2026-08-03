@@ -1996,45 +1996,6 @@
       meaningful?
       (assoc :last-ms now))))
 
-(defn- start-turn-stall-watchdog!
-  "Daemon thread guarding ONE running turn against a stalled provider stream.
-   While `tid` remains the session's current turn, it polls the shared `stall`
-   atom (updated by `run-turn!` with the live phase + last meaningful-progress
-   wall-clock). If no meaningful progress lands for `TURN_STALL_TIMEOUT_MS`, it
-   flags the turn stalled and `cancel!`s the token, closing the in-flight
-   provider stream so the blocked worker unwinds and the queue drains.
-   Self-terminating: exits as soon as `tid` is no longer the current turn."
-  [sid tid cancel-token stall]
-  (let
-    [check-ms (-> (long TURN_STALL_TIMEOUT_MS)
-                  (quot 8)
-                  (max 1000)
-                  (min 20000))]
-    (doto (Thread. ^Runnable
-                   (fn []
-                     (try (loop []
-
-                            (Thread/sleep check-ms)
-                            (when (= tid (:current-turn (get @registry sid)))
-                              (let
-                                [{:keys [phase last-ms]} @stall
-                                 idle-ms (- (System/currentTimeMillis) (long (or last-ms 0)))]
-
-                                (if (and (not (contains? stall-exempt-phases phase))
-                                         (>= idle-ms (long TURN_STALL_TIMEOUT_MS)))
-                                  (do (tel/log!
-                                        :warn
-                                        ["gateway: provider stream stalled — force-cancelling turn"
-                                         tid (str idle-ms "ms idle in phase " phase)])
-                                      (swap! stall assoc :stalled? true)
-                                      (cancellation/cancel! cancel-token :stall-watchdog))
-                                  (recur)))))
-                          (catch InterruptedException _ nil)
-                          (catch Throwable _ nil)))
-                   (str "gateway-turn-stall-watchdog-" tid))
-      (.setDaemon true)
-      (.start))
-    nil))
 
 (defonce ^:private turn-terminal-claims
   ;; `[sid tid]` -> the claim key of the RUN that owns that turn's one terminal
@@ -2142,6 +2103,137 @@
     (.setDaemon true)
     (.start))
   nil)
+
+(def ^:private TURN_LAUNCH_TIMEOUT_MS
+  "How long a LAUNCHED turn may report NO worker activity at all — not a phase,
+   not even the stamp the worker writes before it queues for an execution permit
+   — before it is declared orphaned.
+
+   `turn.started` is on the wire and `:current-turn` points at the turn the
+   moment `launch-turn-worker!` runs, but EVERYTHING that could finish it lives
+   in the worker body. When that body never begins — a throw between the started
+   event and the worker future, a cancel racing the launch that no hook observed,
+   a drain path whose exception a daemon thread swallowed — nothing ever lands a
+   terminal: the session sits on a spinner that cannot be answered, retried or
+   cancelled. Entering the body takes microseconds, so a minute is pure slack."
+  60000)
+
+(defn- turn-watchdog-live?
+  "True while THIS run of `tid` still owes the session a terminal.
+
+   The session pin is the primary signal, but a turn whose record still says
+   `running` is unfinished even when something else took the `:current-turn`
+   slot — and that clash is exactly how a turn ends up with `turn.started` and no
+   terminal. Guarding on the pin ALONE let the watchdog exit silently and leave
+   the orphan behind."
+  [sid tid cancel-token]
+  (let
+    [entry
+     (get @registry sid)
+
+     turn
+     (get-in entry [:turns tid])]
+
+    (and (current-turn-run? sid tid cancel-token)
+         (or (= tid (:current-turn entry)) (= "running" (:status turn))))))
+
+(defn- fail-orphaned-turn!
+  "Land `turn.failed` for a turn nobody else finished. Claim-guarded, so it is a
+   no-op the instant a real terminal exists.
+
+   Reported as a STALL-class failure (`:stalled? true`), never a user stop: the
+   backlog drains and the message this turn never ran is re-queued for the
+   automatic retry instead of being silently dropped."
+  [sid tid cancel-token reason]
+  (when (claim-turn-terminal! sid tid cancel-token)
+    (tel/log! :error ["gateway: orphaned turn — landing turn.failed" tid reason])
+    (finish-turn! sid
+                  tid
+                  {:status "failed"
+                   :role "assistant"
+                   :content [(content/error "turn_failed" reason false)]
+                   :error reason
+                   :completed_at (System/currentTimeMillis)})
+    (append-event! sid "turn.failed" (turn-terminal-payload sid tid "failed"))
+    (emit-context-updated! sid)
+    (after-turn-terminal!
+      sid
+      tid
+      {:failed? true :transient? true :cancel-token cancel-token :stalled? true})
+    true))
+
+(defn- start-turn-stall-watchdog!
+  "Daemon thread guarding ONE turn from `turn.started` — not from its first chunk
+   — until a terminal exists for it.
+
+   While the turn still owes a terminal ([[turn-watchdog-live?]]) it polls the
+   shared `stall` atom (`run-turn!` records the live phase plus the last
+   meaningful-progress wall-clock; the worker stamps `:started?` the moment its
+   body begins). Two ceilings:
+
+     - a turn whose worker body NEVER began trips after
+       [[TURN_LAUNCH_TIMEOUT_MS]] — the orphaned launch;
+     - a started turn with no meaningful progress in a non-exempt phase trips
+       after [[TURN_STALL_TIMEOUT_MS]] — the stalled provider stream.
+
+   Tripping cancels the token, closing the in-flight stream so the blocked worker
+   unwinds and the queue drains. A wedged worker can ignore `cancel!` forever
+   (uninterruptible native code) — and a launch that never produced a worker has
+   nothing to unwind at all — so the watchdog then GUARANTEES the terminal: if
+   nobody landed one within [[CANCEL_TERMINAL_GRACE_MS]] it lands `turn.failed`
+   itself. Every `turn.started` therefore ends in a terminal event.
+
+   Self-terminating: exits as soon as the turn no longer owes a terminal."
+  [sid tid cancel-token stall]
+  (let
+    [check-ms (-> (min (long TURN_STALL_TIMEOUT_MS) (long TURN_LAUNCH_TIMEOUT_MS))
+                  (quot 8)
+                  (max 1000)
+                  (min 20000))]
+    (doto (Thread.
+            ^Runnable
+            (fn []
+              (try (loop []
+
+                     (Thread/sleep check-ms)
+                     (when (turn-watchdog-live? sid tid cancel-token)
+                       (let
+                         [{:keys [phase last-ms started?]} @stall
+                          idle-ms (- (System/currentTimeMillis) (long (or last-ms 0)))
+                          tripped? (if started?
+                                     (and (not (contains? stall-exempt-phases phase))
+                                          (>= idle-ms (long TURN_STALL_TIMEOUT_MS)))
+                                     (>= idle-ms (long TURN_LAUNCH_TIMEOUT_MS)))]
+
+                         (if tripped?
+                           (let
+                             [reason (if started?
+                                       (str "provider stream stalled: no output for " idle-ms
+                                            "ms in phase " phase)
+                                       (str "turn never started running: no worker activity for "
+                                            idle-ms
+                                            "ms"))]
+                             (tel/log! :warn
+                                       ["gateway: turn made no progress — force-cancelling" tid
+                                        reason])
+                             (swap! stall assoc :stalled? true)
+                             (cancellation/cancel! cancel-token
+                                                   (if started? :stall-watchdog :launch-watchdog))
+                             ;; Last line of defence: the cancel normally makes the
+                             ;; worker (or the cancel hook) land the terminal. When
+                             ;; neither can, land it here — a `turn.started` with no
+                             ;; terminal is what wedges a session forever.
+                             (Thread/sleep (long CANCEL_TERMINAL_GRACE_MS))
+                             (when (turn-watchdog-live? sid tid cancel-token)
+                               (fail-orphaned-turn! sid tid cancel-token reason)))
+                           (recur)))))
+                   (catch InterruptedException _ nil)
+                   (catch Throwable t
+                     (tel/log! :error ["gateway: turn watchdog failed" tid (ex-message t)]))))
+            (str "gateway-turn-stall-watchdog-" tid))
+      (.setDaemon true)
+      (.start))
+    nil))
 
 (defn- run-turn!
   "Worker body for one submitted turn. Streams phased chunks into the
@@ -2499,69 +2591,91 @@
 
                    (seq attachments)
                    (assoc :attachments attachments)))
-  (let
-    [stall
-     (atom {:phase nil :last-ms (System/currentTimeMillis)})
+  ;; From here on the turn is PUBLIC: `turn.started` is on the wire and
+  ;; `:current-turn` points at `tid`. A throw in this body therefore left a turn
+  ;; nobody runs and nobody ends — and every caller of this fn is either an HTTP
+  ;; handler or a daemon thread that swallows Throwables, so the failure was
+  ;; invisible and the session sat on a spinner that could not even be cancelled.
+  ;; Land a terminal instead of leaking an orphan.
+  (try
+    (let
+      [stall
+       (atom {:phase nil :last-ms (System/currentTimeMillis)})
 
-     ;; Single-claim ticket for this turn's ONE terminal landing. `turn.started`
-     ;; is already on the wire and `:current-turn` already points at `tid`, so
-     ;; EXACTLY one of {the worker body, the cancel hook} must finish the turn.
-     ;; Zero would pin the session to a turn nobody is running: the UI shows an
-     ;; empty assistant row forever and every later message piles up `queued`
-     ;; with nothing to drain it.
-     claimed
-     (java.util.concurrent.atomic.AtomicBoolean. false)
+       ;; Armed BEFORE the worker exists, so it also covers the window in which
+       ;; the worker fails to come into existence at all.
+       _
+       (start-turn-stall-watchdog! sid tid cancel-token stall)
 
-     worker
-     (fn []
-       (when (.compareAndSet claimed false true)
-         (if (acquire-turn-permit! cancel-token)
-           (do (swap! turns-executing inc)
-               (start-turn-stall-watchdog! sid tid cancel-token stall)
-               (try (run-turn! sid
-                               tid
-                               request
-                               {:messages messages
-                                :model model
-                                :reasoning-default reasoning-default
-                                :cancel-token cancel-token
-                                :extra-body extra-body
-                                :turn-features turn-features
-                                :workspace workspace
-                                :engine-opts engine-opts
-                                :attachments attachments
-                                :display-request display-request
-                                :stall stall})
-                    (finally (release-turn-permit!))))
-           (cancel-waiting-turn! sid tid cancel-token))))
+       ;; Single-claim ticket for this turn's ONE terminal landing. `turn.started`
+       ;; is already on the wire and `:current-turn` already points at `tid`, so
+       ;; EXACTLY one of {the worker body, the cancel hook} must finish the turn.
+       ;; Zero would pin the session to a turn nobody is running: the UI shows an
+       ;; empty assistant row forever and every later message piles up `queued`
+       ;; with nothing to drain it.
+       claimed
+       (java.util.concurrent.atomic.AtomicBoolean. false)
 
-     fut
-     (cancellation/worker-future (str "gateway-turn-" tid) worker)]
+       worker
+       (fn []
+         (when (.compareAndSet claimed false true)
+           ;; Proof of life for the watchdog: the body BEGAN. Waiting for the
+           ;; process-wide permit is legitimate work, so it moves the deadline
+           ;; off the launch ceiling and onto the stall ceiling.
+           (swap! stall assoc
+             :phase :awaiting-permit
+             :started? true
+             :last-ms (System/currentTimeMillis))
+           (if (acquire-turn-permit! cancel-token)
+             (do (swap! turns-executing inc)
+                 (try (run-turn! sid
+                                 tid
+                                 request
+                                 {:messages messages
+                                  :model model
+                                  :reasoning-default reasoning-default
+                                  :cancel-token cancel-token
+                                  :extra-body extra-body
+                                  :turn-features turn-features
+                                  :workspace workspace
+                                  :engine-opts engine-opts
+                                  :attachments attachments
+                                  :display-request display-request
+                                  :stall stall})
+                      (finally (release-turn-permit!))))
+             (cancel-waiting-turn! sid tid cancel-token))))
 
-    ;; Deliberately NOT `cancellation-set-future!`. That registers a bare
-    ;; `.cancel(true)`, and a `FutureTask` cancelled BEFORE its thread enters
-    ;; `run` never invokes the body at all — so a cancel racing the launch (or a
-    ;; token already cancelled when the queue head drains: app backgrounded,
-    ;; view closed, stop pressed) killed the worker after `turn.started` and
-    ;; before anything could emit a terminal. THAT is the wedged-session bug.
-    ;; Interrupt the worker, then land the cancellation ourselves iff we win the
-    ;; claim — winning means the body has not started and never will.
-    (cancellation/on-cancel!
-      cancel-token
-      (fn []
-        (try (.cancel ^java.util.concurrent.Future fut true) (catch Throwable _ nil))
-        (if (.compareAndSet claimed false true)
-          ;; Off the cancelling thread: this lands a terminal and drains the
-          ;; queue, which must never run inside an HTTP/UI cancel handler.
-          (cancellation/worker-future (str "gateway-turn-cancel-" tid)
-                                      (fn []
-                                        (cancel-waiting-turn! sid tid cancel-token)))
-          ;; The body IS running, so it owns the terminal — unless it never
-          ;; gets there. `cancel!` only fires a token; a worker parked in
-          ;; uninterruptible code (native GIL, stuck cleanup) ignores it and the
-          ;; session stays pinned to a turn nobody runs, with its backlog held.
-          (start-cancel-terminal-backstop! sid tid cancel-token cancel-waiting-turn!))))
-    fut))
+       fut
+       (cancellation/worker-future (str "gateway-turn-" tid) worker)]
+
+      ;; Deliberately NOT `cancellation-set-future!`. That registers a bare
+      ;; `.cancel(true)`, and a `FutureTask` cancelled BEFORE its thread enters
+      ;; `run` never invokes the body at all — so a cancel racing the launch (or a
+      ;; token already cancelled when the queue head drains: app backgrounded,
+      ;; view closed, stop pressed) killed the worker after `turn.started` and
+      ;; before anything could emit a terminal. THAT is the wedged-session bug.
+      ;; Interrupt the worker, then land the cancellation ourselves iff we win the
+      ;; claim — winning means the body has not started and never will.
+      (cancellation/on-cancel!
+        cancel-token
+        (fn []
+          (try (.cancel ^java.util.concurrent.Future fut true) (catch Throwable _ nil))
+          (if (.compareAndSet claimed false true)
+            ;; Off the cancelling thread: this lands a terminal and drains the
+            ;; queue, which must never run inside an HTTP/UI cancel handler.
+            (cancellation/worker-future (str "gateway-turn-cancel-" tid)
+                                        (fn []
+                                          (cancel-waiting-turn! sid tid cancel-token)))
+            ;; The body IS running, so it owns the terminal — unless it never
+            ;; gets there. `cancel!` only fires a token; a worker parked in
+            ;; uninterruptible code (native GIL, stuck cleanup) ignores it and the
+            ;; session stays pinned to a turn nobody runs, with its backlog held.
+            (start-cancel-terminal-backstop! sid tid cancel-token cancel-waiting-turn!))))
+      fut)
+    (catch Throwable t
+      (tel/log! :error ["gateway: turn launch failed" tid (ex-message t)])
+      (fail-orphaned-turn! sid tid cancel-token (str "turn launch failed: " (ex-message t)))
+      nil)))
 
 (defn- left-queued-by-cancel?
   "True when queued turn `head` was submitted BEFORE the session's cancel floor

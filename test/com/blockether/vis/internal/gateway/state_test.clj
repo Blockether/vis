@@ -1580,7 +1580,8 @@
            (cancellation/cancellation-token)
 
            stall
-           (atom {:phase :provider-call :last-ms (- (System/currentTimeMillis) 60000)})]
+           (atom
+             {:phase :provider-call :started? true :last-ms (- (System/currentTimeMillis) 60000)})]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
                ;; await INSIDE with-redefs so the async watchdog thread reads the
@@ -1608,7 +1609,9 @@
            (cancellation/cancellation-token)
 
            stall
-           (atom {:phase :iteration-final :last-ms (- (System/currentTimeMillis) 60000)})]
+           (atom {:phase :iteration-final
+                  :started? true
+                  :last-ms (- (System/currentTimeMillis) 60000)})]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
                (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
@@ -1616,7 +1619,90 @@
                  (expect (true? (await-cancel token 4000))))
                (expect (true? (:stalled? @stall)))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
-    (it "leaves a turn alone while it runs a legitimately long tool/eval phase"
+    (it
+      "leaves a turn alone while it runs a legitimately long tool/eval phase"
+      (let
+        [sid
+         (str "stall-" (java.util.UUID/randomUUID))
+
+         tid
+         "t1"
+
+         token
+         (cancellation/cancellation-token)
+
+         stall
+         (atom {:phase :tool-start :started? true :last-ms (- (System/currentTimeMillis) 60000)})]
+
+        (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
+             (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
+               (watchdog sid tid token stall)
+               (expect (false? (await-cancel token 1200))))
+             (expect (nil? (:stalled? @stall)))
+             (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
+    (it "leaves a turn alone once it is no longer the current turn"
+        (let
+          [sid
+           (str "stall-" (java.util.UUID/randomUUID))
+
+           token
+           (cancellation/cancellation-token)
+
+           stall
+           (atom
+             {:phase :provider-call :started? true :last-ms (- (System/currentTimeMillis) 60000)})]
+
+          (try
+            ;; a DIFFERENT current turn than the one the watchdog guards
+            (swap! registry assoc sid {:next-seq 0 :current-turn "other"})
+            (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
+              (watchdog sid "t1" token stall)
+              (expect (false? (await-cancel token 1200))))
+            (expect (nil? (:stalled? @stall)))
+            (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
+    (it "lands a terminal for a launched turn whose worker body never began"
+        ;; Regression: `turn.started` was on the wire and `:current-turn` pinned,
+        ;; but nothing ever entered the worker body — so no terminal event could
+        ;; ever be emitted and the session wedged on a spinner that could not be
+        ;; cancelled or drained. The watchdog now guards from LAUNCH, not from the
+        ;; first chunk.
+        (let
+          [sid
+           (str "stall-" (java.util.UUID/randomUUID))
+
+           tid
+           "t1"
+
+           token
+           (cancellation/cancellation-token)
+
+           landed
+           (atom nil)
+
+           ;; no `:started?`: the worker never stamped proof of life
+           stall
+           (atom {:phase nil :last-ms (- (System/currentTimeMillis) 60000)})]
+
+          (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
+               (with-redefs
+                 [state/TURN_LAUNCH_TIMEOUT_MS
+                  150
+
+                  state/CANCEL_TERMINAL_GRACE_MS
+                  50
+
+                  state/fail-orphaned-turn!
+                  (fn [_sid _tid _token reason]
+                    (reset! landed reason)
+                    true)]
+
+                 (watchdog sid tid token stall)
+                 (expect (true? (await-cancel token 4000)))
+                 (Thread/sleep 400))
+               (expect (true? (:stalled? @stall)))
+               (expect (str/includes? (str @landed) "turn never started running"))
+               (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
+    (it "holds a started turn to the stall ceiling, never the launch ceiling"
         (let
           [sid
            (str "stall-" (java.util.UUID/randomUUID))
@@ -1628,15 +1714,23 @@
            (cancellation/cancellation-token)
 
            stall
-           (atom {:phase :tool-start :last-ms (- (System/currentTimeMillis) 60000)})]
+           (atom {:phase :awaiting-permit
+                  :started? true
+                  :last-ms (- (System/currentTimeMillis) 60000)})]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
-               (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
+               (with-redefs
+                 [state/TURN_LAUNCH_TIMEOUT_MS
+                  150
+
+                  state/TURN_STALL_TIMEOUT_MS
+                  300000]
+
                  (watchdog sid tid token stall)
-                 (expect (false? (await-cancel token 1200))))
+                 (expect (false? (await-cancel token 1500))))
                (expect (nil? (:stalled? @stall)))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
-    (it "leaves a turn alone once it is no longer the current turn"
+    (it "guards a turn whose record is still running after the pin moved on"
         (let
           [sid
            (str "stall-" (java.util.UUID/randomUUID))
@@ -1645,16 +1739,73 @@
            (cancellation/cancellation-token)
 
            stall
-           (atom {:phase :provider-call :last-ms (- (System/currentTimeMillis) 60000)})]
+           (atom
+             {:phase :provider-call :started? true :last-ms (- (System/currentTimeMillis) 60000)})]
 
-          (try
-            ;; a DIFFERENT current turn than the one the watchdog guards
-            (swap! registry assoc sid {:next-seq 0 :current-turn "other"})
-            (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
-              (watchdog sid "t1" token stall)
-              (expect (false? (await-cancel token 1200))))
-            (expect (nil? (:stalled? @stall)))
-            (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))))
+          (try (swap! registry assoc
+                 sid
+                 {:next-seq 0
+                  :current-turn "other"
+                  :turns {"t1" {:status "running" :cancel-token token}}})
+               (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
+                 (watchdog sid "t1" token stall)
+                 (expect (true? (await-cancel token 4000))))
+               (expect (true? (:stalled? @stall)))
+               (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))))
+
+(defdescribe
+  turn-launch-orphan-test
+  "A throw anywhere AFTER `turn.started` — every caller of `launch-turn-worker!`
+   is an HTTP handler or a Throwable-swallowing daemon thread — used to leave a
+   public turn nobody runs and nobody ends. It must land a terminal instead."
+  (it
+    "lands turn.failed when the launch throws after turn.started"
+    (let
+      [launch
+       @#'state/launch-turn-worker!
+
+       registry
+       @#'state/registry
+
+       sid
+       (str "launch-" (java.util.UUID/randomUUID))
+
+       tid
+       "t1"
+
+       token
+       (cancellation/cancellation-token)
+
+       events
+       (atom [])
+
+       failed
+       (atom nil)]
+
+      (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
+           (with-redefs
+             [state/append-event!
+              (fn [_sid kind _payload]
+                (swap! events conj kind)
+                nil)
+
+              state/start-turn-stall-watchdog!
+              (fn [& _]
+                nil)
+
+              state/fail-orphaned-turn!
+              (fn [_sid _tid _token reason]
+                (reset! failed reason)
+                true)
+
+              cancellation/worker-future
+              (fn [& _]
+                (throw (ex-info "boom" {})))]
+
+             (expect (nil? (launch sid tid "hi" {:cancel-token token}))))
+           (expect (= ["turn.started"] @events))
+           (expect (str/includes? (str @failed) "turn launch failed"))
+           (finally (cancellation/cancel! token) (swap! registry dissoc sid))))))
 
 (defdescribe gateway-session-order-test
              (it "returns live sessions first and orders each state by recency"
