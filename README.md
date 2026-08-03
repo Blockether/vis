@@ -43,7 +43,7 @@ Native runtimes are published for Linux x64 and arm64.
 {:deps {com.blockether/vis {:mvn/version "0.1.25"}}}
 ```
 
-Every release deploys the whole monorepo to Clojars at one shared version, and `com.blockether/vis` already depends on every bundled extension, so that single coordinate gives the full agent. Depend on one package (`com.blockether/vis-channel-tui`, `com.blockether/vis-provider-anthropic`, `com.blockether/vis-language-python`, …) only when you embed a part of it. Writing your own extension: [Extending Vis](resources/vis-docs/extending.md).
+`com.blockether/vis` already depends on every bundled extension, so that single coordinate gives the full agent. Depend on one package (`com.blockether/vis-channel-tui`, `com.blockether/vis-provider-anthropic`, `com.blockether/vis-language-python`, …) only when you embed a part of it.
 
 ## Companion app (iPhone / Android)
 
