@@ -18,7 +18,11 @@
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+
+    // The human-input tests parse the ENGINE's own wire fixture
+    // (`src/lib/human-input.fixture.json`), which the Clojure suite re-derives.
+    "resolveJsonModule": true
   },
   "include": ["src"]
 }

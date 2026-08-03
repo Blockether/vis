@@ -4,12 +4,19 @@
 
    These tests pin the whole app path: the request defaults to both surfaces,
    it names its session, the gateway bridge turns it into `human_input.request`
-   / `human_input.close` session events, the REST helpers scope every answer to
-   the owning session, and the push tap alerts a phone that a run is parked."
-  (:require [clojure.string :as str]
+   / `human_input.close` session events, the REST endpoints the phone actually
+   calls answer it, the push tap alerts a phone that a run is parked, and the
+   JSON fixture the companion's own suite parses is the engine's own projection.
+
+   The matching TUI half — one request driving the terminal dialog and this
+   bridge at the same time — is
+   `com.blockether.vis.ext.channel-tui.human-input-cross-channel-test`."
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.gateway.human-input :as gw-hi]
             [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.human-input :as hi]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
 
@@ -159,3 +166,183 @@
       (is (= "human_input.request" (get-in n [:data :type])))
       (is (= "req-1" (get-in n [:data :request_id])))
       (is (= "sid-9" (get-in n [:data :session_id]))))))
+
+;; =============================================================================
+;; The endpoints the phone actually calls
+;;
+;; `gw-hi/submit!` is the in-process seam; the app only ever sees the HTTP
+;; handlers and their JSON. These drive the real ring handlers so a routing,
+;; path-param or encoding slip cannot hide behind a green in-process test.
+;; =============================================================================
+
+(defn- rv
+  "Resolve a (private) handler var in the gateway server namespace."
+  [sym]
+  (requiring-resolve (symbol "com.blockether.vis.internal.gateway.server" (name sym))))
+
+(defn- body-stream
+  [m]
+  (java.io.ByteArrayInputStream. (.getBytes ^String (wire/json-str m) "UTF-8")))
+
+(defn- json-body [response] (wire/parse-json (:body response)))
+
+(deftest the-app-answers-a-parked-run-over-http-test
+  (gw-hi/install!)
+  (let
+    [sid
+     (str (random-uuid))
+
+     rid
+     (str "req-" (random-uuid))
+
+     answer
+     (future (hi/request! (spec :id rid
+                                :session-id sid
+                                :fields
+                                [{:id "note" :type "plaintext" :label "Note" :is-required true}])))]
+
+    (try (is (await-true #(some? (gw-hi/request-of sid rid))))
+         (testing "a phone that starts cold still finds the open form, snake_case"
+           (let
+             [response
+              ((rv 'list-human-input-handler) {:path-params {:sid sid}})
+
+              request
+              (first (get (json-body response) "requests"))]
+
+             (is (= 200 (:status response)))
+             (is (= "application/json" (get-in response [:headers "Content-Type"])))
+             (is (= rid (get request "id")))
+             (is (= sid (get request "session_id")))
+             (is (= "Deploy?" (get request "title")))
+             (is (= ["note"] (mapv #(get % "id") (get request "fields"))))
+             (is (true? (get-in request ["fields" 0 "is_required"])))))
+         (testing "the engine's validation answers the app, and the run stays parked"
+           (let
+             [body (json-body ((rv 'submit-human-input-handler)
+                                {:path-params {:sid sid :request-id rid}
+                                 :body (body-stream {:values {"note" "   "}})}))]
+             (is (false? (get body "is_accepted")))
+             (is (= rid (get body "request_id")))
+             (is (contains? (get body "errors") "note"))
+             (is (some? (gw-hi/request-of sid rid)))))
+         (testing "another session may not answer this request"
+           (is (= 404
+                  (:status ((rv 'submit-human-input-handler)
+                             {:path-params {:sid (str (random-uuid)) :request-id rid}
+                              :body (body-stream {:values {"note" "ship"}})})))))
+         (testing "an accepted answer releases the blocked extension"
+           (let
+             [body (json-body ((rv 'submit-human-input-handler)
+                                {:path-params {:sid sid :request-id rid}
+                                 :body (body-stream {:values {"note" "ship it"}})}))]
+             (is (true? (get body "is_accepted")))
+             (is (= "ship it" (get-in (deref answer 2000 ::timeout) [:values "note"])))))
+         (testing "a settled request is gone from the snapshot and answerable no more"
+           (is (empty? (get (json-body ((rv 'list-human-input-handler) {:path-params {:sid sid}}))
+                            "requests")))
+           (is (= 404
+                  (:status ((rv 'cancel-human-input-handler)
+                             {:path-params {:sid sid :request-id rid}})))))
+         (finally (hi/cancel! rid "cleanup")))))
+
+(deftest the-app-cancels-a-parked-run-over-http-test
+  (gw-hi/install!)
+  (let
+    [sid
+     (str (random-uuid))
+
+     rid
+     (str "req-" (random-uuid))
+
+     answer
+     (future (hi/request! (spec :id rid :session-id sid)))]
+
+    (try (is (await-true #(some? (gw-hi/request-of sid rid))))
+         (let
+           [body (json-body ((rv 'cancel-human-input-handler)
+                              {:path-params {:sid sid :request-id rid}}))]
+           (is (true? (get body "is_cancelled")))
+           (is (= rid (get body "request_id")))
+           (is (false? (:is-submitted (deref answer 2000 ::timeout))))
+           (is (empty? (gw-hi/pending sid))))
+         (finally (hi/cancel! rid "cleanup")))))
+
+;; =============================================================================
+;; Cross-language contract
+;;
+;; The companion's own unit tests parse `human-input.fixture.json`. That file is
+;; the engine's projection, byte for byte — so a change to `request->view` that
+;; the app cannot read fails HERE, in Clojure, instead of silently shipping a
+;; dialog the phone renders empty.
+;; =============================================================================
+
+(def ^:private fixture-spec
+  "The request whose wire projection the companion app's fixture holds."
+  {:id "req-1"
+   :session-id "sid-1"
+   :title "Deploy?"
+   :description "prod"
+   :timeout-ms 300000
+   :fields [{:id "env"
+             :type "select"
+             :label "Env"
+             :default "prod"
+             :options [{:value "prod"} {:value "stg" :label "Staging"}]}
+            {:id "key" :type "password" :is-required true :max-length 40}
+            {:id "ok" :type "checkbox" :label "Confirm" :default true}
+            {:id "tags" :type "multiselect" :options ["a" "b"] :default []}]})
+
+(defn- fixture-file
+  "`apps/vis-companion/src/lib/human-input.fixture.json`, found from the working
+   directory upwards so the test runs from the repo root or a sub-project."
+  []
+  (loop [dir (.getCanonicalFile (io/file (System/getProperty "user.dir")))]
+    (when dir
+      (let [f (io/file dir "apps/vis-companion/src/lib/human-input.fixture.json")]
+        (if (.isFile f) f (recur (.getParentFile dir)))))))
+
+(deftest the-app-fixture-is-the-engines-own-projection-test
+  (testing "the companion parses engine bytes, not a hand-written lookalike"
+    (let [file (fixture-file)]
+      (is (some? file))
+      (when file
+        (is (= (wire/parse-json (slurp file))
+               (wire/parse-json (wire/json-str (hi/request->view (hi/normalize-request
+                                                                   fixture-spec))))))))))
+
+(deftest the-companion-urls-route-to-the-human-input-handlers-test
+  (testing "the URLs `gateway.ts` builds are the URLs this router serves"
+    (let
+      [match-by-path
+       (requiring-resolve 'reitit.core/match-by-path)
+
+       router
+       ((rv 'router) "token" [])
+
+       sid
+       (str (random-uuid))
+
+       rid
+       "req 1"
+
+       ;; `encodeURIComponent`, exactly as the companion client escapes an id.
+       encoded
+       "req%201"
+
+       match
+       (fn [path]
+         (match-by-path router path))]
+
+      (is (= @(rv 'list-human-input-handler)
+             (get-in (match (str "/v1/sessions/" sid "/human-input")) [:data :get :handler])))
+      (is (= @(rv 'submit-human-input-handler)
+             (get-in (match (str "/v1/sessions/" sid "/human-input/" encoded "/actions/submit"))
+                     [:data :post :handler])))
+      (is (= @(rv 'cancel-human-input-handler)
+             (get-in (match (str "/v1/sessions/" sid "/human-input/" encoded "/actions/cancel"))
+                     [:data :post :handler])))
+      (testing "and hand the handlers the ids they answer with"
+        (let [m (match (str "/v1/sessions/" sid "/human-input/" encoded "/actions/submit"))]
+          (is (= sid (str (get-in m [:path-params :sid]))))
+          (is (= rid (get-in m [:path-params :request-id]))))))))

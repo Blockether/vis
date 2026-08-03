@@ -1,0 +1,60 @@
+{
+  "is_cancellable": true,
+  "id": "req-1",
+  "submit_label": "Submit",
+  "cancel_label": "Cancel",
+  "title": "Deploy?",
+  "fields": [
+    {
+      "id": "env",
+      "type": "select",
+      "label": "Env",
+      "is_required": false,
+      "options": [
+        {
+          "value": "prod",
+          "label": "prod"
+        },
+        {
+          "value": "stg",
+          "label": "Staging"
+        }
+      ],
+      "default": "prod"
+    },
+    {
+      "id": "key",
+      "type": "password",
+      "label": "key",
+      "is_required": true,
+      "max_length": 40
+    },
+    {
+      "id": "ok",
+      "type": "checkbox",
+      "label": "Confirm",
+      "is_required": false,
+      "default": true
+    },
+    {
+      "id": "tags",
+      "type": "multiselect",
+      "label": "tags",
+      "is_required": false,
+      "options": [
+        {
+          "value": "a",
+          "label": "a"
+        },
+        {
+          "value": "b",
+          "label": "b"
+        }
+      ],
+      "default": []
+    }
+  ],
+  "session_id": "sid-1",
+  "timeout_ms": 300000,
+  "description": "prod"
+}

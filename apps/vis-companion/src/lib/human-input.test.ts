@@ -1,3 +1,4 @@
+import fixture from './human-input.fixture.json';
 import { describe, expect, it } from 'vitest';
 import type { SseEvent } from './types';
 import {
@@ -15,28 +16,11 @@ import {
 /**
  * VERBATIM engine output: `wire/json-str` of `human-input/request->view` for a
  * request with one field of every shape. The app must read the daemon's own
- * projection, so this fixture is copied from the running gateway rather than
- * hand-written to match the parser.
+ * projection, so this fixture is never hand-tuned to match the parser — the
+ * engine suite (`gateway.human-input-test`) re-derives these very bytes and
+ * fails if the projection and this file ever disagree.
  */
-const WIRE = JSON.parse(`{
-  "is_cancellable": true,
-  "id": "req-1",
-  "submit_label": "Submit",
-  "cancel_label": "Cancel",
-  "title": "Deploy?",
-  "fields": [
-    {"id": "env", "type": "select", "label": "Env", "is_required": false,
-     "options": [{"value": "prod", "label": "prod"}, {"value": "stg", "label": "Staging"}],
-     "default": "prod"},
-    {"id": "key", "type": "password", "label": "key", "is_required": true, "max_length": 40},
-    {"id": "ok", "type": "checkbox", "label": "Confirm", "is_required": false, "default": true},
-    {"id": "tags", "type": "multiselect", "label": "tags", "is_required": false,
-     "options": [{"value": "a", "label": "a"}, {"value": "b", "label": "b"}], "default": []}
-  ],
-  "session_id": "sid-1",
-  "timeout_ms": 300000,
-  "description": "prod"
-}`) as unknown;
+const WIRE = fixture as unknown;
 
 function requested(request: unknown = WIRE): SseEvent {
   return { type: 'human_input.request', session_id: 'sid-1', request } as SseEvent;
