@@ -376,14 +376,47 @@
            (catch Throwable _ fault))
       fault)))
 
-(defn- relativize-faults
-  "Rewrite every fault's \"file\" in `parsed` (both \"failures\" and \"errors\") to a
-   path relative to workspace `root`. Idempotent — an already-relative path is left
-   as-is."
+(def ^:private unlocated-files
+  "Source-file SENTINELS a runtime uses for \"this frame has no source\": they are
+   not paths, so a fault carrying one has no location at all."
+  #{"Unknown" "Unknown Source" "NO_SOURCE_PATH" "NO_SOURCE_FILE"})
+
+(defn- locate-fault
+  "Drop a fault's location when the runtime could not resolve one, instead of
+   passing its sentinel on. `StackTraceElement.getLineNumber` answers -1 for a
+   frame it cannot place (-2 for a native one) and its file name is then a
+   `Unknown` / `NO_SOURCE_PATH` sentinel — lazytest copies both onto the failure
+   verbatim, and a NEGATIVE line violates the run_tests contract (`\"line\"` is a
+   non-negative count), which used to blow up the whole result. nil is exactly
+   what `failures->text` and `group-faults-by-cwd` already render as \"no
+   location\"."
+  [fault]
+  (let
+    [file
+     (str (get fault "file"))
+
+     line
+     (get fault "line")]
+
+    (assoc fault
+      "file" (when-not (or (str/blank? file) (contains? unlocated-files file)) file)
+      "line" (when (nat-int? line) line))))
+
+(defn- normalize-faults
+  "Make every fault's location in `parsed` (both \"failures\" and \"errors\") honest:
+   an unresolvable location is dropped (`locate-fault`) and a real absolute path is
+   rewritten relative to workspace `root`. Idempotent — an already-relative path
+   and an already-dropped location are left as-is."
   [root parsed]
-  (let [root-file (io/file (str root))]
+  (let
+    [root-file
+     (io/file (str root))
+
+     clean
+     (comp (partial rel-fault-file root-file) locate-fault)]
+
     (reduce (fn [m k]
-              (if (seq (get m k)) (update m k (partial mapv (partial rel-fault-file root-file))) m))
+              (if (seq (get m k)) (update m k (partial mapv clean)) m))
             parsed
             ["failures" "errors"])))
 
@@ -663,7 +696,7 @@
                             (when (seq (str (get r "err"))) (str " nREPL err: " (get r "err"))))
                "repl_wedged" true}
               (map? parsed) (-> parsed
-                                (->> (relativize-faults root))
+                                (->> (normalize-faults root))
                                 (compose-repl-output)
                                 (assoc "mode" "repl"
                                        "ns" ns-disp

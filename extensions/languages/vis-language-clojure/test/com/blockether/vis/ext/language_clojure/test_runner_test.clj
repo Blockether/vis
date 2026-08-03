@@ -7,9 +7,12 @@
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
             [com.blockether.vis.ext.language-clojure.test-runner :as tr]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.foundation.surface-contract :as contract]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private run-via-repl @#'com.blockether.vis.ext.language-clojure.test-runner/run-via-repl)
+(def ^:private normalize-faults
+  @#'com.blockether.vis.ext.language-clojure.test-runner/normalize-faults)
 
 (defn- connect-failed-throw
   [_]
@@ -178,6 +181,64 @@
         (expect (= [f] (get-in grouped ["." "<unknown>" "failures"])))))
   (it "returns an empty map when there is nothing to group"
       (expect (= {} (tr/group-faults-by-cwd [] [])))))
+
+;; Regression: a lazytest fault whose location came from a stack frame the JVM
+;; could not place carried `"file" "Unknown"` (or `NO_SOURCE_PATH`) and
+;; `"line" -1` (`StackTraceElement.getLineNumber`, -2 for a native frame).
+;; Both were handed on untouched, so `run_tests` threw
+;; `language-surface contract violation for :test-fn` — a single unlocatable
+;; failure destroyed the whole run's result instead of reporting the failing
+;; test.
+(defdescribe
+  normalize-faults-location-test
+  "`normalize-faults` drops a location the runtime could not resolve, so every
+   fault stays inside the `:test-fn` contract (`\"line\"` is a NON-NEGATIVE count)
+   and no digest prints a `(Unknown:-1)` that points nowhere."
+  (it "drops unresolved file/line sentinels and keeps the result conformant"
+      (let
+        [parsed
+         {"mode" "repl"
+          "language" "clojure"
+          "framework" "lazytest"
+          "total" 26
+          "pass" 25
+          "fail" 1
+          "failures" [{"ns" "a.core-test"
+                       "test" "boom"
+                       "type" "fail"
+                       "message" "KeyError: 0"
+                       "file" "Unknown"
+                       "line" -1}]
+          "errors" [{"ns" "a.core-test"
+                     "test" "bang"
+                     "type" "error"
+                     "message" "nope"
+                     "file" "NO_SOURCE_PATH"
+                     "line" -2}]}
+
+         normalized
+         (normalize-faults "." parsed)]
+
+        (expect (nil? (get-in normalized ["failures" 0 "file"])))
+        (expect (nil? (get-in normalized ["failures" 0 "line"])))
+        (expect (nil? (get-in normalized ["errors" 0 "file"])))
+        (expect (nil? (get-in normalized ["errors" 0 "line"])))
+        ;; the message still identifies the failure — only the fake location goes
+        (expect (= "KeyError: 0" (get-in normalized ["failures" 0 "message"])))
+        (expect (contract/valid? :test-fn normalized))))
+  (it "leaves a real file and line alone"
+      (let
+        [parsed
+         {"mode" "repl"
+          "language" "clojure"
+          "failures" [{"ns" "a.core-test" "file" "test/a/core_test.clj" "line" 12}]}
+
+         normalized
+         (normalize-faults "." parsed)]
+
+        (expect (= "test/a/core_test.clj" (get-in normalized ["failures" 0 "file"])))
+        (expect (= 12 (get-in normalized ["failures" 0 "line"])))
+        (expect (contract/valid? :test-fn normalized)))))
 
 (defdescribe
   clj-test-fn-cwd-root-test
