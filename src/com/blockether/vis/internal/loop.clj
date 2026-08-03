@@ -12206,6 +12206,30 @@
                               m))))
   nil)
 
+(defn reload-router!
+  "Rebuild the shared LLM router from the freshly reloaded config and reseat it
+   on every cached env. Registered as a `/reload` hook.
+
+   `reload-slash` re-reads vis.yml through `config/reload-config!`, but the
+   router is an immutable SNAPSHOT: built once by `get-router` and captured
+   again inside every long-lived session env (`(:router environment)`). Without
+   this hook a `default_model` / provider edit only took effect after a full
+   restart — the engine kept routing turns through the previous router, and
+   every frontend that names the router default (the TUI footer model chip via
+   `resolve-effective-model`) kept showing the OLD model.
+
+   No-ops when the router was never built, so lazy first use is preserved: a
+   `/reload` must not force OAuth token fetches at TUI boot. Returns nil."
+  []
+  (when (router-initialized?) (refresh-cached-routers! (rebuild-router! (config/current-config))))
+  nil)
+
+;; Wire `reload-router!` into the `/reload` slash. `run-reload-hooks!` runs
+;; AFTER `config/reload-config!`, so the rebuild always sees the new config.
+;; `defonce` keeps the registration idempotent across `(require ... :reload)`.
+(defonce ^:private _router-reload-hook
+  (extension/register-reload-hook! ::router-reload reload-router!))
+
 ;; Keep live session envs in sync with Python-extension (re)loads. Each env
 ;; caches its own `:extensions` rows — slash dispatch (`active-slashes env`)
 ;; and sandbox bindings read those, NOT the global registry — so a `/reload`

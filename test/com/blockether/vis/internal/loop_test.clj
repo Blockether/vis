@@ -5702,3 +5702,43 @@
                    (expect (true? (::lp/fatal-iteration-error result)))
                    (expect (= "provider_billing" (get block "code")))
                    (expect (str/includes? (get block "message") "billing and available credits")))))
+
+(defdescribe
+  reload-router-hook-test
+  ;; `/reload` used to re-read vis.yml WITHOUT rebuilding the router, so a
+  ;; changed `default_model` kept routing to the old model and the TUI footer
+  ;; chip kept naming it until a restart.
+  (describe
+    "reload-router!"
+    (it "no-ops while the router was never built (lazy first use is preserved)"
+        (with-redefs [lp/router-initialized? (fn [] false)
+                      lp/rebuild-router! (fn [_] (throw (ex-info "must not build" {})))
+                      lp/refresh-cached-routers! (fn [_] (throw (ex-info "must not reseat" {})))]
+          (expect (nil? (lp/reload-router!)))))
+    (it "rebuilds from the reloaded config and reseats cached session envs"
+        (let [built (atom nil)
+              seated (atom nil)
+              cfg {:providers [{:id :acme}] :default-model "new-model"}]
+          (with-redefs [lp/router-initialized? (fn [] true)
+                        config/current-config (fn [] cfg)
+                        lp/rebuild-router! (fn [c] (reset! built c) ::rebuilt)
+                        lp/refresh-cached-routers! (fn [r] (reset! seated r))]
+            (expect (nil? (lp/reload-router!))))
+          (expect (= cfg @built))
+          (expect (= ::rebuilt @seated)))))
+  (describe
+    "/reload wiring"
+    (it "is registered as a reload hook that rebuilds the router"
+        (let [hook (get @@#'extension/reload-hooks
+                        :com.blockether.vis.internal.loop/router-reload)
+              built (atom nil)
+              seated (atom nil)
+              cfg {:providers [] :default-model "after-reload"}]
+          (expect (ifn? hook))
+          (with-redefs [lp/router-initialized? (fn [] true)
+                        config/current-config (fn [] cfg)
+                        lp/rebuild-router! (fn [c] (reset! built c) ::rebuilt)
+                        lp/refresh-cached-routers! (fn [r] (reset! seated r))]
+            (hook))
+          (expect (= cfg @built))
+          (expect (= ::rebuilt @seated))))))
