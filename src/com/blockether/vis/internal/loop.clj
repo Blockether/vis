@@ -5269,6 +5269,44 @@
                     (= (squash p) (squash code))) ;; prose IS the code verbatim
         p))))
 
+(defn- native-tool-call-block
+  "ONE iteration block for a native tool call.
+
+   A `:handler` native tool is dispatched in Clojure and never runs as Python:
+   its `:source` is the synthesized call kept for DISPLAY/persist/validation only
+   (blocks require a string `:code`; a nil here failed `validate-iteration-blocks!`
+   and errored the whole iteration on every handler-tool call). Every other native
+   tool synthesizes the bare call into its bound sandbox symbol. Execution branches
+   on `:vis/native-handler` before `:source` is ever evaluated.
+
+   BOTH shapes carry `:vis/native-input` — the input the tool was called with,
+   already normalized at THE DOOR (or, for a retry, by `resolve-native-retry` after
+   the override merge). That input is what lets a tool RENDER ITS OWN pending call
+   (`:render-call`): carrying it only on the handler branch meant every
+   sandbox-bound native tool — `shell` included — painted the raw `shell({…})`
+   invocation JSON while it ran instead of the bash block its result completes.
+   A call the resolver REJECTED has no runnable input, so it keeps the synthesized
+   raise as its only display."
+  [call-shapes handler tc effective-tc resolution-error]
+  (let [effective-name (:name effective-tc)]
+    (cond->
+      (if handler
+        {:lang "native"
+         :source (tool-call->python-source call-shapes effective-tc)
+         :svar/tool-call-id (:id tc)
+         :vis/tool-name effective-name
+         :vis/native-handler handler}
+        {:lang "python"
+         ;; Engine-native call resolvers may substitute a policy-approved stored
+         ;; call before synthesis. Invalid refs use the ordinary tool error path.
+         :source (if resolution-error
+                   (str "raise ValueError(" (py-literal resolution-error) ")")
+                   (tool-call->python-source call-shapes effective-tc))
+         :svar/tool-call-id (:id tc)
+         :vis/tool-name effective-name})
+      (not resolution-error)
+      (assoc :vis/native-input (:input effective-tc)))))
+
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
@@ -5559,46 +5597,28 @@
                           engine-native-tool-call-shapes)
        blocks (if answer-md
                 []
-                (mapv
-                  (fn [tc]
-                    (let
-                      [resolver (get engine-native-tool-resolvers (:name tc))
-                       call-resolution (when resolver
-                                         (resolver {:previous-iterations
-                                                    (:previous-iterations answer-validation-context)
-                                                    :replay-policies replay-policies}
-                                                   (:input tc)))
-                       effective-tc (or (:tool-call call-resolution) tc)
-                       resolution-error (:error call-resolution)
-                       effective-name (:name effective-tc)]
+                (mapv (fn [tc]
+                        (let
+                          [resolver (get engine-native-tool-resolvers (:name tc))
+                           call-resolution (when resolver
+                                             (resolver {:previous-iterations
+                                                        (:previous-iterations
+                                                          answer-validation-context)
+                                                        :replay-policies replay-policies}
+                                                       (:input tc)))
+                           effective-tc (or (:tool-call call-resolution) tc)
+                           resolution-error (:error call-resolution)
+                           effective-name (:name effective-tc)]
 
-                      (if-let [h (when-not resolution-error (get native-handlers effective-name))]
-                        ;; a `:handler` native tool: dispatched in Clojure,
-                        ;; never runs as Python. `:source` is the synthesized
-                        ;; call for DISPLAY/persist/validation only (blocks
-                        ;; require a string `:code`; a nil here failed
-                        ;; `validate-iteration-blocks!` and errored the whole
-                        ;; iteration on every handler-tool call) — execution
-                        ;; branches on `:vis/native-handler` before `:source`
-                        ;; is ever evaluated.
-                        {:lang "native"
-                         :source (tool-call->python-source call-shapes effective-tc)
-                         :svar/tool-call-id (:id tc)
-                         :vis/tool-name effective-name
-                         :vis/native-handler h
-                         ;; already normalized at THE DOOR (or, for a retry, by
-                         ;; `resolve-native-retry` after the override merge)
-                         :vis/native-input (:input effective-tc)}
-                        {:lang "python"
-                         ;; Engine-native call resolvers may substitute a
-                         ;; policy-approved stored call before synthesis.
-                         ;; Invalid refs use the ordinary tool error path.
-                         :source (if resolution-error
-                                   (str "raise ValueError(" (py-literal resolution-error) ")")
-                                   (tool-call->python-source call-shapes effective-tc))
-                         :svar/tool-call-id (:id tc)
-                         :vis/tool-name effective-name})))
-                  tool-calls))
+                          (native-tool-call-block call-shapes
+                                                  ;; a `:handler` native tool dispatches in Clojure; a
+                                                  ;; rejected call runs its synthesized raise instead
+                                                  (when-not resolution-error
+                                                    (get native-handlers effective-name))
+                                                  tc
+                                                  effective-tc
+                                                  resolution-error)))
+                      tool-calls))
        preflight-start-ns (System/nanoTime)
        preflight-result (if answer-md
                           {:code-entries [] :normalized-code "" :raw-fence-preflight-error nil}

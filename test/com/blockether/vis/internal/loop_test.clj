@@ -4180,6 +4180,59 @@
         (expect (str/includes? p "__vis_par_isolated__("))
         (expect (str/includes? p "__vis_settle__(__x__)")))))
 
+(def ^:private native-tool-call-block (deref #'lp/native-tool-call-block))
+
+(def ^:private pending-call-display (deref #'lp/pending-call-display))
+
+(defdescribe
+  native-tool-call-block-test
+  ;; REGRESSION: only the `:handler` branch carried `:vis/native-input`, so every
+  ;; sandbox-bound native tool — `shell` above all — lost the input its own
+  ;; `:render-call` needs and painted raw invocation JSON for the whole run.
+  (it "carries the call input on the synthesized-python branch too"
+      (let
+        [tc {:id "c1" :name "shell" :input {"op" "wait" "id" "dev" "until" "ready"}}
+         block (native-tool-call-block {} nil tc tc nil)]
+
+        (expect (= "python" (:lang block)))
+        (expect (= {"op" "wait" "id" "dev" "until" "ready"} (:vis/native-input block)))))
+  (it "keeps carrying it for a `:handler` tool dispatched in Clojure"
+      (let
+        [tc {:id "c2" :name "search_web" :input {"query" "vis"}}
+         block (native-tool-call-block {}
+                                       (fn [_ _]
+                                         {})
+                                       tc
+                                       tc
+                                       nil)]
+
+        (expect (= "native" (:lang block)))
+        (expect (= {"query" "vis"} (:vis/native-input block)))))
+  (it "gives a REJECTED call no input — its only display is the synthesized raise"
+      (let
+        [tc {:id "c3" :name "retry_native" :input {"tool_call_id" "nope"}}
+         block (native-tool-call-block {} nil tc tc "unknown tool_call_id")]
+
+        (expect (not (contains? block :vis/native-input)))
+        (expect (str/includes? (:source block) "raise ValueError("))))
+  (it "renders a pending `shell` wait as its own bash block, not the call JSON"
+      ;; End to end over the real seam: the block's input reaches the tool's own
+      ;; `:render-call`, so the running form is the shell block its result card
+      ;; completes instead of `shell({\"op\": \"wait\", …})`.
+      (let
+        [renderers (extension/native-tool-call-renderers [sh/vis-extension])
+         tc {:id "c4"
+             :name "shell"
+             :input {"op" "wait" "id" "svar-verify" "until" "VERIFY_EXIT=" "timeout_secs" 600}}
+         block (native-tool-call-block {} nil tc tc nil)
+         display (pending-call-display renderers
+                                       (:vis/tool-name block)
+                                       (:vis/native-input block))]
+
+        (expect (= "bash" (:display-language display)))
+        (expect (= "# shell wait svar-verify\n# until: VERIFY_EXIT=  (timeout 600s)"
+                   (:display-code display))))))
+
 (defn- env-root
   "The sandbox's primary allowed root — where cat is confined for a :memory env.
    Falls back to cwd. Temp files for the fs tests MUST live under here or cat

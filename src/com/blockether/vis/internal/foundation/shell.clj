@@ -2364,9 +2364,29 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
        ;; fall through to the raw invocation instead of throwing before the run.
        (try (mapv format-shell-command (ordered-lines commands)) (catch Throwable _ nil)))
 
+     until
+     (some-> (opt input :until)
+             str
+             str/trim
+             not-empty)
+
+     timeout-secs
+     (opt input :timeout_secs)
+
      code
      (cond (seq lines) (str/join "\n" lines)
-           id (str "# shell " op " " id)
+           ;; A lifecycle stage runs no command of its own: it names the stage and
+           ;; the background shell it acts on. A `wait` also names WHAT it is
+           ;; waiting for — the `until` regex, and the backstop it gives up after,
+           ;; ARE that call — so the running block says what the wall is for.
+           id (str "# shell "
+                   op
+                   " "
+                   id
+                   (when until
+                     (str "\n# until: "
+                          until
+                          (when timeout-secs (str "  (timeout " timeout-secs "s)")))))
            :else nil)]
 
     (when code {:code code :language "bash"})))

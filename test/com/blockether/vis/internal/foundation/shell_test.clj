@@ -1078,6 +1078,12 @@
   (it "names the stage and its target for a lifecycle call that carries no commands"
       (expect (= {:code "# shell logs sh-1" :language "bash"}
                  (render-shell-call {"op" "logs" "id" "sh-1"}))))
+  (it "says what a `wait` is WAITING FOR, not merely which shell it targets"
+      ;; The wall a wait puts up IS its `until` regex plus the backstop it gives
+      ;; up after; a bare "# shell wait <id>" left the running block mute.
+      (expect (= {:code "# shell wait dev\n# until: Local:.*http  (timeout 600s)" :language "bash"}
+                 (render-shell-call
+                   {"op" "wait" "id" "dev" "until" "Local:.*http" "timeout_secs" 600}))))
   (it "keeps the raw invocation when there is neither a command nor a target"
       (expect (nil? (render-shell-call {"op" "run"})))
       ;; A malformed batch is the CALL's error to report, never this preview's.
