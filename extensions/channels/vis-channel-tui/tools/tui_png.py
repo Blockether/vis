@@ -23,6 +23,11 @@ A 120x40 frame lands in under a second instead of ~35s.
 
 Box-drawing characters are painted as lines through the cell centre rather than
 as glyphs, so borders connect seamlessly at any cell size.
+
+FONTS — the default face is the JetBrains Mono this repo bundles for its docs
+(`BUNDLED_WOFF2`); `_bundled` unpacks it to TTF on first use, so nothing has to
+be installed. Host monospaces and the imaging backend's embedded
+"Noto Sans Mono" are fallbacks only.
 """
 
 from PIL import Image, ImageDraw, ImageFont
@@ -44,8 +49,16 @@ CELL_W, CELL_H = 18, 34
 MAX_PNG_PX = 1024
 MIN_CELL_W, MIN_CELL_H = 4, 8
 
-# Descending preference: JetBrains Mono first — round, wide-countered, easy to
-# read at small sizes — then the usual system monospaces.
+# THE DEFAULT FACE: JetBrains Mono -- round, wide-countered, easy to read at
+# small sizes. It is deliberately not a host font. The repo already ships the
+# variable woff2 the docs site uses, and `_bundled` decompresses it once into a
+# TTF the imaging backend can load, so every render looks the same on any
+# machine and in CI. Everything below is only a fallback for when that asset
+# cannot be reached.
+BUNDLED_WOFF2 = "resources/vis-docs/assets/fonts/jetbrains-mono.woff2"
+BUNDLED_DIR = "/tmp/vis-fonts"
+
+# Fallback host installs, in descending preference.
 FONT_FAMILIES = (
     (
         "~/Library/Fonts/JetBrainsMono-Regular.ttf",
@@ -64,6 +77,10 @@ FONT_FAMILIES = (
         "/usr/share/fonts/TTF/DejaVuSansMono-Bold.ttf",
     ),
 )
+
+# Last resort: family NAMES, not files. The imaging backend embeds these faces,
+# so they resolve with no fonts installed and no repo checkout in sight.
+EMBEDDED_FAMILIES = (("Noto Sans Mono", "Noto Sans Mono Bold"),)
 
 # Sizes tried by `_fit`, largest first.
 FONT_SIZES = tuple(range(24, 6, -1))
@@ -106,14 +123,16 @@ def _expand(path):
 def _load(path, size, index=None):
     # The host resolves a font by FILE, so a family we do not actually have on
     # disk must LOSE the probe in `font` instead of silently answering with the
-    # fallback face.
+    # fallback face. A bare family NAME -- no separator, no font extension -- is
+    # the exception: those are the faces the imaging backend embeds itself.
     import os as _os
 
     resolved = _expand(path)
-    if not _os.path.exists(resolved):
+    is_file = _os.sep in resolved or resolved.lower().endswith((".ttf", ".ttc", ".otf"))
+    if is_file and not _os.path.exists(resolved):
         return None
     try:
-        if index is None:
+        if index is None or not is_file:
             return ImageFont.truetype(resolved, size)
         return ImageFont.truetype(resolved, size, index=index)
     except Exception:
@@ -163,6 +182,64 @@ def _fit(path, index=None, heavy=None, cell_w=CELL_W, cell_h=CELL_H):
     return None
 
 
+_BUNDLED = None
+
+
+def _repo_root():
+    """Nearest ancestor of the working directory that ships the bundled font."""
+    import os as _os
+
+    here = _os.path.abspath(_os.getcwd())
+    while True:
+        if _os.path.exists(_os.path.join(here, BUNDLED_WOFF2)):
+            return here
+        parent = _os.path.dirname(here)
+        if parent == here:
+            return None
+        here = parent
+
+
+def _bundled():
+    """`(regular, bold)` paths of the bundled JetBrains Mono, or `(None, None)`.
+
+    The repo ships the docs' variable woff2 and the imaging backend loads TTF, so
+    the face is decompressed once into `BUNDLED_DIR` and reused by every later
+    render. Both weights are the SAME variable file under two names on purpose:
+    the host reads the weight off the file NAME and varies the `wght` axis, so
+    `JetBrainsMono-Bold.ttf` really is painted bold.
+    """
+    global _BUNDLED
+    import os as _os
+    import shutil as _shutil
+
+    if _BUNDLED is not None:
+        return _BUNDLED
+    regular = _os.path.join(BUNDLED_DIR, "JetBrainsMono-Regular.ttf")
+    bold = _os.path.join(BUNDLED_DIR, "JetBrainsMono-Bold.ttf")
+    if not (_os.path.exists(regular) and _os.path.exists(bold)):
+        root = _repo_root()
+        try:
+            if root is None:
+                raise FileNotFoundError(BUNDLED_WOFF2)
+            from fontTools.ttLib.woff2 import decompress
+
+            _os.makedirs(BUNDLED_DIR, exist_ok=True)
+            decompress(_os.path.join(root, BUNDLED_WOFF2), regular)
+            _shutil.copyfile(regular, bold)
+        except Exception:
+            _BUNDLED = (None, None)
+            return _BUNDLED
+    _BUNDLED = (regular, bold)
+    return _BUNDLED
+
+
+def _families():
+    """Faces to try, best first: bundled default, host installs, embedded names."""
+    regular, bold = _bundled()
+    bundled = ((regular, bold),) if regular else ()
+    return bundled + FONT_FAMILIES + EMBEDDED_FAMILIES
+
+
 _FONTS = {}
 
 
@@ -171,7 +248,7 @@ def font(bold=False, cell_w=CELL_W, cell_h=CELL_H):
     key = (bold, cell_w, cell_h)
     if key not in _FONTS:
         fitted = None
-        for regular, heavy in FONT_FAMILIES:
+        for regular, heavy in _families():
             fitted = _fit(
                 regular,
                 index=1 if bold else None,

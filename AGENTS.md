@@ -2,6 +2,16 @@
 
 Read only the section relevant to the change. Keep this file for durable, repo-wide contracts; put local implementation detail beside the code and inspect source/tests before changing a contract.
 
+## Engineering defaults
+
+- Do not preserve backward compatibility. Remove obsolete paths instead of adding compatibility layers, fallbacks, or migrations.
+- Choose the simplest implementation that fully meets the current requirement. Avoid speculative abstraction, configuration, and indirection.
+- Grow the system in layers: start from the smallest version that works end to end, and add each capability on top of a product that already works. Never trade a working product for unfinished complexity.
+- Keep components modular and concerns clearly separated.
+- Prefer established, well-maintained libraries when they reduce overall complexity or improve reliability; do not reimplement common functionality without a clear reason.
+- Lean on the dependencies already in the project before writing your own implementation or adding packages. Do not assume a library lacks a capability without checking its documentation and types.
+- Make architectural decisions for the long term. Do not accept a stopgap that only works for now and is meant to be replaced later.
+
 ## This repo is public: never document Blockether's own deployment
 
 - Blockether's hosted gateway is **private infrastructure**. Its public hostname, private bind address, ingress/Endpoints chain, server names, systemd units, and playbooks belong **only** in the private `infrastructure` repo — never in `README.md`, `AGENTS.md`, `resources/vis-docs/**`, `docker-compose.yml`, `Dockerfile`, code comments, tests, or commit messages.
@@ -55,6 +65,7 @@ Use snake_case string IDs. Hydrate from merged config so `/reload` respects proj
 - One lazy `shim_*.clj` per shim, one registered extension, and `builtin-extension-nses` inclusion. Python lives in `resources/vis-shims/<name>.py`, referenced as `:shim/source "vis-shims/<name>.py"`; never embed it as a Clojure string. Verify lazy import behavior and native resource inclusion.
 - Python format/lint uses in-process `com.blockether/ruff`, not a subprocess or PyPI install. Honor ruff's nearest-config resolution; missing targets fail, and only syntax plus `E9xx`/`F6xx`/`F7xx`/`F82x` are errors.
 - The sandbox `ruff` shim supports `vis-agent python -m ruff check|format <paths>`; root `ruff.toml` configures this repo. Upgrade ruff in sibling `clj-ruff`, release it, then move the `deps.edn` pin.
+- The PIL shim's `ImageFont.truetype` takes a family NAME or a file path, and the requested face must reach both the draw op and the measurement or text is measured in one font and painted in another. Family comes from the file/name, weight and italic from the name stem (`…-Bold.ttf` → 700), and a variable font honors the `wght` axis — which is why one file can serve two weights.
 
 ## TUI rendering
 
@@ -62,6 +73,8 @@ Render paint work in the `vis-channel-tui` REPL using Lanterna `DefaultVirtualTe
 
 - **Look at the pixels, not only at assertions.** `test/…/channel_tui/capture.clj` drives a real paint and journals every frame: `(cap/capture-json! "/tmp/vis-frames.json" {:cols 120 :rows 40 :keys [\c :esc] :paint! (fn [{:keys [screen]}] …)})`; `cap/frame-text` flattens one frame to greppable text.
 - `tools/tui_png.py` rasterizes that journal with the real theme colors. In `python_execution`: `exec(open("extensions/channels/vis-channel-tui/tools/tui_png.py").read(), globals())`, then `show_frames("/tmp/vis-frames.json", "/tmp/prefix", indexes=[1], label="…")` — it renders the PNGs **and** attaches them with `vis_attach`, so both the human and the model see the actual frame.
+- The default face is the **JetBrains Mono this repo bundles** (`resources/vis-docs/assets/fonts/jetbrains-mono.woff2`): `_bundled` decompresses it once into `/tmp/vis-fonts/JetBrainsMono-{Regular,Bold}.ttf`, so a render is identical on any machine and needs nothing installed. Both weights are the SAME variable file — the host reads the weight off the file NAME and varies the `wght` axis. Host monospaces (`FONT_FAMILIES`) and the imaging-embedded `"Noto Sans Mono"` name (`EMBEDDED_FAMILIES`) are fallbacks only; to render in another face, put it first in `FONT_FAMILIES`. Never hardcode a font size: `_fit` measures real ink and sizes glyphs to the cell.
+- Rendering reads the repo asset and writes `/tmp`, which a bare `ep/create-python-context {}` denies; pass the 2-arity roots-fn `(constantly ["/tmp" "/private/tmp" (System/getProperty "user.dir")])`.
 - Keep both: the capture journal is what you eyeball, the lazytest terminal-grid assertions are the regression gate.
 
 ## Shipping verified work
