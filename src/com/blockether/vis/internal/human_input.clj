@@ -231,6 +231,23 @@
       (some? default)
       (assoc :default default))))
 
+(defn- ambient-session-id
+  "Session id of the extension environment currently executing, or nil.
+
+   A request raised inside a gateway session has to NAME that session: the
+   gateway bridge turns the request into a session event so the companion app
+   learns the run is blocked, and a session event with no session has nowhere
+   to go. Resolved late and defensively — `human-input` must stay loadable
+   (and testable) without the extension runtime."
+  []
+  (try (when-let [v (resolve 'com.blockether.vis.internal.extension/*current-environment*)]
+         (let
+           [env (var-get v)
+            env (if (instance? clojure.lang.IDeref env) (deref env) env)]
+
+           (when (map? env) (trimmed (:session-id env)))))
+       (catch Throwable _ nil)))
+
 (defn- normalize-channel-ids
   [request]
   (let
@@ -238,7 +255,10 @@
      (pick request "channel_ids" :channel-ids "channel_id" :channel-id)
 
      ids
-     (cond (nil? ids) [:tui]
+     ;; Both surfaces by default: the TUI draws its dialog, and the gateway
+     ;; bridge turns the same event into a session event + push alert so a
+     ;; companion-app operator is not left staring at a stalled run.
+     (cond (nil? ids) [:tui :app]
            (keyword? ids) [ids]
            (sequential? ids) (vec ids)
            :else (invalid-request! ":channel-ids must be a keyword or a sequence of keywords"))]
@@ -288,7 +308,10 @@
      (when (empty? fields) (invalid-request! ":fields must not be empty"))
 
      _
-     (when-not (apply distinct? (map :id fields)) (invalid-request! "field ids must be distinct"))]
+     (when-not (apply distinct? (map :id fields)) (invalid-request! "field ids must be distinct"))
+
+     session-id
+     (or (trimmed (pick request "session_id" :session-id)) (ambient-session-id))]
 
     (cond->
       {:id (or (trimmed (pick request "id" :id)) (str (random-uuid)))
@@ -300,6 +323,9 @@
        (normalize-bool nil ":is-cancellable" (pick request "is_cancellable" :is-cancellable) true)
        :timeout-ms (normalize-timeout request)
        :channel-ids (normalize-channel-ids request)}
+      session-id
+      (assoc :session-id session-id)
+
       (trimmed (pick request "description" :description))
       (assoc :description (trimmed (pick request "description" :description)))
 
@@ -454,8 +480,13 @@
   (let [[old _] (swap-vals! pending dissoc request-id)]
     (when-let [entry (get old request-id)]
       (deliver (:promise entry) result)
+      ;; The close event carries `:session-id` because the entry is ALREADY
+      ;; gone from `pending` by now: a listener that has to route the close to
+      ;; a session can no longer look it up.
       (publish! (:channel-ids entry)
-                {:op :human-input/close :request-id request-id :reason (:reason result)})
+                (cond-> {:op :human-input/close :request-id request-id :reason (:reason result)}
+                  (:session-id entry)
+                  (assoc :session-id (:session-id entry))))
       entry)))
 
 (defn submit!

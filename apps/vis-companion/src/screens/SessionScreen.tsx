@@ -11,6 +11,7 @@ import {
 import { AssistantMessage, transcriptEnterClass, UserMessage } from '../components/ChatContent';
 import { ExpandableImage } from '../components/ImageViewer';
 import { Banner, Spinner } from '../components/ui';
+import { HumanInputPrompt } from '../components/HumanInputPrompt';
 import { ProviderRouterDialog } from './RouterScreen';
 import {
   attachmentsFromFiles,
@@ -3957,6 +3958,10 @@ export function SessionScreen({
 
   return (
     <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-ink transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+      {/* A run BLOCKED on the operator (`vis.request_human_input`) parks until it
+         is answered. The prompt portals its own overlay, so it sits here purely
+         to be mounted for this session — the TUI shows the same form. */}
+      <HumanInputPrompt client={client} subscriptions={subscriptions} sid={sid} />
       {/* In landscape on a notched phone the horizontal safe-area insets are the
          ones that bite (the notch on one side, the rounded corner on the other),
          and this header used to pad only the TOP — so the back button and the

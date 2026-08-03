@@ -97,14 +97,16 @@
 
 (defdescribe
   normalize-request-test
-  (it "defaults the chrome, channel and timeout"
+  (it "defaults the chrome, channels and timeout"
       (let [request (hi/normalize-request {:title "Deploy" :fields [{:id "name"}]})]
         (expect (string? (:id request)))
         (expect (= "Deploy" (:title request)))
         (expect (= "Submit" (:submit-label request)))
         (expect (= "Cancel" (:cancel-label request)))
         (expect (true? (:is-cancellable request)))
-        (expect (= [:tui] (:channel-ids request)))
+        ;; Both surfaces: the TUI dialog AND the gateway bridge that tells the
+        ;; companion app a run is parked on a human.
+        (expect (= [:tui :app] (:channel-ids request)))
         (expect (= hi/default-timeout-ms (:timeout-ms request)))))
   (it "rejects a request without a title or fields"
       (expect (throws? clojure.lang.ExceptionInfo #(hi/normalize-request {:fields [{:id "name"}]})))

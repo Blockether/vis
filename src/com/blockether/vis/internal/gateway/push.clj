@@ -608,16 +608,48 @@
      :collapse-id (str sid)
      :data {:session_id (str sid) :turn_id (get event "turn_id") :status status :type "turn.end"}}))
 
-(defn on-event!
-  "Event tap: push exactly on a terminal turn event, and only when push is
-   both configured and wanted by at least one device. Cheap and silent
-   otherwise — this runs on EVERY gateway event."
+(defn- human-input-notification
+  "Alert for a run BLOCKED on a human. The only push that says \"vis is waiting
+   for YOU\": a turn parked on an unanswered dialog produces no terminal event,
+   so without this the phone stays silent until the request times out."
   [sid event]
-  (try (when (and (contains? #{"turn.completed" "turn.failed"} (get event "type"))
-                  (pos? (device-count))
-                  (any-configured?))
-         (let [n (turn-notification sid event)]
-           (future (broadcast! n))))
+  (let
+    [request
+     (get event "request")
+
+     asked
+     (or (not-empty (str (get request "title"))) "Input needed")
+
+     description
+     (not-empty (str (get request "description")))
+
+     described
+     (@describe-session sid nil)]
+
+    {:title (or (not-empty (str (:title described))) "Vis")
+     :body (clip (str "Waiting for your input \u2014 "
+                      (if description (str asked ": " description) asked))
+                 BODY_LIMIT)
+     :thread-id (str sid)
+     ;; Its own collapse lane: an input request must not be swallowed by the
+     ;; session's last turn banner.
+     :collapse-id (str sid ":human-input")
+     :data
+     {:session_id (str sid) :request_id (str (get request "id")) :type "human_input.request"}}))
+
+(defn on-event!
+  "Event tap: push exactly on a terminal turn event or on a human-input request
+   the run is now blocked on, and only when push is both configured and wanted
+   by at least one device. Cheap and silent otherwise — this runs on EVERY
+   gateway event."
+  [sid event]
+  (try (when-let [kind (#{"turn.completed" "turn.failed" "human_input.request"} (get event "type"))]
+         (when (and (pos? (device-count)) (any-configured?))
+           (let
+             [n (if (= "human_input.request" kind)
+                  (human-input-notification sid event)
+                  (turn-notification sid event))]
+             (future (broadcast! n)))))
        (catch Throwable t
          (tel/log! {:level :warn :id ::push-tap-failed :data {:error (ex-message t)}})))
   nil)

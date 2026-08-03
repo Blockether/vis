@@ -24,6 +24,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.file-picker :as file-picker]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
+            [com.blockether.vis.internal.gateway.human-input :as gw-human-input]
             [com.blockether.vis.internal.gateway.pairing :as pairing]
             [com.blockether.vis.internal.gateway.protocol :as protocol]
             [com.blockether.vis.internal.gateway.push :as push]
@@ -2398,6 +2399,77 @@
                                                :data {:type "test"}})
                     :push (push/status)})))
 
+;; --- Human-input requests (a run BLOCKED on the operator) ---
+
+(defn- human-input-404
+  [request-id]
+  (error-response 404
+                  :human-input-not-found "no such pending human-input request"
+                  :request_id (str request-id)))
+
+(defn- list-human-input-handler
+  "GET /v1/sessions/:sid/human-input — the typed input requests this session is
+   BLOCKED on right now.
+
+   The live `human_input.request` event is the fast path; this is how a client
+   that connected LATER (cold start, background, reinstall) still finds the
+   open form instead of watching a turn that never moves."
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response {:requests (gw-human-input/pending sid)})
+    (session-404 (get-in request [:path-params :sid]))))
+
+(defn- submit-human-input-handler
+  "POST /v1/sessions/:sid/human-input/:request-id/actions/submit — answer one
+   pending request with `{values: {field_id: value}}`.
+
+   Validation stays in the engine, so the app and the TUI accept exactly the
+   same answers: a rejected one comes back `{is_accepted false, errors {…}}`
+   and the request STAYS pending so the operator can fix it."
+  [request]
+  (let
+    [sid
+     (path-sid request)
+
+     request-id
+     (str (get-in request [:path-params :request-id]))
+
+     values
+     (get (body-json request) "values")]
+
+    (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
+          (nil? (gw-human-input/request-of sid request-id)) (human-input-404 request-id)
+          (not (map? values)) (error-response 400 :bad-request "values must be an object")
+          :else (let [outcome (gw-human-input/submit! request-id values)]
+                  (json-response
+                    (cond-> {:is_accepted (boolean (:is-accepted outcome)) :request_id request-id}
+                      (seq (:errors outcome))
+                      (assoc :errors (:errors outcome))))))))
+
+(defn- cancel-human-input-handler
+  "POST /v1/sessions/:sid/human-input/:request-id/actions/cancel — dismiss one
+   pending request. The blocked extension resumes with `is_submitted false`.
+   A request declared `is_cancellable false` refuses, exactly as in the TUI."
+  [request]
+  (let
+    [sid
+     (path-sid request)
+
+     request-id
+     (str (get-in request [:path-params :request-id]))
+
+     view
+     (when sid (gw-human-input/request-of sid request-id))]
+
+    (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
+          (nil? view) (human-input-404 request-id)
+          (false? (:is-cancellable view)) (error-response 409
+                                                          :human-input-not-cancellable
+                                                          "this request cannot be cancelled"
+                                                          :request_id request-id)
+          :else (json-response {:is_cancelled (boolean (gw-human-input/cancel! request-id))
+                                :request_id request-id}))))
+
 (defn- reachable-addresses
   "Every base URL this gateway answers on, most durable first (Tailscale before
    LAN — see [[pairing/candidate-hosts]]).
@@ -2883,6 +2955,9 @@
         [(sid-route "")
          {:get soul-handler :patch patch-session-handler :delete delete-session-handler}]
         [(sid-route "/release") {:post release-session-handler}]
+        [(sid-route "/human-input") {:get list-human-input-handler}]
+        [(sid-route "/human-input/:request-id/actions/submit") {:post submit-human-input-handler}]
+        [(sid-route "/human-input/:request-id/actions/cancel") {:post cancel-human-input-handler}]
         [(sid-route "/events") {:get events-handler}] [(sid-route "/voice") {:post voice-handler}]
         [(sid-route "/voice/model") {:get voice-model-handler :post voice-model-handler}]
         [(sid-route "/events-since") {:get events-since-handler}]
@@ -3205,7 +3280,11 @@
                                                ;; vis said rather than that it said something.
                                                :answer (state/turn-answer-text sid tid)}
                                               (catch Throwable _ nil))))
-          (state/add-event-tap! ::push push/on-event!))
+          (state/add-event-tap! ::push push/on-event!)
+          ;; Human-input bridge: a `request-human-input!` raised inside a
+          ;; session becomes a session event, so the companion app sees the
+          ;; blocked run live (and the push tap above alerts the phone).
+          (gw-human-input/install!))
 
       server
       (try

@@ -47,6 +47,12 @@ import type {
 } from './types';
 import { PROTOCOL_HEADERS } from './compat';
 import {
+  humanInputRequestsFromWire,
+  type HumanInputOutcome,
+  type HumanInputRequest,
+  type HumanInputValues,
+} from './human-input';
+import {
   flushSnapshots,
   hydrateSnapshots,
   installSnapshotFlushOnHide,
@@ -2123,6 +2129,51 @@ export class GatewayClient {
       signal,
     );
     return this.storeQueuedTurns(sid, response.turns);
+  }
+
+  /**
+   * The typed input requests this session is BLOCKED on right now.
+   *
+   * SSE carries `human_input.request` live, but a screen opened (or reloaded,
+   * or woken by a push) while a run is already parked has to read the open
+   * forms back from here — the same snapshot the TUI restores from.
+   */
+  async humanInputRequests(sid: string, signal?: AbortSignal): Promise<HumanInputRequest[]> {
+    const response = await this.request<{ requests: unknown[] }>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/human-input`,
+      undefined,
+      signal,
+    );
+    return humanInputRequestsFromWire(response.requests);
+  }
+
+  /**
+   * Answer one open request. Validation is the ENGINE's: a rejected answer comes
+   * back `is_accepted false` with per-field errors and the request stays open,
+   * exactly as it does for the TUI dialog.
+   */
+  submitHumanInput(
+    sid: string,
+    requestId: string,
+    values: HumanInputValues,
+  ): Promise<HumanInputOutcome> {
+    return this.request<HumanInputOutcome>(
+      'POST',
+      `/v1/sessions/${encodeURIComponent(sid)}/human-input/${encodeURIComponent(requestId)}/actions/submit`,
+      { values },
+    );
+  }
+
+  /** Dismiss one open request. The blocked extension resumes unanswered. */
+  cancelHumanInput(
+    sid: string,
+    requestId: string,
+  ): Promise<{ is_cancelled: boolean; request_id: string }> {
+    return this.request<{ is_cancelled: boolean; request_id: string }>(
+      'POST',
+      `/v1/sessions/${encodeURIComponent(sid)}/human-input/${encodeURIComponent(requestId)}/actions/cancel`,
+    );
   }
 
   /**
