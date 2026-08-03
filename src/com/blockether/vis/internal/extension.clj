@@ -1216,6 +1216,41 @@
    is enforced on our side before a tool surface ever goes out."
   24)
 
+(defn- union-parameter-count
+  "How many parameters of a WIRE schema have a UNION type — a vector `:type` or an
+   `:anyOf` — counting nested objects, `$defs` and array items.
+
+   Anthropic budgets this SEPARATELY from optional parameters: `Schemas contains
+   too many parameters with union types (17 parameters with union types)`.
+   Measured live, 16 is accepted and 17 refused, nested unions count exactly like
+   top-level ones — so declaring an optional parameter `required` and nullable
+   buys nothing at all: it moves the same parameter from one budget to the other."
+  [node]
+  (cond (map? node) (let
+                      [props
+                       (:properties node)
+
+                       items
+                       (:items node)]
+
+                      (+ (if (or (sequential? (:type node)) (:anyOf node)) 1 0)
+                         (long (transduce (map union-parameter-count)
+                                          +
+                                          0
+                                          (concat
+                                            (when (map? props) (vals props))
+                                            (vals (:$defs node))
+                                            (if (sequential? items) items (when items [items]))
+                                            (:anyOf node)
+                                            (:allOf node))))))
+        (sequential? node) (long (transduce (map union-parameter-count) + 0 node))
+        :else 0))
+
+(def ^:private strict-union-parameter-budget
+  "Union-typed parameters one request's strict tools may declare in total."
+  16)
+
+
 (defn- non-scalar-node?
   "True when a wire-schema node is a container or a union — anything a model can
    get structurally WRONG."
@@ -1255,43 +1290,64 @@
           :else 2)))
 
 (defn- schema-grammar-cost
-  "Size proxy for the grammar one schema compiles into: its structure, WITHOUT
-   descriptions (prose is not part of a grammar). Measured against the live
-   Anthropic API — the boundary sits between a surface scoring 1070 (accepted)
-   and one scoring 1120 (`The compiled grammar is too large`)."
+  "GRAMMAR SLOTS one wire schema contributes: every property (recursively), every
+   array's item schema, every union branch, every `$defs` entry.
+
+   Measured against the live API, this — not schema text — is the currency.
+   Twenty strict tools carrying 24-character property names and 800-character
+   descriptions compile fine; one extra property each does not. Arrays are the
+   expensive slot: the same twenty parameters pass as scalars and are refused as
+   arrays."
   [node]
-  (cond (map? node) (reduce-kv
-                      (fn [acc k v]
-                        (if (= :description k)
-                          acc
-                          (+ (long acc) 2 (count (name k)) (long (schema-grammar-cost v)))))
-                      0
-                      node)
-        (sequential? node) (reduce (fn [acc v]
-                                     (+ (long acc) 1 (long (schema-grammar-cost v))))
-                                   0
-                                   node)
-        (string? node) (+ 2 (count node))
-        :else 4))
+  (cond (map? node) (let
+                      [props
+                       (:properties node)
+
+                       items
+                       (:items node)]
+
+                      (+ (long (if (map? props) (count props) 0))
+                         (long (if items (inc (long (schema-grammar-cost items))) 0))
+                         (long (transduce (map schema-grammar-cost)
+                                          +
+                                          0
+                                          (concat (when (map? props) (vals props))
+                                                  (vals (:$defs node))
+                                                  (:anyOf node)
+                                                  (:allOf node))))))
+        (sequential? node) (long (transduce (map schema-grammar-cost) + 0 node))
+        :else 0))
 
 (def ^:private strict-grammar-budget
-  "Total `schema-grammar-cost` one request's strict tools may spend. Anthropic
-   compiles them into ONE grammar and refuses the whole request when it grows too
-   large; 1050 sits under the measured 1070-accepted / 1120-rejected boundary."
-  1050)
+  "Grammar slots one request's strict tools may spend IN TOTAL — one per tool plus
+   its `schema-grammar-cost`. Anthropic compiles them into ONE grammar and refuses
+   the whole request when it grows too large.
+
+   Measured live: `{git patch ls cat grep struct_index}` scores 50 and is
+   accepted; every probe that scored 60 or more was refused with `The compiled
+   grammar is too large`, including this surface plus `shell` (60) or
+   `struct_nodes` (63). A separate hard cap — `The maximum number of strict tools
+   supported is 20` — never binds under it: a container-bearing tool costs at
+   least three slots, so this budget runs out first."
+  50)
 
 (defn budget-strict-tools
   "Keep `:strict` on as much of an advertised surface as ONE request can carry.
 
    `advertise-tool` decides per tool whether a schema is grammar-samplable, but
    the provider compiles ONE grammar for the whole request and rejects it whole
-   past either aggregate limit — `Schemas contains too many optional parameters
-   (72) … (limit: 24)` and `The compiled grammar is too large`. Both were
-   measured live; this is the aggregate gate over the FINAL surface (extension
-   natives plus engine-owned tools), and it is what keeps a growing tool surface
-   from 400-ing every request.
+   past ANY of three aggregate limits, every one of them measured live against
+   `api.anthropic.com`:
 
-   The budget fits roughly five tools out of two dozen, so it is spent by
+   - at most `strict-optional-parameter-budget` optional parameters;
+   - at most `strict-union-parameter-budget` union-typed parameters;
+   - `strict-grammar-budget` grammar slots for the compiled grammar.
+
+   This is the aggregate gate over the FINAL surface (extension natives plus
+   engine-owned tools), and it is what keeps a growing tool surface from 400-ing
+   every request.
+
+   The budget fits roughly a quarter of this repo's own tools, so it is spent by
    `payload-risk` first — a batch of maps before an array of strings, scalars
    never — then cheapest grammar first, ties by name, so the outcome is
    deterministic. Everything else loses the flag and is sampled unconstrained,
@@ -1305,8 +1361,9 @@
      (into {}
            (map-indexed (fn [i t]
                           [i
-                           {:grammar (schema-grammar-cost (:schema t))
+                           {:grammar (inc (long (schema-grammar-cost (:schema t))))
                             :optional (optional-parameter-count (:schema t))
+                            :union (union-parameter-count (:schema t))
                             :risk (payload-risk (:schema t))}]))
            tools)
 
@@ -1318,19 +1375,23 @@
      affordable
      (->> eligible
           (sort-by (juxt #(:risk (cost %)) #(:grammar (cost %)) #(:name (nth tools %))))
-          (reduce (fn [{:keys [grammar optional kept] :as acc} i]
+          (reduce (fn [{:keys [grammar optional union kept] :as acc} i]
                     (let
                       [g
                        (+ (long grammar) (long (:grammar (cost i))))
 
                        o
-                       (+ (long optional) (long (:optional (cost i))))]
+                       (+ (long optional) (long (:optional (cost i))))
+
+                       u
+                       (+ (long union) (long (:union (cost i))))]
 
                       (if (and (<= g (long strict-grammar-budget))
-                               (<= o (long strict-optional-parameter-budget)))
-                        {:grammar g :optional o :kept (conj kept i)}
+                               (<= o (long strict-optional-parameter-budget))
+                               (<= u (long strict-union-parameter-budget)))
+                        {:grammar g :optional o :union u :kept (conj kept i)}
                         acc)))
-                  {:grammar 0 :optional 0 :kept #{}})
+                  {:grammar 0 :optional 0 :union 0 :kept #{}})
           :kept)]
 
     (into []

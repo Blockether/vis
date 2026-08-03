@@ -694,9 +694,11 @@
   @#'extension/strict-grammar-budget)
 
 (defn- grammar-spend
-  "Total compiled-grammar cost of the tools that KEPT `:strict`."
+  "Total compiled-grammar cost of the tools that KEPT `:strict` — one slot per
+   tool plus its schema, exactly as `budget-strict-tools` spends it."
   [tools]
-  (reduce + 0 (map #(#'extension/schema-grammar-cost (:schema %)) (filter :strict tools))))
+  (let [strict (filter :strict tools)]
+    (reduce + (count strict) (map #(#'extension/schema-grammar-cost (:schema %)) strict))))
 
 (defdescribe
   strict-budget-test
@@ -711,7 +713,7 @@
       ;; batches of maps are ranked first, and what they leave does not fit it.
       (let
         [tools
-         (extension/budget-strict-tools (conj (mapv #(batch-tool (str "b" %) 1) (range 6))
+         (extension/budget-strict-tools (conj (mapv #(batch-tool (str "b" %) 1) (range 12))
                                               (flat-tool "flat")))
 
          strict
@@ -767,4 +769,60 @@
                    (#'extension/optional-parameter-count
                     (assoc-in (:schema nested)
                       [:properties "edits" :items :properties "ranges"]
-                      {:type "string"})))))))
+                      {:type "string"}))))))
+  (it "the union-type limit binds on its own budget"
+      ;; Measured live: `Schemas contains too many parameters with union types
+      ;; (17 …)` — 16 pass, 17 are refused, and the grammar of both is tiny. A
+      ;; `required` nullable parameter therefore buys nothing: it only moves the
+      ;; same parameter from the optional budget onto this one.
+      (let
+        [union-tool
+         (fn [name n]
+           (extension/advertise-tool
+             {:name name
+              :description "d"
+              :schema {:type "object"
+                       :properties (into {}
+                                         (map (fn [i]
+                                                [(str "u" i)
+                                                 {:anyOf [{:type "string"}
+                                                          {:type "object"
+                                                           :properties {"a" {:type "string"}}
+                                                           :required ["a"]
+                                                           :additionalProperties false}]}]))
+                                         (range n))
+                       :required (mapv #(str "u" %) (range n))
+                       :additionalProperties false}}))
+
+         strict-of
+         (fn [tool]
+           (:strict (first (extension/budget-strict-tools [tool]))))]
+
+        (expect (= 16 (#'extension/union-parameter-count (:schema (union-tool "ok" 16)))))
+        (expect (true? (strict-of (union-tool "ok" 16))))
+        (expect (nil? (strict-of (union-tool "over" 17))))
+        ;; …and the grammar is nowhere near its own budget, so nothing else did it.
+        (expect (>= (long strict-grammar-budget-for-test)
+                    (long (grammar-spend [(assoc (union-tool "over" 17) :strict true)]))))))
+  (it "grammar cost is structure — names and prose are free"
+      ;; Measured live: twenty strict tools with 24-character property names and
+      ;; 800-character descriptions compile; one more property each does not.
+      (let
+        [terse
+         {:type "object"
+          :properties {"p" {:type "string"}}
+          :required ["p"]
+          :additionalProperties false}
+
+         verbose
+         {:type "object"
+          :properties {"a-very-long-parameter-name" {:type "string"
+                                                     :description (apply str (repeat 800 \z))}}
+          :required ["a-very-long-parameter-name"]
+          :additionalProperties false}]
+
+        (expect (= (#'extension/schema-grammar-cost terse)
+                   (#'extension/schema-grammar-cost verbose)))
+        (expect (< (long (#'extension/schema-grammar-cost terse))
+                   (long (#'extension/schema-grammar-cost
+                          (assoc-in terse [:properties "q"] {:type "string"}))))))))
