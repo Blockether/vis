@@ -15,6 +15,7 @@ import { Header, Shell, TabBar } from '../App';
 import { BUNDLED_DARK, BUNDLED_LIGHT } from '../lib/palettes';
 import { applyTheme } from '../lib/theme';
 import { ChipHeaderVariant, FleetStripVariant, MachineFirstVariant } from './variants';
+import { DataTableVariant } from './tableVariants';
 
 export interface DesignVariant {
   id: string;
@@ -49,6 +50,14 @@ export const DESIGN_VARIANTS: DesignVariant[] = [
     blurb: 'Machine › Project › Session. The fleet is legible at a glance, at the cost of one more level.',
     states: ['default'],
     render: () => <MachineFirstVariant />,
+  },
+  {
+    id: 'table',
+    title: 'Table · vis-table viewer',
+    blurb:
+      'An attached CSV is data: filter, click-to-sort, multi-select and Copy CSV, in the same fence the TUI paints as a grid.',
+    states: ['default', 'wide', 'tall', 'solo'],
+    render: (state) => <DataTableVariant state={state} />,
   },
 ];
 
