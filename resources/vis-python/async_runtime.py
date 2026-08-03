@@ -385,9 +385,8 @@ class __vis_Call__:
     # concurrency to forfeit (unlike a batchable set of calls), so we settle it
     # synchronously right here instead of raising 'not subscriptable'. This kills
     # the `git(...)["stdout"]` / `cat(...)["anchors"]` papercut. We deliberately
-    # do NOT add `__getattr__`/`__iter__`: attribute access is probed by internal
-    # plumbing (`hasattr(v, 'send')`), and iteration is exactly the batch-me-instead
-    # case the loud repr must keep nudging toward `await gather(...)`.
+    # do NOT add `__iter__`: iteration is exactly the batch-me-instead case the
+    # loud repr must keep nudging toward `await gather(...)`.
     def __getitem__(self, k):
         return __vis_settle__(self)[k]
 
@@ -396,6 +395,21 @@ class __vis_Call__:
 
     def __contains__(self, k):
         return k in __vis_settle__(self)
+
+    # ATTRIBUTE auto-settle, same reasoning as `__getitem__` above: `r.get(...)`
+    # or `r.items()` on a still-deferred call is a single-expression use of that
+    # ONE result, and an unresolved `__vis_Call__` reaching user space is exactly
+    # the wedge issue #97 reported (a bare AttributeError naming an object the
+    # caller never created). The names the engine's own plumbing PROBES with
+    # `hasattr` stay ABSENT (`send`/`throw`/`close` for coroutines, `keys` for
+    # pyify's mapping test) so a probe never silently RUNS the call, and dunders
+    # keep normal python semantics — `repr` stays loud, iteration stays refused.
+    __vis_never_settle__ = frozenset(("send", "throw", "close", "keys"))
+
+    def __getattr__(self, name):
+        if name.startswith("_") or name in __vis_Call__.__vis_never_settle__:
+            raise AttributeError(name)
+        return getattr(__vis_settle__(self), name)
 
 
 class __vis_Gather__:
@@ -453,7 +467,16 @@ def __vis_awaitable__(v):
 def __vis_exec_call__(c):
     if c.ran:
         if c.failed:
-            raise RuntimeError(c.nm + " deferred call has already failed")
+            # Disposed before it ever ran (a sibling in the same `await gather(...)`
+            # failed, or the block abandoned it). Issue #97: the bare "has already
+            # failed" text read like a mystery, so say what happened and how to
+            # recover instead of leaving the caller to retry the same dead object.
+            raise RuntimeError(
+                c.nm
+                + "(...) never ran: this deferred call was disposed when a sibling"
+                + " in the same `await gather(...)` failed, so it holds no result."
+                + " Issue the call again in a fresh `await` — do not reuse this object."
+            )
         return c.res
     try:
         # Fold Python **kwargs into a TRAILING DICT positional. The host tool

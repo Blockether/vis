@@ -1394,6 +1394,87 @@ await patch({'path': css})" "t1/i1")]
         (expect (str/includes? (str (get-in err [:data :npe-message])) "is null"))
         (expect (str/includes? (:message err) "internal tool fault")))))
 
+(defdescribe context-cancelled-and-loop-breaker-test
+             ;; Issue #97: once a host-phase failure tore the GraalPy context down, every
+             ;; later block died with GraalVM's bare "Context execution was cancelled." —
+             ;; no reason, no recovery — so the model re-sent identical code until the turn
+             ;; burned out. The mapped error now EXPLAINS the teardown, and on the third
+             ;; identical failure says out loud that the retry itself is the problem.
+             (it "explains a cancelled/closed context and tags it :context-cancelled?"
+                 (let
+                   [err (host-throw! "__ctx_cancelled__"
+                                     (RuntimeException. "Context execution was cancelled."))]
+                   (expect (true? (get-in err [:data :context-cancelled?])))
+                   (expect (str/includes? (:message err) "CONTEXT was torn down"))
+                   (expect (str/includes? (:message err) "ntr["))
+                   ;; the raw engine text still rides along as the trailing original error
+                   (expect (str/includes? (:message err) "Context execution was cancelled."))))
+             (it "leaves an ordinary runtime fault untagged"
+                 (let [err (host-throw! "__ctx_fine__" (RuntimeException. "disk quota exceeded"))]
+                   (expect (nil? (get-in err [:data :context-cancelled?])))))
+             (it "shouts LOOP BREAKER once the SAME block fails identically 3x"
+                 (let
+                   [boom
+                    (fn []
+                      (host-throw! "__loop_boom__" (RuntimeException. "identical failure")))
+
+                    e1
+                    (boom)
+
+                    e2
+                    (boom)
+
+                    e3
+                    (boom)]
+
+                   (expect (not (str/includes? (:message e1) "LOOP BREAKER")))
+                   (expect (not (str/includes? (:message e2) "LOOP BREAKER")))
+                   (expect (str/includes? (:message e3) "LOOP BREAKER"))
+                   (expect (str/includes? (:message e3) "failed 3 times in a row"))
+                   (expect (= 3 (get-in e3 [:data :repeated-failures])))
+                   (expect (nil? (get-in e1 [:data :repeated-failures])))
+                   ;; the real error is still there under the breaker
+                   (expect (str/includes? (:message e3) "identical failure"))))
+             (it "a DIFFERENT failing block restarts the streak"
+                 (let
+                   [_
+                    (host-throw! "__loop_a__" (RuntimeException. "aaa"))
+
+                    _
+                    (host-throw! "__loop_a__" (RuntimeException. "aaa"))
+
+                    other
+                    (host-throw! "__loop_b__" (RuntimeException. "bbb"))
+
+                    again
+                    (host-throw! "__loop_b__" (RuntimeException. "bbb"))]
+
+                   (expect (nil? (get-in other [:data :repeated-failures])))
+                   (expect (not (str/includes? (:message again) "LOOP BREAKER")))))
+             (it "a SUCCESSFUL block in between clears the streak"
+                 (let
+                   [^org.graalvm.polyglot.Context c
+                    @py-ctx
+
+                    boom
+                    (fn []
+                      (host-throw! "__loop_clear__" (RuntimeException. "same again")))
+
+                    _
+                    (boom)
+
+                    _
+                    (boom)
+
+                    _
+                    (ep/run-python-block c "print(1 + 1)")
+
+                    after
+                    (boom)]
+
+                   (expect (nil? (get-in after [:data :repeated-failures])))
+                   (expect (not (str/includes? (:message after) "LOOP BREAKER"))))))
+
 (defdescribe
   await-host-null-pyify-test
   ;; REGRESSION: the async drive loop (`__vis_drive__`) used to send the RAW

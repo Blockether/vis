@@ -2268,6 +2268,43 @@
                    (when (instance? Throwable h) h)))))))
        (catch Throwable _ nil)))
 
+(def ^:private ^java.util.Map block-failure-memory
+  "Per-context memory of the LAST failing block: `Context -> [code message count]`.
+
+   A `WeakHashMap` on purpose — the entry dies with the context, so a disposed
+   or reloaded sandbox leaves nothing behind."
+  (java.util.Collections/synchronizedMap (java.util.WeakHashMap.)))
+
+(def ^:private repeat-breaker-threshold
+  "Consecutive identical (code, error) failures before the loop breaker fires.
+   Two retries is normal recovery; the third is a loop."
+  3)
+
+(defn- note-block-failure!
+  "Record this failure and return how many times IN A ROW this exact `code` has
+   failed on `python-context` with this exact `message`."
+  [python-context code message]
+  (if (nil? python-context)
+    1
+    (let
+      [prev
+       (.get block-failure-memory python-context)
+
+       n
+       (if (and (vector? prev) (= (nth prev 0) code) (= (nth prev 1) message))
+         (inc (long (nth prev 2)))
+         1)]
+
+      (.put block-failure-memory python-context [code message n])
+      n)))
+
+(defn- clear-block-failures!
+  "Forget a context's failure streak. Called on every SUCCESSFUL block so
+   `note-block-failure!` only ever counts CONSECUTIVE identical failures."
+  [python-context]
+  (when python-context (.remove block-failure-memory python-context))
+  nil)
+
 (defn map-polyglot-error
   "Map a GraalPy `PolyglotException` into the engine's op-error shape. `:phase`
    is `:python/syntax` for parse errors, else `:python/runtime`; `:line`/`:column`
@@ -2431,6 +2468,16 @@
            #"'(list|tuple|str|int|float|bool|NoneType|set)' object has no attribute '(get|items|keys|values)'"
            (str base))))
 
+     ;; The GraalPy CONTEXT itself is gone (issue #97): a host-phase teardown, a
+     ;; `/reload`, or a cancellation closed it, and every later block then died
+     ;; with GraalVM's bare "Context execution was cancelled." — no reason and no
+     ;; recovery, so the model kept retrying valid code until the turn burned out.
+     context-cancelled?
+     (boolean (and base
+                   (re-find
+                     #"Context execution was cancelled|Context is closed|Context is already closed"
+                     (str base))))
+
      ;; Python indentation slip (a block not indented, or a stray indent).
      indent?
      (boolean (and base
@@ -2439,6 +2486,12 @@
 
      hint
      (cond
+       context-cancelled?
+       (str "The Python sandbox CONTEXT was torn down (cancelled or closed) — every import, "
+            "variable, and definition from earlier blocks is GONE, so re-running the same "
+            "block keeps failing. Recover in ONE fresh block: re-import what you need, "
+            "re-read stored results with `ntr[\"<tool id>\"]`, and rebuild any state before "
+            "continuing. If it repeats, stop and tell the USER. Original error: ")
        prose-hint prose-hint
        non-ascii? (str "A non-ASCII character leaked into CODE position - it is only "
                        "legal inside a \"...\" string or a `#` comment. This is almost always "
@@ -2511,10 +2564,24 @@
      source-context
      (when pos (render-source-context code (nth pos 0) (nth pos 1) (nth pos 2)))
 
+     ;; Loop breaker (issue #97): the model cannot see its own retry history, so
+     ;; one identical block failing identically was re-sent over and over until
+     ;; the turn burned out. Say it out loud on the Nth strike.
+     repeats
+     (note-block-failure! python-context code (str base))
+
+     breaker
+     (when (>= (long repeats) (long repeat-breaker-threshold))
+       (str
+         "LOOP BREAKER: this EXACT block has now failed " repeats
+         " times in a row with the SAME error. Re-sending it verbatim will fail again — "
+         "change the approach, use a different tool, or tell the USER what is blocking you.\n\n"))
+
      msg
-     (cond-> (if hint (str hint base) base)
-       source-context
-       (str "\n\n" source-context))]
+     (str breaker
+          (cond-> (if hint (str hint base) base)
+            source-context
+            (str "\n\n" source-context)))]
 
     {:message msg
      :data (cond->
@@ -2542,6 +2609,12 @@
 
              host-npe?
              (assoc :host-null? true)
+
+             context-cancelled?
+             (assoc :context-cancelled? true)
+
+             (>= (long repeats) (long repeat-breaker-threshold))
+             (assoc :repeated-failures repeats)
 
              undefined-name
              (assoc :name-undefined?
@@ -2825,6 +2898,9 @@
            (mpl-capture/drain sink)]
 
           (.putMember g "__vis_async_result__" nil) ;; clear stash for the next turn
+          ;; A clean block ENDS any failure streak, so the loop breaker only ever
+          ;; counts CONSECUTIVE identical failures.
+          (clear-block-failures! ctx)
           ;; FLAT sum type — success is ONE CONTEXT channel, never both:
           ;;   - printed output (`:stdout`) → the python_execution result; OR
           ;;   - the returned value (`:result`) → a native tool call (never prints).

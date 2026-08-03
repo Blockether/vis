@@ -572,9 +572,10 @@
   "A deferred `__vis_Call__` (a tool call you forgot to `await`) auto-settles
    when USED INLINE via subscript / `len` / `in` — killing the classic
    `git(x)['stdout']` \"'__vis_Call__' object is not subscriptable\" papercut —
-   WITHOUT weakening the loud unawaited repr or adding spooky `__getattr__`
-   auto-run. The call is built INSIDE a function body so the top-level
-   assignment auto-settle doesn't resolve it first."
+   WITHOUT weakening the loud unawaited repr, and without ever settling on the
+   names internal plumbing probes with `hasattr`. The call is built INSIDE a
+   function body so the top-level assignment auto-settle doesn't resolve it
+   first."
   (let
     [ctx
      (:python-context (ep/create-python-context {}))
@@ -592,6 +593,22 @@
                      "    return [kind, c['stdout'], len(c), 'exit' in c, 'zzz' in c]\n"
                      "print(_t())"))]
           (expect (re-find #"\['__vis_Call__', 'hi', 2, True, False\]" out))))
+    (it "attribute use settles too, but the engine's own hasattr probes never run it"
+        ;; Issue #97: after a host-phase failure an unresolved `__vis_Call__` escaped
+        ;; into user space and every attribute touch died with a bare AttributeError
+        ;; naming an object the caller never made. Attribute access is the same
+        ;; single-expression use as subscript, so it settles — EXCEPT on the names
+        ;; internal plumbing probes with `hasattr` (`send`/`throw`/`close`/`keys`),
+        ;; which must stay absent so a probe can never silently run the tool.
+        (let
+          [out
+           (run
+             (str
+               "def _t():\n" "    ran = []\n"
+               "    c = __vis_deferred__(lambda: ran.append(1) or {'stdout': 'hi'}, 'faketool')()\n"
+               "    probes = [hasattr(c, n) for n in ('send', 'throw', 'close', 'keys')]\n"
+               "    return [probes, len(ran), c.get('stdout'), len(ran)]\n" "print(_t())"))]
+          (expect (re-find #"\[\[False, False, False, False\], 0, 'hi', 1\]" out))))
     (it "an un-awaited call still repr's a LOUD hint and never silently ran"
         (let
           [out (run (str
