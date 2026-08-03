@@ -5,7 +5,11 @@
 # gh, chrome, spel + Playwright browsers, ffmpeg, the Parakeet ASR model). The
 # host contributes nothing but a port, a state volume and a workspace.
 #
-#   docker compose build          # ~30 min the first time; native-image is slow
+# The gateway itself runs on the JVM from the source baked into the image — no
+# native-image anywhere in this build, so it is downloads and a dependency
+# warm-up rather than an hours-long, RAM-hungry compile.
+#
+#   docker compose build
 #   docker compose up -d
 #   docker compose exec vis-gateway cat /home/vis/.vis/gateway-token
 #
@@ -26,9 +30,10 @@ services:
         # Build-time toggles only; version pins live in the Dockerfile's ARGs.
         WITH_BROWSERS: ${WITH_BROWSERS:-true}
         WITH_CHROME: ${WITH_CHROME:-true}
-        # The GraalPy JIT variant forces -Xms14g on the builder JVM. Only turn
-        # it on where that much RAM is FREE, or the build OOMs at minute nine.
-        VIS_ORACLE_NATIVE_IMAGE: ${VIS_ORACLE_NATIVE_IMAGE:-false}
+        # `vis-agent --version` reads a resource stamped from this sha; the
+        # image says "dev" without one, because `.dockerignore` drops `.git`.
+        #   VIS_BUILD_SHA=$(git rev-parse --short HEAD) docker compose build
+        VIS_BUILD_SHA: ${VIS_BUILD_SHA:-}
     image: ${VIS_IMAGE:-vis-gateway}:${VIS_TAG:-local}
     container_name: vis-gateway
     restart: unless-stopped

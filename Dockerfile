@@ -10,11 +10,13 @@
 # Stages:
 #   jdk      — GraalVM CE 25.1.3 (see .graalvm-version), shared by build+runtime.
 #   builder  — clojure CLI + `clojure -T:build native`, produces target/vis.
+#              RELEASE ASSETS ONLY: the runtime image does not depend on it, so
+#              a plain `docker build` never runs native-image at all.
 #   native-export — build-only: the release bundle as a bare filesystem, for
 #              `docker buildx --output type=local` cross-platform releases.
 #   model    — the Parakeet ASR model, fetched once into its own cache layer.
 #   browsers — spel (Playwright) + its browser bundles, in its own layer.
-#   runtime  — the binary, the model, and the agent toolchain.
+#   runtime  — this source on the JVM, the model, and the agent toolchain.
 #
 # Version pins are ARGs. These ARGs and this header are the only place a
 # version is written down in this repo; bump them here.
@@ -23,8 +25,10 @@
 #   docker build -t vis-gateway:lean --build-arg WITH_BROWSERS=false \
 #                                    --build-arg WITH_CHROME=false .
 #
-# Build cost: native-image is CPU- and RAM-hungry. The default here is the
-# LEAN interpreter build (VIS_ORACLE_NATIVE_IMAGE=false). The JIT variant
+# Build cost: this image is downloads plus a dependency warm-up — there is no
+# native-image in it. That cost belongs to `--target native-export` (release
+# assets) alone: native-image is CPU- and RAM-hungry, the default there is the
+# LEAN interpreter build (VIS_ORACLE_NATIVE_IMAGE=false), and the JIT variant
 # (:oracle-native-image true) pulls in libpythonvm, which forces -Xms14g on
 # the builder JVM — only enable it on a host with >=16 GB of FREE RAM.
 # =============================================================================
@@ -42,9 +46,10 @@ ARG SPEL_SHA256=5fc16873fdd879522fe75a7ada5aeb57e3310bc1927571c60d6b9b2578444059
 ARG PARAKEET_MODEL=sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8
 ARG PARAKEET_RELEASE=asr-models
 
-# The container ships the same public wrapper as every other distribution,
-# backed by the full community native runtime (all channels and voice ASR).
-# There is no leaner feature profile to select, so nothing to configure.
+# The container ships the same public wrapper as every other distribution and
+# runs it on the JVM (see the runtime stage), with all channels and voice ASR.
+# There is no leaner feature profile to select, so nothing to configure. These
+# two native-image knobs belong to the release-asset stages only.
 ARG VIS_ORACLE_NATIVE_IMAGE=false
 ARG VIS_NATIVE_EXTRA_ARGS=
 ARG WITH_BROWSERS=true
@@ -409,20 +414,11 @@ RUN test "${WITH_BROWSERS}" != "true" || ls /opt/vis/playwright
 COPY --from=model /opt/vis/models /opt/vis/models
 ENV VIS_PARAKEET_MODEL_DIR=/opt/vis/models/${PARAKEET_MODEL}
 
-# ── Vis Agent wrapper + private native runtime ──
-# The Bash wrapper is the only public executable in every distribution. It pins
-# native-image's runtime user.home to HOME and selects the private sidecar.
-COPY --from=builder /build/target/vis /usr/local/bin/vis-agent-native
-# The GraalPy/Truffle language resources live BESIDE the binary (the image is
-# built with -H:+CopyLanguageResources, see native-image.properties). The wrapper
-# passes -Dpolyglot.engine.resourcePath for this exact directory name; without it
-# every Python tool dies with "No module named 'ast'".
-COPY --from=builder /build/target/resources /usr/local/bin/vis-agent-resources
-COPY --from=builder /build/bin/vis-agent /usr/local/bin/vis-agent
-RUN chmod 0755 /usr/local/bin/vis-agent /usr/local/bin/vis-agent-native
-
-# Unprivileged. The gateway never runs as root, and neither does anything the
-# agent spawns. /work is the default workspace mount point.
+# ── Unprivileged user ──
+# The gateway never runs as root, and neither does anything the agent spawns.
+# /work is the default workspace mount point. Created BEFORE the source below,
+# so the checkout, its `.cpcache` and the warmed `~/.m2` all belong to the user
+# that runs them.
 # Absolute path on purpose: the PATH set above deliberately omits /usr/sbin
 # (the vis user has no business there), so a bare `useradd` is "not found".
 # .ssh and .config/gh are created HERE, owned by vis: docker seeds a named
@@ -434,23 +430,75 @@ RUN /usr/sbin/useradd --create-home --shell /bin/bash --uid 10001 vis \
     && chmod 0700 /home/vis/.ssh \
     && chown -R vis:vis /home/vis /work
 
+# ── Vis Agent: the JVM runtime, from this source ──
+# The container runs `clojure -M:vis` (the wrapper's `jvm` runtime), NOT a
+# native image, and that is the point:
+#   * Building it needs no native-image at all — downloads and a dependency
+#     warm-up, instead of a ~20-minute points-to analysis with a ~12 GiB live
+#     set that only a big machine can even finish.
+#   * Nothing is frozen at build time. native-image initialises Clojure
+#     namespaces during the BUILD, so top-level defs bake in as constants
+#     (`config.clj` folds `config-dir` off `user.home` — that is why the native
+#     build has to pass `-Duser.home=/home/vis`), and every reflective call
+#     missing from `reachability-metadata.json` is a runtime abort: a single
+#     unregistered `java.lang.Character.codePointAt` made the gateway die on
+#     any non-empty `~/.vis/config.yml`. The JVM runs the same code with
+#     neither failure mode, and reads HOME like every other program.
+#   * It costs this image nothing: the JDK, the Clojure CLI and Maven are
+#     already installed above for the agent's own Clojure toolchain.
+# Native binaries are still built — for RELEASE ASSETS, by the `builder` and
+# `native-export` stages above, which this image does not depend on.
+#
+# `bin/vis-agent` resolves itself through symlinks and treats the directory
+# above its own `bin/` as a checkout when it holds a `deps.edn`, so the symlink
+# is what makes THIS source the runtime it launches.
+COPY --chown=vis:vis . /opt/vis/src
+RUN ln -sf /opt/vis/src/bin/vis-agent /usr/local/bin/vis-agent
+
+# `vis/VERSION` — what `vis-agent --version` prints — is a classpath resource
+# the native build writes from a git short sha. `.dockerignore` drops `.git`,
+# so there is no repo to ask here: stamp it from the host's sha, which
+# `bin/release-native` and CI already pass in. Without one the runtime reports
+# "dev", exactly like any source checkout.
+ARG VIS_BUILD_SHA=""
+RUN set -eux; \
+    if [ -n "${VIS_BUILD_SHA}" ]; then \
+        install -d -o vis -g vis /opt/vis/src/resources/vis; \
+        printf '%s\n' "${VIS_BUILD_SHA}" > /opt/vis/src/resources/vis/VERSION; \
+        chown vis:vis /opt/vis/src/resources/vis/VERSION; \
+    fi
+
 USER vis
 WORKDIR /work
 # GIT_CONFIG_GLOBAL: ~/.gitconfig would sit in the container layer and vanish on
 # every `compose up` recreate, taking user.name/user.email with it. Point git at
 # the persisted .config volume instead; `git config --global` then writes there
 # too, so the identity survives a rebuild.
+# VIS_RUNTIME=jvm: the wrapper runs this source with `clojure -M:vis`. It is
+# also what `find_native` would decide on its own here (there is no binary to
+# find), said out loud so `docker exec … vis-agent` can never drift.
 ENV HOME=/home/vis \
     VIS_HOME=/home/vis/.vis \
-    GIT_CONFIG_GLOBAL=/home/vis/.config/git/config
+    GIT_CONFIG_GLOBAL=/home/vis/.config/git/config \
+    VIS_RUNTIME=jvm
+
+# Warm the runtime as the user that will run it: `-P` resolves and downloads
+# every dependency into /home/vis/.m2 and writes /opt/vis/src/.cpcache, so the
+# first boot fetches nothing and a container with no outbound network still
+# starts. /home/vis/.vis is a VOLUME in every deployment and /home/vis/.m2 is
+# not — the cache belongs in the image layer, never in mutable state.
+RUN cd /opt/vis/src && clojure -P -M:vis && test -d /opt/vis/src/.cpcache
 
 # Prove, at build time, that the assembled image is what it claims to be:
-# the toolchain resolves, and the voice extension can actually SEE the model.
+# the toolchain resolves, the runtime that will serve is the JVM one (no binary
+# is in this image at all), and the voice extension can actually SEE the model.
 RUN set -eux; \
     java -version; clojure --version; mvn -v | head -1; \
     python3 --version; node --version; gh --version | head -1; \
     ffmpeg -version | head -1; git --version; ssh -V; \
     vis-agent --version; \
+    vis-agent runtime | grep -Eq '^Runtime: +jvm'; \
+    test ! -e /usr/local/bin/vis-agent-native; \
     vis-agent extension voice models status; \
     test ! -e /root/.vis; \
     test -d /home/vis/.vis; \
