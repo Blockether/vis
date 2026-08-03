@@ -2580,6 +2580,31 @@
                   (update db :channel-status dissoc id)
                   db)))
 
+(reg-event-db :human-input-open
+              (fn [db [_ form]]
+                (if (:human-input db)
+                  (update db :human-input-queue (fnil conj []) form)
+                  (assoc db :human-input form))))
+
+(reg-event-db :human-input-form
+              (fn [db [_ form]]
+                (assoc db :human-input form)))
+
+(reg-event-db :human-input-close
+              (fn [db [_ request-id]]
+                (if (or (nil? request-id)
+                        (= request-id (get-in db [:human-input :request :id])))
+                  (let
+                    [queue (vec (:human-input-queue db))]
+
+                    (assoc db
+                           :human-input (first queue)
+                           :human-input-queue (vec (rest queue))))
+                  (assoc db
+                         :human-input-queue
+                         (vec (remove #(= request-id (get-in % [:request :id]))
+                                      (:human-input-queue db)))))))
+
 (defn- drop-pending-turn-messages
   "Remove the transient user + assistant placeholder pair created by
    `:send-message`. Used only when a submitted prompt is cancelled and
