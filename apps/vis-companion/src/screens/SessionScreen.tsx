@@ -22,6 +22,7 @@ import {
   type PendingAttachment,
 } from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';
+import { holdKeyboardAcrossSheet } from '../lib/keyboard';
 import { mergeQueueBacklog, queuedTurnFromWire, type QueueDelta } from '../lib/gateway';
 import { exactCost, formatCost, formatTokens, sessionUsage } from '../lib/usage';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -3081,6 +3082,10 @@ export function SessionScreen({
       return;
     }
 
+    // The native sheet takes the software keyboard down with it and, on cancel,
+    // nothing puts it back: the composer never lost DOM focus, so the webview sees
+    // no focus change. Hold it across the sheet for whoever was mid-sentence.
+    const restoreKeyboard = holdKeyboardAcrossSheet(composerRef.current);
     try {
       const result = await pickMediaAttachments({
         maxFiles: remaining,
@@ -3092,6 +3097,8 @@ export function SessionScreen({
       setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
     } catch (cause) {
       setComposerNotice(filePickerCancelled(cause) ? 'No files selected.' : (cause as Error).message);
+    } finally {
+      restoreKeyboard();
     }
   }
 
@@ -3106,6 +3113,8 @@ export function SessionScreen({
       return;
     }
 
+    // The camera sheet closes the keyboard the same way the picker does.
+    const restoreKeyboard = holdKeyboardAcrossSheet(composerRef.current);
     try {
       const result = await capturePhotoAttachment({
         maxFileBytes: limits?.max_file_bytes ?? 5 * 1024 * 1024,
@@ -3116,6 +3125,8 @@ export function SessionScreen({
     } catch (cause) {
       // A cancelled shutter is a decision, not a failure.
       setComposerNotice(filePickerCancelled(cause) ? 'No photo taken.' : (cause as Error).message);
+    } finally {
+      restoreKeyboard();
     }
   }
 
