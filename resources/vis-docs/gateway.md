@@ -237,9 +237,36 @@ only the session title plus `session_id`, `turn_id`, `status` and the sending
 gateway's own `gateway_id` (the opaque id `/healthz` reports, so a phone paired
 with several machines opens the tapped session on the machine that raised it);
 the transcript never leaves the gateway. iOS devices are delivered through
-**APNs**, Android
-devices through **FCM**; each half is configured independently and either can be
-left off.
+**APNs**, Android devices through **FCM**; each half is configured independently
+and either can be left off.
+
+### Who a gateway can actually push to
+
+Read this before configuring anything: APNs and FCM bind the credential to the
+**app build**, not to the gateway.
+
+- An APNs key signs only for topics owned by the Apple team that issued it. A key
+  from any other team, signing for someone else's bundle id, is refused with HTTP
+  403 `InvalidProviderToken` (or `TopicDisallowed`) — every time, permanently.
+- An FCM service account may only send to tokens minted from its **own** Firebase
+  project's `google-services.json`. Anything else is 403 `SENDER_ID_MISMATCH`.
+
+So the credentials below configure push for a companion **you build and sign
+yourself**, under your own Apple team and Firebase project, with your own bundle
+id and package name. They cannot make a companion distributed through the App
+Store or Play Store — which carries its publisher's topic and sender id — accept
+a push from your gateway. That is an Apple/Google constraint, not a vis setting:
+no key, topic, or environment value works around it.
+
+| You run | Push to that app |
+| --- | --- |
+| your gateway + your own rebuilt companion | ✅ configure it below |
+| your gateway + a store-distributed companion | only from a gateway holding **that publisher's** credentials |
+| your gateway + a store-distributed companion, using your own key | ❌ permanent 403 — nothing to configure |
+
+Push is optional. With no credentials the gateway still registers devices,
+reports `features.push` as unavailable, and simply never sends; sessions,
+streaming, and drafts are unaffected.
 
 ### Gateway side, iOS (APNs credentials)
 
@@ -261,7 +288,7 @@ delivery immediately. Otherwise give the gateway one of:
 export VIS_APNS_KEY_PATH=~/.vis/apns/AuthKey_ABCD123456.p8
 export VIS_APNS_KEY_ID=ABCD123456
 export VIS_APNS_TEAM_ID=YOURTEAMID                  # your Apple team id
-export VIS_APNS_TOPIC=com.example.yourapp           # the app's bundle id
+export VIS_APNS_TOPIC=com.example.yourapp           # your own build's bundle id
 export VIS_APNS_ENV=production                      # or sandbox for Xcode builds
 ```
 
@@ -274,7 +301,10 @@ put the rest in `~/.vis/apns/apns.edn`:
 
 Create the key once at *Apple Developer -> Certificates, Identifiers & Profiles
 -> Keys*, with the **Apple Push Notifications service (APNs)** capability
-enabled; the same key signs for every app of the team and never expires.
+enabled. A team-scoped key signs for every app of that team (Apple allows two
+per environment); a topic-specific key is restricted to the bundle ids you
+select. Neither kind expires — the only remedy for a leaked key is revoking it,
+which breaks push for every gateway that was using it.
 
 `GET /v1/capabilities` reports readiness as `features.push`, naming what is
 missing when it is not ready.
@@ -311,6 +341,25 @@ the keychain (`vis-fcm/google_services`), `~/.vis/fcm/google-services.json`, or
 Registrations from a platform the gateway cannot serve are stored and listed but
 never sent — the device reports `unsupported-platform` rather than having its
 token thrown at the wrong provider.
+
+### Secret, or shippable?
+
+Running gateways for other people means distributing none of the first group.
+
+| File or value | Verdict |
+| --- | --- |
+| APNs key `~/.vis/apns/AuthKey_*.p8` | **secret** — a private signing key; whoever holds it can push to every app it is scoped to, until it is revoked |
+| FCM service account `~/.vis/fcm/*.json` | **secret** — a Google private key, same rule |
+| gateway token (`--token-file`, `~/.vis/gateway.token`) | **secret** — full API access to that gateway |
+| device tokens (`~/.vis/devices.edn`) | **private** — never echoed in full; `GET /v1/devices` masks them |
+| `google-services.json` | **shippable** — client config that already sits inside every APK; it holds no private key |
+| bundle id / package name, APNs topic, Apple team id, Firebase project id | **public** — identifiers, not credentials |
+| APNs key id (`ABCD123456`) | **public** — it is just the `.p8` filename |
+
+There is no way to hand out the first group safely, and no per-holder
+revocation: one leak revokes the key for everyone. If devices must be woken by
+gateways you do not control, the signing key stays on a service you run and
+those gateways call it — it is never copied onto them.
 
 ### Device registry
 
