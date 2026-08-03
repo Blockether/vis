@@ -1,5 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import { Keyboard } from '@capacitor/keyboard';
+import { isSoftKeyboardUp } from './viewport';
 
 /**
  * Keeping the software keyboard across a native sheet.
@@ -19,6 +20,21 @@ import { Keyboard } from '@capacitor/keyboard';
  *  mid-animation is dropped before the webview is first responder again. */
 const SHEET_DISMISS_MS = 150;
 
+/** Gap between later looks at the keyboard, once the first window has passed. */
+const KEYBOARD_WATCH_MS = 100;
+
+/**
+ * Looks taken before the keyboard counts as gone for good.
+ *
+ * A sheet that DELIVERED media is not the cancel case: iOS hands first responder
+ * back to the webview and raises the keyboard by itself, a few hundred ms after
+ * the plugin promise settles. Blurring on top of that drives the keyboard down
+ * again and the focus that follows drags it back up — the open/close/open flicker
+ * seen after attaching a picture to a half-written message. So watch first, and
+ * only repair a keyboard that never came back.
+ */
+const KEYBOARD_WATCH_LOOKS = 3;
+
 interface Caret {
   start: number | null;
   end: number | null;
@@ -26,9 +42,11 @@ interface Caret {
 
 export interface KeyboardHoldOptions {
   /** Defers the refocus. Injected by tests; production waits out the dismissal. */
-  schedule?: (run: () => void) => void;
+  schedule?: (run: () => void, delayMs: number) => void;
   /** Asks the platform for the keyboard once focus is back. */
   showSoftKeyboard?: () => void;
+  /** True while the software keyboard is on screen. */
+  isKeyboardOpen?: () => boolean;
 }
 
 function caretOf(element: HTMLElement): Caret {
@@ -63,12 +81,12 @@ function requestSoftKeyboard(): void {
   void Keyboard.show().catch(() => undefined);
 }
 
-function afterSheetDismissal(run: () => void): void {
+function afterSheetDismissal(run: () => void, delayMs: number): void {
   if (typeof setTimeout !== 'function') {
     run();
     return;
   }
-  setTimeout(run, SHEET_DISMISS_MS);
+  setTimeout(run, delayMs);
 }
 
 /**
@@ -77,6 +95,10 @@ function afterSheetDismissal(run: () => void): void {
  * was cancelled. It is a no-op when the keyboard was down to begin with — a user who
  * opened the picker from a closed composer must not be ambushed by one — and calling
  * it twice restores once.
+ *
+ * The thunk WATCHES before it acts: a keyboard that the OS brought back on its own
+ * is left strictly alone, because cycling focus underneath it is what the user sees
+ * as the keyboard closing and reopening.
  */
 export function holdKeyboardAcrossSheet(
   element: HTMLElement | null | undefined,
@@ -91,13 +113,27 @@ export function holdKeyboardAcrossSheet(
     restored = true;
     const schedule = options.schedule ?? afterSheetDismissal;
     const show = options.showSoftKeyboard ?? requestSoftKeyboard;
-    schedule(() => {
+    const isKeyboardOpen = options.isKeyboardOpen ?? isSoftKeyboardUp;
+    let looks = 0;
+
+    const watch = () => {
+      // Back on its own: the sheet returned first responder and the OS is already
+      // raising the keyboard. There is nothing to repair, and touching focus here
+      // would take it down and bring it up again in front of the user.
+      if (isKeyboardOpen()) return;
+      looks += 1;
+      if (looks < KEYBOARD_WATCH_LOOKS) {
+        schedule(watch, KEYBOARD_WATCH_MS);
+        return;
+      }
       // The element is still `document.activeElement`, so plain `focus()` is a
       // no-op to the engine. Only a real focus change raises the keyboard.
       if (element.ownerDocument?.activeElement === element) element.blur();
       element.focus({ preventScroll: true });
       if (caret) restoreCaret(element, caret);
       show();
-    });
+    };
+
+    schedule(watch, SHEET_DISMISS_MS);
   };
 }

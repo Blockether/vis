@@ -40,6 +40,7 @@ describe('holdKeyboardAcrossSheet', () => {
     const restore = holdKeyboardAcrossSheet(element, {
       schedule: (run) => run(),
       showSoftKeyboard,
+      isKeyboardOpen: () => false,
     });
     // The native sheet never moved DOM focus, so a plain focus() would be ignored.
     expect(log).toEqual([]);
@@ -58,18 +59,45 @@ describe('holdKeyboardAcrossSheet', () => {
     holdKeyboardAcrossSheet(element, {
       schedule: (run) => void pending.push(run),
       showSoftKeyboard: () => undefined,
+      isKeyboardOpen: () => false,
     })();
 
     expect(log).toEqual([]);
-    pending.forEach((run) => run());
+    while (pending.length) pending.shift()?.();
     expect(log).toEqual(['blur', 'focus:true', 'caret:4-4']);
+  });
+
+  // The OS can take its time handing first responder back. Anything that arrives
+  // inside the watch window still counts as "the keyboard came back by itself".
+  it('gives up the repair when the keyboard returns late', () => {
+    const { element, log } = composer();
+    const showSoftKeyboard = vi.fn();
+    const pending: Array<() => void> = [];
+    let open = false;
+
+    holdKeyboardAcrossSheet(element, {
+      schedule: (run) => void pending.push(run),
+      showSoftKeyboard,
+      isKeyboardOpen: () => open,
+    })();
+
+    pending.shift()?.();
+    open = true;
+    while (pending.length) pending.shift()?.();
+
+    expect(log).toEqual([]);
+    expect(showSoftKeyboard).not.toHaveBeenCalled();
   });
 
   it('leaves a closed keyboard closed', () => {
     const { element, log } = composer({ focused: false });
     const showSoftKeyboard = vi.fn();
 
-    holdKeyboardAcrossSheet(element, { schedule: (run) => run(), showSoftKeyboard })();
+    holdKeyboardAcrossSheet(element, {
+      schedule: (run) => run(),
+      showSoftKeyboard,
+      isKeyboardOpen: () => false,
+    })();
 
     expect(log).toEqual([]);
     expect(showSoftKeyboard).not.toHaveBeenCalled();
@@ -89,6 +117,7 @@ describe('holdKeyboardAcrossSheet', () => {
     const restore = holdKeyboardAcrossSheet(element, {
       schedule: (run) => run(),
       showSoftKeyboard: () => undefined,
+      isKeyboardOpen: () => false,
     });
     restore();
     restore();
@@ -105,10 +134,32 @@ describe('holdKeyboardAcrossSheet', () => {
     const showSoftKeyboard = vi.fn();
 
     expect(() =>
-      holdKeyboardAcrossSheet(element, { schedule: (run) => run(), showSoftKeyboard })(),
+      holdKeyboardAcrossSheet(element, {
+        schedule: (run) => run(),
+        showSoftKeyboard,
+        isKeyboardOpen: () => false,
+      })(),
     ).not.toThrow();
 
     expect(log).toEqual(['blur', 'focus:true']);
     expect(showSoftKeyboard).toHaveBeenCalledTimes(1);
+  });
+
+  // The reported bug: write a description, attach a picture, and the keyboard
+  // closes and reopens under the composer. Delivering media hands first responder
+  // back to the webview and the OS raises the keyboard itself; a blind blur/focus
+  // on top of that IS the flicker.
+  it('leaves a keyboard the sheet already handed back alone', () => {
+    const { element, log } = composer();
+    const showSoftKeyboard = vi.fn();
+
+    holdKeyboardAcrossSheet(element, {
+      schedule: (run) => run(),
+      showSoftKeyboard,
+      isKeyboardOpen: () => true,
+    })();
+
+    expect(log).toEqual([]);
+    expect(showSoftKeyboard).not.toHaveBeenCalled();
   });
 });

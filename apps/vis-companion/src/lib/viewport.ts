@@ -439,6 +439,10 @@ export function useIsViewportRotating(): boolean {
 // to ask here instead of measuring the visual viewport.
 let pinnedShellHeight: number | null = null;
 
+// Whether the software keyboard is on screen, maintained by the native keyboard
+// driver in `useVisualViewportShell` and read through `isSoftKeyboardUp`.
+let softKeyboardUp = false;
+
 // `--safe-bottom` is deliberately NOT written on `document.documentElement`. A
 // custom property set on the ROOT invalidates the computed style of every
 // element that could inherit it, and the keyboard drivers below rewrite it on
@@ -507,6 +511,20 @@ export function reclaimViewportForExternalNavigation(): void {
   reclaimShellForExternalNavigation?.();
 }
 
+/**
+ * Is the software keyboard on screen right now?
+ *
+ * `visualViewport` cannot answer on native iOS: `resize: 'none'` keeps WKWebView
+ * full-height, so the visual viewport never shrinks and only Capacitor's
+ * will-show/will-hide pair knows. Android resizes the webview itself and the web
+ * build has no plugin, so both are measured. The native driver in
+ * `useVisualViewportShell` owns `softKeyboardUp`.
+ */
+export function isSoftKeyboardUp(): boolean {
+  if (Capacitor.getPlatform() === 'ios') return softKeyboardUp;
+  return isKeyboardCovering(readViewportMetrics());
+}
+
 export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>): void {
   useEffect(() => {
     const shell = shellRef.current;
@@ -546,8 +564,10 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     let keyboardPinOrientation: KeyboardOrientation | null = null;
     // What the keyboard is doing, independent of whether the shell is currently
     // pinned to it: a rotation has to drop the pin (the numbers behind it belong
-    // to the other orientation) and then rebuild it from fresh ones.
-    let keyboardUp = false;
+    // to the other orientation) and then rebuild it from fresh ones. Module-level
+    // so anything that has to know whether the keyboard is up (see
+    // `isSoftKeyboardUp`) reads the same fact this driver maintains.
+    softKeyboardUp = false;
     // UIKit emits synthetic hide/show pairs while rotating. Latch the confirmed
     // pre-rotation state before those events can erase it, then rebuild the pin
     // as soon as the new CSS/JS dimensions agree.
@@ -572,7 +592,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         window.clearTimeout(outOfOrderDidHideTimer);
         outOfOrderDidHideTimer = null;
       }
-      keyboardUp = false;
+      softKeyboardUp = false;
       keyboardExpectedAfterRotation = false;
       keyboardPinned = false;
       keyboardPinOrientation = null;
@@ -671,7 +691,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       // unless the keyboard is genuinely still up.
       if (
         keyboardPinned &&
-        !keyboardUp &&
+        !softKeyboardUp &&
         !isKeyboardInputElement(document.activeElement)
       ) {
         keyboardPinned = false;
@@ -737,7 +757,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       if (phase !== 'end') {
         if (phase === 'start') {
           keyboardExpectedAfterRotation =
-            keyboardUp && isKeyboardInputElement(document.activeElement);
+            softKeyboardUp && isKeyboardInputElement(document.activeElement);
         }
         sync();
         return;
@@ -796,7 +816,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         if (
           Math.abs(rootWidth - rootHeight) < 2 ||
           innerLandscape === rootLandscape ||
-          !keyboardUp ||
+          !softKeyboardUp ||
           !isKeyboardInputElement(document.activeElement)
         )
           return false;
@@ -812,8 +832,8 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       prepinKeyboard = (duringRotation = false) => {
         if (
           duringRotation
-            ? (!keyboardUp && !keyboardExpectedAfterRotation) || !viewportOrientationSettled()
-            : keyboardUp || isViewportRotating()
+            ? (!softKeyboardUp && !keyboardExpectedAfterRotation) || !viewportOrientationSettled()
+            : softKeyboardUp || isViewportRotating()
         )
           return false;
         const metrics = readViewportMetrics();
@@ -828,7 +848,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         // it; `onWillShow` calls `pin`, which clears this timer.
         timers.push(
           window.setTimeout(() => {
-            if (keyboardUp || !keyboardPinned) return;
+            if (softKeyboardUp || !keyboardPinned) return;
             keyboardPinned = false;
             pinnedShellHeight = null;
             setBox(null);
@@ -838,7 +858,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         return true;
       };
       const onWillShow = (info: KeyboardInfo) => {
-        keyboardUp = true;
+        softKeyboardUp = true;
         keyboardHeight = info.keyboardHeight;
         // Mid-rotation the two operands describe different devices — iOS reports
         // the new keyboard height while `innerHeight` is still the old window,
@@ -877,14 +897,14 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
             // The CSS root can expose the flip before matchMedia/orientationchange.
             if (prepinKeyboardFromPhysicalRoot()) return;
             if (isViewportRotating() || keyboardExpectedAfterRotation) return;
-            keyboardUp = false;
+            softKeyboardUp = false;
             setSafeBottom(SAFE_BOTTOM_DEFAULT);
             finishKeyboardHide();
           }, 250);
           return;
         }
         if (isViewportRotating() || keyboardExpectedAfterRotation) return;
-        keyboardUp = false;
+        softKeyboardUp = false;
         setSafeBottom(SAFE_BOTTOM_DEFAULT);
         pin(layoutHeight(readViewportMetrics()));
       };
@@ -892,7 +912,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       // transitions: the rotation already moved everything at once.
       repinKeyboard = () => {
         if (
-          (!keyboardUp && !keyboardExpectedAfterRotation) ||
+          (!softKeyboardUp && !keyboardExpectedAfterRotation) ||
           !isKeyboardInputElement(document.activeElement)
         )
           return false;
@@ -913,16 +933,16 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         // that makes this early pin safe.
         if (prepinKeyboardFromPhysicalRoot()) return;
         if (isViewportRotating() || keyboardExpectedAfterRotation) return;
-        // A genuine will→did dismissal already cleared `keyboardUp` in
+        // A genuine will→did dismissal already cleared `softKeyboardUp` in
         // `onWillHide`; seeing it still set means this may be iOS's reversed
         // rotation pair, so hold briefly for the matching will event.
-        if (keyboardUp && isKeyboardInputElement(document.activeElement)) {
+        if (softKeyboardUp && isKeyboardInputElement(document.activeElement)) {
           if (outOfOrderDidHideTimer !== null)
             window.clearTimeout(outOfOrderDidHideTimer);
           outOfOrderDidHideTimer = window.setTimeout(() => {
             outOfOrderDidHideTimer = null;
             if (isViewportRotating() || keyboardExpectedAfterRotation) return;
-            keyboardUp = false;
+            softKeyboardUp = false;
             finishKeyboardHide();
           }, 40);
           return;
