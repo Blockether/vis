@@ -9,7 +9,13 @@ def __vis_run_module__(name):
         mod = importlib.import_module(name)
     except ImportError:
         mod = None
-    if mod is not None and getattr(mod, "__file__", None) is None:
+    # A vis shim is a synthesised module: `__vis_shim__` is the marker the host
+    # stamps on it. (A missing `__file__` still counts, as the fallback for a
+    # module the identity stamp never reached.)
+    if mod is not None and (
+        getattr(mod, "__vis_shim__", None) is not None
+        or getattr(mod, "__file__", None) is None
+    ):
         entry = getattr(mod, "console_main", None) or getattr(mod, "main", None)
         if callable(entry):
             try:

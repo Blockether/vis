@@ -1420,6 +1420,32 @@
                                              vec))))
           (or m {}))))))
 
+(def ^:private shim-identity-python
+  "Installs `__vis_stamp_shim__` — the ONE place a shim's module identity
+   (`__file__`, `__vis_shim__`, fallback `__version__`) is stamped, so every
+   synthesised module answers the introspection every real library answers."
+  (runtime-python-src "vis-python/shim_identity.py"))
+
+(def ^:private shim-origin-prefix
+  ;; A shim's source is a CLASSPATH RESOURCE, not a file on disk (inside the
+  ;; native image there is no file at all), so its `__file__` is angle-bracketed
+  ;; the way CPython marks its own non-file origins (`<frozen ...>`).
+  "<vis-shim>/")
+
+(def ^:private shim-fallback-version
+  ;; Only for a shim that declares no `__version__` of its own: something truthful
+  ;; is better than an AttributeError, and a shim's own value always wins.
+  "vis-shim")
+
+(defn- shim-identity-json
+  "Identity spec for `shim`: the modules it owns (declared `:shim/imports` plus
+   the capture-derived `:provides`) and the `__file__` / `__version__` to stamp."
+  ^String [shim trig]
+  (json/write-json-str {"sid" (:shim/name shim)
+                        "file" (str shim-origin-prefix (:shim/source shim))
+                        "version" shim-fallback-version
+                        "names" (vec (distinct (concat (:shim/imports shim) (:provides trig))))}))
+
 (defn- install-sandbox-shims!
   "Install EVERY extension-contributed sandbox shim into `ctx` (main context AND
    every `sub_loop` fork), in registration order, BEFORE the baseline snapshot.
@@ -1431,7 +1457,11 @@
    ON DEMAND, once, on the first `import`/attribute touch (see
    `lazy-shim-runtime-python`). A shim with no derivable trigger (no importable
    module, no builtins staple - e.g. `attach`) stays EAGER, preserving its side
-   effects. Best-effort: one shim's failure never breaks context creation."
+   effects. Best-effort: one shim's failure never breaks context creation.
+
+   Whichever path materializes it, the module is stamped with its identity
+   (`__file__` / `__vis_shim__` / fallback `__version__`) the moment its source
+   has run - see `shim-identity-python`."
   [^Context ctx ^Value g]
   (let
     [shims
@@ -1462,31 +1492,47 @@
                  :lazy? lazy?)))
            base)
 
-     id->src
-     (into {} (comp (filter :lazy?) (map (juxt :sid :src))) entries)]
+     id->entry
+     (into {} (comp (filter :lazy?) (map (juxt :sid identity))) entries)
 
+     stamp!
+     (fn [{:keys [shim trig]}]
+       (try (.putMember g "__vis_shim_stamp_json__" (shim-identity-json shim trig))
+            (.eval ctx "python" "__vis_stamp_shim__(__vis_shim_stamp_json__)")
+            (.putMember g "__vis_shim_stamp_json__" nil)
+            (catch Throwable t
+              (tel/log! {:level :warn :id ::sandbox-shim-stamp-failed}
+                        (str "sandbox shim '" (:shim/name shim)
+                             "' identity stamp failed: " (or (.getMessage t) t))))))]
+
+    ;; Module identity first: both paths below stamp through `__vis_stamp_shim__`.
+    (try (.eval ctx "python" ^String shim-identity-python)
+         (catch Throwable t
+           (tel/log! {:level :warn :id ::shim-identity-runtime-failed}
+                     (str "shim-identity runtime failed to install: " (or (.getMessage t) t)))))
     ;; Central lazy runtime + host loader callback - once, only if anything is lazy.
-    (when (seq id->src)
+    (when (seq id->entry)
       (try (.eval ctx "python" ^String lazy-shim-runtime-python)
            (.putMember g
                        "__vis_load_shim__"
                        (wrap-ifn (fn [sid]
-                                   (when-let [s (get id->src (str sid))]
-                                     (.eval ctx "python" ^String s))
+                                   (when-let [e (get id->entry (str sid))]
+                                     (.eval ctx "python" ^String (:src e))
+                                     (stamp! e))
                                    nil)))
            (catch Throwable t
              (tel/log! {:level :warn :id ::lazy-shim-runtime-failed}
                        (str "lazy-shim runtime failed to install: " (or (.getMessage t) t))))))
-    (doseq [{:keys [shim src sid trig lazy?]} entries]
+    (doseq [{:keys [shim src sid trig lazy?] :as e} entries]
       (try (wire-shim-bindings! g shim)
-           (if (and lazy? (contains? id->src sid))
+           (if (and lazy? (contains? id->entry sid))
              (do (.putMember g
                              "__vis_lazy_spec_json__"
                              (json/write-json-str
                                {"sid" sid "provides" (:provides trig) "autoload" (:autoload trig)}))
                  (.eval ctx "python" "__vis_register_lazy_shim__(__vis_lazy_spec_json__)")
                  (.putMember g "__vis_lazy_spec_json__" nil))
-             (when (string? src) (.eval ctx "python" ^String src)))
+             (when (string? src) (.eval ctx "python" ^String src) (stamp! e)))
            (catch Throwable t
              (tel/log! {:level :warn :id ::sandbox-shim-install-failed}
                        (str "sandbox shim '" (:shim/name shim)

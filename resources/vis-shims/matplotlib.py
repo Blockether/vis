@@ -2530,6 +2530,7 @@ def __vis_install_matplotlib__():
     # module per import path live here.
     mpl.__path__ = []
     mpl_toolkits.__path__ = []
+    mpl_toolkits.__version__ = "3.0-vis-imaging"
     mplot3d.__path__ = []
 
     _math = __import__("math")

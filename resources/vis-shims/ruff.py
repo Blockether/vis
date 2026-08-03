@@ -10,8 +10,8 @@
 #     vis python -m ruff check  PATHS  -> lint report, exit 1 on findings
 #     vis python -m ruff format PATHS  -> rewrite files (--check / --diff too)
 #
-# `-m` works because sandbox shims are synthesised modules with no `__file__`:
-# the host's module runner calls `console_main(sys.argv[1:])` instead of runpy.
+# `-m` works because sandbox shims are synthesised modules the host marks with
+# `__vis_shim__`: the module runner calls `console_main(sys.argv[1:])`, not runpy.
 #
 # Ruff's OWN configuration discovery is authoritative -- for every file the host
 # walks up for `.ruff.toml`, `ruff.toml` or a `pyproject.toml` with
@@ -444,6 +444,12 @@ def __vis_install_ruff__():
     module.RuffError = RuffError
     module.config_for = config_for
     module.version = version
+    try:
+        module.__version__ = version()
+    except Exception:
+        # The host binding is the only source of truth; never fail the import
+        # over a version string (the host stamps a fallback anyway).
+        pass
     module.format_str = format_str
     module.check_str = check_str
     module.format_file = format_file

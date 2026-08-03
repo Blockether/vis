@@ -379,6 +379,7 @@ def __vis_install_sqlite3__():
     mod.version_info = (2, 6, 0)
     mod.sqlite_version = "3.53.2"
     mod.sqlite_version_info = (3, 53, 2)
+    mod.__version__ = "2.6.0-vis-shim"
     mod.paramstyle = "qmark"
     mod.apilevel = "2.0"
     mod.threadsafety = 1

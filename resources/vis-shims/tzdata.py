@@ -95,6 +95,7 @@ def __vis_install_tzdata__():
     _zi_mod = _types.ModuleType("zoneinfo")
     _zi_mod.ZoneInfo = ZoneInfo
     _zi_mod.ZoneInfoNotFoundError = ZoneInfoNotFoundError
+    _zi_mod.__version__ = "system"
     _zi_mod.available_timezones = available_timezones
     _zi_mod.TZPATH = ()
     _zi_mod.reset_tzpath = lambda to=None: None
