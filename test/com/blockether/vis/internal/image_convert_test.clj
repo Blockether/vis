@@ -445,6 +445,48 @@
                   (expect (nil? (raster (doc "width=\"10\" height=\"10\""))))))))
 
 ;; =============================================================================
+;; fit-dimensions
+;; =============================================================================
+
+(defdescribe
+  fit-dimensions-test
+  "The PIXEL ceiling. A provider refuses an oversized picture whatever it
+   WEIGHS: a 4K screenshot is a couple of hundred KB and still a hard 400 once
+   one request carries many images -- and attachments replay, so every long
+   session becomes exactly that request."
+  (it "hands back a picture within the ceiling ITSELF, byte for byte"
+      (let
+        [data
+         (raster-bytes "png" 40 20 0xff0000)
+
+         r
+         (image-convert/fit-dimensions data 1568)]
+
+        (expect (identical? data (:bytes r)))
+        (expect (= [40 20] [(:width r) (:height r)]))))
+  (it "downscales an oversized picture, ratio intact"
+      (let
+        [data
+         (raster-bytes "png" 4000 1000 0x00ff00)
+
+         r
+         (image-convert/fit-dimensions data 500)]
+
+        (expect (nil? (:reason r)))
+        (expect (= [500 125] [(:width r) (:height r)]))
+        (expect (= [500 125] (decoded-size (:bytes r))))
+        (expect (= "00ff00" (px (decode (:bytes r)) 250 60)))))
+  (it "defaults to a ceiling under every provider's many-image limit"
+      (expect (<= image-convert/max-wire-dimension 2000))
+      (let [r (image-convert/fit-dimensions (raster-bytes "png" 2400 2400 0xff0000))]
+        (expect (= [image-convert/max-wire-dimension image-convert/max-wire-dimension]
+                   [(:width r) (:height r)]))))
+  (it "leaves the payload alone when conversion is unavailable"
+      (binding [image-convert/*enabled?* false]
+        (let [data (raster-bytes "png" 40 20 0xff0000)]
+          (expect (identical? data (:bytes (image-convert/fit-dimensions data 10))))))))
+
+;; =============================================================================
 ;; Cross-validation: a decoder that is NOT the one that wrote the bytes
 ;; =============================================================================
 

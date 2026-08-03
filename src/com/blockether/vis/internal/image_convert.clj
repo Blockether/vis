@@ -275,6 +275,84 @@
     (let [out (try (imaging/optimize data {:max-bytes max-bytes}) (catch Throwable _ nil))]
       (if (and out (pos? (alength ^bytes out)) (< (alength ^bytes out) (alength data))) out data))))
 
+(def ^:const max-wire-dimension
+  "Long-edge ceiling, in PIXELS, for a payload on a vision wire.
+
+   Bytes are not the only cap a provider enforces. Anthropic refuses any image
+   whose side exceeds 8000px -- and 2000px as soon as ONE request carries many
+   images, which every long vis session becomes, because attachments REPLAY on
+   every later turn:
+
+     messages.0.content.52.image.source.base64.data: At least one of the image
+     dimensions exceed max allowed size for many-image requests: 2000 pixels
+
+   That is a hard 400 on a request whose predecessor was fine, and -- since the
+   same rows replay -- it repeats until the offending attachment leaves the
+   session. So the send gate clamps the PICTURE, not only its weight.
+
+   1568 sits deliberately below the 2000 ceiling: it is the long edge Anthropic
+   downscales to on its own side, so a retina screenshot reaches the model as
+   the same picture it would have seen anyway, in fewer bytes and fewer tokens,
+   on every provider."
+  1568)
+
+(defn fit-dimensions
+  "Downscale an already wire-safe payload until NEITHER side exceeds
+   `max-dimension`, preserving aspect ratio and container (`imaging/optimize`'s
+   `:max-width`/`:max-height`, so an animated GIF stays animated).
+
+   The third and last exception to \"never re-encode\", and it earns it exactly
+   the way [[fit-within]] does: the alternative is not \"send the original\", it
+   is a provider 400 that replays on every later turn ([[max-wire-dimension]]).
+
+   Returns `{:bytes <b> :width <w> :height <h>}` -- `data` ITSELF when it already
+   fits, so the verbatim-bytes contract holds for every picture within the
+   ceiling -- or `{:reason <why>}` when an oversized picture cannot be brought
+   under it. Never nil, never throws."
+  ([^bytes data] (fit-dimensions data max-wire-dimension))
+  ([^bytes data ^long max-dimension]
+   (let
+     [probe
+      (when (and *enabled?* data (pos? (alength data)))
+        (try (imaging/probe data) (catch Throwable _ nil)))
+
+      w
+      (long (or (:width probe) 0))
+
+      h
+      (long (or (:height probe) 0))]
+
+     (cond
+       ;; Nothing to measure (conversion off, or a container the prober cannot
+       ;; read): best effort beats dropping a picture over a size never seen.
+       (or (nil? probe) (not (pos? w)) (not (pos? h))) {:bytes data}
+       (and (<= w max-dimension) (<= h max-dimension)) {:bytes data :width w :height h}
+       :else (let
+               [out
+                (try (imaging/optimize
+                       data
+                       {:max-width max-dimension :max-height max-dimension :force true})
+                     (catch Throwable _ nil))
+
+                scaled
+                (when (and out (pos? (alength ^bytes out)))
+                  (try (imaging/probe out) (catch Throwable _ nil)))
+
+                w2
+                (long (or (:width scaled) 0))
+
+                h2
+                (long (or (:height scaled) 0))]
+
+               (if (and (pos? w2) (pos? h2) (<= w2 max-dimension) (<= h2 max-dimension))
+                 {:bytes out :width w2 :height h2}
+                 {:reason (str w
+                               "x"
+                               h
+                               " exceeds the "
+                               max-dimension
+                               "px per-side limit for images and could not be downscaled")}))))))
+
 (def ^:const video-gif-max-dimension
   "Long-edge ceiling for the GIF a clip becomes. A model reads a contact sheet,
    not a film: 320px keeps a UI flow or a crash repro legible while leaving

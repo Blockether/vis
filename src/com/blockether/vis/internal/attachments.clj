@@ -700,7 +700,7 @@
 
 (defn- content-key
   "Cache key: the payload's own content, plus everything the verdict depends on."
-  [^String payload media-type ^long max-bytes]
+  [^String payload media-type ^long max-bytes ^long max-dimension]
   (let
     [md
      (MessageDigest/getInstance "SHA-256")
@@ -708,7 +708,10 @@
      digest
      (.digest md (.getBytes payload StandardCharsets/UTF_8))]
 
-    (str (.encodeToString (Base64/getUrlEncoder) digest) "|" media-type "|" max-bytes)))
+    (str (.encodeToString (Base64/getUrlEncoder) digest)
+         "|" media-type
+         "|" max-bytes
+         "|" max-dimension)))
 
 (defn- cache-put!
   [k verdict]
@@ -762,7 +765,7 @@
    `{:media-type <mt> :size <n>}` — send the caller's own base64, untouched.
    `{:media-type <mt> :size <n> :base64 <b64>}` — send THIS instead (converted).
    `{:reason <why>}` — do not send it, and tell whoever asks why."
-  [^String payload declared ^long max-bytes]
+  [^String payload declared ^long max-bytes ^long max-dimension]
   (let [raw (try (.decode (Base64/getDecoder) payload) (catch Throwable _ nil))]
     (if (or (nil? raw) (zero? (alength ^bytes raw)))
       {:reason "the attachment carries no readable image bytes"}
@@ -777,11 +780,19 @@
          ;; every byte the user dropped.
          video? (video-media-type? mt)
          safe (when-not video? (image-convert/to-provider-safe raw mt))
+         ;; PIXELS are a provider limit of their own, and the one a byte cap
+         ;; never catches: a well-compressed 4K screenshot sits happily under
+         ;; 5MB and is still refused outright once the request carries many
+         ;; images. Clamped BEFORE the byte ladder — fewer pixels is also fewer
+         ;; bytes — and a picture already within the ceiling comes back ITSELF.
+         scaled (some-> safe
+                        :bytes
+                        (image-convert/fit-dimensions max-dimension))
          ;; Over the cap is NOT the same as unsendable. The real optimisers get
          ;; one shot at it (lossless first, then the imaging library's own
          ;; ladder) instead of the picture being dropped; a payload that already
          ;; fits comes back IDENTICAL, so nothing under the cap is re-encoded.
-         fitted (some-> ^bytes (:bytes safe)
+         fitted (some-> ^bytes (:bytes scaled)
                         (image-convert/fit-within max-bytes))]
 
         (cond video? (video-verdict raw mt max-bytes)
@@ -793,6 +804,7 @@
                             {:reason (unsupported-media-reason mt)})
               (not (provider-image-media-type? (:media-type safe)))
               {:reason (or (:reason safe) (unsupported-media-reason mt))}
+              (:reason scaled) {:reason (:reason scaled)}
               (> (alength ^bytes fitted) max-bytes) {:reason (str (size-label (alength ^bytes
                                                                                        fitted))
                                                                   " exceeds the "
@@ -826,6 +838,9 @@
      * BMP, TIFF, anything else the decoder reads — re-containered to PNG
      * HEIC/AVIF, a corrupt raster, an image past the decoder's limits —
        refused, with the decoder's own words
+     * any side over `max-dimension` — DOWNSCALED to fit, because a provider
+       refuses an oversized picture outright once a request carries many images
+       (`image-convert/max-wire-dimension`), whatever it weighs
      * anything over `max-bytes` — OPTIMIZED first (the imaging library's
        oxipng / jpegtran / gifsicle pass, then its bounded ladder) and refused
        only when even that does not fit
@@ -835,7 +850,9 @@
    replaced by the WIRE payload, `{:path :filename :reason}` when it cannot be
    sent, or nil when it is not an image at all. Never throws."
   ([attachment] (wire-image attachment {}))
-  ([{:keys [media-type base64] :as attachment} {:keys [max-bytes] :or {max-bytes max-image-bytes}}]
+  ([{:keys [media-type base64] :as attachment}
+    {:keys [max-bytes max-dimension]
+     :or {max-bytes max-image-bytes max-dimension image-convert/max-wire-dimension}}]
    (let
      [declared
       (str/lower-case (str/trim (str media-type)))
@@ -846,11 +863,11 @@
      (when (and (media-candidate? declared) (not (str/blank? payload)))
        (let
          [k
-          (content-key payload declared (long max-bytes))
+          (content-key payload declared (long max-bytes) (long max-dimension))
 
           verdict
           (or (get-in @wire-cache [:entries k])
-              (cache-put! k (wire-verdict payload declared (long max-bytes))))]
+              (cache-put! k (wire-verdict payload declared (long max-bytes) (long max-dimension))))]
 
          (if (:reason verdict)
            (assoc (select-keys attachment [:path :filename]) :reason (:reason verdict))

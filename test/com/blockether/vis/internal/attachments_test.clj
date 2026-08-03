@@ -696,6 +696,40 @@
                 (expect (= tiny-png-b64
                            (:base64 (attachments/wire-image {:base64 tiny-png-b64
                                                              :media-type "image/png"}))))))
+  (describe "the wire PIXEL limit"
+            (it "downscales a picture no provider accepts at that size, ratio intact"
+                ;; A 4K screenshot weighs a couple of hundred KB and clears every
+                ;; byte check — and is still `At least one of the image dimensions
+                ;; exceed max allowed size for many-image requests: 2000 pixels`
+                ;; once the session has replayed enough attachments into one
+                ;; request. Bytes were never the only cap.
+                (let
+                  [png
+                   (imaging/encode (imaging/blank 3840 2160 "white") :png)
+
+                   wired
+                   (attachments/wire-image {:base64 (b64 png) :media-type "image/png"})
+
+                   probe
+                   (imaging/probe (.decode (Base64/getDecoder) ^String (:base64 wired)))]
+
+                  (expect (nil? (:reason wired)))
+                  (expect (= "image/png" (:media-type wired)))
+                  (expect (= image-convert/max-wire-dimension (:width probe)))
+                  (expect (= 882 (:height probe)))))
+            (it "honours the caller's own ceiling, and keys the verdict cache by it"
+                (let
+                  [att
+                   {:base64 (b64 (imaging/encode (imaging/blank 40 20 "white") :png))
+                    :media-type "image/png"}
+
+                   dims
+                   (fn [wired]
+                     (let [p (imaging/probe (.decode (Base64/getDecoder) ^String (:base64 wired)))]
+                       [(:width p) (:height p)]))]
+
+                  (expect (= [40 20] (dims (attachments/wire-image att))))
+                  (expect (= [10 5] (dims (attachments/wire-image att {:max-dimension 10})))))))
   (describe "repeat sends"
             (it "re-uses the cached verdict instead of rasterizing the same SVG every turn"
                 (let
