@@ -50,6 +50,7 @@ import {
 } from './lib/push';
 import { syncPushRegistrations } from './lib/notify';
 import { isShellChromeVisible, shellScreen } from './lib/shell';
+import { pushIntentFrom, resolvePushIntent, type PushIntent } from './lib/push-intent';
 
 type Tab = 'sessions' | 'connect';
 
@@ -678,18 +679,44 @@ export function App() {
     };
   }, [notifyTargets]);
 
+  // A notification tap is a HANDOFF across a cold start, so it is PARKED, not
+  // handled where it lands: Capacitor retains the tap until the first listener
+  // consumes it, and that listener attaches on the first render — before the
+  // saved machines are read back and before the launch route is applied. The
+  // handler used to read the active gateway right there, find none, and return,
+  // consuming the tap: the notification opened the app on the session list and
+  // the session it was about never appeared. See `lib/push-intent.ts`.
+  const [pushIntent, setPushIntent] = useState<PushIntent | null>(null);
   useEffect(() => {
     void clearDeliveredPushes();
+    // Mount-once on purpose: re-subscribing whenever the active gateway changes
+    // leaves a window with no listener attached, which is where the retained
+    // launch tap arrives.
     return onPushTap((tap) => {
       // The OS may suspend us with the software keyboard up and never deliver its
       // hide event. Reclaim the full shell before routing; otherwise the old
       // keyboard-height pin survives into the notification's destination.
       reclaimViewportForExternalNavigation();
-      const conn = active;
-      if (!conn || !tap.sessionId) return;
-      void openGatewaySession(conn, tap.sessionId);
+      const intent = pushIntentFrom(tap, Date.now());
+      if (intent) setPushIntent(intent);
     });
-  }, [active, openGatewaySession]);
+  }, []);
+
+  // Drain the parked tap as soon as the launch route is applied AND a gateway
+  // exists to open it on — both of which arrive after the tap during a cold
+  // start. Re-evaluated on every state change that could unblock it.
+  useEffect(() => {
+    if (!pushIntent) return;
+    const outcome = resolvePushIntent(pushIntent, {
+      isRouteApplied: routeApplied,
+      conns,
+      active,
+      now: Date.now(),
+    });
+    if (outcome.action === 'wait') return;
+    setPushIntent(null);
+    if (outcome.action === 'open') openGatewaySession(outcome.conn, outcome.sid);
+  }, [pushIntent, routeApplied, conns, active, openGatewaySession]);
 
   // Backfill each paired gateway's stable id (from /healthz) so a shareable link
   // can name its gateway by id instead of leaking the gateway URL. Cheap: it
