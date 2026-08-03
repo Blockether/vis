@@ -106,7 +106,12 @@
           "Direct native tools: single operations" "simple edits" "small fixed call sets"
           "default for most Python/data work" "YAML/JSON/TOML/CSV" "over shell." "background shells"
           "`shell` op `wait`" "REQUIRED `until` regex" "`logs` snapshots"
-          "higher-order Python helpers" "functions that accept or return callables"
+          "functions that accept or return callables"
+          ;; The helper rule is imperative, not a preference: a bare "prefer small helpers"
+          ;; left copy-pasted loops fully compliant, so the trigger (second occurrence) and
+          ;; the prohibition are pinned here.
+          "NEVER paste a near-identical loop or block twice in" "defined once"
+          "on the second occurrence factor it out and call the helper"
           "Call advertised native tools directly" "for unadvertised sandbox" "read-only `session`"
           "raw data, not rendered text" "Use documented keys" "never a `session_fold` receipt"
           "# saved:" "Before re-running or scanning transcript" "recover raw result" "saved id"
