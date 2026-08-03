@@ -144,6 +144,47 @@
                (expect (re-find #"does not exist" (get-in r [:error :message]))))
              (finally (cleanup root))))))
 
+;; ── what the result SAYS was linted ─────────────────────────────────────────
+
+;; Regression: `lint_code("python", {"paths" [...]})` counted the files that HAD
+;; findings, not the files it linted, and never echoed `targets` (the Clojure pack
+;; does). A clean run over a dozen sources therefore came back `files 0` with no
+;; targets and rendered as `0 files — clean`, indistinguishable from a run that
+;; matched nothing and silently linted NOTHING.
+(defdescribe lint-target-reporting-test
+             "the result names what was linted, findings or not."
+             (it "counts the files it LINTED, not the files that had findings"
+                 (let [root (tmp-dir)]
+                   (try (spit! root "ruff.toml" "line-length = 100\n")
+                        (spit! root "src/a.py" "x = 1\n")
+                        (spit! root "src/b.py" "y = 2\n")
+                        (let [r (:result (pyruff/py-lint-fn (env root) {"paths" ["src"]}))]
+                          (expect (contract/valid? :lint-fn r))
+                          (expect (= [] (get r "findings")))
+                          (expect (= 2 (get r "files"))))
+                        (finally (cleanup root)))))
+             (it "echoes the requested targets, relative to the workspace root"
+                 (let [root (tmp-dir)]
+                   (try (spit! root "src/a.py" "x = 1\n")
+                        (spit! root "tests/test_a.py" "y = 2\n")
+                        (let
+                          [r (:result (pyruff/py-lint-fn (env root)
+                                                         {"path" "src"
+                                                          "paths" ["tests/test_a.py"]}))]
+                          (expect (= ["src" "tests/test_a.py"] (get r "targets"))))
+                        (finally (cleanup root)))))
+             (it "reports a whole-project lint by the files it walked"
+                 (let [root (sample-project)]
+                   (try (let [r (:result (pyruff/py-lint-fn (env root) {}))]
+                          ;; src/pkg/a.py + tests/test_a.py; .venv/lib/junk.py is pruned
+                          (expect (= 2 (get r "files")))
+                          (expect (nil? (get r "targets"))))
+                        (finally (cleanup root)))))
+             (it "counts a snippet lint as one file, like the Clojure pack's stdin lint"
+                 (let [r (:result (pyruff/py-lint-fn nil {"code" "x = 1\n"}))]
+                   (expect (= 1 (get r "files")))
+                   (expect (nil? (get r "targets"))))))
+
 ;; ── project configuration ───────────────────────────────────────────────────
 
 (defdescribe config-for-test

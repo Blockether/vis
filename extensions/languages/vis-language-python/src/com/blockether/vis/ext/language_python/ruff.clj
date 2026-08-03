@@ -407,7 +407,10 @@
    `select` / `ignore` (a string, or a list of selectors like [\"F\" \"B\" \"E501\"])
    override it. Findings carry the ruff code as `type`, `is_fixable`, and a
    `level` derived from the code: syntax/pyflakes fatals are errors, conventions
-   (W/C/N/D/I/UP…) info, the rest warnings."
+   (W/C/N/D/I/UP…) info, the rest warnings. `files` is how many files were
+   LINTED (a snippet counts as 1), NOT how many carried findings, and `targets`
+   echoes the requested path/paths relative to the workspace root: a CLEAN run
+   still has to say what it looked at."
   ([arg] (py-lint-fn nil arg))
   ([env arg]
    (let
@@ -466,7 +469,7 @@
                          "error" (get by-level "error" 0)
                          "warning" (get by-level "warning" 0)
                          "info" (get by-level "info" 0)
-                         "files" (count (distinct (keep #(get % "file") findings)))
+                         "files" (if code 1 (count abs-files))
                          "findings" findings
                          "providers" ["ruff"]
                          "by-cwd"
@@ -486,6 +489,9 @@
                            findings)}
                         code
                         (assoc "snippet" code)
+
+                        (seq targets)
+                        (assoc "targets" (mapv #(relativize-path root (under root %)) targets))
 
                         cfg
                         (assoc "config" (relativize-path root cfg))
