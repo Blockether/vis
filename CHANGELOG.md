@@ -7,6 +7,151 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.26] - 2026-08-03
+
+### Changed
+- Release v0.1.26
+- Register the BigInteger constructors the image invokes reflectively
+- Explain a torn-down Python context and break identical retry loops
+- Unwrap host tool envelopes before crossing into extension Python
+- Emit pytest terminal report and --junitxml from the sandbox shim
+- Guarantee a terminal event for every launched gateway turn
+- Teach python run_tests the project's declared layout
+- Underline markdown table links and pin the painted click region
+- Make markdown links inside table cells clickable
+- Record how a draft clone was actually made
+- Let a jailed command reach the macOS Keychain
+- Mount a workspace root only where it exists
+- Paint a failed call's error line red
+- Derive a background shell id from its command
+- Settle a cancelled turn in one frame
+- Record who cancelled a turn
+- Record the typed human-input pause API in the changelog
+- Reformat the tree and drop the ambiguous loop name in the issues example
+- Cover human-input dialog queueing in the TUI state store
+- Wrap dialog descriptions at the painted width and survive tiny terminals
+- Render optional dialog description above human-input fields
+- Enforce snake_case string keys at the Python human-input seam
+- Ask the clone what its fork skipped instead of mirroring the rules
+- Document the no-root options for draft copy-on-write
+- Document that btrfs drafts need root only once
+- Enforce required human-input fields and mark them REQUIRED
+- Document that one btrfs mount over a subdirectory enables drafts
+- Give every human-input field a name, a label and a description
+- Explain the copy-on-write filesystem drafts require
+- Enforce human-input rules identically on the TUI and the app
+- Stop tracking generated tsc buildinfo files
+- Pick the podman machine that can hold the native builder
+- Never read a filtered .yarn artifact pair as an agent deletion
+- Render magit transient flags as toggles distinct from commands
+- Build the linux-x64 release asset locally through Rosetta
+- Cross-validate human input on the TUI and the companion app
+- Stop counting a draft-generated ignored tree as an agent change
+- Dismiss companion overlays when a session opens underneath them
+- Refresh command-backed provider credentials on auth rejection
+- Deliver human input requests to the companion app
+- Never delete the trees a gitignore-aware fork skipped
+- Render human-input dialog with canonical TUI painters
+- Wire the human-input dialog into the TUI screen
+- Add the TUI human-input dialog renderer
+- Make the python_execution helper rule imperative
+- Build the local linux-arm64 asset with podman as well as docker
+- Ship GraalPy language resources beside the native runtime
+- Flag off-wire scopes in the session_fold card
+- Isolate drafted sessions from configured filesystem roots
+- Add typed human-input pause API for extensions
+- Drop monorepo release note and extending link from README
+- Render a pending shell call as its shell block
+- Give the x64 native builder the heap its analysis measurably needs
+- Keep the composer keyboard across native picker and camera sheets
+- Make pushing verified work a repo contract
+- Add a Magit-style --no-verify switch to the TUI commit transient
+- fix(ios): ask App Store Connect for the relationship it is matched by
+- release: update release notes for v0.1.25
+
+### Package changes
+
+#### com.blockether/vis
+- Release v0.1.26 (89df19352)
+- Register the BigInteger constructors the image invokes reflectively (ac67464c7)
+- Explain a torn-down Python context and break identical retry loops (632247f3a)
+- Unwrap host tool envelopes before crossing into extension Python (e95dcf997)
+- Emit pytest terminal report and --junitxml from the sandbox shim (b8f5b580f)
+- Guarantee a terminal event for every launched gateway turn (f879b7825)
+- Teach python run_tests the project's declared layout (c02a64918)
+- Record how a draft clone was actually made (bd51f3649)
+- Let a jailed command reach the macOS Keychain (ae2f2a76b)
+- Mount a workspace root only where it exists (619ff91eb)
+- Derive a background shell id from its command (d77cee07c)
+- Record who cancelled a turn (4ffc57709)
+- Record the typed human-input pause API in the changelog (3ba586e5b)
+- Reformat the tree and drop the ambiguous loop name in the issues example (f7046766e)
+- Render optional dialog description above human-input fields (d84392570)
+- Enforce snake_case string keys at the Python human-input seam (609374929)
+- Ask the clone what its fork skipped instead of mirroring the rules (ad00c209c)
+- Document the no-root options for draft copy-on-write (c397c6327)
+- Document that btrfs drafts need root only once (f61be0fe3)
+- Enforce required human-input fields and mark them REQUIRED (46bb32041)
+- Document that one btrfs mount over a subdirectory enables drafts (d3461ecf5)
+- Give every human-input field a name, a label and a description (bc7b618e9)
+- Explain the copy-on-write filesystem drafts require (782f4d5c4)
+- Enforce human-input rules identically on the TUI and the app (3633dabcb)
+- Stop tracking generated tsc buildinfo files (4ec7b78dd)
+- Pick the podman machine that can hold the native builder (ac1ddcabe)
+- Never read a filtered .yarn artifact pair as an agent deletion (024bfc742)
+- Build the linux-x64 release asset locally through Rosetta (e756ef8fe)
+- Cross-validate human input on the TUI and the companion app (f00138072)
+- Stop counting a draft-generated ignored tree as an agent change (9febe38bd)
+- Dismiss companion overlays when a session opens underneath them (0b0efcecf)
+- Refresh command-backed provider credentials on auth rejection (7037440d5)
+- Deliver human input requests to the companion app (a0ce6fa32)
+- Never delete the trees a gitignore-aware fork skipped (86b30737a)
+- Make the python_execution helper rule imperative (745f7917a)
+- Build the local linux-arm64 asset with podman as well as docker (165b65445)
+- Ship GraalPy language resources beside the native runtime (d37c55e2e)
+- Flag off-wire scopes in the session_fold card (f315a8b80)
+- Isolate drafted sessions from configured filesystem roots (22548058d)
+- Add typed human-input pause API for extensions (d1eeb3221)
+- Drop monorepo release note and extending link from README (96e0f910c)
+- Render a pending shell call as its shell block (7abe19cda)
+- Give the x64 native builder the heap its analysis measurably needs (9ec55ca33)
+- Keep the composer keyboard across native picker and camera sheets (a77c5ff85)
+- Make pushing verified work a repo contract (4da60f138)
+- fix(ios): ask App Store Connect for the relationship it is matched by (aa92c592e)
+- release: update release notes for v0.1.25 (c22ad7f0b)
+
+#### com.blockether/vis-channel-tui
+- Underline markdown table links and pin the painted click region (0270524f4)
+- Make markdown links inside table cells clickable (71f3950a5)
+- Paint a failed call's error line red (ed0eccaa8)
+- Settle a cancelled turn in one frame (9730a9d02)
+- Cover human-input dialog queueing in the TUI state store (24ef40908)
+- Wrap dialog descriptions at the painted width and survive tiny terminals (483947fd6)
+- Render optional dialog description above human-input fields (d84392570)
+- Enforce required human-input fields and mark them REQUIRED (46bb32041)
+- Give every human-input field a name, a label and a description (bc7b618e9)
+- Enforce human-input rules identically on the TUI and the app (3633dabcb)
+- Render magit transient flags as toggles distinct from commands (0baca3543)
+- Cross-validate human input on the TUI and the companion app (f00138072)
+- Render human-input dialog with canonical TUI painters (4cd3c8ae3)
+- Wire the human-input dialog into the TUI screen (5ecfb8fbc)
+- Add the TUI human-input dialog renderer (1c8ca4172)
+- Render a pending shell call as its shell block (7abe19cda)
+- Add a Magit-style --no-verify switch to the TUI commit transient (fdcb547b2)
+
+#### com.blockether/vis-language-python
+- Teach python run_tests the project's declared layout (c02a64918)
+
+#### com.blockether/vis-persistance-sqlite
+- Record how a draft clone was actually made (bd51f3649)
+- Isolate drafted sessions from configured filesystem roots (22548058d)
+
+#### com.blockether/vis-workspace-rift
+- Record how a draft clone was actually made (bd51f3649)
+- Ask the clone what its fork skipped instead of mirroring the rules (ad00c209c)
+
+
+
 ### Added
 
 - human-input: an extension can pause its run and ask the operator a typed
@@ -2820,7 +2965,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.25...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.26...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -2841,3 +2986,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.23]: https://github.com/Blockether/vis/releases/tag/v0.1.23
 [v0.1.24]: https://github.com/Blockether/vis/releases/tag/v0.1.24
 [v0.1.25]: https://github.com/Blockether/vis/releases/tag/v0.1.25
+[v0.1.26]: https://github.com/Blockether/vis/releases/tag/v0.1.26
