@@ -112,10 +112,10 @@
    could never time the stuck cancel out and `:cancelling?` wedged input forever."
   [:session :workspace :workspace/root :title :messages :utilization :scroll :layout :input
    :input-history :input-history-index :input-history-draft :slash-command-index
-   :slash-command-hidden? :submitted-input :pending-sends :queue-paused :pastes :paste-counter
-   :loading? :cancel-token :cancelling? :cancelling-at-ms :cancel-awaiting-client-id
-   :gateway-turn-id :live-turn-client-id :progress :turn-start-ms :detail-expansions
-   :mouse-selection :session-model-pref])
+   :slash-command-hidden? :submitted-input :pending-sends :submissions-in-flight :queue-paused
+   :pastes :paste-counter :loading? :cancel-token :cancelling? :cancelling-at-ms
+   :cancel-awaiting-client-id :gateway-turn-id :live-turn-client-id :progress :turn-start-ms
+   :detail-expansions :mouse-selection :session-model-pref])
 
 (defn- empty-tab-state
   []
@@ -135,6 +135,7 @@
    :submitted-input nil
    :utilization nil
    :pending-sends []
+   :submissions-in-flight []
    :queue-paused nil
    :pastes {}
    :paste-counter 0
@@ -3300,8 +3301,19 @@
      session
      (:session source-db)
 
+     ;; DOUBLE-SUBMIT GUARD. `:pending-sends` mirrors GATEWAY truth, so it is
+     ;; still EMPTY for the whole enqueue round-trip: comparing against it alone
+     ;; let a second Enter inside that window (key repeat, or a terminal that
+     ;; delivers CR and LF) mint a second correlation id and register the SAME
+     ;; text as a SECOND queued turn — seen in the wild 7 ms apart, both drained
+     ;; and both answered. A submission that is sent but not yet acked counts as
+     ;; queued here; `:submission-settled` releases it when the round-trip ends.
+     in-flight
+     (vec (or (:submissions-in-flight source-db) []))
+
      dup?
-     (= text (:text (peek (vec (or (:pending-sends source-db) [])))))]
+     (or (= text (:text (peek (vec (or (:pending-sends source-db) [])))))
+         (boolean (some #(= text (:text %)) in-flight)))]
 
     (cond
       ;; The user asked to STOP the current turn (`:cancelling?`). A submission in
@@ -3359,6 +3371,14 @@
                          workspace-id
                          (fn [w]
                            (cond-> w
+                             ;; In flight until the gateway answers — the ONLY record of
+                             ;; this submission until the ack or the `turn.queued`
+                             ;; broadcast paints the real row.
+                             gateway?
+                             (update :submissions-in-flight
+                                     (fn [q]
+                                       (conj (vec (or q [])) entry)))
+
                              ;; The correlation id we are about to send as the gateway
                              ;; A submission with NOWHERE to go (session still being
                              ;; created, so there is no gateway queue yet) is the ONLY
@@ -3492,6 +3512,23 @@
               ;; in-flight turn commits. No provider call happens from this handler.
               (fn [db [_ text workspace-id]]
                 (enqueue-message-result db workspace-id text)))
+
+(reg-event-db :submission-settled
+              ;; One submission's gateway round-trip ENDED — queued, already running, or
+              ;; failed. Drop it from the in-flight double-submit guard: the text is now
+              ;; either a real queued row (mirrored through the one `:sync-queued-turn`
+              ;; writer), a live turn, or staged locally, and the next identical text is
+              ;; a NEW intent that must go through.
+              (fn [db [_ workspace-id client-id]]
+                (if-not client-id
+                  db
+                  (update-tab db
+                              (or workspace-id (current-tab-id db))
+                              (fn [w]
+                                (assoc w
+                                  :submissions-in-flight (vec (remove #(= client-id (:client-id %))
+                                                                (or (:submissions-in-flight w)
+                                                                    [])))))))))
 
 (reg-event-db :stage-queued-locally
               ;; FAILURE PATH ONLY: the gateway enqueue never landed, so there is no
@@ -5275,60 +5312,63 @@
             (when sid
               (gateway-queue-io!
                 (fn []
-                  (try
-                    (let
-                      [res
-                       (submit-queued-turn! sid
-                                            (cond->
-                                              {:request agent-text
-                                               ;; The gateway echoes this back on
-                                               ;; turn.queued and every wire view of the
-                                               ;; turn: the ONE key that tells us the row
-                                               ;; it broadcasts is our own submission —
-                                               ;; and the key that makes the retry above
-                                               ;; idempotent.
-                                               :idempotency-key client-id}
-                                              reasoning-level
-                                              (assoc :reasoning-default reasoning-level)
+                  (try (let
+                         [res
+                          (submit-queued-turn! sid
+                                               (cond->
+                                                 {:request agent-text
+                                                  ;; The gateway echoes this back on
+                                                  ;; turn.queued and every wire view of the
+                                                  ;; turn: the ONE key that tells us the row
+                                                  ;; it broadcasts is our own submission —
+                                                  ;; and the key that makes the retry above
+                                                  ;; idempotent.
+                                                  :idempotency-key client-id}
+                                                 reasoning-level
+                                                 (assoc :reasoning-default reasoning-level)
 
-                                              extra-body
-                                              (assoc :extra-body extra-body)
+                                                 extra-body
+                                                 (assoc :extra-body extra-body)
 
-                                              (seq turn-features)
-                                              (assoc :turn-features turn-features)
+                                                 (seq turn-features)
+                                                 (assoc :turn-features turn-features)
 
-                                              display-text
-                                              (assoc :display-request display-text)
+                                                 display-text
+                                                 (assoc :display-request display-text)
 
-                                              (seq workspace)
-                                              (assoc :workspace workspace)))
+                                                 (seq workspace)
+                                                 (assoc :workspace workspace)))
 
-                       turn
-                       (:turn res)
+                          turn
+                          (:turn res)
 
-                       tid
-                       (get turn "turn_id")]
+                          tid
+                          (get turn "turn_id")]
 
-                      (cond (and tid (= "queued" (get turn "status")))
-                            (dispatch [:sync-queued-turn workspace-id
-                                       {:op :add
-                                        :turn-id tid
-                                        :client-id client-id
-                                        :text (or (get turn "request") agent-text)
-                                        :preview-text (or (get turn "request_preview")
-                                                          display-text
-                                                          (get turn "request")
-                                                          agent-text)}])
-                            ;; Accepted but already RUNNING: not a queue row.
-                            tid nil
-                            :else (stage!)))
-                    (catch Throwable t
-                      (stage!)
-                      (try (vis/notify! (str "Queueing failed — kept locally: "
-                                             (or (ex-message t) (str t)))
-                                        :level :warn
-                                        :ttl-ms 3000)
-                           (catch Throwable _ nil))))))))))
+                         (cond (and tid (= "queued" (get turn "status")))
+                               (dispatch [:sync-queued-turn workspace-id
+                                          {:op :add
+                                           :turn-id tid
+                                           :client-id client-id
+                                           :text (or (get turn "request") agent-text)
+                                           :preview-text (or (get turn "request_preview")
+                                                             display-text
+                                                             (get turn "request")
+                                                             agent-text)}])
+                               ;; Accepted but already RUNNING: not a queue row.
+                               tid nil
+                               :else (stage!)))
+                       (catch Throwable t
+                         (stage!)
+                         (try (vis/notify! (str "Queueing failed — kept locally: "
+                                                (or (ex-message t) (str t)))
+                                           :level :warn
+                                           :ttl-ms 3000)
+                              (catch Throwable _ nil)))
+                       ;; Release the double-submit guard on the ONE path every outcome
+                       ;; passes through, so an identical follow-up message is never
+                       ;; swallowed once this round-trip is over.
+                       (finally (dispatch [:submission-settled workspace-id client-id])))))))))
 
 (reg-fx :gateway-delete-queued
         ;; Drop a gateway queued record. The local row is removed by the caller as a

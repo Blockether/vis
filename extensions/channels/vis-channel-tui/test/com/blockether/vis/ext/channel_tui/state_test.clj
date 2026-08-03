@@ -2283,6 +2283,67 @@
           (expect (= :a (nth gw 1)))
           (expect (= "queued" (:text entry)))
           (expect (= {1 {:id 1 :content "payload"}} (:pastes entry))))))
+  (it "registers ONE gateway turn when the same text is submitted twice inside the round-trip"
+      ;; REGRESSION (real session): the SAME text landed as TWO queued gateway turns
+      ;; 7 ms apart — both drained, both answered, the second one paid for. The old
+      ;; guard compared against `:pending-sends`, which mirrors GATEWAY truth and is
+      ;; therefore still EMPTY for the whole enqueue round-trip, so a second Enter in
+      ;; that window minted a fresh correlation id and registered a second turn. The
+      ;; in-flight record guards the window; `:submission-settled` releases it.
+      (let
+        [registry
+         (-> #'state/event-registry
+             deref
+             deref)
+
+         enqueue-fn
+         (:fn (get registry :enqueue-message))
+
+         settled-fn
+         (:fn (get registry :submission-settled))
+
+         gw-fx
+         (fn [result]
+           (filterv #(= :gateway-enqueue (first %)) (:fx result)))
+
+         db
+         {:active-tab-id :b
+          :input-history []
+          :pastes {}
+          :paste-counter 0
+          :tab-locals {:a {:session {:id "a"}
+                           :loading? true
+                           :pending-sends []
+                           :input-history []
+                           :pastes {}
+                           :paste-counter 0}}}
+
+         first-result
+         (enqueue-fn db [:enqueue-message "double tap" :a])
+
+         second-result
+         (enqueue-fn (:db first-result) [:enqueue-message "double tap" :a])]
+
+        ;; The first Enter registers exactly one queued turn …
+        (expect (= 1 (count (gw-fx first-result))))
+        ;; … and the second, still inside the round-trip, registers NOTHING.
+        (expect (empty? (gw-fx second-result)))
+        (expect (empty? (get-in second-result [:db :tab-locals :a :pending-sends])))
+        (let
+          [client-id
+           (:client-id (nth (first (gw-fx first-result)) 3))
+
+           settled
+           (settled-fn (:db first-result) [:submission-settled :a client-id])
+
+           again
+           (enqueue-fn settled [:enqueue-message "double tap" :a])]
+
+          (expect (string? client-id))
+          (expect (seq (get-in first-result [:db :tab-locals :a :submissions-in-flight])))
+          ;; Once the round-trip settles, the same text is a NEW intent again.
+          (expect (empty? (get-in settled [:tab-locals :a :submissions-in-flight])))
+          (expect (= 1 (count (gw-fx again)))))))
   (it "never queues a submission while a cancel is in flight (:cancelling?)"
       ;; REGRESSION: pressing Esc to cancel, then typing a new message, parked that
       ;; message in the queue (`:pending-sends`) behind the turn being torn down —
