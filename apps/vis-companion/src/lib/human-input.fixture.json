@@ -6,10 +6,13 @@
   "title": "Deploy?",
   "fields": [
     {
-      "id": "env",
+      "description": "Where this deploy lands",
+      "is_required": false,
+      "default": "prod",
+      "name": "env",
       "type": "select",
       "label": "Env",
-      "is_required": false,
+      "id": "env",
       "options": [
         {
           "value": "prod",
@@ -19,11 +22,11 @@
           "value": "stg",
           "label": "Staging"
         }
-      ],
-      "default": "prod"
+      ]
     },
     {
       "id": "key",
+      "name": "key",
       "type": "password",
       "label": "key",
       "is_required": true,
@@ -31,6 +34,7 @@
     },
     {
       "id": "ok",
+      "name": "ok",
       "type": "checkbox",
       "label": "Confirm",
       "is_required": false,
@@ -38,6 +42,7 @@
     },
     {
       "id": "tags",
+      "name": "tags",
       "type": "multiselect",
       "label": "tags",
       "is_required": false,

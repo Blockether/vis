@@ -36,11 +36,14 @@ export interface HumanInputOption {
 }
 
 export interface HumanInputField {
+  /** How the answer is keyed. `name` is the contract; `id` is its alias. */
   id: string;
+  name: string;
   type: HumanInputFieldType;
   label: string;
   is_required: boolean;
-  help?: string;
+  /** Prose under the label. Always rendered in italic. */
+  description?: string;
   placeholder?: string;
   options?: HumanInputOption[];
   max_length?: number;
@@ -106,21 +109,22 @@ function optionFromWire(raw: unknown): HumanInputOption | null {
 function fieldFromWire(raw: unknown): HumanInputField | null {
   const row = record(raw);
   if (!row) return null;
-  const id = text(row.id);
+  const id = text(row.name) || text(row.id);
   if (id === '') return null;
   const type = fieldType(row.type);
   const options = Array.isArray(row.options)
     ? row.options.map(optionFromWire).filter((option): option is HumanInputOption => option !== null)
     : undefined;
-  const help = optionalText(row.help);
+  const description = optionalText(row.description) ?? optionalText(row.help);
   const placeholder = optionalText(row.placeholder);
   const maxLength = typeof row.max_length === 'number' && row.max_length > 0 ? row.max_length : undefined;
   return {
     id,
+    name: id,
     type,
     label: text(row.label) || id,
     is_required: row.is_required === true,
-    ...(help ? { help } : {}),
+    ...(description ? { description } : {}),
     ...(placeholder ? { placeholder } : {}),
     ...(options ? { options } : {}),
     ...(maxLength ? { max_length: maxLength } : {}),

@@ -157,7 +157,7 @@ export function HumanInputPrompt({
         >
           <div className="space-y-3 p-4">
             {request.description && (
-              <p className="font-mono text-meta text-dialog-hint">{request.description}</p>
+              <p className="font-mono text-meta italic text-dialog-hint">{request.description}</p>
             )}
             {request.fields.map((field) => (
               <HumanInputFieldRow
@@ -203,8 +203,10 @@ function FieldShell({
         {field.label}
         {field.is_required ? ' *' : ''}
       </span>
+      {field.description && (
+        <p className="font-mono text-chip italic text-dialog-hint">{field.description}</p>
+      )}
       {children}
-      {field.help && <p className="font-mono text-chip text-dialog-hint">{field.help}</p>}
       {error && <p className="font-mono text-chip text-err">{error}</p>}
     </div>
   );

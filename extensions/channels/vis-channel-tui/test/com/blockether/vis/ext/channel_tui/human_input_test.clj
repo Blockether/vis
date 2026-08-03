@@ -12,7 +12,7 @@
             [com.blockether.vis.ext.channel-tui.screen :as screen]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [com.googlecode.lanterna TerminalSize]
+  (:import [com.googlecode.lanterna SGR TerminalSize TextCharacter]
            [com.googlecode.lanterna.input KeyStroke KeyType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
@@ -35,7 +35,7 @@
      :label "Tags"
      :options [{:value "a" :label "Alpha"} {:value "b" :label "Beta"}]}
     {:id "ok" :type :checkbox :label "Confirm"}
-    {:id "note" :type :multiline :label "Note" :help "Free text"}]
+    {:id "note" :type :multiline :label "Note" :description "Free text"}]
    :submit-label "Submit"
    :cancel-label "Cancel"
    :is-cancellable true
@@ -471,3 +471,90 @@
                                   :fields [{:id "a" :type :checkbox :label "Yes"}]
                                   :is-cancellable true}))
         (expect (not (str/includes? (screen-text screen) "█"))))))
+
+(defn- row-index
+  "Index of the first plan row matching `pred`."
+  [rows pred]
+  (first (keep-indexed (fn [i r]
+                         (when (pred r) i))
+                       rows)))
+
+(defn- screen-row-of
+  "The y of the first back-buffer row containing `needle`, or nil."
+  [screen needle]
+  (first (keep (fn [y]
+                 (when (str/includes? (screen-row screen y) needle) y))
+               (range 30))))
+
+(defn- modifiers-at
+  "The SGR modifiers the back buffer holds at `x`,`y`."
+  [^TerminalScreen screen ^long x ^long y]
+  (set (.getModifiers ^TextCharacter (.getBackCharacter screen (int x) (int y)))))
+
+(defn- modifiers-of
+  "The SGR modifiers painted on the first character of `needle`."
+  [screen needle]
+  (let [y (screen-row-of screen needle)]
+    (when y (modifiers-at screen (.indexOf ^String (screen-row screen y) ^String needle) y))))
+
+(defdescribe
+  label-and-description-test
+  "Three names, three jobs, drawn in that order: the bold LABEL says what the
+   field is, the ITALIC description explains it, and only then comes the input.
+   Prose that arrives after the box you already filled is prose nobody reads."
+  (it "puts a field's description between its label and its input"
+      (let
+        [rows
+         (hi/form-rows (hi/init-form (request)))
+
+         i
+         (row-index rows #(and (= :label (:kind %)) (= "Note" (:text %))))]
+
+        (expect (some? i))
+        (expect (= {:kind :description :text "Free text"} (nth rows (inc i))))
+        (expect (= :input (:kind (nth rows (+ (long i) 2)))))
+        (expect (= "note" (:field-id (nth rows (+ (long i) 2)))))))
+  (it "leaves a field with no description with just its label and input"
+      (let
+        [rows
+         (hi/form-rows (hi/init-form (request)))
+
+         i
+         (row-index rows #(and (= :label (:kind %)) (= "Env" (:text %))))]
+
+        (expect (some? i))
+        (expect (= :option (:kind (nth rows (inc (long i))))))))
+  (it "hangs a checkbox description under the box that carries the label"
+      (let
+        [rows (hi/form-rows (hi/init-form {:id "r"
+                                           :title "T"
+                                           :fields [{:id "ok"
+                                                     :type :checkbox
+                                                     :label "Confirm"
+                                                     :description "This cannot be undone"}]}))]
+        ;; No bold label row: the checkbox row already says "Confirm", and the
+        ;; description still explains it right underneath.
+        (expect (= [:checkbox :description :blank] (mapv :kind rows)))
+        (expect (= "This cannot be undone" (:text (second rows))))))
+  (it "paints every description in italic and every label in bold"
+      (let
+        [{:keys [screen g]}
+         (virtual-screen)
+
+         _
+         ;; A short form, so both prose rows are inside the dialog viewport.
+         (hi/paint! g
+                    80
+                    30
+                    (hi/init-form
+                      {:id "r"
+                       :title "T"
+                       :description "Pick the target"
+                       :fields
+                       [{:id "note" :type :plaintext :label "Note" :description "Free text"}]}))]
+
+        ;; The request's own description and the field's, both italic, never bold.
+        (expect (= #{SGR/ITALIC} (modifiers-of screen "Pick the target")))
+        (expect (= #{SGR/ITALIC} (modifiers-of screen "Free text")))
+        ;; The label above it is the bold one — the two must not read alike.
+        (expect (= #{SGR/BOLD} (modifiers-of screen "Note"))))))

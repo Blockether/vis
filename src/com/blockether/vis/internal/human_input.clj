@@ -122,11 +122,17 @@
           ks))
 
 (defn- trimmed
+  "`value` as trimmed non-blank text, or nil.
+
+   A collection is never text: a map or vector would `str` into Clojure source
+   no operator can read, so a name, label or description that arrives as one is
+   dropped exactly like a blank."
   [value]
-  (some-> value
-          str
-          str/trim
-          not-empty))
+  (when-not (coll? value)
+    (some-> value
+            str
+            str/trim
+            not-empty)))
 
 (defn- invalid-field!
   [field-id message]
@@ -180,15 +186,24 @@
 
 (defn normalize-field
   "Validate one field spec and return its internal form. Throws `ex-info` with
-   `:type :vis/human-input-invalid-field` on a bad spec."
+   `:type :vis/human-input-invalid-field` on a bad spec.
+
+   Three names, three jobs, and every field ends up with all three:
+
+     - `:name` is how the answer is KEYED — the key the extension reads back out
+       of `:values` (`:id` is the historical alias, accepted and still emitted).
+     - `:label` is how the field is SHOWN. Never blank: a field without one
+       shows its `:name`, so no surface ever draws a bare, unlabelled input.
+     - `:description` is the prose under that label, rendered in italic by every
+       dialog (`:help` is its legacy alias)."
   [field]
   (when-not (map? field) (invalid-field! nil "field must be a map"))
   (let
     [field-id
-     (trimmed (pick field "id" :id))
+     (trimmed (pick field "name" :name "id" :id))
 
      _
-     (when-not field-id (invalid-field! nil "field needs a non-blank :id"))
+     (when-not field-id (invalid-field! nil "field needs a non-blank :name"))
 
      type-name
      (or (trimmed (pick field "type" :type)) "plaintext")
@@ -202,9 +217,16 @@
                        (str "unknown type " (pr-str type-name)
                             " — expected one of " (str/join ", " (sort (keys field-types))))))
 
+     description
+     (trimmed (pick field "description" :description "help" :help))
+
      spec
      (cond->
        {:id field-id
+        ;; The same string under both keys: `:name` is the contract a spec
+        ;; writes, `:id` is what every surface has always keyed rows and errors
+        ;; by. One field identity, two spellings, no drift between them.
+        :name field-id
         :type field-type
         :label (or (trimmed (pick field "label" :label)) field-id)
         ;; Optional unless the caller says otherwise — the same default every
@@ -213,8 +235,8 @@
         :is-required
         (normalize-bool field-id ":is-required" (pick field "is_required" :is-required) false)
         :is-secret (contains? secret-types field-type)}
-       (trimmed (pick field "help" :help))
-       (assoc :help (trimmed (pick field "help" :help)))
+       description
+       (assoc :description description)
 
        (trimmed (pick field "placeholder" :placeholder))
        (assoc :placeholder (trimmed (pick field "placeholder" :placeholder)))
@@ -313,7 +335,8 @@
      (when (empty? fields) (invalid-request! ":fields must not be empty"))
 
      _
-     (when-not (apply distinct? (map :id fields)) (invalid-request! "field ids must be distinct"))
+     (when-not (apply distinct? (map :name fields))
+       (invalid-request! "field names must be distinct"))
 
      session-id
      (or (trimmed (pick request "session_id" :session-id)) (ambient-session-id))]
@@ -559,12 +582,21 @@
 
    `request` is a spec map — `:title`, `:fields`, optional `:description`,
    `:submit-label`, `:cancel-label`, `:is-cancellable`, `:timeout-ms`,
-   `:channel-ids` (string keys from the Python boundary work too). Publishes a
-   `:human-input/request` channel event, waits for [[submit!]] / [[cancel!]],
-   and always returns a map:
+   `:channel-ids` (string keys from the Python boundary work too).
 
-     {:is-submitted true  :reason \"submitted\" :request-id … :values {…}}
-     {:is-submitted false :reason \"cancelled\"|\"timeout\"|… :request-id …}
+   Every field carries `:name`, `:type`, `:label` and an optional
+   `:description`. `:name` keys the answer in `:values`, `:label` is what the
+   dialog shows above the input, and `:description` is the italic line under
+   that label — see [[normalize-field]].
+
+   Publishes a `:human-input/request` channel event, waits for [[submit!]] /
+   [[cancel!]], and always returns a map, either
+
+     :is-submitted true, :reason \"submitted\", plus :request-id and :values
+
+   or
+
+     :is-submitted false, :reason \"cancelled\"/\"timeout\"/…, plus :request-id
 
    `:password` values in `:values` are opaque handles — see [[reveal-secret]]."
   [request]

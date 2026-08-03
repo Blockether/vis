@@ -48,10 +48,49 @@
   (it "fills the documented defaults"
       (let [[field] (normalized-fields {:id "name"})]
         (expect (= "name" (:id field)))
+        (expect (= "name" (:name field)))
         (expect (= :plaintext (:type field)))
+        ;; No `:label` in the spec — the field still shows something a human can
+        ;; read, never a blank heading.
         (expect (= "name" (:label field)))
+        (expect (nil? (:description field)))
         (expect (false? (:is-required field)))
         (expect (false? (:is-secret field)))))
+  (it "keys the answer by :name, shows :label, explains with :description"
+      (let
+        [[field] (normalized-fields {:name "api_key"
+                                     :label "API key"
+                                     :description "Found on the provider dashboard"})]
+        (expect (= "api_key" (:name field)))
+        ;; The same string under `:id`, so every surface that has always keyed
+        ;; rows, values and errors by `:id` keeps working unchanged.
+        (expect (= "api_key" (:id field)))
+        (expect (= "API key" (:label field)))
+        (expect (= "Found on the provider dashboard" (:description field)))))
+  (it "accepts the legacy :id and :help spellings"
+      (let [[field] (normalized-fields {:id "note" :help "Free text"})]
+        (expect (= "note" (:name field)))
+        (expect (= "note" (:id field)))
+        (expect (= "Free text" (:description field)))))
+  (it "prefers :name when a spec carries both spellings"
+      (let [[field] (normalized-fields {:id "old" :name "new"})]
+        (expect (= "new" (:id field)))
+        (expect (= "new" (:name field)))))
+  (it "refuses a field that has a label but no name"
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(normalized-fields {:label "Just a label" :description "and prose"}))))
+  (it "never draws a collection as prose"
+      ;; A JSON client can post anything. `str` on a map or vector yields Clojure
+      ;; source no operator can read, so such a label or description is dropped
+      ;; like a blank and such a name is refused outright.
+      (let [[field] (normalized-fields {:name "note" :label {} :description ["a" "b"]})]
+        (expect (= "note" (:label field)))
+        (expect (nil? (:description field))))
+      (expect (throws? clojure.lang.ExceptionInfo #(normalized-fields {:name {"a" 1}}))))
+  (it "keys coerced values by the field name"
+      (let [fields (normalized-fields {:name "note" :is-required true})]
+        (expect (= {:is-accepted true :values {"note" "hi"}}
+                   (hi/coerce-values fields {"note" "hi"})))))
   (it "reads string keys from the Python boundary"
       (let
         [[field] (normalized-fields {"id" "token"
@@ -59,14 +98,14 @@
                                      "label" "API token"
                                      "is_required" true
                                      "max_length" 40
-                                     "help" "from the dashboard"})]
+                                     "description" "from the dashboard"})]
         (expect (= "token" (:id field)))
         (expect (= :password (:type field)))
         (expect (= "API token" (:label field)))
         (expect (true? (:is-required field)))
         (expect (true? (:is-secret field)))
         (expect (= 40 (:max-length field)))
-        (expect (= "from the dashboard" (:help field)))))
+        (expect (= "from the dashboard" (:description field)))))
   (it "expands bare option strings into value/label pairs"
       (let [[field] (normalized-fields {:id "env" :type "select" :options ["staging" "prod"]})]
         (expect (= [{:value "staging" :label "staging"} {:value "prod" :label "prod"}]
@@ -112,9 +151,13 @@
       (expect (throws? clojure.lang.ExceptionInfo #(hi/normalize-request {:fields [{:id "name"}]})))
       (expect (throws? clojure.lang.ExceptionInfo #(hi/normalize-request {:title "t"})))
       (expect (throws? clojure.lang.ExceptionInfo #(hi/normalize-request {:title "t" :fields []}))))
-  (it "rejects duplicate field ids"
+  (it "rejects duplicate field names, however they are spelled"
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(hi/normalize-request {:title "t" :fields [{:id "a"} {:id "a"}]}))))
+                       #(hi/normalize-request {:title "t" :fields [{:name "a"} {:name "a"}]})))
+      ;; `:id` is the same identity under its legacy name — a spec cannot smuggle
+      ;; a collision past this by mixing the two spellings.
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(hi/normalize-request {:title "t" :fields [{:name "a"} {:id "a"}]}))))
   (it "clamps and validates the timeout"
       (expect (= hi/max-timeout-ms
                  (:timeout-ms (hi/normalize-request {:title "t"

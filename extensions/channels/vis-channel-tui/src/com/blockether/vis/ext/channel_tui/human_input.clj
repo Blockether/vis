@@ -374,6 +374,10 @@
      value
      (get-in form [:values id])
 
+     description
+     (when-let [text (:description field)]
+       [{:kind :description :text text}])
+
      rows
      (cond (contains? text-types type)
            (let
@@ -424,12 +428,17 @@
                    (field-options field)))
            :else [])]
 
+    ;; Label, then description, then the input: the italic prose explains the
+    ;; field you are about to fill, so it has to be readable BEFORE it, not
+    ;; discovered underneath it.
+    ;;
     ;; A checkbox row already carries its own label — a separate bold label row
-    ;; above it would say the same word twice, which no other dialog does.
-    (cond-> (if (= :checkbox type) (vec rows) (into [{:kind :label :text (label-text field)}] rows))
-      (:help field)
-      (conj {:kind :help :text (:help field)})
-
+    ;; above it would say the same word twice, which no other dialog does — so
+    ;; there its description follows the box instead.
+    (cond->
+      (if (= :checkbox type)
+        (into (vec rows) description)
+        (into (into [{:kind :label :text (label-text field)}] description) rows))
       (get-in form [:errors id])
       (conj {:kind :error :text (get-in form [:errors id])})
 
@@ -514,6 +523,20 @@
   (p/fill-rect! g (inc (long left)) row inner-w 1)
   (p/put-str! g (inc (long left)) row (dialogs/ellipsize (str text) (max 0 (- (long inner-w) 2)))))
 
+(defn- paint-italic!
+  "Prose rows — the request's description and each field's — paint in the same
+   dim ITALIC voice the rest of the TUI uses for explanatory text, so a
+   description can never be mistaken for a label or a value."
+  [g left row inner-w fg text]
+  (p/set-colors! g fg t/dialog-bg)
+  (p/fill-rect! g (inc (long left)) row inner-w 1)
+  (p/styled g
+            [p/ITALIC]
+            (p/put-str! g
+                        (inc (long left))
+                        row
+                        (dialogs/ellipsize (str text) (max 0 (- (long inner-w) 2))))))
+
 
 
 (defn- paint-row!
@@ -529,7 +552,7 @@
         nil)
 
     :description
-    (do (paint-plain! g left row inner-w t/dialog-hint (:text entry)) nil)
+    (do (paint-italic! g left row inner-w t/dialog-hint (:text entry)) nil)
 
     :label
     (do (p/set-colors! g t/dialog-fg t/dialog-bg)
@@ -541,9 +564,6 @@
                               row
                               (dialogs/ellipsize (str (:text entry)) (max 0 (- (long inner-w) 2)))))
         nil)
-
-    :help
-    (do (paint-plain! g left row inner-w t/dialog-hint (:text entry)) nil)
 
     :error
     (do (paint-plain! g left row inner-w t/footer-error-fg (:text entry)) nil)

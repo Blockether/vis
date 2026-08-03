@@ -284,12 +284,13 @@
    :title "Deploy?"
    :description "prod"
    :timeout-ms 300000
-   :fields [{:id "env"
+   :fields [{:name "env"
              :type "select"
              :label "Env"
+             :description "Where this deploy lands"
              :default "prod"
              :options [{:value "prod"} {:value "stg" :label "Staging"}]}
-            {:id "key" :type "password" :is-required true :max-length 40}
+            {:name "key" :type "password" :is-required true :max-length 40}
             {:id "ok" :type "checkbox" :label "Confirm" :default true}
             {:id "tags" :type "multiselect" :options ["a" "b"] :default []}]})
 

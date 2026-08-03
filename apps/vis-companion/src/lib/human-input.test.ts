@@ -50,12 +50,19 @@ describe('humanInputRequestFromWire', () => {
     expect(request.session_id).toBe('sid-1');
     expect(request.submit_label).toBe('Submit');
     expect(request.is_cancellable).toBe(true);
-    expect(request.fields.map((field) => `${field.id}:${field.type}`)).toEqual([
+    expect(request.fields.map((field) => `${field.name}:${field.type}`)).toEqual([
       'env:select',
       'key:password',
       'ok:checkbox',
       'tags:multiselect',
     ]);
+    // name keys the answer, label is what the dialog shows, description is the
+    // italic line under it.
+    expect(request.fields[0]?.name).toBe('env');
+    expect(request.fields[0]?.label).toBe('Env');
+    expect(request.fields[0]?.description).toBe('Where this deploy lands');
+    expect(request.fields[1]?.label).toBe('key');
+    expect(request.fields[1]?.description).toBeUndefined();
     expect(request.fields[1]?.is_required).toBe(true);
     expect(request.fields[1]?.max_length).toBe(40);
     expect(request.fields[0]?.options).toEqual([
@@ -74,6 +81,26 @@ describe('humanInputRequestFromWire', () => {
     expect(request?.submit_label).toBe('Submit');
     expect(request?.cancel_label).toBe('Cancel');
     expect(request?.is_cancellable).toBe(true);
+  });
+
+  it('names a field by its wire name, and by its id for older engines', () => {
+    const named = humanInputRequestFromWire({
+      id: 'r',
+      title: 'T',
+      fields: [{ name: 'token', type: 'plaintext', label: 'API token', description: 'from 1Password' }],
+    });
+    expect(named?.fields[0]?.name).toBe('token');
+    expect(named?.fields[0]?.id).toBe('token');
+    expect(named?.fields[0]?.label).toBe('API token');
+    expect(named?.fields[0]?.description).toBe('from 1Password');
+
+    const legacy = humanInputRequestFromWire({
+      id: 'r',
+      title: 'T',
+      fields: [{ id: 'token', type: 'plaintext', help: 'legacy help line' }],
+    });
+    expect(legacy?.fields[0]?.name).toBe('token');
+    expect(legacy?.fields[0]?.description).toBe('legacy help line');
   });
 
   it('refuses a frame it could not render as an answerable form', () => {

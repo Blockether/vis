@@ -256,7 +256,8 @@
                (is (await-true #(= 1 (count (:human-input-queue @state/app-db)))))
                (is (tui-open? open-id))
                (is (await-true #(= [open-id queued-id] (mapv :id (gw/pending sid)))))
-               (is (= 1 (count (events-of seen "human_input.request" queued-id)))))
+               ;; The bridge publishes from another thread: poll, never race it.
+               (is (await-true #(= 1 (count (events-of seen "human_input.request" queued-id))))))
              (testing "the app may answer the QUEUED one without disturbing the open dialog"
                (is (:is-accepted (gw/submit! queued-id {"why" "because"})))
                (is (true? (:is-submitted (deref queued-answer 2000 ::timeout))))
