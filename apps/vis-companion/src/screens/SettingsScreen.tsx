@@ -1,5 +1,15 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { GatewayClient, GatewayError, cachedThemeCatalogs } from '../lib/gateway';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  GatewayClient,
+  GatewayError,
+  cachedThemeCatalogs,
+} from "../lib/gateway";
 import type {
   GatewayConn,
   PushDevice,
@@ -12,7 +22,7 @@ import type {
   McpServer,
   McpServerInput,
   McpTestResult,
-} from '../lib/types';
+} from "../lib/types";
 import {
   acquirePushToken,
   cachedPushToken,
@@ -22,9 +32,15 @@ import {
   pushPermission,
   pushPlatform,
   type PushPermission,
-} from '../lib/push';
-import { applyTheme, dedupeThemes, resolveLocalTheme } from '../lib/theme';
-import { applyGatewayNotify } from '../lib/notify';
+} from "../lib/push";
+import { applyTheme, dedupeThemes, resolveLocalTheme } from "../lib/theme";
+import { applyGatewayNotify } from "../lib/notify";
+import {
+  registerForPush,
+  registeredIds,
+  relayUrlFor,
+  unregisterFromPush,
+} from "../lib/relay";
 import {
   DEFAULT_SESSION_PAGE_SIZE,
   getGatewayNotify,
@@ -35,11 +51,18 @@ import {
   setSessionsPerPage,
   setThemePalette,
   setThemePref,
-} from '../lib/storage';
-import { BUNDLED_THEMES } from '../lib/palettes';
-import { Banner, Button, Input } from '../components/ui';
-import { REACH_HINT, REACH_LABEL, bestAddress, hostOf, mergeAddresses, reachOf } from '../lib/endpoints';
-import { onWake } from '../lib/wake';
+} from "../lib/storage";
+import { BUNDLED_THEMES } from "../lib/palettes";
+import { Banner, Button, Input } from "../components/ui";
+import {
+  REACH_HINT,
+  REACH_LABEL,
+  bestAddress,
+  hostOf,
+  mergeAddresses,
+  reachOf,
+} from "../lib/endpoints";
+import { onWake } from "../lib/wake";
 import {
   ProviderFlowPanel,
   ProviderSignOutButton,
@@ -50,7 +73,7 @@ import {
   providerStatusDot,
   providerStatusLine,
   useProviderAuth,
-} from '../components/ProviderAuth';
+} from "../components/ProviderAuth";
 
 interface Props {
   client: GatewayClient;
@@ -82,7 +105,7 @@ export function GatewaySettingsDialog({
   const [pending, setPending] = useState<string | null>(null);
   const [unreachable, setUnreachable] = useState(false);
   const [unauthorized, setUnauthorized] = useState(false);
-  const [labelDraft, setLabelDraft] = useState(gateway.label ?? '');
+  const [labelDraft, setLabelDraft] = useState(gateway.label ?? "");
   const [confirmRemove, setConfirmRemove] = useState(false);
 
   const load = useCallback(
@@ -128,10 +151,10 @@ export function GatewaySettingsDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === "Escape") onClose();
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
   function patch(updated: Toggle) {
@@ -139,16 +162,17 @@ export function GatewaySettingsDialog({
       (current) =>
         current?.map((group) => ({
           ...group,
-          toggles: group.toggles.map((toggle) => (toggle.id === updated.id ? updated : toggle)),
+          toggles: group.toggles.map((toggle) =>
+            toggle.id === updated.id ? updated : toggle,
+          ),
         })) ?? null,
     );
   }
 
-
   async function flip(toggle: Toggle) {
     setPending(toggle.id);
     try {
-      patch(await client.setSetting(toggle.id, 'toggle'));
+      patch(await client.setSetting(toggle.id, "toggle"));
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -159,7 +183,7 @@ export function GatewaySettingsDialog({
   async function pick(toggle: Toggle, value: string) {
     setPending(toggle.id);
     try {
-      patch(await client.setSetting(toggle.id, 'value', value));
+      patch(await client.setSetting(toggle.id, "value", value));
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -167,14 +191,15 @@ export function GatewaySettingsDialog({
     }
   }
 
-  const settingCount = groups?.reduce((total, group) => total + group.toggles.length, 0) ?? 0;
+  const settingCount =
+    groups?.reduce((total, group) => total + group.toggles.length, 0) ?? 0;
   const status = unreachable
-    ? { dot: '○', label: 'Offline', tone: 'text-err' }
+    ? { dot: "○", label: "Offline", tone: "text-err" }
     : unauthorized
-      ? { dot: '●', label: 'Unauthorized', tone: 'text-warn-strong' }
+      ? { dot: "●", label: "Unauthorized", tone: "text-warn-strong" }
       : isPrimary
-        ? { dot: '●', label: 'Primary', tone: 'text-ok' }
-        : { dot: '○', label: 'Saved', tone: 'text-dialog-hint' };
+        ? { dot: "●", label: "Primary", tone: "text-ok" }
+        : { dot: "○", label: "Saved", tone: "text-dialog-hint" };
 
   return (
     <div
@@ -197,7 +222,9 @@ export function GatewaySettingsDialog({
             >
               Machine settings
             </h2>
-            <p className="truncate font-mono text-meta opacity-65">{gateway.url}</p>
+            <p className="truncate font-mono text-meta opacity-65">
+              {gateway.url}
+            </p>
           </div>
           <button
             type="button"
@@ -211,8 +238,8 @@ export function GatewaySettingsDialog({
 
         <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
           <p className="text-ui text-dialog-hint">
-            These settings are stored by this gateway and shared with its TUI and every
-            other client.
+            These settings are stored by this gateway and shared with its TUI
+            and every other client.
           </p>
         </div>
 
@@ -238,23 +265,26 @@ export function GatewaySettingsDialog({
                 className="w-full"
                 onChange={(event) => setLabelDraft(event.target.value)}
                 onBlur={() => {
-                  if ((labelDraft.trim() || undefined) !== (gateway.label ?? undefined))
+                  if (
+                    (labelDraft.trim() || undefined) !==
+                    (gateway.label ?? undefined)
+                  )
                     void onRename?.(labelDraft.trim() || undefined);
                 }}
                 onKeyDown={(event) => {
-                  if (event.key === 'Enter') event.currentTarget.blur();
-                  if (event.key === 'Escape') {
-                    setLabelDraft(gateway.label ?? '');
+                  if (event.key === "Enter") event.currentTarget.blur();
+                  if (event.key === "Escape") {
+                    setLabelDraft(gateway.label ?? "");
                     event.currentTarget.blur();
                   }
                 }}
               />
 
               <p className="font-mono text-meta text-dialog-hint">
-                This device remembers{' '}
-                <span className="text-white">{gatewayHost(gateway.url)}</span> and its
-                access token. The name is only shown in your machine list — the machine
-                never sees it.
+                This device remembers{" "}
+                <span className="text-white">{gatewayHost(gateway.url)}</span>{" "}
+                and its access token. The name is only shown in your machine
+                list — the machine never sees it.
               </p>
 
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-dialog-edge pt-2">
@@ -274,10 +304,13 @@ export function GatewaySettingsDialog({
                 {confirmRemove ? (
                   <>
                     <span className="min-w-0 flex-1 font-mono text-meta text-dialog-hint">
-                      Deletes the address and token from this device. You&apos;ll need
-                      the QR code again.
+                      Deletes the address and token from this device.
+                      You&apos;ll need the QR code again.
                     </span>
-                    <Button variant="ghost" onClick={() => setConfirmRemove(false)}>
+                    <Button
+                      variant="ghost"
+                      onClick={() => setConfirmRemove(false)}
+                    >
                       Cancel
                     </Button>
                     <Button
@@ -291,7 +324,10 @@ export function GatewaySettingsDialog({
                     </Button>
                   </>
                 ) : (
-                  <Button variant="danger" onClick={() => setConfirmRemove(true)}>
+                  <Button
+                    variant="danger"
+                    onClick={() => setConfirmRemove(true)}
+                  >
                     Forget this machine
                   </Button>
                 )}
@@ -314,7 +350,9 @@ export function GatewaySettingsDialog({
           {unreachable ? (
             <SettingsPanel title="Settings">
               <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
-                <p className="font-mono text-body font-bold text-err">Machine unreachable</p>
+                <p className="font-mono text-body font-bold text-err">
+                  Machine unreachable
+                </p>
                 <p className="font-mono text-meta text-dialog-hint">
                   Can't load settings — vis isn't responding on this machine.
                 </p>
@@ -334,9 +372,9 @@ export function GatewaySettingsDialog({
                   Token missing or invalid
                 </p>
                 <p className="max-w-sm font-mono text-meta text-dialog-hint">
-                  The machine is online, but rejected this token. Re-pair from{' '}
-                  <code className="text-accent-ink">vis gateway pair</code> and paste the fresh link
-                  to load its settings.
+                  The machine is online, but rejected this token. Re-pair from{" "}
+                  <code className="text-accent-ink">vis gateway pair</code> and
+                  paste the fresh link to load its settings.
                 </p>
                 <button
                   type="button"
@@ -352,10 +390,20 @@ export function GatewaySettingsDialog({
               {/* `bg-panel-2` equals `bg-panel` in the shipped themes, so plain
                   tinted blocks were an invisible skeleton — a blank hole where
                   the settings should be. Bars are drawn in `--color-muted`. */}
-              <div className="space-y-px bg-dialog-edge" role="status" aria-live="polite" aria-label="Loading settings">
-                <p className="bg-panel px-4 py-2 font-mono text-ui text-dialog-hint">Loading settings…</p>
-                {['w-1/2', 'w-2/3', 'w-2/5'].map((width) => (
-                  <div key={width} className="animate-pulse bg-panel px-4 py-3.5 motion-reduce:animate-none">
+              <div
+                className="space-y-px bg-dialog-edge"
+                role="status"
+                aria-live="polite"
+                aria-label="Loading settings"
+              >
+                <p className="bg-panel px-4 py-2 font-mono text-ui text-dialog-hint">
+                  Loading settings…
+                </p>
+                {["w-1/2", "w-2/3", "w-2/5"].map((width) => (
+                  <div
+                    key={width}
+                    className="animate-pulse bg-panel px-4 py-3.5 motion-reduce:animate-none"
+                  >
                     <span className={`block h-2.5 bg-muted/30 ${width}`} />
                     <span className="mt-2 block h-1.5 w-1/4 bg-muted/20" />
                   </div>
@@ -373,7 +421,7 @@ export function GatewaySettingsDialog({
               <SettingsPanel
                 key={group.id}
                 title={group.title}
-                meta={`${group.toggles.length} ${group.toggles.length === 1 ? 'option' : 'options'}`}
+                meta={`${group.toggles.length} ${group.toggles.length === 1 ? "option" : "options"}`}
               >
                 <div className="divide-y divide-dialog-edge">
                   {group.toggles.map((toggle) => {
@@ -385,13 +433,17 @@ export function GatewaySettingsDialog({
                       >
                         <span
                           className={`pt-0.5 font-mono text-body ${
-                            toggle.type === 'boolean' && toggle.enabled
-                              ? 'text-ok'
-                              : 'text-dialog-hint'
+                            toggle.type === "boolean" && toggle.enabled
+                              ? "text-ok"
+                              : "text-dialog-hint"
                           }`}
                           aria-hidden="true"
                         >
-                          {toggle.type === 'boolean' ? (toggle.enabled ? '●' : '○') : '◆'}
+                          {toggle.type === "boolean"
+                            ? toggle.enabled
+                              ? "●"
+                              : "○"
+                            : "◆"}
                         </span>
 
                         <div className="min-w-0">
@@ -405,7 +457,7 @@ export function GatewaySettingsDialog({
                           )}
                         </div>
 
-                        {toggle.type === 'boolean' && (
+                        {toggle.type === "boolean" && (
                           <Switch
                             label={toggle.label}
                             on={!!toggle.enabled}
@@ -415,7 +467,7 @@ export function GatewaySettingsDialog({
                           />
                         )}
 
-                        {toggle.type === 'enum' && toggle.choices && (
+                        {toggle.type === "enum" && toggle.choices && (
                           <div className="col-span-full col-start-2 flex min-w-0 flex-wrap gap-1.5">
                             {toggle.choices.map((choice) => {
                               const selected = toggle.value === choice;
@@ -427,8 +479,8 @@ export function GatewaySettingsDialog({
                                   onClick={() => pick(toggle, choice)}
                                   className={`min-h-8 border px-2 py-0.5 font-mono text-chip font-bold transition-[background-color,border-color,color,transform,translate,scale,rotate] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none sm:min-h-6 ${
                                     selected
-                                      ? 'border-transparent bg-accent text-accent-foreground'
-                                      : 'border-transparent bg-panel-2 text-dialog-hint hover:bg-hover hover:text-white'
+                                      ? "border-transparent bg-accent text-accent-foreground"
+                                      : "border-transparent bg-panel-2 text-dialog-hint hover:bg-hover hover:text-white"
                                   }`}
                                   aria-pressed={selected}
                                 >
@@ -449,7 +501,7 @@ export function GatewaySettingsDialog({
 
         <footer className="flex shrink-0 items-center border-t border-dialog-edge bg-panel-2 px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] font-mono text-chip text-dialog-hint sm:px-4 sm:py-2">
           <span>
-            {settingCount} {settingCount === 1 ? 'option' : 'options'}
+            {settingCount} {settingCount === 1 ? "option" : "options"}
           </span>
         </footer>
       </section>
@@ -460,19 +512,21 @@ export function GatewaySettingsDialog({
 function McpServersPanel({ client }: { client: GatewayClient }) {
   const [servers, setServers] = useState<McpServer[] | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [transport, setTransport] = useState<'stdio' | 'streamable_http'>('stdio');
-  const [name, setName] = useState('');
-  const [command, setCommand] = useState('');
-  const [args, setArgs] = useState('');
-  const [cwd, setCwd] = useState('');
-  const [url, setUrl] = useState('');
-  const [env, setEnv] = useState('');
-  const [headers, setHeaders] = useState('');
+  const [transport, setTransport] = useState<"stdio" | "streamable_http">(
+    "stdio",
+  );
+  const [name, setName] = useState("");
+  const [command, setCommand] = useState("");
+  const [args, setArgs] = useState("");
+  const [cwd, setCwd] = useState("");
+  const [url, setUrl] = useState("");
+  const [env, setEnv] = useState("");
+  const [headers, setHeaders] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [test, setTest] = useState<McpTestResult | null>(null);
   const [authFlow, setAuthFlow] = useState<McpAuthFlow | null>(null);
-  const [authInput, setAuthInput] = useState('');
+  const [authInput, setAuthInput] = useState("");
   // The server being edited, or null while adding. Editing keys the save by the
   // ORIGINAL name: `POST /v1/mcp/servers` replaces by name, so a renamed field
   // would fork a second server instead of updating this one.
@@ -498,14 +552,17 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
     const timer = window.setInterval(() => {
       void (async () => {
         try {
-          const verdict = await client.mcpAuthPoll(authFlow.server, authFlow.flow_id);
-          if (verdict.status === 'ok') {
+          const verdict = await client.mcpAuthPoll(
+            authFlow.server,
+            authFlow.flow_id,
+          );
+          if (verdict.status === "ok") {
             setAuthFlow(null);
-            setAuthInput('');
+            setAuthInput("");
             await load();
-          } else if (verdict.status === 'error') {
+          } else if (verdict.status === "error") {
             setAuthFlow(null);
-            setError(verdict.error ?? 'Authorization failed.');
+            setError(verdict.error ?? "Authorization failed.");
           }
         } catch {
           // Expired or already swept; the Finish button reports it in context.
@@ -522,38 +579,38 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
     setError(null);
     setTest(null);
     setEditing(server);
-    setTransport(server?.transport ?? 'stdio');
-    setName(server?.name ?? '');
-    setCommand(server?.command ?? '');
-    setArgs((server?.args ?? []).join('\n'));
-    setCwd(server?.cwd ?? '');
-    setUrl(server?.url ?? '');
-    setEnv('');
-    setHeaders('');
+    setTransport(server?.transport ?? "stdio");
+    setName(server?.name ?? "");
+    setCommand(server?.command ?? "");
+    setArgs((server?.args ?? []).join("\n"));
+    setCwd(server?.cwd ?? "");
+    setUrl(server?.url ?? "");
+    setEnv("");
+    setHeaders("");
     setShowForm(true);
   }
 
   function closeForm() {
     setShowForm(false);
     setEditing(null);
-    setName('');
-    setCommand('');
-    setArgs('');
-    setCwd('');
-    setUrl('');
-    setEnv('');
-    setHeaders('');
+    setName("");
+    setCommand("");
+    setArgs("");
+    setCwd("");
+    setUrl("");
+    setEnv("");
+    setHeaders("");
   }
 
   const spec = (): McpServerInput => {
     const keyValues = (text: string) =>
       Object.fromEntries(
         text
-          .split('\n')
+          .split("\n")
           .map((line) => line.trim())
           .filter(Boolean)
           .map((line) => {
-            const index = line.indexOf('=');
+            const index = line.indexOf("=");
             return [line.slice(0, index).trim(), line.slice(index + 1)];
           })
           .filter(([key]) => key),
@@ -564,12 +621,15 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
       ...(editing ? { enabled: editing.enabled } : {}),
       ...(editing?.timeout_ms ? { timeout_ms: editing.timeout_ms } : {}),
     };
-    return transport === 'stdio'
+    return transport === "stdio"
       ? {
           ...kept,
           transport,
           command: command.trim(),
-          args: args.split('\n').map((arg) => arg.trim()).filter(Boolean),
+          args: args
+            .split("\n")
+            .map((arg) => arg.trim())
+            .filter(Boolean),
           ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
           ...(env.trim() ? { env: keyValues(env) } : {}),
         }
@@ -582,9 +642,11 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
   };
 
   const valid = () => {
-    if (!name.trim()) return 'Server name is required.';
-    if (transport === 'stdio' && !command.trim()) return 'An executable is required.';
-    if (transport === 'streamable_http' && !url.trim()) return 'An MCP endpoint is required.';
+    if (!name.trim()) return "Server name is required.";
+    if (transport === "stdio" && !command.trim())
+      return "An executable is required.";
+    if (transport === "streamable_http" && !url.trim())
+      return "An MCP endpoint is required.";
     return null;
   };
 
@@ -594,7 +656,7 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
     // Keyed by the name the gateway already knows when editing.
     const target = editing ? editing.name : name.trim();
     const candidate = spec();
-    setBusy('save');
+    setBusy("save");
     try {
       const result = await client.testMcpServer(target, candidate);
       setTest(result);
@@ -626,7 +688,9 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
   async function setRunning(server: McpServer, running: boolean) {
     setBusy(server.name);
     try {
-      await (running ? client.startMcpServer(server.name) : client.killMcpServer(server.name));
+      await (running
+        ? client.startMcpServer(server.name)
+        : client.killMcpServer(server.name));
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -643,9 +707,9 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
     try {
       const flow = await client.mcpAuthStart(server.name);
       setError(null);
-      setAuthInput('');
+      setAuthInput("");
       setAuthFlow(flow);
-      window.open(flow.url, '_blank', 'noopener,noreferrer');
+      window.open(flow.url, "_blank", "noopener,noreferrer");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -657,13 +721,17 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
     if (!authFlow) return;
     setBusy(authFlow.server);
     try {
-      const verdict = await client.mcpAuthComplete(authFlow.server, authFlow.flow_id, authInput.trim());
-      if (verdict.status === 'error') {
-        setError(verdict.error ?? 'Authorization failed.');
+      const verdict = await client.mcpAuthComplete(
+        authFlow.server,
+        authFlow.flow_id,
+        authInput.trim(),
+      );
+      if (verdict.status === "error") {
+        setError(verdict.error ?? "Authorization failed.");
         return;
       }
       setAuthFlow(null);
-      setAuthInput('');
+      setAuthInput("");
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -675,7 +743,7 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
   async function cancelAuth() {
     const flow = authFlow;
     setAuthFlow(null);
-    setAuthInput('');
+    setAuthInput("");
     if (!flow) return;
     try {
       await client.mcpAuthCancel(flow.server, flow.flow_id);
@@ -685,7 +753,10 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
   }
 
   async function signOut(server: McpServer) {
-    if (!window.confirm(`Forget ${server.name}'s OAuth tokens on this gateway?`)) return;
+    if (
+      !window.confirm(`Forget ${server.name}'s OAuth tokens on this gateway?`)
+    )
+      return;
     setBusy(server.name);
     try {
       await client.mcpAuthLogout(server.name);
@@ -714,34 +785,52 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
     <SettingsPanel
       title="MCP servers"
       description="Tools run on this gateway and are shared with every client. Commands, tokens, and environment values never leave this machine."
-      meta={servers === null ? 'loading' : `${servers.length} configured`}
+      meta={servers === null ? "loading" : `${servers.length} configured`}
     >
       <div className="divide-y divide-dialog-edge">
         {error && <Banner kind="err">{error}</Banner>}
         {servers?.map((server) => (
-          <div key={server.name} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 px-3 py-3 sm:px-4 sm:py-2.5">
+          <div
+            key={server.name}
+            className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 px-3 py-3 sm:px-4 sm:py-2.5"
+          >
             <div className="min-w-0">
-              <p className="truncate font-mono text-ui font-bold text-white">{server.name}</p>
+              <p className="truncate font-mono text-ui font-bold text-white">
+                {server.name}
+              </p>
               <p className="mt-0.5 truncate font-mono text-meta text-dialog-hint">
-                {server.transport === 'stdio' ? server.command : server.url} · {server.tools} tools ·{' '}
+                {server.transport === "stdio" ? server.command : server.url} ·{" "}
+                {server.tools} tools ·{" "}
                 {server.is_killed
-                  ? 'killed'
+                  ? "killed"
                   : server.is_connected
-                    ? 'connected'
+                    ? "connected"
                     : server.enabled
-                      ? 'connecting'
-                      : 'disabled'}
-                {server.url ? (server.is_authorized ? ' · signed in' : ' · not signed in') : null}
+                      ? "connecting"
+                      : "disabled"}
+                {server.url
+                  ? server.is_authorized
+                    ? " · signed in"
+                    : " · not signed in"
+                  : null}
               </p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-1.5">
               {server.url && (
-                <Button variant="ghost" disabled={busy !== null} onClick={() => void authorize(server)}>
-                  {server.is_authorized ? 'Re-auth' : 'Sign in'}
+                <Button
+                  variant="ghost"
+                  disabled={busy !== null}
+                  onClick={() => void authorize(server)}
+                >
+                  {server.is_authorized ? "Re-auth" : "Sign in"}
                 </Button>
               )}
               {server.url && server.is_authorized && (
-                <Button variant="ghost" disabled={busy !== null} onClick={() => void signOut(server)}>
+                <Button
+                  variant="ghost"
+                  disabled={busy !== null}
+                  onClick={() => void signOut(server)}
+                >
                   Sign out
                 </Button>
               )}
@@ -750,7 +839,7 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
                 disabled={busy !== null}
                 onClick={() => void setRunning(server, server.is_killed)}
               >
-                {server.is_killed ? 'Start' : 'Kill'}
+                {server.is_killed ? "Start" : "Kill"}
               </Button>
               {server.is_managed ? (
                 <>
@@ -761,22 +850,33 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
                     disabled={busy !== null}
                     onClick={() => void toggle(server)}
                   />
-                  <Button variant="ghost" disabled={busy !== null} onClick={() => openForm(server)}>
+                  <Button
+                    variant="ghost"
+                    disabled={busy !== null}
+                    onClick={() => openForm(server)}
+                  >
                     Edit
                   </Button>
-                  <Button variant="ghost" disabled={busy !== null} onClick={() => void remove(server)}>
+                  <Button
+                    variant="ghost"
+                    disabled={busy !== null}
+                    onClick={() => void remove(server)}
+                  >
                     Remove
                   </Button>
                 </>
               ) : (
-                <p className="font-mono text-chip text-dialog-hint">config file</p>
+                <p className="font-mono text-chip text-dialog-hint">
+                  config file
+                </p>
               )}
             </div>
             {authFlow?.server === server.name && (
               <div className="col-span-2 mt-2 space-y-2 border-t border-dialog-edge pt-2">
                 <p className="font-mono text-meta text-dialog-hint">
-                  Approve the sign-in in the browser tab we opened. If it stayed shut, use this link — then paste
-                  the URL the browser lands on. Nothing secret ever reaches this device.
+                  Approve the sign-in in the browser tab we opened. If it stayed
+                  shut, use this link — then paste the URL the browser lands on.
+                  Nothing secret ever reaches this device.
                 </p>
                 <a
                   className="block truncate font-mono text-meta text-accent underline"
@@ -795,10 +895,17 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
                   autoCorrect="off"
                 />
                 <div className="flex flex-wrap justify-end gap-2">
-                  <Button variant="ghost" disabled={busy !== null} onClick={() => void cancelAuth()}>
+                  <Button
+                    variant="ghost"
+                    disabled={busy !== null}
+                    onClick={() => void cancelAuth()}
+                  >
                     Cancel
                   </Button>
-                  <Button disabled={busy !== null || !authInput.trim()} onClick={() => void finishAuth()}>
+                  <Button
+                    disabled={busy !== null || !authInput.trim()}
+                    onClick={() => void finishAuth()}
+                  >
                     Finish sign-in
                   </Button>
                 </div>
@@ -807,7 +914,9 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
           </div>
         ))}
         {servers?.length === 0 && !showForm && (
-          <p className="px-3 py-5 font-mono text-meta text-dialog-hint sm:px-4">No MCP servers on this gateway.</p>
+          <p className="px-3 py-5 font-mono text-meta text-dialog-hint sm:px-4">
+            No MCP servers on this gateway.
+          </p>
         )}
         {!showForm ? (
           <div className="p-2.5">
@@ -815,15 +924,19 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
           </div>
         ) : (
           <div className="space-y-3 p-2.5">
-            <div className="grid grid-cols-2 gap-1" role="group" aria-label="MCP transport">
-              {(['stdio', 'streamable_http'] as const).map((kind) => (
+            <div
+              className="grid grid-cols-2 gap-1"
+              role="group"
+              aria-label="MCP transport"
+            >
+              {(["stdio", "streamable_http"] as const).map((kind) => (
                 <button
                   key={kind}
                   type="button"
                   onClick={() => setTransport(kind)}
-                  className={`min-h-8 border px-2 font-mono text-chip font-bold uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${transport === kind ? 'border-transparent bg-accent text-accent-foreground' : 'border-transparent bg-panel-2 text-dialog-hint hover:bg-hover hover:text-white'}`}
+                  className={`min-h-8 border px-2 font-mono text-chip font-bold uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${transport === kind ? "border-transparent bg-accent text-accent-foreground" : "border-transparent bg-panel-2 text-dialog-hint hover:bg-hover hover:text-white"}`}
                 >
-                  {kind === 'stdio' ? 'Local command' : 'Streamable HTTP'}
+                  {kind === "stdio" ? "Local command" : "Streamable HTTP"}
                 </button>
               ))}
             </div>
@@ -831,39 +944,115 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
               {editing ? (
                 <p className="font-mono text-ui text-white">{editing.name}</p>
               ) : (
-                <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="filesystem" autoCapitalize="none" autoCorrect="off" />
+                <Input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="filesystem"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                />
               )}
             </FormLabel>
-            {transport === 'stdio' ? (
+            {transport === "stdio" ? (
               <>
                 <FormLabel label="Executable">
-                  <Input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="npx" autoCapitalize="none" autoCorrect="off" />
+                  <Input
+                    value={command}
+                    onChange={(event) => setCommand(event.target.value)}
+                    placeholder="npx"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                  />
                 </FormLabel>
-                <FormLabel label="Arguments — one per line" hint="Arguments are passed directly, never through a shell.">
-                  <textarea value={args} onChange={(event) => setArgs(event.target.value)} placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path'} className="min-h-24 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none" />
+                <FormLabel
+                  label="Arguments — one per line"
+                  hint="Arguments are passed directly, never through a shell."
+                >
+                  <textarea
+                    value={args}
+                    onChange={(event) => setArgs(event.target.value)}
+                    placeholder={
+                      "-y\n@modelcontextprotocol/server-filesystem\n/path"
+                    }
+                    className="min-h-24 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none"
+                  />
                 </FormLabel>
                 <FormLabel label="Working directory (optional)">
-                  <Input value={cwd} onChange={(event) => setCwd(event.target.value)} placeholder="/workspace" autoCapitalize="none" autoCorrect="off" />
+                  <Input
+                    value={cwd}
+                    onChange={(event) => setCwd(event.target.value)}
+                    placeholder="/workspace"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                  />
                 </FormLabel>
-                <FormLabel label="Environment variables (optional)" hint={editing ? 'One NAME=value per line. Leave blank to keep the values already stored.' : 'One NAME=value per line. Values are write-only after saving.'}>
-                  <textarea value={env} onChange={(event) => setEnv(event.target.value)} placeholder="API_TOKEN=…" className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none" />
+                <FormLabel
+                  label="Environment variables (optional)"
+                  hint={
+                    editing
+                      ? "One NAME=value per line. Leave blank to keep the values already stored."
+                      : "One NAME=value per line. Values are write-only after saving."
+                  }
+                >
+                  <textarea
+                    value={env}
+                    onChange={(event) => setEnv(event.target.value)}
+                    placeholder="API_TOKEN=…"
+                    className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none"
+                  />
                 </FormLabel>
               </>
             ) : (
               <>
                 <FormLabel label="Streamable HTTP endpoint">
-                  <Input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://mcp.example.com/mcp" inputMode="url" autoCapitalize="none" autoCorrect="off" />
+                  <Input
+                    value={url}
+                    onChange={(event) => setUrl(event.target.value)}
+                    placeholder="https://mcp.example.com/mcp"
+                    inputMode="url"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                  />
                 </FormLabel>
-                <FormLabel label="Headers (optional)" hint={editing ? 'One NAME=value per line. Leave blank to keep the values already stored.' : 'One NAME=value per line. Values are write-only after saving.'}>
-                  <textarea value={headers} onChange={(event) => setHeaders(event.target.value)} placeholder="Authorization=Bearer …" className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none" />
+                <FormLabel
+                  label="Headers (optional)"
+                  hint={
+                    editing
+                      ? "One NAME=value per line. Leave blank to keep the values already stored."
+                      : "One NAME=value per line. Values are write-only after saving."
+                  }
+                >
+                  <textarea
+                    value={headers}
+                    onChange={(event) => setHeaders(event.target.value)}
+                    placeholder="Authorization=Bearer …"
+                    className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none"
+                  />
                 </FormLabel>
               </>
             )}
-            {test && <Banner kind="ok">Validated {test.name}: {test.tools.length} tools discovered.</Banner>}
+            {test && (
+              <Banner kind="ok">
+                Validated {test.name}: {test.tools.length} tools discovered.
+              </Banner>
+            )}
             <div className="flex flex-wrap justify-end gap-2 border-t border-dialog-edge pt-2">
-              <Button variant="ghost" disabled={busy !== null} onClick={() => closeForm()}>Cancel</Button>
-              <Button disabled={busy !== null} onClick={() => void validateAndSave()}>
-                {busy === 'save' ? 'Validating…' : editing ? 'Validate & update' : 'Validate & save'}
+              <Button
+                variant="ghost"
+                disabled={busy !== null}
+                onClick={() => closeForm()}
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={busy !== null}
+                onClick={() => void validateAndSave()}
+              >
+                {busy === "save"
+                  ? "Validating…"
+                  : editing
+                    ? "Validate & update"
+                    : "Validate & save"}
               </Button>
             </div>
           </div>
@@ -873,19 +1062,37 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
   );
 }
 
-function FormLabel({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+function FormLabel({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+}) {
   return (
     <label className="block space-y-1">
-      <span className="block font-mono text-chip font-bold text-white">{label}</span>
+      <span className="block font-mono text-chip font-bold text-white">
+        {label}
+      </span>
       {children}
-      {hint && <span className="block font-mono text-chip text-dialog-hint">{hint}</span>}
+      {hint && (
+        <span className="block font-mono text-chip text-dialog-hint">
+          {hint}
+        </span>
+      )}
     </label>
   );
 }
 
 /** Settings owned by this companion installation, never by a gateway. */
-export function ApplicationSettingsDialog({ onClose }: { onClose: () => void }) {
-  const [pref, setPref] = useState<ThemePref>('blockether-light');
+export function ApplicationSettingsDialog({
+  onClose,
+}: {
+  onClose: () => void;
+}) {
+  const [pref, setPref] = useState<ThemePref>("blockether-light");
   // Seeded from the catalogs already cached for the paired gateways (persisted
   // across a cold start), so the FIRST frame is the finished list. Anything
   // fetched below lands on top of the same rows instead of replacing them.
@@ -910,7 +1117,11 @@ export function ApplicationSettingsDialog({ onClose }: { onClose: () => void }) 
       setPageSize(sessions);
       const paint = () =>
         setThemes(
-          dedupeThemes(...cachedThemeCatalogs(), cachedPalette ? [cachedPalette] : [], BUNDLED_THEMES),
+          dedupeThemes(
+            ...cachedThemeCatalogs(),
+            cachedPalette ? [cachedPalette] : [],
+            BUNDLED_THEMES,
+          ),
         );
       paint();
 
@@ -919,7 +1130,9 @@ export function ApplicationSettingsDialog({ onClose }: { onClose: () => void }) 
       // Reopening settings inside the window touches the network zero times and
       // repaints the identical list; a cold-but-cached machine paints instantly
       // and revalidates underneath.
-      const clients = connections.map((connection) => new GatewayClient(connection));
+      const clients = connections.map(
+        (connection) => new GatewayClient(connection),
+      );
       if (clients.every((client) => client.isThemeFresh())) return;
       await Promise.allSettled(clients.map((client) => client.themeCatalog()));
       if (cancelled) return;
@@ -934,10 +1147,10 @@ export function ApplicationSettingsDialog({ onClose }: { onClose: () => void }) 
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === "Escape") onClose();
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
   async function chooseTheme(next: ThemeSummary) {
@@ -980,7 +1193,10 @@ export function ApplicationSettingsDialog({ onClose }: { onClose: () => void }) 
       >
         <header className="flex min-h-12 shrink-0 items-center bg-dialog-title text-dialog-title-foreground">
           <div className="min-w-0 flex-1 px-3 py-2 sm:px-4">
-            <h2 id="application-settings-title" className="font-mono text-body font-black uppercase tracking-[0.12em]">
+            <h2
+              id="application-settings-title"
+              className="font-mono text-body font-black uppercase tracking-[0.12em]"
+            >
               Application settings
             </h2>
             <p className="font-mono text-meta opacity-65">This device</p>
@@ -997,7 +1213,8 @@ export function ApplicationSettingsDialog({ onClose }: { onClose: () => void }) 
 
         <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
           <p className="text-ui text-dialog-hint">
-            These choices affect this copy of Vis only. They are never sent to a gateway.
+            These choices affect this copy of Vis only. They are never sent to a
+            gateway.
           </p>
         </div>
 
@@ -1015,16 +1232,25 @@ export function ApplicationSettingsDialog({ onClose }: { onClose: () => void }) 
                   <button
                     type="button"
                     key={choice.id}
-                    disabled={pending?.startsWith('theme:') ?? false}
+                    disabled={pending?.startsWith("theme:") ?? false}
                     onClick={() => void chooseTheme(choice)}
-                    className={`flex min-h-10 items-center justify-between gap-3 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-9 ${selected ? 'bg-accent text-accent-foreground' : 'bg-input text-white hover:bg-hover'}`}
+                    className={`flex min-h-10 items-center justify-between gap-3 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-9 ${selected ? "bg-accent text-accent-foreground" : "bg-input text-white hover:bg-hover"}`}
                     aria-pressed={selected}
                   >
                     <span className="min-w-0">
-                      <span className="block truncate font-mono text-ui font-bold">{choice.display_name}</span>
-                      <span className="block font-mono text-chip uppercase tracking-wider opacity-65">{choice.mode}</span>
+                      <span className="block truncate font-mono text-ui font-bold">
+                        {choice.display_name}
+                      </span>
+                      <span className="block font-mono text-chip uppercase tracking-wider opacity-65">
+                        {choice.mode}
+                      </span>
                     </span>
-                    <span className="shrink-0 font-mono text-meta font-black" aria-hidden="true">{selected ? '●' : '○'}</span>
+                    <span
+                      className="shrink-0 font-mono text-meta font-black"
+                      aria-hidden="true"
+                    >
+                      {selected ? "●" : "○"}
+                    </span>
                   </button>
                 );
               })}
@@ -1038,25 +1264,34 @@ export function ApplicationSettingsDialog({ onClose }: { onClose: () => void }) 
           >
             <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-3">
               {[
-                { size: 5, label: 'compact' },
-                { size: 10, label: 'balanced' },
-                { size: 15, label: 'detailed' },
+                { size: 5, label: "compact" },
+                { size: 10, label: "balanced" },
+                { size: 15, label: "detailed" },
               ].map(({ size, label }) => {
                 const selected = size === pageSize;
                 return (
                   <button
                     type="button"
                     key={size}
-                    disabled={pending?.startsWith('pageSize:') ?? false}
+                    disabled={pending?.startsWith("pageSize:") ?? false}
                     onClick={() => void choosePageSize(size)}
-                    className={`flex min-h-10 min-w-0 items-center justify-between gap-2 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-9 ${selected ? 'bg-accent text-accent-foreground' : 'bg-input text-white hover:bg-hover'}`}
+                    className={`flex min-h-10 min-w-0 items-center justify-between gap-2 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-9 ${selected ? "bg-accent text-accent-foreground" : "bg-input text-white hover:bg-hover"}`}
                     aria-pressed={selected}
                   >
                     <span className="min-w-0">
-                      <span className="block truncate font-mono text-ui font-bold">{size}</span>
-                      <span className="block font-mono text-chip uppercase tracking-wider opacity-65">{label}</span>
+                      <span className="block truncate font-mono text-ui font-bold">
+                        {size}
+                      </span>
+                      <span className="block font-mono text-chip uppercase tracking-wider opacity-65">
+                        {label}
+                      </span>
                     </span>
-                    <span className="shrink-0 font-mono text-meta font-black" aria-hidden="true">{selected ? '●' : '○'}</span>
+                    <span
+                      className="shrink-0 font-mono text-meta font-black"
+                      aria-hidden="true"
+                    >
+                      {selected ? "●" : "○"}
+                    </span>
                   </button>
                 );
               })}
@@ -1085,7 +1320,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
   const signedIn = providers?.filter(isProviderAuthed).length ?? 0;
 
   const tagModel = async (
-    role: 'default' | 'fallback',
+    role: "default" | "fallback",
     providerId: string,
     model: string,
   ) => {
@@ -1094,13 +1329,15 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
     auth.setErr(null);
     auth.setNote(null);
     try {
-      if (role === 'fallback') {
+      if (role === "fallback") {
         await client.setFallbackModel(providerId, model);
       } else {
         await client.setDefaultModel(providerId, model);
       }
       await auth.reload(undefined, { force: true });
-      auth.setNote(`${role === 'fallback' ? 'Fallback' : 'Default'} set to ${providerId} / ${model}.`);
+      auth.setNote(
+        `${role === "fallback" ? "Fallback" : "Default"} set to ${providerId} / ${model}.`,
+      );
     } catch (e) {
       auth.setErr(e instanceof GatewayError ? e.message : String(e));
     } finally {
@@ -1108,9 +1345,10 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
     }
   };
 
-  const setDefault = (providerId: string, model: string) => tagModel('default', providerId, model);
+  const setDefault = (providerId: string, model: string) =>
+    tagModel("default", providerId, model);
   const setFallback = (providerId: string, model: string) =>
-    tagModel('fallback', providerId, model);
+    tagModel("fallback", providerId, model);
 
   const clearFallback = async (providerId: string) => {
     auth.setPending(`fallback:${providerId}`);
@@ -1119,7 +1357,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
     try {
       await client.clearFallbackModel();
       await auth.reload(undefined, { force: true });
-      auth.setNote('Fallback cleared.');
+      auth.setNote("Fallback cleared.");
     } catch (e) {
       auth.setErr(e instanceof GatewayError ? e.message : String(e));
     } finally {
@@ -1131,7 +1369,9 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
     <SettingsPanel
       title="Providers"
       description="Sign in to model providers so this machine can reach them, then tag the default model and a fallback on another provider."
-      meta={providers ? `${signedIn}/${providers.length} signed in` : 'checking…'}
+      meta={
+        providers ? `${signedIn}/${providers.length} signed in` : "checking…"
+      }
     >
       <div className="space-y-2 p-3">
         {err && <Banner kind="err">{err}</Banner>}
@@ -1164,22 +1404,30 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
             provider.default_model ??
             provider.fallback_model ??
             orderedModels[0] ??
-            '';
+            "";
           const settingDefault = pending === `default:${provider.id}`;
           const settingFallback = pending === `fallback:${provider.id}`;
           const tagging = settingDefault || settingFallback;
-          const isDefaultModel = provider.is_default && provider.default_model === selectedModel;
-          const isFallbackModel = provider.is_fallback && provider.fallback_model === selectedModel;
+          const isDefaultModel =
+            provider.is_default && provider.default_model === selectedModel;
+          const isFallbackModel =
+            provider.is_fallback && provider.fallback_model === selectedModel;
 
           return (
-            <div key={provider.id} className="border border-dialog-edge bg-panel-2">
+            <div
+              key={provider.id}
+              className="border border-dialog-edge bg-panel-2"
+            >
               <button
                 type="button"
                 className="flex min-h-12 w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none"
                 onClick={() => setExpanded(open ? null : provider.id)}
                 aria-expanded={open}
               >
-                <span className={`font-mono text-body ${dot.tone}`} aria-label={dot.label}>
+                <span
+                  className={`font-mono text-body ${dot.tone}`}
+                  aria-label={dot.label}
+                >
                   {dot.glyph}
                 </span>
                 <span className="min-w-0 flex-1">
@@ -1200,18 +1448,21 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                   className="shrink-0 font-mono text-meta text-dialog-hint"
                   aria-hidden="true"
                 >
-                  {open ? '▾' : '▸'}
+                  {open ? "▾" : "▸"}
                 </span>
               </button>
 
               {open && (
                 <div className="space-y-3 border-t border-dialog-edge p-3">
                   {limits && (
-                    <p className="break-words font-mono text-meta text-dialog-hint">{limits}</p>
+                    <p className="break-words font-mono text-meta text-dialog-hint">
+                      {limits}
+                    </p>
                   )}
                   <p className="break-words font-mono text-chip text-dialog-hint">
-                    {provider.id} · {provider.models.length}{' '}
-                    {provider.models.length === 1 ? 'model' : 'models'} available
+                    {provider.id} · {provider.models.length}{" "}
+                    {provider.models.length === 1 ? "model" : "models"}{" "}
+                    available
                   </p>
 
                   <div className="space-y-2">
@@ -1220,10 +1471,10 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                       className="block font-mono text-meta font-bold text-dialog-hint"
                     >
                       {settingDefault
-                        ? 'Model · saving default…'
+                        ? "Model · saving default…"
                         : settingFallback
-                          ? 'Model · saving fallback…'
-                          : 'Model'}
+                          ? "Model · saving fallback…"
+                          : "Model"}
                     </label>
                     <select
                       id={`model-${provider.id}`}
@@ -1231,7 +1482,10 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                       disabled={provider.models.length === 0 || tagging}
                       onChange={(event) => {
                         const model = event.target.value;
-                        setModelDrafts((drafts) => ({ ...drafts, [provider.id]: model }));
+                        setModelDrafts((drafts) => ({
+                          ...drafts,
+                          [provider.id]: model,
+                        }));
                       }}
                       className="min-h-10 w-full min-w-0 border border-dialog-edge bg-input px-3 font-mono text-ui text-white outline-none transition-colors focus:border-accent disabled:opacity-50"
                     >
@@ -1244,21 +1498,28 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                     <div className="flex flex-col gap-2 sm:flex-row">
                       <Button
                         className="flex-1"
-                        variant={isDefaultModel ? 'ghost' : 'solid'}
+                        variant={isDefaultModel ? "ghost" : "solid"}
                         disabled={!selectedModel || tagging || isDefaultModel}
-                        onClick={() => void setDefault(provider.id, selectedModel)}
+                        onClick={() =>
+                          void setDefault(provider.id, selectedModel)
+                        }
                       >
-                        {isDefaultModel ? 'Default' : 'Set as default'}
+                        {isDefaultModel ? "Default" : "Set as default"}
                       </Button>
                       <Button
                         className="flex-1"
                         variant="ghost"
                         disabled={
-                          !selectedModel || tagging || provider.is_default || isFallbackModel
+                          !selectedModel ||
+                          tagging ||
+                          provider.is_default ||
+                          isFallbackModel
                         }
-                        onClick={() => void setFallback(provider.id, selectedModel)}
+                        onClick={() =>
+                          void setFallback(provider.id, selectedModel)
+                        }
                       >
-                        {isFallbackModel ? 'Fallback' : 'Set as fallback'}
+                        {isFallbackModel ? "Fallback" : "Set as fallback"}
                       </Button>
                       {provider.is_fallback && (
                         <Button
@@ -1273,23 +1534,23 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                     </div>
                     <p className="break-words font-mono text-chip text-dialog-hint">
                       {provider.is_default
-                        ? 'This is the default provider, so it cannot also hold the fallback — tag another provider instead.'
-                        : 'The default runs every turn; the fallback takes over on another provider when it cannot.'}
+                        ? "This is the default provider, so it cannot also hold the fallback — tag another provider instead."
+                        : "The default runs every turn; the fallback takes over on another provider when it cannot."}
                     </p>
                   </div>
 
                   <div className="flex flex-col gap-2 sm:flex-row">
                     <Button
                       className="flex-1"
-                      variant={authed ? 'ghost' : 'solid'}
+                      variant={authed ? "ghost" : "solid"}
                       disabled={pending === `auth:${provider.id}`}
                       onClick={() => void auth.signIn(provider)}
                     >
                       {pending === `auth:${provider.id}`
-                        ? 'Starting…'
+                        ? "Starting…"
                         : authed
-                          ? 'Sign in again'
-                          : 'Sign in'}
+                          ? "Sign in again"
+                          : "Sign in"}
                     </Button>
                     <Button
                       variant="ghost"
@@ -1297,10 +1558,16 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                       disabled={pending === `status:${provider.id}`}
                       onClick={() => void auth.recheck(provider)}
                     >
-                      {pending === `status:${provider.id}` ? 'Checking…' : 'Check status'}
+                      {pending === `status:${provider.id}`
+                        ? "Checking…"
+                        : "Check status"}
                     </Button>
                     {authed && (
-                      <ProviderSignOutButton auth={auth} provider={provider} className="flex-1" />
+                      <ProviderSignOutButton
+                        auth={auth}
+                        provider={provider}
+                        className="flex-1"
+                      />
                     )}
                   </div>
                 </div>
@@ -1329,10 +1596,10 @@ function NotificationsPanel({
 }) {
   const [push, setPush] = useState<PushStatus | null>(null);
   const [devices, setDevices] = useState<PushDevice[] | null>(null);
-  const [perm, setPerm] = useState<PushPermission>('unsupported');
+  const [perm, setPerm] = useState<PushPermission>("unsupported");
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [busy, setBusy] = useState<'enable' | 'disable' | null>(null);
+  const [busy, setBusy] = useState<"enable" | "disable" | null>(null);
   // An OLDER gateway simply has no /v1/devices route. That is not an error the
   // user can act on — it is a missing capability upstream — so the whole panel
   // (and every button in it) disappears instead of offering calls that 404.
@@ -1358,7 +1625,10 @@ function NotificationsPanel({
         setErr(null);
       } catch (e) {
         if (signal?.aborted) return;
-        if (e instanceof GatewayError && (e.status === 404 || e.status === 501)) {
+        if (
+          e instanceof GatewayError &&
+          (e.status === 404 || e.status === 501)
+        ) {
           setUnsupported(true);
           setDevices([]);
           setErr(null);
@@ -1378,8 +1648,20 @@ function NotificationsPanel({
   }, [load]);
 
   const token = cachedPushToken();
-  const mask = token ? maskToken(token) : null;
-  const mine = mask ? (devices ?? []).find((d) => d.token_preview === mask) : undefined;
+  // This device can appear in the list under either of its names: its push token,
+  // or the relay grant a machine without a signing key was handed instead.
+  const [masks, setMasks] = useState<string[]>([]);
+  useEffect(() => {
+    let stale = false;
+    void (async () => {
+      const ids = await registeredIds(token ?? "");
+      if (!stale) setMasks(ids.map(maskToken));
+    })();
+    return () => {
+      stale = true;
+    };
+  }, [token, devices]);
+  const mine = (devices ?? []).find((d) => masks.includes(d.token_preview));
   const registered = Boolean(mine);
   // Both halves have to agree: this machine holds the token AND this device
   // still wants alerts from it.
@@ -1387,16 +1669,18 @@ function NotificationsPanel({
   const supported = isPushSupported();
 
   const enable = useCallback(async () => {
-    setBusy('enable');
+    setBusy("enable");
     setErr(null);
     setNote(null);
     try {
       const fresh = await acquirePushToken();
       await applyGatewayNotify(gateway.url, true, () =>
-        client.registerDevice(deviceRegistration(fresh)),
+        registerForPush(deviceRegistration(fresh), client.pushTarget()),
       );
       setNotify(true);
-      setNote('This device will be notified when a turn finishes on this machine.');
+      setNote(
+        "This device will be notified when a turn finishes on this machine.",
+      );
       await load();
     } catch (e) {
       // The switch may already be stored even though the machine refused the
@@ -1411,13 +1695,15 @@ function NotificationsPanel({
   const disable = useCallback(async () => {
     const current = cachedPushToken();
     if (!current) return;
-    setBusy('disable');
+    setBusy("disable");
     setErr(null);
     setNote(null);
     try {
-      await applyGatewayNotify(gateway.url, false, () => client.unregisterDevice(current));
+      await applyGatewayNotify(gateway.url, false, () =>
+        unregisterFromPush(current, client.pushTarget()),
+      );
       setNotify(false);
-      setNote('This device will no longer be notified by this machine.');
+      setNote("This device will no longer be notified by this machine.");
       await load();
     } catch (e) {
       setNotify(await getGatewayNotify(gateway.url));
@@ -1430,8 +1716,13 @@ function NotificationsPanel({
   // Push has two independent halves; this device only cares about its own. An
   // iOS-only gateway is "available" to an iPhone and "not configured" to a
   // Pixel, and the missing-credentials banner must name the right ones.
-  const provider = pushPlatform() === 'android' ? push?.fcm : push?.apns;
-  const available = provider ? provider.is_available : (push?.is_available ?? false);
+  const provider = pushPlatform() === "android" ? push?.fcm : push?.apns;
+  // A machine holding no signing key is not silent if it has a relay: this device
+  // hands it a grant instead of a token, so "not configured" would be a lie.
+  const relayUrl = relayUrlFor(push ?? undefined, pushPlatform());
+  const available =
+    Boolean(relayUrl) ||
+    (provider ? provider.is_available : (push?.is_available ?? false));
   const missing = provider?.missing ?? push?.missing;
 
   // Gateway too old to know about push at all: render nothing.
@@ -1444,9 +1735,9 @@ function NotificationsPanel({
       meta={
         push
           ? available
-            ? `${push.devices} device${push.devices === 1 ? '' : 's'} · ${pushPlatform() === 'android' ? (push.fcm?.project_id ?? 'fcm') : (push.environment ?? 'production')}`
-            : 'not configured'
-          : 'checking…'
+            ? `${push.devices} device${push.devices === 1 ? "" : "s"} · ${relayUrl ? "via relay" : pushPlatform() === "android" ? (push.fcm?.project_id ?? "fcm") : (push.environment ?? "production")}`
+            : "not configured"
+          : "checking…"
       }
     >
       <div className="space-y-2 p-3">
@@ -1455,20 +1746,23 @@ function NotificationsPanel({
 
         {push && !available && (
           <Banner kind="warn">
-            This machine cannot push to {pushPlatform() === 'android' ? 'Android' : 'iOS'} yet — missing{' '}
-            {(missing ?? ['push credentials']).join(', ')}.
+            This machine cannot push to{" "}
+            {pushPlatform() === "android" ? "Android" : "iOS"} yet — missing{" "}
+            {(missing ?? ["push credentials"]).join(", ")}.
           </Banner>
         )}
 
         {!supported && (
           <Banner kind="warn">
-            Native alerts need the iOS or Android app. The web build can stay open instead.
+            Native alerts need the iOS or Android app. The web build can stay
+            open instead.
           </Banner>
         )}
 
-        {supported && perm === 'denied' && (
+        {supported && perm === "denied" && (
           <Banner kind="warn">
-            Notifications are turned off for Vis in system Settings — enable them there first.
+            Notifications are turned off for Vis in system Settings — enable
+            them there first.
           </Banner>
         )}
 
@@ -1479,7 +1773,9 @@ function NotificationsPanel({
               disabled={busy !== null || !available}
               onClick={() => void enable()}
             >
-              {busy === 'enable' ? 'Registering…' : 'Notify me from this machine'}
+              {busy === "enable"
+                ? "Registering…"
+                : "Notify me from this machine"}
             </Button>
           )}
           {supported && notifying && (
@@ -1489,7 +1785,9 @@ function NotificationsPanel({
               disabled={busy !== null}
               onClick={() => void disable()}
             >
-              {busy === 'disable' ? 'Removing…' : 'Stop notifying me from this machine'}
+              {busy === "disable"
+                ? "Removing…"
+                : "Stop notifying me from this machine"}
             </Button>
           )}
         </div>
@@ -1507,16 +1805,16 @@ function NotificationsPanel({
           >
             <span className="min-w-0 flex-1">
               <span className="block truncate font-mono text-ui text-white">
-                {device.label ?? device.platform ?? 'device'}
-                {device.token_preview === mask && (
+                {device.label ?? device.platform ?? "device"}
+                {masks.includes(device.token_preview) && (
                   <span className="ml-2 text-chip font-bold uppercase tracking-wider text-accent">
                     this device
                   </span>
                 )}
               </span>
               <span className="block truncate font-mono text-meta text-dialog-hint">
-                {device.token_preview} · {device.environment ?? 'production'}
-                {device.client_version ? ` · v${device.client_version}` : ''}
+                {device.token_preview} · {device.environment ?? "production"}
+                {device.client_version ? ` · v${device.client_version}` : ""}
               </span>
             </span>
           </div>
@@ -1547,7 +1845,7 @@ function SettingsPanel({
     <section className="min-w-0 overflow-hidden border border-dialog-edge bg-panel transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
       <header
         className={`flex min-h-8 gap-3 border-b border-dialog-edge bg-panel-2 px-3 py-1.5 ${
-          description ? 'items-start' : 'items-center'
+          description ? "items-start" : "items-center"
         }`}
       >
         <div className="min-w-0 flex-1">
@@ -1588,19 +1886,19 @@ function Switch({
     <button
       type="button"
       role="switch"
-      aria-label={`${label}: ${on ? 'on' : 'off'}`}
+      aria-label={`${label}: ${on ? "on" : "off"}`}
       aria-checked={on}
       aria-busy={busy}
       disabled={disabled}
       onClick={onClick}
       className={`mt-0.5 inline-flex h-8 w-[3.25rem] shrink-0 items-center justify-center border font-mono text-chip font-black tracking-[0.08em] transition-colors duration-150 ease-out active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none motion-reduce:active:scale-100 sm:h-6 ${
         on
-          ? 'border-transparent bg-accent text-accent-foreground'
-          : 'border-transparent bg-panel-2 text-dialog-hint hover:bg-hover hover:text-white'
+          ? "border-transparent bg-accent text-accent-foreground"
+          : "border-transparent bg-panel-2 text-dialog-hint hover:bg-hover hover:text-white"
       }`}
     >
-      <span aria-hidden className={busy ? 'animate-pulse' : ''}>
-        {busy ? '··' : on ? 'ON' : 'OFF'}
+      <span aria-hidden className={busy ? "animate-pulse" : ""}>
+        {busy ? "··" : on ? "ON" : "OFF"}
       </span>
     </button>
   );
@@ -1643,14 +1941,22 @@ function AddressPanel({
 }) {
   // Key on the contents, not on the array identity: `gateway.alts` is a fresh
   // array on every reload, and depending on it re-ran the probe forever.
-  const altsKey = (gateway.alts ?? []).join(' ');
+  const altsKey = (gateway.alts ?? []).join(" ");
   // Content-keyed, never url-keyed: choosing another address rewrites
   // `gateway.url` but yields the SAME address set. Re-deriving the array on the
   // url handed the probe effect below a fresh identity, so every dot fell back
   // to a pulsing "checking" and the rows re-flowed for no reason.
-  const addressKey = mergeAddresses([gateway.url], altsKey ? altsKey.split(' ') : []).join(' ');
-  const addresses = useMemo(() => (addressKey ? addressKey.split(' ') : []), [addressKey]);
-  const [reach, setReach] = useState<Record<string, 'checking' | 'online' | 'offline'>>({});
+  const addressKey = mergeAddresses(
+    [gateway.url],
+    altsKey ? altsKey.split(" ") : [],
+  ).join(" ");
+  const addresses = useMemo(
+    () => (addressKey ? addressKey.split(" ") : []),
+    [addressKey],
+  );
+  const [reach, setReach] = useState<
+    Record<string, "checking" | "online" | "offline">
+  >({});
   const [probeNonce, setProbeNonce] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -1659,7 +1965,9 @@ function AddressPanel({
   useEffect(() => {
     let cancelled = false;
     const inFlight = new Set<AbortController>();
-    setReach(Object.fromEntries(addresses.map((url) => [url, 'checking' as const])));
+    setReach(
+      Object.fromEntries(addresses.map((url) => [url, "checking" as const])),
+    );
 
     // One controller PER address, never one shared across the batch: a single
     // deadline let the slowest address abort every probe still in flight and
@@ -1688,7 +1996,11 @@ function AddressPanel({
         // for the rest of the session.
         let ok = await probe(url);
         if (!ok && !cancelled) ok = await probe(url);
-        if (!cancelled) setReach((current) => ({ ...current, [url]: ok ? 'online' : 'offline' }));
+        if (!cancelled)
+          setReach((current) => ({
+            ...current,
+            [url]: ok ? "online" : "offline",
+          }));
       }),
     );
 
@@ -1723,7 +2035,7 @@ function AddressPanel({
     <SettingsPanel
       title="Address"
       description="Which network path this device uses to reach the machine — pin one, or let the app pick the most durable route."
-      meta={gateway.pinned ? 'pinned' : 'automatic'}
+      meta={gateway.pinned ? "pinned" : "automatic"}
     >
       <div className="space-y-2 p-3">
         {err && <Banner kind="err">{err}</Banner>}
@@ -1732,7 +2044,7 @@ function AddressPanel({
           {addresses.map((url) => {
             const inUse = url === gateway.url;
             const kind = reachOf(url);
-            const state = reach[url] ?? 'checking';
+            const state = reach[url] ?? "checking";
             return (
               <li key={url}>
                 <button
@@ -1741,17 +2053,17 @@ function AddressPanel({
                   onClick={() => void choose(url, true)}
                   className={`flex w-full min-w-0 items-center gap-2 border px-2 py-1.5 text-left transition-colors disabled:cursor-default ${
                     inUse
-                      ? 'border-accent bg-panel-2'
-                      : 'border-dialog-edge hover:border-accent hover:bg-hover'
+                      ? "border-accent bg-panel-2"
+                      : "border-dialog-edge hover:border-accent hover:bg-hover"
                   }`}
                 >
                   <span
                     className={`size-1.5 shrink-0 rounded-full ${
-                      state === 'online'
-                        ? 'bg-ok'
-                        : state === 'offline'
-                          ? 'bg-err'
-                          : 'animate-pulse bg-dialog-hint motion-reduce:animate-none'
+                      state === "online"
+                        ? "bg-ok"
+                        : state === "offline"
+                          ? "bg-err"
+                          : "animate-pulse bg-dialog-hint motion-reduce:animate-none"
                     }`}
                     aria-hidden="true"
                   />
@@ -1762,7 +2074,7 @@ function AddressPanel({
                     {REACH_LABEL[kind]}
                   </span>
                   <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
-                    {inUse ? 'in use' : busy === url ? 'switching' : 'use'}
+                    {inUse ? "in use" : busy === url ? "switching" : "use"}
                   </span>
                 </button>
                 {inUse && (
@@ -1778,13 +2090,15 @@ function AddressPanel({
         <div className="flex flex-wrap items-center gap-2 border-t border-dialog-edge pt-2">
           <span className="min-w-0 flex-1 font-mono text-meta text-dialog-hint">
             {gateway.pinned
-              ? 'Pinned: this device always uses the address above and never switches on its own.'
-              : 'Automatic: this device prefers the most durable address that answers — Tailscale over Wi-Fi, Wi-Fi over anything local.'}
+              ? "Pinned: this device always uses the address above and never switches on its own."
+              : "Automatic: this device prefers the most durable address that answers — Tailscale over Wi-Fi, Wi-Fi over anything local."}
           </span>
           {gateway.pinned && (
             <Button
               variant="ghost"
-              onClick={() => void choose(bestAddress(addresses) ?? gateway.url, false)}
+              onClick={() =>
+                void choose(bestAddress(addresses) ?? gateway.url, false)
+              }
             >
               Automatic
             </Button>

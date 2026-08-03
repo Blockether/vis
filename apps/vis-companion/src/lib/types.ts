@@ -48,7 +48,7 @@ export interface Session {
   project_id?: string | null;
   project_name?: string | null;
   project_position?: number | null;
-  status?: 'idle' | 'running' | 'suspended' | string;
+  status?: "idle" | "running" | "suspended" | string;
   /** Canonical gateway liveness; older gateways are inferred from status. */
   live?: boolean;
   current_turn_id?: string | null;
@@ -143,7 +143,7 @@ export interface Project {
   [k: string]: unknown;
 }
 
-export type ToggleType = 'boolean' | 'enum';
+export type ToggleType = "boolean" | "enum";
 
 export interface Toggle {
   id: string;
@@ -168,7 +168,7 @@ export interface SettingsResponse {
 /** Sanitized MCP inventory served by one gateway. Secret values never travel here. */
 export interface McpServer {
   name: string;
-  transport: 'stdio' | 'streamable_http';
+  transport: "stdio" | "streamable_http";
   enabled: boolean;
   is_connected: boolean;
   /** False when the server comes from a hand-written config tier: listed, but this API never rewrites it. */
@@ -198,11 +198,11 @@ export interface McpServersResponse {
 export interface McpAuthFlow {
   flow_id: string;
   server: string;
-  kind: 'pkce';
+  kind: "pkce";
   url: string;
   redirect_uri?: string;
   expires_at_ms?: number;
-  status: 'pending' | 'ok' | 'error';
+  status: "pending" | "ok" | "error";
   error?: string;
 }
 
@@ -217,7 +217,7 @@ export interface McpAuthStatus {
 }
 
 export interface McpServerInput {
-  transport: 'stdio' | 'streamable_http';
+  transport: "stdio" | "streamable_http";
   enabled?: boolean;
   command?: string;
   args?: string[];
@@ -263,7 +263,12 @@ export interface ProviderLimitRow {
   limit?: number;
   remaining?: number;
   is_unlimited?: boolean;
-  window?: { kind?: string; unit?: string; size?: number; resets_at_ms?: number };
+  window?: {
+    kind?: string;
+    unit?: string;
+    size?: number;
+    resets_at_ms?: number;
+  };
   note?: string;
 }
 
@@ -273,7 +278,7 @@ export interface ProviderLimitRow {
  */
 export interface ProviderLimits {
   provider_id?: string;
-  status?: 'ok' | 'loading' | 'error' | string;
+  status?: "ok" | "loading" | "error" | string;
   fetched_at_ms?: number;
   static?: Record<string, unknown>;
   dynamic?: { limits?: ProviderLimitRow[]; note?: string };
@@ -309,7 +314,7 @@ export interface ModelPref {
 export interface AuthFlow {
   flow_id: string;
   provider_id: string;
-  kind: 'pkce' | 'device' | 'api-key';
+  kind: "pkce" | "device" | "api-key";
   url?: string;
   user_code?: string;
   verification_uri?: string;
@@ -319,14 +324,14 @@ export interface AuthFlow {
 }
 
 export interface AuthVerdict {
-  status: 'ok' | 'pending' | 'error' | 'cancelled' | 'logged-out';
+  status: "ok" | "pending" | "error" | "cancelled" | "logged-out";
   message?: string;
 }
 
 export interface ThemeSummary {
   id: string;
   display_name: string;
-  mode: 'light' | 'dark';
+  mode: "light" | "dark";
   /** Browser-ready CSS custom properties for THIS theme (present in the themes list). */
   css_vars?: Record<string, string>;
 }
@@ -341,10 +346,10 @@ export interface GatewayTheme extends ThemeSummary {
 }
 
 export interface VoiceModelState {
-  status: 'ready' | 'downloading' | 'failed' | 'absent' | 'unavailable';
+  status: "ready" | "downloading" | "failed" | "absent" | "unavailable";
   progress?: number;
   /** What the 'downloading' status is actually doing right now. */
-  phase?: 'downloading' | 'extracting';
+  phase?: "downloading" | "extracting";
   error?: string;
 }
 
@@ -415,14 +420,14 @@ export interface GatewayCapabilities {
     chat: { enabled: boolean };
     pastes?: {
       enabled: boolean;
-      transport: 'display_request';
-      format: 'vis-paste-v1';
+      transport: "display_request";
+      format: "vis-paste-v1";
       inline_max_chars: number;
       collapsed_by_default: boolean;
     };
     attachments: {
       enabled: boolean;
-      transport: 'inline-base64';
+      transport: "inline-base64";
       media_types: string[];
       /** The subset of `media_types` that is a clip, not a still. */
       video_media_types?: string[];
@@ -433,8 +438,8 @@ export interface GatewayCapabilities {
     };
     voice: {
       enabled: boolean;
-      transport: 'audio/wav';
-      transcription: 'gateway-local';
+      transport: "audio/wav";
+      transcription: "gateway-local";
       model: VoiceModelState;
     };
     push?: PushStatus;
@@ -461,14 +466,14 @@ export interface GatewayStatus {
  */
 export interface PushStatus {
   is_available: boolean;
-  provider: 'apns' | 'fcm' | 'apns+fcm';
+  provider: "apns" | "fcm" | "apns+fcm" | "relay";
   /** APNs view, mirrored at the top level for older gateways. */
-  environment?: 'sandbox' | 'production';
+  environment?: "sandbox" | "production";
   topic?: string | null;
   missing?: string[];
   apns?: {
     is_available: boolean;
-    environment?: 'sandbox' | 'production';
+    environment?: "sandbox" | "production";
     topic?: string | null;
     key_source?: string | null;
     missing?: string[];
@@ -480,6 +485,16 @@ export interface PushStatus {
     source?: string | null;
     missing?: string[];
   };
+  /**
+   * The push relay this gateway would send through. A machine with no signing
+   * key of its own is not silent: it can still wake a device that handed it a
+   * relay grant, and `url` is where that grant is minted.
+   */
+  relay?: {
+    is_available: boolean;
+    url?: string | null;
+    source?: string | null;
+  };
   devices: number;
 }
 
@@ -487,7 +502,7 @@ export interface PushStatus {
 export interface PushDevice {
   token_preview: string;
   platform?: string;
-  environment?: 'sandbox' | 'production';
+  environment?: "sandbox" | "production";
   client?: string;
   client_version?: string;
   label?: string;
@@ -496,11 +511,15 @@ export interface PushDevice {
   last_seen?: number;
 }
 
-/** Body of `POST /v1/devices`. */
+/**
+ * Body of `POST /v1/devices`. Exactly one of `token` (this gateway pushes with
+ * its own credentials) or `grant` (it pushes through the relay) is required.
+ */
 export interface PushDeviceInput {
-  token: string;
+  token?: string;
+  grant?: string;
   platform?: string;
-  environment?: 'sandbox' | 'production';
+  environment?: "sandbox" | "production";
   client?: string;
   client_version?: string;
   label?: string;
@@ -518,28 +537,24 @@ export interface PushSendResult {
 /** One SSE event as delivered by GET /v1/events?sids=… */
 
 export type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonValue[]
-  | { [key: string]: JsonValue };
+  string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 export interface ContentBlock {
   id: string;
-  type: 'prose' | 'code' | 'tool' | 'reasoning' | 'error' | 'attachment' | 'notice';
+  type:
+    "prose" | "code" | "tool" | "reasoning" | "error" | "attachment" | "notice";
   markdown?: string;
   text?: string;
   language?: string;
   tool?: string;
-  status?: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status?: "pending" | "running" | "completed" | "failed" | "cancelled";
   input?: JsonValue;
   output?: JsonValue;
   error?: JsonValue;
   code?: string;
   message?: string;
   retryable?: boolean;
-  visibility?: 'private' | 'visible';
+  visibility?: "private" | "visible";
   attachment_id?: string;
   name?: string;
   media_type?: string;

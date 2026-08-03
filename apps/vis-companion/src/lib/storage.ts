@@ -4,18 +4,18 @@
 // connection (url + token) plus the active connection id are stored here so the
 // app reconnects to the SAME gateway the TUI/other channels use.
 
-import { Preferences } from '@capacitor/preferences';
-import { bridged } from './bridge';
-import type { GatewayConn, ThemePref, ThemeSummary } from './types';
+import { Preferences } from "@capacitor/preferences";
+import { bridged } from "./bridge";
+import type { GatewayConn, ThemePref, ThemeSummary } from "./types";
 
-const CONNS_KEY = 'vis.connections';
-const ACTIVE_KEY = 'vis.activeConnection';
-const PRIMARY_KEY = 'vis.primaryConnection';
-const THEME_PREF_KEY = 'vis.themePref';
-const THEME_PALETTE_KEY = 'vis.themePalette';
+const CONNS_KEY = "vis.connections";
+const ACTIVE_KEY = "vis.activeConnection";
+const PRIMARY_KEY = "vis.primaryConnection";
+const THEME_PREF_KEY = "vis.themePref";
+const THEME_PALETTE_KEY = "vis.themePalette";
 
 // Appearance belongs to this application installation, never a gateway.
-const DEFAULT_THEME_PREF: ThemePref = 'blockether-light';
+const DEFAULT_THEME_PREF: ThemePref = "blockether-light";
 
 function localGet(key: string): string | null {
   try {
@@ -73,7 +73,9 @@ export async function saveConnections(conns: GatewayConn[]): Promise<void> {
 }
 
 /** Insert-or-replace a connection keyed by its URL; returns the new list. */
-export async function upsertConnection(conn: GatewayConn): Promise<GatewayConn[]> {
+export async function upsertConnection(
+  conn: GatewayConn,
+): Promise<GatewayConn[]> {
   const conns = await loadConnections();
   const idx = conns.findIndex((c) => c.url === conn.url);
   if (idx >= 0) conns[idx] = { ...conns[idx], ...conn };
@@ -86,7 +88,8 @@ export async function removeConnection(url: string): Promise<GatewayConn[]> {
   const conns = (await loadConnections()).filter((c) => c.url !== url);
   await saveConnections(conns);
   if ((await getActiveUrl()) === url) await setActiveUrl(conns[0]?.url ?? null);
-  if ((await getPrimaryUrl()) === url) await setPrimaryUrl(conns[0]?.url ?? null);
+  if ((await getPrimaryUrl()) === url)
+    await setPrimaryUrl(conns[0]?.url ?? null);
   await forgetGatewayNotify(url);
   return conns;
 }
@@ -116,10 +119,9 @@ export async function switchConnectionUrl(
   if ((await getPrimaryUrl()) === from) await setPrimaryUrl(to);
   const store = await loadSubscriptionStore();
   if (store[from]) {
-    store[to] = Array.from(new Set([...(store[to] ?? []), ...store[from]])).slice(
-      0,
-      MAX_SUBSCRIBED_SESSIONS,
-    );
+    store[to] = Array.from(
+      new Set([...(store[to] ?? []), ...store[from]]),
+    ).slice(0, MAX_SUBSCRIBED_SESSIONS);
     delete store[from];
     await setRaw(SUBSCRIPTIONS_KEY, JSON.stringify(store));
   }
@@ -132,7 +134,7 @@ export async function getActiveUrl(): Promise<string | null> {
 }
 
 export async function setActiveUrl(url: string | null): Promise<void> {
-  await setRaw(ACTIVE_KEY, url ?? '');
+  await setRaw(ACTIVE_KEY, url ?? "");
 }
 
 export async function getActiveConnection(): Promise<GatewayConn | null> {
@@ -147,7 +149,7 @@ export async function getPrimaryUrl(): Promise<string | null> {
 }
 
 export async function setPrimaryUrl(url: string | null): Promise<void> {
-  await setRaw(PRIMARY_KEY, url ?? '');
+  await setRaw(PRIMARY_KEY, url ?? "");
 }
 
 /**
@@ -159,7 +161,8 @@ export async function getPrimaryConnection(): Promise<GatewayConn | null> {
   if (conns.length === 0) return null;
   const stored = await getPrimaryUrl();
   const legacy = await getActiveUrl();
-  const primary = conns.find((c) => c.url === stored || c.url === legacy) ?? conns[0];
+  const primary =
+    conns.find((c) => c.url === stored || c.url === legacy) ?? conns[0];
   if (primary.url !== stored) await setPrimaryUrl(primary.url);
   return primary;
 }
@@ -167,8 +170,8 @@ export async function getPrimaryConnection(): Promise<GatewayConn | null> {
 /** The selected app-local palette, migrated from the old light/dark preference. */
 export async function getThemePref(): Promise<ThemePref> {
   const raw = await getRaw(THEME_PREF_KEY);
-  if (raw === 'light') return 'blockether-light';
-  if (raw === 'dark') return 'blockether-dark';
+  if (raw === "light") return "blockether-light";
+  if (raw === "dark") return "blockether-dark";
   return raw?.trim() || DEFAULT_THEME_PREF;
 }
 
@@ -182,10 +185,10 @@ export async function getThemePalette(): Promise<ThemeSummary | null> {
   if (!raw) return null;
   try {
     const theme = JSON.parse(raw) as Partial<ThemeSummary>;
-    return typeof theme.id === 'string' &&
-      typeof theme.display_name === 'string' &&
-      (theme.mode === 'light' || theme.mode === 'dark')
-      ? theme as ThemeSummary
+    return typeof theme.id === "string" &&
+      typeof theme.display_name === "string" &&
+      (theme.mode === "light" || theme.mode === "dark")
+      ? (theme as ThemeSummary)
       : null;
   } catch {
     return null;
@@ -195,7 +198,7 @@ export async function getThemePalette(): Promise<ThemeSummary | null> {
 export async function setThemePalette(theme: ThemeSummary): Promise<void> {
   await setRaw(THEME_PALETTE_KEY, JSON.stringify(theme));
 }
-const SESSIONS_PER_PROJECT_KEY = 'vis.sessionsPerProject';
+const SESSIONS_PER_PROJECT_KEY = "vis.sessionsPerProject";
 export const DEFAULT_SESSION_PAGE_SIZE = 10;
 export const SESSION_PAGE_SIZES: readonly number[] = [5, 10, 15];
 
@@ -212,7 +215,9 @@ const pageSizeListeners = new Set<(value: number) => void>();
 export async function getSessionsPerPage(): Promise<number> {
   if (pageSizeCache !== null) return pageSizeCache;
   const raw = await getRaw(SESSIONS_PER_PROJECT_KEY);
-  pageSizeCache = normalizePageSize(raw ? Number(raw) : DEFAULT_SESSION_PAGE_SIZE);
+  pageSizeCache = normalizePageSize(
+    raw ? Number(raw) : DEFAULT_SESSION_PAGE_SIZE,
+  );
   return pageSizeCache;
 }
 
@@ -223,13 +228,15 @@ export async function setSessionsPerPage(value: number): Promise<void> {
   for (const listener of pageSizeListeners) listener(normalized);
 }
 
-export function subscribeSessionsPerPage(listener: (value: number) => void): () => void {
+export function subscribeSessionsPerPage(
+  listener: (value: number) => void,
+): () => void {
   pageSizeListeners.add(listener);
   return () => {
     pageSizeListeners.delete(listener);
   };
 }
-const SUBSCRIPTIONS_KEY = 'vis.sessionSubscriptions';
+const SUBSCRIPTIONS_KEY = "vis.sessionSubscriptions";
 const MAX_SUBSCRIBED_SESSIONS = 24;
 
 type SubscriptionStore = Record<string, string[]>;
@@ -239,8 +246,8 @@ async function loadSubscriptionStore(): Promise<SubscriptionStore> {
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as SubscriptionStore
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as SubscriptionStore)
       : {};
   } catch {
     return {};
@@ -248,16 +255,26 @@ async function loadSubscriptionStore(): Promise<SubscriptionStore> {
 }
 
 /** Sessions the user has visited and keeps live-subscribed, scoped per gateway. */
-export async function loadSubscribedSessions(gatewayUrl: string): Promise<string[]> {
+export async function loadSubscribedSessions(
+  gatewayUrl: string,
+): Promise<string[]> {
   const store = await loadSubscriptionStore();
-  return Array.from(new Set(store[gatewayUrl] ?? [])).slice(0, MAX_SUBSCRIBED_SESSIONS);
+  return Array.from(new Set(store[gatewayUrl] ?? [])).slice(
+    0,
+    MAX_SUBSCRIBED_SESSIONS,
+  );
 }
 
 /** Mark one visited session as most-recently subscribed and persist across reloads. */
-export async function rememberSubscribedSession(gatewayUrl: string, sid: string): Promise<string[]> {
+export async function rememberSubscribedSession(
+  gatewayUrl: string,
+  sid: string,
+): Promise<string[]> {
   const store = await loadSubscriptionStore();
-  const sessions = [sid, ...(store[gatewayUrl] ?? []).filter((id) => id !== sid)]
-    .slice(0, MAX_SUBSCRIBED_SESSIONS);
+  const sessions = [
+    sid,
+    ...(store[gatewayUrl] ?? []).filter((id) => id !== sid),
+  ].slice(0, MAX_SUBSCRIBED_SESSIONS);
   store[gatewayUrl] = sessions;
   await setRaw(SUBSCRIPTIONS_KEY, JSON.stringify(store));
   return sessions;
@@ -268,7 +285,7 @@ export async function rememberSubscribedSession(gatewayUrl: string, sid: string)
 // want a buzz when the work laptop finishes a turn and want silence from the
 // build box it is only watching. So the switch lives in that gateway's settings
 // and is stored per gateway URL, exactly like the subscribed-session list.
-const NOTIFY_KEY = 'vis.gatewayNotifications';
+const NOTIFY_KEY = "vis.gatewayNotifications";
 
 /** Only an EXPLICIT entry is stored; absence means "not decided yet". */
 type NotifyStore = Record<string, boolean>;
@@ -278,10 +295,11 @@ async function loadNotifyStore(): Promise<NotifyStore> {
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return {};
     const store: NotifyStore = {};
     for (const [url, on] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof on === 'boolean') store[url] = on;
+      if (typeof on === "boolean") store[url] = on;
     }
     return store;
   } catch {
@@ -306,7 +324,10 @@ export async function getGatewayNotify(url: string): Promise<boolean> {
   return (await loadNotifyStore())[url] ?? true;
 }
 
-export async function setGatewayNotify(url: string, on: boolean): Promise<void> {
+export async function setGatewayNotify(
+  url: string,
+  on: boolean,
+): Promise<void> {
   const store = await loadNotifyStore();
   store[url] = on;
   await saveNotifyStore(store);
@@ -327,4 +348,87 @@ async function forgetGatewayNotify(url: string): Promise<void> {
   if (!(url in store)) return;
   delete store[url];
   await saveNotifyStore(store);
+}
+
+// ── Relay grants, per relay ─────────────────────────────────────────
+// A machine that holds no push credentials of its own can still wake this phone,
+// but only through a relay, and only by presenting a capability this DEVICE
+// minted for itself. That grant names the device, not the machine, so it is
+// minted ONCE per relay and reused by every machine that needs it — the relay
+// rate-limits minting on purpose, and a launch sweep over five paired machines
+// that minted five grants would be refused by it.
+//
+// It is stored because it must outlive the launch that created it: re-minting on
+// every start would eventually be throttled into silence, and the app would have
+// no way to name — and therefore to REVOKE — the grant a gateway is still
+// holding.
+const GRANT_KEY = "vis.relayGrants";
+
+/** One relay's grant for this device, with the token it was minted for. */
+export interface RelayGrant {
+  /** The OS push token this grant carries; a rotated token makes it useless. */
+  token: string;
+  grant: string;
+  /** Epoch ms the relay stamped into it, when it said. */
+  expires_at?: number;
+}
+
+type GrantStore = Record<string, RelayGrant>;
+
+function asGrant(value: unknown): RelayGrant | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  if (typeof row.grant !== "string" || !row.grant) return null;
+  if (typeof row.token !== "string") return null;
+  return {
+    token: row.token,
+    grant: row.grant,
+    expires_at: typeof row.expires_at === "number" ? row.expires_at : undefined,
+  };
+}
+
+async function loadGrantStore(): Promise<GrantStore> {
+  const raw = await getRaw(GRANT_KEY);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return {};
+    const store: GrantStore = {};
+    for (const [url, value] of Object.entries(
+      parsed as Record<string, unknown>,
+    )) {
+      const grant = asGrant(value);
+      if (grant) store[url] = grant;
+    }
+    return store;
+  } catch {
+    return {};
+  }
+}
+
+/** The grant this device already holds for one relay, if any. */
+export async function getRelayGrant(
+  relayUrl: string,
+): Promise<RelayGrant | null> {
+  return (await loadGrantStore())[relayUrl] ?? null;
+}
+
+export async function setRelayGrant(
+  relayUrl: string,
+  grant: RelayGrant,
+): Promise<void> {
+  const store = await loadGrantStore();
+  store[relayUrl] = grant;
+  await setRaw(GRANT_KEY, JSON.stringify(store));
+}
+
+/**
+ * Every grant this device ever minted.
+ *
+ * Turning notifications off has to name what the gateway is holding, and a
+ * relayed registration is filed under the GRANT, not under the push token.
+ */
+export async function relayGrants(): Promise<RelayGrant[]> {
+  return Object.values(await loadGrantStore());
 }

@@ -8,10 +8,10 @@ import {
   useMemo,
   useRef,
   useState,
-} from 'react';
-import type { GatewayConn } from './lib/types';
-import { type Compat, compatOf } from './lib/compat';
-import { GatewayClient, ROUTER_TTL_MS } from './lib/gateway';
+} from "react";
+import type { GatewayConn } from "./lib/types";
+import { type Compat, compatOf } from "./lib/compat";
+import { GatewayClient, ROUTER_TTL_MS } from "./lib/gateway";
 import {
   getPrimaryConnection,
   loadConnections,
@@ -22,24 +22,40 @@ import {
   switchConnectionUrl,
   upsertConnection,
   removeConnection,
-} from './lib/storage';
-import { bestAddress, hostOf, isUpgrade, mergeAddresses } from './lib/endpoints';
-import { onWake } from './lib/wake';
-import { SessionSubscriptionHub } from './lib/subscriptions';
-import { parsePairing } from './lib/pairing';
-import { onPairingLink } from './lib/deeplink';
-import { hydratePendingShare, parseShareLink, receiveSharedText } from './lib/share-intake';
-import { applyTheme, resolveLocalTheme } from './lib/theme';
-import { getThemePalette, getThemePref } from './lib/storage';
-import { ConnectScreen } from './screens/ConnectScreen';
-import { SessionsScreen } from './screens/SessionsScreen';
-import { IncompatibleScreen } from './screens/IncompatibleScreen';
-import { isSessionEntered, parseRoute, parseSessionDeepLink, screenKey, sessionHash, tabHash } from './lib/router';
+} from "./lib/storage";
+import {
+  bestAddress,
+  hostOf,
+  isUpgrade,
+  mergeAddresses,
+} from "./lib/endpoints";
+import { onWake } from "./lib/wake";
+import { SessionSubscriptionHub } from "./lib/subscriptions";
+import { parsePairing } from "./lib/pairing";
+import { onPairingLink } from "./lib/deeplink";
+import {
+  hydratePendingShare,
+  parseShareLink,
+  receiveSharedText,
+} from "./lib/share-intake";
+import { applyTheme, resolveLocalTheme } from "./lib/theme";
+import { getThemePalette, getThemePref } from "./lib/storage";
+import { ConnectScreen } from "./screens/ConnectScreen";
+import { SessionsScreen } from "./screens/SessionsScreen";
+import { IncompatibleScreen } from "./screens/IncompatibleScreen";
+import {
+  isSessionEntered,
+  parseRoute,
+  parseSessionDeepLink,
+  screenKey,
+  sessionHash,
+  tabHash,
+} from "./lib/router";
 import {
   reclaimViewportForExternalNavigation,
   useVisualViewportShell,
-} from './lib/viewport';
-import { App as CapacitorApp } from '@capacitor/app';
+} from "./lib/viewport";
+import { App as CapacitorApp } from "@capacitor/app";
 import {
   acquirePushToken,
   clearDeliveredPushes,
@@ -47,12 +63,17 @@ import {
   isPushSupported,
   onPushTap,
   pushPermission,
-} from './lib/push';
-import { syncPushRegistrations } from './lib/notify';
-import { isShellChromeVisible, shellScreen } from './lib/shell';
-import { pushIntentFrom, resolvePushIntent, type PushIntent } from './lib/push-intent';
+} from "./lib/push";
+import { syncPushRegistrations } from "./lib/notify";
+import { registerForPush, unregisterFromPush } from "./lib/relay";
+import { isShellChromeVisible, shellScreen } from "./lib/shell";
+import {
+  pushIntentFrom,
+  resolvePushIntent,
+  type PushIntent,
+} from "./lib/push-intent";
 
-type Tab = 'sessions' | 'connect';
+type Tab = "sessions" | "connect";
 
 /** How long a parked share still steers navigation on the next launch. */
 const RESUMABLE_SHARE_MS = 5 * 60 * 1000;
@@ -79,13 +100,13 @@ const RECOVERY_SWEEP_MIN_GAP_MS = 5_000;
 // moment the list is up: by the time anything is tapped the module is resolved,
 // `lazy` mounts it in the same commit, and no boundary ever falls back.
 const SessionScreenLazy = lazy(async () => ({
-  default: (await import('./screens/SessionScreen')).SessionScreen,
+  default: (await import("./screens/SessionScreen")).SessionScreen,
 }));
 const GatewaySettingsDialogLazy = lazy(async () => ({
-  default: (await import('./screens/SettingsScreen')).GatewaySettingsDialog,
+  default: (await import("./screens/SettingsScreen")).GatewaySettingsDialog,
 }));
 const ApplicationSettingsDialogLazy = lazy(async () => ({
-  default: (await import('./screens/SettingsScreen')).ApplicationSettingsDialog,
+  default: (await import("./screens/SettingsScreen")).ApplicationSettingsDialog,
 }));
 
 // Each split screen keeps its own boundary so a miss costs that screen, never the
@@ -100,7 +121,9 @@ function SessionScreen(props: ComponentProps<typeof SessionScreenLazy>) {
   );
 }
 
-function GatewaySettingsDialog(props: ComponentProps<typeof GatewaySettingsDialogLazy>) {
+function GatewaySettingsDialog(
+  props: ComponentProps<typeof GatewaySettingsDialogLazy>,
+) {
   return (
     <Suspense fallback={null}>
       <GatewaySettingsDialogLazy {...props} />
@@ -108,7 +131,9 @@ function GatewaySettingsDialog(props: ComponentProps<typeof GatewaySettingsDialo
   );
 }
 
-function ApplicationSettingsDialog(props: ComponentProps<typeof ApplicationSettingsDialogLazy>) {
+function ApplicationSettingsDialog(
+  props: ComponentProps<typeof ApplicationSettingsDialogLazy>,
+) {
   return (
     <Suspense fallback={null}>
       <ApplicationSettingsDialogLazy {...props} />
@@ -117,16 +142,18 @@ function ApplicationSettingsDialog(props: ComponentProps<typeof ApplicationSetti
 }
 
 function prefetchScreens() {
-  void import('./screens/SessionScreen');
-  void import('./screens/SettingsScreen');
+  void import("./screens/SessionScreen");
+  void import("./screens/SettingsScreen");
 }
 
 export function App() {
   // Warm the split screens once the shell is up — off the critical path, so the
   // launch frame stays the list and the first tap still opens instantly.
   useEffect(() => {
-    if (typeof window.requestIdleCallback === 'function') {
-      const handle = window.requestIdleCallback(prefetchScreens, { timeout: 2_000 });
+    if (typeof window.requestIdleCallback === "function") {
+      const handle = window.requestIdleCallback(prefetchScreens, {
+        timeout: 2_000,
+      });
       return () => window.cancelIdleCallback(handle);
     }
     const timer = window.setTimeout(prefetchScreens, 300);
@@ -136,9 +163,15 @@ export function App() {
   const [conns, setConns] = useState<GatewayConn[]>([]);
   const [active, setActive] = useState<GatewayConn | null>(null);
   const [primary, setPrimary] = useState<GatewayConn | null>(null);
-  const [tab, setTab] = useState<Tab>('sessions');
-  const [openTarget, setOpenTarget] = useState<{ conn: GatewayConn; sid: string; fresh?: boolean } | null>(null);
-  const [settingsTarget, setSettingsTarget] = useState<GatewayConn | null>(null);
+  const [tab, setTab] = useState<Tab>("sessions");
+  const [openTarget, setOpenTarget] = useState<{
+    conn: GatewayConn;
+    sid: string;
+    fresh?: boolean;
+  } | null>(null);
+  const [settingsTarget, setSettingsTarget] = useState<GatewayConn | null>(
+    null,
+  );
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   // The settings dialog's REMOUNT identity is the machine you opened, captured
   // once — never its current URL. Switching address rewrites `settingsTarget.url`,
@@ -146,7 +179,7 @@ export function App() {
   // transition replayed, the scroll position snapped back to the top and every
   // panel refetched from an empty cache. That is the jump. The address is a
   // property of the machine, not its identity.
-  const [settingsKey, setSettingsKey] = useState('');
+  const [settingsKey, setSettingsKey] = useState("");
   const openSettings = useCallback((conn: GatewayConn) => {
     setSettingsKey(conn.id ?? conn.url);
     setSettingsTarget(conn);
@@ -166,14 +199,15 @@ export function App() {
   const sessionConn = openTarget?.conn ?? active;
   // Transport identity is the URL/token pair — the only fields `GatewayClient`
   // reads — so renaming a connection's label never tears down the live stream.
-  const connUrl = sessionConn?.url ?? '';
+  const connUrl = sessionConn?.url ?? "";
   const connToken = sessionConn?.token;
   const client = useMemo(
-    () => (connUrl ? new GatewayClient({ url: connUrl, token: connToken }) : null),
+    () =>
+      connUrl ? new GatewayClient({ url: connUrl, token: connToken }) : null,
     [connUrl, connToken],
   );
   const subscriptions = useMemo(
-    () => client ? new SessionSubscriptionHub(client) : null,
+    () => (client ? new SessionSubscriptionHub(client) : null),
     [client],
   );
   // Stable client for the open settings dialog: a fresh `new GatewayClient(...)`
@@ -182,10 +216,13 @@ export function App() {
   // Keyed on the transport pair only: renaming a machine (or any other field
   // `GatewayClient` never reads) must not build a new client and re-fire the
   // dialog's `load`.
-  const settingsUrl = settingsTarget?.url ?? '';
+  const settingsUrl = settingsTarget?.url ?? "";
   const settingsToken = settingsTarget?.token;
   const settingsClient = useMemo(
-    () => (settingsUrl ? new GatewayClient({ url: settingsUrl, token: settingsToken }) : null),
+    () =>
+      settingsUrl
+        ? new GatewayClient({ url: settingsUrl, token: settingsToken })
+        : null,
     [settingsUrl, settingsToken],
   );
 
@@ -222,12 +259,11 @@ export function App() {
       }
       setConns(next);
       setOffline(null);
-      setActive(makeActive ? conn : (await getPrimaryConnection()));
-      if (makeActive) setTab('sessions');
+      setActive(makeActive ? conn : await getPrimaryConnection());
+      if (makeActive) setTab("sessions");
     },
     [],
   );
-
 
   // The tap must paint the session on the frame it happens on. Remembering the
   // active gateway and the watch list are Capacitor Preferences writes — bridge
@@ -235,11 +271,14 @@ export function App() {
   // between tapping a row and seeing the transcript. Nothing on this path reads
   // them back, so they are persisted underneath the navigation, not in front of
   // it.
-  const openGatewaySession = useCallback((conn: GatewayConn, sid: string, fresh = false) => {
-    setActive(conn);
-    setOpenTarget({ conn, sid, fresh });
-    void rememberSubscribedSession(conn.url, sid).catch(() => undefined);
-  }, []);
+  const openGatewaySession = useCallback(
+    (conn: GatewayConn, sid: string, fresh = false) => {
+      setActive(conn);
+      setOpenTarget({ conn, sid, fresh });
+      void rememberSubscribedSession(conn.url, sid).catch(() => undefined);
+    },
+    [],
+  );
 
   // Overlays are screen-scoped, and a navigation can land while one is up: see
   // `isSessionEntered`. Dismissing here covers every way in — list tap, deep
@@ -264,13 +303,13 @@ export function App() {
   const openSharedSession = useCallback(async () => {
     const conn = active ?? (await getPrimaryConnection());
     if (!conn) {
-      setTab('connect');
+      setTab("connect");
       return;
     }
     const [sid] = await loadSubscribedSessions(conn.url);
     if (!sid) {
       setActive(conn);
-      setTab('sessions');
+      setTab("sessions");
       return;
     }
     openGatewaySession(conn, sid);
@@ -301,7 +340,7 @@ export function App() {
   const applyRoute = useCallback(
     (hash: string) => {
       const route = parseRoute(hash);
-      if (route.name === 'session') {
+      if (route.name === "session") {
         const conn =
           (route.gw && conns.find((c) => c.id === route.gw)) || active;
         if (conn) {
@@ -309,11 +348,11 @@ export function App() {
           return;
         }
         setOpenTarget(null);
-        setTab('connect');
+        setTab("connect");
         return;
       }
       setOpenTarget(null);
-      setTab(route.name === 'connect' ? 'connect' : 'sessions');
+      setTab(route.name === "connect" ? "connect" : "sessions");
     },
     [conns, active, openGatewaySession],
   );
@@ -336,11 +375,12 @@ export function App() {
     const onHash = () => {
       // Any arrival at a non-session URL (our own pop, browser back, a pasted
       // link) means our pushed entry is gone from the top.
-      if (parseRoute(window.location.hash).name !== 'session') pushedSessionRef.current = false;
+      if (parseRoute(window.location.hash).name !== "session")
+        pushedSessionRef.current = false;
       applyRoute(window.location.hash);
     };
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
   }, [ready, routeApplied, applyRoute]);
 
   // Reflect view state back into the URL so the address bar is always shareable.
@@ -349,11 +389,12 @@ export function App() {
     // Prefer the freshest captured gateway id (backfilled after open) over the
     // one snapshotted into openTarget, so the shareable URL cleans up in place.
     const gwId =
-      conns.find((c) => c.url === openTarget?.conn.url)?.id ?? openTarget?.conn.id;
+      conns.find((c) => c.url === openTarget?.conn.url)?.id ??
+      openTarget?.conn.id;
     const desired = openTarget
       ? sessionHash(openTarget.sid, gwId)
-      : tabHash(tab === 'connect' ? 'connect' : 'sessions');
-    const current = window.location.hash || '#/';
+      : tabHash(tab === "connect" ? "connect" : "sessions");
+    const current = window.location.hash || "#/";
     if (current === desired) return;
     // Opening a session is this app's ONE forward navigation, so it is the one
     // that earns a history entry. Rewriting every route in place left the stack
@@ -361,12 +402,12 @@ export function App() {
     // session instead of returning to the list. Everything else — tab switches,
     // the gateway id backfilled into an already-open session — still rewrites
     // the current entry, so back never walks through cosmetic URL repairs.
-    if (openTarget && parseRoute(current).name !== 'session') {
-      history.pushState(null, '', desired);
+    if (openTarget && parseRoute(current).name !== "session") {
+      history.pushState(null, "", desired);
       pushedSessionRef.current = true;
       return;
     }
-    history.replaceState(null, '', desired);
+    history.replaceState(null, "", desired);
   }, [openTarget, tab, ready, routeApplied, conns]);
 
   // Leaving a session is a history STEP, not a state reset: entering pushed an
@@ -398,8 +439,8 @@ export function App() {
         leaveSession();
         return;
       }
-      if (tab !== 'sessions' && conns.length > 0 && active) {
-        setTab('sessions');
+      if (tab !== "sessions" && conns.length > 0 && active) {
+        setTab("sessions");
         return;
       }
       try {
@@ -413,7 +454,7 @@ export function App() {
     let removed = false;
     let sub: { remove: () => void } | null = null;
     try {
-      void CapacitorApp.addListener('backButton', () => backRef.current())
+      void CapacitorApp.addListener("backButton", () => backRef.current())
         .then((handle) => {
           if (removed) handle.remove();
           else sub = handle;
@@ -445,9 +486,11 @@ export function App() {
   // Paint the locally cached palette immediately. The settings dialog refreshes its
   // catalog from every paired gateway later; startup must never wait on the network.
   useEffect(() => {
-    void Promise.all([getThemePref(), getThemePalette()]).then(([pref, palette]) => {
-      applyTheme(resolveLocalTheme(pref, palette));
-    });
+    void Promise.all([getThemePref(), getThemePalette()]).then(
+      ([pref, palette]) => {
+        applyTheme(resolveLocalTheme(pref, palette));
+      },
+    );
   }, []);
 
   // Deep-linked pairing: vis://gateway?url=…&token=…
@@ -484,7 +527,12 @@ export function App() {
   // Steer to a composer once a share is parked AND the initial route has been
   // applied: routing earlier would be overwritten by the hash we booted with.
   useEffect(() => {
-    if (!shareNonce || !routeApplied || shareNonce === handledShareNonce.current) return;
+    if (
+      !shareNonce ||
+      !routeApplied ||
+      shareNonce === handledShareNonce.current
+    )
+      return;
     handledShareNonce.current = shareNonce;
     void openSharedSession();
   }, [shareNonce, routeApplied, openSharedSession]);
@@ -496,7 +544,10 @@ export function App() {
   useEffect(() => {
     if (!client) return;
     client.prefetchRouter();
-    const timer = window.setInterval(() => client.prefetchRouter(), ROUTER_TTL_MS);
+    const timer = window.setInterval(
+      () => client.prefetchRouter(),
+      ROUTER_TTL_MS,
+    );
     return () => window.clearInterval(timer);
   }, [client]);
 
@@ -541,11 +592,11 @@ export function App() {
   //   2. moves itself onto a more durable address as soon as that one answers.
   // A hand-picked address is never changed while it works, and loopback is never
   // left behind — see `lib/endpoints.ts`.
-  const activeUrl = active?.url ?? '';
+  const activeUrl = active?.url ?? "";
   const activeToken = active?.token;
   const activePinned = active?.pinned ?? false;
   const activeLabel = active?.label;
-  const knownAltsKey = (active?.alts ?? []).join(' ');
+  const knownAltsKey = (active?.alts ?? []).join(" ");
   useEffect(() => {
     if (!activeUrl) return;
     let cancelled = false;
@@ -559,7 +610,8 @@ export function App() {
       let advertised: string[] = [];
       let activeResponded = false;
       try {
-        advertised = (await new GatewayClient(creds).capabilities(signal)).addresses ?? [];
+        advertised =
+          (await new GatewayClient(creds).capabilities(signal)).addresses ?? [];
         activeResponded = true;
       } catch {
         // An address can disappear while the device remains online (for example,
@@ -572,8 +624,8 @@ export function App() {
       // forever as an unreachable row nobody can delete.
       const known = advertised.length
         ? mergeAddresses([activeUrl], advertised)
-        : mergeAddresses([activeUrl], knownAltsKey.split(' '));
-      if (known.join(' ') !== knownAltsKey) {
+        : mergeAddresses([activeUrl], knownAltsKey.split(" "));
+      if (known.join(" ") !== knownAltsKey) {
         await upsertConnection({ url: activeUrl, alts: known });
         if (cancelled) return;
         setConns(await loadConnections());
@@ -589,7 +641,9 @@ export function App() {
         await Promise.all(
           candidates.map(async (url) => {
             try {
-              return (await new GatewayClient({ ...creds, url }).ping(signal)) ? url : null;
+              return (await new GatewayClient({ ...creds, url }).ping(signal))
+                ? url
+                : null;
             } catch {
               return null;
             }
@@ -607,7 +661,11 @@ export function App() {
       // A machine the user renamed keeps its name across an address switch; an
       // auto-derived host label follows the address it describes.
       const named = Boolean(activeLabel) && activeLabel !== hostOf(activeUrl);
-      await switchConnectionUrl(activeUrl, chosen, named ? {} : { label: hostOf(chosen) });
+      await switchConnectionUrl(
+        activeUrl,
+        chosen,
+        named ? {} : { label: hostOf(chosen) },
+      );
       if (cancelled) return;
       setOffline(null);
       await refresh();
@@ -623,8 +681,15 @@ export function App() {
       ctrl.abort();
       off();
     };
-  }, [activeUrl, activeToken, activePinned, activeLabel, knownAltsKey, recoveryNonce, refresh]);
-
+  }, [
+    activeUrl,
+    activeToken,
+    activePinned,
+    activeLabel,
+    knownAltsKey,
+    recoveryNonce,
+    refresh,
+  ]);
 
   // Native push is a PER-GATEWAY choice, so the sweep is per gateway: every
   // paired machine is brought in line with ITS OWN switch (that gateway's
@@ -634,14 +699,16 @@ export function App() {
   // unreachable has to land eventually. Registration only refreshes a permission
   // the user ALREADY granted — the app never prompts on launch, and the web
   // build no-ops.
-  const pairedKey = conns.map((c) => `${c.url}\u0000${c.token ?? ''}`).join('\n');
+  const pairedKey = conns
+    .map((c) => `${c.url}\u0000${c.token ?? ""}`)
+    .join("\n");
   const notifyTargets = useMemo<GatewayConn[]>(
     () =>
       pairedKey
-        .split('\n')
+        .split("\n")
         .filter(Boolean)
         .map((row) => {
-          const [url, token] = row.split('\u0000');
+          const [url, token] = row.split("\u0000");
           return { url, token: token || undefined };
         }),
     [pairedKey],
@@ -650,7 +717,7 @@ export function App() {
     if (notifyTargets.length === 0 || !isPushSupported()) return;
     let cancelled = false;
     const sweep = async () => {
-      if ((await pushPermission()) !== 'granted') return;
+      if ((await pushPermission()) !== "granted") return;
       let token: string;
       try {
         token = await acquirePushToken();
@@ -663,8 +730,16 @@ export function App() {
         notifyTargets,
         token,
         {
-          register: (conn, tok) => new GatewayClient(conn).registerDevice(deviceRegistration(tok)),
-          unregister: (conn, tok) => new GatewayClient(conn).unregisterDevice(tok),
+          // Which name this device is filed under is the gateway's answer, not
+          // ours: a machine with no signing key of its own is handed a relay
+          // grant instead of a token (see lib/relay.ts).
+          register: (conn, tok) =>
+            registerForPush(
+              deviceRegistration(tok),
+              new GatewayClient(conn).pushTarget(),
+            ),
+          unregister: (conn, tok) =>
+            unregisterFromPush(tok, new GatewayClient(conn).pushTarget()),
         },
         () => cancelled,
       );
@@ -713,9 +788,10 @@ export function App() {
       active,
       now: Date.now(),
     });
-    if (outcome.action === 'wait') return;
+    if (outcome.action === "wait") return;
     setPushIntent(null);
-    if (outcome.action === 'open') openGatewaySession(outcome.conn, outcome.sid);
+    if (outcome.action === "open")
+      openGatewaySession(outcome.conn, outcome.sid);
   }, [pushIntent, routeApplied, conns, active, openGatewaySession]);
 
   // Backfill each paired gateway's stable id (from /healthz) so a shareable link
@@ -729,7 +805,9 @@ export function App() {
     void (async () => {
       let changed = false;
       for (const conn of missing) {
-        const id = await new GatewayClient(conn).identify(ctrl.signal).catch(() => null);
+        const id = await new GatewayClient(conn)
+          .identify(ctrl.signal)
+          .catch(() => null);
         if (id) {
           await upsertConnection({ ...conn, id });
           changed = true;
@@ -756,9 +834,10 @@ export function App() {
     if (!subscriptions || !sessionConn) return;
     void loadSubscribedSessions(sessionConn.url).then((ids) => {
       if (cancelled) return;
-      const next = openTarget?.sid && !ids.includes(openTarget.sid)
-        ? [openTarget.sid, ...ids]
-        : ids;
+      const next =
+        openTarget?.sid && !ids.includes(openTarget.sid)
+          ? [openTarget.sid, ...ids]
+          : ids;
       subscriptions.watchSessions(next);
     });
     return () => {
@@ -799,15 +878,17 @@ export function App() {
     <Shell>
       {isChromeVisible && (
         <Header
-          tab={hasConn ? tab : 'connect'}
+          tab={hasConn ? tab : "connect"}
           hasConn={hasConn}
           onTab={setTab}
           onAppSettings={() => setAppSettingsOpen(true)}
         />
       )}
 
-      <main className={`min-h-0 flex-1 overflow-x-hidden overscroll-contain ${shellView === 'session' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
-        {shellView === 'connect' ? (
+      <main
+        className={`min-h-0 flex-1 overflow-x-hidden overscroll-contain ${shellView === "session" ? "overflow-hidden" : "overflow-y-auto"}`}
+      >
+        {shellView === "connect" ? (
           <ConnectScreen
             conns={conns}
             active={active}
@@ -817,7 +898,7 @@ export function App() {
             offlineError={blocked ? offline : null}
             onRetry={() => setOffline(null)}
           />
-        ) : shellView === 'incompatible' && sessionConn && compat ? (
+        ) : shellView === "incompatible" && sessionConn && compat ? (
           <IncompatibleScreen
             compat={compat}
             conn={sessionConn}
@@ -825,10 +906,10 @@ export function App() {
             onRetry={() => setCompatNonce((n) => n + 1)}
             onBack={() => {
               setOpenTarget(null);
-              setTab('connect');
+              setTab("connect");
             }}
           />
-        ) : shellView === 'session' && openTarget && client && subscriptions ? (
+        ) : shellView === "session" && openTarget && client && subscriptions ? (
           <SessionScreen
             key={`${openTarget.conn.url}:${openTarget.sid}`}
             client={client}
@@ -836,7 +917,9 @@ export function App() {
             sid={openTarget.sid}
             fresh={openTarget.fresh}
             onBack={leaveSession}
-            onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
+            onOpenSession={(sid, fresh) =>
+              void openGatewaySession(openTarget.conn, sid, fresh)
+            }
             onManageProviders={() => openSettings(openTarget.conn)}
           />
         ) : (
@@ -858,12 +941,15 @@ export function App() {
           gateway={settingsTarget}
           isPrimary={settingsTarget.url === primary?.url}
           onMakePrimary={async () => {
-            await Promise.all([setPrimaryUrl(settingsTarget.url), setActiveUrl(settingsTarget.url)]);
+            await Promise.all([
+              setPrimaryUrl(settingsTarget.url),
+              setActiveUrl(settingsTarget.url),
+            ]);
             setPrimary(settingsTarget);
             setActive(settingsTarget);
             setOpenTarget(null);
             setOffline(null);
-            setTab('sessions');
+            setTab("sessions");
           }}
           onRename={async (label) => {
             const updated = { ...settingsTarget, label };
@@ -883,11 +969,20 @@ export function App() {
             const wasActive = settingsTarget.url === active?.url;
             if (url !== settingsTarget.url) {
               const named =
-                Boolean(settingsTarget.label) && settingsTarget.label !== hostOf(settingsTarget.url);
-              await switchConnectionUrl(settingsTarget.url, url, named ? {} : { label: hostOf(url) });
+                Boolean(settingsTarget.label) &&
+                settingsTarget.label !== hostOf(settingsTarget.url);
+              await switchConnectionUrl(
+                settingsTarget.url,
+                url,
+                named ? {} : { label: hostOf(url) },
+              );
             }
             const saved = await upsertConnection({ url, pinned });
-            const next = saved.find((c) => c.url === url) ?? { ...settingsTarget, url, pinned };
+            const next = saved.find((c) => c.url === url) ?? {
+              ...settingsTarget,
+              url,
+              pinned,
+            };
             setSettingsTarget(next);
             if (wasActive) setActive(next);
             await refresh();
@@ -895,7 +990,9 @@ export function App() {
           onClose={() => setSettingsTarget(null)}
         />
       )}
-      {appSettingsOpen && <ApplicationSettingsDialog onClose={() => setAppSettingsOpen(false)} />}
+      {appSettingsOpen && (
+        <ApplicationSettingsDialog onClose={() => setAppSettingsOpen(false)} />
+      )}
     </Shell>
   );
 }
@@ -915,20 +1012,32 @@ export function Header({
     <header className="relative z-30 shrink-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
       <div className="mx-auto flex h-12 w-full max-w-[1400px] items-center pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
         <div className="flex items-center gap-2.5" aria-label="Vis">
-          <img src="/vis-logo.png" alt="" className="h-[18px] w-5 object-contain" />
-          <span className="font-mono text-title font-black tracking-[0.18em] text-white">VIS</span>
+          <img
+            src="/vis-logo.png"
+            alt=""
+            className="h-[18px] w-5 object-contain"
+          />
+          <span className="font-mono text-title font-black tracking-[0.18em] text-white">
+            VIS
+          </span>
         </div>
-        <nav className="mx-auto hidden h-full items-stretch sm:flex" aria-label="Primary navigation">
-          {(hasConn ? (['sessions', 'connect'] as Tab[]) : (['connect'] as Tab[])).map((item) => (
+        <nav
+          className="mx-auto hidden h-full items-stretch sm:flex"
+          aria-label="Primary navigation"
+        >
+          {(hasConn
+            ? (["sessions", "connect"] as Tab[])
+            : (["connect"] as Tab[])
+          ).map((item) => (
             <button
               type="button"
               key={item}
               onClick={() => onTab(item)}
-              className={`relative flex min-w-28 items-center justify-center gap-2 px-4 font-mono text-meta font-bold uppercase tracking-[0.1em] transition-[color,background-color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${tab === item ? 'bg-panel text-white after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:bg-accent' : 'text-dialog-hint hover:bg-hover hover:text-white'}`}
-              aria-current={tab === item ? 'page' : undefined}
+              className={`relative flex min-w-28 items-center justify-center gap-2 px-4 font-mono text-meta font-bold uppercase tracking-[0.1em] transition-[color,background-color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${tab === item ? "bg-panel text-white after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:bg-accent" : "text-dialog-hint hover:bg-hover hover:text-white"}`}
+              aria-current={tab === item ? "page" : undefined}
             >
               <NavIcon id={item} />
-              {item === 'sessions' ? 'Sessions' : 'Machines'}
+              {item === "sessions" ? "Sessions" : "Machines"}
             </button>
           ))}
         </nav>
@@ -951,10 +1060,16 @@ export function Header({
   );
 }
 
-export function TabBar({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) {
+export function TabBar({
+  tab,
+  onTab,
+}: {
+  tab: Tab;
+  onTab: (tab: Tab) => void;
+}) {
   const items: { id: Tab; label: string }[] = [
-    { id: 'sessions', label: 'Sessions' },
-    { id: 'connect', label: 'Machines' },
+    { id: "sessions", label: "Sessions" },
+    { id: "connect", label: "Machines" },
   ];
 
   return (
@@ -969,10 +1084,10 @@ export function TabBar({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) 
           onClick={() => onTab(item.id)}
           className={`relative flex min-h-12 items-center justify-center gap-2 font-mono text-meta font-bold uppercase tracking-[0.08em] transition-[color,background-color,transform,translate,scale,rotate] duration-150 active:scale-[0.98] motion-reduce:transition-none ${
             tab === item.id
-              ? 'bg-panel text-white after:absolute after:inset-x-5 after:top-0 after:h-0.5 after:bg-accent'
-              : 'text-dialog-hint active:bg-hover active:text-white'
+              ? "bg-panel text-white after:absolute after:inset-x-5 after:top-0 after:h-0.5 after:bg-accent"
+              : "text-dialog-hint active:bg-hover active:text-white"
           }`}
-          aria-current={tab === item.id ? 'page' : undefined}
+          aria-current={tab === item.id ? "page" : undefined}
         >
           <NavIcon id={item.id} />
           <span>{item.label}</span>
@@ -983,15 +1098,29 @@ export function TabBar({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) 
 }
 
 function NavIcon({ id }: { id: Tab }) {
-  if (id === 'sessions') {
+  if (id === "sessions") {
     return (
-      <svg viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <svg
+        viewBox="0 0 20 20"
+        className="size-4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        aria-hidden="true"
+      >
         <path d="M3.5 4.5h13v11h-13zM6.5 7.5h7M6.5 10h7M6.5 12.5h4" />
       </svg>
     );
   }
   return (
-    <svg viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+    <svg
+      viewBox="0 0 20 20"
+      className="size-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
       <path d="M4 4.5h12v4H4zM4 11.5h12v4H4zM6.5 6.5h.01M6.5 13.5h.01" />
     </svg>
   );
@@ -1000,7 +1129,14 @@ function NavIcon({ id }: { id: Tab }) {
 /** Header cog. Same 20-unit box, stroke and weight as `NavIcon` so the two read as one set. */
 function SettingsIcon() {
   return (
-    <svg viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+    <svg
+      viewBox="0 0 20 20"
+      className="size-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
       <path d="M8.35 4.23 L8.72 1.9 A8.2 8.2 0 0 1 11.28 1.9 L11.65 4.23 A6 6 0 0 1 14.17 5.68 L16.37 4.84 A8.2 8.2 0 0 1 17.66 7.06 L15.82 8.55 A6 6 0 0 1 15.82 11.45 L17.66 12.94 A8.2 8.2 0 0 1 16.37 15.16 L14.17 14.32 A6 6 0 0 1 11.65 15.77 L11.28 18.1 A8.2 8.2 0 0 1 8.72 18.1 L8.35 15.77 A6 6 0 0 1 5.83 14.32 L3.63 15.16 A8.2 8.2 0 0 1 2.34 12.94 L4.18 11.45 A6 6 0 0 1 4.18 8.55 L2.34 7.06 A8.2 8.2 0 0 1 3.63 4.84 L5.83 5.68 A6 6 0 0 1 8.35 4.23 Z" />
       <circle cx="10" cy="10" r="2.4" />
     </svg>
@@ -1009,8 +1145,15 @@ function SettingsIcon() {
 
 function Splash() {
   return (
-    <div className="flex h-full items-center justify-center bg-ink" aria-label="Loading Vis">
-      <img src="/vis-logo.png" alt="Vis" className="h-16 w-auto animate-pulse object-contain" />
+    <div
+      className="flex h-full items-center justify-center bg-ink"
+      aria-label="Loading Vis"
+    >
+      <img
+        src="/vis-logo.png"
+        alt="Vis"
+        className="h-16 w-auto animate-pulse object-contain"
+      />
     </div>
   );
 }

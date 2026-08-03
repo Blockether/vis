@@ -6,6 +6,7 @@
 // we send it on every request. A 401 surfaces as GatewayError so the UI can
 // prompt a re-pair.
 
+import type { PushGateway } from "./relay";
 import type {
   AuthFlow,
   AuthVerdict,
@@ -44,28 +45,28 @@ import type {
   McpServersResponse,
   McpTestResult,
   WorkspaceDraft,
-} from './types';
-import { PROTOCOL_HEADERS } from './compat';
+} from "./types";
+import { PROTOCOL_HEADERS } from "./compat";
 import {
   humanInputRequestsFromWire,
   type HumanInputOutcome,
   type HumanInputRequest,
   type HumanInputValues,
-} from './human-input';
+} from "./human-input";
 import {
   flushSnapshots,
   hydrateSnapshots,
   installSnapshotFlushOnHide,
   scheduleSnapshotFlush,
   type SnapshotStores,
-} from './snapshot-store';
+} from "./snapshot-store";
 
 export class GatewayError extends Error {
   status: number;
   body: unknown;
   constructor(status: number, message: string, body?: unknown) {
     super(message);
-    this.name = 'GatewayError';
+    this.name = "GatewayError";
     this.status = status;
     this.body = body;
   }
@@ -75,7 +76,7 @@ export class GatewayError extends Error {
 // user's own request vs. the assistant's reply), a short preview snippet, and
 // when it happened. Several travel per session, newest first.
 export interface SessionMatchHit {
-  side: 'request' | 'reply';
+  side: "request" | "reply";
   snippet: string;
   at: number | null;
 }
@@ -159,7 +160,10 @@ const VOICE_BYTES_PER_SECOND = 32_000;
 const VOICE_TIMEOUT_PER_SECOND_MS = 500;
 
 function voiceTimeoutMs(bytes: number): number {
-  return VOICE_TIMEOUT_FLOOR_MS + Math.ceil(bytes / VOICE_BYTES_PER_SECOND) * VOICE_TIMEOUT_PER_SECOND_MS;
+  return (
+    VOICE_TIMEOUT_FLOOR_MS +
+    Math.ceil(bytes / VOICE_BYTES_PER_SECOND) * VOICE_TIMEOUT_PER_SECOND_MS
+  );
 }
 
 /** Router rows per gateway base URL, shared by every screen and client instance. */
@@ -214,12 +218,12 @@ export interface TranscriptWindow {
 const transcriptWindows = new Map<string, TranscriptWindow>();
 
 function transcriptStamp(row: Session | null | undefined): string {
-  if (!row) return '';
+  if (!row) return "";
   // Neither fact present = a payload that cannot express movement (an older
   // gateway's detail row). Return '' so callers FETCH instead of trusting a
   // constant stamp that both never invalidates and never detects a change.
-  if (row.turn_count === undefined && row.modified_at === undefined) return '';
-  return `${row.turn_count ?? ''}\u0000${row.modified_at ?? ''}`;
+  if (row.turn_count === undefined && row.modified_at === undefined) return "";
+  return `${row.turn_count ?? ""}\u0000${row.modified_at ?? ""}`;
 }
 
 /** Bound the cache so hopping through many sessions cannot pin every transcript. */
@@ -295,7 +299,7 @@ const themeInflight = new Map<string, Promise<GatewayTheme>>();
 export function cachedThemeCatalogs(): ThemeSummary[][] {
   const keys: string[] = [];
   for (const key of snapshots.keys()) {
-    if (key.endsWith('\u0000theme')) keys.push(key);
+    if (key.endsWith("\u0000theme")) keys.push(key);
   }
   keys.sort();
   return keys.flatMap((key) => {
@@ -312,9 +316,16 @@ export function cachedThemeCatalogs(): ThemeSummary[][] {
  */
 function sameJson(a: unknown, b: unknown): boolean {
   if (a === b) return true;
-  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (
+    typeof a !== "object" ||
+    typeof b !== "object" ||
+    a === null ||
+    b === null
+  )
+    return false;
   if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length)
+      return false;
     return a.every((item, index) => sameJson(item, b[index]));
   }
   const left = a as Record<string, unknown>;
@@ -322,7 +333,9 @@ function sameJson(a: unknown, b: unknown): boolean {
   const keys = Object.keys(left);
   if (keys.length !== Object.keys(right).length) return false;
   return keys.every(
-    (key) => Object.prototype.hasOwnProperty.call(right, key) && sameJson(left[key], right[key]),
+    (key) =>
+      Object.prototype.hasOwnProperty.call(right, key) &&
+      sameJson(left[key], right[key]),
   );
 }
 
@@ -362,7 +375,7 @@ const SESSIONS_PAGE = 100;
  * Sent on 200 AND 304, so a walk can tell whether the fleet was re-ranked under
  * it without giving up the 304s that make the walk cheap.
  */
-const SESSIONS_ORDER_HEADER = 'X-Vis-Sessions-Order';
+const SESSIONS_ORDER_HEADER = "X-Vis-Sessions-Order";
 
 function reconcileRows<T>(previous: T[] | null, next: T[]): T[] {
   if (!previous) return next;
@@ -429,11 +442,14 @@ export function mergeQueueBacklog(
       forget.push(tid);
     }
   }
-  return { rows: [...rows.filter((row) => byId.has(row.turnId)), ...appended], forget };
+  return {
+    rows: [...rows.filter((row) => byId.has(row.turnId)), ...appended],
+    forget,
+  };
 }
 
 function normalizeBase(url: string): string {
-  return url.replace(/\/+$/, '');
+  return url.replace(/\/+$/, "");
 }
 
 /**
@@ -447,19 +463,23 @@ function normalizeBase(url: string): string {
  * `request` stays verbatim so editing a row starts from what was authored.
  */
 export function queuedTurnFromWire(row: Record<string, unknown>): QueuedTurn {
-  const request = typeof row.request === 'string' ? row.request : '';
-  const preview = typeof row.request_preview === 'string' ? row.request_preview : '';
-  const rawAttachments = Array.isArray(row.attachment_previews) ? row.attachment_previews : [];
+  const request = typeof row.request === "string" ? row.request : "";
+  const preview =
+    typeof row.request_preview === "string" ? row.request_preview : "";
+  const rawAttachments = Array.isArray(row.attachment_previews)
+    ? row.attachment_previews
+    : [];
   const attachments: QueuedAttachment[] = rawAttachments.map((entry) => {
     const item = (entry ?? {}) as Record<string, unknown>;
     return {
-      filename: typeof item.filename === 'string' ? item.filename : 'image',
-      mediaType: typeof item.media_type === 'string' ? item.media_type : 'image',
-      sizeLabel: typeof item.size_label === 'string' ? item.size_label : '',
+      filename: typeof item.filename === "string" ? item.filename : "image",
+      mediaType:
+        typeof item.media_type === "string" ? item.media_type : "image",
+      sizeLabel: typeof item.size_label === "string" ? item.size_label : "",
     };
   });
   return {
-    turnId: String(row.turn_id ?? row.id ?? ''),
+    turnId: String(row.turn_id ?? row.id ?? ""),
     request,
     preview: preview || request,
     attachments,
@@ -497,12 +517,14 @@ export class GatewayClient {
 
   /** Cache key for one of this gateway's snapshot-able payloads. */
   private snapshotKey(kind: string, sid?: string): string {
-    return sid ? `${this.base}\u0000${kind}\u0000${sid}` : `${this.base}\u0000${kind}`;
+    return sid
+      ? `${this.base}\u0000${kind}\u0000${sid}`
+      : `${this.base}\u0000${kind}`;
   }
 
   private headers(extra?: HeadersInit): Headers {
     const h = new Headers(extra);
-    if (this.token) h.set('Authorization', `Bearer ${this.token}`);
+    if (this.token) h.set("Authorization", `Bearer ${this.token}`);
     // Announce which wire protocol this build speaks on EVERY request, so a
     // gateway that no longer serves us answers 426 with a real explanation
     // instead of a shape we would misread.
@@ -521,9 +543,14 @@ export class GatewayClient {
     body?: unknown,
     signal?: AbortSignal,
     extraHeaders?: Record<string, string>,
-  ): Promise<{ status: number; data: T | undefined; etag: string | null; headers: Headers }> {
+  ): Promise<{
+    status: number;
+    data: T | undefined;
+    etag: string | null;
+    headers: Headers;
+  }> {
     const headers = this.headers(extraHeaders);
-    if (body !== undefined) headers.set('Content-Type', 'application/json');
+    if (body !== undefined) headers.set("Content-Type", "application/json");
     // Bound the whole exchange, not just the connect: a resumed request usually
     // parks on the BODY read, with its headers already delivered.
     const deadline = new AbortController();
@@ -533,7 +560,9 @@ export class GatewayClient {
     const stalled = () => deadline.signal.aborted && !signal?.aborted;
     const seconds = Math.round(REQUEST_TIMEOUT_MS / 1000);
     try {
-      const attemptSignal = anySignal(signal ? [signal, deadline.signal] : [deadline.signal]);
+      const attemptSignal = anySignal(
+        signal ? [signal, deadline.signal] : [deadline.signal],
+      );
       let res: Response;
       try {
         res = await fetch(this.base + path, {
@@ -548,7 +577,12 @@ export class GatewayClient {
           : new GatewayError(0, `network error: ${(e as Error).message}`);
       }
       if (res.status === 304)
-        return { status: 304, data: undefined, etag: res.headers.get('ETag'), headers: res.headers };
+        return {
+          status: 304,
+          data: undefined,
+          etag: res.headers.get("ETag"),
+          headers: res.headers,
+        };
       let text: string;
       try {
         text = await res.text();
@@ -574,7 +608,7 @@ export class GatewayClient {
       return {
         status: res.status,
         data: parsed as T,
-        etag: res.headers.get('ETag'),
+        etag: res.headers.get("ETag"),
         headers: res.headers,
       };
     } finally {
@@ -593,12 +627,17 @@ export class GatewayClient {
 
   // ── Health / status ─────────────────────────────────────────────
   status(signal?: AbortSignal): Promise<GatewayStatus> {
-    return this.request<GatewayStatus>('GET', '/v1/admin/status', undefined, signal);
+    return this.request<GatewayStatus>(
+      "GET",
+      "/v1/admin/status",
+      undefined,
+      signal,
+    );
   }
 
   async ping(signal?: AbortSignal): Promise<boolean> {
     try {
-      await this.request('GET', '/healthz', undefined, signal);
+      await this.request("GET", "/healthz", undefined, signal);
       return true;
     } catch (e) {
       // A token-gated gateway still answers /healthz; a 401 means "reachable
@@ -627,7 +666,7 @@ export class GatewayClient {
    * case, a gateway too old to know it is too old.
    */
   health(signal?: AbortSignal): Promise<GatewayHealth> {
-    return this.request<GatewayHealth>('GET', '/healthz', undefined, signal);
+    return this.request<GatewayHealth>("GET", "/healthz", undefined, signal);
   }
 
   /**
@@ -637,17 +676,17 @@ export class GatewayClient {
    * first frame for a screen the user just re-entered.
    */
   cachedCapabilities(): GatewayCapabilities | null {
-    return readSnapshot<GatewayCapabilities>(this.snapshotKey('capabilities'));
+    return readSnapshot<GatewayCapabilities>(this.snapshotKey("capabilities"));
   }
 
   async capabilities(signal?: AbortSignal): Promise<GatewayCapabilities> {
     const response = await this.request<GatewayCapabilities>(
-      'GET',
-      '/v1/capabilities',
+      "GET",
+      "/v1/capabilities",
       undefined,
       signal,
     );
-    writeSnapshot(this.snapshotKey('capabilities'), response);
+    writeSnapshot(this.snapshotKey("capabilities"), response);
     return response;
   }
 
@@ -657,29 +696,54 @@ export class GatewayClient {
    * push at all — the app needs both to tell "push impossible here" apart from
    * "push possible, this phone just isn't registered".
    */
-  devices(signal?: AbortSignal): Promise<{ devices: PushDevice[]; push: PushStatus }> {
-    return this.request('GET', '/v1/devices', undefined, signal);
+  devices(
+    signal?: AbortSignal,
+  ): Promise<{ devices: PushDevice[]; push: PushStatus }> {
+    return this.request("GET", "/v1/devices", undefined, signal);
   }
 
   /** Idempotent: re-registering the same token refreshes it, never duplicates. */
-  registerDevice(input: PushDeviceInput): Promise<{ device: PushDevice; push: PushStatus }> {
-    return this.request('POST', '/v1/devices', input);
+  registerDevice(
+    input: PushDeviceInput,
+  ): Promise<{ device: PushDevice; push: PushStatus }> {
+    return this.request("POST", "/v1/devices", input);
   }
 
   unregisterDevice(token: string): Promise<{ is_removed: boolean }> {
-    return this.request('DELETE', `/v1/devices/${encodeURIComponent(token)}`);
+    return this.request("DELETE", `/v1/devices/${encodeURIComponent(token)}`);
   }
 
-  voiceModel(sid: string, start = false, signal?: AbortSignal): Promise<VoiceModelState> {
+  /**
+   * This gateway as push registration sees it (`lib/relay.ts`): whether it can
+   * sign a push to this device at all, and the two calls that put the device on
+   * its list or take it off again.
+   */
+  pushTarget(): PushGateway {
+    return {
+      status: async () => (await this.devices()).push,
+      register: (input) => this.registerDevice(input),
+      unregister: (id) => this.unregisterDevice(id),
+    };
+  }
+
+  voiceModel(
+    sid: string,
+    start = false,
+    signal?: AbortSignal,
+  ): Promise<VoiceModelState> {
     return this.request<VoiceModelState>(
-      start ? 'POST' : 'GET',
+      start ? "POST" : "GET",
       `/v1/sessions/${encodeURIComponent(sid)}/voice/model`,
       undefined,
       signal,
     );
   }
 
-  async transcribeVoice(sid: string, wav: Blob, signal?: AbortSignal): Promise<VoiceTranscript> {
+  async transcribeVoice(
+    sid: string,
+    wav: Blob,
+    signal?: AbortSignal,
+  ): Promise<VoiceTranscript> {
     let response: Response;
     let text: string;
     // Same shape as `request`: bound the whole exchange, keep a caller's own
@@ -690,24 +754,35 @@ export class GatewayClient {
     const stalled = () => deadline.signal.aborted && !signal?.aborted;
     const seconds = Math.round(budget / 1000);
     try {
-      const attemptSignal = anySignal(signal ? [signal, deadline.signal] : [deadline.signal]);
+      const attemptSignal = anySignal(
+        signal ? [signal, deadline.signal] : [deadline.signal],
+      );
       try {
-        response = await fetch(`${this.base}/v1/sessions/${encodeURIComponent(sid)}/voice`, {
-          method: 'POST',
-          headers: this.headers({ 'Content-Type': 'audio/wav' }),
-          body: wav,
-          signal: attemptSignal,
-        });
+        response = await fetch(
+          `${this.base}/v1/sessions/${encodeURIComponent(sid)}/voice`,
+          {
+            method: "POST",
+            headers: this.headers({ "Content-Type": "audio/wav" }),
+            body: wav,
+            signal: attemptSignal,
+          },
+        );
       } catch (cause) {
         throw stalled()
-          ? new GatewayError(0, `transcription did not answer within ${seconds}s`)
+          ? new GatewayError(
+              0,
+              `transcription did not answer within ${seconds}s`,
+            )
           : new GatewayError(0, `network error: ${(cause as Error).message}`);
       }
       try {
         text = await response.text();
       } catch (cause) {
         throw stalled()
-          ? new GatewayError(0, `transcription stopped sending after ${seconds}s`)
+          ? new GatewayError(
+              0,
+              `transcription stopped sending after ${seconds}s`,
+            )
           : new GatewayError(0, `network error: ${(cause as Error).message}`);
       }
     } finally {
@@ -722,10 +797,15 @@ export class GatewayClient {
     }
     if (!response.ok) {
       const message =
-        (parsed as { error?: string | { message?: string } })?.error instanceof Object
+        (parsed as { error?: string | { message?: string } })?.error instanceof
+        Object
           ? (parsed as { error: { message?: string } }).error.message
           : (parsed as { error?: string })?.error;
-      throw new GatewayError(response.status, message || `HTTP ${response.status}`, parsed);
+      throw new GatewayError(
+        response.status,
+        message || `HTTP ${response.status}`,
+        parsed,
+      );
     }
     return parsed as VoiceTranscript;
   }
@@ -733,17 +813,17 @@ export class GatewayClient {
   // ── Settings (shared feature-toggle registry, same as TUI) ──────
   /** Last settings payload seen for this gateway — paint it, then revalidate. */
   cachedSettings(): SettingsResponse | null {
-    return readSnapshot<SettingsResponse>(this.snapshotKey('settings'));
+    return readSnapshot<SettingsResponse>(this.snapshotKey("settings"));
   }
 
   async settings(signal?: AbortSignal): Promise<SettingsResponse> {
     const response = await this.request<SettingsResponse>(
-      'GET',
-      '/v1/settings?channel=all',
+      "GET",
+      "/v1/settings?channel=all",
       undefined,
       signal,
     );
-    writeSnapshot(this.snapshotKey('settings'), response);
+    writeSnapshot(this.snapshotKey("settings"), response);
     return response;
   }
 
@@ -754,7 +834,7 @@ export class GatewayClient {
    * once in a blue moon.
    */
   cachedSetting(id: string): Toggle | null {
-    return readSnapshot<Toggle>(this.snapshotKey('setting', id));
+    return readSnapshot<Toggle>(this.snapshotKey("setting", id));
   }
 
   /**
@@ -764,34 +844,40 @@ export class GatewayClient {
    */
   async setting(id: string, signal?: AbortSignal): Promise<Toggle> {
     const toggle = await this.request<Toggle>(
-      'GET',
+      "GET",
       `/v1/settings/${encodeURIComponent(id)}`,
       undefined,
       signal,
     );
-    writeSnapshot(this.snapshotKey('setting', id), toggle);
+    writeSnapshot(this.snapshotKey("setting", id), toggle);
     return toggle;
   }
 
   async setSetting(
     id: string,
-    action: 'toggle' | 'cycle' | 'value',
+    action: "toggle" | "cycle" | "value",
     value?: string,
   ): Promise<Toggle> {
-    const updated = await this.request<Toggle>('POST', '/v1/settings', { id, action, value });
+    const updated = await this.request<Toggle>("POST", "/v1/settings", {
+      id,
+      action,
+      value,
+    });
     // The by-id seed the composer reads is the same fact, so keep it in step —
     // otherwise cycling reasoning effort here would repaint the OLD word on the
     // next open until the revalidation landed.
-    writeSnapshot(this.snapshotKey('setting', id), updated);
+    writeSnapshot(this.snapshotKey("setting", id), updated);
     // Patch the one toggle that changed instead of dropping the snapshot, so
     // reopening the dialog paints the NEW value rather than a blank sheet.
     const cached = this.cachedSettings();
     if (cached) {
-      writeSnapshot(this.snapshotKey('settings'), {
+      writeSnapshot(this.snapshotKey("settings"), {
         ...cached,
         groups: (cached.groups ?? []).map((group) => ({
           ...group,
-          toggles: group.toggles.map((toggle) => (toggle.id === updated.id ? updated : toggle)),
+          toggles: group.toggles.map((toggle) =>
+            toggle.id === updated.id ? updated : toggle,
+          ),
         })),
       });
     }
@@ -800,23 +886,38 @@ export class GatewayClient {
 
   // ── Gateway-owned MCP servers ───────────────────────────────────
   async mcpServers(signal?: AbortSignal): Promise<McpServer[]> {
-    return (await this.request<McpServersResponse>('GET', '/v1/mcp/servers', undefined, signal)).servers ?? [];
+    return (
+      (
+        await this.request<McpServersResponse>(
+          "GET",
+          "/v1/mcp/servers",
+          undefined,
+          signal,
+        )
+      ).servers ?? []
+    );
   }
 
-  async saveMcpServer(name: string, server: McpServerInput): Promise<McpServer> {
-    return this.request<McpServer>('POST', '/v1/mcp/servers', { name, server });
+  async saveMcpServer(
+    name: string,
+    server: McpServerInput,
+  ): Promise<McpServer> {
+    return this.request<McpServer>("POST", "/v1/mcp/servers", { name, server });
   }
 
-  async setMcpServerEnabled(name: string, enabled: boolean): Promise<McpServer> {
+  async setMcpServerEnabled(
+    name: string,
+    enabled: boolean,
+  ): Promise<McpServer> {
     return this.request<McpServer>(
-      'POST',
+      "POST",
       `/v1/mcp/servers/${encodeURIComponent(name)}/actions/enable`,
       { enabled },
     );
   }
 
   async deleteMcpServer(name: string): Promise<void> {
-    await this.request('DELETE', `/v1/mcp/servers/${encodeURIComponent(name)}`);
+    await this.request("DELETE", `/v1/mcp/servers/${encodeURIComponent(name)}`);
   }
 
   // Kill/start are RUNTIME ops, not config edits: they work for hand-written
@@ -824,14 +925,14 @@ export class GatewayClient {
   // somebody's `vis.yml`. A kill holds until `startMcpServer`.
   async killMcpServer(name: string): Promise<McpServer> {
     return this.request<McpServer>(
-      'POST',
+      "POST",
       `/v1/mcp/servers/${encodeURIComponent(name)}/actions/kill`,
     );
   }
 
   async startMcpServer(name: string): Promise<McpServer> {
     return this.request<McpServer>(
-      'POST',
+      "POST",
       `/v1/mcp/servers/${encodeURIComponent(name)}/actions/start`,
     );
   }
@@ -842,14 +943,18 @@ export class GatewayClient {
   // itself and `mcpAuthPoll` reports it.
   async mcpAuthStart(name: string): Promise<McpAuthFlow> {
     return this.request<McpAuthFlow>(
-      'POST',
+      "POST",
       `/v1/mcp/servers/${encodeURIComponent(name)}/auth/start`,
     );
   }
 
-  async mcpAuthComplete(name: string, flowId: string, input: string): Promise<McpAuthFlow> {
+  async mcpAuthComplete(
+    name: string,
+    flowId: string,
+    input: string,
+  ): Promise<McpAuthFlow> {
     return this.request<McpAuthFlow>(
-      'POST',
+      "POST",
       `/v1/mcp/servers/${encodeURIComponent(name)}/auth/complete`,
       { flow_id: flowId, input },
     );
@@ -857,7 +962,7 @@ export class GatewayClient {
 
   async mcpAuthPoll(name: string, flowId: string): Promise<McpAuthFlow> {
     return this.request<McpAuthFlow>(
-      'POST',
+      "POST",
       `/v1/mcp/servers/${encodeURIComponent(name)}/auth/poll`,
       { flow_id: flowId },
     );
@@ -865,7 +970,7 @@ export class GatewayClient {
 
   async mcpAuthCancel(name: string, flowId: string): Promise<void> {
     await this.request(
-      'POST',
+      "POST",
       `/v1/mcp/servers/${encodeURIComponent(name)}/auth/cancel`,
       { flow_id: flowId },
     );
@@ -873,13 +978,19 @@ export class GatewayClient {
 
   async mcpAuthLogout(name: string): Promise<McpAuthStatus> {
     return this.request<McpAuthStatus>(
-      'POST',
+      "POST",
       `/v1/mcp/servers/${encodeURIComponent(name)}/auth/logout`,
     );
   }
 
-  async testMcpServer(name: string, server: McpServerInput): Promise<McpTestResult> {
-    return this.request<McpTestResult>('POST', '/v1/mcp/servers/actions/test', { name, server });
+  async testMcpServer(
+    name: string,
+    server: McpServerInput,
+  ): Promise<McpTestResult> {
+    return this.request<McpTestResult>("POST", "/v1/mcp/servers/actions/test", {
+      name,
+      server,
+    });
   }
 
   // ── Router: providers, models, auth ─────────────────────────────
@@ -935,7 +1046,10 @@ export class GatewayClient {
     // daemon one probe, and an aborted caller never cancels the others.
     let inflight = routerInflight.get(key);
     if (!inflight) {
-      inflight = this.request<{ providers: RouterProvider[] }>('GET', '/v1/router')
+      inflight = this.request<{ providers: RouterProvider[] }>(
+        "GET",
+        "/v1/router",
+      )
         .then((response) => {
           const rows = response.providers;
           routerCache.set(key, { at: Date.now(), rows });
@@ -953,11 +1067,15 @@ export class GatewayClient {
   }
 
   async setDefaultModel(provider: string, model: string): Promise<void> {
-    await this.request<{ default_provider: string; default_model: string }>('PATCH', '/v1/router', {
-      role: 'primary',
-      provider,
-      model,
-    });
+    await this.request<{ default_provider: string; default_model: string }>(
+      "PATCH",
+      "/v1/router",
+      {
+        role: "primary",
+        provider,
+        model,
+      },
+    );
     this.invalidateRouter();
   }
 
@@ -968,10 +1086,10 @@ export class GatewayClient {
    */
   async setFallbackModel(provider: string, model: string): Promise<void> {
     await this.request<{ fallback_provider: string; fallback_model: string }>(
-      'PATCH',
-      '/v1/router',
+      "PATCH",
+      "/v1/router",
       {
-        role: 'fallback',
+        role: "fallback",
         provider,
         model,
       },
@@ -981,11 +1099,15 @@ export class GatewayClient {
 
   /** Drop the fallback tag: a blank `provider` on the fallback role clears it. */
   async clearFallbackModel(): Promise<void> {
-    await this.request<{ fallback_provider: string | null }>('PATCH', '/v1/router', {
-      role: 'fallback',
-      provider: '',
-      model: '',
-    });
+    await this.request<{ fallback_provider: string | null }>(
+      "PATCH",
+      "/v1/router",
+      {
+        role: "fallback",
+        provider: "",
+        model: "",
+      },
+    );
     this.invalidateRouter();
   }
 
@@ -1000,9 +1122,11 @@ export class GatewayClient {
    * for a seed evicted from the snapshot store.
    */
   cachedSessionModel(sid: string): ModelPref | null {
-    const seeded = readSnapshot<ModelPref>(this.snapshotKey('model', sid));
+    const seeded = readSnapshot<ModelPref>(this.snapshotKey("model", sid));
     if (seeded) return seeded;
-    return this.cachedSessions()?.find((row) => row.id === sid)?.model_pref ?? null;
+    return (
+      this.cachedSessions()?.find((row) => row.id === sid)?.model_pref ?? null
+    );
   }
 
   /**
@@ -1013,21 +1137,24 @@ export class GatewayClient {
   private seedSessionModels(rows: Session[]): void {
     for (const row of rows) {
       if (!row?.id) continue;
-      const key = this.snapshotKey('model', row.id);
+      const key = this.snapshotKey("model", row.id);
       const pref = row.model_pref ?? null;
       if (pref || readSnapshot<ModelPref>(key)) writeSnapshot(key, pref);
     }
   }
 
-  async sessionModel(sid: string, signal?: AbortSignal): Promise<ModelPref | null> {
+  async sessionModel(
+    sid: string,
+    signal?: AbortSignal,
+  ): Promise<ModelPref | null> {
     const response = await this.request<{ model?: ModelPref }>(
-      'GET',
+      "GET",
       `/v1/sessions/${encodeURIComponent(sid)}/model`,
       undefined,
       signal,
     );
     const pref = response.model ?? null;
-    writeSnapshot(this.snapshotKey('model', sid), pref);
+    writeSnapshot(this.snapshotKey("model", sid), pref);
     return pref;
   }
 
@@ -1048,13 +1175,13 @@ export class GatewayClient {
     const provider = pref?.provider?.trim() || undefined;
     const model = pref?.model?.trim() || undefined;
     const next = provider || model ? { provider, model } : null;
-    writeSnapshot(this.snapshotKey('model', sid), next);
+    writeSnapshot(this.snapshotKey("model", sid), next);
     return next;
   }
 
   /** The gateway default as last seen — same first-frame job as above. */
   cachedDefaultModel(): ModelPref | null {
-    return readSnapshot<ModelPref>(this.snapshotKey('model-default'));
+    return readSnapshot<ModelPref>(this.snapshotKey("model-default"));
   }
 
   /**
@@ -1068,10 +1195,12 @@ export class GatewayClient {
    */
   async defaultModel(signal?: AbortSignal): Promise<ModelPref | null> {
     const rows = await this.router(signal);
-    const row = rows.find((p) => p.is_default && p.default_model) ?? rows.find((p) => p.default_model);
+    const row =
+      rows.find((p) => p.is_default && p.default_model) ??
+      rows.find((p) => p.default_model);
     if (!row?.default_model) return null;
     const pref = { provider: row.id, model: row.default_model };
-    writeSnapshot(this.snapshotKey('model-default'), pref);
+    writeSnapshot(this.snapshotKey("model-default"), pref);
     return pref;
   }
 
@@ -1081,19 +1210,19 @@ export class GatewayClient {
     model: string,
   ): Promise<ModelPref | null> {
     const response = await this.request<{ model?: ModelPref }>(
-      'PATCH',
+      "PATCH",
       `/v1/sessions/${encodeURIComponent(sid)}/model`,
       { provider, model },
     );
     const pref = response.model ?? null;
-    writeSnapshot(this.snapshotKey('model', sid), pref);
+    writeSnapshot(this.snapshotKey("model", sid), pref);
     return pref;
   }
 
   /** Begin OAuth. `kind: 'device'` finishes by polling; `'pkce'` needs a paste-back. */
   startProviderAuth(providerId: string): Promise<AuthFlow> {
     return this.request<AuthFlow>(
-      'POST',
+      "POST",
       `/v1/providers/${encodeURIComponent(providerId)}/auth/start`,
     );
   }
@@ -1104,7 +1233,7 @@ export class GatewayClient {
     redirectUrl: string,
   ): Promise<AuthVerdict> {
     const verdict = await this.request<AuthVerdict>(
-      'POST',
+      "POST",
       `/v1/providers/${encodeURIComponent(providerId)}/auth/complete`,
       { flow_id: flowId, redirect_url: redirectUrl },
     );
@@ -1119,7 +1248,7 @@ export class GatewayClient {
     apiKey: string,
   ): Promise<AuthVerdict> {
     const verdict = await this.request<AuthVerdict>(
-      'POST',
+      "POST",
       `/v1/providers/${encodeURIComponent(providerId)}/auth/complete`,
       { flow_id: flowId, api_key: apiKey },
     );
@@ -1127,20 +1256,23 @@ export class GatewayClient {
     return verdict;
   }
 
-  async pollProviderAuth(providerId: string, flowId: string): Promise<AuthVerdict> {
+  async pollProviderAuth(
+    providerId: string,
+    flowId: string,
+  ): Promise<AuthVerdict> {
     const verdict = await this.request<AuthVerdict>(
-      'POST',
+      "POST",
       `/v1/providers/${encodeURIComponent(providerId)}/auth/poll`,
       { flow_id: flowId },
     );
     // A settled verdict changed the daemon's credentials; a pending one did not.
-    if (verdict?.status !== 'pending') this.invalidateRouter();
+    if (verdict?.status !== "pending") this.invalidateRouter();
     return verdict;
   }
 
   cancelProviderAuth(providerId: string, flowId: string): Promise<AuthVerdict> {
     return this.request<AuthVerdict>(
-      'POST',
+      "POST",
       `/v1/providers/${encodeURIComponent(providerId)}/auth/cancel`,
       { flow_id: flowId },
     );
@@ -1148,7 +1280,7 @@ export class GatewayClient {
 
   async logoutProvider(providerId: string): Promise<AuthVerdict> {
     const verdict = await this.request<AuthVerdict>(
-      'POST',
+      "POST",
       `/v1/providers/${encodeURIComponent(providerId)}/logout`,
     );
     this.invalidateRouter();
@@ -1163,9 +1295,12 @@ export class GatewayClient {
    * the fresh verdict back into the cached row — no full re-probe of every
    * provider, and no screen left painting the stale dot.
    */
-  async providerStatus(providerId: string, signal?: AbortSignal): Promise<ProviderStatus> {
+  async providerStatus(
+    providerId: string,
+    signal?: AbortSignal,
+  ): Promise<ProviderStatus> {
     const response = await this.request<{ status?: ProviderStatus }>(
-      'GET',
+      "GET",
       `/v1/providers/${encodeURIComponent(providerId)}/status`,
       undefined,
       signal,
@@ -1176,9 +1311,12 @@ export class GatewayClient {
   }
 
   /** Live quota report for one provider (`GET /v1/providers/:id/limits`). */
-  async providerLimits(providerId: string, signal?: AbortSignal): Promise<ProviderLimits> {
+  async providerLimits(
+    providerId: string,
+    signal?: AbortSignal,
+  ): Promise<ProviderLimits> {
     const response = await this.request<{ report?: ProviderLimits }>(
-      'GET',
+      "GET",
       `/v1/providers/${encodeURIComponent(providerId)}/limits`,
       undefined,
       signal,
@@ -1189,19 +1327,24 @@ export class GatewayClient {
   }
 
   /** Keep the shared router cache honest after a single-provider re-probe. */
-  private mergeCachedProvider(providerId: string, patch: Partial<RouterProvider>): void {
+  private mergeCachedProvider(
+    providerId: string,
+    patch: Partial<RouterProvider>,
+  ): void {
     const entry = routerCache.get(this.base);
     if (!entry) return;
     routerCache.set(this.base, {
       at: entry.at,
-      rows: entry.rows.map((row) => (row.id === providerId ? { ...row, ...patch } : row)),
+      rows: entry.rows.map((row) =>
+        row.id === providerId ? { ...row, ...patch } : row,
+      ),
     });
   }
 
   // ── Theme (same persisted selection and palette as the TUI) ─────
   /** Last catalog seen for THIS gateway — paint it, then revalidate. */
   cachedTheme(): GatewayTheme | null {
-    return readSnapshot<GatewayTheme>(this.snapshotKey('theme'));
+    return readSnapshot<GatewayTheme>(this.snapshotKey("theme"));
   }
 
   /** True while the cached catalog is young enough to serve without asking. */
@@ -1226,25 +1369,31 @@ export class GatewayClient {
     const pending = this.theme(signal);
     themeInflight.set(this.base, pending);
     return pending.finally(() => {
-      if (themeInflight.get(this.base) === pending) themeInflight.delete(this.base);
+      if (themeInflight.get(this.base) === pending)
+        themeInflight.delete(this.base);
     });
   }
 
   async theme(signal?: AbortSignal): Promise<GatewayTheme> {
-    const response = await this.request<GatewayTheme>('GET', '/v1/theme', undefined, signal);
-    writeSnapshot(this.snapshotKey('theme'), response);
+    const response = await this.request<GatewayTheme>(
+      "GET",
+      "/v1/theme",
+      undefined,
+      signal,
+    );
+    writeSnapshot(this.snapshotKey("theme"), response);
     themeFetchedAt.set(this.base, Date.now());
     return response;
   }
 
   setTheme(id: string): Promise<GatewayTheme> {
-    return this.request<GatewayTheme>('POST', '/v1/theme', { id });
+    return this.request<GatewayTheme>("POST", "/v1/theme", { id });
   }
 
   async slashes(signal?: AbortSignal): Promise<SlashCommand[]> {
     const response = await this.request<{ commands: SlashCommand[] }>(
-      'GET',
-      '/v1/slashes',
+      "GET",
+      "/v1/slashes",
       undefined,
       signal,
     );
@@ -1260,7 +1409,7 @@ export class GatewayClient {
     signal?: AbortSignal,
   ): Promise<FileSuggestion[]> {
     const rows = await this.request<FileSuggestion[]>(
-      'GET',
+      "GET",
       `/v1/sessions/${encodeURIComponent(sid)}/suggest?kind=file&q=${encodeURIComponent(query)}`,
       undefined,
       signal,
@@ -1277,22 +1426,22 @@ export class GatewayClient {
 
   /** Last session list seen for this gateway. */
   cachedSessions(): Session[] | null {
-    return readSnapshot<Session[]>(this.snapshotKey('sessions'));
+    return readSnapshot<Session[]>(this.snapshotKey("sessions"));
   }
 
   /** Last meta row seen for ONE session. */
   cachedSession(sid: string): Session | null {
-    return readSnapshot<Session>(this.snapshotKey('session', sid));
+    return readSnapshot<Session>(this.snapshotKey("session", sid));
   }
 
   /** Last transcript seen for ONE session. */
   cachedTranscript(sid: string): TranscriptTurn[] | null {
-    return readSnapshot<TranscriptTurn[]>(this.snapshotKey('transcript', sid));
+    return readSnapshot<TranscriptTurn[]>(this.snapshotKey("transcript", sid));
   }
 
   /** Last queued backlog seen for ONE session. */
   cachedQueuedTurns(sid: string): QueuedTurn[] | null {
-    return readSnapshot<QueuedTurn[]>(this.snapshotKey('queued', sid));
+    return readSnapshot<QueuedTurn[]>(this.snapshotKey("queued", sid));
   }
 
   /**
@@ -1310,12 +1459,12 @@ export class GatewayClient {
    * into `turn`, so the reader can drop a replay it has already applied.
    */
   cachedLiveTurn<T>(sid: string): { turn: T; seq: number } | null {
-    const cached = snapshots.get(this.snapshotKey('live', sid));
+    const cached = snapshots.get(this.snapshotKey("live", sid));
     return (cached as { turn: T; seq: number } | undefined) ?? null;
   }
 
   rememberLiveTurn(sid: string, turn: unknown, seq: number): void {
-    const key = this.snapshotKey('live', sid);
+    const key = this.snapshotKey("live", sid);
     if (turn === null) snapshots.delete(key);
     else snapshots.set(key, { turn, seq });
   }
@@ -1354,7 +1503,10 @@ export class GatewayClient {
     }
   }
 
-  cachedSentAttachments(sid: string, tid: string | undefined): GatewayAttachment[] | undefined {
+  cachedSentAttachments(
+    sid: string,
+    tid: string | undefined,
+  ): GatewayAttachment[] | undefined {
     if (!tid) return undefined;
     return this.sentAttachments.get(`${sid}\u0000${tid}`);
   }
@@ -1387,7 +1539,7 @@ export class GatewayClient {
     if (inflight) return inflight;
     const pending = (async () => {
       const res = await this.request<{ attachments?: GatewayAttachment[] }>(
-        'GET',
+        "GET",
         `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/attachments`,
         undefined,
         signal,
@@ -1404,7 +1556,10 @@ export class GatewayClient {
     return pending;
   }
 
-  private readonly attachmentFetches = new Map<string, Promise<GatewayAttachment[]>>();
+  private readonly attachmentFetches = new Map<
+    string,
+    Promise<GatewayAttachment[]>
+  >();
 
   /**
    * Drop ONE row from the cached backlog.
@@ -1416,7 +1571,7 @@ export class GatewayClient {
    * "Queued" row for a turn that is already running.
    */
   forgetQueuedTurn(sid: string, tid: string): void {
-    const key = this.snapshotKey('queued', sid);
+    const key = this.snapshotKey("queued", sid);
     const rows = readSnapshot<QueuedTurn[]>(key);
     if (!rows) return;
     const next = rows.filter((row) => row.turnId !== tid);
@@ -1425,19 +1580,19 @@ export class GatewayClient {
 
   /** Drop every snapshot of one session — it is gone or is being replaced. */
   forgetSession(sid: string): void {
-    snapshots.delete(this.snapshotKey('session', sid));
-    snapshots.delete(this.snapshotKey('transcript', sid));
-    snapshots.delete(this.snapshotKey('queued', sid));
-    snapshots.delete(this.snapshotKey('live', sid));
-    snapshots.delete(this.snapshotKey('model', sid));
+    snapshots.delete(this.snapshotKey("session", sid));
+    snapshots.delete(this.snapshotKey("transcript", sid));
+    snapshots.delete(this.snapshotKey("queued", sid));
+    snapshots.delete(this.snapshotKey("live", sid));
+    snapshots.delete(this.snapshotKey("model", sid));
     for (const key of Array.from(this.sentAttachments.keys())) {
       if (key.startsWith(`${sid}\u0000`)) this.sentAttachments.delete(key);
     }
     for (const key of Array.from(this.attachmentFetches.keys())) {
       if (key.startsWith(`${sid}\u0000`)) this.attachmentFetches.delete(key);
     }
-    transcriptStamps.delete(this.snapshotKey('transcript', sid));
-    transcriptWindows.delete(this.snapshotKey('transcript', sid));
+    transcriptStamps.delete(this.snapshotKey("transcript", sid));
+    transcriptWindows.delete(this.snapshotKey("transcript", sid));
     scheduleSnapshotFlush(snapshotStores);
   }
 
@@ -1466,13 +1621,15 @@ export class GatewayClient {
     signal?: AbortSignal,
     onPage?: (rows: Session[]) => void,
   ): Promise<Session[]> {
-    const key = this.snapshotKey('sessions');
+    const key = this.snapshotKey("sessions");
     const cached = this.cachedSessions();
     const pinned = GatewayClient.sessionsValidators.get(key);
     // Only ever ask conditionally when a 304 can actually be ANSWERED from the
     // rows those validators were issued for.
     const known =
-      pinned && pinned.full === cached ? pinned.windows : new Map<number, SessionsWindow>();
+      pinned && pinned.full === cached
+        ? pinned.windows
+        : new Map<number, SessionsWindow>();
 
     const fetchWindow = async (offset: number): Promise<SessionsWindow> => {
       const pin = known.get(offset);
@@ -1481,22 +1638,22 @@ export class GatewayClient {
         total?: number;
         has_more?: boolean;
       }>(
-        'GET',
+        "GET",
         `/v1/sessions?limit=${SESSIONS_PAGE}&offset=${offset}`,
         undefined,
         signal,
-        pin ? { 'If-None-Match': pin.etag } : undefined,
+        pin ? { "If-None-Match": pin.etag } : undefined,
       );
       // The ordering stamp is read from THIS response, never from the pin: a 304
       // says these ROWS are unchanged, not that the fleet around them is.
-      const order = res.headers.get(SESSIONS_ORDER_HEADER) ?? '';
+      const order = res.headers.get(SESSIONS_ORDER_HEADER) ?? "";
       if (res.status === 304 && pin) return { ...pin, order };
       const rows = res.data?.sessions ?? [];
       // Every row names the model it runs on, so opening any of them paints the
       // right chip on the FIRST frame instead of after a per-session round trip.
       this.seedSessionModels(rows);
       return {
-        etag: res.etag ?? '',
+        etag: res.etag ?? "",
         order,
         rows,
         total: res.data?.total ?? rows.length,
@@ -1509,7 +1666,12 @@ export class GatewayClient {
     // here, keep the pins, and hand back the identical array. `rows` identity is
     // what proves the 304 — the window itself is rebuilt to carry a fresh order.
     const headPin = known.get(0);
-    if (headPin && head.rows === headPin.rows && cached && cached.length === head.total)
+    if (
+      headPin &&
+      head.rows === headPin.rows &&
+      cached &&
+      cached.length === head.total
+    )
       return cached;
 
     const progressive = !cached || cached.length === 0;
@@ -1534,7 +1696,11 @@ export class GatewayClient {
      *   a gateway too old to send the stamp still cannot produce a duplicate key.
      */
     const drain = async (first: SessionsWindow) => {
-      const fetched: { offset: number; start: number; window: SessionsWindow }[] = [];
+      const fetched: {
+        offset: number;
+        start: number;
+        window: SessionsWindow;
+      }[] = [];
       const seen = new Set<string>();
       let merged: Session[] = [];
       let torn = false;
@@ -1583,21 +1749,28 @@ export class GatewayClient {
     if (!pass.torn && pass.dropped === 0) {
       for (const { offset, start, window } of pass.fetched) {
         if (!window.etag) continue;
-        windows.set(offset, { ...window, rows: rows.slice(start, start + window.rows.length) });
+        windows.set(offset, {
+          ...window,
+          rows: rows.slice(start, start + window.rows.length),
+        });
       }
     }
-    if (windows.size) GatewayClient.sessionsValidators.set(key, { full: rows, windows });
+    if (windows.size)
+      GatewayClient.sessionsValidators.set(key, { full: rows, windows });
     else GatewayClient.sessionsValidators.delete(key);
     return rows;
   }
 
   // GET /v1/sessions/actions/search?q= matches user requests + LLM responses in the
   // transcript store server-side, returning only the matching session ids.
-  async searchSessionIds(query: string, signal?: AbortSignal): Promise<string[]> {
+  async searchSessionIds(
+    query: string,
+    signal?: AbortSignal,
+  ): Promise<string[]> {
     const q = query.trim();
     if (!q) return [];
     const res = await this.request<{ session_ids: string[] }>(
-      'GET',
+      "GET",
       `/v1/sessions/actions/search?q=${encodeURIComponent(q)}`,
       undefined,
       signal,
@@ -1615,7 +1788,7 @@ export class GatewayClient {
     const q = query.trim();
     if (!q) return [];
     const res = await this.request<{ matches?: RawSessionMatch[] }>(
-      'GET',
+      "GET",
       `/v1/sessions/actions/search?q=${encodeURIComponent(q)}`,
       undefined,
       signal,
@@ -1629,7 +1802,8 @@ export class GatewayClient {
       hits: (m.hits ?? [])
         .filter((h) => Boolean(h.snippet?.trim()))
         .map((h) => ({
-          side: h.side === 'request' ? ('request' as const) : ('reply' as const),
+          side:
+            h.side === "request" ? ("request" as const) : ("reply" as const),
           snippet: h.snippet as string,
           at: h.at ?? null,
         })),
@@ -1641,9 +1815,9 @@ export class GatewayClient {
     channel?: string;
     root?: string;
   }): Promise<Session> {
-    return this.request<Session>('POST', '/v1/sessions', {
+    return this.request<Session>("POST", "/v1/sessions", {
       title: opts.title,
-      channel: opts.channel ?? 'web',
+      channel: opts.channel ?? "web",
       root: opts.root,
     });
   }
@@ -1655,7 +1829,7 @@ export class GatewayClient {
    */
   async drafts(sid: string, signal?: AbortSignal): Promise<WorkspaceDraft[]> {
     const res = await this.request<{ drafts?: WorkspaceDraft[] }>(
-      'GET',
+      "GET",
       `/v1/sessions/${encodeURIComponent(sid)}/workspace/drafts`,
       undefined,
       signal,
@@ -1670,19 +1844,32 @@ export class GatewayClient {
    * and `/draft blank` (`blank: true`, an empty lineage). The gateway rejects a
    * blank label, and a clean draft in a repo without a commit.
    */
-  createDraft(sid: string, label: string, blank = false, clean = false): Promise<unknown> {
-    return this.request('POST', `/v1/sessions/${encodeURIComponent(sid)}/workspace/drafts`, {
-      label,
-      blank,
-      clean,
-    });
+  createDraft(
+    sid: string,
+    label: string,
+    blank = false,
+    clean = false,
+  ): Promise<unknown> {
+    return this.request(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(sid)}/workspace/drafts`,
+      {
+        label,
+        blank,
+        clean,
+      },
+    );
   }
 
   /** Move `sid` INTO an existing draft — the wire twin of `/draft resume <label>`. */
   resumeDraft(sid: string, workspaceId: string): Promise<unknown> {
-    return this.request('POST', `/v1/sessions/${encodeURIComponent(sid)}/workspace/resume`, {
-      workspace_id: workspaceId,
-    });
+    return this.request(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(sid)}/workspace/resume`,
+      {
+        workspace_id: workspaceId,
+      },
+    );
   }
 
   async session(
@@ -1691,14 +1878,14 @@ export class GatewayClient {
     includeQueued = false,
   ): Promise<Session> {
     const response = await this.request<Session & { queued_turns?: unknown }>(
-      'GET',
-      `/v1/sessions/${encodeURIComponent(sid)}${includeQueued ? '?include=queued' : ''}`,
+      "GET",
+      `/v1/sessions/${encodeURIComponent(sid)}${includeQueued ? "?include=queued" : ""}`,
       undefined,
       signal,
     );
     const { queued_turns: queuedTurns, ...row } = response;
     const merged = reconcileRow(this.cachedSession(sid), row as Session);
-    writeSnapshot(this.snapshotKey('session', sid), merged);
+    writeSnapshot(this.snapshotKey("session", sid), merged);
 
     if (includeQueued) {
       if (Array.isArray(queuedTurns)) {
@@ -1723,9 +1910,12 @@ export class GatewayClient {
    * `listSessions` and snapshots, fetched when a row expands, and is `null` for
    * a session that has no turns yet. The gateway memoizes each decoded iteration.
    */
-  async sessionUsage(sid: string, signal?: AbortSignal): Promise<SessionUsage | null> {
+  async sessionUsage(
+    sid: string,
+    signal?: AbortSignal,
+  ): Promise<SessionUsage | null> {
     const res = await this.request<{ usage: SessionUsage | null }>(
-      'GET',
+      "GET",
       `/v1/sessions/${encodeURIComponent(sid)}/usage`,
       undefined,
       signal,
@@ -1734,12 +1924,19 @@ export class GatewayClient {
   }
 
   async deleteSession(sid: string): Promise<unknown> {
-    const result = await this.request('DELETE', `/v1/sessions/${encodeURIComponent(sid)}`);
+    const result = await this.request(
+      "DELETE",
+      `/v1/sessions/${encodeURIComponent(sid)}`,
+    );
     this.forgetSession(sid);
     // Drop just the deleted row from the list snapshot; the list keeps painting
     // every other session instead of falling back to a skeleton.
     const rows = this.cachedSessions();
-    if (rows) writeSnapshot(this.snapshotKey('sessions'), rows.filter((row) => row.id !== sid));
+    if (rows)
+      writeSnapshot(
+        this.snapshotKey("sessions"),
+        rows.filter((row) => row.id !== sid),
+      );
     return result;
   }
 
@@ -1750,17 +1947,19 @@ export class GatewayClient {
    */
   async renameSession(sid: string, title: string): Promise<Session> {
     const row = await this.request<Session>(
-      'PATCH',
+      "PATCH",
       `/v1/sessions/${encodeURIComponent(sid)}`,
       { title },
     );
     const merged = reconcileRow(this.cachedSession(sid), row);
-    writeSnapshot(this.snapshotKey('session', sid), merged);
+    writeSnapshot(this.snapshotKey("session", sid), merged);
     const rows = this.cachedSessions();
     if (rows) {
       writeSnapshot(
-        this.snapshotKey('sessions'),
-        rows.map((entry) => (entry.id === sid ? reconcileRow(entry, row) : entry)),
+        this.snapshotKey("sessions"),
+        rows.map((entry) =>
+          entry.id === sid ? reconcileRow(entry, row) : entry,
+        ),
       );
     }
     return merged;
@@ -1776,7 +1975,7 @@ export class GatewayClient {
   private mergeTurns(
     previous: TranscriptTurn[] | null,
     incoming: TranscriptTurn[],
-    where: 'tail' | 'head',
+    where: "tail" | "head",
   ): TranscriptTurn[] {
     if (!previous?.length) return incoming;
     if (!incoming.length) return previous;
@@ -1796,7 +1995,7 @@ export class GatewayClient {
       merged[at] = kept;
     }
     if (!fresh.length) return changed ? merged : previous;
-    return where === 'head' ? fresh.concat(merged) : merged.concat(fresh);
+    return where === "head" ? fresh.concat(merged) : merged.concat(fresh);
   }
 
   /**
@@ -1816,7 +2015,8 @@ export class GatewayClient {
     signal?: AbortSignal,
   ): Promise<TranscriptPage> {
     const search = new URLSearchParams();
-    for (const [key, value] of Object.entries(query)) search.set(key, String(value));
+    for (const [key, value] of Object.entries(query))
+      search.set(key, String(value));
     const suffix = search.toString();
     const response = await this.request<{
       turns?: TranscriptTurn[];
@@ -1824,27 +2024,31 @@ export class GatewayClient {
       offset?: number;
       has_more?: boolean;
     }>(
-      'GET',
-      `/v1/sessions/${encodeURIComponent(sid)}/transcript${suffix ? `?${suffix}` : ''}`,
+      "GET",
+      `/v1/sessions/${encodeURIComponent(sid)}/transcript${suffix ? `?${suffix}` : ""}`,
       undefined,
       signal,
     );
     const turns = response.turns ?? [];
-    const total = typeof response.total === 'number' ? response.total : turns.length;
+    const total =
+      typeof response.total === "number" ? response.total : turns.length;
     const offset =
-      typeof response.offset === 'number' ? response.offset : Math.max(0, total - turns.length);
+      typeof response.offset === "number"
+        ? response.offset
+        : Math.max(0, total - turns.length);
     return {
       turns,
       total,
       offset,
-      hasMore: typeof response.has_more === 'boolean' ? response.has_more : offset > 0,
+      hasMore:
+        typeof response.has_more === "boolean" ? response.has_more : offset > 0,
     };
   }
 
   /** How much of `sid`'s transcript we hold, and how much older history exists. */
   transcriptWindow(sid: string): TranscriptWindow {
     return (
-      transcriptWindows.get(this.snapshotKey('transcript', sid)) ?? {
+      transcriptWindows.get(this.snapshotKey("transcript", sid)) ?? {
         offset: 0,
         total: this.cachedTranscript(sid)?.length ?? 0,
       }
@@ -1860,7 +2064,7 @@ export class GatewayClient {
     signal?: AbortSignal,
     limit: number = TRANSCRIPT_PAGE,
   ): Promise<TranscriptTurn[]> {
-    const key = this.snapshotKey('transcript', sid);
+    const key = this.snapshotKey("transcript", sid);
     const page = await this.fetchTranscriptPage(sid, { limit }, signal);
     const cached = this.cachedTranscript(sid);
     const held = transcriptWindows.get(key);
@@ -1871,17 +2075,20 @@ export class GatewayClient {
     // concatenating would paint turn 123 straight into turn 223 — a hole no
     // "load earlier" can reach, because it only ever walks back from turn 123.
     // Drop the stale rows and restart the window at this page instead.
-    const adjoins = !cached?.length || page.offset <= heldOffset + cached.length;
+    const adjoins =
+      !cached?.length || page.offset <= heldOffset + cached.length;
     // Both sides are contiguous slices with a known offset, so split the page at
     // our oldest row instead of trusting "unseen id ⇒ newer": a page that reaches
     // FURTHER BACK than we hold (a deleted turn, a smaller earlier limit) would
     // otherwise append ancient turns to the BOTTOM of the transcript.
-    const before = adjoins ? Math.max(0, Math.min(page.turns.length, heldOffset - page.offset)) : 0;
+    const before = adjoins
+      ? Math.max(0, Math.min(page.turns.length, heldOffset - page.offset))
+      : 0;
     const turns = adjoins
       ? this.mergeTurns(
-          this.mergeTurns(cached, page.turns.slice(before), 'tail'),
+          this.mergeTurns(cached, page.turns.slice(before), "tail"),
           page.turns.slice(0, before),
-          'head',
+          "head",
         )
       : page.turns;
     writeSnapshot(key, turns);
@@ -1906,7 +2113,7 @@ export class GatewayClient {
     signal?: AbortSignal,
     limit: number = TRANSCRIPT_PAGE,
   ): Promise<TranscriptTurn[] | null> {
-    const key = this.snapshotKey('transcript', sid);
+    const key = this.snapshotKey("transcript", sid);
     const window = this.transcriptWindow(sid);
     if (window.offset <= 0) return null;
     const offset = Math.max(0, window.offset - limit);
@@ -1915,7 +2122,11 @@ export class GatewayClient {
       { offset, limit: window.offset - offset },
       signal,
     );
-    const turns = this.mergeTurns(this.cachedTranscript(sid), page.turns, 'head');
+    const turns = this.mergeTurns(
+      this.cachedTranscript(sid),
+      page.turns,
+      "head",
+    );
     writeSnapshot(key, turns);
     transcriptWindows.set(key, { offset: page.offset, total: page.total });
     return turns;
@@ -1932,7 +2143,7 @@ export class GatewayClient {
     row: Session | null,
     signal?: AbortSignal,
   ): Promise<TranscriptTurn[] | null> {
-    const key = this.snapshotKey('transcript', sid);
+    const key = this.snapshotKey("transcript", sid);
     const stamp = transcriptStamp(row);
     const cached = this.cachedTranscript(sid);
     // A cached transcript holding a 'running' row is PROVISIONAL: that row is a
@@ -1940,8 +2151,14 @@ export class GatewayClient {
     // no outcome. Never let the stamp short-circuit past one — the turn may have
     // finished, failed or been cancelled since, and the caller would keep
     // painting a spinner for work that is long over.
-    const provisional = !!cached?.some((turn) => turn.status === 'running');
-    if (stamp && cached?.length && !provisional && transcriptStamps.get(key) === stamp) return null;
+    const provisional = !!cached?.some((turn) => turn.status === "running");
+    if (
+      stamp &&
+      cached?.length &&
+      !provisional &&
+      transcriptStamps.get(key) === stamp
+    )
+      return null;
     const turns = await this.transcript(sid, signal);
     if (stamp) transcriptStamps.set(key, stamp);
     return turns;
@@ -1958,7 +2175,8 @@ export class GatewayClient {
       throw new GatewayError(0, `network error: ${(error as Error).message}`);
     }
     const text = await response.text();
-    if (!response.ok) throw new GatewayError(response.status, `HTTP ${response.status}`, text);
+    if (!response.ok)
+      throw new GatewayError(response.status, `HTTP ${response.status}`, text);
     return text;
   }
 
@@ -1971,7 +2189,11 @@ export class GatewayClient {
    * by construction, hence cached; a FAILED fetch is evicted so a row that has
    * not landed yet is retried by the next render.
    */
-  attachmentUrl(sid: string, iterationId: string, index: number): Promise<string> {
+  attachmentUrl(
+    sid: string,
+    iterationId: string,
+    index: number,
+  ): Promise<string> {
     const key = GatewayClient.attachmentKey(sid, iterationId, index);
     const cached = this.attachmentUrls.get(key);
     if (cached) {
@@ -1990,7 +2212,8 @@ export class GatewayClient {
       } catch (error) {
         throw new GatewayError(0, `network error: ${(error as Error).message}`);
       }
-      if (!response.ok) throw new GatewayError(response.status, `HTTP ${response.status}`);
+      if (!response.ok)
+        throw new GatewayError(response.status, `HTTP ${response.status}`);
       return URL.createObjectURL(await response.blob());
     })();
     pending.catch(() => this.attachmentUrls.delete(key));
@@ -1999,7 +2222,11 @@ export class GatewayClient {
     return pending;
   }
 
-  private static attachmentKey(sid: string, iterationId: string, index: number): string {
+  private static attachmentKey(
+    sid: string,
+    iterationId: string,
+    index: number,
+  ): string {
     return `${sid}\u0000${iterationId}\u0000${index}`;
   }
 
@@ -2015,7 +2242,11 @@ export class GatewayClient {
    * the "my images are gone when I re-open the session" report — the bytes were
    * always on the gateway, the app revoked them from under itself.
    */
-  retainAttachment(sid: string, iterationId: string, index: number): () => void {
+  retainAttachment(
+    sid: string,
+    iterationId: string,
+    index: number,
+  ): () => void {
     const key = GatewayClient.attachmentKey(sid, iterationId, index);
     this.attachmentHolds.set(key, (this.attachmentHolds.get(key) ?? 0) + 1);
     let released = false;
@@ -2048,17 +2279,23 @@ export class GatewayClient {
       if (this.attachmentHolds.has(candidate)) continue;
       const stale = this.attachmentUrls.get(candidate);
       this.attachmentUrls.delete(candidate);
-      void stale?.then((url) => URL.revokeObjectURL(url)).catch(() => undefined);
+      void stale
+        ?.then((url) => URL.revokeObjectURL(url))
+        .catch(() => undefined);
     }
   }
 
   submitTurn(
     sid: string,
     request: string,
-    options: { model?: string; displayRequest?: string; attachments?: GatewayAttachment[] } = {},
+    options: {
+      model?: string;
+      displayRequest?: string;
+      attachments?: GatewayAttachment[];
+    } = {},
   ): Promise<SubmittedTurn> {
     return this.request<SubmittedTurn>(
-      'POST',
+      "POST",
       `/v1/sessions/${encodeURIComponent(sid)}/turns`,
       {
         request,
@@ -2071,7 +2308,7 @@ export class GatewayClient {
 
   cancelCurrentTurn(sid: string): Promise<unknown> {
     return this.request(
-      'POST',
+      "POST",
       `/v1/sessions/${encodeURIComponent(sid)}/cancel-current`,
     );
   }
@@ -2081,9 +2318,13 @@ export class GatewayClient {
   // channel via turn.queued/.updated/.deleted/.drained. These edit that backlog.
 
   /** Edit a still-queued turn's prompt before it starts. */
-  updateQueuedTurn(sid: string, tid: string, request: string): Promise<unknown> {
+  updateQueuedTurn(
+    sid: string,
+    tid: string,
+    request: string,
+  ): Promise<unknown> {
     return this.request(
-      'PATCH',
+      "PATCH",
       `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}`,
       { request },
     );
@@ -2092,7 +2333,7 @@ export class GatewayClient {
   /** Drop a queued turn before it ever runs. */
   deleteQueuedTurn(sid: string, tid: string): Promise<unknown> {
     return this.request(
-      'DELETE',
+      "DELETE",
       `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}`,
     );
   }
@@ -2111,19 +2352,19 @@ export class GatewayClient {
     const fetched = turns
       .filter(
         (turn): turn is Record<string, unknown> =>
-          turn !== null && typeof turn === 'object' && !Array.isArray(turn),
+          turn !== null && typeof turn === "object" && !Array.isArray(turn),
       )
       .sort((a, b) => Number(a.queued_at ?? 0) - Number(b.queued_at ?? 0))
       .map(queuedTurnFromWire)
-      .filter((row) => row.turnId !== '');
+      .filter((row) => row.turnId !== "");
     const rows = reconcileRows(this.cachedQueuedTurns(sid), fetched);
-    writeSnapshot(this.snapshotKey('queued', sid), rows);
+    writeSnapshot(this.snapshotKey("queued", sid), rows);
     return rows;
   }
 
   async queuedTurns(sid: string, signal?: AbortSignal): Promise<QueuedTurn[]> {
     const response = await this.request<{ turns: SubmittedTurn[] }>(
-      'GET',
+      "GET",
       `/v1/sessions/${encodeURIComponent(sid)}/turns?status=queued`,
       undefined,
       signal,
@@ -2138,9 +2379,12 @@ export class GatewayClient {
    * or woken by a push) while a run is already parked has to read the open
    * forms back from here — the same snapshot the TUI restores from.
    */
-  async humanInputRequests(sid: string, signal?: AbortSignal): Promise<HumanInputRequest[]> {
+  async humanInputRequests(
+    sid: string,
+    signal?: AbortSignal,
+  ): Promise<HumanInputRequest[]> {
     const response = await this.request<{ requests: unknown[] }>(
-      'GET',
+      "GET",
       `/v1/sessions/${encodeURIComponent(sid)}/human-input`,
       undefined,
       signal,
@@ -2159,7 +2403,7 @@ export class GatewayClient {
     values: HumanInputValues,
   ): Promise<HumanInputOutcome> {
     return this.request<HumanInputOutcome>(
-      'POST',
+      "POST",
       `/v1/sessions/${encodeURIComponent(sid)}/human-input/${encodeURIComponent(requestId)}/actions/submit`,
       { values },
     );
@@ -2171,7 +2415,7 @@ export class GatewayClient {
     requestId: string,
   ): Promise<{ is_cancelled: boolean; request_id: string }> {
     return this.request<{ is_cancelled: boolean; request_id: string }>(
-      'POST',
+      "POST",
       `/v1/sessions/${encodeURIComponent(sid)}/human-input/${encodeURIComponent(requestId)}/actions/cancel`,
     );
   }
@@ -2197,20 +2441,20 @@ export class GatewayClient {
     sid: string,
     tid: string,
     signal?: AbortSignal,
-  ): Promise<Pick<TranscriptTurn, 'status' | 'content'> | null> {
+  ): Promise<Pick<TranscriptTurn, "status" | "content"> | null> {
     try {
       const row = await this.request<Record<string, unknown>>(
-        'GET',
+        "GET",
         `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}`,
         undefined,
         signal,
       );
-      const status = String(row.status ?? '');
-      if (status === '') return null;
+      const status = String(row.status ?? "");
+      if (status === "") return null;
       return {
         status,
         content: Array.isArray(row.content)
-          ? (row.content as TranscriptTurn['content'])
+          ? (row.content as TranscriptTurn["content"])
           : undefined,
       };
     } catch (error) {
@@ -2240,7 +2484,7 @@ export class GatewayClient {
     signal?: AbortSignal,
   ): Promise<TranscriptIteration[]> {
     const response = await this.request<{ iterations?: unknown }>(
-      'GET',
+      "GET",
       `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/trace`,
       undefined,
       signal,
@@ -2250,14 +2494,13 @@ export class GatewayClient {
       : [];
   }
 
-
   /**
    * Resume a queue the gateway paused after a provider failure — retries the
    * held head immediately and clears the failure counter/circuit breaker.
    */
   resumeQueue(sid: string): Promise<unknown> {
     return this.request(
-      'POST',
+      "POST",
       `/v1/sessions/${encodeURIComponent(sid)}/resume-queue`,
     );
   }
@@ -2306,20 +2549,29 @@ export class GatewayClient {
         };
         try {
           armStall(SSE_CONNECT_TIMEOUT_MS);
-          const spec = Array.from(cursors, ([sid, cursor]) => `${sid}:${cursor}`).join(',');
+          const spec = Array.from(
+            cursors,
+            ([sid, cursor]) => `${sid}:${cursor}`,
+          ).join(",");
           const response = await fetch(
             `${this.base}/v1/events?sids=${encodeURIComponent(spec)}`,
-            { headers: this.headers({ Accept: 'text/event-stream' }), signal: attemptSignal },
+            {
+              headers: this.headers({ Accept: "text/event-stream" }),
+              signal: attemptSignal,
+            },
           );
           if (!response.ok || !response.body) {
-            throw new GatewayError(response.status, `SSE HTTP ${response.status}`);
+            throw new GatewayError(
+              response.status,
+              `SSE HTTP ${response.status}`,
+            );
           }
 
           opts.onOpen?.();
           retryMs = 400;
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
-          let buffer = '';
+          let buffer = "";
 
           // Stall watchdog: the gateway sends a heartbeat every 15 s. If we
           // see nothing for 45 s the socket was silently frozen (iOS
@@ -2331,28 +2583,40 @@ export class GatewayClient {
             const { value, done } = await reader.read();
             armStall(SSE_STALL_TIMEOUT_MS);
             if (done) break;
-            buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+            buffer += decoder
+              .decode(value, { stream: true })
+              .replace(/\r\n/g, "\n");
             let boundary: number;
-            while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+            while ((boundary = buffer.indexOf("\n\n")) >= 0) {
               const frame = buffer.slice(0, boundary);
               buffer = buffer.slice(boundary + 2);
-              for (const line of frame.split('\n')) {
+              for (const line of frame.split("\n")) {
                 const trimmed = line.trimStart();
-                if (!trimmed.startsWith('data:')) continue;
+                if (!trimmed.startsWith("data:")) continue;
                 const json = trimmed.slice(5).trim();
                 if (!json) continue;
                 try {
                   const event = JSON.parse(json) as SseEvent;
-                  const sid = typeof event.session_id === 'string'
-                    ? event.session_id
-                    : typeof event.sid === 'string' ? event.sid : '';
+                  const sid =
+                    typeof event.session_id === "string"
+                      ? event.session_id
+                      : typeof event.sid === "string"
+                        ? event.sid
+                        : "";
                   // Deliver FIRST, then advance the cursor: an event whose
                   // handler failed must replay on reconnect, never be skipped.
                   onEvent(event);
-                  if (sid && event.type === 'subscription.ready' && typeof event.cursor === 'number') {
+                  if (
+                    sid &&
+                    event.type === "subscription.ready" &&
+                    typeof event.cursor === "number"
+                  ) {
                     cursors.set(sid, event.cursor);
-                  } else if (sid && typeof event.seq === 'number') {
-                    cursors.set(sid, Math.max(cursors.get(sid) ?? -1, event.seq));
+                  } else if (sid && typeof event.seq === "number") {
+                    cursors.set(
+                      sid,
+                      Math.max(cursors.get(sid) ?? -1, event.seq),
+                    );
                   }
                 } catch {
                   // Ignore one malformed frame without ending sibling sessions.
@@ -2360,7 +2624,7 @@ export class GatewayClient {
               }
             }
           }
-          if (!signal.aborted) throw new GatewayError(0, 'event stream closed');
+          if (!signal.aborted) throw new GatewayError(0, "event stream closed");
         } catch (error) {
           if (signal.aborted) break;
           opts.onError?.(error);
@@ -2415,20 +2679,26 @@ export class GatewayClient {
         };
         try {
           armStall(SSE_CONNECT_TIMEOUT_MS);
-          const query = cursor != null ? `?cursor=${cursor}` : '';
+          const query = cursor != null ? `?cursor=${cursor}` : "";
           const response = await fetch(
             `${this.base}/v1/sessions/${encodeURIComponent(sid)}/events${query}`,
-            { headers: this.headers({ Accept: 'text/event-stream' }), signal: attemptSignal },
+            {
+              headers: this.headers({ Accept: "text/event-stream" }),
+              signal: attemptSignal,
+            },
           );
           if (!response.ok || !response.body) {
-            throw new GatewayError(response.status, `SSE HTTP ${response.status}`);
+            throw new GatewayError(
+              response.status,
+              `SSE HTTP ${response.status}`,
+            );
           }
 
           opts.onOpen?.();
           retryMs = 400;
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
-          let buffer = '';
+          let buffer = "";
 
           // Stall watchdog — same heartbeat bound as the multiplexed variant.
           armStall(SSE_STALL_TIMEOUT_MS);
@@ -2437,14 +2707,16 @@ export class GatewayClient {
             const { value, done } = await reader.read();
             armStall(SSE_STALL_TIMEOUT_MS);
             if (done) break;
-            buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+            buffer += decoder
+              .decode(value, { stream: true })
+              .replace(/\r\n/g, "\n");
             let boundary: number;
-            while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+            while ((boundary = buffer.indexOf("\n\n")) >= 0) {
               const frame = buffer.slice(0, boundary);
               buffer = buffer.slice(boundary + 2);
-              for (const line of frame.split('\n')) {
+              for (const line of frame.split("\n")) {
                 const trimmed = line.trimStart();
-                if (!trimmed.startsWith('data:')) continue;
+                if (!trimmed.startsWith("data:")) continue;
                 const json = trimmed.slice(5).trim();
                 if (!json) continue;
                 try {
@@ -2452,14 +2724,15 @@ export class GatewayClient {
                   // Deliver FIRST, then advance: an event whose handler
                   // failed must replay on reconnect, never be skipped.
                   onEvent(event);
-                  if (typeof event.seq === 'number') cursor = Math.max(cursor ?? 0, event.seq);
+                  if (typeof event.seq === "number")
+                    cursor = Math.max(cursor ?? 0, event.seq);
                 } catch {
                   // A malformed frame must not end an otherwise healthy stream.
                 }
               }
             }
           }
-          if (!signal.aborted) throw new GatewayError(0, 'event stream closed');
+          if (!signal.aborted) throw new GatewayError(0, "event stream closed");
         } catch (error) {
           if (signal.aborted) return;
           opts.onError?.(error);
@@ -2493,7 +2766,7 @@ function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
     }
     const timer = window.setTimeout(resolve, ms);
     signal.addEventListener(
-      'abort',
+      "abort",
       () => {
         window.clearTimeout(timer);
         resolve();
@@ -2510,7 +2783,7 @@ function anySignal(signals: AbortSignal[]): AbortSignal {
       ctrl.abort();
       break;
     }
-    s.addEventListener('abort', () => ctrl.abort(), { once: true });
+    s.addEventListener("abort", () => ctrl.abort(), { once: true });
   }
   return ctrl.signal;
 }
