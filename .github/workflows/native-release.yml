@@ -41,52 +41,63 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Sizing here is MEASURED, not guessed. The same build was reproduced
-          # locally (GraalVM 25.1.3, `clojure -T:build native :profile :community`)
-          # to find what the [2/8] analysis actually needs for
-          # this image (313k reachable methods, 84.6k types, 425 MB image heap):
+          # Sizing here is MEASURED, not guessed — from the builder's own output.
+          # This image is GC-BOUND on every free runner: the points-to analysis
+          # live set is ~13.7 GiB (native-image prints that number itself) while a
+          # free standard runner has 16 GB in total. Measured arm64 history, same
+          # runner class, same `-J-Xmx14g -J-Xms8g`:
+          #   v0.1.11  284,910 methods  136.66 MiB resources  70.2% in GC   82 m
+          #   v0.1.12  286,696 methods  137.28 MiB resources  67.7% in GC   85 m
+          #   v0.1.22  278,614 methods  156.78 MiB resources  73.5% in GC   86 m
+          #   v0.1.24  279,489 methods  157.03 MiB resources  79.1% in GC  130 m
+          # Reachable code did NOT grow — the embedded resources/image heap did,
+          # and past ~13 GiB of live set every extra MiB costs MINUTES, because GC
+          # time grows super-linearly as the heap fills. Peak RSS is already
+          # 14.1-14.9 GiB of the runner's 16 GB.
+          # x64 at `-J-Xmx12g` fell off that cliff in v0.1.23/v0.1.24: 92.8% of
+          # [4/8] parsing, 89.4% of [6/8] compiling and 98.0% of [7/8] laying out
+          # spent in GC, then "OutOfMemoryError: Java heap space" after 3 h — and
+          # NO x64 asset on the release. arm64 built the same commits at 14g, so
+          # x64 now gets the identical arguments.
           #   -J-Xmx5g   -> OutOfMemoryError: Java heap space        (7 min in)
           #   -J-Xmx8g   -> OutOfMemoryError: GC overhead limit      (9 min in)
           #   -J-Xmx10g  -> OutOfMemoryError: GC overhead limit      (9 min in)
-          #   -J-Xmx12g  -> SUCCESS, peak RSS 13.5 GB, 63% of the time in GC
-          # So the v0.1.0..v0.1.8 failures were never reflection/resource config
-          # or thread counts: the builder was simply short of heap, and the
-          # DeadlockWatchdog then aborted a build that was only GC-thrashing.
-          # We therefore do NOT cap builder threads (-H:NumberOfThreads): capping
-          # them only stretches the wall clock while the peak live set — the
-          # thing that actually OOMs — stays the same. Let the builder use every
-          # core the runner has.
-          # Free standard runners that can host it (larger runners are a paid
-          # Team/Enterprise feature this community project does not use):
-          #   ubuntu-latest    4 cores / 16 GB x64    -> proven: v0.1.8, 1 h 58 m
-          #   ubuntu-24.04-arm 4 cores / 16 GB arm64  -> same class, same args
-          #   macos-15/26      3 cores /  7 GB arm64  -> impossible, never use
-          # -H:DeadlockWatchdogInterval=0 keeps a slow-but-progressing analysis
-          # alive; -J-Xms == -J-Xmx commits the heap up front instead of paying
-          # repeated full GCs while it ratchets up under an already-full old gen.
-          # arm64 measurement (v0.1.10, run 30257185005): the SAME -J-Xmx12g that
-          # passes on x64 died with "OutOfMemoryError: Java heap space" 2 h 07 m in
-          # — the aarch64 backend's analysis/compile graphs simply need more heap
-          # than x64 for this image — so arm64 gets 14 GB and starts smaller
-          # (-J-Xms8g) so the 16 GB runner is not fully committed up front.
+          #   -J-Xmx12g  -> green until v0.1.22, OOM from v0.1.23 on
+          #   -J-Xmx14g  -> green on arm64 through v0.1.24
           # DO NOT raise -J-Xmx above runner RAM again: the v0.1.14 attempts at
           # 18g/22g (plus a swapfile, G1, no -Xms) only moved the builder into
-          # swap, where the analysis thrashes instead of finishing. These exact
-          # args produced the last GREEN native build (run 30353695813).
-          - { os: ubuntu-latest, bin: target/vis, asset: vis-agent-linux-x64-community.tar.gz, extra_args: '-J-Xmx12g -J-Xms12g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          # swap, where the analysis thrashes instead of finishing. And do NOT cap
+          # builder threads (-H:NumberOfThreads): that only stretches the wall
+          # clock while the peak live set — the thing that OOMs — stays the same.
+          # -H:DeadlockWatchdogInterval=0 keeps a slow-but-progressing analysis
+          # alive; -J-Xms starts the heap big enough that the builder does not pay
+          # repeated full GCs while ratcheting up under an already-full old gen,
+          # without committing the whole runner up front.
+          # Free standard runners that can host it (larger runners are ALWAYS
+          # billed, even for public repositories, so this community project does
+          # not use them):
+          #   ubuntu-latest    4 cores / 16 GB x64
+          #   ubuntu-24.04-arm 4 cores / 16 GB arm64
+          # There is no flag left to win with: the next time this cliff is hit the
+          # fix is a BIGGER BUILDER (an 8-core/32 GB larger runner, or a
+          # self-hosted 32 GB box), or less reachable code — not more tuning.
+          - { os: ubuntu-latest, bin: target/vis, asset: vis-agent-linux-x64-community.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
           - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-agent-linux-arm64-community.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
-          # NO macOS job, and that is a hard constraint, not an oversight:
-          #   * the only free arm64 macOS runners have 7 GB — less than half of
-          #     what the builder needs (v0.1.6/v0.1.8 each burned 4 h there);
-          #   * graalvm-ce-builds publishes NO macos-x64 asset for 25.1.3 (only
-          #     linux-x64, linux-aarch64, macos-aarch64, windows-x64), so the
-          #     free 14 GB Intel runner has no community JDK to build with —
-          #     v0.1.9's macos-15-intel job died in setup for exactly that;
-          #   * bigger runners are a paid Team/Enterprise feature, and vis is a
-          #     community project that uses only free standard runners.
-          # macOS arm64 binaries are therefore built by a maintainer on an Apple
-          # silicon Mac with GraalVM CE 25.1.3 (`clojure -T:build native :profile
-          # :community`, needs ~16 GB free RAM) and uploaded to the release.
+          # NO GitHub-hosted macOS job, and that is a hard constraint, not an
+          # oversight — every hosted macOS class is below the ~13.7 GiB live set:
+          #   * free arm64 macOS (macos-latest/14/15/26) is 3 cores / 7 GB, less
+          #     than half of it (v0.1.6/v0.1.8 each burned 4 h there);
+          #   * free macos-15-intel is 4 cores / 14 GB — still short once the OS
+          #     is accounted for — and graalvm-ce-builds publishes NO macos-x64
+          #     asset for 25.1.3 (only linux-x64, linux-aarch64, macos-aarch64,
+          #     windows-x64), so v0.1.9's Intel job died in setup for that;
+          #   * even the PAID macos-*-xlarge (M2, 5 cores) has only 14 GB.
+          # So a macOS arm64 asset needs a SELF-HOSTED Apple-silicon runner with
+          # >= 32 GB (add it here as `runs-on: [self-hosted, macOS, ARM64]`), or a
+          # maintainer build (`clojure -T:build native :profile :community`,
+          # ~16 GB free RAM) uploaded to the release. Until one of those exists no
+          # macos-arm64 bundle is published and `vis-agent update` on a Mac cannot
+          # find the asset bin/vis-agent asks for.
     steps:
       # A dispatch may name an ALREADY-PUSHED tag: build that tag's source with
       # THIS (fixed) workflow file, and attach the asset to that tag's release —
