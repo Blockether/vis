@@ -1551,3 +1551,21 @@
                                      {:id :corp :api-key-command "mint-token"})))
                      (expect (= false @start-called?))
                      (expect (str/includes? (str @message) "api_key_command"))))))
+
+(defdescribe provider-focus-index-test
+             (it "opens parked on the provider a Settings row points at, matched by NAME"
+                 (let
+                   [focus-index
+                    @#'provider/focus-provider-index
+
+                    fleet
+                    [{:id :anthropic} {:id "openai"} {:id :ollama}]]
+
+                   (expect (= 0 (focus-index fleet nil)))
+                   ;; config carries strings, the registry keywords: both must land on row 1
+                   (expect (= 1 (focus-index fleet :openai)))
+                   (expect (= 1 (focus-index fleet "openai")))
+                   (expect (= 2 (focus-index fleet :ollama)))
+                   ;; an unknown id degrades to the first row, never an out-of-range cursor
+                   (expect (= 0 (focus-index fleet :nope)))
+                   (expect (= 0 (focus-index [] :openai))))))

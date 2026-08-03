@@ -377,7 +377,7 @@
         (expect (str/includes? (:text command) "c  Commit staged"))
         (expect (= "c" (:bold command)))))
   (it
-    "the popup is a band INSIDE the host frame with a margin row under its title"
+    "the popup is a band INSIDE the host frame with a rule under its title"
     (let
       [grid
        (transient-grid! commit-transient-spec 3 74 27)
@@ -410,12 +410,18 @@
       ;; The band is CONTIGUOUS: the last command sits directly on that rule,
       ;; never one row above it with a host row left showing between.
       (expect (str/includes? (nth grid 25) "Amend last commit"))
-      ;; Margin-top: title, blank, first group header. "Blank" is the band's
-      ;; INNER width — every row it owns carries the frame's own edge.
-      (expect (str/blank? (subs (nth grid (dec (long args-y))) 4 78)))
-      (expect (= [\│ \│]
+      ;; TITLE BAND: opening rule, the bold title, the title's OWN closing rule,
+      ;; then the first group header — `───` / `Commit` / `───` / body, the chrome
+      ;; the host gives any other titled section. Both rules end in T-junctions
+      ;; ON the frame, never in a blank margin row floating under the title.
+      (expect (str/includes? (nth grid (dec (long args-y))) "────"))
+      (expect (= [\├ \┤]
                  [(nth (nth grid (dec (long args-y))) 3) (nth (nth grid (dec (long args-y))) 78)]))
-      (expect (str/includes? (nth grid (- args-y 2)) "Commit"))))
+      (expect (str/includes? (nth grid (- args-y 2)) "Commit"))
+      (expect (str/includes? (nth grid (- args-y 3)) "────"))
+      (expect (= [\├ \┤]
+                 [(nth (nth grid (- args-y 3)) 3) (nth (nth grid (- args-y 3)) 78)]))
+      (expect (= rule-y (- args-y 3)))))
   (it "the popup wipes every host row it covers and no column outside the frame"
       ;; The status buffer paints its OWN hint bar on `hint-row`, framed by the
       ;; dialog's box borders. The popup replaces that hint bar in place: any row
@@ -479,13 +485,15 @@
         ;; The popup's OWN rule keeps its T-junctions …
         (expect (= \├ (nth (nth grid (long rule-y)) 3)))
         (expect (= \┤ (nth (nth grid (long rule-y)) 78)))
+        ;; … the rule under its TITLE does too …
+        (expect (= [\├ \┤] [(nth (nth grid (+ (long rule-y) 2)) 3) (nth (nth grid (+ (long rule-y) 2)) 78)]))
         ;; … its CLOSING rule keeps them too …
         (expect (= [\├ \┤] [(nth (nth grid 26) 3) (nth (nth grid 26) 78)]))
         ;; … and every other row it covers gets a plain frame edge back, the
         ;; host's junctions included.
         (expect (every? (fn [y]
                           (= [\│ \│] [(nth (nth grid y) 3) (nth (nth grid y) 78)]))
-                        (remove #{26} (range (inc (long rule-y)) 28))))
+                        (remove #{26 (+ (long rule-y) 2)} (range (inc (long rule-y)) 28))))
         ;; The host separator's body is gone, not just its junctions.
         (expect (not (str/includes? (nth grid 25) "────")))))
   (it "pressing a flag key arms it and pressing it again disarms it"
@@ -564,6 +572,8 @@
                   (transient-grid! tall 3 74 27 {:min-row 6 :clear-above? true})]
 
                  (expect (str/includes? (nth grid 6) "Commit"))
+                 ;; …and the title keeps its own rule even when the band is clamped.
+                 (expect (str/includes? (nth grid 7) "────"))
                  (expect (every? str/blank? (take 6 grid))))))
 
 (defdescribe session-dialog-wheel-test
@@ -1089,11 +1099,31 @@
          "Stream reasoning deltas inside each iteration bubble without collapsing this text into ellipsis."}]
 
        entries
-       (settings-render-entries rows 24 16)]
+       (settings-render-entries rows 16)]
 
       (expect (< 2 (count entries)))
       (expect (some #(= :option-desc (:part %)) entries))
       (expect (every? #(not (str/includes? (str (:text %)) "...")) entries))))
+  (it "an info row is a head line + its own body; an inline state never wraps"
+      (let
+        [settings-render-entries
+         (var-get #'dlg/settings-render-entries)
+
+         entries
+         (settings-render-entries
+           [{:type :info :tone :bad :label "MCP unavailable" :description "connection refused"}
+            {:type :mcp-toggle
+             :label "filesystem"
+             :description "connected · 12 tools"
+             :inline-description true}]
+           24)]
+
+        ;; section prose is a bold head line plus a dim body — never label and
+        ;; description glued into one run-on sentence
+        (expect (= [{:row-idx 0 :part :info-line :text "MCP unavailable" :head? true}
+                    {:row-idx 0 :part :info-line :text "connection refused"}
+                    {:row-idx 1 :part :option}]
+                   entries))))
   (it "theme picker rows label registered themes"
       (let [theme-picker-items (var-get #'dlg/theme-picker-items)]
         (expect (= [{:theme-id :vis-dark :label "Vis Dark"}
@@ -1720,12 +1750,17 @@
           (expect (= ["fs" "gh" "hand"] (mapv :label toggles)))
           (expect (= "connected · 3 tools" (:description (first toggles))))
           (expect (= :mcp-manage (:id (last rows))))
+          ;; a server's live status rides its own row, so the section reads as a
+          ;; table instead of costing a wrapped description row per server
+          (expect (every? :inline-description toggles))
           ;; on = enabled AND not killed, so a killed config-file server reads off
           (expect (= [p/STATUS_ON p/STATUS_OFF p/STATUS_OFF] (mapv #(first (mark % {})) toggles)))
           (expect (every? selectable? (remove #(= :section (:type %)) rows))))
         ;; A gateway that is down degrades to an inline row, never a modal.
         (reset! inventory {:status :error :servers [] :error "connection refused"})
         (expect (= [:section :info :action] (mapv :type (mcp-rows))))
+        ;; the failure reads AS a failure: bad tone, so the head line paints red
+        (expect (= :bad (:tone (second (mcp-rows)))))
         (finally (reset! inventory original)))))
   (it
     "settings-rows carries the MCP section and Settings can open focused on it"
@@ -1868,3 +1903,171 @@
 
         (.addInput terminal (transient-key :esc))
         (expect (nil? (dlg/transient-dialog! screen "Auth" ["Guidance."] spec))))))
+
+(defdescribe
+  provider-settings-section-test
+  (it
+    "providers are settings ROWS — auth, model, default — not a dialog of their own"
+    (let
+      [inventory
+       (var-get #'dlg/provider-inventory)
+
+       provider-rows
+       (var-get #'dlg/provider-settings-rows)
+
+       mark
+       (var-get #'dlg/settings-row-mark)
+
+       selectable?
+       (var-get #'dlg/settings-selectable?)
+
+       original
+       @inventory]
+
+      (try
+        ;; No gateway read yet → Settings stays provider-free.
+        (reset! inventory {:status :unloaded :providers [] :error nil})
+        (expect (nil? (provider-rows)))
+        (reset! inventory {:status :ok
+                           :error nil
+                           :providers
+                           [{:provider {:id :anthropic :models [{:name "claude"}]}
+                             :auth :on
+                             :default? true}
+                            {:provider {:id :openai :models ["gpt"]} :auth :off :default? false}
+                            {:provider {:id :ollama :models []} :auth :local :default? false}]})
+        (let
+          [rows
+           (provider-rows)
+
+           providers
+           (filterv #(= :provider (:type %)) rows)]
+
+          (expect (= [:section :provider :provider :provider :action] (mapv :type rows)))
+          (expect (= "Providers" (:label (first rows))))
+          (expect (= :provider-manage (:id (last rows))))
+          ;; the row carries the provider itself, so Enter can open ITS menu
+          (expect (= [:anthropic :openai :ollama] (mapv #(:id (:provider %)) providers)))
+          (expect (= "signed in · claude · default" (:description (first providers))))
+          (expect (= "not signed in · gpt" (:description (second providers))))
+          ;; the dot is the gateway's verdict; a local provider needs no credential
+          (expect (= [p/STATUS_ON p/STATUS_OFF p/MARK_VALUE] (mapv #(first (mark % {})) providers)))
+          (expect (every? selectable? (remove #(= :section (:type %)) rows))))
+        ;; A gateway that is down degrades to an inline row, never a modal.
+        (reset! inventory {:status :error :providers [] :error "connection refused"})
+        (expect (= [:section :info :action] (mapv :type (provider-rows))))
+        (finally (reset! inventory original)))))
+  (it
+    "settings-rows carries the Providers section and Settings can open focused on it"
+    (let
+      [settings-rows
+       (var-get #'dlg/settings-rows)
+
+       inventory
+       (var-get #'dlg/provider-inventory)
+
+       initial-index
+       (var-get #'dlg/settings-initial-index)
+
+       original
+       @inventory]
+
+      (try (reset! inventory {:status :ok
+                              :error nil
+                              :providers
+                              [{:provider {:id :anthropic :models []} :auth :on :default? true}]})
+           (with-redefs
+             [vis/registered-extensions
+              (constantly [])
+
+              vis/get-router
+              (constantly nil)]
+
+             (let
+               [rows
+                (settings-rows)
+
+                row
+                (first (filter #(= :provider (:type %)) rows))]
+
+               (expect (some #{"Providers"}
+                             (->> rows
+                                  (filter #(= :section (:type %)))
+                                  (mapv :label))))
+               (expect (= :anthropic (:id (:provider row))))
+               ;; the palette's Providers entry parks the cursor on the first row
+               (expect (= (:label row) (:label (nth rows (initial-index rows "Providers")))))
+               (expect (not= (initial-index rows "Providers") (initial-index rows nil)))))
+           (finally (reset! inventory original)))))
+  (it
+    "the fleet is config first, then authenticated presets, each with the gateway's verdict"
+    (let
+      [inventory
+       (var-get #'dlg/provider-inventory)
+
+       original
+       @inventory]
+
+      (try (with-redefs
+             [vis/load-config
+              (constantly {:providers [{:id :anthropic :models ["claude"]} {:id :ollama}]
+                           :default-provider "anthropic"})
+
+              vis/authenticated-preset-providers
+              (constantly [{:id :openai :models ["gpt"]} {:id :anthropic :models []}])
+
+              vis/gateway-provider-status
+              (fn [pid]
+                {"is_authenticated" (= :anthropic pid)})]
+
+             (dlg/load-provider-inventory!)
+             (let [{:keys [status providers]} @inventory]
+               (expect (= :ok status))
+               ;; a configured provider is NOT duplicated by its preset twin
+               (expect (= [:anthropic :ollama :openai] (mapv #(:id (:provider %)) providers)))
+               ;; a local provider needs no credential, so the gateway is never asked
+               (expect (= [:on :local :off] (mapv :auth providers)))
+               (expect (= [true false false] (mapv :default? providers)))))
+           ;; a blown-up read is data, not a throw into the dialog loop
+           (with-redefs
+             [vis/load-config (fn []
+                                (throw (ex-info "boom" {})))]
+             (dlg/load-provider-inventory!)
+             (expect (= :error (:status @inventory)))
+             (expect (= "boom" (:error @inventory))))
+           (finally (reset! inventory original)))))
+  (it
+    "Enter on a provider row opens THAT provider's menu, then re-reads the fleet"
+    (let
+      [activate!
+       (var-get #'dlg/activate-settings-row!)
+
+       inventory
+       (var-get #'dlg/provider-inventory)
+
+       opened
+       (atom [])
+
+       original
+       @inventory]
+
+      (try (with-redefs
+             [vis/load-config
+              (constantly {:providers [{:id :openai}]})
+
+              vis/authenticated-preset-providers
+              (constantly [])
+
+              vis/gateway-provider-status
+              (constantly {"is_authenticated" false})]
+
+             (reset! inventory {:status :unloaded :providers [] :error nil})
+             (activate! nil
+                        (atom {})
+                        {:provider-open #(swap! opened conj %)}
+                        {:type :provider :provider {:id :openai}})
+             (expect (= [:openai] @opened))
+             ;; signing in or picking a model changes what the row says: re-read it
+             (expect (= :ok (:status @inventory)))
+             (expect (= [:openai] (mapv #(:id (:provider %)) (:providers @inventory)))))
+           (finally (reset! inventory original))))))

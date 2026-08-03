@@ -2347,20 +2347,18 @@
       clear-above?
       (boolean (:clear-above? opts))
 
-      ;; A leading blank row gives the first group header its MARGIN-TOP, so
-      ;; `Arguments` breathes under the transient's bold title instead of
-      ;; sitting glued to it (groups after it already get one from the
-      ;; trailing blank of the group before).
+      ;; The title carries its OWN rule underneath (see `title-rule-row`), so the
+      ;; first group header needs no blank margin of its own; groups after it
+      ;; still get one from the trailing blank of the group before.
       display-rows
-      (into [{:kind :blank}]
-            (butlast (into []
-                           (mapcat (fn [{:keys [title items]}]
-                                     (concat [{:kind :header :text title}]
-                                             (map (fn [it]
-                                                    {:kind :item :item it})
-                                                  items)
-                                             [{:kind :blank}])))
-                           (:groups spec))))
+      (butlast (into []
+                     (mapcat (fn [{:keys [title items]}]
+                               (concat [{:kind :header :text title}]
+                                       (map (fn [it]
+                                              {:kind :item :item it})
+                                            items)
+                                       [{:kind :blank}])))
+                     (:groups spec)))
 
       n
       (count display-rows)
@@ -2388,14 +2386,21 @@
       (dec (long foot-row))
 
       ;; Anchor the popup to the bottom of its own band — the last body row sits
-      ;; DIRECTLY on the closing rule, the bold title one row above the body.
+      ;; DIRECTLY on the closing rule, and above the body sit the title's own
+      ;; rule, the bold title, and the band's opening separator. The popup reads
+      ;; as `───` / `Commit` / `───` / body: the same chrome the host gives any
+      ;; other titled section, instead of a title floating on a blank margin.
       ;; Clamp so a short terminal — or the host's reserved header — never paints
       ;; over the rows above `:min-row`.
       body-top
-      (max (inc top-limit) (- (long foot-rule-row) n))
+      (max (+ (long top-limit) 2) (- (long foot-rule-row) n))
+
+      ;; The rule that closes the title band and opens the body.
+      title-rule-row
+      (max top-limit (dec (long body-top)))
 
       title-row
-      (max top-limit (dec (long body-top)))
+      (max top-limit (dec (long title-rule-row)))
 
       band-x
       (inc (long left))
@@ -2439,6 +2444,8 @@
        (p/set-colors! g t/dialog-border t/dialog-bg)
        (when (>= (long sep-row) (max (long wipe-top) (long top-limit)))
          (p/draw-separator! g left (+ (long left) (long inner-w) 1) sep-row))
+       (when (> (long title-rule-row) (long title-row))
+         (p/draw-separator! g left (+ (long left) (long inner-w) 1) title-rule-row))
        (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
          (p/draw-separator! g left (+ (long left) (long inner-w) 1) foot-rule-row))
        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
@@ -3650,6 +3657,127 @@
                     (sort-by (juxt :type :label :name) group-rows)))
             (sort-by first (group-by extension-group-key extension-rows)))))
 
+(def ^:private provider-inventory
+  "Cached provider fleet plus each provider's gateway auth verdict, rendered
+   INSIDE Settings.
+
+   Stays `:unloaded` until a dialog asks for it, so `settings-rows` keeps
+   working — and stays gateway-free — for callers and tests without one."
+  (atom {:status :unloaded :providers [] :error nil}))
+
+(defn- provider-fleet
+  "The fleet the Providers section shows: configured providers first, then every
+   preset the gateway already holds credentials for — the same list the full
+   provider manager builds, so both surfaces never disagree."
+  [config]
+  (let
+    [base
+     (vec (or (:providers config) []))
+
+     configured-ids
+     (into #{} (map :id) base)]
+
+    (into base
+          (remove #(contains? configured-ids (:id %)))
+          (try (vis/authenticated-preset-providers) (catch Throwable _ nil)))))
+
+(defn- provider-auth-state
+  "`:local` for a provider that needs no credentials at all, otherwise the
+   GATEWAY's verdict: `:on` authenticated, `:off` not. The TUI must not read the
+   auth file itself — the gateway may be on another machine and it is the one
+   process that owns credential resolution."
+  [provider]
+  (cond (contains? vis/provider-local-no-auth-ids (:id provider)) :local
+        (try (boolean (get (vis/gateway-provider-status (:id provider)) "is_authenticated"))
+             (catch Throwable _ false))
+        :on
+        :else :off))
+
+(defn load-provider-inventory!
+  "Refresh the cached provider fleet from config + gateway. Never throws: a
+   gateway that is down becomes an inline row instead of yet another modal. The
+   auth probes fan out, because one serial round trip per provider would stall
+   the dialog for as long as the slowest provider takes."
+  []
+  (reset! provider-inventory (try (let
+                                    [config
+                                     (vis/load-config)
+
+                                     fleet
+                                     (provider-fleet config)
+
+                                     default-id
+                                     (some-> (:default-provider config)
+                                             name)
+
+                                     states
+                                     (mapv (fn [provider]
+                                             (vis/worker-future "vis-tui-settings-provider-auth"
+                                                                #(provider-auth-state provider)))
+                                           fleet)]
+
+                                    {:status :ok
+                                     :providers (mapv (fn [provider state]
+                                                        {:provider provider
+                                                         :auth @state
+                                                         :default? (= default-id
+                                                                      (some-> (:id provider)
+                                                                              name))})
+                                                      fleet
+                                                      states)
+                                     :error nil})
+                                  (catch Exception e
+                                    {:status :error :providers [] :error (ex-message e)}))))
+
+(defn- provider-settings-status
+  "One provider row's description: the auth verdict first — it decides whether
+   the provider can serve a turn at all — then its model and default tag."
+  [{:keys [provider auth default?]}]
+  (str/join " · "
+            (remove str/blank?
+              [(case auth
+                 :on
+                 "signed in"
+
+                 :local
+                 "local, no sign-in"
+
+                 "not signed in")
+               (str (some-> provider
+                            :models
+                            first
+                            vis/model-name)) (when default? "default")])))
+
+(defn- provider-settings-rows
+  "The `Providers` settings section: one row per provider — auth state, model,
+   default tag on the same line — opening that provider's own menu, plus one
+   action row into the full manager (add / sign in / models / remove). Empty
+   until `load-provider-inventory!` has run."
+  []
+  (let [{:keys [status providers error]} @provider-inventory]
+    (when-not (= :unloaded status)
+      (vec
+        (concat
+          [{:type :section :label "Providers"}]
+          (mapv (fn [{:keys [provider auth] :as entry}]
+                  {:type :provider
+                   :label (vis/display-label (:id provider))
+                   :description (provider-settings-status entry)
+                   :inline-description true
+                   :provider provider
+                   :auth auth})
+                providers)
+          (when (seq (str error))
+            [{:type :info :tone :bad :label "Providers unavailable" :description (str error)}])
+          (when (and (empty? providers) (empty? (str error)))
+            [{:type :info
+              :label "No providers yet"
+              :description "Add one below, or declare them under providers: in vis.yml."}])
+          [{:type :action
+            :id :provider-manage
+            :label "Manage providers…"
+            :description "Add, sign in, pick models, remove"}])))))
+
 (def ^:private mcp-inventory
   "Cached gateway MCP inventory rendered INSIDE Settings.
 
@@ -3704,9 +3832,9 @@
                                 {:type :mcp/read-only :server server})))))
 
 (defn- mcp-settings-rows
-  "The `MCP Servers` settings section: one togglable row per server plus one
-   action row into the full manager (add / edit / sign in / remove). Empty
-   until `load-mcp-inventory!` has run."
+  "The `MCP Servers` settings section: one togglable row per server — its live
+   status riding the same line — plus one action row into the full manager
+   (add / edit / sign in / remove). Empty until `load-mcp-inventory!` has run."
   []
   (let [{:keys [status servers error]} @mcp-inventory]
     (when-not (= :unloaded status)
@@ -3716,14 +3844,15 @@
                         {:type :mcp-toggle
                          :label (str (get row "name"))
                          :description (mcp-model/server-status row)
+                         :inline-description true
                          :server row})
                       servers)
                 (when (seq (str error))
-                  [{:type :info :label "MCP unavailable" :description (str error)}])
+                  [{:type :info :tone :bad :label "MCP unavailable" :description (str error)}])
                 (when (and (empty? servers) (empty? (str error)))
                   [{:type :info
                     :label "No MCP servers yet"
-                    :description "Add one below, or declare it under `mcp:` in vis.yml."}])
+                    :description "Add one below, or declare them under mcp: in vis.yml."}])
                 [{:type :action
                   :id :mcp-manage
                   :label "Manage MCP servers…"
@@ -3732,7 +3861,8 @@
 (defn- settings-rows
   "Every settings row in ONE flat, grouped list — no tabs (mirrors the web
    settings modal): Terminal-UI chrome, then all feature toggles grouped by
-   `:group`, then MCP servers, then channel / provider / extension knobs.
+   `:group`, then providers, then MCP servers, then channel / provider /
+   extension knobs.
    Sections with nothing to show drop out."
   ([] (settings-rows (extension-option-rows)))
   ([extension-rows]
@@ -3758,6 +3888,9 @@
                ;; ALL feature toggles, grouped by :group like the web.
                (or (registry-toggle-rows) [])
                (or (contributor-rows) [])
+               ;; Providers live here too — one row per provider, straight into
+               ;; its own menu, mirroring the web Settings providers panel.
+               (or (provider-settings-rows) [])
                ;; MCP servers live here too — one toggle per server instead
                ;; of a stack of separate dialogs.
                (or (mcp-settings-rows) [])
@@ -3819,7 +3952,7 @@
    glyph and the resource status dots: ● (status-ok) = on, ○ (dim) = off,
    ◆ (accent) = a value/enum to cycle, ▸ (accent) = an action. Returns
    `[glyph fg-color]`."
-  [{:keys [key type set-key item-id toggle-id server]} values]
+  [{:keys [key type set-key item-id toggle-id server auth]} values]
   (let
     [on
      [p/STATUS_ON t/status-ok]
@@ -3870,6 +4003,17 @@
       :mcp-toggle
       (if (mcp-model/server-on? server) on off)
 
+      ;; a provider's dot is the GATEWAY's auth verdict, never a local guess
+      :provider
+      (case auth
+        :on
+        on
+
+        :local
+        val
+
+        off)
+
       :toggle
       (if (get values key false) on off)
 
@@ -3918,7 +4062,7 @@
 
 (defn- settings-selectable?
   [{:keys [type]}]
-  (contains? #{:toggle :choice :action :set-toggle :registry-toggle :mcp-toggle} type))
+  (contains? #{:toggle :choice :action :set-toggle :registry-toggle :mcp-toggle :provider} type))
 
 (defn- first-selectable-index
   [rows]
@@ -4102,9 +4246,10 @@
     :action
     (when-let [f (get callbacks (:id row))]
       (let [result (f @values)]
-        ;; The MCP manager can add, remove or authorize a server; re-read the
-        ;; inventory so the rows underneath it are never stale.
+        ;; The MCP and provider managers can add, remove or authorize an entry;
+        ;; re-read that inventory so the rows underneath it are never stale.
         (when (= :mcp-manage (:id row)) (load-mcp-inventory!))
+        (when (= :provider-manage (:id row)) (load-provider-inventory!))
         result))
 
     :mcp-toggle
@@ -4113,6 +4258,14 @@
              (catch Exception e
                (load-mcp-inventory!)
                (swap! mcp-inventory assoc :error (ex-message e))))
+        @values)
+
+    ;; A provider row opens that provider's own menu (sign in, models, remove)
+    ;; and re-reads the fleet, since any of those can change what the row says.
+    :provider
+    (do (when-let [f (:provider-open callbacks)]
+          (f (:id (:provider row))))
+        (load-provider-inventory!)
         @values)
 
     (if (= :theme-name (:key row))
@@ -4154,17 +4307,17 @@
 (defn- settings-render-entries
   "Flatten logical settings rows into paint rows. Descriptions wrap under
    their owning option instead of stealing a fixed inline column and
-   collapsing to `...` on narrow dialogs / long extension labels."
-  [rows option-w desc-w]
-  (let
-    [option-w
-     (max 1 (long option-w))
+   collapsing to `...` on narrow dialogs / long extension labels — except
+   rows that ask for `:inline-description` (a short STATE, not prose), which
+   keep it on the option line and emit no wrap rows at all.
 
-     desc-w
-     (max 1 (long desc-w))]
-
+   An `:info` row is prose ABOUT its section (empty state, gateway error), so
+   its label and description are separate wrapped blocks — a bold head line
+   plus a dim body — never one run-on sentence."
+  [rows desc-w]
+  (let [desc-w (max 1 (long desc-w))]
     (vec
-      (mapcat (fn [idx {:keys [type label description]}]
+      (mapcat (fn [idx {:keys [type label description inline-description]}]
                 (case type
                   :section
                   [{:row-idx idx :part :section}]
@@ -4173,23 +4326,20 @@
                   [{:row-idx idx :part :subsection}]
 
                   :info
-                  (let
-                    [text
-                     (str label
-                          (when-not (str/blank? (str (or description ""))) (str "  " description)))
+                  (into (mapv (fn [line]
+                                {:row-idx idx :part :info-line :text line :head? true})
+                              (or (seq (settings-wrap-lines label desc-w)) [""]))
+                        (mapv (fn [line]
+                                {:row-idx idx :part :info-line :text line})
+                              (settings-wrap-lines description desc-w)))
 
-                     lines
-                     (settings-wrap-lines text (max 1 (- option-w 2)))]
-
-                    (mapv (fn [line]
-                            {:row-idx idx :part :info-line :text line})
-                          (or (seq lines) [""])))
-
-                  (let [desc-lines (settings-wrap-lines description desc-w)]
-                    (into [{:row-idx idx :part :option}]
-                          (mapv (fn [line]
-                                  {:row-idx idx :part :option-desc :text line})
-                                desc-lines)))))
+                  (if inline-description
+                    [{:row-idx idx :part :option}]
+                    (let [desc-lines (settings-wrap-lines description desc-w)]
+                      (into [{:row-idx idx :part :option}]
+                            (mapv (fn [line]
+                                    {:row-idx idx :part :option-desc :text line})
+                                  desc-lines))))))
               (range)
               rows))))
 
@@ -4300,9 +4450,10 @@
 
    `settings` is the persisted TUI settings map (see
    `state/default-settings`). `callbacks` also carries `:focus-section` (a
-   section label to park the cursor on, e.g. `MCP Servers`) and
-   `:mcp-manage` (the full MCP manager, reached from its section's action
-   row). Esc clears an active search first, then closes and returns the
+   section label to park the cursor on, e.g. `MCP Servers` or `Providers`),
+   `:mcp-manage` / `:provider-manage` (the full managers, reached from their
+   section's action row) and `:provider-open` (one provider's own menu, reached
+   from its row). Esc clears an active search first, then closes and returns the
    current settings map."
   ([^TerminalScreen screen settings] (settings-dialog! screen settings nil))
   ([^TerminalScreen screen settings callbacks]
@@ -4310,10 +4461,11 @@
      [extension-rows
       (extension-option-rows)
 
-      ;; MCP servers are a settings section now, so the inventory is read once
-      ;; when the dialog opens instead of behind a dialog of its own.
+      ;; MCP servers and providers are settings sections now, so both
+      ;; inventories are read once when the dialog opens instead of from behind
+      ;; dialogs of their own.
       _
-      (load-mcp-inventory!)
+      (do (load-mcp-inventory!) (load-provider-inventory!))
 
       selected
       (atom (settings-initial-index (settings-rows extension-rows) (:focus-section callbacks)))
@@ -4435,7 +4587,7 @@
           (max 1 (- base-option-w check-w))
 
           base-entries
-          (settings-render-entries rows base-option-w base-desc-w)
+          (settings-render-entries rows base-desc-w)
 
           scrollable?
           (> (count base-entries) visible-h)
@@ -4452,8 +4604,21 @@
           desc-w
           (max 1 (- option-w check-w))
 
+          ;; Rows carrying an inline description (MCP / provider status) share
+          ;; ONE column, so those states line up as a table instead of ragging
+          ;; after names of different length.
+          inline-desc-x
+          (+ option-x
+             p/STATUS_WIDTH
+             2
+             (long (reduce max
+                           0
+                           (keep (fn [[row lbl]]
+                                   (when (:inline-description row) (count lbl)))
+                                 (map vector rows labels)))))
+
           entries
-          (settings-render-entries rows option-w desc-w)
+          (settings-render-entries rows desc-w)
 
           visual-n
           (count entries)
@@ -4546,8 +4711,8 @@
 
              (if (< entry-idx visual-n)
                (let
-                 [{:keys [row-idx part text]} (nth entries entry-idx)
-                  {:keys [label]} (nth rows row-idx)
+                 [{:keys [row-idx part text head?]} (nth entries entry-idx)
+                  {:keys [label tone description inline-description]} (nth rows row-idx)
                   option-label (nth labels row-idx)
                   selected? (= row-idx @selected)
                   [mark mark-color] (settings-row-mark (nth rows row-idx) @values)]
@@ -4568,10 +4733,20 @@
                          [p/BOLD]
                          (p/put-str! g (+ lleft 2) row-y (settings-subsection-text label paint-w))))
 
+                   ;; Prose ABOUT the section (empty state, gateway error): a
+                   ;; bold head line plus its own wrapped body, both in the
+                   ;; description column so the block hangs off the section
+                   ;; instead of running along the pane edge as one sentence.
                    :info-line
-                   (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                   (do (p/set-colors! g
+                                      (cond (and head? (= :bad tone)) t/status-bad
+                                            head? t/dialog-fg
+                                            :else t/dialog-hint)
+                                      t/dialog-bg)
                        (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                       (p/put-str! g (+ lleft 2) row-y (ellipsize text (max 1 (- paint-w 2)))))
+                       (if head?
+                         (p/styled g [p/BOLD] (p/put-str! g desc-x row-y (ellipsize text desc-w)))
+                         (p/put-str! g desc-x row-y (ellipsize text desc-w))))
 
                    :option-desc
                    (do (p/set-colors! g t/dialog-hint t/dialog-bg)
@@ -4584,9 +4759,11 @@
                    ;; descriptions into an ellipsis-only column.
                    (do (p/set-colors! g t/dialog-fg t/dialog-bg)
                        (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                       ;; Cursor glyph in the dialog padding column.
+                       ;; Cursor glyph sits immediately LEFT of the row body, so
+                       ;; a selected row reads as one unit instead of an orphan
+                       ;; bullet parked against the pane divider.
                        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                       (p/draw-selection-marker! g (inc lleft) row-y selected?)
+                       (p/draw-selection-marker! g (- option-x p/SELECTION_WIDTH) row-y selected?)
                        ;; Leading status glyph (●/○/◆/▸) via the shared component,
                        ;; which returns the col to start the label at.
                        (let
@@ -4596,7 +4773,18 @@
                          (p/set-colors! g t/dialog-fg t/dialog-bg)
                          (if selected?
                            (p/styled g [p/BOLD] (p/put-str! g label-x row-y lbl))
-                           (p/put-str! g label-x row-y lbl))))))
+                           (p/put-str! g label-x row-y lbl))
+                         ;; A short STATE (an MCP server / provider status) rides
+                         ;; the option line in one shared column instead of
+                         ;; costing a whole wrapped row per entry.
+                         (when (and inline-description (seq (str description)))
+                           (let
+                             [dx (max (+ (long label-x) (long (count lbl)) 2) (long inline-desc-x))
+                              avail (- (+ lleft paint-w) dx)]
+
+                             (when (pos? avail)
+                               (p/set-colors! g t/dialog-hint t/dialog-bg)
+                               (p/put-str! g dx row-y (ellipsize (str description) avail)))))))))
                (do (p/set-colors! g t/dialog-fg t/dialog-bg)
                    (p/fill-rect! g (inc lleft) row-y paint-w 1)))))
          ;; Left Table-of-Contents rail (the VS Code settings sidebar): the

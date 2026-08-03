@@ -1428,15 +1428,37 @@
                 (recur))
             (recur)))))))
 
+(defn- focus-provider-index
+  "Row index of `provider-id` in `providers`, else 0.
+
+   A caller can point straight at one provider — a Settings provider row does —
+   so the dialog opens parked on it instead of on a list to search again. Ids
+   are compared by NAME: config carries strings, the registry keywords."
+  [providers provider-id]
+  (let
+    [focus (some-> provider-id
+                   name)]
+    (or (when focus
+          (first (keep-indexed (fn [i provider]
+                                 (when (= focus
+                                          (some-> (:id provider)
+                                                  name))
+                                   i))
+                               providers)))
+        0)))
+
 (def ^:private provider-dialog-title "Providers")
 
 (defn show-provider-dialog!
   "Provider manager dialog.
    Esc saves and closes. Provider order has no routing semantics; choose exactly
-   one default provider/model pair."
+   one default provider/model pair.
+
+   `opts` may carry `:focus-provider-id`, which opens the dialog already parked
+   on that provider — how a Settings provider row leads straight to its menu."
   ([^TerminalScreen screen] (show-provider-dialog! screen nil nil))
   ([^TerminalScreen screen current-config] (show-provider-dialog! screen current-config nil))
-  ([^TerminalScreen screen current-config _opts]
+  ([^TerminalScreen screen current-config opts]
    (let
      [seed
       (or current-config (vis/load-config) {:providers []})
@@ -1500,7 +1522,7 @@
                   @items))
 
       selected
-      (atom 0)
+      (atom (focus-provider-index @items (:focus-provider-id opts)))
 
       scroll
       (atom 0)

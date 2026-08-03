@@ -2381,22 +2381,41 @@
            (render-frame! screen cols rows @state/app-db (System/currentTimeMillis))))
        (catch Throwable _ nil)))
 
-(defn- open-settings-modal!
-  "Open Settings as a sub-modal of the Router hub.
+(defn- open-provider-modal!
+  "Open the full provider manager (add / sign in / pick models / remove) and
+   commit whatever it saved.
 
-   The Router (`provider/show-provider-dialog!`) hands this in as its
-   `:open-settings` callback and invokes it from INSIDE its own dialog loop,
-   which already holds `draw-lock` via `with-dialog-lock`; so this must NOT
-   re-grab the lock. Top-level callers (command palette) wrap it in
+   Settings hands this in as its `:provider-manage` and `:provider-open`
+   callbacks and calls it from INSIDE its own dialog loop, which already holds
+   `draw-lock` via `with-dialog-lock`; so this must NOT re-grab the lock.
+   Top-level callers wrap it themselves. `focus-provider-id` opens the manager
+   already parked on one provider, so a Settings row leads straight to that
+   provider instead of to a list the user has to search again. Returns nil."
+  ([^TerminalScreen screen] (open-provider-modal! screen nil))
+  ([^TerminalScreen screen focus-provider-id]
+   (when-let [c (provider/show-provider-dialog! screen
+                                                (:config @state/app-db)
+                                                {:focus-provider-id focus-provider-id})]
+     (state/dispatch [:set-config c])
+     (state/dispatch [:force-provider-limits-refresh]))
+   nil))
+
+(defn- open-settings-modal!
+  "Open Settings: the one hub for everything configurable, providers included.
+
+   Its own callbacks (`:provider-manage`, `:provider-open`, `:mcp-manage`) run
+   from INSIDE the settings dialog loop, which already holds `draw-lock` via
+   `with-dialog-lock`; so neither this nor they may re-grab the lock.
+   Top-level callers (command palette, C-x o) wrap it in
    `with-dialog-lock` themselves. Live `:on-change` and the returned value
    both dispatch `:update-settings`, so a tweak applies whether the user
    edits a row or just closes. Repaints the chat frame so a live theme change
    shows immediately.
 
    `focus-section` parks the cursor on one section label: the palette's MCP
-   entry opens Settings on `MCP Servers`, where each server is a toggle row
-   and `:mcp-manage` opens the full manager for add / edit / sign-in /
-   remove. Returns nil."
+   entry opens Settings on `MCP Servers` and its Providers entry on
+   `Providers`, where every provider is a row into its own menu and
+   `:mcp-manage` / `:provider-manage` open the full managers. Returns nil."
   ([^TerminalScreen screen] (open-settings-modal! screen nil))
   ([^TerminalScreen screen focus-section]
    (when-let [s (dlg/settings-dialog!
@@ -2406,6 +2425,12 @@
 
                    :mcp-manage
                    (fn [_] (mcp/show-mcp-dialog! screen))
+
+                   :provider-manage
+                   (fn [_] (open-provider-modal! screen))
+
+                   :provider-open
+                   (fn [provider-id] (open-provider-modal! screen provider-id))
 
                    :on-change
                    (fn [settings]
@@ -6744,14 +6769,12 @@
                                   ;; Shift+F3 / its in-place input field. The
                                   ;; previous palette entry was a duplicate
                                   ;; entry point for the same action.
+                                  ;; Providers live INSIDE Settings now: one row
+                                  ;; per provider (auth state + model) opening
+                                  ;; that provider's own menu, with the full
+                                  ;; manager one row below them.
                                   :providers
-                                  (when-let
-                                    [c (with-dialog-lock #(provider/show-provider-dialog!
-                                                            screen
-                                                            (:config @state/app-db)
-                                                            {:open-settings (fn [] (open-settings-modal! screen))}))]
-                                    (state/dispatch [:set-config c])
-                                    (state/dispatch [:force-provider-limits-refresh]))
+                                  (with-dialog-lock #(open-settings-modal! screen "Providers"))
 
                                   ;; MCP servers live INSIDE Settings now: one
                                   ;; toggle row per server (enable/disable, or
@@ -6764,13 +6787,7 @@
                                   (with-dialog-lock #(open-settings-modal! screen))
 
                                   :model
-                                  (when-let
-                                    [c (with-dialog-lock #(provider/show-provider-dialog!
-                                                            screen
-                                                            (:config @state/app-db)
-                                                            {:open-settings (fn [] (open-settings-modal! screen))}))]
-                                    (state/dispatch [:set-config c])
-                                    (state/dispatch [:force-provider-limits-refresh]))
+                                  (with-dialog-lock #(open-provider-modal! screen))
 
                                   ;; App verbs reachable from the palette (Ctrl+P)
                                   ;; in addition to their direct keys — the palette
@@ -7139,17 +7156,12 @@
                          :switch-project
                          (do (switch-project!) (recur))
 
-                         ;; C-x o: opens Providers; also reachable via the
+                         ;; C-x o: opens Providers — a section INSIDE Settings
+                         ;; now, exactly like the app; also reachable via the
                          ;; C-x p palette → "Providers".
                          :providers
                          (do (when-not (:dialog-open? @state/app-db)
-                               (when-let
-                                 [c (with-dialog-lock #(provider/show-provider-dialog!
-                                                         screen
-                                                         (:config @state/app-db)
-                                                         {:open-settings (fn [] (open-settings-modal! screen))}))]
-                                 (state/dispatch [:set-config c])
-                                 (state/dispatch [:force-provider-limits-refresh])))
+                               (with-dialog-lock #(open-settings-modal! screen "Providers")))
                              (recur))
 
                          :pick-file
