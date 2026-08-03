@@ -9,6 +9,7 @@
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.magit :as magit]
+            [com.blockether.vis.ext.channel-tui.transient :as tr]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.git :as git]
             [lazytest.core :refer [defdescribe expect it]])
@@ -298,15 +299,15 @@
 
          mini
          {:transient!
-          (fn [title spec _read-option]
-            (expect (= "Commit" title))
+          (fn [spec]
+            (expect (= "Commit" (:title spec)))
             (expect
               (= {:key "h" :type :switch :id :no-verify :label "Disable hooks" :arg "--no-verify"}
-                 (dialogs/transient-item-by-key spec \h)))
+                 (tr/item-by-key spec \h)))
             ;; magit's transients are case-sensitive: `n` is NOT the hooks flag.
-            (expect (nil? (dialogs/transient-item-by-key spec \n)))
-            (expect (= :commit (:id (dialogs/transient-item-by-key spec \c))))
-            (expect (= :amend (:id (dialogs/transient-item-by-key spec \a))))
+            (expect (nil? (tr/item-by-key spec \n)))
+            (expect (= :commit (:id (tr/item-by-key spec \c))))
+            (expect (= :amend (:id (tr/item-by-key spec \a))))
             {:action :commit :switches #{:no-verify} :options {}})
           :read! (fn [_label _opts]
                    "via transient")}]
@@ -323,7 +324,7 @@
          (init-repo!)
 
          mini
-         {:transient! (fn [_title _spec _read-option]
+         {:transient! (fn [_spec]
                         {:action :commit :switches #{} :options {}})
           :read! (fn [_label _opts]
                    "via transient")}]

@@ -10,6 +10,7 @@
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.theme :as t]
+            [com.blockether.vis.ext.channel-tui.transient :as tr]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.mcp-model :as mcp-model]
             [com.blockether.vis.internal.theme :as shared-theme]
@@ -492,6 +493,26 @@
 
                        (p/set-fg! g t/dialog-hint)
                        (p/styled g [p/ITALIC] (p/put-str! g start row joined))))))
+
+(defn transient-host
+  "The standard modal HOST for `tr/run!` — the one adapter between a Lanterna
+   `screen` and the host-agnostic transient component. It paints through `g`,
+   flushes with the modal cursor hidden, borrows this namespace's hint bar, and
+   normalizes one modal keystroke into what the component understands: `:esc`,
+   a Character, or nil for \"nothing actionable, just repaint\".
+
+   Any surface holding a screen and a `TextGraphics` embeds a transient with
+   this — the magit status buffer, the provider dialog, `transient-dialog!`."
+  [^TerminalScreen screen g]
+  {:g g
+   :hint-bar! draw-hint-bar!
+   :refresh! (fn []
+               (.setCursorPosition screen nil)
+               (.refresh screen Screen$RefreshType/DELTA))
+   :read-key!
+   (fn []
+     (let [key (read-modal-key! screen)]
+       (condp = (key-type key) KeyType/Escape :esc KeyType/Character (key-character key) nil)))})
 
 (defn hint-bar-width
   "Natural rendered width (chars) of a `draw-hint-bar!` hint — a plain string,
@@ -2129,7 +2150,7 @@
       (magit/discard-file! root row))))
 
 (defn- magit-commit-flow!
-  "Magit's `c` commit transient (`magit-transient!`), keyed exactly like Emacs
+  "Magit's `c` commit transient (`tr/run!`), keyed exactly like Emacs
    magit's commit popup. FLAGS: `-h` Disable hooks (`--no-verify`) — a TOGGLE (press
    `h` to arm it, press it again to disarm it), the escape hatch for a repo whose
    pre-commit/commit-msg githook is broken or irrelevant. COMMANDS: `c` commit the
@@ -2139,15 +2160,14 @@
   (when-let
     [{:keys [action switches]}
      ((:transient! mini)
-       "Commit"
-       {:groups
+       {:title "Commit"
+        :groups
         [{:title "Arguments"
           :items
           [{:key "h" :type :switch :id :no-verify :label "Disable hooks" :arg "--no-verify"}]}
-         {:title "Commit"
+         {:title "Commands"
           :items [{:key "c" :type :action :id :commit :label "Commit staged"}
-                  {:key "a" :type :action :id :amend :label "Amend last commit"}]}]}
-       (constantly nil))]
+                  {:key "a" :type :action :id :amend :label "Amend last commit"}]}]})]
     (let
       [amend? (= :amend action)
        no-verify? (contains? switches :no-verify)]
@@ -2161,354 +2181,6 @@
           (if (str/blank? msg)
             {:ok? false :msg "Empty message — commit aborted"}
             (magit/commit! root msg {:amend? amend? :no-verify? no-verify?})))))))
-
-(defn transient-item-by-key
-  "PURE: the transient spec item bound to single character `ch` (a Character or
-   string), scanning every group in order. nil when nothing is bound."
-  [spec ch]
-  (let [k (str ch)]
-    (some (fn [{:keys [items]}]
-            (some #(when (= k (:key %)) %) items))
-          (:groups spec))))
-
-(defn transient-toggle
-  "PURE reducer for ONE keystroke against a magit transient `state`
-   (`{:switches #{ids} :options {id val}}`). Returns a map whose `:kind` tells
-   the impure caller what to do next:
-     {:kind :continue :state s'}  a SWITCH flipped (or an unbound key — no-op)
-     {:kind :option   :item it}   an OPTION was hit; caller reads a value then
-                                   re-enters with it stored under [:options id]
-     {:kind :action   :item it}   an ACTION fires; caller runs it and closes.
-   Switches are the only kind this fn mutates; options/actions leave `state`
-   untouched (the impure loop finishes their job)."
-  [spec state ch]
-  (if-let [{:keys [type id] :as it} (transient-item-by-key spec ch)]
-    (case type
-      :switch
-      {:kind :continue
-       :state (update state :switches #(if (contains? % id) (disj % id) (conj (or % #{}) id)))}
-
-      :option
-      {:kind :option :item it}
-
-      :action
-      {:kind :action :item it}
-
-      {:kind :continue :state state})
-    {:kind :continue :state state}))
-
-(defn transient-key-glyph
-  "PURE: the key column glyph magit paints for one transient item. FLAGS
-   (`:switch` / `:option`) carry magit's leading `-` — `-h`, `-t` — so a toggle can
-   never be mistaken for a fire-once verb; COMMANDS (`:action`) show the bare key."
-  [{:keys [type key]}]
-  (if (= :action type) (str key) (str "-" key)))
-
-(defn transient-item-arg
-  "PURE: the trailing git-argument cell magit shows for a FLAG: `(--no-verify)` for
-   a switch, `(%topic=fix)` for an option carrying `value`. nil for actions (a
-   command contributes no argument) and for flags that name none.
-
-   A `:secret? true` option NEVER renders what it holds: an armed API key shows
-   as `(••••••)`, so a credential can be carried by a transient without being
-   echoed onto the screen or into a screenshot."
-  [{:keys [type arg secret?]} value]
-  (let
-    [raw
-     (when (and value (not (str/blank? (str value)))) (str value))
-
-     v
-     (when raw (if secret? "••••••" raw))]
-
-    (cond (= :action type) nil
-          (and arg (= :option type)) (str "(" arg v ")")
-          arg (str "(" arg ")")
-          v (str "(" v ")")
-          :else nil)))
-
-(defn transient-layout
-  "PURE: `{:key-w :label-w}` column widths for the transient grid. Every group's
-   items share one key column and one description column, so flags and commands
-   line up as a grid exactly like magit's popup."
-  [spec]
-  (let [items (mapcat :items (:groups spec))]
-    {:key-w (reduce max 0 (map #(long (p/display-width (transient-key-glyph %))) items))
-     :label-w (reduce max 0 (map #(long (p/display-width (str (:label %)))) items))}))
-
-(defn- draw-transient-item!
-  "One transient row as a GRID cell: key glyph column, description column, and the
-   git-argument column.
-
-   A FLAG (`:switch` / `:option`) reads dim while OFF and turns BOLD `dialog-fg`
-   with its argument accented while ON, so pressing its key visibly toggles it.
-   A COMMAND (`:action`) always shows a BOLD accented key with its description in
-   full `dialog-fg` — a command is never `off`."
-  [g left row inner-w {:keys [key-w label-w]} {:keys [type label] :as it} active? value]
-  (let
-    [action?
-     (= :action type)
-
-     keytxt
-     (transient-key-glyph it)
-
-     argtxt
-     (transient-item-arg it value)
-
-     x
-     (+ (long left) 2)
-
-     lx
-     (+ (long x) (long key-w) 1)
-
-     right
-     (+ (long left) (long inner-w))
-
-     label-txt
-     (str label)
-
-     ;; Argument column: aligned past the widest description when it fits, else
-     ;; trailing the description inline, else dropped (a very narrow buffer).
-     arg-x
-     (when argtxt
-       (let
-         [w
-          (long (p/display-width argtxt))
-
-          col
-          (+ (long lx) (long label-w) 2)
-
-          inline
-          (+ (long lx) (long (p/display-width label-txt)) 2)]
-
-         (cond (<= (+ col w) (dec (long right))) col
-               (<= (+ inline w) (dec (long right))) inline)))
-
-     shown
-     (ellipsize label-txt (max 0 (- (long (or arg-x right)) (long lx) 1)))
-
-     fg
-     (if (or action? active?) t/dialog-fg t/dialog-hint)]
-
-    (p/set-colors! g t/dialog-fg t/dialog-bg)
-    (p/fill-rect! g (inc (long left)) row inner-w 1)
-    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-    (if (or action? active?)
-      (p/styled g [p/BOLD] (p/put-str! g x row keytxt))
-      (p/put-str! g x row keytxt))
-    (p/set-colors! g fg t/dialog-bg)
-    (if active? (p/styled g [p/BOLD] (p/put-str! g lx row shown)) (p/put-str! g lx row shown))
-    (when arg-x
-      (p/set-colors! g (if active? t/dialog-hint-key t/dialog-hint) t/dialog-bg)
-      (if active?
-        (p/styled g [p/BOLD] (p/put-str! g arg-x row argtxt))
-        (p/put-str! g arg-x row argtxt)))
-    (p/set-colors! g t/dialog-fg t/dialog-bg)))
-
-(defn magit-transient!
-  "Magit-style transient rendered IN the status buffer's ECHO AREA — a bottom-
-   anchored popup painted over the buffer's own lower rows (title + grouped
-   SWITCHES / value OPTIONS / fire-once ACTIONS + a hint row on `hint-row`), NOT
-   a centered modal dialog box. The status buffer stays fully visible above it,
-   exactly like Emacs magit's transient popup / minibuffer. There is NO moving
-   cursor — you press an item's `:key` directly, CASE-SENSITIVELY (`-f` ≠ `-F`),
-   exactly like magit. FLAGS (`:switch` / `:option`) render with magit's leading
-   `-` and TOGGLE: the first press turns the argument on, the next turns it back
-   off; the popup stays open either way. COMMANDS (`:action`) fire once and close.
-   `spec` is
-   `{:groups [{:title str :items [{:key :type :id :label :arg}]}]}` where `:type` is
-   `:switch` | `:option` | `:action` and the optional `:arg` is the literal git
-   argument the flag contributes (`--no-verify`), shown in its own grid column.
-   `read-option` (impure) fetches an option's
-   value: `(read-option item current) -> str|nil` — nil (Esc) leaves it unchanged;
-   it too should read INLINE (via the buffer's `:read!` minibuffer), never a box.
-   Returns `{:action id :switches #{…} :options {id val}}` when an action fires,
-   or nil on Esc.
-
-   `g left inner-w hint-row text-w` are the SAME buffer-geometry values the other
-   inline minibuffer primitives receive, so the popup shares the status buffer's
-   canvas instead of allocating its own screen.
-
-   `opts` tunes how the popup sits in its host's frame:
-     `:min-row`      first row the popup may touch or wipe (the host's content
-                     top, or the row under whatever header the host keeps
-                     visible). A tall transient stops there instead of climbing
-                     over it.
-     `:clear-above?` also wipe every row from `:min-row` down to the popup's own
-                     separator — for a host that repaints PAGES of different
-                     heights in the same frame (the provider's model picker), so
-                     a short page never leaves a taller one bleeding above it."
-  ([^TerminalScreen screen g left inner-w hint-row text-w title spec read-option]
-   (magit-transient! screen g left inner-w hint-row text-w title spec read-option nil))
-  ([^TerminalScreen screen g left inner-w hint-row text-w title spec read-option opts]
-   (let
-     [top-limit
-      (long (or (:min-row opts) 0))
-
-      clear-above?
-      (boolean (:clear-above? opts))
-
-      ;; The title carries its OWN rule underneath (see `title-rule-row`), so the
-      ;; first group header needs no blank margin of its own; groups after it
-      ;; still get one from the trailing blank of the group before.
-      display-rows
-      (butlast (into []
-                     (mapcat (fn [{:keys [title items]}]
-                               (concat [{:kind :header :text title}]
-                                       (map (fn [it]
-                                              {:kind :item :item it})
-                                            items)
-                                       [{:kind :blank}])))
-                     (:groups spec)))
-
-      n
-      (count display-rows)
-
-      footer
-      [["-key" "toggle flag"] ["key" "run command"] ["Esc" "cancel"]]
-
-      ;; The popup lives INSIDE its host's frame, ALWAYS: the band spans the
-      ;; box's INNER columns, its capping separator ends in T-junctions ON the
-      ;; border, and its hint bar REPLACES the host's own hint row instead of
-      ;; dropping one row lower onto the bottom border. The full-bleed band this
-      ;; replaces owned every column of the terminal and swallowed the frame, so
-      ;; the transient read as a second window pasted over the dialog instead of
-      ;; magit's popup living in the buffer it belongs to.
-      foot-row
-      (long hint-row)
-
-      ;; …and it is GLUED to the frame's BOTTOM CHROME. The host paints
-      ;; `├───┤` directly above its hint row; a band that simply overwrote that
-      ;; row left its last command running straight into the footer text, which
-      ;; reads as the popup eating the bottom border. The popup repaints that
-      ;; rule itself, so it always ends rule / hint bar / bottom border — the
-      ;; exact chrome of the buffer it covers.
-      foot-rule-row
-      (dec (long foot-row))
-
-      ;; Anchor the popup to the bottom of its own band — the last body row sits
-      ;; DIRECTLY on the closing rule, and above the body sit the title's own
-      ;; rule, the bold title, and the band's opening separator. The popup reads
-      ;; as `───` / `Commit` / `───` / body: the same chrome the host gives any
-      ;; other titled section, instead of a title floating on a blank margin.
-      ;; Clamp so a short terminal — or the host's reserved header — never paints
-      ;; over the rows above `:min-row`.
-      body-top
-      (max (+ (long top-limit) 2) (- (long foot-rule-row) n))
-
-      ;; The rule that closes the title band and opens the body.
-      title-rule-row
-      (max top-limit (dec (long body-top)))
-
-      title-row
-      (max top-limit (dec (long title-rule-row)))
-
-      band-x
-      (inc (long left))
-
-      band-w
-      (long inner-w)
-
-      ;; Wiping only the band's INNER columns leaves whatever the host painted in
-      ;; the two border columns: a status buffer's own section separator survived
-      ;; as stray `├`/`┤` junctions beside the popup. Repaint the frame's plain
-      ;; edge on every row the band owns; the capping separators put their own
-      ;; junctions back afterwards.
-      clear-row!
-      (fn [row]
-        (p/set-colors! g t/dialog-fg t/dialog-bg)
-        (p/fill-rect! g band-x row band-w 1)
-        (p/set-colors! g t/dialog-border t/dialog-bg)
-        (p/set-char! g left row p/BOX_V)
-        (p/set-char! g (+ (long left) (long inner-w) 1) row p/BOX_V))
-
-      layout
-      (transient-layout spec)
-
-      sep-row
-      (max 0 (dec (long title-row)))
-
-      ;; Paging hosts own every row from `:min-row` down (see `:clear-above?`);
-      ;; everyone else leaves the buffer above the separator alone — the status
-      ;; rows are exactly what magit keeps visible behind its transient.
-      wipe-top
-      (if clear-above? top-limit sep-row)
-
-      ;; The closing rule is the floor: a page taller than the band it was given
-      ;; loses its overflow rows rather than painting over the host's frame.
-      visible
-      (min (long n) (max 1 (- (long foot-rule-row) (long body-top))))]
-
-     (loop [state {:switches #{} :options {}}]
-       (dotimes [i (max 1 (- (long body-top) (long wipe-top)))]
-         (clear-row! (+ (long wipe-top) i)))
-       (p/set-colors! g t/dialog-border t/dialog-bg)
-       (when (>= (long sep-row) (max (long wipe-top) (long top-limit)))
-         (p/draw-separator! g left (+ (long left) (long inner-w) 1) sep-row))
-       (when (> (long title-rule-row) (long title-row))
-         (p/draw-separator! g left (+ (long left) (long inner-w) 1) title-rule-row))
-       (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
-         (p/draw-separator! g left (+ (long left) (long inner-w) 1) foot-rule-row))
-       (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-       (p/styled g
-                 [p/BOLD]
-                 (p/put-str! g (+ (long left) 2) title-row (ellipsize (str title) text-w)))
-       (dotimes [i visible]
-         (let
-           [r (nth display-rows i)
-            row (+ (long body-top) (long i))]
-
-           (clear-row! row)
-           (case (:kind r)
-             :header
-             (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                 (p/styled g
-                           [p/BOLD]
-                           (p/put-str! g (+ (long left) 2) row (ellipsize (str (:text r)) text-w))))
-
-             :blank
-             nil
-
-             :item
-             (let
-               [{:keys [type id] :as it} (:item r)
-                active? (case type
-                          :switch
-                          (contains? (:switches state) id)
-
-                          :option
-                          (contains? (:options state) id)
-
-                          false)
-                value (when (= type :option) (get (:options state) id))]
-
-               (draw-transient-item! g left row inner-w layout it active? value)))))
-       (draw-hint-bar! g left foot-row inner-w footer)
-       (.setCursorPosition screen nil)
-       (.refresh screen Screen$RefreshType/DELTA)
-       (let [key (read-modal-key! screen)]
-         (if (nil? key)
-           (recur state)
-           (condp = (key-type key)
-             KeyType/Escape nil
-             KeyType/Character
-             (let
-               [ch (key-character key)
-                r (transient-toggle spec state ch)]
-
-               (case (:kind r)
-                 :continue
-                 (recur (:state r))
-
-                 :option
-                 (let
-                   [{:keys [id] :as it} (:item r)
-                    v (read-option it (get (:options state) id))]
-
-                   (recur (if (nil? v) state (assoc-in state [:options id] v))))
-
-                 :action
-                 {:action (:id (:item r)) :switches (:switches state) :options (:options state)}))
-             (recur state))))))))
 
 (defn transient-dialog!
   "Host ONE magit transient in its OWN modal — the popup for flows that have no
@@ -2524,7 +2196,7 @@
    text. `spec` may carry a `:title` for the popup itself when the frame's title
    would read redundantly.
 
-   Returns `magit-transient!`'s `{:action :switches :options}`, or nil on Esc."
+   Returns `tr/run!`'s `{:action :switches :options}`, or nil on Esc."
   [^TerminalScreen screen title body spec]
   (let
     [size
@@ -2548,10 +2220,10 @@
                     (if (str/blank? line) [""] (render/wrap-text line est-w))))
           vec)
 
-     ;; The popup's own footprint: a leading blank, every group as header +
-     ;; items + a trailing blank (the last one dropped), plus its bold title.
+     ;; The popup's own footprint — the component knows it (`tr/height`), so the
+     ;; box is sized by what the transient will actually paint.
      popup-h
-     (reduce + 2 (map #(+ 2 (count (:items %))) (:groups spec)))
+     (tr/height spec)
 
      body-gap
      (if (seq wrapped) 1 0)
@@ -2585,28 +2257,27 @@
       (let [row (+ content-top (long idx))]
         (p/fill-rect! g (inc left) row inner-w 1)
         (p/put-str! g (+ left 2) row (ellipsize line text-w))))
-    (magit-transient! screen
-                      g
-                      left
-                      inner-w
-                      hint-row
-                      text-w
-                      (or (:title spec) title)
-                      spec
-                      (fn [{:keys [label prompt mask]} current]
-                        (magit-mini-read! screen
-                                          g
-                                          left
-                                          inner-w
-                                          hint-row
-                                          text-w
-                                          (or prompt (str label ":"))
-                                          {:initial current :mask mask}))
-                      {:min-row (+ content-top (count wrapped) (long body-gap))
-                       :clear-above? true})))
+    (tr/run! (transient-host screen g)
+             {:left left
+              :inner-w inner-w
+              :hint-row hint-row
+              :text-w text-w
+              :min-row (+ content-top (count wrapped) (long body-gap))
+              :clear-above? true}
+             (assoc spec
+               :title (or (:title spec) title)
+               :read-option (fn [{:keys [label prompt mask]} current]
+                              (magit-mini-read! screen
+                                                g
+                                                left
+                                                inner-w
+                                                hint-row
+                                                text-w
+                                                (or prompt (str label ":"))
+                                                {:initial current :mask mask}))))))
 
 (defn- magit-push-flow!
-  "Magit-style push transient (`magit-transient!`). SWITCHES (all optional):
+  "Magit-style push transient (`tr/run!`). SWITCHES (all optional):
    force-with-lease, dry-run, disable hooks (--no-verify), set-upstream. When the
    repo targets Gerrit a `t Topic` OPTION appears and the primary `p` push lands
    on `refs/for/<branch>` carrying that topic. Every OTHER configured remote is
@@ -2674,16 +2345,16 @@
      (vec (cons primary remote-rows))
 
      spec
-     {:groups [{:title "Arguments" :items arg-items} {:title "Push" :items push-items}]}
+     {:title "Push"
+      :groups [{:title "Arguments" :items arg-items} {:title "Commands" :items push-items}]
+      :read-option (fn [{:keys [id]} current]
+                     (when (= id :topic)
+                       ((:read! mini)
+                         "Topic:"
+                         {:initial
+                          (or current (when (and branch (not= branch g-branch)) branch) "")})))}]
 
-     read-option
-     (fn [{:keys [id]} current]
-       (when (= id :topic)
-         ((:read! mini)
-           "Topic:"
-           {:initial (or current (when (and branch (not= branch g-branch)) branch) "")})))]
-
-    (when-let [{:keys [action switches options]} ((:transient! mini) "Push" spec read-option)]
+    (when-let [{:keys [action switches options]} ((:transient! mini) spec)]
       (let
         [base {:set-upstream? (contains? switches :set-upstream)
                :force? (contains? switches :force)
@@ -3088,20 +2759,17 @@
                    (magit-mini-read! screen g left inner-w hint-row text-w label opts))
           :choose! (fn [title choices]
                      (magit-mini-choose! screen g left inner-w hint-row text-w title choices))
-          :transient! (fn [title spec read-option]
-                        (magit-transient! screen
-                                          g
-                                          left
-                                          inner-w
-                                          hint-row
-                                          text-w
-                                          title
-                                          spec
-                                          read-option
-                                          ;; The popup opens INSIDE the status buffer's own
-                                          ;; frame and may never climb over the box's top
-                                          ;; border or the rows it keeps visible.
-                                          {:min-row content-top}))}]
+          :transient! (fn [spec]
+                        (tr/run! (transient-host screen g)
+                                 {:left left
+                                  :inner-w inner-w
+                                  :hint-row hint-row
+                                  :text-w text-w
+                                  ;; The popup opens INSIDE the status buffer's own
+                                  ;; frame and may never climb over the box's top
+                                  ;; border or the rows it keeps visible.
+                                  :min-row content-top}
+                                 spec))}]
 
         (dotimes [i visible]
           (let

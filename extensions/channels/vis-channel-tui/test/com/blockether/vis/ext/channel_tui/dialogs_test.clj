@@ -4,11 +4,12 @@
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.table :as table]
+            [com.blockether.vis.ext.channel-tui.terminals :as term]
             [com.blockether.vis.core :as vis]
             ;; Loaded for its side effect: registers the :shell/enabled toggle
             ;; (internal foundation, at ns load), which the settings-rows test asserts.
             [com.blockether.vis.internal.foundation.shell])
-  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize TextCharacter]
+  (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
@@ -32,23 +33,6 @@
       (expect (dlg/modal-escape-key?
                 (KeyStroke. (Character/valueOf (char 27)) false false false)))))
 
-(defn- virtual-screen
-  []
-  ;; Clear any interrupt flag leaked onto this (lazytest-reused) thread by a
-  ;; prior cancellation test. Lanterna's DefaultVirtualTerminal.readInput
-  ;; throws "Unexpected interrupt" when Thread.interrupted() is set, which
-  ;; made the wheel-coalescing reads flaky depending on test order.
-  (Thread/interrupted)
-  (let
-    [terminal
-     (DefaultVirtualTerminal. (TerminalSize. 80 30))
-
-     screen
-     (TerminalScreen. terminal)]
-
-    (.startScreen screen)
-    {:terminal terminal :screen screen}))
-
 
 (defn- wheel-down [] (MouseAction. MouseActionType/SCROLL_DOWN 0 (TerminalPosition. 10 10)))
 
@@ -56,7 +40,7 @@
              (it "modal input coalesces wheel floods and preserves the next non-wheel key"
                  (let
                    [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-                    (virtual-screen)
+                    (term/virtual-screen)
 
                     read-modal-input!
                     (var-get #'dlg/read-modal-input!)]
@@ -74,7 +58,7 @@
              (it "reports a queued keystroke so a per-key search can debounce itself"
                  (let
                    [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-                    (virtual-screen)
+                    (term/virtual-screen)
 
                     read-modal-input!
                     (var-get #'dlg/read-modal-input!)]
@@ -97,7 +81,7 @@
              (it "selection menu applies a wheel burst as one scroll movement"
                  (let
                    [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-                    (virtual-screen)
+                    (term/virtual-screen)
 
                     items
                     (mapv #(hash-map :label (str "Item " %) :id %) (range 20))]
@@ -202,385 +186,11 @@
 
         (expect (= 5 (:selected (on-key s0 burst geom)))))))
 
-(def ^:private commit-transient-spec
-  "The spec `magit-commit-flow!` hands the transient: one FLAG group and one
-   COMMAND group, exactly like Emacs magit's commit popup."
-  {:groups [{:title "Arguments"
-             :items
-             [{:key "h" :type :switch :id :no-verify :label "Disable hooks" :arg "--no-verify"}]}
-            {:title "Commit"
-             :items [{:key "c" :type :action :id :commit :label "Commit staged"}
-                     {:key "a" :type :action :id :amend :label "Amend last commit"}]}]})
-
-(defn- transient-key
-  [c]
-  (if (= :esc c)
-    (KeyStroke. KeyType/Escape)
-    (KeyStroke. (Character/valueOf (char c)) false false false)))
-
-(defn- painted-rows
-  "Non-blank rows of the virtual terminal as `{:text :bold}`. `:bold` keeps only the
-   cells carrying SGR/BOLD, so an ARMED flag is distinguishable from a dim one."
-  [^DefaultVirtualTerminal terminal]
-  (->> (range 30)
-       (map (fn [y]
-              (reduce (fn [acc x]
-                        (let
-                          [^TextCharacter ch
-                           (.getCharacter terminal (TerminalPosition. (int x) (int y)))
-
-                           s
-                           (if ch (.getCharacterString ch) " ")]
-
-                          (-> acc
-                              (update :text str s)
-                              (update
-                                :bold
-                                str
-                                (if (and ch (contains? (set (.getModifiers ch)) SGR/BOLD)) s "")))))
-                      {:text "" :bold ""}
-                      (range 80))))
-       (map #(update % :text str/trimr))
-       (remove #(str/blank? (:text %)))
-       vec))
-
-(defn- drive-transient!
-  "Run `magit-transient!` on a virtual terminal, feeding `keys` (characters, `:esc`
-   for Escape). Returns `{:ret … :rows …}` — the transient's result plus its LAST
-   paint, which is what the user is looking at when the key lands."
-  [spec keys]
-  (let
-    [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-     (virtual-screen)
-
-     g
-     (.newTextGraphics screen)]
-
-    (doseq [c keys]
-      (.addInput terminal (transient-key c)))
-    {:ret (dlg/magit-transient! screen g 0 78 28 70 "Commit" spec (constantly nil))
-     :rows (painted-rows terminal)}))
-
-(defn- terminal-grid
-  "EVERY terminal row as a string, blanks KEPT."
-  [^DefaultVirtualTerminal terminal]
-  (vec (for [y (range 30)]
-         (apply str
-           (for [x (range 80)]
-             (let [^TextCharacter ch (.getCharacter terminal (TerminalPosition. (int x) (int y)))]
-               (if ch (.getCharacterString ch) " ")))))))
-
-(defn- transient-grid!
-  "EVERY terminal row (blanks KEPT) after one paint of `magit-transient!` at the
-   host-dialog geometry `magit-status-buffer!` hands it, so the popup's own band
-   geometry — its capping rule, its margin rows, the row its hint bar lands on —
-   is inspectable. `opts` goes straight through. `pre!` paints the HOST buffer
-   first, so whatever the popup covers (or fails to cover) shows up."
-  ([spec left inner-w hint-row] (transient-grid! spec left inner-w hint-row nil))
-  ([spec left inner-w hint-row opts] (transient-grid! spec left inner-w hint-row opts nil))
-  ([spec left inner-w hint-row opts pre!]
-   (let
-     [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-      (virtual-screen)
-
-      g
-      (.newTextGraphics screen)]
-
-     (when pre! (pre! g))
-     (.addInput terminal (transient-key :esc))
-     (dlg/magit-transient! screen g left inner-w hint-row 70 "Commit" spec (constantly nil) opts)
-     (terminal-grid terminal))))
-
-(defn- row-with [rows needle] (some #(when (str/includes? (:text %) needle) %) rows))
-
-(defdescribe
-  magit-transient-toggle-test
-  (let
-    [spec
-     {:groups [{:title "Arguments"
-                :items [{:key "f" :type :switch :id :force :label "Force" :arg "--force-with-lease"}
-                        {:key "u" :type :switch :id :set-upstream :label "Upstream" :arg "-u"}
-                        {:key "t" :type :option :id :topic :label "Topic" :arg "%topic="}]}
-               {:title "Push" :items [{:key "p" :type :action :id :push :label "Push"}]}]}
-
-     init
-     {:switches #{} :options {}}]
-
-    (it "binds a key to its item across every group"
-        (expect (= :force (:id (dlg/transient-item-by-key spec \f))))
-        (expect (= :push (:id (dlg/transient-item-by-key spec \p))))
-        (expect (nil? (dlg/transient-item-by-key spec \z))))
-    (it "a switch flips on then off; an unbound key is a no-op"
-        (let
-          [on
-           (dlg/transient-toggle spec init \f)
-
-           off
-           (dlg/transient-toggle spec (:state on) \f)]
-
-          (expect (= :continue (:kind on)))
-          (expect (= #{:force} (:switches (:state on))))
-          (expect (= #{} (:switches (:state off))))
-          (expect (= init (:state (dlg/transient-toggle spec init \z))))))
-    (it "two switches accumulate independently"
-        (let
-          [s (-> (dlg/transient-toggle spec init \f)
-                 :state
-                 (->> (#(dlg/transient-toggle spec % \u)))
-                 :state)]
-          (expect (= #{:force :set-upstream} (:switches s)))))
-    (it "an option key asks the caller to read a value"
-        (let [r (dlg/transient-toggle spec init \t)]
-          (expect (= :option (:kind r)))
-          (expect (= :topic (:id (:item r))))))
-    (it "an action key fires with the item, leaving state untouched"
-        (let [r (dlg/transient-toggle spec {:switches #{:force} :options {}} \p)]
-          (expect (= :action (:kind r)))
-          (expect (= :push (:id (:item r))))))))
-
-(defdescribe
-  magit-transient-grid-test
-  (it "flags carry magit's leading dash; commands show the bare key"
-      (expect (= "-h" (dlg/transient-key-glyph {:type :switch :key "h"})))
-      (expect (= "-t" (dlg/transient-key-glyph {:type :option :key "t"})))
-      (expect (= "c" (dlg/transient-key-glyph {:type :action :key "c"}))))
-  (it "the argument cell names the git flag, with an option's value inline"
-      (expect (= "(--no-verify)" (dlg/transient-item-arg {:type :switch :arg "--no-verify"} nil)))
-      (expect (= "(%topic=fix)" (dlg/transient-item-arg {:type :option :arg "%topic="} "fix")))
-      (expect (nil? (dlg/transient-item-arg {:type :action :arg "--nope"} nil)))
-      (expect (nil? (dlg/transient-item-arg {:type :switch} nil)))
-      ;; A credential rides the transient WITHOUT ever being echoed.
-      (expect (= "(••••••)" (dlg/transient-item-arg {:type :option :secret? true} "sk-live-123")))
-      (expect (nil? (dlg/transient-item-arg {:type :option :secret? true} ""))))
-  (it "one shared key + description column aligns every group into a grid"
-      (expect (= {:key-w 2 :label-w (count "Amend last commit")}
-                 (dlg/transient-layout commit-transient-spec)))))
-
-(defdescribe
-  magit-transient-render-test
-  (it "a flag and a command render as two visibly different grid rows"
-      (let
-        [rows
-         (:rows (drive-transient! commit-transient-spec [:esc]))
-
-         flag
-         (row-with rows "Disable hooks")
-
-         command
-         (row-with rows "Commit staged")]
-
-        (expect (str/includes? (:text flag) "-h Disable hooks"))
-        (expect (str/includes? (:text flag) "(--no-verify)"))
-        ;; A flag starts OFF: dim, nothing bold.
-        (expect (str/blank? (:bold flag)))
-        ;; A command is a BOLD key plus its description — never dim.
-        (expect (str/includes? (:text command) "c  Commit staged"))
-        (expect (= "c" (:bold command)))))
-  (it
-    "the popup is a band INSIDE the host frame with a rule under its title"
-    (let
-      [grid
-       (transient-grid! commit-transient-spec 3 74 27)
-
-       rule-y
-       (first (keep-indexed (fn [i s]
-                              (when (str/includes? s "────") i))
-                            grid))
-
-       args-y
-       (first (keep-indexed (fn [i s]
-                              (when (str/includes? s "Arguments") i))
-                            grid))]
-
-      ;; The capping rule ends in T-junctions ON the host's box border and
-      ;; never spills into the columns outside it.
-      (expect (= \├ (nth (nth grid rule-y) 3)))
-      (expect (= \┤ (nth (nth grid rule-y) 78)))
-      (expect (str/blank? (subs (nth grid rule-y) 0 3)))
-      (expect (str/blank? (subs (nth grid rule-y) 79)))
-      ;; The hint bar lands ON the host's own hint row — the row below it, the
-      ;; dialog's bottom border, is never swallowed.
-      (expect (str/includes? (nth grid 27) "toggle flag"))
-      (expect (str/blank? (nth grid 28)))
-      ;; The popup is GLUED to that bottom chrome: it repaints the host's own
-      ;; `├───┤` rule directly above the hint bar, so its last command never
-      ;; runs straight into the footer text with the rule swallowed.
-      (expect (str/includes? (nth grid 26) "────"))
-      (expect (= [\├ \┤] [(nth (nth grid 26) 3) (nth (nth grid 26) 78)]))
-      ;; The band is CONTIGUOUS: the last command sits directly on that rule,
-      ;; never one row above it with a host row left showing between.
-      (expect (str/includes? (nth grid 25) "Amend last commit"))
-      ;; TITLE BAND: opening rule, the bold title, the title's OWN closing rule,
-      ;; then the first group header — `───` / `Commit` / `───` / body, the chrome
-      ;; the host gives any other titled section. Both rules end in T-junctions
-      ;; ON the frame, never in a blank margin row floating under the title.
-      (expect (str/includes? (nth grid (dec (long args-y))) "────"))
-      (expect (= [\├ \┤]
-                 [(nth (nth grid (dec (long args-y))) 3) (nth (nth grid (dec (long args-y))) 78)]))
-      (expect (str/includes? (nth grid (- args-y 2)) "Commit"))
-      (expect (str/includes? (nth grid (- args-y 3)) "────"))
-      (expect (= [\├ \┤]
-                 [(nth (nth grid (- args-y 3)) 3) (nth (nth grid (- args-y 3)) 78)]))
-      (expect (= rule-y (- args-y 3)))))
-  (it "the popup wipes every host row it covers and no column outside the frame"
-      ;; The status buffer paints its OWN hint bar on `hint-row`, framed by the
-      ;; dialog's box borders. The popup replaces that hint bar in place: any row
-      ;; it fails to own reads as a SECOND hint bar stacked between its commands
-      ;; and its footer, and any column it owns outside the border reads as the
-      ;; popup escaping the dialog.
-      (let
-        [host!
-         (fn [g]
-           (doseq [y (range 30)]
-             (p/put-str! g 0 y (apply str (repeat 80 \H)))))
-
-         grid
-         (transient-grid! commit-transient-spec 3 74 27 nil host!)
-
-         rule-y
-         (first (keep-indexed (fn [i s]
-                                (when (str/includes? s "────") i))
-                              grid))
-
-         band
-         (subvec grid (long rule-y) 28)]
-
-        (expect (some? rule-y))
-        ;; Above the rule the host buffer is untouched — the popup never wipes
-        ;; the status rows it is supposed to leave visible.
-        (expect (= (apply str (repeat 80 \H)) (nth grid (dec (long rule-y)))))
-        ;; From the rule down to its own hint bar the popup owns every INNER
-        ;; column …
-        (expect (every? #(not (str/includes? (subs % 4 78) "H")) band))
-        ;; … and not one column outside the host's frame.
-        (expect (every? #(str/starts-with? % "HHH") band))
-        (expect (every? #(str/ends-with? % "H") band))
-        ;; The row under the hint bar — the dialog's bottom border — survives.
-        (expect (= (apply str (repeat 80 \H)) (nth grid 28)))
-        (expect (str/includes? (nth grid 27) "toggle flag"))
-        ;; … and the popup's closing rule sits directly on that hint bar.
-        (expect (str/includes? (nth grid 26) "────"))))
-  (it "the popup repaints the frame edge over a host separator it covers"
-      ;; Wiping only the INNER columns left the host's own section separator
-      ;; showing as stray `├`/`┤` junctions in the border columns beside the
-      ;; popup — the band looked like it had been torn out of the frame.
-      (let
-        [host!
-         (fn [g]
-           (doseq [y (range 30)]
-             (p/put-str! g 3 y "│")
-             (p/put-str! g 78 y "│"))
-           ;; a host separator INSIDE the rows the band will take over
-           (p/put-str! g 3 25 (str "├" (apply str (repeat 74 \─)) "┤")))
-
-         grid
-         (transient-grid! commit-transient-spec 3 74 27 nil host!)
-
-         rule-y
-         (first (keep-indexed (fn [i s]
-                                (when (str/includes? s "────") i))
-                              grid))]
-
-        (expect (some? rule-y))
-        ;; The popup's OWN rule keeps its T-junctions …
-        (expect (= \├ (nth (nth grid (long rule-y)) 3)))
-        (expect (= \┤ (nth (nth grid (long rule-y)) 78)))
-        ;; … the rule under its TITLE does too …
-        (expect (= [\├ \┤] [(nth (nth grid (+ (long rule-y) 2)) 3) (nth (nth grid (+ (long rule-y) 2)) 78)]))
-        ;; … its CLOSING rule keeps them too …
-        (expect (= [\├ \┤] [(nth (nth grid 26) 3) (nth (nth grid 26) 78)]))
-        ;; … and every other row it covers gets a plain frame edge back, the
-        ;; host's junctions included.
-        (expect (every? (fn [y]
-                          (= [\│ \│] [(nth (nth grid y) 3) (nth (nth grid y) 78)]))
-                        (remove #{26 (+ (long rule-y) 2)} (range (inc (long rule-y)) 28))))
-        ;; The host separator's body is gone, not just its junctions.
-        (expect (not (str/includes? (nth grid 25) "────")))))
-  (it "pressing a flag key arms it and pressing it again disarms it"
-      (let
-        [on
-         (row-with (:rows (drive-transient! commit-transient-spec [\h :esc])) "Disable hooks")
-
-         off
-         (row-with (:rows (drive-transient! commit-transient-spec [\h \h :esc])) "Disable hooks")]
-
-        (expect (str/includes? (:bold on) "--no-verify"))
-        (expect (str/blank? (:bold off)))))
-  (it "the flag toggles the argument the command finally runs with"
-      (expect (= {:action :commit :switches #{:no-verify} :options {}}
-                 (:ret (drive-transient! commit-transient-spec [\h \c]))))
-      (expect (= {:action :commit :switches #{} :options {}}
-                 (:ret (drive-transient! commit-transient-spec [\h \h \c]))))
-      (expect (= {:action :commit :switches #{:no-verify} :options {}}
-                 (:ret (drive-transient! commit-transient-spec [\h \h \h \c])))))
-  (it "transient keys are case-sensitive, exactly like magit"
-      (expect (= {:action :commit :switches #{} :options {}}
-                 (:ret (drive-transient! commit-transient-spec [\H \c]))))
-      (let
-        [spec
-         {:groups
-          [{:title "Arguments"
-            :items
-            [{:key "f" :type :switch :id :lease :label "Force with lease" :arg "--force-with-lease"}
-             {:key "F" :type :switch :id :force :label "Force" :arg "--force"}]}
-           {:title "Push" :items [{:key "p" :type :action :id :push :label "Push"}]}]}]
-        (expect (= #{:lease} (:switches (:ret (drive-transient! spec [\f \p])))))
-        (expect (= #{:force} (:switches (:ret (drive-transient! spec [\F \p])))))
-        (expect (= #{:force :lease} (:switches (:ret (drive-transient! spec [\f \F \p])))))))
-  (it "Esc cancels the transient, armed flags and all"
-      (expect (nil? (:ret (drive-transient! commit-transient-spec [\h :esc]))))))
-
-(defdescribe magit-transient-paging-test
-             ;; The provider dialog runs the SAME transient for PAGES of models in
-             ;; one frame (`provider/run-transient!` passes `{:min-row … :clear-above?
-             ;; true}`), so a short page must wipe everything a taller one left above
-             ;; its title — without ever painting above `:min-row`.
-             (it "clear-above? wipes from :min-row down and keeps the frame intact"
-                 (let
-                   [grid
-                    (transient-grid! commit-transient-spec 3 74 27 {:min-row 6 :clear-above? true})
-
-                    rule-y
-                    (first (keep-indexed (fn [i s]
-                                           (when (str/includes? s "────") i))
-                                         grid))]
-
-                   (expect (= \├ (nth (nth grid rule-y) 3)))
-                   (expect (= \┤ (nth (nth grid rule-y) 78)))
-                   (expect (str/blank? (subs (nth grid rule-y) 0 3)))
-                   (expect (str/blank? (subs (nth grid rule-y) 79)))
-                   ;; The hint bar lands ON the host's hint row, so the row below it — the
-                   ;; dialog's bottom border — is never swallowed.
-                   (expect (str/includes? (nth grid 27) "toggle flag"))
-                   (expect (str/blank? (nth grid 28)))
-                   ;; Nothing above `:min-row` is painted or wiped.
-                   (expect (>= rule-y 6))
-                   (expect (every? str/blank? (take 6 grid)))))
-             (it
-               "a transient taller than the host box stops at :min-row instead of climbing over it"
-               (let
-                 [tall
-                  {:groups (vec (for [gi (range 3)]
-                                  {:title (str "Group " gi)
-                                   :items (vec (for [i (range 5)]
-                                                 {:key (str (char (+ (int \a) (* gi 5) i)))
-                                                  :type :action
-                                                  :id (keyword (str "a" gi i))
-                                                  :label (str "Action " gi "-" i)}))}))}
-
-                  grid
-                  (transient-grid! tall 3 74 27 {:min-row 6 :clear-above? true})]
-
-                 (expect (str/includes? (nth grid 6) "Commit"))
-                 ;; …and the title keeps its own rule even when the band is clamped.
-                 (expect (str/includes? (nth grid 7) "────"))
-                 (expect (every? str/blank? (take 6 grid))))))
-
 (defdescribe session-dialog-wheel-test
              (it "session picker coalesces wheel floods and moves selection"
                  (let
                    [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-                    (virtual-screen)
+                    (term/virtual-screen)
 
                     sessions
                     (mapv (fn [idx]
@@ -841,7 +451,7 @@
     (it
       "keeps selection plain while sessions retain one row of breathing room"
       (let
-        [{:keys [^TerminalScreen screen]} (virtual-screen)
+        [{:keys [^TerminalScreen screen]} (term/virtual-screen)
          draw-session (var-get #'dlg/draw-navigator-session!)
          draw-hit (var-get #'dlg/draw-navigator-hit-line!)
          entry {:focused? false
@@ -1523,7 +1133,7 @@
   (it "draft manager filters interactively and returns the stable workspace id"
       (let
         [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-         (virtual-screen)
+         (term/virtual-screen)
 
          drafts
          [{"workspace_id" "ws-a" "label" "feature-a" "is_current" true}
@@ -1857,7 +1467,7 @@
     "reads a masked credential inline and submits it without echoing it"
     (let
       [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-       (virtual-screen)
+       (term/virtual-screen)
 
        spec
        {:title "Sign in"
@@ -1873,15 +1483,15 @@
                   :items [{:key "a" :type :action :id :submit :label "Sign in with this key"}]}]}]
 
       (doseq [c [\k \s \k \- \1]]
-        (.addInput terminal (transient-key c)))
+        (.addInput terminal (term/keystroke c)))
       (.addInput terminal (KeyStroke. KeyType/Enter))
-      (.addInput terminal (transient-key \a))
+      (.addInput terminal (term/keystroke \a))
       (let
         [ret
          (dlg/transient-dialog! screen "Z.AI Authentication" ["Paste your key."] spec)
 
          text
-         (str/join "\n" (map :text (painted-rows terminal)))]
+         (str/join "\n" (map :text (term/painted-rows terminal)))]
 
         (expect (= :submit (:action ret)))
         (expect (= "sk-1" (get-in ret [:options :api-key])))
@@ -1894,14 +1504,14 @@
   (it "Esc backs out of the popup without a value"
       (let
         [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-         (virtual-screen)
+         (term/virtual-screen)
 
          spec
          {:title "Sign in"
           :groups [{:title "Authenticate"
                     :items [{:key "a" :type :action :id :submit :label "Sign in"}]}]}]
 
-        (.addInput terminal (transient-key :esc))
+        (.addInput terminal (term/keystroke :esc))
         (expect (nil? (dlg/transient-dialog! screen "Auth" ["Guidance."] spec))))))
 
 (defdescribe

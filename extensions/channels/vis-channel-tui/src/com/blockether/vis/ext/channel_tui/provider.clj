@@ -22,6 +22,7 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
+            [com.blockether.vis.ext.channel-tui.transient :as tr]
             [com.blockether.vis.internal.external-opener :as opener])
   (:import [com.googlecode.lanterna.input KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen Screen$RefreshType TerminalScreen]))
@@ -1070,21 +1071,18 @@
                 (conj {:title "Commands" :items commands}))})))
 
 (defn- run-transient!
-  "Run ONE magit transient INSIDE the provider dialog's own frame: same box, same
-   hint row, no second window. Nothing in this dialog is a flag, so the option
-   reader is never reached."
+  "Embed ONE transient (`tr/run!`) INSIDE the provider dialog's own frame: same
+   box, same hint row, no second window. Nothing in this dialog is a flag, so the
+   spec needs no option reader."
   [^TerminalScreen screen g {:keys [left inner-w hint-row text-w min-row]} title spec]
-  (dlg/magit-transient! screen
-                        g
-                        left
-                        inner-w
-                        hint-row
-                        text-w
-                        title
-                        spec
-                        (fn [_item _current]
-                          nil)
-                        {:min-row min-row :clear-above? true}))
+  (tr/run! (dlg/transient-host screen g)
+           {:left left
+            :inner-w inner-w
+            :hint-row hint-row
+            :text-w text-w
+            :min-row min-row
+            :clear-above? true}
+           (assoc spec :title title)))
 
 (defn- run-model-transient!
   "Magit transient model picker for `provider`: one keystroke per model, `n` / `p`
@@ -1714,7 +1712,7 @@
                              :scroll @scroll}))
          ;; Bottom-anchored overlay painted OVER the card list — the provider
          ;; stays visible above it. Actions and models are real magit transients
-         ;; (`dlg/magit-transient!`) that run their OWN key loop, so the only
+         ;; (`tr/run!`) that run their OWN key loop, so the only
          ;; thing left to paint from here is the y/n confirm line.
          (when (= @mode :confirm)
            (let
