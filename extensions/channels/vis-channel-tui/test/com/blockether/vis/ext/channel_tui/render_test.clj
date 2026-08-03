@@ -260,6 +260,41 @@
         (expect (not (str/includes? txt "x = 1 / 0")))
         (expect (= 1 (count (re-seq #"ZeroDivisionError" txt)))))))
 
+(defdescribe failed-form-error-row-test
+             ;; Inside a code band the error row is the ONLY status signal a failed call has:
+             ;; the band itself is deliberately status-neutral. Painting that row with the
+             ;; plain code marker made a failed `shell`/`python_execution` read exactly like a
+             ;; successful one, so the row must carry the ERROR marker (red fg).
+             (it "marks a failed python_execution error row as an error row"
+                 (let
+                   [lines
+                    (render-forms [{:vis/tool-name "python_execution"
+                                    :success? false
+                                    :code "r = await shell({\"op\": \"background\"})"
+                                    :error {:message "shell op background needs an ERRMARKER id."}
+                                    :result nil}])
+
+                    err-lines
+                    (filter #(str/includes? (str %) "ERRMARKER") lines)]
+
+                   (expect (seq err-lines))
+                   (expect (every? #(str/starts-with? (str %) p/MARKER_ERR_RESULT) err-lines))
+                   (expect (not-any? #(str/starts-with? (str %) p/MARKER_CODE) err-lines))))
+             (it "marks a failed native tool error row as an error row"
+                 (let
+                   [lines
+                    (render-forms [{:vis/tool-name "patch"
+                                    :success? false
+                                    :code "patch([{\"path\": \"a.clj\"}])"
+                                    :error {:message "No changes: ERRMARKER stale from_anchor."}
+                                    :result nil}])
+
+                    err-lines
+                    (filter #(str/includes? (str %) "ERRMARKER") lines)]
+
+                   (expect (seq err-lines))
+                   (expect (every? #(str/starts-with? (str %) p/MARKER_ERR_RESULT) err-lines)))))
+
 (defdescribe
   coalesce-forms-test
   ;; Regression: a DB-restored session whose trailer had >=2 adjacent `cat`
@@ -593,7 +628,9 @@
       (expect (str/includes? body "invalid syntax"))
       (expect (some #(and (str/includes? % "\u001b[") (str/includes? (strip-ansi %) "def broken"))
                     lines))
-      (expect (= p/MARKER_CODE (marker-of error-line)))))
+      ;; The message rides the ERROR marker: a code band is status-neutral, so this
+      ;; row is what makes a failed call read as failed.
+      (expect (= p/MARKER_ERR_RESULT (marker-of error-line)))))
   (it
     "renders a form eval error message exactly once"
     (let

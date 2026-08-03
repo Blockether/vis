@@ -4958,9 +4958,14 @@
                   (vec (concat visible summary (when expanded? hidden))))
                 :else entries)))
 
+          ;; The FAILURE row of a call. Code bands stay status-neutral, so this line
+          ;; is the only place a failed tool can read as failed: it wears the error
+          ;; marker (red `code-error-result-fg`), never the quiet code foreground —
+          ;; otherwise a failed `shell`/`python_execution` looks exactly like output.
           inline-error-message-lines
           (when error
-            (mapv #(line-entry (str c-marker %)) (wrap-text (form-error-headline error) fill-w)))
+            (mapv #(line-entry (str err-result-marker %))
+                  (wrap-text (form-error-headline error) fill-w)))
 
           ;; Completed native invocation source is redundant beside its op-card.
           ;; While a call is still RUNNING only `vis/show-running-tool-code?`
