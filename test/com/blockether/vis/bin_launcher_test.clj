@@ -491,6 +491,61 @@
            (finally (delete-tree! root))))))
 
 (defdescribe
+  wrapper-native-precedence-test
+  (it
+    "runs the released native, and a self-built one only when none is installed"
+    (let
+      [root
+       (.toFile (Files/createTempDirectory "vis-agent-native-test-" (make-array FileAttribute 0)))
+
+       install-dir
+       (doto (io/file root "install") .mkdirs)
+
+       home
+       (doto (io/file root "home") .mkdirs)
+
+       vis-home
+       (doto (io/file home ".vis") .mkdirs)
+
+       managed-src
+       (doto (io/file vis-home "install/src") .mkdirs)
+
+       tools
+       (doto (io/file root "tools") .mkdirs)
+
+       launcher
+       (io/file install-dir "vis-agent")
+
+       ;; What `vis-agent update --native` downloads from the release tag.
+       released
+       (io/file vis-home "install/vis-agent-native")
+
+       ;; What `clojure -T:build native` leaves in that source tree.
+       self-built
+       (io/file managed-src "target/vis")
+
+       run!
+       (wrapper-runner {:launcher launcher :cwd root :home home :vis-home vis-home :tools tools})]
+
+      (try (copy-launcher! launcher)
+           (spit (io/file managed-src "deps.edn") "{}")
+           (.mkdirs (io/file managed-src "target"))
+           (write-executable! released "#!/usr/bin/env bash\nprintf 'RELEASED:%s\\n' \"$*\"\n")
+           (write-executable! self-built "#!/usr/bin/env bash\nprintf 'SELF-BUILT:%s\\n' \"$*\"\n")
+           ;; A binary you built yourself must never shadow the published release.
+           (let [{:keys [exit output]} (run! ["--native" "--version"])]
+             (expect (= 0 exit) output)
+             (expect (str/includes? output "RELEASED:") output))
+           (let [{:keys [output]} (run! ["runtime" "show"])]
+             (expect (str/includes? output (.getAbsolutePath released)) output))
+           ;; With no release installed, --native is the build that source made.
+           (io/delete-file released)
+           (let [{:keys [exit output]} (run! ["--native" "--version"])]
+             (expect (= 0 exit) output)
+             (expect (str/includes? output "SELF-BUILT:") output))
+           (finally (delete-tree! root))))))
+
+(defdescribe
   wrapper-tagged-source-update-test
   (it
     "pins the managed source to the newest release tag, or to a named ref"

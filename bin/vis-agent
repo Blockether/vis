@@ -7,7 +7,8 @@
 #   3. update that same runtime         (`vis-agent update`).
 #
 # Three runtimes, one word each:
-#   native  the published runtime, downloaded beside this wrapper
+#   native  the released build, downloaded beside this wrapper; a native you
+#           built yourself (target/vis) is used only when none is installed
 #   jvm     `clojure -M:vis` from source pinned to the newest vX.Y.Z tag
 #   dev     `clojure -M:vis` from a live checkout — the only moving runtime
 #
@@ -250,6 +251,9 @@ find_jvm_source() {
   fi
 }
 
+# The released native wins: an installed one (VIS_INSTALLED_NATIVE, beside this
+# wrapper, or in Vis state) is preferred over `target/vis`, the binary this
+# runtime's own source produced. Building one yourself never shadows a release.
 find_native() {
   local source_root candidate
   source_root="$(find_jvm_source 2>/dev/null || true)"
@@ -397,7 +401,7 @@ vis_runtime_usage() {
   cat >&2 <<'EOF'
 Usage: vis-agent runtime [show]
        vis-agent runtime use native|jvm|dev|auto
-         native  the published runtime, downloaded by 'vis-agent update'
+         native  the released build ('vis-agent update --native'), else your own target/vis
          jvm     source pinned to the newest release tag
          dev     a live checkout, tracking its branch
          auto    forget the choice: native if installed, else tagged source

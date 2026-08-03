@@ -3875,7 +3875,7 @@
      (help-row "--debug, --verbose, -v" "Enable verbose debug logging.")
      (help-row "--" "End flags: every later word is prompt text.")
      (help-row "--help, -h" "Show help.") "" "RUNTIME (WHICH DISTRIBUTION RUNS)"
-     (help-row "--native" "Run the installed native runtime.")
+     (help-row "--native" "Run the released native build, else your own.")
      (help-row "--jvm" "Run the release-tagged source Vis owns.")
      (help-row "--dev" "Run your live checkout.")
      (help-row "VIS_RUNTIME=native|jvm|dev" "The same choice, for one process.")
