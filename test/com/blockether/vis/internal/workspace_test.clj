@@ -651,6 +651,31 @@
            (spit (io/file clone "src.txt") "source\n")
            (Thread/sleep 8)
            (expect (= [] (ws/deleted-paths clone trunk (System/currentTimeMillis))))
+           (finally (delete-tree! trunk) (delete-tree! clone)))))
+  (it
+    "a filtered `.yarn` artifact PAIR the fork drops is NEVER an agent deletion, even when git tracks it"
+    (let
+      [trunk
+       (temp-dir "vis-yarnguard-t")
+
+       clone
+       (temp-dir "vis-yarnguard-c")]
+
+      (try (git! (io/file trunk) "init" "-q")
+           (.mkdirs (io/file trunk ".yarn/cache"))
+           (spit (io/file trunk ".yarn/cache/pkg.zip") "COMMITTED ZERO-INSTALL CACHE\n")
+           (.mkdirs (io/file trunk ".yarn/releases"))
+           (spit (io/file trunk ".yarn/releases/yarn.cjs") "runner\n")
+           (spit (io/file trunk ".yarn/releases/old.cjs") "the agent really deleted this\n")
+           (git! (io/file trunk) "add" "-A")
+           (git! (io/file trunk) "-c" "user.email=t@t" "-c" "user.name=t" "commit" "-qm" "init")
+           ;; The backend matches the `.yarn/<artifact>` PAIR, so `cache` never
+           ;; reaches the clone while `releases` does.
+           (.mkdirs (io/file clone ".yarn/releases"))
+           (spit (io/file clone ".yarn/releases/yarn.cjs") "runner\n")
+           (Thread/sleep 8)
+           (expect (= [".yarn/releases/old.cjs"]
+                      (ws/deleted-paths clone trunk (System/currentTimeMillis))))
            (finally (delete-tree! trunk) (delete-tree! clone))))))
 
 (defdescribe

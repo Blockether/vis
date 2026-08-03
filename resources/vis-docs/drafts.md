@@ -125,8 +125,9 @@ changes — is therefore the source of the draft.
 The fork is **gitignore-aware**. Whatever your repository ignores is not copied
 into the draft, and neither are regenerable artifact directories at any depth
 (`node_modules`, `target`, `dist`, `build`, `coverage`, `__pycache__`,
-virtualenvs, and framework caches such as `.next`, `.turbo`, or `.vite`) — even
-when your repository happens to track one. A file git tracks despite an ignore
+virtualenvs, Yarn Berry's `.yarn/cache` and `.yarn/unplugged`, and framework
+caches such as `.next`, `.turbo`, or `.vite`) — even when your repository
+happens to track one. A file git tracks despite an ignore
 rule is still copied, and the repository itself (`.git`) is always copied.
 
 That is what makes forking a large repository fast: this repository clones about

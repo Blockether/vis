@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   dumped into the real repository. Force-added ignored files stay tracked and
   still land.
 
+- fix(drafts): `/draft apply` no longer deletes a committed `.yarn/cache`. The fork
+  drops the `.yarn/<artifact>` pairs (`cache`, `unplugged`, `install-state.gz`,
+  `build-state.yml`) that a Yarn zero-install repository commits, and the deletion
+  guard matched single directory names only, so every file under a tracked
+  `.yarn/cache` read as an agent deletion. The guard now mirrors the pair rule;
+  `.yarn/patches` and `.yarn/releases` keep reporting real deletions.
+
 ### Documentation
 
 - docs: document the per-root `draft` policy (`shared`, `copy-only`,

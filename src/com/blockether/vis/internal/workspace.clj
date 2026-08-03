@@ -756,15 +756,30 @@
     ".mypy_cache" ".ruff_cache" ".next" ".nuxt" ".svelte-kit" ".turbo" ".vite" ".parcel-cache"
     ".cache" "dist" "build" "coverage"})
 
+(def ^:private fork-yarn-artifact-names
+  "Second segment of a `.yarn/<artifact>` PAIR the fork drops. The backend
+   matches the pair, never the bare name, so `.yarn/patches` and
+   `.yarn/releases` — which repositories commit — stay. A Yarn zero-install
+   repository COMMITS `.yarn/cache`, and the backend drops it all the same, so
+   the git-tracked side of this guard is load-bearing: without it `apply!`
+   reads a whole committed cache as an agent deletion and erases it."
+  #{"cache" "unplugged" "install-state.gz" "build-state.yml"})
+
 (defn- fork-artifact-path?
   "True when any segment of the trunk-relative `rel` names a filtered-out
-   regenerable artifact tree."
+   regenerable artifact tree, or opens a filtered `.yarn/<artifact>` pair."
   [^Path rel]
   (let [c (.getNameCount rel)]
     (loop [i 0]
-      (cond (>= i c) false
-            (contains? fork-artifact-dir-names (str (.getName rel i))) true
-            :else (recur (inc i))))))
+      (if (>= i c)
+        false
+        (let [s (str (.getName rel i))]
+          (if (or (contains? fork-artifact-dir-names s)
+                  (and (= ".yarn" s)
+                       (< (inc i) c)
+                       (contains? fork-yarn-artifact-names (str (.getName rel (inc i))))))
+            true
+            (recur (inc i))))))))
 
 (defn- fork-ignored-paths
   "Repo-relative paths the repository at `dir` ignores and does not track —
