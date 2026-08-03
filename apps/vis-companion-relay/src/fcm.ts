@@ -5,7 +5,7 @@
  */
 
 import { PROVIDER_TIMEOUT_MS } from "./apns";
-import { signJwt } from "./jwt";
+import { isPkcs8Pem, signJwt } from "./jwt";
 import type { Deps, Env, Notification, PushResult } from "./types";
 
 const TOKEN_URI = "https://oauth2.googleapis.com/token";
@@ -24,6 +24,7 @@ export function fcmConfig(env: Env): FcmConfig | null {
   try {
     const sa = JSON.parse(raw) as Record<string, string>;
     if (!sa.project_id || !sa.client_email || !sa.private_key) return null;
+    if (!isPkcs8Pem(sa.private_key)) return null;
     return { projectId: sa.project_id, clientEmail: sa.client_email, privateKey: sa.private_key };
   } catch {
     return null;

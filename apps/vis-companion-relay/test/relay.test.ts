@@ -108,6 +108,30 @@ function pushRequest(grant: string, body: Record<string, unknown> = {}): Request
 
 const ok = () => new Response("", { status: 200 });
 
+/**
+ * A 1 MiB-per-chunk body that reports how much of itself the relay pulled.
+ * `highWaterMark: 0` means nothing is produced until something reads it, so
+ * `pulled` counts real demand rather than the stream's own read-ahead.
+ */
+function countingBody(chunks: number): { stream: ReadableStream; pulled: number } {
+  const chunk = new TextEncoder().encode("A".repeat(1024 * 1024));
+  const state = { pulled: 0 } as { pulled: number; stream: ReadableStream };
+  state.stream = new ReadableStream(
+    {
+      pull(controller) {
+        if (state.pulled >= chunks) {
+          controller.close();
+          return;
+        }
+        state.pulled += 1;
+        controller.enqueue(chunk);
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  return state;
+}
+
 beforeEach(async () => {
   resetProviderTokens();
   resetAccessTokens();
@@ -385,27 +409,33 @@ describe("what an unwelcome caller costs", () => {
     expect((await handle(post("/v1/grants", body), env, deps)).status).toBe(429);
   });
 
-  it("refuses an oversized body by its declaration, before reading it", async () => {
-    let wasRead = false;
+  it("refuses an oversized body by its declaration, before pulling a byte of it", async () => {
+    const body = countingBody(64);
     const request = new Request("https://relay.example.com/v1/push", {
       method: "POST",
       headers: { "content-length": String(64 * 1024 * 1024), "content-type": "application/json" },
-      body: JSON.stringify({ title: "x" }),
-    });
-    Object.defineProperty(request, "text", {
-      value: async () => {
-        wasRead = true;
-        return "{}";
-      },
-    });
+      body: body.stream,
+      duplex: "half",
+    } as RequestInit);
     expect((await handle(request, makeEnv(), makeDeps(fakeFetch(ok).fn))).status).toBe(413);
-    expect(wasRead).toBe(false);
+    expect(body.pulled).toBe(0);
   });
 
-  it("refuses an oversized body that declared nothing", async () => {
-    const request = post("/v1/push", { title: "x".repeat(64 * 1024) });
-    request.headers.delete("content-length");
+  /**
+   * A chunked body declares no length, so the cap has to be enforced as the
+   * bytes arrive: buffering 64 MiB and measuring afterwards is how one
+   * unauthenticated POST takes an isolate down with it.
+   */
+  it("refuses an undeclared oversized body without buffering it", async () => {
+    const body = countingBody(64);
+    const request = new Request("https://relay.example.com/v1/push", {
+      method: "POST",
+      headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.7" },
+      body: body.stream,
+      duplex: "half",
+    } as RequestInit);
     expect((await handle(request, makeEnv(), makeDeps(fakeFetch(ok).fn))).status).toBe(413);
+    expect(body.pulled).toBe(1);
   });
 
   it("caps the custom data keys that reach a provider", async () => {
@@ -441,5 +471,47 @@ describe("routing", () => {
     expect(response.status).toBe(404);
     expect(await response.text()).not.toContain("x=1");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+});
+
+describe("when the relay itself is misconfigured", () => {
+  /**
+   * A `.p8` pasted with its newlines mangled used to throw out of `atob` and
+   * reach the caller as a bare 500 carrying a stack trace, on every push, with
+   * `/healthz` still cheerfully reporting the provider as available.
+   */
+  it("treats key material it cannot decode as no key at all", async () => {
+    const env = makeEnv({ APNS_KEY_P8: '"-----BEGIN PRIVATE KEY-----\nnot base64!!\n' });
+    const deps = makeDeps(fakeFetch(ok).fn);
+
+    const health = (await (
+      await handle(new Request("https://relay.example.com/healthz"), env, deps)
+    ).json()) as { apns: { is_available: boolean } };
+    expect(health.apns.is_available).toBe(false);
+
+    const response = await handle(pushRequest(await mint(env, deps)), env, deps);
+    expect(response.status).toBe(503);
+    expect((await response.json()) as { error: { code: string } }).toMatchObject({
+      error: { code: "provider_unconfigured" },
+    });
+  });
+
+  it("answers an unexpected throw in JSON, without a stack trace", async () => {
+    const env = makeEnv({
+      MINT_LIMIT: {
+        limit: () => {
+          throw new Error("binding is missing at /Users/someone/secret/path.ts:12");
+        },
+      } as unknown as RateLimit,
+    });
+    const response = await handle(
+      post("/v1/grants", { device_token: APPLE_TOKEN }),
+      env,
+      makeDeps(fakeFetch(ok).fn),
+    );
+    expect(response.status).toBe(500);
+    const text = await response.text();
+    expect(JSON.parse(text)).toMatchObject({ error: { code: "internal_error" } });
+    expect(text).not.toContain("/Users/");
   });
 });

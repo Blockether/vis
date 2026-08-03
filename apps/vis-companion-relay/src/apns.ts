@@ -7,7 +7,7 @@
  * there and works when deployed (workerd#4841). Use `wrangler dev --remote`.
  */
 
-import { signJwt } from "./jwt";
+import { isPkcs8Pem, signJwt } from "./jwt";
 import type { Deps, Env, Notification, PushResult } from "./types";
 
 export const APNS_PRODUCTION_HOST = "https://api.push.apple.com";
@@ -40,6 +40,7 @@ export function apnsConfig(env: Env): ApnsConfig | null {
   const teamId = (env.APNS_TEAM_ID ?? "").trim();
   const topic = (env.APNS_TOPIC ?? "").trim();
   if (!keyP8 || !keyId || !teamId || !topic) return null;
+  if (!isPkcs8Pem(keyP8)) return null;
   return {
     keyP8,
     keyId,

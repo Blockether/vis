@@ -124,16 +124,49 @@ function oversized(): Response {
 }
 
 /**
- * `content-length` is the cheap check and a chunked body has none, so the size
- * is enforced twice: on the declaration, then on what actually arrived.
+ * `content-length` is the cheap refusal, but a chunked body declares none, so
+ * the bytes are counted as they arrive and the stream is cancelled the instant
+ * the cap is passed. Buffering first and measuring after would let a single
+ * unauthenticated POST put Cloudflare's whole 100 MB body allowance into a
+ * 128 MB isolate, and take every other request sharing it down too.
+ *
+ * The cancel is deliberate: it stops the upload mid-flight, which is the whole
+ * point. `wrangler dev` wraps the worker in a body-draining middleware that
+ * then logs "Network connection lost" and can take the local server with it —
+ * a dev-only facade, absent from the deployed bundle (`deploy --dry-run
+ * --outdir` contains no drainer). Do not remove the cancel to quiet it.
  */
 async function readJson(
   request: Request,
 ): Promise<Record<string, unknown> | typeof TOO_LARGE | null> {
-  const text = await request.text();
-  if (text.length > MAX_REQUEST_BYTES) return TOO_LARGE;
+  const stream = request.body;
+  if (!stream) return null;
+  const reader = stream.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+  const chunks: Uint8Array[] = [];
+  let total = 0;
   try {
-    const parsed = JSON.parse(text) as unknown;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_REQUEST_BYTES) {
+        await reader.cancel();
+        return TOO_LARGE;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return null;
+  }
+
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
     return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
   } catch {
     return null;
@@ -313,7 +346,7 @@ function preflight(): Response {
   });
 }
 
-export async function handle(request: Request, env: Env, deps: Deps = defaultDeps): Promise<Response> {
+async function route(request: Request, env: Env, deps: Deps): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, "") || "/";
   const method = request.method.toUpperCase();
@@ -325,6 +358,23 @@ export async function handle(request: Request, env: Env, deps: Deps = defaultDep
   if (method === "POST" && path === "/v1/grants") return await createGrantHandler(request, env, deps);
   if (method === "POST" && path === "/v1/push") return await pushHandler(request, env, deps);
   return fail(404, "not_found", `${method} ${path} is not a route of this relay`);
+}
+
+/**
+ * Nothing a caller sends may come back to them as an exception. An unhandled
+ * throw is a bare 500 carrying a stack trace — a leak, and a lie about the
+ * shape of every other answer this relay gives.
+ */
+export async function handle(
+  request: Request,
+  env: Env,
+  deps: Deps = defaultDeps,
+): Promise<Response> {
+  try {
+    return await route(request, env, deps);
+  } catch {
+    return fail(500, "internal_error", "the relay failed to handle this request");
+  }
 }
 
 export default {

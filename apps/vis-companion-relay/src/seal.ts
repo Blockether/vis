@@ -48,8 +48,14 @@ export interface Grant {
 }
 
 /**
- * One AES key per secret, derived by SHA-256 so any length of secret works and
- * the key material itself never sits in a variable a log could reach.
+ * One AES key per secret, derived by SHA-256 so any length of secret works.
+ *
+ * The cached value is the PROMISE, which is the shape Workers usually punishes:
+ * a `fetch` promise shared between two requests fails with "Cannot perform I/O
+ * on behalf of a different request". A `crypto.subtle` promise is not I/O — it
+ * resolves for a later request even after the one that created it has ended,
+ * verified against workerd itself — so the derivation happens once per isolate
+ * instead of once per concurrent miss.
  */
 const derivedKeys = new Map<string, Promise<CryptoKey>>();
 

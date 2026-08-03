@@ -30,6 +30,20 @@ export function pemToPkcs8(pem: string): ArrayBuffer {
   return der.buffer;
 }
 
+/**
+ * Key material that will not even decode is the same as no key at all — and it
+ * is said once, at config time, so `/healthz` reports the truth and a
+ * mis-pasted secret is a 503 an operator can read rather than a 500 on every
+ * push for the life of the deployment.
+ */
+export function isPkcs8Pem(pem: string): boolean {
+  try {
+    return pemToPkcs8(pem).byteLength > 0;
+  } catch {
+    return false;
+  }
+}
+
 export type JwtAlgorithm = "ES256" | "RS256";
 
 export async function signJwt(
