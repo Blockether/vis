@@ -290,6 +290,65 @@ describe("pushing", () => {
     expect((await handle(pushRequest(grant), env, deps)).status).toBe(502);
   });
 
+  /**
+   * Apple documents 500 and 503 as "retry after a delay", and a Worker's fetch
+   * to Apple can lose its connection outright. Both mean nothing was delivered,
+   * so the alert is gone forever unless this one retry happens.
+   */
+  it("asks a provider that merely stumbled a second time", async () => {
+    let attempts = 0;
+    const apns = fakeFetch(() => (++attempts === 1 ? new Response("", { status: 503 }) : ok()));
+    const env = makeEnv();
+    const deps = makeDeps(apns.fn);
+    const grant = await mint(env, deps);
+
+    expect((await handle(pushRequest(grant), env, deps)).status).toBe(200);
+    expect(apns.calls.length).toBe(2);
+  });
+
+  it("asks again when the connection to Apple is lost mid-flight", async () => {
+    let attempts = 0;
+    const apns = fakeFetch(() => {
+      if (++attempts === 1) throw new Error("Network connection lost.");
+      return ok();
+    });
+    const env = makeEnv();
+    const deps = makeDeps(apns.fn);
+    const grant = await mint(env, deps);
+
+    expect((await handle(pushRequest(grant), env, deps)).status).toBe(200);
+    expect(apns.calls.length).toBe(2);
+  });
+
+  it("never asks again once Apple has actually decided", async () => {
+    const apns = fakeFetch(
+      () => new Response(JSON.stringify({ reason: "PayloadTooLarge" }), { status: 413 }),
+    );
+    const env = makeEnv();
+    const deps = makeDeps(apns.fn);
+    const grant = await mint(env, deps);
+
+    expect((await handle(pushRequest(grant), env, deps)).status).toBe(502);
+    expect(apns.calls.length).toBe(1);
+  });
+
+  it("asks Google a second time when FCM stumbles", async () => {
+    let sends = 0;
+    const fcm = fakeFetch((url) => {
+      if (url.includes("oauth2.googleapis.com")) {
+        return new Response(JSON.stringify({ access_token: "ya29.test" }), { status: 200 });
+      }
+      return ++sends === 1 ? new Response("", { status: 503 }) : ok();
+    });
+    const env = makeEnv();
+    const deps = makeDeps(fcm.fn);
+    const grant = await mint(env, deps, { device_token: ANDROID_TOKEN, platform: "android" });
+
+    expect((await handle(pushRequest(grant), env, deps)).status).toBe(200);
+    expect(sends).toBe(2);
+  });
+
+
   it("requires a grant", async () => {
     const response = await handle(post("/v1/push", { title: "hi" }), makeEnv(), makeDeps(fakeFetch(ok).fn));
     expect(response.status).toBe(401);

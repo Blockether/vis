@@ -53,8 +53,22 @@
   (let [f (io/file (vis-home) "relay.edn")]
     (when (.isFile f) (try (edn/read-string (slurp f)) (catch Throwable _ nil)))))
 
+(defn- loopback?
+  "True when a URL cannot leave this machine, which is the one place cleartext
+   costs nothing — `wrangler dev`, and the tests' own relay."
+  [^String url]
+  (try (contains? #{"127.0.0.1" "localhost" "::1" "[::1]" "0:0:0:0:0:0:0:1"}
+                  (str/lower-case (str (.getHost (URI/create url)))))
+       (catch Throwable _ false)))
+
 (defn config
-  "Where this gateway relays pushes, or `:is-configured false`. Never throws."
+  "Where this gateway relays pushes, or `:is-configured false`. Never throws.
+
+   A grant is a BEARER capability and the alert carries the title and body of
+   what just happened, so the address both are handed to is TLS or nothing: a
+   cleartext relay is reported `:is-insecure` and is never used — silently
+   trusting it would put a permanent right to push to that phone on the wire.
+   Loopback is the exception; it never reaches a network."
   []
   (let
     [side
@@ -64,13 +78,19 @@
      (some-> (or (env-val "VIS_PUSH_RELAY_URL") (:url side))
              str
              str/trim
-             (str/replace #"/+$" ""))]
+             (str/replace #"/+$" ""))
+
+     is-secure
+     (boolean (and (not (str/blank? url))
+                   (or (str/starts-with? url "https://")
+                       (and (str/starts-with? url "http://") (loopback? url)))))]
 
     {:url (when-not (str/blank? url) url)
      :source (cond (env-val "VIS_PUSH_RELAY_URL") "env"
                    (:url side) "file"
                    :else nil)
-     :is-configured (boolean (and (not (str/blank? url)) (str/starts-with? url "http")))}))
+     :is-insecure (boolean (and (not (str/blank? url)) (not is-secure)))
+     :is-configured is-secure}))
 
 (defn configured?
   "True when a grant registered here can actually be delivered."
@@ -100,35 +120,64 @@
                    badge
                    (assoc :badge badge))))
 
+(def ^:private RETRY-DELAY-MS 300)
+
+(defn- transient-verdict?
+  "Verdicts that prove the relay never reached a provider: a transport failure,
+   or the relay itself reporting an upstream that stumbled. Nothing was
+   delivered, so asking again cannot duplicate a notification — and not asking
+   loses it for good."
+  [{:keys [status]}]
+  (contains? #{0 502 503 504} status))
+
+(defn- post-once
+  [url grant notification]
+  (try (let
+         [^HttpResponse resp
+          (.send ^HttpClient @http-client
+                 (-> (HttpRequest/newBuilder (URI/create (str url "/v1/push")))
+                     (.header "authorization" (str "Bearer " grant))
+                     (.header "content-type" "application/json")
+                     (.timeout (Duration/ofSeconds 15))
+                     (.POST (HttpRequest$BodyPublishers/ofString (payload notification)))
+                     (.build))
+                 (HttpResponse$BodyHandlers/ofString))
+
+          status
+          (.statusCode resp)
+
+          parsed
+          (wire/parse-json (.body resp))
+
+          reason
+          (str (or (get parsed "reason") (get-in parsed ["error" "code"]) ""))]
+
+         {:status status :reason reason})
+       (catch Throwable t {:status 0 :reason (or (ex-message t) "transport-error")})))
+
 (defn send!
   "Ask the relay to deliver one alert to the device this grant names. Returns
    `{:status int :reason str}` — status 0 for a transport failure, so this
-   never throws. The relay answers 404/410 once the grant is gone, which is the
-   caller's cue to forget the device."
+   never throws. A stumble is tried once more; the relay answers 404/410 once
+   the grant is gone, which is the caller's cue to forget the device."
   [grant notification]
   (let [cfg (config)]
-    (if-not (:is-configured cfg)
-      {:status 0 :reason "not-configured"}
-      (try (let
-             [^HttpResponse resp
-              (.send ^HttpClient @http-client
-                     (-> (HttpRequest/newBuilder (URI/create (str (:url cfg) "/v1/push")))
-                         (.header "authorization" (str "Bearer " grant))
-                         (.header "content-type" "application/json")
-                         (.timeout (Duration/ofSeconds 15))
-                         (.POST (HttpRequest$BodyPublishers/ofString (payload notification)))
-                         (.build))
-                     (HttpResponse$BodyHandlers/ofString))
-              status (.statusCode resp)
-              parsed (wire/parse-json (.body resp))
-              reason (str (or (get parsed "reason") (get-in parsed ["error" "code"]) ""))]
+    (cond (:is-insecure cfg) {:status 0 :reason "insecure-relay-url"}
+          (not (:is-configured cfg)) {:status 0 :reason "not-configured"}
+          :else (let
+                  [first-try (post-once (:url cfg) grant notification)
+                   result (if-not (transient-verdict? first-try)
+                            first-try
+                            (do (Thread/sleep ^long RETRY-DELAY-MS)
+                                (post-once (:url cfg) grant notification)))]
 
-             (when (not= 200 status)
-               (tel/log! {:level :warn
-                          :id ::relay-push-failed
-                          :data {:grant (mask grant) :status status :reason reason}}))
-             {:status status :reason reason})
-           (catch Throwable t {:status 0 :reason (or (ex-message t) "transport-error")})))))
+                  (when (not= 200 (:status result))
+                    (tel/log! {:level :warn
+                               :id ::relay-push-failed
+                               :data {:grant (mask grant)
+                                      :status (:status result)
+                                      :reason (:reason result)}}))
+                  result))))
 
 (defn dead-grant?
   "True when the relay's verdict means this grant will never deliver again —
@@ -140,4 +189,7 @@
   "Relay half of the push capability. Carries the URL, never the grants."
   []
   (let [cfg (config)]
-    {:is-available (:is-configured cfg) :url (:url cfg) :source (:source cfg)}))
+    {:is-available (:is-configured cfg)
+     :url (:url cfg)
+     :source (:source cfg)
+     :is-insecure (:is-insecure cfg)}))

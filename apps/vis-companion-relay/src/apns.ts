@@ -136,6 +136,26 @@ export const APNS_DEAD_REASONS = new Set(["BadDeviceToken", "Unregistered", "Dev
 const APNS_WRONG_ENVIRONMENT = new Set(["BadDeviceToken", "BadEnvironmentKeyInToken"]);
 
 /**
+ * Apple documents 500 and 503 as "retry after a delay", and a Worker's fetch to
+ * Apple can lose the connection outright (status 0). Neither of those delivered
+ * anything, so asking once more is the difference between a lost alert and a
+ * late one — and it cannot duplicate a push that never happened. A verdict
+ * Apple actually reached (4xx) is final and is never asked twice.
+ */
+export const PROVIDER_RETRY_DELAY_MS = 250;
+
+export function isTransient(result: PushResult): boolean {
+  return result.status === 0 || result.status >= 500;
+}
+
+export async function attemptTwice(send: () => Promise<PushResult>): Promise<PushResult> {
+  const first = await send();
+  if (!isTransient(first)) return first;
+  await new Promise((resolve) => setTimeout(resolve, PROVIDER_RETRY_DELAY_MS));
+  return await send();
+}
+
+/**
  * Send, retrying once against the other environment. A TestFlight build
  * registered as `sandbox` (or the reverse) is the single most common
  * misconfiguration, and the retry is what keeps it working anyway. The relay
@@ -149,9 +169,13 @@ export async function sendApns(
   deps: Deps,
 ): Promise<PushResult> {
   const environment = args.environment === "sandbox" ? "sandbox" : "production";
-  const attempt = await post(cfg, environment, args.deviceToken, args.notification, deps);
+  const attempt = await attemptTwice(() =>
+    post(cfg, environment, args.deviceToken, args.notification, deps),
+  );
   if (attempt.status === 200 || !APNS_WRONG_ENVIRONMENT.has(attempt.reason)) return attempt;
   const other = environment === "sandbox" ? "production" : "sandbox";
-  const retry = await post(cfg, other, args.deviceToken, args.notification, deps);
+  const retry = await attemptTwice(() =>
+    post(cfg, other, args.deviceToken, args.notification, deps),
+  );
   return retry.status === 200 ? retry : attempt;
 }

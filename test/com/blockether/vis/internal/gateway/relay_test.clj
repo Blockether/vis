@@ -217,3 +217,59 @@
                   (testing "a registration with neither token nor grant is refused"
                     (is (nil? (push/register-device! {:token "  "})))
                     (is (nil? (push/register-device! {}))))))
+
+;; A relay is one more machine on the network, so the failures worth testing are
+;; the network's: a stumble that must be tried again, a verdict that must not be,
+;; and an address that must never see a bearer grant at all.
+
+(deftest a-relay-that-stumbles-is-asked-twice-test
+  (testing "a 503 costs one retry, and the second answer is the verdict"
+    (with-push-home [home]
+                    (let
+                      [attempts
+                       (atom 0)
+
+                       relay-server
+                       (start-relay! (fn [_]
+                                       (if (= 1 (swap! attempts inc))
+                                         {:status 503 :body "{\"reason\":\"upstream\"}"}
+                                         {:status 200 :body "{\"is_delivered\":true}"})))]
+
+                      (try (configure-relay! home (:url relay-server))
+                           (is (= 200 (:status (relay/send! "GRANT-abcdef123456" ALERT))))
+                           (is (= 2 (count @(:requests relay-server))))
+                           (finally ((:stop! relay-server)))))))
+  (testing "a verdict the relay already reached is never asked again"
+    (with-push-home [home]
+                    (let
+                      [relay-server (start-relay! (fn [_]
+                                                    {:status 404
+                                                     :body
+                                                     "{\"error\":{\"code\":\"unknown_grant\"}}"}))]
+                      (try (configure-relay! home (:url relay-server))
+                           (is (= 404 (:status (relay/send! "GRANT-abcdef123456" ALERT))))
+                           (is (= 1 (count @(:requests relay-server))))
+                           (finally ((:stop! relay-server))))))))
+
+(deftest a-cleartext-relay-is-refused-before-the-grant-leaves-test
+  (testing "a grant is a bearer capability: the address it is handed to is TLS or nothing"
+    (with-push-home [home]
+                    (configure-relay! home "http://push.example.com")
+                    (let [cfg (relay/config)]
+                      (is (false? (:is-configured cfg)))
+                      (is (true? (:is-insecure cfg)))
+                      (is (= "http://push.example.com" (:url cfg))))
+                    (is (false? (relay/configured?)))
+                    (is (= {:status 0 :reason "insecure-relay-url"}
+                           (relay/send! "GRANT-abcdef123456" ALERT)))
+                    (let [st (relay/status)]
+                      (is (false? (:is-available st)))
+                      (is (true? (:is-insecure st))))))
+  (testing "https is fine, and so is loopback — it cannot leave the machine"
+    (with-push-home [home]
+                    (configure-relay! home "https://push.example.com")
+                    (is (true? (relay/configured?)))
+                    (configure-relay! home "http://127.0.0.1:8787")
+                    (is (true? (relay/configured?)))
+                    (configure-relay! home "http://localhost:8787")
+                    (is (true? (relay/configured?))))))

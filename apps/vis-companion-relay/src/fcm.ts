@@ -4,7 +4,7 @@
  * APNs this needs nothing special from the runtime.
  */
 
-import { PROVIDER_TIMEOUT_MS } from "./apns";
+import { attemptTwice, PROVIDER_TIMEOUT_MS } from "./apns";
 import { isPkcs8Pem, signJwt } from "./jwt";
 import type { Deps, Env, Notification, PushResult } from "./types";
 
@@ -93,7 +93,7 @@ function message(deviceToken: string, notification: Notification): unknown {
 
 export const FCM_DEAD_REASONS = new Set(["UNREGISTERED", "NOT_FOUND", "INVALID_ARGUMENT"]);
 
-export async function sendFcm(
+async function postFcm(
   cfg: FcmConfig,
   args: { deviceToken: string; notification: Notification },
   deps: Deps,
@@ -124,4 +124,13 @@ export async function sendFcm(
   } catch (error) {
     return { status: 0, reason: error instanceof Error ? error.message : "transport-error" };
   }
+}
+
+/** Google stumbles the same way Apple does; so does the connection to it. */
+export async function sendFcm(
+  cfg: FcmConfig,
+  args: { deviceToken: string; notification: Notification },
+  deps: Deps,
+): Promise<PushResult> {
+  return await attemptTwice(() => postFcm(cfg, args, deps));
 }
