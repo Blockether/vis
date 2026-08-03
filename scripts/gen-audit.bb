@@ -266,6 +266,28 @@
                        (if (in-house? sym) "Blockether (in-house)" "3rd-party")))
              [""])))
 
+(def ^:private date-placeholder "@@GENERATED-DATE@@")
+
+(defn- stamp-date
+  "Resolve `body`'s date placeholder against the committed document.
+
+   CI regenerates this file and compares it byte-for-byte with the copy in git,
+   so a wall-clock date would fail that gate on any push made on a later day
+   than the last regeneration — with the date line as the ONLY diff. Keep the
+   date the committed document already states while the rest of the document is
+   identical, and move it (UTC, the zone CI runs in) only when the content
+   really changed."
+  [root body]
+  (let [f       (fs/file root "audit" "README.md")
+        current (when (fs/exists? f) (slurp f))
+        line    #"(?m)^> Generated (\d{4}-\d{2}-\d{2})\.$"
+        stated  (second (re-find line (or current "")))
+        today   (subs (str (java.time.LocalDate/now java.time.ZoneOffset/UTC)) 0 10)
+        kept?   (and stated
+                     (= body (str/replace current line
+                                          (str "> Generated " date-placeholder "."))))]
+    (str/replace body date-placeholder (if kept? stated today))))
+
 (defn- gen [root]
   (binding [*out* *err*] (println "Discovering modules…"))
   (let [modules  (discover-modules root)
@@ -279,10 +301,11 @@
                       (sort-by #(- (nth % 2))))
         total-b  (reduce + 0 (keep #(:size-bytes (nth % 3)) rows))
         copyleft (filter #(re-find #"GPL" (str (:license (nth % 3)))) rows)
-        ;; CI runs in UTC. Pin the generated date to that zone so a local run does
-        ;; not churn the document or fail the gate around a timezone boundary.
-        today    (subs (str (java.time.LocalDate/now java.time.ZoneOffset/UTC)) 0 10)]
-    (str
+        ;; The date is a placeholder until `stamp-date` decides whether it may move.
+        today    date-placeholder]
+    (stamp-date
+     root
+     (str
      "# Vis — Security & Dependency Audit
 
 > Generated " today ".
@@ -657,7 +680,7 @@ addresses reports on a best-effort basis.
 Keep the two channels separate: security disclosures stay private
 (<security@blockether.com>); everything else is a GitHub issue.
 
-")))
+"))))
 
 ;; --------------------------------------------------------------------- runner
 

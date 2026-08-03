@@ -103,3 +103,24 @@
             (expect (= (normalize declared) stated)
                     (str coord " states " stated
                          " but its POM declares " declared)))))))
+
+(defdescribe
+  audit-generated-date-test
+  ;; `.github/workflows/audit-md.yml` regenerates this document and fails on ANY
+  ;; diff. A wall-clock stamp therefore reddened the pipeline on every dependency
+  ;; bump made on a later day than the last regeneration, with the date line as
+  ;; the only diff. `scripts/gen-audit.bb` renders a placeholder and `stamp-date`
+  ;; keeps the committed date while the rest of the document is byte-identical.
+  (it "the generator resolves its date against the committed doc, not the clock"
+      (let [src (slurp (io/file "scripts" "gen-audit.bb"))]
+        (expect (str/includes? src "> Generated \" today \"."))
+        (expect (re-find #"today\s+date-placeholder\]" src))
+        (expect (str/includes? src "(defn- stamp-date"))
+        ;; the ONLY clock read left feeds stamp-date's "content changed" branch
+        (expect (= 1 (count (re-seq #"LocalDate/now" src))))
+        (expect (str/includes?
+                 (second (str/split src #"\(defn- stamp-date"))
+                 "LocalDate/now"))))
+  (it "the committed document states one resolved ISO date"
+      (expect (= 1 (count (re-seq #"(?m)^> Generated \d{4}-\d{2}-\d{2}\.$"
+                                  (slurp audit-file)))))))
