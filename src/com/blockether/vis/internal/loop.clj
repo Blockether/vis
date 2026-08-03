@@ -5006,26 +5006,33 @@
         :else (py-literal (str v))))
 
 (defn- normalize-tool-input
-  "EXTERNAL-EDGE ADAPTER (svar wire): svar's JSON parse may hand tool args with
-   keyword OR string keys depending on the provider adapter. This is the ONE
-   sanctioned conversion point — everything downstream (synth-call, py-literal,
-   the sandbox) is strings-only. `normalize-dict-key` additionally strips a
-   model-drift leading colon (`\":path\"`) so positional extraction still finds
-   the key and the call just works.
+  "MODEL-DRIFT + EXTENSION-EDN adapter for ONE tool call's arguments.
+
+   NOT a svar workaround: svar decodes tool arguments strings-only at the wire
+   edge — it parses a provider body with the tool-argument subtrees left
+   UNINTERNED (`RAW_TOOL_ARG_KEYS` / `keywordize-response`) — so nothing that
+   arrives from a provider is ever a keyword. What this pass owns is the two
+   things svar rightly refuses to touch:
+
+     1. MODEL DRIFT — a model that literally writes `\":path\"` as a JSON key.
+        `env/normalize-dict-key` strips that leading colon so positional
+        extraction still finds the key and the call just works.
+     2. EXTENSION-AUTHORED EDN — `:retry-overrides` and `:call` shapes are
+        Clojure data written by humans, so they legitimately carry keywords.
 
    DEEP: keys are normalized at EVERY depth, not just the top level. Tools like
-   `patch` carry NESTED dicts (`edits [{:from_anchor …}]`); a shallow pass left
-   the model-drift colon on those nested keys, so the synthesized Python call
+   `patch` carry NESTED dicts (`edits [{\":from_anchor\" …}]`); a shallow pass
+   left the drift colon on those nested keys, so the synthesized Python call
    leaked `patch([{\":from_anchor\": …}])`.
 
-   VALUES TOO, at every depth: a keyword/symbol VALUE (an enum coerced by the
-   provider adapter, `{\"op\" :delete}`) is stringified HERE — `:delete` ->
-   `\"delete\"`, `:a/b` -> `\"a/b\"` — because `py-literal` rightly treats one as
-   a producer bug and throws `boundary-violation!`, which killed the whole tool
-   call instead of running it. Everything else (edit `replace` text, anchors,
-   paths, numbers, booleans) passes through verbatim."
+   VALUES TOO, at every depth: a keyword/symbol VALUE (`{\"op\" :delete}` out of
+   extension EDN) is stringified HERE — `:delete` -> `\"delete\"`, `:a/b` ->
+   `\"a/b\"` — because `py-literal` rightly treats one as a producer bug and
+   throws `boundary-violation!`, which killed the whole tool call instead of
+   running it. Everything else (edit `replace` text, anchors, paths, numbers,
+   booleans) passes through verbatim."
   [input]
-  (letfn [(nk [k] (env/normalize-dict-key (if (keyword? k) (name k) (str k))))
+  (letfn [(nk [k] (env/normalize-dict-key (if (keyword? k) (subs (str k) 1) (str k))))
           (nv [x] (if (keyword? x) (subs (str x) 1) (str x)))
           (walk [x]
             (cond (map? x) (into {}
@@ -5038,23 +5045,20 @@
     (walk (or input {}))))
 
 (defn- normalize-tool-calls
-  "THE DOOR: every native tool call svar returns enters the engine HERE, already
-   strings-only.
+  "THE DOOR: every native tool call svar returns enters the engine HERE.
 
-   Model-authored tool arguments are DATA, never Clojure identifiers. svar's
-   `decode-tool-arguments` now decodes them strings-only at the source (its
-   `stringify-tool-args` keeps both keys and keyword/symbol values as strings),
-   so this door is normally a no-op. It stays because vis pins svar by version
-   and MUST NOT trust a provider adapter to have been fixed: an older svar, or a
-   new adapter path, would otherwise leak keywordized argument keys such as
-   `:path` into the engine.
+   svar hands model-authored arguments over strings-only — its response parse
+   leaves tool-argument subtrees UNINTERNED, so a provider can no longer deliver
+   `:path` — which makes this pass exactly one thing: the single place MODEL
+   DRIFT is repaired (a literal `\":path\"` key, a stray keyword value out of an
+   extension's EDN), at the point where `ask-code!`'s result becomes engine
+   data.
 
    Vis is strings-only end to end — the sandbox, the synthesized Python,
    persistence and the wire all speak snake_case strings — so the whole
-   tool-call vector is normalized ONCE, at the single point where `ask-code!`'s
-   result becomes engine data. Everything downstream — call synthesis, replay
-   elision, `retry_native`, receipts, iteration records — reads plain string
-   keys and must NOT re-check a keyword variant."
+   tool-call vector is normalized ONCE. Everything downstream — call synthesis,
+   replay elision, `retry_native`, receipts, iteration records — reads plain
+   string keys and must NOT re-check a keyword variant."
   [tool-calls]
   (mapv #(update % :input normalize-tool-input) (vec tool-calls)))
 
@@ -5582,7 +5586,9 @@
                          :svar/tool-call-id (:id tc)
                          :vis/tool-name effective-name
                          :vis/native-handler h
-                         :vis/native-input (normalize-tool-input (:input effective-tc))}
+                         ;; already normalized at THE DOOR (or, for a retry, by
+                         ;; `resolve-native-retry` after the override merge)
+                         :vis/native-input (:input effective-tc)}
                         {:lang "python"
                          ;; Engine-native call resolvers may substitute a
                          ;; policy-approved stored call before synthesis.

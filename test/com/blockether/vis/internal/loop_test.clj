@@ -5789,7 +5789,7 @@
                      (finally (ce/remove-channel-event-listener! chan ::hitl-wall))))))
 
 (defdescribe normalize-tool-input-strings-only-test
-  (describe "svar-edge tool arguments are strings-only, keys AND values"
+  (describe "model-drift and extension EDN are stringified, keys AND values"
     (it "stringifies keyword/symbol values at every depth so py-literal renders"
       (let [normalize #'lp/normalize-tool-input
             py-literal #'lp/py-literal
@@ -5809,7 +5809,7 @@
       (expect (throws? Exception #(#'lp/py-literal {"op" :delete}))))))
 
 (defdescribe tool-call-door-strings-only-test
-  (describe "svar's keywordized tool arguments are stringified once, at the door"
+  (describe "model drift is repaired once, at the door"
     (it "normalizes every tool call's :input at every depth"
       (let [door #'lp/normalize-tool-calls
             calls (door [{:id "t1" :name "patch"
@@ -5819,6 +5819,13 @@
                     {"op" "delete" "paths" ["x"]}]
                    (mapv :input calls)))
         (expect (= ["t1" "t2"] (mapv :id calls)))))
+    (it "repairs a model-drift `\":path\"` key at every depth"
+      ;; svar hands the wire key over verbatim, so a model that writes a leading
+      ;; colon INTO its JSON is repaired here and nowhere else.
+      (let [[tc] (#'lp/normalize-tool-calls
+                   [{:id "p" :name "patch"
+                     :input {":edits" [{":path" "a.clj" ":from_anchor" "1:aa"}]}}])]
+        (expect (= {"edits" [{"path" "a.clj" "from_anchor" "1:aa"}]} (:input tc)))))
     (it "lets downstream consumers read string keys only — no keyword fallback"
       (let [payload (apply str (repeat 20 "x"))
             [tc] (#'lp/normalize-tool-calls [{:id "w" :name "write"
