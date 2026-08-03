@@ -109,7 +109,7 @@
   com.blockether/vis-language-typescript-bun {:local/root
                                               "extensions/languages/vis-language-typescript-bun"}
   com.blockether/vis-workspace-rift {:local/root "extensions/workspaces/vis-workspace-rift"}
-  com.blockether/svar {:mvn/version "0.7.96"}
+  com.blockether/svar {:mvn/version "0.7.97"}
   com.blockether/anomaly {:mvn/version "1.0.1"}
   ;; Runtime downloader for the per-platform FFM native jars (fff/ruff/imaging/
   ;; tree-sitter) on the plain-JVM path — never used by the native binary.
