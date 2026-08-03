@@ -1,0 +1,6 @@
+{
+  // The tests additionally drive node:sqlite as a stand-in D1 binding.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": { "types": ["@cloudflare/workers-types", "node"] },
+  "include": ["src", "test", "vitest.config.ts"]
+}

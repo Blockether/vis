@@ -1,0 +1,23 @@
+{
+  "name": "vis-companion-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Push relay for the vis companion \u2014 a Cloudflare Worker that holds the APNs/FCM signing keys so self-hosted gateways never have to.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "wrangler dev --remote",
+    "db:local": "wrangler d1 execute vis-companion-relay --local --file schema.sql",
+    "db:apply": "wrangler d1 execute vis-companion-relay --remote --file schema.sql",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260730.1",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.0",
+    "wrangler": "^4.0.0"
+  }
+}

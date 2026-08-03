@@ -2338,11 +2338,10 @@
 ;; --- Native push devices (APNs) ---
 
 (defn- device-wire
-  "One registered device in wire shape — the raw token NEVER leaves the gateway."
+  "One registered device in wire shape — the raw token and the relay grant NEVER
+   leave the gateway."
   [device]
-  (-> device
-      (dissoc :token)
-      (assoc :token_preview (push/mask (:token device)))))
+  (push/public-device device))
 
 (defn- list-devices-handler
   "GET /v1/devices — registered push devices (tokens masked) plus this gateway's
@@ -2352,9 +2351,13 @@
   (json-response {:devices (push/list-devices) :push (push/status)}))
 
 (defn- register-device-handler
-  "POST /v1/devices — idempotently register one native push token.
-   `{token, platform?, environment?, client?, client_version?, label?, bundle_id?}`.
-   Re-registering the same token refreshes it instead of duplicating."
+  "POST /v1/devices — idempotently register one device for push.
+   `{token?, grant?, platform?, environment?, client?, client_version?, label?,
+   bundle_id?}`. Exactly one identifier is required: a raw APNs/FCM `token`
+   this gateway pushes to with its OWN credentials, or a relay `grant` the
+   device obtained from the push relay — the relay holds the signing key, so a
+   gateway that is not the app's publisher can wake it without ever learning
+   the device token. Re-registering refreshes instead of duplicating."
   [request]
   (let
     [body
@@ -2363,12 +2366,18 @@
      token
      (some-> (get body "token")
              str
+             str/trim)
+
+     grant
+     (some-> (get body "grant")
+             str
              str/trim)]
 
-    (if (str/blank? token)
-      (error-response 400 :bad-request "token is required")
+    (if (and (str/blank? token) (str/blank? grant))
+      (error-response 400 :bad-request "token or grant is required")
       (if-let
         [device (push/register-device! {:token token
+                                        :grant grant
                                         :platform (get body "platform")
                                         :environment (get body "environment")
                                         :client (get body "client")

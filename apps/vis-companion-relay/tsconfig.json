@@ -1,0 +1,7 @@
+{
+  // The Worker itself: workerd globals only. A `node:` import that sneaks into
+  // src/ must fail here, not in production.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": { "types": ["@cloudflare/workers-types"] },
+  "include": ["src"]
+}

@@ -31,6 +31,7 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [com.blockether.vis.internal.gateway.fcm :as fcm]
+            [com.blockether.vis.internal.gateway.relay :as relay]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.wire :as wire]
@@ -189,10 +190,11 @@
 (defn configured? "True when this gateway can deliver an APPLE push." [] (:is-configured (config)))
 
 (defn any-configured?
-  "True when this gateway can deliver a push to SOME platform — Apple or
-   Android. Android-only credentials are a perfectly valid setup."
+  "True when this gateway can deliver a push to SOME platform — through the
+   relay, or with its own Apple or Android credentials. Any one of the three is
+   a perfectly valid setup."
   []
-  (or (configured?) (fcm/configured?)))
+  (or (configured?) (fcm/configured?) (relay/configured?)))
 
 ;; =============================================================================
 ;; ES256 provider token (JWT)
@@ -338,47 +340,79 @@
     m
     (into {} (take MAX_DEVICES (sort-by #(- (long (:last-seen (val %) 0))) m)))))
 
+(defn public-device
+  "One device as the wire may see it. The raw device token and the relay grant
+   are both SECRETS: neither ever leaves this process."
+  [device]
+  (-> device
+      (dissoc :token :grant :id)
+      (assoc :token_preview (mask (or (:token device) (:grant device)))
+             :is-relayed (some? (:grant device)))))
+
 (defn list-devices
-  "Every registered device, tokens MASKED — safe for an HTTP response."
+  "Every registered device, secrets MASKED — safe for an HTTP response."
   []
   (->> (vals (ensure-loaded!))
        (sort-by #(- (long (:last-seen % 0))))
-       (mapv (fn [d]
-               (-> d
-                   (dissoc :token)
-                   (assoc :token_preview (mask (:token d))))))))
+       (mapv public-device)))
 
 (defn device-count ^long [] (count (ensure-loaded!)))
 
-(defn register-device!
-  "Idempotently register (or refresh) one device token. Returns the stored
-   device, or nil when the token is unusable."
-  [{:keys [token platform environment client client-version label bundle-id]}]
+(defn- not-blank
+  [s]
   (let
-    [token (some-> token
-                   str
-                   str/trim)]
-    (when-not (str/blank? token)
-      (let
-        [now (System/currentTimeMillis)
-         existing (get (ensure-loaded!) token)
-         device (merge {:registered-at now}
-                       existing
-                       {:token token
-                        :platform (or platform "ios")
-                        :environment (if (= "sandbox" environment) "sandbox" "production")
-                        :client (or client "vis-companion")
-                        :client-version client-version
-                        :label label
-                        :bundle-id bundle-id
-                        :last-seen now})]
+    [v (some-> s
+               str
+               str/trim)]
+    (when-not (str/blank? v) v)))
 
-        (swap! devices #(prune (assoc (or % {}) token device)))
+(defn register-device!
+  "Idempotently register (or refresh) one device. A device identifies itself
+   either by a raw APNs/FCM token this gateway pushes to directly, or by a
+   relay GRANT (`gateway.relay`) that lets it be woken WITHOUT this gateway
+   ever learning its token. Returns the stored device, or nil when neither is
+   usable."
+  [{:keys [token grant platform environment client client-version label bundle-id]}]
+  (let
+    [token
+     (not-blank token)
+
+     grant
+     (not-blank grant)
+
+     id
+     (or token grant)]
+
+    (when id
+      (let
+        [now
+         (System/currentTimeMillis)
+
+         existing
+         (get (ensure-loaded!) id)
+
+         device
+         (merge {:registered-at now}
+                existing
+                {:id id
+                 :token token
+                 :grant grant
+                 :platform (or platform "ios")
+                 :environment (if (= "sandbox" environment) "sandbox" "production")
+                 :client (or client "vis-companion")
+                 :client-version client-version
+                 :label label
+                 :bundle-id bundle-id
+                 :last-seen now})]
+
+        (swap! devices #(prune (assoc (or % {}) id device)))
         (write-devices! @devices)
         (tel/log! {:level :info
                    :id ::device-registered
-                   :data
-                   {:token (mask token) :platform (:platform device) :env (:environment device)}})
+                   :data {:token (mask id)
+                          :platform (:platform device)
+                          :env (:environment device)
+                          :is-relayed (some? grant)}})
         device))))
 
 (defn unregister-device!
@@ -463,11 +497,13 @@
            data)))
 
 (defn send-to-device!
-  "Deliver one alert to one registered device. Retries once against the other
-   APNs environment (a TestFlight build registered as `sandbox`, or the
-   reverse, is the single most common misconfiguration) and evicts the device
-   when Apple says the token is dead. Returns `{:is-delivered bool :status
-   :reason}`."
+  "Deliver one alert to one registered device. A device that handed us a relay
+   grant is delivered through the relay — it holds the signing key so this
+   gateway does not have to — and everything else goes straight to APNs/FCM
+   with this gateway's own credentials. Retries once against the other APNs
+   environment (a TestFlight build registered as `sandbox`, or the reverse, is
+   the single most common misconfiguration) and forgets the device when the
+   provider says it is gone. Returns `{:is-delivered bool :status :reason}`."
   [device notification]
   (let
     [platform
@@ -476,46 +512,58 @@
      token
      (:token device)
 
-     result
-     (cond (= "android" platform) (let [r (fcm/send! token notification)]
-                                    (when (fcm/dead-token? r) (unregister-device! token))
-                                    r)
-           ;; Anything else (a browser, some future platform) is stored so the app
-           ;; can see itself registered, but never handed to a provider.
-           (not (contains? #{"ios" "ipados"} platform)) {:status 0 :reason "unsupported-platform"}
-           :else (let [cfg (config)]
-                   (if-not (:is-configured cfg)
-                     {:status 0 :reason "not-configured"}
-                     (let
-                       [payload (alert-payload notification)
-                        env (or (:environment device) (:default-environment cfg))
-                        attempt (post-apns cfg env token payload notification)
-                        other (when (contains? #{"BadDeviceToken" "BadEnvironmentKeyInToken"}
-                                               (:reason attempt))
-                                (post-apns cfg
-                                           (if (= "sandbox" env) "production" "sandbox")
-                                           token
-                                           payload
-                                           notification))
-                        result (or (when (= 200 (:status other)) other) other attempt)]
+     grant
+     (:grant device)
 
-                       (when (and other (= 200 (:status other)))
-                         (swap! devices assoc-in
-                           [token :environment]
-                           (if (= "sandbox" env) "production" "sandbox"))
-                         (write-devices! @devices))
-                       (when (contains? #{"BadDeviceToken" "Unregistered" "DeviceTokenNotForTopic"}
-                                        (:reason result))
-                         (unregister-device! token))
-                       result))))]
+     id
+     (or (:id device) token grant)
+
+     result
+     (cond
+       ;; A grant wins over any local credential: it is the only path that also
+       ;; works when this gateway is not the one that signed the app.
+       (and grant (relay/configured?)) (let [r (relay/send! grant notification)]
+                                         (when (relay/dead-grant? r) (unregister-device! id))
+                                         r)
+       (str/blank? (str token)) {:status 0 :reason "relay-not-configured"}
+       (= "android" platform) (let [r (fcm/send! token notification)]
+                                (when (fcm/dead-token? r) (unregister-device! id))
+                                r)
+       ;; Anything else (a browser, some future platform) is stored so the app
+       ;; can see itself registered, but never handed to a provider.
+       (not (contains? #{"ios" "ipados"} platform)) {:status 0 :reason "unsupported-platform"}
+       :else (let [cfg (config)]
+               (if-not (:is-configured cfg)
+                 {:status 0 :reason "not-configured"}
+                 (let
+                   [payload (alert-payload notification)
+                    env (or (:environment device) (:default-environment cfg))
+                    attempt (post-apns cfg env token payload notification)
+                    other (when (contains? #{"BadDeviceToken" "BadEnvironmentKeyInToken"}
+                                           (:reason attempt))
+                            (post-apns cfg
+                                       (if (= "sandbox" env) "production" "sandbox")
+                                       token
+                                       payload
+                                       notification))
+                    result (or (when (= 200 (:status other)) other) other attempt)]
+
+                   (when (and other (= 200 (:status other)))
+                     (swap! devices assoc-in
+                       [id :environment]
+                       (if (= "sandbox" env) "production" "sandbox"))
+                     (write-devices! @devices))
+                   (when (contains? #{"BadDeviceToken" "Unregistered" "DeviceTokenNotForTopic"}
+                                    (:reason result))
+                     (unregister-device! id))
+                   result))))]
 
     (when (not= 200 (:status result))
-      (tel/log! {:level :warn
-                 :id ::push-failed
-                 :data {:token (mask token)
-                        :platform platform
-                        :status (:status result)
-                        :reason (:reason result)}}))
+      (tel/log!
+        {:level :warn
+         :id ::push-failed
+         :data
+         {:token (mask id) :platform platform :status (:status result) :reason (:reason result)}}))
     (assoc result :is-delivered (= 200 (:status result)))))
 
 (defn broadcast!
@@ -685,11 +733,15 @@
      (config)
 
      f
-     (fcm/config)]
+     (fcm/config)
 
-    {:is-available (or (:is-configured cfg) (:is-configured f))
+     r
+     (relay/status)]
+
+    {:is-available (or (:is-configured cfg) (:is-configured f) (:is-available r))
      :provider (cond (and (:is-configured cfg) (:is-configured f)) "apns+fcm"
                      (:is-configured f) "fcm"
+                     (and (:is-available r) (not (:is-configured cfg))) "relay"
                      :else "apns")
      :environment (:default-environment cfg)
      :topic (:topic cfg)
@@ -703,4 +755,5 @@
            :project-id (:project-id f)
            :source (:source f)
            :missing (:missing f)}
+     :relay r
      :devices (device-count)}))

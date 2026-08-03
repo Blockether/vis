@@ -268,6 +268,55 @@ Push is optional. With no credentials the gateway still registers devices,
 reports `features.push` as unavailable, and simply never sends; sessions,
 streaming, and drafts are unaffected.
 
+### Relayed push (a gateway with no Apple or Google key)
+
+The way around the wall above is to hand the gateway a **capability** instead of a
+credential. The signing key stays on a relay the app's publisher runs; the device
+asks that relay for an opaque **grant** and gives the grant to the gateway.
+
+```
+app     -> POST   /v1/grants        {device_token}   => a grant
+app     -> hands the grant to this gateway on "notify this device"
+gateway -> POST   /v1/push          Bearer <grant>   => the relay signs and sends
+app     -> DELETE /v1/grants/<grant>                 => revoked, alone
+```
+
+Point a gateway at a relay with either of:
+
+```bash
+export VIS_PUSH_RELAY_URL=https://push.example.com
+echo '{:url "https://push.example.com"}' > ~/.vis/relay.edn
+```
+
+Then register the device with a `grant` instead of a `token`:
+
+```bash
+curl -sS -X POST "$GATEWAY/v1/devices" \
+  -H "x-vis-protocol: 2" -H "authorization: Bearer $VIS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"grant":"…","platform":"ios","label":"iPhone"}'
+```
+
+What that changes, and why it is worth an extra hop:
+
+- this gateway holds **no `.p8` and no service-account JSON** — nothing whose leak
+  can only be repaired by breaking push for every other gateway;
+- this gateway **never learns the raw device token**, so a gateway you do not trust
+  cannot fingerprint the device it notifies;
+- **revocation is per grant**: deleting one row mutes one gateway, alone;
+- the relay learns *when* a push happened, never *what* — the alert body can be
+  encrypted app-side, so the promise above still holds.
+
+A relay answering `404` (unknown grant) or `410` (the provider says the device is
+gone) makes the gateway forget the device on the spot. Direct credentials and a
+relay can coexist: a device registered with a `token` uses the credentials below,
+a device registered with a `grant` uses the relay. `GET /v1/devices` reports which
+under `push.relay`.
+
+The relay itself is in this repo — `apps/vis-companion-relay`, a Cloudflare Worker
+plus D1 that runs on the free plan. Its README covers deploying, quotas and the
+failure verdicts.
+
 ### Gateway side, iOS (APNs credentials)
 
 Push is **off until the gateway holds an APNs key**. On macOS the key can live in

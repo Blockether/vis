@@ -1,0 +1,35 @@
+{
+  // Push relay for the vis companion. `wrangler deploy` needs exactly one D1
+  // database and the provider secrets below; nothing else.
+  //
+  //   wrangler d1 create vis-companion-relay      # paste the id into database_id
+  //   npm run db:apply                            # create the tables
+  //   wrangler secret put APNS_KEY_P8             # the .p8 PEM, whole file
+  //   wrangler secret put FCM_SERVICE_ACCOUNT     # the service-account JSON
+  //   npm run deploy
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vis-companion-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vis-companion-relay",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+    }
+  ],
+  // Public configuration only. Key material is a secret, never a var:
+  //   wrangler secret put APNS_KEY_P8 / FCM_SERVICE_ACCOUNT
+  "vars": {
+    "APNS_KEY_ID": "",
+    "APNS_TEAM_ID": "",
+    "APNS_TOPIC": "",
+    "APNS_DEFAULT_ENV": "production",
+    "PUSH_RATE_LIMIT": "120",
+    "PUSH_RATE_WINDOW_MS": "3600000",
+    "GRANT_RATE_LIMIT": "30",
+    "MAX_GRANTS_PER_DEVICE": "10"
+  }
+}
