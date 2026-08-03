@@ -6,7 +6,10 @@
    asserted against a Lanterna virtual terminal back-buffer, the same
    harness `dialogs-test` uses."
   (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.human-input :as hi]
+            [com.blockether.vis.ext.channel-tui.screen :as screen]
+            [com.blockether.vis.ext.channel-tui.state :as state]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType]
@@ -319,3 +322,74 @@
                     (hi/paint! g 80 30 form)]
 
                    (expect (str/includes? (screen-text screen) "User is required")))))
+
+(defn- stroke
+  "A printable KeyStroke, exactly as Lanterna delivers it."
+  [c]
+  (KeyStroke. (Character/valueOf ^Character c) false false))
+
+(defdescribe
+  state-wiring-test
+  (it "queues a second request and shows it when the first one closes"
+      (reset! state/app-db {:render-version 0})
+      (state/dispatch [:human-input-open (hi/init-form (request))])
+      (state/dispatch [:human-input-open (hi/init-form (assoc (request) :id "req-2"))])
+      ;; Only ONE dialog is ever on screen; the rest wait their turn.
+      (expect (= "req-1" (get-in @state/app-db [:human-input :request :id])))
+      (expect (= ["req-2"] (mapv #(get-in % [:request :id]) (:human-input-queue @state/app-db))))
+      (state/dispatch [:human-input-close "req-1"])
+      (expect (= "req-2" (get-in @state/app-db [:human-input :request :id])))
+      (expect (empty? (:human-input-queue @state/app-db)))
+      (state/dispatch [:human-input-close "req-2"])
+      (expect (nil? (:human-input @state/app-db))))
+  (it "drops a queued request that settles before it is ever shown"
+      ;; A timeout or a sibling channel can answer a QUEUED request. Closing it
+      ;; must not promote it onto the screen, and must not disturb the visible one.
+      (reset! state/app-db {:render-version 0})
+      (state/dispatch [:human-input-open (hi/init-form (request))])
+      (state/dispatch [:human-input-open (hi/init-form (assoc (request) :id "req-2"))])
+      (state/dispatch [:human-input-close "req-2"])
+      (expect (= "req-1" (get-in @state/app-db [:human-input :request :id])))
+      (expect (empty? (:human-input-queue @state/app-db))))
+  (it "opens and closes the dialog straight from channel events"
+      (reset! state/app-db {:render-version 0})
+      (#'screen/handle-channel-event! {:op :human-input/request :request (request)})
+      (expect (= "req-1" (get-in @state/app-db [:human-input :request :id])))
+      ;; An open dialog owns the screen: render fast paths off, cursor is ours.
+      (expect (true? (#'screen/overlay-locked? @state/app-db)))
+      (#'screen/handle-channel-event! {:op :human-input/close :request-id "req-1"})
+      (expect (nil? (:human-input @state/app-db)))
+      (expect (false? (#'screen/overlay-locked? @state/app-db))))
+  (it "submits the typed values and closes once the engine accepts them"
+      (let [submitted (atom nil)]
+        (with-redefs
+          [vis/submit-human-input! (fn [id values]
+                                     (reset! submitted [id values])
+                                     {:is-accepted true})]
+          (reset! state/app-db {:render-version 0})
+          (state/dispatch [:human-input-open (hi/init-form (request))])
+          (doseq [key [(stroke \b) (stroke \o) (KeyStroke. KeyType/Enter)]]
+            (#'screen/human-input-key! @state/app-db key))
+          (expect (= "req-1" (first @submitted)))
+          (expect (= "bo" (get-in @submitted [1 "user"])))
+          (expect (nil? (:human-input @state/app-db))))))
+  (it "keeps the dialog open and shows the engine's errors on a rejected answer"
+      (with-redefs
+        [vis/submit-human-input! (fn [_ _]
+                                   {:is-accepted false :errors {"pass" "Password is required"}})]
+        (reset! state/app-db {:render-version 0})
+        (state/dispatch [:human-input-open (hi/init-form (request))])
+        (#'screen/human-input-key! @state/app-db (KeyStroke. KeyType/Enter))
+        (expect (= "req-1" (get-in @state/app-db [:human-input :request :id])))
+        (expect (= {"pass" "Password is required"} (get-in @state/app-db [:human-input :errors])))))
+  (it "cancels the pending request on Escape"
+      (let [cancelled (atom nil)]
+        (with-redefs
+          [vis/cancel-human-input! (fn [id]
+                                     (reset! cancelled id)
+                                     true)]
+          (reset! state/app-db {:render-version 0})
+          (state/dispatch [:human-input-open (hi/init-form (request))])
+          (#'screen/human-input-key! @state/app-db (KeyStroke. KeyType/Escape))
+          (expect (= "req-1" @cancelled))
+          (expect (nil? (:human-input @state/app-db)))))))

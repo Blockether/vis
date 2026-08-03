@@ -8,6 +8,7 @@
             [com.blockether.vis.ext.channel-tui.file-suggest :as file-suggest]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.header :as header]
+            [com.blockether.vis.ext.channel-tui.human-input :as hi]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.mcp :as mcp]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
@@ -526,7 +527,48 @@
     :notify
     (vis/notify! (or text "") :level (or level :info) :ttl-ms (or ttl-ms copy-success-ttl-ms))
 
+    ;; A pending human-input request owns the whole keyboard until it is
+    ;; answered: the form is built HERE (screen.clj may require the dialog
+    ;; ns, state.clj may not) and handed to state as a ready-made value.
+    :human-input/request
+    (state/dispatch [:human-input-open (hi/init-form (:request event))])
+
+    ;; Close arrives for EVERY settle — including a timeout or another
+    ;; channel answering first — so the dialog can never outlive its request.
+    :human-input/close
+    (state/dispatch [:human-input-close (:request-id event)])
+
     nil))
+
+(defn- human-input-key!
+  "Feed one keystroke to the open human-input dialog and act on its verdict.
+
+   While a request is open this is the ONLY consumer of keys, so nothing
+   leaks into the chat editor. Submitting round-trips through
+   `vis/submit-human-input!`, which re-validates: a rejected answer keeps
+   the dialog open with per-field errors, an accepted one closes it and
+   releases the waiting extension."
+  [db ^KeyStroke key]
+  (let
+    [open-form (:human-input db)
+
+     {:keys [form action]}
+     (hi/handle-event open-form (hi/key->event key))
+
+     request-id (hi/request-id form)]
+
+    (case action
+      :submit
+      (let [outcome (vis/submit-human-input! request-id (hi/submit-values form))]
+        (if (:is-accepted outcome)
+          (state/dispatch [:human-input-close request-id])
+          (state/dispatch [:human-input-form (hi/set-errors form (:errors outcome))])))
+
+      :cancel
+      (do (vis/cancel-human-input! request-id)
+          (state/dispatch [:human-input-close request-id]))
+
+      (state/dispatch [:human-input-form form]))))
 
 (defn- slash-spec->menu-command
   "Adapt a declarative slash spec into the legacy menu-command shape
@@ -1852,12 +1894,13 @@
     (min (long input-max-lines) (max (long input-min-lines) n))))
 
 (defn- overlay-locked?
-  "True when an F1 help / F2 context modal card owns the whole screen.
-   While locked, the cheap render fast-paths are disabled and the cursor
-   is hidden — the card is the only interactive surface, but the chrome
-   underneath stays painted so the input is visible behind the overlay."
+  "True when an F1 help / F2 context modal card or a human-input dialog
+   owns the whole screen. While locked, the cheap render fast-paths are
+   disabled and the input cursor is hidden — the card is the only
+   interactive surface, but the chrome underneath stays painted so the
+   input is visible behind the overlay."
   [db]
-  (boolean (or (:help-open? db) (:tasks-open? db))))
+  (boolean (or (:help-open? db) (:tasks-open? db) (:human-input db))))
 
 (defn- draw-bottom-chrome!
   "Paint the bottom screen chrome — input box, echo-area row, the two
@@ -2245,6 +2288,12 @@
         (let [help-geom (components/help-overlay! g cols rows (:help-scroll db))]
           (when (not= (:max-scroll help-geom) (:help-scroll-max db))
             (state/dispatch [:set-help-scroll-max (:max-scroll help-geom)]))))
+      ;; A human-input dialog paints on top of even the help overlay and is
+      ;; the only surface allowed to own the text cursor while it is open.
+      (when-let [human-form (:human-input db)]
+        (if-let [pos (hi/paint! g cols rows human-form)]
+          (.setCursorPosition screen ^TerminalPosition pos)
+          (.setCursorPosition screen nil)))
       (cr/commit-frame!)
       ;; Vim-style jump-label overlay for disclosures (C-x t). Painted AFTER
       ;; the commit so `cr/current` holds this frame's fresh toggle regions and
@@ -5603,6 +5652,12 @@
 
                  (cond
                    (:shutdown? db) nil
+
+                   ;; An open human-input dialog swallows the keyboard: every
+                   ;; stroke belongs to the form until it is answered.
+                   (and (some? key) (:human-input db))
+                   (do (human-input-key! db key) (recur))
+
                    (nil? key)
                    (do (let
                          [old-mom (long @scroll-momentum)

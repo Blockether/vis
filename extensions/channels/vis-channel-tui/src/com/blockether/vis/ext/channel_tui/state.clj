@@ -2592,18 +2592,14 @@
 
 (reg-event-db :human-input-close
               (fn [db [_ request-id]]
-                (if (or (nil? request-id)
-                        (= request-id (get-in db [:human-input :request :id])))
-                  (let
-                    [queue (vec (:human-input-queue db))]
-
+                (if (or (nil? request-id) (= request-id (get-in db [:human-input :request :id])))
+                  (let [queue (vec (:human-input-queue db))]
                     (assoc db
-                           :human-input (first queue)
-                           :human-input-queue (vec (rest queue))))
+                      :human-input (first queue)
+                      :human-input-queue (vec (rest queue))))
                   (assoc db
-                         :human-input-queue
-                         (vec (remove #(= request-id (get-in % [:request :id]))
-                                      (:human-input-queue db)))))))
+                    :human-input-queue (vec (remove #(= request-id (get-in % [:request :id]))
+                                              (:human-input-queue db)))))))
 
 (defn- drop-pending-turn-messages
   "Remove the transient user + assistant placeholder pair created by
