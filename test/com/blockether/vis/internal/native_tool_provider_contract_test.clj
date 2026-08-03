@@ -54,10 +54,17 @@
   [style body]
   (if (= :gemini style) (:toolConfig body) (:tool_choice body)))
 
-(defn- contains-nested-one-of?
+(defn- nested-union-keys
+  "Union keywords used anywhere BELOW a schema root. Nested unions are allowed;
+   `oneOf` is not: no provider's strict-tool subset accepts it (Anthropic answers
+   `Schema type 'oneOf' is not supported`), so `wire-schema` rewrites every one
+   into the equivalent `anyOf`."
   [schema]
-  (boolean (some #(and (map? %) (contains? % :oneOf) (not (identical? % schema)))
-                 (tree-seq coll? seq schema))))
+  (into #{}
+        (comp (filter #(and (map? %) (not (identical? % schema))))
+              (mapcat #(select-keys % [:oneOf :anyOf :allOf]))
+              (map key))
+        (tree-seq coll? seq schema)))
 
 (defdescribe native-tool-provider-contract-test
              (it
@@ -78,7 +85,8 @@
                  (expect (contains? canonical "grep"))
                  (expect (every? #(= "object" (get-in % [:schema :type])) tools))
                  (expect (every? #(empty? (select-keys (:schema %) [:oneOf :anyOf :allOf])) tools))
-                 (expect (contains-nested-one-of? (get canonical "grep")))
+                 (expect (= #{:anyOf} (nested-union-keys (get canonical "grep"))))
+                 (expect (every? #(not (contains? (nested-union-keys (:schema %)) :oneOf)) tools))
                  (doseq [[style body] bodies]
                    (let
                      [wire-tools (provider-tools style body)

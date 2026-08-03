@@ -4839,7 +4839,10 @@
       (str fs-part " " net-part))))
 
 (defn- finalize-engine-native-tool
-  "Require and project the raw-result contract for one engine-owned native tool."
+  "Require and project the raw-result contract for one engine-owned native tool,
+   then put its schema through the SAME wire projection extension natives get
+   (`extension/advertise-tool`) so the engine surface carries identical
+   constraint prose and the same derived `:strict` opt-in."
   [{:keys [name description result] :as tool}]
   (when-not (and (string? description) (not (str/blank? description)))
     (throw (ex-info
@@ -4860,7 +4863,8 @@
                     {:type :loop/engine-native-result-has-label :name name})))
   (-> tool
       (assoc :description (str description "\n\nRaw result: " result))
-      (dissoc :result)))
+      (dissoc :result)
+      (extension/advertise-tool)))
 
 (defn- python-execution-tool
   "The engine-level `python_execution` tool schema. Preferred for batched,

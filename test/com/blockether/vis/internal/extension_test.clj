@@ -540,7 +540,7 @@
 (defdescribe
   wire-schema-constraints-test
   (it
-    "array bounds survive as real constraints; provider-unenforceable bounds become description prose"
+    "enforceable bounds survive; provider-unenforceable bounds become description prose"
     (let
       [sym
        (extension/symbol #'constrained-native-tool
@@ -558,6 +558,7 @@
                                                                  :properties {"path" {:type "string"
                                                                                       :minLength
                                                                                       1}}}}
+                                                "pair" {:type "array" :minItems 2 :maxItems 2}
                                                 "depth" {:type "integer" :minimum 1 :maximum 9}}
                                    :required ["edits"]}})
 
@@ -568,14 +569,81 @@
        edits
        (get-in schema [:properties "edits"])]
 
-      ;; `minItems`/`maxItems` are inside BOTH strict-tool subsets: they stay.
+      ;; `minItems 1` is the one array bound the strict subset enforces: it stays,
+      ;; and is what makes `"[{…}]"` unsamplable as a STRING.
       (expect (= 1 (:minItems edits)))
-      (expect (= 8 (:maxItems edits)))
-      (expect (= "Edit maps." (:description edits)))
+      ;; The live API rejects `maxItems` outright and every `minItems` past 0/1,
+      ;; so those are inlined instead of dropped.
+      (expect (nil? (:maxItems edits)))
+      (expect (= "Edit maps. {maxItems: 8}" (:description edits)))
+      (expect (= {:type "array" :description "{maxItems: 2, minItems: 2}"}
+                 (get-in schema [:properties "pair"])))
       ;; Outside the Anthropic subset ⇒ inlined into the node's own description,
       ;; never dropped, appended after an existing description.
       (expect (= {:type "string" :description "{minLength: 1}"}
                  (get-in edits [:items :properties "path"])))
       (expect (= {:type "integer" :description "{minimum: 1, maximum: 9}"}
                  (get-in schema [:properties "depth"])))
-      (expect (= ["edits"] (:required schema))))))
+      (expect (= ["edits"] (:required schema)))))
+  (it "rewrites oneOf unions to anyOf — no strict subset accepts oneOf"
+      (expect (= {:type "object"
+                  :properties {"x" {:anyOf [{:type "string"} {:type "integer"}]}}
+                  :additionalProperties false}
+                 (#'extension/wire-schema
+                  {:type "object"
+                   :properties {"x" {:oneOf [{:type "string"} {:type "integer"}]}}
+                   :additionalProperties false})))))
+
+(defdescribe
+  strict-samplable-schema-test
+  (it "a closed object schema is advertised with :strict true"
+      (let
+        [tool (extension/advertise-tool
+                {:name "patchy"
+                 :description "d"
+                 :schema {:type "object"
+                          :properties {"edits" {:type "array"
+                                                :minItems 1
+                                                :items {:type "object"
+                                                        :properties {"path" {:type "string"}}
+                                                        :required ["path"]
+                                                        :additionalProperties false}}}
+                          :required ["edits"]
+                          :additionalProperties false}})]
+        (expect (true? (:strict tool)))
+        (expect (= 1 (get-in tool [:schema :properties "edits" :minItems])))))
+  (it "a FOREIGN/free-form object payload is never advertised strict"
+      ;; `mcp__call`'s `args` is another server's schema; `struct_patch`'s edit
+      ;; maps are heterogeneous. An open object cannot be grammar-constrained, so
+      ;; the flag is simply absent instead of 400-ing the whole request.
+      (expect (nil? (:strict (extension/advertise-tool
+                               {:name "mcpish"
+                                :description "d"
+                                :schema {:type "object"
+                                         :properties {"server" {:type "string"}
+                                                      "args" {:type "object"
+                                                              :description "Foreign args."}}
+                                         :required ["server"]
+                                         :additionalProperties false}}))))
+      (expect (nil? (:strict (extension/advertise-tool {:name "editsish"
+                                                        :description "d"
+                                                        :schema {:type "object"
+                                                                 :properties
+                                                                 {"edits" {:type "array"
+                                                                           :items {:type "object"}}}
+                                                                 :required ["edits"]
+                                                                 :additionalProperties false}})))))
+  (it "an object that does not close itself is not strict-samplable"
+      (expect (false? (extension/strict-samplable-schema?
+                        {:type "object" :properties {"a" {:type "string"}} :required ["a"]})))
+      (expect (false? (extension/strict-samplable-schema?
+                        {:type "object"
+                         :properties {"a" {:type "object" :additionalProperties false}}
+                         :additionalProperties false})))
+      (expect (true? (extension/strict-samplable-schema?
+                       {:type "object"
+                        :properties {"a" {:anyOf [{:type "string"}
+                                                  {:type "object"
+                                                   :properties {"b" {:type "string"}}
+                                                   :additionalProperties false}]}}
+                        :additionalProperties false})))))

@@ -1052,28 +1052,45 @@
    inbound tool input against `:ext.symbol/schema`, so every tool still coerces
    and checks its OWN arguments.
 
-   `minItems`/`maxItems` and `additionalProperties` are deliberately ABSENT here:
-   both strict-tool subsets (Anthropic's supported-key list, OpenAI structured
-   outputs) accept them, so they travel as REAL constraints — with `strict` on,
-   `minItems` is what makes an array argument impossible to sample as a JSON
-   STRING."
-  [:minLength :maxLength :minimum :maximum :minProperties :maxProperties])
+   Measured against the live API (`strict: true`, sonnet 4.5), NOT guessed:
+   `maxItems` is rejected outright (`For 'array' type, property 'maxItems' is not
+   supported`) and `minItems` only takes 0 or 1 (`'minItems' values other than 0
+   or 1 are not supported`) — hence `wire-schema`'s special case, which keeps a
+   real `minItems 0/1` and proses every other array bound. A `minItems 1` on an
+   array argument is exactly what makes `\"[{…}]\"` unsamplable as a STRING."
+  [:minLength :maxLength :minimum :maximum :minProperties :maxProperties :maxItems])
+
+(defn- enforceable-min-items?
+  "True for the only `minItems` values the strict subset keeps as a real
+   constraint; every other bound becomes prose."
+  [x]
+  (or (= x 0) (= x 1)))
 
 (defn- schema-constraint-prose
   "Compact `{minLength: 1, minimum: 0}` for ONE schema node's prose-only
    constraints, or nil when it declares none."
   [m]
   (let
-    [pairs (keep (fn [k]
-                   (when-some [v (get m k)]
-                     (str (name k) ": " v)))
-                 wire-schema-prose-keys)]
+    [pairs
+     (keep (fn [k]
+             (when-some [v (get m k)]
+               (str (name k) ": " v)))
+           wire-schema-prose-keys)
+
+     pairs
+     (cond-> (vec pairs)
+       (and (contains? m :minItems) (not (enforceable-min-items? (:minItems m))))
+       (conj (str "minItems: " (:minItems m))))]
+
     (when (seq pairs) (str "{" (str/join ", " pairs) "}"))))
 
 (defn- wire-schema
   "Recursively rewrite a JSON-schema tree for the model-facing wire:
-   `wire-schema-prose-keys` move into the node's own `description`; every other
-   key, array bounds included, stays a real provider-enforceable constraint."
+   `wire-schema-prose-keys` (and an unenforceable `minItems`) move into the
+   node's own `description`; `oneOf` becomes `anyOf` — no provider strict subset
+   accepts `oneOf` (`Schema type 'oneOf' is not supported`) and every one accepts
+   `anyOf`, which for these disjoint unions means the same thing. What survives
+   is a real provider-enforceable constraint."
   [x]
   (cond (map? x) (let
                    [prose
@@ -1081,6 +1098,18 @@
 
                     base
                     (apply dissoc x wire-schema-prose-keys)
+
+                    base
+                    (cond-> base
+                      (not (enforceable-min-items? (:minItems base)))
+                      (dissoc :minItems))
+
+                    base
+                    (if-some [alts (:oneOf base)]
+                      (-> base
+                          (dissoc :oneOf)
+                          (assoc :anyOf alts))
+                      base)
 
                     base
                     (if prose
@@ -1097,19 +1126,65 @@
         (sequential? x) (mapv wire-schema x)
         :else x))
 
+(defn- strict-samplable-node?
+  "True when ONE wire-schema node can be sampled under provider grammar
+   constraints. The binding rule, measured live: every `object` node must close
+   itself with `additionalProperties false` and declare its properties (`For
+   'object' type, 'additionalProperties' must be explicitly set to false`). A
+   FREE-FORM object — `{:type \"object\"}` with no properties — is by definition
+   unconstrainable, so a tool carrying one can never be strict."
+  [node]
+  (or (not (map? node))
+      (and (if (= "object" (:type node))
+             (and (false? (:additionalProperties node)) (seq (:properties node)))
+             true)
+           (every? strict-samplable-node? (vals (:properties node)))
+           (every? strict-samplable-node? (vals (:$defs node)))
+           (let [items (:items node)]
+             (if (sequential? items)
+               (every? strict-samplable-node? items)
+               (strict-samplable-node? items)))
+           (every? strict-samplable-node? (concat (:anyOf node) (:allOf node))))))
+
+(defn strict-samplable-schema?
+  "True when a WIRE schema (post-`wire-schema`) is inside the provider's strict
+   subset, i.e. the model can be FORCED to sample arguments that match it. Only
+   such a tool is advertised with `:strict true`; anything else would 400 the
+   whole request, so the flag is derived, never hand-maintained.
+
+   The tools that fail are the ones whose payload is FOREIGN or dynamic — an MCP
+   server's own arguments, an editor's heterogeneous edit maps — where the schema
+   is deliberately open. Those stay unconstrained: the tool's own coercion and
+   validation is their gate."
+  [schema]
+  (and (map? schema) (= "object" (:type schema)) (strict-samplable-node? schema)))
+
+(defn advertise-tool
+  "Project ONE finalized tool def `{:name :description :schema}` onto the
+   model-facing wire: schema through `wire-schema`, plus `:strict true` when the
+   result is grammar-samplable. `:strict` is svar's per-tool opt-in to
+   grammar-constrained tool sampling (Anthropic `strict`, OpenAI/Codex
+   `strict`); a provider that has no such mode ignores it."
+  [tool]
+  (let [wire (wire-schema (:schema tool))]
+    (cond-> (assoc tool :schema wire)
+      (strict-samplable-schema? wire)
+      (assoc :strict true))))
+
 (defn native-tool-schemas
-  "The model-facing `:tools` surface: `{:name :description :schema}` for every
-   ACTIVE native tool, in extension/symbol order. Each description automatically
-   includes the symbol's mandatory raw-result contract. Schema constraints no
-   provider can enforce are inlined into their own `description` here."
+  "The model-facing `:tools` surface: `{:name :description :schema}` (plus
+   `:strict` where enforceable) for every ACTIVE native tool, in extension/symbol
+   order. Each description automatically includes the symbol's mandatory
+   raw-result contract. Schema constraints no provider can enforce are inlined
+   into their own `description` here."
   ([active-extensions] (native-tool-schemas active-extensions nil))
   ([active-extensions env]
    (->> (native-tools-for active-extensions env)
         (filter :active?)
         (mapv (fn [{:keys [name description result schema]}]
-                {:name name
-                 :description (str description "\n\nRaw result: " result)
-                 :schema (wire-schema schema)})))))
+                (advertise-tool {:name name
+                                 :description (str description "\n\nRaw result: " result)
+                                 :schema schema}))))))
 
 (defn native-tool-handlers
   "Map wire-name → `:handler` `(fn [env input] -> result)` for every ACTIVE native
