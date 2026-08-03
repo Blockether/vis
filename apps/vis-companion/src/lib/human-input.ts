@@ -187,9 +187,11 @@ function defaultValue(field: HumanInputField): HumanInputValue {
  * keystrokes.
  */
 export function initialHumanInputValues(request: HumanInputRequest): HumanInputValues {
-  const values: HumanInputValues = {};
-  for (const field of request.fields) values[field.id] = defaultValue(field);
-  return values;
+  // `Object.fromEntries` (not `values[id] = …`): a field id of `__proto__` is a
+  // plain string to the engine, but assigning it on an object literal hits the
+  // prototype setter and silently drops the field — the form could never be
+  // answered from the app while the TUI happily edits it.
+  return Object.fromEntries(request.fields.map((field) => [field.id, defaultValue(field)]));
 }
 
 /** A required field the operator has not answered yet. */

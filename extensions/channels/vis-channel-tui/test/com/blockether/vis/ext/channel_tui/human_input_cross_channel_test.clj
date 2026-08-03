@@ -229,3 +229,162 @@
                  (is (empty? (gw/pending sid)))
                  (is (nil? (:human-input @state/app-db)))
                  (finally (engine/cancel! from-tui "cleanup")))))))))
+
+(deftest a-second-parked-request-queues-behind-the-first-test
+  (with-surfaces!
+    (fn [seen]
+      (let
+        [sid
+         (str (random-uuid))
+
+         open-id
+         (str "open-" (random-uuid))
+
+         queued-id
+         (str "queued-" (random-uuid))
+
+         open-answer
+         (ask! sid open-id [{:id "user" :type "plaintext" :label "User" :is-required true}])
+
+         _
+         (is (await-true #(tui-open? open-id)))
+
+         queued-answer
+         (ask! sid queued-id [{:id "why" :type "plaintext" :label "Why" :is-required true}])]
+
+        (try (testing "the terminal shows one form at a time, the app is offered both"
+               (is (await-true #(= 1 (count (:human-input-queue @state/app-db)))))
+               (is (tui-open? open-id))
+               (is (await-true #(= [open-id queued-id] (mapv :id (gw/pending sid)))))
+               (is (= 1 (count (events-of seen "human_input.request" queued-id)))))
+             (testing "the app may answer the QUEUED one without disturbing the open dialog"
+               (is (:is-accepted (gw/submit! queued-id {"why" "because"})))
+               (is (true? (:is-submitted (deref queued-answer 2000 ::timeout))))
+               (is (await-true #(empty? (:human-input-queue @state/app-db))))
+               (is (tui-open? open-id))
+               (is (= [open-id] (mapv :id (gw/pending sid)))))
+             (testing "and the still-open one answers from the terminal as if nothing happened"
+               (press! (stroke \o) (stroke \k) (KeyStroke. KeyType/Enter))
+               (is (= "ok" (get-in (deref open-answer 2000 ::timeout) [:values "user"])))
+               (is (await-true #(nil? (:human-input @state/app-db))))
+               (is (empty? (gw/pending sid))))
+             (finally (engine/cancel! open-id "cleanup") (engine/cancel! queued-id "cleanup")))))))
+
+(deftest a-timeout-clears-the-form-from-both-surfaces-test
+  (with-surfaces!
+    (fn [seen]
+      (let
+        [sid
+         (str (random-uuid))
+
+         rid
+         (str "expired-" (random-uuid))
+
+         answer
+         (future (engine/request! {:id rid
+                                   :session-id sid
+                                   :title "Deploy?"
+                                   :timeout-ms 400
+                                   :fields [{:id "user" :type "plaintext" :label "User"}]}))]
+
+        (is (await-true #(tui-open? rid)))
+        (testing "nobody answered: the extension resumes and no surface keeps a dead form"
+          (is (= "timeout" (:reason (deref answer 3000 ::timeout))))
+          (is (await-true #(nil? (:human-input @state/app-db))))
+          (is (await-true #(seq (events-of seen "human_input.close" rid))))
+          (is (= ["timeout"]
+                 (mapv #(get (second %) "reason") (events-of seen "human_input.close" rid))))
+          (is (empty? (gw/pending sid)))
+          (is (nil? (gw/request-of sid rid))))))))
+
+(deftest both-surfaces-answering-at-once-settles-the-run-once-test
+  (with-surfaces!
+    (fn [seen]
+      (let
+        [sid
+         (str (random-uuid))
+
+         rid
+         (str "storm-" (random-uuid))
+
+         answer
+         (ask! sid rid [{:id "user" :type "plaintext" :label "User" :is-required true}])
+
+         _
+         (is (await-true #(and (tui-open? rid) (seq (gw/pending sid)))))
+
+         gate
+         (java.util.concurrent.CountDownLatch. 1)
+
+         ;; Six phones and a terminal answer the same form in the same instant.
+         racers
+         (doall (conj (vec (for [i (range 6)]
+                             (future (.await gate) (gw/submit! rid {"user" (str "app-" i)}))))
+                      (future (.await gate) (press! (KeyStroke. KeyType/Escape)))))
+
+         _
+         (.countDown gate)
+
+         _
+         (run! deref racers)
+
+         result
+         (deref answer 5000 ::timeout)]
+
+        (testing "the extension is released exactly once, by exactly one surface"
+          (is (not= ::timeout result))
+          (is (= rid (:request-id result)))
+          (is (contains? #{"submitted" "cancelled"} (:reason result))))
+        (testing "and both surfaces end with no form and no way to answer it again"
+          (is (await-true #(= 1 (count (events-of seen "human_input.close" rid)))))
+          (is (= 1 (count (events-of seen "human_input.request" rid))))
+          (is (await-true #(nil? (:human-input @state/app-db))))
+          (is (empty? (gw/pending sid)))
+          (is (= {:is-accepted false :reason "unknown"} (gw/submit! rid {"user" "late"})))
+          (is (false? (gw/cancel! rid))))))))
+
+(deftest a-request-that-forbids-cancelling-forbids-it-on-both-surfaces-test
+  (with-surfaces!
+    (fn [seen]
+      (let
+        [sid
+         (str (random-uuid))
+
+         rid
+         (str "must-answer-" (random-uuid))
+
+         answer
+         (future (engine/request!
+                   {:id rid
+                    :session-id sid
+                    :title "Deploy?"
+                    :is-cancellable false
+                    :timeout-ms 5000
+                    :fields [{:id "note" :type "plaintext" :label "Note" :is-required true}]}))]
+
+        (try (is (await-true #(tui-open? rid)))
+             (is (await-true #(seq (events-of seen "human_input.request" rid))))
+             (testing "both surfaces are told the escape hatch is closed"
+               (is (false? (:is-cancellable (gw/request-of sid rid))))
+               (is (false? (get-in (second (first (events-of seen "human_input.request" rid)))
+                                   ["request" "is_cancellable"])))
+               (is (false? (get-in @state/app-db [:human-input :request :is-cancellable]))))
+             (testing "Escape in the terminal does not dismiss it"
+               (press! (KeyStroke. KeyType/Escape))
+               (is (tui-open? rid))
+               (is (not (realized? answer)))
+               (is (empty? (events-of seen "human_input.close" rid))))
+             (testing "and the app is refused the same way"
+               (is (false? (gw/cancel! rid)))
+               (is (some? (gw/request-of sid rid)))
+               (is (not (realized? answer)))
+               (is (tui-open? rid)))
+             (testing "answering is the only way out, and it clears both surfaces"
+               (press! (stroke \o) (stroke \k) (KeyStroke. KeyType/Enter))
+               (is (= "ok" (get-in (deref answer 2000 ::timeout) [:values "note"])))
+               (is (await-true #(= 1 (count (events-of seen "human_input.close" rid)))))
+               (is (= "submitted"
+                      (get (second (first (events-of seen "human_input.close" rid))) "reason")))
+               (is (await-true #(nil? (:human-input @state/app-db))))
+               (is (empty? (gw/pending sid))))
+             (finally (engine/cancel-all! "cleanup") (future-cancel answer)))))))

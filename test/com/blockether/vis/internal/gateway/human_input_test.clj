@@ -346,3 +346,149 @@
         (let [m (match (str "/v1/sessions/" sid "/human-input/" encoded "/actions/submit"))]
           (is (= sid (str (get-in m [:path-params :sid]))))
           (is (= rid (get-in m [:path-params :request-id]))))))))
+
+(deftest a-hostile-body-cannot-park-or-settle-a-run-test
+  (gw-hi/install!)
+  (let
+    [sid
+     (str (random-uuid))
+
+     ;; An extension may name its own request, including characters the app has
+     ;; to `encodeURIComponent` before it can even build the URL.
+     rid
+     "req/one two"
+
+     answer
+     (future (hi/request! (spec :id rid
+                                :session-id sid
+                                :fields [{:id "note" :type "plaintext" :label "Note"}])))]
+
+    (try
+      (is (await-true #(some? (gw-hi/request-of sid rid))))
+      (testing "a malformed body is a 400 — never a 500, never a settled run"
+        (doseq [body [{:values "text"} {:values [1 2]} {:values 42} {:values nil} {}]]
+          (is (= 400
+                 (:status ((rv 'submit-human-input-handler)
+                            {:path-params {:sid sid :request-id rid} :body (body-stream body)})))))
+        (is (= 400
+               (:status ((rv 'submit-human-input-handler)
+                          {:path-params {:sid sid :request-id rid}}))))
+        (is (= 400
+               (:status ((rv 'submit-human-input-handler)
+                          {:path-params {:sid sid :request-id rid}
+                           :body (java.io.ByteArrayInputStream. (.getBytes "not json" "UTF-8"))}))))
+        (is (some? (gw-hi/request-of sid rid))))
+      (testing "a structured value is rejected, not stringified into the answer"
+        (let
+          [body (json-body ((rv 'submit-human-input-handler)
+                             {:path-params {:sid sid :request-id rid}
+                              :body (body-stream {:values {"note" {"a" 1}}})}))]
+          (is (false? (get body "is_accepted")))
+          (is (= "must be text" (get-in body ["errors" "note"])))
+          (is (some? (gw-hi/request-of sid rid)))))
+      (testing "the escaped id still routes, and the same handler answers it"
+        (let
+          [match ((requiring-resolve 'reitit.core/match-by-path)
+                   ((rv 'router) "token" [])
+                   (str "/v1/sessions/" sid "/human-input/req%2Fone%20two/actions/submit"))]
+          (is (= rid (get-in match [:path-params :request-id])))
+          (is (= @(rv 'submit-human-input-handler) (get-in match [:data :post :handler])))
+          (is (true? (get (json-body ((rv 'submit-human-input-handler)
+                                       {:path-params (:path-params match)
+                                        :body (body-stream {:values {"note" "typed"}})}))
+                          "is_accepted")))))
+      (is (= {:is-submitted true :reason "submitted" :request-id rid :values {"note" "typed"}}
+             (deref answer 2000 ::stuck)))
+      (finally (hi/cancel! rid)))))
+
+(deftest a-storm-of-answers-settles-a-parked-run-exactly-once-test
+  (gw-hi/install!)
+  (with-events
+    (fn [seen]
+      (let
+        [sid
+         (str (random-uuid))
+
+         rid
+         (str "storm-" (random-uuid))
+
+         answer
+         (future (hi/request! (spec :id rid
+                                    :session-id sid
+                                    :timeout-ms 10000
+                                    :fields [{:id "note" :type "plaintext" :is-required true}])))
+
+         _
+         (is (await-true #(some? (gw-hi/request-of sid rid))))
+
+         ;; Every surface fires at once: valid answers, blank ones, cancels.
+         gate
+         (java.util.concurrent.CountDownLatch. 1)
+
+         racers
+         (doall (concat (for [i (range 6)]
+                          (future (.await gate) [:submit (gw-hi/submit! rid {"note" (str "v" i)})]))
+                        (for [_ (range 3)]
+                          (future (.await gate) [:blank (gw-hi/submit! rid {"note" "   "})]))
+                        (for [_ (range 3)]
+                          (future (.await gate) [:cancel (gw-hi/cancel! rid)]))))
+
+         _
+         (.countDown gate)
+
+         results
+         (mapv deref racers)
+
+         winners
+         (filterv (fn [[kind outcome]]
+                    (if (= :cancel kind) (true? outcome) (true? (:is-accepted outcome))))
+           results)
+
+         final
+         (deref answer 5000 ::stuck)]
+
+        (testing "exactly one answer wins and the extension is released once"
+          (is (= 1 (count winners)))
+          (is (= rid (:request-id final)))
+          (is (= (if (= :cancel (ffirst winners)) "cancelled" "submitted") (:reason final))))
+        (testing "and every surface is told exactly once that the form is gone"
+          (is (await-true #(= 1 (count (events-of seen "human_input.close" rid)))))
+          (is (= 1 (count (events-of seen "human_input.request" rid))))
+          (is (empty? (gw-hi/pending sid)))
+          (is (nil? (gw-hi/request-of sid rid)))
+          (is (= {:is-accepted false :reason "unknown"} (gw-hi/submit! rid {"note" "late"})))
+          (is (= 404
+                 (:status ((rv 'submit-human-input-handler)
+                            {:path-params {:sid sid :request-id rid}
+                             :body (body-stream {:values {"note" "late"}})})))))))))
+
+(deftest a-request-that-refuses-cancellation-refuses-the-app-too-test
+  (gw-hi/install!)
+  (let
+    [sid
+     (str (random-uuid))
+
+     rid
+     (str "must-answer-" (random-uuid))
+
+     answer
+     (future (hi/request! (spec :id rid
+                                :session-id sid
+                                :is-cancellable false
+                                :fields [{:id "note" :type "plaintext" :is-required true}])))]
+
+    (try (is (await-true #(some? (gw-hi/request-of sid rid))))
+         (testing "the app is refused the escape hatch the TUI dialog also denies"
+           (let
+             [response ((rv 'cancel-human-input-handler) {:path-params {:sid sid :request-id rid}})]
+             (is (= 409 (:status response)))
+             (is (= "human-input-not-cancellable" (get-in (json-body response) ["error" "type"])))
+             (is (false? (:is-cancellable (gw-hi/request-of sid rid))))
+             (is (some? (gw-hi/request-of sid rid)))))
+         (testing "answering it is still the way out"
+           (is (true? (get (json-body ((rv 'submit-human-input-handler)
+                                        {:path-params {:sid sid :request-id rid}
+                                         :body (body-stream {:values {"note" "yes"}})}))
+                           "is_accepted")))
+           (is (true? (:is-submitted (deref answer 2000 ::stuck)))))
+         (finally (hi/cancel! rid)))))

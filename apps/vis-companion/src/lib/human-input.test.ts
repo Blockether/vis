@@ -113,6 +113,23 @@ describe('initialHumanInputValues', () => {
     });
     expect(request && initialHumanInputValues(request)).toEqual({ flag: false, many: ['a'] });
   });
+
+  it('keeps a field literally named __proto__ answerable', () => {
+    const request = humanInputRequestFromWire({
+      id: 'r',
+      title: 'T',
+      fields: [{ id: '__proto__', type: 'plaintext', is_required: true }],
+    }) as HumanInputRequest;
+    const values = initialHumanInputValues(request);
+    // `values[id] = …` on an object literal hits the prototype setter: the
+    // field silently vanishes, the submit button never enables and the POST
+    // omits the value the engine is waiting for.
+    expect(Object.prototype.hasOwnProperty.call(values, '__proto__')).toBe(true);
+    expect(isHumanInputAnswerable(request, values)).toBe(false);
+    const answered = { ...values, ['__proto__']: 'typed' };
+    expect(isHumanInputAnswerable(request, answered)).toBe(true);
+    expect(JSON.parse(JSON.stringify(answered))['__proto__']).toBe('typed');
+  });
 });
 
 describe('required fields', () => {

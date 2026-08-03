@@ -128,7 +128,18 @@
                                  {:title "t" :fields [{:id "a"}] :channel-id :app}))))
       (expect (= [:tui :app]
                  (:channel-ids (hi/normalize-request
-                                 {:title "t" :fields [{:id "a"}] :channel-ids [:tui :app]}))))))
+                                 {:title "t" :fields [{:id "a"}] :channel-ids [:tui :app]})))))
+  (it "keeps an explicit false — a false flag is a value, not a missing key"
+      ;; `:is-cancellable false` is how an extension says THIS ONE MUST BE
+      ;; ANSWERED. Dropping it defaulted the flag back to true and both surfaces
+      ;; offered the escape hatch anyway: the TUI painted its Esc hint, the app
+      ;; its Cancel button, and either could dismiss a request the extension had
+      ;; forbidden dismissing.
+      (expect (false? (:is-cancellable (hi/normalize-request
+                                         {:title "t" :fields [{:id "a"}] :is-cancellable false}))))
+      (expect (false? (:is-cancellable (hi/normalize-request {"title" "t"
+                                                              "fields" [{"id" "a"}]
+                                                              "is_cancellable" false}))))))
 
 (defdescribe
   coerce-values-test
@@ -160,6 +171,21 @@
 
         (expect (= "vis" (get-in outcome [:values "name"])))
         (expect (= "  line\n  two  " (get-in outcome [:values "body"])))))
+  (it "rejects a value no dialog could ever type"
+      ;; A JSON client (the companion app) can post an object or a list where a
+      ;; terminal can only type characters. Stringifying it would hand the
+      ;; extension a Clojure printing of the map and let the app submit an
+      ;; answer the TUI can never produce.
+      (let
+        [fields
+         (normalized-fields {:id "name"} {:id "body" :type "multiline"})
+
+         outcome
+         (hi/coerce-values fields {"name" {"a" 1} "body" ["x"]})]
+
+        (expect (false? (:is-accepted outcome)))
+        (expect (= {"name" "must be text" "body" "must be text"} (:errors outcome)))
+        (expect (= "42" (get-in (hi/coerce-values fields {"name" 42}) [:values "name"])))))
   (it "accepts one value or many for a multiselect and rejects unknown options"
       (let [fields (normalized-fields {:id "tags" :type "multiselect" :options ["a" "b"]})]
         (expect (= ["a"] (get-in (hi/coerce-values fields {"tags" "a"}) [:values "tags"])))
@@ -302,3 +328,38 @@
              (finally ((:detach! a)) ((:detach! b))))))
   (it "rejects an invalid spec before anything blocks"
       (expect (throws? clojure.lang.ExceptionInfo #(hi/request! {:title "t" :fields []})))))
+
+(defdescribe
+  non-cancellable-request-test
+  (it "refuses every operator cancel and still yields to shutdown"
+      ;; `:is-cancellable false` has to be enforced where BOTH surfaces meet —
+      ;; the engine — or the TUI and the app each have to remember it, and the
+      ;; one that forgets dismisses a request the extension declared mandatory.
+      (let
+        [rid
+         (str "must-answer-" (random-uuid))
+
+         answer
+         (future (hi/request! {:id rid
+                               :title "Deploy"
+                               :is-cancellable false
+                               :timeout-ms 3000
+                               :fields [{:id "note" :is-required true}]}))
+
+         parked?
+         (loop [attempts 200]
+           (cond (some? (hi/pending-request rid)) true
+                 (zero? attempts) false
+                 :else (do (Thread/sleep 5) (recur (dec attempts)))))]
+
+        (try (expect parked?)
+             (expect (false? (hi/cancel! rid)))
+             (expect (false? (hi/cancel! rid "operator")))
+             (expect (some? (hi/pending-request rid)))
+             (expect (false? (:is-cancellable (hi/pending-request rid))))
+             ;; Shutdown is not the operator: nothing is left to answer with, so
+             ;; the parked thread must be released anyway.
+             (expect (= 1 (hi/cancel-all! "shutdown")))
+             (expect (= {:is-submitted false :reason "shutdown" :request-id rid}
+                        (deref answer 2000 ::stuck)))
+             (finally (hi/cancel-all! "cleanup") (future-cancel answer))))))

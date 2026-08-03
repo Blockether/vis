@@ -109,12 +109,17 @@
 
 (defn- pick
   "First non-nil value among `ks`. Specs arrive either string-keyed (from the
-   Python/wire boundary) or kebab-keyword-keyed (from Clojure callers)."
+   Python/wire boundary) or kebab-keyword-keyed (from Clojure callers).
+
+   `false` is a VALUE, not a miss: `some` would treat it as one and fall through
+   to the default, which silently turned `:is-cancellable false` — an extension
+   demanding an answer — into a dismissable request on every surface."
   [m & ks]
-  (some (fn [k]
-          (let [v (get m k)]
-            (when (some? v) v)))
-        ks))
+  (reduce (fn [_ k]
+            (let [v (get m k)]
+              (if (some? v) (reduced v) nil)))
+          nil
+          ks))
 
 (defn- trimmed
   [value]
@@ -340,12 +345,21 @@
   [{:keys [type is-required max-length]} value]
   (let
     [text
-     (if (nil? value) "" (str value))
+     (cond (nil? value) ""
+           ;; A JSON client can post an object or a list where a dialog can only
+           ;; ever type characters. `str` would hand the extension a Clojure
+           ;; printing of it, so the app would submit something the TUI cannot —
+           ;; reject it instead, like any other malformed value.
+           (coll? value) ::invalid
+           :else (str value))
 
      text
-     (if (= :multiline type) text (str/trim text))]
+     (cond (= ::invalid text) text
+           (= :multiline type) text
+           :else (str/trim text))]
 
-    (cond (and is-required (str/blank? text)) [:error "is required"]
+    (cond (= ::invalid text) [:error "must be text"]
+          (and is-required (str/blank? text)) [:error "is required"]
           (and max-length (> (count text) (long max-length)))
           [:error (str "must be at most " max-length " characters")]
           (str/blank? text) [:ok (when (= :multiline type) (when-not (empty? text) text))]
@@ -510,20 +524,35 @@
         outcome))
     {:is-accepted false :reason "unknown"}))
 
+(defn- force-cancel!
+  "Settle `request-id` as cancelled no matter what the request declared. The
+   shutdown path: a detaching channel or a closing session must never leave a
+   thread parked, even on a request whose author forbade dismissal."
+  [request-id reason]
+  (some? (settle!
+           request-id
+           {:is-submitted false :reason (or (trimmed reason) "cancelled") :request-id request-id})))
+
 (defn cancel!
-  "Cancel pending request `request-id`. Returns true when it was pending."
+  "Cancel pending request `request-id` on the operator's behalf. Returns true
+   when it was pending AND dismissable.
+
+   A request declared `:is-cancellable false` refuses here, so EVERY surface is
+   refused alike — the TUI dialog, the companion app, any extension API. The
+   only ways out of such a request are an accepted answer, its timeout, and
+   [[cancel-all!]]."
   ([request-id] (cancel! request-id "cancelled"))
   ([request-id reason]
-   (some? (settle! request-id
-                   {:is-submitted false
-                    :reason (or (trimmed reason) "cancelled")
-                    :request-id request-id}))))
+   (if (false? (:is-cancellable (get @pending request-id)))
+     false
+     (force-cancel! request-id reason))))
 
 (defn cancel-all!
   "Cancel every pending request. Returns how many were released. Used when a
-   channel detaches or the session shuts down, so no thread stays parked."
+   channel detaches or the session shuts down, so no thread stays parked — this
+   one ignores `:is-cancellable`, because nothing is left to answer with."
   ([] (cancel-all! "cancelled"))
-  ([reason] (count (filterv #(cancel! % reason) (keys @pending)))))
+  ([reason] (count (filterv #(force-cancel! % reason) (keys @pending)))))
 
 (defn request!
   "Ask the operator for typed values and BLOCK until they answer.

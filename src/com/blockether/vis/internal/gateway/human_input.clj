@@ -61,7 +61,9 @@
   (human-input/submit! (str request-id) values))
 
 (defn cancel!
-  "Cancel `request-id`. Returns true when it was still pending."
+  "Cancel `request-id`. Returns true when it was still pending and dismissable:
+   the engine refuses a request declared `is_cancellable false`, so the app is
+   held to exactly the rule the TUI dialog paints."
   [request-id]
   (human-input/cancel! (str request-id) "cancelled"))
 
