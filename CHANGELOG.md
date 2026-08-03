@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- perf(drafts): bump com.blockether/rift to 0.0.10-8 — draft creation clones a
+  gitignore-aware tree, so generated output (e.g. a companion app's `ios/`
+  build) is pruned instead of copy-on-write cloned file by file. Forking this
+  repository drops from ~3.8s to ~0.7s; force-added paths and `.git` are still
+  cloned, so a fresh draft's `git status` matches its trunk
 - chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.38 — reference
   search runs as one native batch walk, no longer matches names written inside
   string literals or comments (rename included), and the shared native library
