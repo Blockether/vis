@@ -59,3 +59,10 @@ Use snake_case string IDs. Hydrate from merged config so `/reload` respects proj
 ## TUI rendering
 
 Render paint work in the `vis-channel-tui` REPL using Lanterna `DefaultVirtualTerminal` and inspect its back-buffer. Dialog chrome uses `dialogs/draw-dialog-chrome!` on flat `t/terminal-bg`, without tint or shadow.
+
+## Shipping verified work
+
+- A change that is lint-clean, formatted, and covered by its own passing tests is **ready to push**. Commit it and push it to `main` in the same session, without being asked again — finished features must never be left sitting in the working tree.
+- "Ready" is exactly: the smallest relevant `run_tests` namespaces pass, `lint_code` (clj-kondo + reflection) is clean, `format_code` has run, and the behavior is pinned by a test in the suite. Anything short of that stays uncommitted and is reported as unfinished.
+- One commit per feature, imperative subject, production code and its tests together; no scratch, notes, or report files. Never pass `--no-verify` to this repo's own commits — the hooks are the gate.
+- Push to `main` is the only automatic remote action. Tags, releases, store submissions, force pushes, and history rewrites still require an explicit request (see **Companion releases**).
