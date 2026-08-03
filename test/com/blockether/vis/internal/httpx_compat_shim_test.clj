@@ -86,6 +86,20 @@ _rq.request = _fake
                                 "r.headers.get('content-type') == 'application/json' "
                                 "and str(r.url) == 'http://svc/a' and r.url == 'http://svc/a' "
                                 "and repr(r) == '<Response [200]>'"))))))
+  ;; Scrapers resolve hrefs with `httpx.URL(...).join(...)`; the shim's URL was a
+  ;; bare string wrapper, so `join` raised AttributeError.
+  (it "URL resolves relative references and exposes scheme/host/port/path"
+      (with-python-context
+        (expect
+          (true?
+            (ev python-context
+                (str "import httpx\n"
+                     "u = httpx.URL('https://ex.com/a/b?q=1')\n"
+                     "str(u.join('../c')) == 'https://ex.com/c' "
+                     "and str(u.join('https://o.dev/z')) == 'https://o.dev/z' "
+                     "and (u.scheme, u.host, u.path, u.port) == ('https', 'ex.com', '/a/b', None) "
+                     "and str(u.copy_with(path='/z')) == 'https://ex.com/z?q=1' "
+                     "and len({u, httpx.URL(str(u))}) == 1"))))))
   (it "round-trips a JSON body on POST and reports 201"
       (with-python-context
         (expect (true? (ev python-context

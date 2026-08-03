@@ -528,6 +528,39 @@ await patch({'path': css})" "t1/i1")]
         (let [r (ep/run-python-block ctx "print(list(gen))" "t1/i2")]
           (expect (nil? (:error r)))
           (expect (= "[0, 1, 2]" (str/trim (str (:stdout r))))))))
+  ;; Same trap through a catch-all `__getattr__`: bs4's `Tag.__getattr__` answers
+  ;; ANY missing non-dunder attribute with `find(name)` -> None, so the INSTANCE
+  ;; probe `hasattr(v, "send")` was true and auto-settle handed the soup to the
+  ;; coroutine driver, where `soup.send(None)` died with "TypeError: 'NoneType'
+  ;; object is not callable" on EVERY top-level `soup = BeautifulSoup(...)`.
+  (it "a BeautifulSoup binding is not mistaken for an awaitable by the auto-settle"
+      (let
+        [ctx
+         (:python-context (ep/create-python-context {}))
+
+         r
+         (ep/run-python-block ctx
+                              (str "from bs4 import BeautifulSoup\n"
+                                   "soup = BeautifulSoup('<p>hi</p>', 'html.parser')\n"
+                                   "print(soup.find('p').get_text())")
+                              "t1/i1")]
+
+        (expect (nil? (:error r)))
+        (expect (= "hi" (str/trim (str (:stdout r)))))))
+  (it "an object whose __getattr__ answers everything is not driven as a coroutine"
+      (let
+        [ctx
+         (:python-context (ep/create-python-context {}))
+
+         r
+         (ep/run-python-block ctx
+                              (str "class Anything:\n"
+                                   "    def __getattr__(self, n):\n" "        return None\n"
+                                   "obj = Anything()\n" "print(type(obj).__name__, obj.send)")
+                              "t1/i1")]
+
+        (expect (nil? (:error r)))
+        (expect (= "Anything None" (str/trim (str (:stdout r)))))))
   ;; GraalPy compiles `await` inside a lambda into an UNCATCHABLE host fault (a
   ;; null-sourceRange NullPointerException), so `except SyntaxError` around
   ;; compile() never sees it. Reject it up front with CPython's own message.

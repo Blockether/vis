@@ -459,7 +459,7 @@ def __vis_awaitable__(v):
     # `await gather(...)` keep being driven by `__vis_drive__` exactly as before.
     if isinstance(v, (__vis_Call__, __vis_Gather__)):
         return v
-    if hasattr(v, "__await__"):
+    if __vis_is_awaitable__(v):
         return v
     return __vis_Already__(v)
 
@@ -757,6 +757,28 @@ def __vis_settle_gather__(v):
 __vis_gen_type__ = __import__("types").GeneratorType
 
 
+def __vis_is_awaitable__(v):
+    # Probe the TYPE, never the instance. An object with a catch-all
+    # `__getattr__` answers `hasattr(v, "send")` with a value that is not a
+    # method at all: bs4's `Tag.__getattr__` maps ANY missing non-dunder
+    # attribute to `self.find(name)`, so `soup.send` is None and the old
+    # instance probe dragged every top-level `soup = BeautifulSoup(html, ...)`
+    # into `__vis_drive__`, where `it.send(None)` died with
+    # "TypeError: 'NoneType' object is not callable".
+    # A real awaitable defines `__await__` on its class; a raw coroutine-like
+    # driven by hand needs BOTH `send` and `throw` (that pair excludes
+    # ordinary objects with an unrelated `.send`, e.g. sockets), and plain
+    # generators are lazy values, not awaitables.
+    t = type(v)
+    if hasattr(t, "__await__"):
+        return True
+    return (
+        hasattr(t, "send")
+        and hasattr(t, "throw")
+        and not isinstance(v, __vis_gen_type__)
+    )
+
+
 def __vis_settle__(v):
     if isinstance(v, __vis_Call__):
         # TOP-LEVEL tool result: re-type a list/str payload to the probeable
@@ -767,9 +789,7 @@ def __vis_settle__(v):
         return __vis_as_result__(__vis_pyify__(__vis_exec_call__(v)))
     if isinstance(v, __vis_Gather__):
         return __vis_settle_gather__(v)
-    if hasattr(v, "__await__") or (
-        hasattr(v, "send") and not isinstance(v, __vis_gen_type__)
-    ):
+    if __vis_is_awaitable__(v):
         return __vis_pyify__(__vis_drive__(v))
     return __vis_pyify__(v)
 
@@ -781,7 +801,7 @@ def __vis_settle_binding__(name):
 
 
 def __vis_drive__(coro):
-    it = coro.__await__() if hasattr(coro, "__await__") else coro
+    it = coro.__await__() if hasattr(type(coro), "__await__") else coro
     send = None
     while True:
         try:
@@ -1156,7 +1176,7 @@ class __vis_asyncio__:
 
     @staticmethod
     def iscoroutine(v):
-        return hasattr(v, "send") or hasattr(v, "__await__")
+        return __vis_is_awaitable__(v)
 
     @staticmethod
     def isfuture(v):

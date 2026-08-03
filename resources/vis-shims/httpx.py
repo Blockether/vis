@@ -48,6 +48,59 @@ def __vis_install_httpx__():
         def __init__(self, raw):
             self._raw = str(raw)
 
+        @property
+        def _parts(self):
+            from urllib.parse import urlsplit as _s
+
+            return _s(self._raw)
+
+        @property
+        def scheme(self):
+            return self._parts.scheme
+
+        @property
+        def host(self):
+            return self._parts.hostname or ""
+
+        @property
+        def port(self):
+            return self._parts.port
+
+        @property
+        def path(self):
+            return self._parts.path or "/"
+
+        def join(self, url):
+            # Resolve a relative reference against this URL, like httpx.URL.join
+            # — the call every scraper makes on hrefs pulled out of a page.
+            from urllib.parse import urljoin as _j
+
+            return URL(_j(self._raw, str(url)))
+
+        def copy_with(self, **kw):
+            p = self._parts
+            netloc = kw.pop("netloc", None)
+            if netloc is None:
+                host = kw.pop("host", p.hostname or "")
+                port = kw.pop("port", p.port)
+                netloc = host + (":" + str(port) if port else "")
+            else:
+                kw.pop("host", None)
+                kw.pop("port", None)
+            from urllib.parse import urlunsplit as _u
+
+            return URL(
+                _u(
+                    (
+                        kw.pop("scheme", p.scheme),
+                        netloc,
+                        kw.pop("path", p.path),
+                        kw.pop("query", p.query),
+                        kw.pop("fragment", p.fragment),
+                    )
+                )
+            )
+
         def __str__(self):
             return self._raw
 
@@ -56,6 +109,9 @@ def __vis_install_httpx__():
 
         def __eq__(self, other):
             return str(self) == str(other)
+
+        def __hash__(self):
+            return hash(self._raw)
 
     class HTTPError(Exception):
         pass
