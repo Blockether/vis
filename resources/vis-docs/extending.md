@@ -314,6 +314,11 @@ Field `type` is one of `plaintext`, `password`, `multiline`, `select`,
 `description`, `submit_label`, `cancel_label`, `is_cancellable`, and
 `timeout_ms` (default 5 minutes, capped at 1 hour).
 
+`is_required` is enforced, not decorated: every dialog marks the field
+**REQUIRED** next to its label and will not submit while it is blank, and the
+engine rejects such an answer even when it arrives straight over HTTP. A required
+`checkbox` has to be ticked — `false` is not an answer to it.
+
 `vis.ask` never raises for a refusal: cancelling or timing out returns a falsey
 `Answer` whose `reason` says which (`cancelled`, `timeout`, or whatever reason
 the host cancelled with). `answer.values` always carries every field, defaults

@@ -258,8 +258,8 @@
 
                    (expect (str/includes? text "Deploy"))
                    (expect (str/includes? text "Pick the target"))
-                   (expect (str/includes? text "User *"))
-                   (expect (str/includes? text "Password *"))
+                   (expect (str/includes? text "User  REQUIRED"))
+                   (expect (str/includes? text "Password  REQUIRED"))
                    (expect (str/includes? text "Dev"))))
              (it "places the terminal cursor inside the focused text field"
                  (let
@@ -502,6 +502,32 @@
   "Three names, three jobs, drawn in that order: the bold LABEL says what the
    field is, the ITALIC description explains it, and only then comes the input.
    Prose that arrives after the box you already filled is prose nobody reads."
+  (it "says REQUIRED beside the label of every field the engine will refuse"
+      ;; The engine rejects a submission that leaves one of these blank, so the
+      ;; dialog names them BEFORE the operator hits enter — in full, not as a `*`
+      ;; nobody reads.
+      (let
+        [rows
+         (hi/form-rows (hi/init-form (request)))
+
+         label-of
+         (fn [needle]
+           (some #(when (and (= :label (:kind %)) (str/starts-with? (str (:text %)) needle))
+                    (:text %))
+                 rows))
+
+         checkbox-rows
+         (hi/form-rows (hi/init-form
+                         {:id "r"
+                          :title "T"
+                          :fields
+                          [{:id "ok" :type :checkbox :label "Confirm" :is-required true}]}))]
+
+        (expect (= "User  REQUIRED" (label-of "User")))
+        (expect (= "Password  REQUIRED" (label-of "Password")))
+        (expect (= "Env" (label-of "Env")))
+        ;; A checkbox carries its own label, so the marker rides the box itself.
+        (expect (= "Confirm  REQUIRED" (:text (first checkbox-rows))))))
   (it "puts a field's description between its label and its input"
       (let
         [rows

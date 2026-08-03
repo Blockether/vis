@@ -421,12 +421,19 @@
               :else [:ok picked])))))
 
 (defn- coerce-checkbox
-  [_field value]
-  (cond (nil? value) [:ok false]
-        (boolean? value) [:ok value]
-        (contains? #{"true" "1"} (str/lower-case (str value))) [:ok true]
-        (contains? #{"false" "0"} (str/lower-case (str value))) [:ok false]
-        :else [:error "must be true or false"]))
+  [{:keys [is-required]} value]
+  (let
+    [[status result] (cond (nil? value) [:ok false]
+                           (boolean? value) [:ok value]
+                           (contains? #{"true" "1"} (str/lower-case (str value))) [:ok true]
+                           (contains? #{"false" "0"} (str/lower-case (str value))) [:ok false]
+                           :else [:error "must be true or false"])]
+    ;; A required checkbox is a consent box — "I agree", "yes, delete it". Leaving
+    ;; it unticked is not an answer, so it is refused exactly like a blank
+    ;; required text field. Without this the surfaces disagree: the app greys its
+    ;; submit button out for an unticked required box while the engine happily
+    ;; accepted `false` from anything that posted JSON.
+    (if (and (= :ok status) is-required (not result)) [:error "must be checked"] [status result])))
 
 (defn coerce-value
   "Coerce and validate one raw `value` against normalized `field`. Returns

@@ -7,7 +7,6 @@ import {
   applyHumanInputEvent,
   initialHumanInputValues,
   isHumanInputAnswerable,
-  isHumanInputBlank,
   isHumanInputEvent,
   toggleHumanInputOption,
   type HumanInputField,
@@ -99,7 +98,10 @@ export function HumanInputPrompt({
   }, []);
 
   const submit = useCallback(() => {
-    if (!request || busy) return;
+    // The engine REFUSES an answer that leaves a required field blank. Checking
+    // it here too means no path — the button, a stray Enter, a future shortcut —
+    // can send one and bounce the operator off a rejection banner.
+    if (!request || busy || !isHumanInputAnswerable(request, values)) return;
     setBusy(true);
     setError(null);
     client
@@ -201,7 +203,8 @@ function FieldShell({
     <div className="space-y-1">
       <span className="block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
         {field.label}
-        {field.is_required ? ' *' : ''}
+        {/* Said in full, not as a `*`: this is the field that will refuse the form. */}
+        {field.is_required && <span className="ml-1.5 text-err">REQUIRED</span>}
       </span>
       {field.description && (
         <p className="font-mono text-chip italic text-dialog-hint">{field.description}</p>
@@ -230,7 +233,6 @@ function HumanInputFieldRow({
   disabled: boolean;
   onChange: (id: string, value: HumanInputValues[string]) => void;
 }) {
-  const missing = error ?? (isHumanInputBlank(field, value) ? undefined : undefined);
   const chosen = Array.isArray(value) ? value : [];
   const options = field.options ?? [];
 
@@ -255,7 +257,7 @@ function HumanInputFieldRow({
   if (field.type === 'select' || field.type === 'multiselect') {
     const isMulti = field.type === 'multiselect';
     return (
-      <FieldShell field={field} {...(missing ? { error: missing } : {})}>
+      <FieldShell field={field} {...(error ? { error } : {})}>
         <div className="space-y-1">
           {options.map((option) => {
             const on = isMulti ? chosen.includes(option.value) : value === option.value;

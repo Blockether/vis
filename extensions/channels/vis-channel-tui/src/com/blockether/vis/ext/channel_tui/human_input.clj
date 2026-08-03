@@ -360,7 +360,15 @@
   [{:keys [type]} value]
   (if (= :password type) (apply str (repeat (count (str value)) mask-char)) (str value)))
 
-(defn- label-text [{:keys [label is-required]}] (str label (when is-required " *")))
+(def ^:private required-marker
+  "Said in full, next to the label. A lone `*` is a footnote nobody reads, and the
+   engine REFUSES a submission that leaves one of these blank — so the dialog has
+   to name the fields that will bounce it before the operator hits enter."
+  "REQUIRED")
+
+(defn- label-text
+  [{:keys [label is-required]}]
+  (str label (when is-required (str "  " required-marker))))
 
 (defn- field-rows
   [form focus {:keys [id type] :as field}]

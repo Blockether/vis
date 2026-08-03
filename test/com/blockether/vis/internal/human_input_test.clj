@@ -247,6 +247,19 @@
         (expect (false? (get-in (hi/coerce-values fields {"ok" "false"}) [:values "ok"])))
         (expect (false? (get-in (hi/coerce-values fields {}) [:values "ok"])))
         (expect (false? (:is-accepted (hi/coerce-values fields {"ok" "maybe"}))))))
+  (it "refuses an unticked required checkbox"
+      ;; A required checkbox is a consent box — "I agree", "yes, delete it". False
+      ;; is not an answer to it, and both dialogs already refuse to submit one,
+      ;; so anything posting JSON must be held to the same rule.
+      (let [fields (normalized-fields {:id "agree" :type "checkbox" :is-required true})]
+        (expect (= {"agree" "must be checked"} (:errors (hi/coerce-values fields {}))))
+        (expect (= {"agree" "must be checked"} (:errors (hi/coerce-values fields {"agree" false}))))
+        (expect (= {"agree" "must be checked"}
+                   (:errors (hi/coerce-values fields {"agree" "false"}))))
+        (expect (true? (get-in (hi/coerce-values fields {"agree" true}) [:values "agree"])))))
+  (it "leaves an optional checkbox free to stay unticked"
+      (let [fields (normalized-fields {:id "ok" :type "checkbox"})]
+        (expect (true? (:is-accepted (hi/coerce-values fields {"ok" false}))))))
   (it "honours a checkbox default when the value is absent"
       (let [fields (normalized-fields {:id "ok" :type "checkbox" :default true})]
         (expect (true? (get-in (hi/coerce-values fields {}) [:values "ok"])))))
