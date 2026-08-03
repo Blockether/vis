@@ -2359,9 +2359,9 @@
         ;; upgrades THAT row rather than appending a second one.
         (let
           [acked
-           (sync-fn (:db first-result)
-                    [:sync-queued-turn :a
-                     {:op :add :turn-id "t-9" :client-id client-id :text "double tap"}])
+           (:db (sync-fn (:db first-result)
+                         [:sync-queued-turn :a
+                          {:op :add :turn-id "t-9" :client-id client-id :text "double tap"}]))
 
            acked-row
            (first (rows acked))]
@@ -2491,6 +2491,121 @@
         (let [{db' :db} (run event-id db)]
           (expect (= [] (vec (:pending-sends db'))))
           (expect (= ["c-1"] (vec (:retracted-sends db'))))))))
+  (it "never mirrors a retracted submission, whichever source names its turn"
+      ;; The ack of our own enqueue is not the only thing that names a turn taken back
+      ;; mid-flight: the gateway broadcasts `turn.queued` for it too, and that broadcast
+      ;; appended the cancelled message straight back as a "Queued" row whose turn then
+      ;; ran. The rule lives in the ONE writer, so BOTH sources obey it.
+      (let
+        [sync-fn
+         (-> #'state/event-registry
+             deref
+             deref
+             (get :sync-queued-turn)
+             :fn)
+
+         db
+         {:active-tab-id :b
+          :tab-locals {:a {:session {:id "s1"} :pending-sends [] :retracted-sends ["c-1"]}}}]
+
+        (doseq [op [:add :update]]
+          (let
+            [{db' :db :keys [fx]}
+             (sync-fn db
+                      [:sync-queued-turn :a
+                       {:op op :turn-id "t-1" :client-id "c-1" :text "take it back"}])]
+            (expect (= [] (vec (get-in db' [:tab-locals :a :pending-sends]))))
+            ;; …and the record it stood for goes with it
+            (expect (= [[:gateway-retract-queued "s1" "t-1"]] (vec fx)))))
+        ;; a submission nobody retracted still mirrors normally
+        (let
+          [{db' :db :keys [fx]} (sync-fn
+                                  db
+                                  [:sync-queued-turn :a
+                                   {:op :add :turn-id "t-2" :client-id "c-2" :text "keep me"}])]
+          (expect (= ["keep me"] (mapv :text (get-in db' [:tab-locals :a :pending-sends]))))
+          (expect (empty? fx)))))
+  (it "never stages a retracted submission as an unsent row"
+      ;; The enqueue POST failed AFTER the cancel pulled the text back into the editor.
+      ;; Nothing was ever registered server-side, so there is nothing to keep — staging it
+      ;; resurrected a cancelled message as an `unsent` row that the local drain then SENT,
+      ;; with the same text still sitting in the composer.
+      (let
+        [stage-fn
+         (-> #'state/event-registry
+             deref
+             deref
+             (get :stage-queued-locally)
+             :fn)
+
+         db
+         {:active-tab-id :main :session {:id "c1"} :pending-sends [] :retracted-sends ["c-1"]}]
+
+        (expect (= []
+                   (vec (:pending-sends (stage-fn db
+                                                  [:stage-queued-locally :main
+                                                   {:text "take it back" :client-id "c-1"}])))))))
+  (it "still queues a deliberate repeat when the row's clock runs AHEAD of ours"
+      ;; `:queued-at-ms` can carry the GATEWAY's clock (a mirrored backlog row does), and a
+      ;; NEGATIVE age is not "just now": reading it as inside the duplicate window swallowed
+      ;; every deliberate repeat — the editor is cleared on Enter — until the clocks agreed.
+      (let
+        [enqueue-fn
+         (-> #'state/event-registry
+             deref
+             deref
+             (get :enqueue-message)
+             :fn)
+
+         db
+         {:active-tab-id :b
+          :input-history []
+          :pastes {}
+          :paste-counter 0
+          :tab-locals {:a {:session {:id "a"}
+                           :loading? true
+                           :pending-sends [{:text "continue"
+                                            :client-id "c-1"
+                                            :turn-id "t-1"
+                                            :mine? true
+                                            :queued-at-ms (+ (System/currentTimeMillis) 3600000)}]
+                           :input-history []
+                           :pastes {}
+                           :paste-counter 0}}}
+
+         result
+         (enqueue-fn db [:enqueue-message "continue" :a])]
+
+        (expect (= 1 (count (filterv #(= :gateway-enqueue (first %)) (:fx result)))))
+        (expect (= ["continue" "continue"]
+                   (mapv :text (get-in result [:db :tab-locals :a :pending-sends]))))))
+  (it "cancels a retracted turn the gateway has already taken off the queue"
+      ;; Deleting cannot help once the record left the queue — the daemon drained it into a
+      ;; RUNNING turn while the retraction was on its way. Cancel is the only thing that
+      ;; still means stop; a clean delete (or a record already gone) needs neither.
+      (let
+        [cancelled
+         (atom nil)
+
+         retract!
+         #'state/retract-queued-turn!
+
+         with-delete
+         (fn [delete!]
+           (reset! cancelled nil)
+           (with-redefs-fn {#'vis/gateway-delete-queued-turn! delete!
+                            #'vis/gateway-cancel-turn! (fn [sid tid]
+                                                         (reset! cancelled [sid tid]))}
+             #(retract! "s1" "t-1"))
+           @cancelled)]
+
+        (expect (= ["s1" "t-1"]
+                   (with-delete (fn [_ _]
+                                  {"status" "not_found"}))))
+        (expect (nil? (with-delete (fn [_ _]
+                                     {"status" "deleted"}))))
+        (expect (nil? (with-delete (fn [_ _]
+                                     (throw (ex-info "gone" {:http-status 404}))))))))
   (it "never queues a submission while a cancel is in flight (:cancelling?)"
       ;; REGRESSION: pressing Esc to cancel, then typing a new message, parked that
       ;; message in the queue (`:pending-sends`) behind the turn being torn down —
@@ -3273,16 +3388,31 @@
       ;; Cancelling pulls the row back into the editor and `:clear-pending-sends` drops
       ;; it — but neither can delete a gateway record whose turn id did not exist yet, so
       ;; the turn used to run anyway with nothing on screen that ever said it would. The
-      ;; ack settles it: no row, no turn.
-      (let [deleted (atom nil)]
+      ;; ack settles it through the ONE writer: no row, no turn.
+      (let
+        [deleted
+         (atom nil)
+
+         cancelled
+         (atom nil)]
+
         (with-redefs
-          [vis/gateway-submit-turn! (fn [_ _]
-                                      {:turn {"turn_id" "t-gone" "status" "queued"}})
-           vis/gateway-delete-queued-turn! (fn [sid tid]
-                                             (reset! deleted [sid tid])
-                                             {:ok true})
-           vis/notify! (fn [& _]
-                         nil)]
+          [vis/gateway-submit-turn!
+           (fn [_ _]
+             {:turn {"turn_id" "t-gone" "status" "queued"}})
+
+           vis/gateway-delete-queued-turn!
+           (fn [sid tid]
+             (reset! deleted [sid tid])
+             {"status" "deleted"})
+
+           vis/gateway-cancel-turn!
+           (fn [sid tid]
+             (reset! cancelled [sid tid]))
+
+           vis/notify!
+           (fn [& _]
+             nil)]
 
           ;; the row is already gone: the user took the message back mid-round-trip
           (reset! state/app-db {:session {:id "c1"}
@@ -3301,8 +3431,45 @@
               nil
               {}
               nil))
+          ;; the retraction rides the queue lane BEHIND the submit that created the turn
+          (flush-queue-io!)
           (expect (= ["c1" "t-gone"] @deleted))
+          ;; a record the delete removed is not also cancelled
+          (expect (nil? @cancelled))
           ;; and nothing is painted back onto the screen
+          (expect (= [] (:pending-sends @state/app-db))))))
+  (it "CANCELS a retracted submission the gateway had already started"
+      ;; The session went idle inside the round-trip, so the gateway ran the turn instead
+      ;; of queueing it. There is no queued record left to delete, and without the cancel
+      ;; the message the user took back runs to completion anyway.
+      (let [cancelled (atom nil)]
+        (with-redefs
+          [vis/gateway-submit-turn! (fn [_ _]
+                                      {:turn {"turn_id" "t-run" "status" "running"}})
+           vis/gateway-delete-queued-turn! (fn [_ _]
+                                             {"status" "not_found"})
+           vis/gateway-cancel-turn! (fn [sid tid]
+                                      (reset! cancelled [sid tid]))
+           vis/notify! (fn [& _]
+                         nil)]
+
+          (reset! state/app-db {:session {:id "c1"}
+                                :active-tab-id :main
+                                :render-version 0
+                                :loading? true
+                                :pending-sends []
+                                :retracted-sends ["cid-run"]})
+          (await-enqueue!
+            ((get @@#'state/fx-registry :gateway-enqueue)
+              :main
+              {:id "c1"}
+              {:text "take it back" :agent-text "take it back" :client-id "cid-run" :mine? true}
+              nil
+              nil
+              {}
+              nil))
+          (flush-queue-io!)
+          (expect (= ["c1" "t-run"] @cancelled))
           (expect (= [] (:pending-sends @state/app-db))))))
   (it "a submission the gateway never took is staged unsent AND drained, not orphaned"
       ;; Both halves of the rescue. The row is FLAGGED (the strip must not imply the
