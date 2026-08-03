@@ -342,8 +342,10 @@
                (it "documents exactly the launcher's own words, not a source-checkout updater"
                    (expect (= "vis-agent runtime [show | use native|jvm|dev|auto]"
                               (:cmd/usage (get by-name "runtime"))))
-                   (expect (= "vis-agent update [--native|--jvm|--dev] [--rebuild] [vX.Y.Z|<sha>]"
+                   (expect (= "vis-agent update [native|jvm|dev] [--rebuild] [vX.Y.Z|<sha>]"
                               (:cmd/usage (get by-name "update"))))
+                   ;; The launcher accepts the bare runtime word, so the help shows it.
+                   (expect (some #{"vis-agent update dev"} (:cmd/examples (get by-name "update"))))
                    (expect (not (str/includes? (:cmd/usage (get by-name "update")) "--reset"))))
                (it "refuses to run them inside the binary and names the launcher instead"
                    (doseq [nm ["runtime" "update"]]

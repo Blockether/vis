@@ -624,6 +624,69 @@
              (expect (str/includes? output "name one runtime, not --native and --dev")))
            (finally (delete-tree! root))))))
 
+(defdescribe
+  wrapper-update-dev-test
+  (it
+    "updates the live checkout for the bare word `dev`, not only for `--dev`"
+    (let
+      [root
+       (.toFile (Files/createTempDirectory "vis-agent-update-dev-test-"
+                                           (make-array FileAttribute 0)))
+
+       origin
+       (doto (io/file root "origin") .mkdirs)
+
+       install-dir
+       (doto (io/file root "install") .mkdirs)
+
+       home
+       (doto (io/file root "home") .mkdirs)
+
+       vis-home
+       (doto (io/file home ".vis") .mkdirs)
+
+       tools
+       (doto (io/file root "tools") .mkdirs)
+
+       checkout
+       (io/file root "checkout")
+
+       launcher
+       (io/file install-dir "vis-agent")
+
+       run!
+       (wrapper-runner {:launcher launcher :cwd root :home home :vis-home vis-home :tools tools})
+
+       dev-env
+       {"VIS_DEV_CHECKOUT" (.getAbsolutePath checkout)}]
+
+      (try (copy-launcher! launcher)
+           (git! origin "init" "-q" "-b" "main" ".")
+           (spit (io/file origin "deps.edn") "{}")
+           (spit (io/file origin "f") "one")
+           (git! origin "add" "-A")
+           (git! origin "commit" "-qm" "one")
+           (git! root "clone" "-q" (.getAbsolutePath origin) (.getAbsolutePath checkout))
+           (spit (io/file origin "f") "two")
+           (git! origin "add" "-A")
+           (git! origin "commit" "-qm" "two")
+           ;; `update dev` names the dev runtime. It used to fall through to the
+           ;; target case and pin the source Vis owns to a ref called 'dev'.
+           (let [{:keys [exit output]} (run! ["update" "dev"] dev-env)]
+             (expect (= 0 exit) output)
+             (expect (str/includes? output "checkout updated") output)
+             (expect (not (str/includes? output "pinning source")) output))
+           (expect (= "two" (slurp (io/file checkout "f"))))
+           ;; dev follows its branch, so a target beside it is a refusal.
+           (let [{:keys [exit output]} (run! ["update" "dev" "v1.2.3"] dev-env)]
+             (expect (= 1 exit) output)
+             (expect (str/includes? output "takes no target") output))
+           ;; A runtime already named makes the word a ref again.
+           (let [{:keys [exit output]} (run! ["update" "--native" "dev"] dev-env)]
+             (expect (= 1 exit) output)
+             (expect (str/includes? output "expected a release tag") output))
+           (finally (delete-tree! root))))))
+
 (defn- run-wrapper
   "Run the real `bin/vis-agent` from a copy, with HOME/VIS_HOME under `root` and
    a fake native runtime that echoes the argv the app would receive."

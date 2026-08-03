@@ -3451,8 +3451,9 @@
      :cmd/run-fn (launcher-owned! "runtime")}
     {:cmd/name "update"
      :cmd/doc "Update the runtime this installation runs on."
-     :cmd/usage "vis-agent update [--native|--jvm|--dev] [--rebuild] [vX.Y.Z|<sha>]"
-     :cmd/examples ["vis-agent update" "vis-agent update --native" "vis-agent update --jvm v1.2.3"]
+     :cmd/usage "vis-agent update [native|jvm|dev] [--rebuild] [vX.Y.Z|<sha>]"
+     :cmd/examples ["vis-agent update" "vis-agent update native" "vis-agent update dev"
+                    "vis-agent update jvm v1.2.3"]
      :cmd/run-fn (launcher-owned! "update")}
     {:cmd/name "gateway"
      :cmd/doc "Start, inspect, or stop the long-lived gateway daemon."
@@ -3881,7 +3882,7 @@
      (help-row "VIS_RUNTIME=native|jvm|dev" "The same choice, for one process.")
      (help-row "vis-agent runtime show" "Name the runtime in effect and who chose it.")
      (help-row "vis-agent runtime use NAME" "Persist native|jvm|dev|auto as the default.")
-     (help-row "vis-agent update [RUNTIME]" "Update it; --rebuild rebuilds the sidecar.") ""
+     (help-row "vis-agent update [RUNTIME]" "Update native|jvm|dev; default: in effect.") ""
      "CONFIGURATION" (help-row "~/.vis/config.yml" "Global settings: providers, models, tools.")
      (help-row "<project>/vis.yml" "Project settings; .vis/config.yml overrides it.")
      (help-row "vis-agent providers status" "Show provider auth and model catalogs.")

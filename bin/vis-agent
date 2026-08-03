@@ -586,12 +586,13 @@ update_native() {
 
 vis_update_usage() {
   cat >&2 <<'EOF'
-Usage: vis-agent update [--native|--jvm|--dev] [--rebuild] [vX.Y.Z|<sha>]
-         (no flag)  update the runtime that is in effect
-         --native   download the published launcher + native runtime
-         --jvm      move the source Vis owns onto the newest release tag, or onto a ref you name
-         --dev      fast-forward your live checkout
-         --rebuild  after a source update, build the native runtime from that source
+Usage: vis-agent update [native|jvm|dev] [--rebuild] [vX.Y.Z|<sha>]
+         (no runtime)  update the runtime that is in effect
+         native        download the published launcher + native runtime
+         jvm           move the source Vis owns onto the newest release tag, or onto a ref you name
+         dev           fast-forward your live checkout (git pull --ff-only)
+         --rebuild     after a source update, build the native runtime from that source
+       Every runtime word also has a flag form: --native, --jvm, --dev.
 EOF
 }
 
@@ -600,12 +601,22 @@ vis_do_update() {
   local target="" rebuild=0 want="" arg
   for arg in "$@"; do
     case "$arg" in
-      --native|--jvm|--dev)
-        want="${arg#--}"
+      --native|--jvm|--dev) want="${arg#--}" ;;
+      # A bare runtime word is its flag: `update dev` is `update --dev`. Without
+      # this, `update dev` fell through to the target case and tried to pin the
+      # source Vis owns to a git ref called 'dev'. A runtime already named means
+      # the word IS a ref: `update --jvm dev` still pins source to branch dev.
+      native|jvm|dev)
+        if [[ -z "$want" ]]; then
+          want="$arg"
+        else
+          [[ -z "$target" ]] || die "update: one target at a time, not '$target' and '$arg'"
+          target="$arg"
+        fi
         ;;
       --rebuild) rebuild=1 ;;
       -h|--help) vis_update_usage; exit 0 ;;
-      -*) die "update: unknown option $arg" "Usage: vis-agent update [--native|--jvm|--dev] [--rebuild] [vX.Y.Z|<sha>]" ;;
+      -*) die "update: unknown option $arg" "Usage: vis-agent update [native|jvm|dev] [--rebuild] [vX.Y.Z|<sha>]" ;;
       *)
         [[ -z "$target" ]] || die "update: one target at a time, not '$target' and '$arg'"
         target="$arg"
@@ -627,8 +638,8 @@ vis_do_update() {
 
   case "$want" in
     dev)
-      [[ -z "$target" ]] || die "update --dev: dev follows its branch and takes no target" \
-                                "Pin the managed source instead: vis-agent update --jvm $target"
+      [[ -z "$target" ]] || die "update dev: dev follows its branch and takes no target" \
+                                "Pin the managed source instead: vis-agent update jvm $target"
       update_dev
       if (( rebuild )); then build_native_runtime "$dev_checkout"; fi
       ;;
