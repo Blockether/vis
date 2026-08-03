@@ -321,6 +321,24 @@ sealed capability carrying its own device token and expiry, and the abuse counte
 live in Cloudflare's rate limiting bindings, so there is no table to dump, exhaust,
 or migrate. Its README covers deploying, the limits and the failure verdicts.
 
+**Run your own.** No relay address is compiled into anything. The gateway reads it
+from the two settings above and publishes it as `push.relay.url`; the companion
+mints its grant at whatever address that machine names, and this repository names
+none. Deploy that Worker to your own Cloudflare account with your own
+`RELAY_SEAL_KEY` and your own APNs key or Firebase service account, point your
+gateways at it, and nothing of yours touches anyone else's infrastructure. The one
+thing configuration cannot move is the wall at the top of this section: a relay
+signs for the app whose keys it holds, so your own relay serves *your own*
+companion build — a store-distributed companion can only be woken by the relay its
+publisher runs.
+
+Two failures are worth telling apart. An address that is not `https` is not a relay:
+the gateway reports `push.relay.is_insecure`, refuses to hand it a grant
+(`insecure-relay-url`) before opening a socket, and the companion names the address
+rather than blaming absent credentials — loopback is the only exception, for
+`wrangler dev`. A relay that merely stumbles (no answer, `502`, `503`, `504`) is
+asked exactly once more; every other verdict is final.
+
 ### Gateway side, iOS (APNs credentials)
 
 Push is **off until the gateway holds an APNs key**. On macOS the key can live in

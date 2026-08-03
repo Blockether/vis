@@ -494,6 +494,8 @@ export interface PushStatus {
     is_available: boolean;
     url?: string | null;
     source?: string | null;
+    /** Named, but over plain http: configured and unusable, not absent. */
+    is_insecure?: boolean;
   };
   devices: number;
 }

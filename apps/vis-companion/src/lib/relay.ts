@@ -57,20 +57,54 @@ const RENEW_BEFORE_MS = 7 * 24 * 60 * 60 * 1000;
  * gateway holding Firebase credentials and no APNs key can sign for a Pixel and
  * not for an iPhone, so the verdict is per platform, never the summary flag.
  */
+function signsItself(push: PushStatus, platform: string): boolean {
+  return Boolean(
+    platform === "android" ? push.fcm?.is_available : push.apns?.is_available,
+  );
+}
+
 export function relayUrlFor(
   push: PushStatus | undefined,
   platform: string,
 ): string | null {
   if (!push) return null;
-  const own =
-    platform === "android" ? push.fcm?.is_available : push.apns?.is_available;
-  if (own) return null;
+  if (signsItself(push, platform)) return null;
   const url = push.relay?.url;
   // This device's push token travels to whatever address the gateway names here,
   // so a paired machine may send us to a relay over TLS and nowhere else.
   if (!push.relay?.is_available || !url || !url.startsWith("https://"))
     return null;
   return url;
+}
+
+/**
+ * The relay a machine named and this device REFUSED, or null.
+ *
+ * Anyone may run their own relay — the address is configuration on the machine,
+ * never a constant in this app — and the first way that goes wrong is an `http`
+ * address, which would put a permanent right to push to this phone on the wire.
+ * Such a machine holds no credentials AND has a relay we will not use, and
+ * "missing push credentials" would send its operator looking for a signing key
+ * they do not need. Name the address instead: only they can change it.
+ */
+export function refusedRelayUrl(
+  push: PushStatus | undefined,
+  platform: string,
+): string | null {
+  if (!push || signsItself(push, platform)) return null;
+  const url = push.relay?.url;
+  if (!url) return null;
+  return url.startsWith("https://") && !push.relay?.is_insecure ? null : url;
+}
+
+/** A relay address as a person reads it: the host, never the path. */
+export function relayHost(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
 }
 
 /** `POST /v1/grants`: hand the relay this device's token, get back a capability. */

@@ -114,6 +114,12 @@ Then point a gateway at it:
 export VIS_PUSH_RELAY_URL=https://push.example.com
 ```
 
+The companion needs no configuration for this: a gateway publishes its relay as
+`push.relay.url`, and the app mints its grant at whatever address that machine
+names — over `https` only, and never at an address baked into the app. So running
+your own relay is a deploy and one environment variable, and it serves the
+companion build whose signing key you put in it.
+
 `npm run dev` deliberately uses `--remote`: local workerd has no HTTP/2 and APNs
 will fail there with code that works deployed.
 

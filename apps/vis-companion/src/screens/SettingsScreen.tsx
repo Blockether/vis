@@ -38,6 +38,8 @@ import { applyGatewayNotify } from "../lib/notify";
 import {
   registerForPush,
   registeredIds,
+  refusedRelayUrl,
+  relayHost,
   relayUrlFor,
   unregisterFromPush,
 } from "../lib/relay";
@@ -1720,6 +1722,9 @@ function NotificationsPanel({
   // A machine holding no signing key is not silent if it has a relay: this device
   // hands it a grant instead of a token, so "not configured" would be a lie.
   const relayUrl = relayUrlFor(push ?? undefined, pushPlatform());
+  // A relay this device refused is a MISCONFIGURED machine, not a machine
+  // without credentials — and the address is the only part its operator can fix.
+  const refusedRelay = refusedRelayUrl(push ?? undefined, pushPlatform());
   const available =
     Boolean(relayUrl) ||
     (provider ? provider.is_available : (push?.is_available ?? false));
@@ -1735,7 +1740,7 @@ function NotificationsPanel({
       meta={
         push
           ? available
-            ? `${push.devices} device${push.devices === 1 ? "" : "s"} · ${relayUrl ? "via relay" : pushPlatform() === "android" ? (push.fcm?.project_id ?? "fcm") : (push.environment ?? "production")}`
+            ? `${push.devices} device${push.devices === 1 ? "" : "s"} · ${relayUrl ? `via ${relayHost(relayUrl)}` : pushPlatform() === "android" ? (push.fcm?.project_id ?? "fcm") : (push.environment ?? "production")}`
             : "not configured"
           : "checking…"
       }
@@ -1744,7 +1749,16 @@ function NotificationsPanel({
         {err && <Banner kind="err">{err}</Banner>}
         {note && <Banner kind="ok">{note}</Banner>}
 
-        {push && !available && (
+        {push && !available && refusedRelay && (
+          <Banner kind="warn">
+            This machine relays notifications through {refusedRelay}, which is
+            not https — this device will not hand a push grant to an address on
+            the wire. Point it at an https relay (VIS_PUSH_RELAY_URL) and try
+            again.
+          </Banner>
+        )}
+
+        {push && !available && !refusedRelay && (
           <Banner kind="warn">
             This machine cannot push to{" "}
             {pushPlatform() === "android" ? "Android" : "iOS"} yet — missing{" "}

@@ -36,6 +36,8 @@ import {
   grantFor,
   registerForPush,
   registeredIds,
+  refusedRelayUrl,
+  relayHost,
   relayUrlFor,
   unregisterFromPush,
   type PushGateway,
@@ -149,6 +151,35 @@ describe("which machines need a relay", () => {
       relay: { is_available: true, url: "http://10.0.0.5:8787" },
     });
     expect(relayUrlFor(plaintext, "ios")).toBeNull();
+  });
+
+  it("names the http relay a machine offered, instead of blaming its keys", () => {
+    // The relay address is configuration on the MACHINE — anyone may run their
+    // own — so the one failure this device cannot fix must be reported as an
+    // address, not as "missing push credentials".
+    const plaintext = status({
+      relay: {
+        is_available: false,
+        url: "http://10.0.0.5:8787",
+        is_insecure: true,
+      },
+    });
+    expect(refusedRelayUrl(plaintext, "ios")).toBe("http://10.0.0.5:8787");
+    // A machine that can sign for this platform itself is not misconfigured,
+    // whatever its relay says, and a relay we accept is not a complaint.
+    expect(
+      refusedRelayUrl({ ...plaintext, apns: { is_available: true } }, "ios"),
+    ).toBeNull();
+    expect(refusedRelayUrl(status(), "ios")).toBeNull();
+    expect(refusedRelayUrl(undefined, "ios")).toBeNull();
+  });
+
+  it("shows a relay by host, so a self-hosted one is recognisable", () => {
+    expect(relayHost(RELAY)).toBe("relay.example.com");
+    expect(relayHost("https://push.example.com:8443/v1")).toBe(
+      "push.example.com:8443",
+    );
+    expect(relayHost(null)).toBeNull();
   });
 });
 
