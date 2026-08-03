@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.27] - 2026-08-03
+
+### Changed
+- Pin the Python interpreter from vis.yml and fix interpreter resolution
+- Document --native as the released build with a self-built fallback
+- Read API keys in a transient instead of a logo dialog
+- Align root help columns and document runtime and config options
+- Configure providers and models with magit transients
+- Let a magit transient paint inside a host dialog's frame
+- Expose project test environment consistently
+- Retain selected live provider models
+- Fix Bridge commit gate project selection
+- Park timeout walls while human input is pending
+- Release v0.1.27
+- Rebuild the LLM router on /reload
+- Give provider card limits their own row
+- Stop the composer keyboard flickering after attaching media
+- Make the magit transient a full-bleed band with a title margin
+- Accept images up to 25MB over the gateway
+- Build Linux release assets locally with a real version sha
+- Keep a gateway notification choice even when that machine is unreachable
+- Give every paired machine its own notification switch
+- release: update release notes for v0.1.26
+
+### Package changes
+
+#### com.blockether/vis
+- Pin the Python interpreter from vis.yml and fix interpreter resolution (1afda1c45)
+- Document --native as the released build with a self-built fallback (338a8d4f7)
+- Align root help columns and document runtime and config options (ba0311e57)
+- Expose project test environment consistently (98b0e4b82)
+- Park timeout walls while human input is pending (df4b3bad5)
+- Release v0.1.27 (6374d3564)
+- Rebuild the LLM router on /reload (a76e905f0)
+- Stop the composer keyboard flickering after attaching media (a3b35fa59)
+- Accept images up to 25MB over the gateway (c5a4f39c8)
+- Build Linux release assets locally with a real version sha (f8447edbd)
+- Keep a gateway notification choice even when that machine is unreachable (fa66a971d)
+- Give every paired machine its own notification switch (fb5a62b45)
+- release: update release notes for v0.1.26 (1cd946955)
+
+#### com.blockether/vis-channel-tui
+- Read API keys in a transient instead of a logo dialog (c79c52f69)
+- Configure providers and models with magit transients (4279a17b1)
+- Let a magit transient paint inside a host dialog's frame (609d503d6)
+- Retain selected live provider models (6d9f91ef6)
+- Give provider card limits their own row (985d90ad1)
+- Make the magit transient a full-bleed band with a title margin (30fc5386e)
+
+#### com.blockether/vis-foundation-bridge
+- Fix Bridge commit gate project selection (03514779f)
+
+#### com.blockether/vis-language-python
+- Pin the Python interpreter from vis.yml and fix interpreter resolution (1afda1c45)
+- Expose project test environment consistently (98b0e4b82)
+
+
+
 ## [v0.1.26] - 2026-08-03
 
 ### Changed
@@ -2965,7 +3023,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.26...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.27...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -2987,3 +3045,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.24]: https://github.com/Blockether/vis/releases/tag/v0.1.24
 [v0.1.25]: https://github.com/Blockether/vis/releases/tag/v0.1.25
 [v0.1.26]: https://github.com/Blockether/vis/releases/tag/v0.1.26
+[v0.1.27]: https://github.com/Blockether/vis/releases/tag/v0.1.27
