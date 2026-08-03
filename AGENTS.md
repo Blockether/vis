@@ -58,7 +58,11 @@ Use snake_case string IDs. Hydrate from merged config so `/reload` respects proj
 
 ## TUI rendering
 
-Render paint work in the `vis-channel-tui` REPL using Lanterna `DefaultVirtualTerminal` and inspect its back-buffer. Dialog chrome uses `dialogs/draw-dialog-chrome!` on flat `t/terminal-bg`, without tint or shadow.
+Render paint work in the `vis-channel-tui` REPL using Lanterna `DefaultVirtualTerminal` and inspect its back-buffer. Dialog chrome uses `dialogs/draw-dialog-chrome!` on flat `t/terminal-bg`, without tint or shadow. A magit-style transient is a band INSIDE its host's frame: it repaints the frame edge on every row it covers and closes with the host's own `├───┤` rule directly above the hint bar, so the bottom chrome is never swallowed.
+
+- **Look at the pixels, not only at assertions.** `test/…/channel_tui/capture.clj` drives a real paint and journals every frame: `(cap/capture-json! "/tmp/vis-frames.json" {:cols 120 :rows 40 :keys [\c :esc] :paint! (fn [{:keys [screen]}] …)})`; `cap/frame-text` flattens one frame to greppable text.
+- `tools/tui_png.py` rasterizes that journal with the real theme colors. In `python_execution`: `exec(open("extensions/channels/vis-channel-tui/tools/tui_png.py").read(), globals())`, then `show_frames("/tmp/vis-frames.json", "/tmp/prefix", indexes=[1], label="…")` — it renders the PNGs **and** attaches them with `vis_attach`, so both the human and the model see the actual frame.
+- Keep both: the capture journal is what you eyeball, the lazytest terminal-grid assertions are the regression gate.
 
 ## Shipping verified work
 

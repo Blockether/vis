@@ -2328,26 +2328,24 @@
    inline minibuffer primitives receive, so the popup shares the status buffer's
    canvas instead of allocating its own screen.
 
-   `opts` re-targets the SAME transient at a host DIALOG's frame instead of a
-   full-width buffer:
-     `:boxed?`  paint only the box's INNER columns — the separator gets
-                T-junctions on the box border and the hint bar lands ON the
-                dialog's own `hint-row` instead of swallowing its bottom border.
-     `:min-row` first row the popup may touch or wipe (a boxed host's content
-                top, or the row under whatever header the host keeps visible).
-                A tall transient stops there instead of climbing over it."
+   `opts` tunes how the popup sits in its host's frame:
+     `:min-row`      first row the popup may touch or wipe (the host's content
+                     top, or the row under whatever header the host keeps
+                     visible). A tall transient stops there instead of climbing
+                     over it.
+     `:clear-above?` also wipe every row from `:min-row` down to the popup's own
+                     separator — for a host that repaints PAGES of different
+                     heights in the same frame (the provider's model picker), so
+                     a short page never leaves a taller one bleeding above it."
   ([^TerminalScreen screen g left inner-w hint-row text-w title spec read-option]
    (magit-transient! screen g left inner-w hint-row text-w title spec read-option nil))
   ([^TerminalScreen screen g left inner-w hint-row text-w title spec read-option opts]
    (let
-     [cols
-      (long (.getColumns ^com.googlecode.lanterna.TerminalSize (.getTerminalSize screen)))
-
-      boxed?
-      (boolean (:boxed? opts))
-
-      top-limit
+     [top-limit
       (long (or (:min-row opts) 0))
+
+      clear-above?
+      (boolean (:clear-above? opts))
 
       ;; A leading blank row gives the first group header its MARGIN-TOP, so
       ;; `Arguments` breathes under the transient's bold title instead of
@@ -2370,39 +2368,53 @@
       footer
       [["-key" "toggle flag"] ["key" "run command"] ["Esc" "cancel"]]
 
-      ;; FULL-BLEED band. The popup owns EVERY column of the terminal and its
-      ;; hint bar lands on the host dialog's bottom border row, swallowing it:
-      ;; nothing frames the transient on the left, right, or bottom. Only the
-      ;; top separator caps it, one row above the title. BOXED inverts all
-      ;; three: the band is the host box's inner width and the hint bar shares
-      ;; the host's own hint row, so the frame survives.
+      ;; The popup lives INSIDE its host's frame, ALWAYS: the band spans the
+      ;; box's INNER columns, its capping separator ends in T-junctions ON the
+      ;; border, and its hint bar REPLACES the host's own hint row instead of
+      ;; dropping one row lower onto the bottom border. The full-bleed band this
+      ;; replaces owned every column of the terminal and swallowed the frame, so
+      ;; the transient read as a second window pasted over the dialog instead of
+      ;; magit's popup living in the buffer it belongs to.
       foot-row
-      (if boxed? (long hint-row) (inc (long hint-row)))
+      (long hint-row)
 
-      ;; Anchor the popup to the bottom of its OWN band — the last body row
-      ;; sits DIRECTLY on the hint bar, the bold title one row above the body.
-      ;; Anchoring to `foot-row` rather than the host's `hint-row` is what keeps
-      ;; the band CONTIGUOUS: full-bleed the hint bar drops one row lower, so
-      ;; anchoring to `hint-row` skipped that row and left the host's OWN hint
-      ;; bar — and the box borders framing it — alive INSIDE the popup, between
-      ;; its commands and its footer. Clamp so a short terminal — or a boxed
-      ;; host's reserved header — never paints above the top edge.
+      ;; …and it is GLUED to the frame's BOTTOM CHROME. The host paints
+      ;; `├───┤` directly above its hint row; a band that simply overwrote that
+      ;; row left its last command running straight into the footer text, which
+      ;; reads as the popup eating the bottom border. The popup repaints that
+      ;; rule itself, so it always ends rule / hint bar / bottom border — the
+      ;; exact chrome of the buffer it covers.
+      foot-rule-row
+      (dec (long foot-row))
+
+      ;; Anchor the popup to the bottom of its own band — the last body row sits
+      ;; DIRECTLY on the closing rule, the bold title one row above the body.
+      ;; Clamp so a short terminal — or the host's reserved header — never paints
+      ;; over the rows above `:min-row`.
       body-top
-      (max (if boxed? (inc top-limit) 1) (- (long foot-row) n))
+      (max (inc top-limit) (- (long foot-rule-row) n))
 
       title-row
-      (max (if boxed? top-limit 0) (dec (long body-top)))
+      (max top-limit (dec (long body-top)))
 
       band-x
-      (if boxed? (inc (long left)) 0)
+      (inc (long left))
 
       band-w
-      (if boxed? (long inner-w) cols)
+      (long inner-w)
 
+      ;; Wiping only the band's INNER columns leaves whatever the host painted in
+      ;; the two border columns: a status buffer's own section separator survived
+      ;; as stray `├`/`┤` junctions beside the popup. Repaint the frame's plain
+      ;; edge on every row the band owns; the capping separators put their own
+      ;; junctions back afterwards.
       clear-row!
       (fn [row]
         (p/set-colors! g t/dialog-fg t/dialog-bg)
-        (p/fill-rect! g band-x row band-w 1))
+        (p/fill-rect! g band-x row band-w 1)
+        (p/set-colors! g t/dialog-border t/dialog-bg)
+        (p/set-char! g left row p/BOX_V)
+        (p/set-char! g (+ (long left) (long inner-w) 1) row p/BOX_V))
 
       layout
       (transient-layout spec)
@@ -2410,24 +2422,25 @@
       sep-row
       (max 0 (dec (long title-row)))
 
-      ;; Boxed, the popup owns every row from `:min-row` down, so a shorter
-      ;; page never leaves the taller previous one bleeding above its title.
+      ;; Paging hosts own every row from `:min-row` down (see `:clear-above?`);
+      ;; everyone else leaves the buffer above the separator alone — the status
+      ;; rows are exactly what magit keeps visible behind its transient.
       wipe-top
-      (if boxed? top-limit sep-row)
+      (if clear-above? top-limit sep-row)
 
-      ;; The hint bar is the floor: a page taller than the band it was given
+      ;; The closing rule is the floor: a page taller than the band it was given
       ;; loses its overflow rows rather than painting over the host's frame.
       visible
-      (min (long n) (max 1 (- (long foot-row) (long body-top))))]
+      (min (long n) (max 1 (- (long foot-rule-row) (long body-top))))]
 
      (loop [state {:switches #{} :options {}}]
        (dotimes [i (max 1 (- (long body-top) (long wipe-top)))]
          (clear-row! (+ (long wipe-top) i)))
-       (when (>= (long sep-row) (long wipe-top))
-         (p/set-colors! g t/dialog-border t/dialog-bg)
-         (if boxed?
-           (p/draw-separator! g left (+ (long left) (long inner-w) 1) sep-row)
-           (p/draw-separator! g -1 cols sep-row)))
+       (p/set-colors! g t/dialog-border t/dialog-bg)
+       (when (>= (long sep-row) (max (long wipe-top) (long top-limit)))
+         (p/draw-separator! g left (+ (long left) (long inner-w) 1) sep-row))
+       (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
+         (p/draw-separator! g left (+ (long left) (long inner-w) 1) foot-rule-row))
        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
        (p/styled g
                  [p/BOLD]
@@ -2462,7 +2475,7 @@
                 value (when (= type :option) (get (:options state) id))]
 
                (draw-transient-item! g left row inner-w layout it active? value)))))
-       (draw-hint-bar! g (if boxed? left -1) foot-row (if boxed? inner-w cols) footer)
+       (draw-hint-bar! g left foot-row inner-w footer)
        (.setCursorPosition screen nil)
        (.refresh screen Screen$RefreshType/DELTA)
        (let [key (read-modal-key! screen)]
@@ -2582,7 +2595,8 @@
                                           text-w
                                           (or prompt (str label ":"))
                                           {:initial current :mask mask}))
-                      {:boxed? true :min-row (+ content-top (count wrapped) (long body-gap))})))
+                      {:min-row (+ content-top (count wrapped) (long body-gap))
+                       :clear-above? true})))
 
 (defn- magit-push-flow!
   "Magit-style push transient (`magit-transient!`). SWITCHES (all optional):
@@ -3067,9 +3081,20 @@
                    (magit-mini-read! screen g left inner-w hint-row text-w label opts))
           :choose! (fn [title choices]
                      (magit-mini-choose! screen g left inner-w hint-row text-w title choices))
-          :transient!
-          (fn [title spec read-option]
-            (magit-transient! screen g left inner-w hint-row text-w title spec read-option))}]
+          :transient! (fn [title spec read-option]
+                        (magit-transient! screen
+                                          g
+                                          left
+                                          inner-w
+                                          hint-row
+                                          text-w
+                                          title
+                                          spec
+                                          read-option
+                                          ;; The popup opens INSIDE the status buffer's own
+                                          ;; frame and may never climb over the box's top
+                                          ;; border or the rows it keeps visible.
+                                          {:min-row content-top}))}]
 
         (dotimes [i visible]
           (let

@@ -1084,7 +1084,7 @@
                         spec
                         (fn [_item _current]
                           nil)
-                        {:boxed? true :min-row min-row}))
+                        {:min-row min-row :clear-above? true}))
 
 (defn- run-model-transient!
   "Magit transient model picker for `provider`: one keystroke per model, `n` / `p`

@@ -272,11 +272,10 @@
 
 (defn- transient-grid!
   "EVERY terminal row (blanks KEPT) after one paint of `magit-transient!` at the
-   host-dialog geometry `magit-status-buffer!` hands it, so the popup's own
-   band geometry — its full-width rule, its margin rows, the row its hint bar
-   lands on — is inspectable. `opts` goes straight through, so the BOXED variant
-   a host dialog runs it in is inspectable exactly the same way. `pre!` paints
-   the HOST buffer first, so whatever the popup fails to cover shows up."
+   host-dialog geometry `magit-status-buffer!` hands it, so the popup's own band
+   geometry — its capping rule, its margin rows, the row its hint bar lands on —
+   is inspectable. `opts` goes straight through. `pre!` paints the HOST buffer
+   first, so whatever the popup covers (or fails to cover) shows up."
   ([spec left inner-w hint-row] (transient-grid! spec left inner-w hint-row nil))
   ([spec left inner-w hint-row opts] (transient-grid! spec left inner-w hint-row opts nil))
   ([spec left inner-w hint-row opts pre!]
@@ -377,37 +376,52 @@
         ;; A command is a BOLD key plus its description — never dim.
         (expect (str/includes? (:text command) "c  Commit staged"))
         (expect (= "c" (:bold command)))))
-  (it "the popup is a full-bleed band with a margin row under its title"
-      (let
-        [grid
-         (transient-grid! commit-transient-spec 3 74 27)
+  (it
+    "the popup is a band INSIDE the host frame with a margin row under its title"
+    (let
+      [grid
+       (transient-grid! commit-transient-spec 3 74 27)
 
-         rule-y
-         (first (keep-indexed (fn [i s]
-                                (when (str/includes? s "────") i))
-                              grid))
+       rule-y
+       (first (keep-indexed (fn [i s]
+                              (when (str/includes? s "────") i))
+                            grid))
 
-         args-y
-         (first (keep-indexed (fn [i s]
-                                (when (str/includes? s "Arguments") i))
-                              grid))]
+       args-y
+       (first (keep-indexed (fn [i s]
+                              (when (str/includes? s "Arguments") i))
+                            grid))]
 
-        ;; The capping rule spans EVERY column — no host box borders survive it.
-        (expect (= (apply str (repeat 80 "─")) (nth grid rule-y)))
-        ;; The hint bar lands one row BELOW the host's hint row, on its bottom
-        ;; border, swallowing it instead of leaving a border under the popup.
-        (expect (str/includes? (nth grid 28) "toggle flag"))
-        ;; The band is CONTIGUOUS: the last command sits directly on the hint
-        ;; bar, never one row above it with a host row left showing between.
-        (expect (str/includes? (nth grid 27) "Amend last commit"))
-        ;; Margin-top: title, blank, first group header.
-        (expect (str/blank? (nth grid (dec args-y))))
-        (expect (str/includes? (nth grid (- args-y 2)) "Commit"))))
-  (it "the band wipes every host row it covers, hint bar and box borders alike"
+      ;; The capping rule ends in T-junctions ON the host's box border and
+      ;; never spills into the columns outside it.
+      (expect (= \├ (nth (nth grid rule-y) 3)))
+      (expect (= \┤ (nth (nth grid rule-y) 78)))
+      (expect (str/blank? (subs (nth grid rule-y) 0 3)))
+      (expect (str/blank? (subs (nth grid rule-y) 79)))
+      ;; The hint bar lands ON the host's own hint row — the row below it, the
+      ;; dialog's bottom border, is never swallowed.
+      (expect (str/includes? (nth grid 27) "toggle flag"))
+      (expect (str/blank? (nth grid 28)))
+      ;; The popup is GLUED to that bottom chrome: it repaints the host's own
+      ;; `├───┤` rule directly above the hint bar, so its last command never
+      ;; runs straight into the footer text with the rule swallowed.
+      (expect (str/includes? (nth grid 26) "────"))
+      (expect (= [\├ \┤] [(nth (nth grid 26) 3) (nth (nth grid 26) 78)]))
+      ;; The band is CONTIGUOUS: the last command sits directly on that rule,
+      ;; never one row above it with a host row left showing between.
+      (expect (str/includes? (nth grid 25) "Amend last commit"))
+      ;; Margin-top: title, blank, first group header. "Blank" is the band's
+      ;; INNER width — every row it owns carries the frame's own edge.
+      (expect (str/blank? (subs (nth grid (dec (long args-y))) 4 78)))
+      (expect (= [\│ \│]
+                 [(nth (nth grid (dec (long args-y))) 3) (nth (nth grid (dec (long args-y))) 78)]))
+      (expect (str/includes? (nth grid (- args-y 2)) "Commit"))))
+  (it "the popup wipes every host row it covers and no column outside the frame"
       ;; The status buffer paints its OWN hint bar on `hint-row`, framed by the
-      ;; dialog's box borders. Full-bleed the popup's hint bar drops one row
-      ;; lower, so any row it fails to own reads as a SECOND hint bar stacked
-      ;; between the transient's commands and its footer.
+      ;; dialog's box borders. The popup replaces that hint bar in place: any row
+      ;; it fails to own reads as a SECOND hint bar stacked between its commands
+      ;; and its footer, and any column it owns outside the border reads as the
+      ;; popup escaping the dialog.
       (let
         [host!
          (fn [g]
@@ -420,15 +434,60 @@
          rule-y
          (first (keep-indexed (fn [i s]
                                 (when (str/includes? s "────") i))
-                              grid))]
+                              grid))
+
+         band
+         (subvec grid (long rule-y) 28)]
 
         (expect (some? rule-y))
         ;; Above the rule the host buffer is untouched — the popup never wipes
         ;; the status rows it is supposed to leave visible.
-        (expect (str/includes? (nth grid (dec (long rule-y))) "HHH"))
-        ;; From the rule down to its own hint bar the popup owns every column.
-        (expect (every? #(not (str/includes? % "H")) (subvec grid (long rule-y) 29)))
-        (expect (str/includes? (nth grid 28) "toggle flag"))))
+        (expect (= (apply str (repeat 80 \H)) (nth grid (dec (long rule-y)))))
+        ;; From the rule down to its own hint bar the popup owns every INNER
+        ;; column …
+        (expect (every? #(not (str/includes? (subs % 4 78) "H")) band))
+        ;; … and not one column outside the host's frame.
+        (expect (every? #(str/starts-with? % "HHH") band))
+        (expect (every? #(str/ends-with? % "H") band))
+        ;; The row under the hint bar — the dialog's bottom border — survives.
+        (expect (= (apply str (repeat 80 \H)) (nth grid 28)))
+        (expect (str/includes? (nth grid 27) "toggle flag"))
+        ;; … and the popup's closing rule sits directly on that hint bar.
+        (expect (str/includes? (nth grid 26) "────"))))
+  (it "the popup repaints the frame edge over a host separator it covers"
+      ;; Wiping only the INNER columns left the host's own section separator
+      ;; showing as stray `├`/`┤` junctions in the border columns beside the
+      ;; popup — the band looked like it had been torn out of the frame.
+      (let
+        [host!
+         (fn [g]
+           (doseq [y (range 30)]
+             (p/put-str! g 3 y "│")
+             (p/put-str! g 78 y "│"))
+           ;; a host separator INSIDE the rows the band will take over
+           (p/put-str! g 3 25 (str "├" (apply str (repeat 74 \─)) "┤")))
+
+         grid
+         (transient-grid! commit-transient-spec 3 74 27 nil host!)
+
+         rule-y
+         (first (keep-indexed (fn [i s]
+                                (when (str/includes? s "────") i))
+                              grid))]
+
+        (expect (some? rule-y))
+        ;; The popup's OWN rule keeps its T-junctions …
+        (expect (= \├ (nth (nth grid (long rule-y)) 3)))
+        (expect (= \┤ (nth (nth grid (long rule-y)) 78)))
+        ;; … its CLOSING rule keeps them too …
+        (expect (= [\├ \┤] [(nth (nth grid 26) 3) (nth (nth grid 26) 78)]))
+        ;; … and every other row it covers gets a plain frame edge back, the
+        ;; host's junctions included.
+        (expect (every? (fn [y]
+                          (= [\│ \│] [(nth (nth grid y) 3) (nth (nth grid y) 78)]))
+                        (remove #{26} (range (inc (long rule-y)) 28))))
+        ;; The host separator's body is gone, not just its junctions.
+        (expect (not (str/includes? (nth grid 25) "────")))))
   (it "pressing a flag key arms it and pressing it again disarms it"
       (let
         [on
@@ -463,15 +522,15 @@
   (it "Esc cancels the transient, armed flags and all"
       (expect (nil? (:ret (drive-transient! commit-transient-spec [\h :esc]))))))
 
-(defdescribe magit-transient-boxed-test
-             ;; The provider dialog runs the SAME transient inside its own frame
-             ;; (`provider/run-transient!` passes `{:boxed? true :min-row …}`), so the box
-             ;; has to survive the popup: inner columns only, T-junctions ON the border,
-             ;; and the hint bar on the host's own hint row instead of its bottom edge.
-             (it "boxed, the rule ends in T-junctions and the hint bar shares the host's hint row"
+(defdescribe magit-transient-paging-test
+             ;; The provider dialog runs the SAME transient for PAGES of models in
+             ;; one frame (`provider/run-transient!` passes `{:min-row … :clear-above?
+             ;; true}`), so a short page must wipe everything a taller one left above
+             ;; its title — without ever painting above `:min-row`.
+             (it "clear-above? wipes from :min-row down and keeps the frame intact"
                  (let
                    [grid
-                    (transient-grid! commit-transient-spec 3 74 27 {:boxed? true :min-row 6})
+                    (transient-grid! commit-transient-spec 3 74 27 {:min-row 6 :clear-above? true})
 
                     rule-y
                     (first (keep-indexed (fn [i s]
@@ -502,7 +561,7 @@
                                                   :label (str "Action " gi "-" i)}))}))}
 
                   grid
-                  (transient-grid! tall 3 74 27 {:boxed? true :min-row 6})]
+                  (transient-grid! tall 3 74 27 {:min-row 6 :clear-above? true})]
 
                  (expect (str/includes? (nth grid 6) "Commit"))
                  (expect (every? str/blank? (take 6 grid))))))
