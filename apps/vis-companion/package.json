@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "node scripts/react-compiler-lint.mjs",
+    "design:shots": "node scripts/design-shots.mjs",
     "postinstall": "npm rebuild typescript-7",
     "cap:config": "node scripts/gen-capacitor-config.mjs",
     "sync": "cap sync",

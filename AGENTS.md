@@ -77,6 +77,21 @@ Render paint work in the `vis-channel-tui` REPL using Lanterna `DefaultVirtualTe
 - Rendering reads the repo asset and writes `/tmp`, which a bare `ep/create-python-context {}` denies; pass the 2-arity roots-fn `(constantly ["/tmp" "/private/tmp" (System/getProperty "user.dir")])`.
 - Keep both: the capture journal is what you eyeball, the lazytest terminal-grid assertions are the regression gate.
 
+## Companion GUI design shots
+
+UX proposals are **made in the app and photographed**, never described in prose. The TUI has its capture journal; the companion has the design gallery.
+
+- The harness lives in `apps/vis-companion`: `src/dev/fleet.ts` (fixture data), `src/dev/variants.tsx` (one exported component per proposal, driven by a `state` prop), `src/dev/DesignGallery.tsx` (the `DESIGN_VARIANTS` registry), `scripts/design-shots.mjs` (`npm run design:shots`).
+- Dev-only route: `#/__design` lists the proposals, `#/__design?v=<id>&state=<state>&theme=light|dark` renders exactly one alone, so the viewport IS the proposal. `main.tsx` reaches it behind `import.meta.env.DEV`; nothing shipped imports `src/dev/**`.
+- The **page** owns the matrix, not the script: the gallery publishes `window.__designShots` (`{id, state}` per registered state) and `design-shots.mjs` reads it, so adding a variant needs no script edit.
+- Variants reuse the real chrome (`Header`, `TabBar`, `Shell` exported from `App.tsx`) and only Tailwind design tokens — a proposal that cannot be built with the design system cannot be photographed either.
+- `design:shots` spawns vite, then per shot runs `spel open --viewport WxH`, `spel wait --fn window.__designReady`, `spel screenshot`, writing `/tmp/vis-ui/<variant>-<state>-<theme>-<viewport>.png`. Flags: `--only`, `--viewport`, `--theme`, `--out`, `--keep`.
+- Always **both viewports** (390x844 phone, 1280x900 desktop) and **both palettes** (`applyTheme` with `BUNDLED_LIGHT`/`BUNDLED_DARK` in a layout effect, before the ready flag): the same amber that reads as an accent on paper is a flare on ink.
+- Flip `window.__designReady` only after `document.fonts.ready` AND a paint. A shot taken earlier renders in a fallback face and every measurement in it is a lie.
+- **Look at the pixels, not at the file list.** Attach every shot with `vis_attach("/tmp/vis-ui/<name>.png")` and actually read it: that is how `state === 'filter'` against a registry declaring `'filtered'` was caught — three "different" states had produced byte-identical PNGs. `PIL.Image.paste` is not bound in this sandbox, so attach the raw PNGs individually instead of composing a contact sheet.
+- Give every design a state that can **falsify** it: the solo state (one machine paired, the whole concept must disappear) and a degraded state (a machine offline) are what expose a layout that only works in the demo.
+- The gallery is production code: `npm run typecheck`, `npm run lint`, and `npm run build` must be clean before it ships.
+
 ## Shipping verified work
 
 - A change that is lint-clean, formatted, and covered by its own passing tests is **ready to push**. Commit it and push it to `main` in the same session, without being asked again — finished features must never be left sitting in the working tree.

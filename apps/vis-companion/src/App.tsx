@@ -901,7 +901,7 @@ export function App() {
   );
 }
 
-function Header({
+export function Header({
   tab,
   hasConn,
   onTab,
@@ -952,7 +952,7 @@ function Header({
   );
 }
 
-function TabBar({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) {
+export function TabBar({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) {
   const items: { id: Tab; label: string }[] = [
     { id: 'sessions', label: 'Sessions' },
     { id: 'connect', label: 'Machines' },
@@ -1016,7 +1016,7 @@ function Splash() {
   );
 }
 
-function Shell({ children }: { children: ReactNode }) {
+export function Shell({ children }: { children: ReactNode }) {
   // Keep the shell in the page's layout layer: absolute positioning avoids the
   // lagging fixed WebKit layer during rotation. The viewport hook mutates only
   // this root's geometry synchronously, without a React render between focus
