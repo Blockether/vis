@@ -3503,13 +3503,19 @@
 (defn- form-fingerprint
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
-  [{:keys [code comment render-segments result-render result-summary result-kind result-detail error
-           success? silent? tool-color-role cards]
+  [{:keys [code comment display-code display-language pending-summary render-segments result-render
+           result-summary result-kind result-detail error success? silent? tool-color-role cards]
     tool-name :vis/tool-name}]
   [(text-fingerprint code) (text-fingerprint comment) render-segments
    (text-fingerprint result-render) (text-fingerprint result-summary) result-kind
    ;; result-detail is a small op-metadata map; compared structurally.
    result-detail error success? silent?
+   ;; What a RUNNING native call actually paints: the tool-authored code band
+   ;; (`:display-code`/`:display-language`) and its pending headline
+   ;; (`:pending-summary`). `:code` alone can't stand in for them — the same
+   ;; invocation renders differently once the tool's own `:render-call` lands,
+   ;; and without these the live bubble keeps the pre-display body forever.
+   (text-fingerprint display-code) display-language (text-fingerprint pending-summary)
    ;; The native-tool BADGE identity the renderer paints (label + color); without
    ;; these in the key, a form that gains them renders from a STALE cache entry.
    tool-name tool-color-role

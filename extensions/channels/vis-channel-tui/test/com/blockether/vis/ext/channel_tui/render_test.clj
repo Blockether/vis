@@ -3606,6 +3606,39 @@
                    (let [base {:thinking "planning" :forms []}]
                      (expect (not= (fp base) (fp (assoc base :content-stream "live text"))))))))
 
+(defdescribe form-fingerprint-pending-display-test
+             ;; Regression: the live progress body is memoized by `form-fingerprint`.
+             ;; A RUNNING native call paints its tool-authored band (`:display-code` /
+             ;; `:display-language`) and its pending headline (`:pending-summary`), yet
+             ;; none of the three were in the key — so the same `:code` served the
+             ;; pre-display body forever and the op-card never appeared until the call
+             ;; finished. Caught by capturing the same frame before/after the display
+             ;; fields land: the two paints were byte-identical.
+             (let
+               [fp
+                #'render/form-fingerprint
+
+                base
+                {:code "shell({\"op\": \"wait\", \"id\": \"verify\"})" :vis/tool-name "shell"}]
+
+               (it "display-code busts the fingerprint"
+                   (expect (not= (fp base) (fp (assoc base :display-code "# shell wait verify"))))
+                   (expect (not= (fp (assoc base :display-code "# a"))
+                                 (fp (assoc base :display-code "# b")))))
+               (it "display-language busts the fingerprint"
+                   (expect (not= (fp base) (fp (assoc base :display-language "bash")))))
+               (it "pending-summary busts the fingerprint"
+                   (expect (not= (fp base) (fp (assoc base :pending-summary "◷ `verify` waiting"))))
+                   (expect (not= (fp (assoc base :pending-summary "◷ `verify` waiting"))
+                                 (fp (assoc base :pending-summary "◷ `verify` reading logs")))))
+               (it "identical display fields still hit the same fingerprint"
+                   (let
+                     [full (assoc base
+                             :display-code "# shell wait verify"
+                             :display-language "bash"
+                             :pending-summary "◷ `verify` waiting")]
+                     (expect (= (fp full) (fp full)))))))
+
 (defdescribe
   message-detail-expansions-key-test
   ;; The height/estimate/projection caches key a message to ONLY its own
