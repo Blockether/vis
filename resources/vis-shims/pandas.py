@@ -105,6 +105,38 @@ def __vis_install_pandas__():
             ]
         return vals
 
+    # ----- Index -----
+    class Index(list):
+        """A labelled axis: a sequence of labels carrying a `name`."""
+
+        def __init__(self, data=(), name=None, dtype=None):
+            list.__init__(self, _to_list(data))
+            self.name = name if name is not None else getattr(data, "name", None)
+
+        @property
+        def values(self):
+            try:
+                import numpy as _np
+
+                return _np.array(list(self))
+            except Exception:
+                return list(self)
+
+        def tolist(self):
+            return list(self)
+
+        def to_list(self):
+            return list(self)
+
+        def copy(self):
+            return Index(self, self.name)
+
+        def rename(self, name):
+            return Index(self, name)
+
+        def __repr__(self):
+            return "Index(" + repr(list(self)) + ", name=" + repr(self.name) + ")"
+
     # ----- Series -----
     class Series:
         def __init__(self, data=None, index=None, name=None, dtype=None):
@@ -125,9 +157,9 @@ def __vis_install_pandas__():
                 vals = _to_list(data)
             self._v = _norm_num(vals)
             if index is None:
-                self._i = list(range(len(self._v)))
+                self._i = Index(range(len(self._v)))
             else:
-                self._i = _to_list(index)
+                self._i = Index(index)
             self.name = name
 
         @property
@@ -141,7 +173,11 @@ def __vis_install_pandas__():
 
         @property
         def index(self):
-            return list(self._i)
+            return self._i
+
+        @index.setter
+        def index(self, value):
+            self._i = Index(value)
 
         @property
         def dtype(self):
@@ -1060,11 +1096,11 @@ def __vis_install_pandas__():
             self._c = list(columns) if columns is not None else list(cols.keys())
             n = len(cols[self._c[0]]) if self._c else 0
             if index is not None:
-                self._i = _to_list(index)
+                self._i = Index(index)
             elif idx is not None:
-                self._i = idx
+                self._i = Index(idx)
             else:
-                self._i = list(range(n))
+                self._i = Index(range(n))
 
         @property
         def columns(self):
@@ -1078,7 +1114,11 @@ def __vis_install_pandas__():
 
         @property
         def index(self):
-            return list(self._i)
+            return self._i
+
+        @index.setter
+        def index(self, value):
+            self._i = Index(value)
 
         @property
         def shape(self):
@@ -1114,6 +1154,18 @@ def __vis_install_pandas__():
 
         def __len__(self):
             return self.shape[0]
+
+        def __iter__(self):
+            return iter(self._c)
+
+        def __contains__(self, key):
+            return key in self._c
+
+        def keys(self):
+            return Index(self._c)
+
+        def items(self):
+            return iter([(c, self._col(c)) for c in self._c])
 
         def _col(self, c):
             return Series(self._d[c], self._i, c)
@@ -2326,6 +2378,7 @@ def __vis_install_pandas__():
 
     mod = types.ModuleType("pandas")
     mod.DataFrame = DataFrame
+    mod.Index = Index
     mod.Series = Series
     mod.read_csv = read_csv
     mod.read_json = read_json

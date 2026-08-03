@@ -173,3 +173,40 @@
           (true?
             (ev python-context
                 "from pandas.tseries.offsets import Day\nx = Day(3)\nx.n == 3 and x.days == 3"))))))
+
+(defdescribe
+  pandas-index-surface-test
+  (it "iterates, contains and keys over the COLUMN labels like pandas"
+      (with-python-context
+        (expect
+          (= [["x" "y"] true false ["x" "y"] ["x" "y"]]
+             (ev
+               python-context
+               (str
+                 "import pandas as pd\n"
+                 "df = pd.DataFrame({'x':[1,2],'y':['p','q']})\n"
+                 "[list(df), 'x' in df, 0 in df, list(df.keys()), [c for c, _ in df.items()]]"))))))
+  (it "exposes df.index as an Index with a settable, persistent name"
+      (with-python-context
+        (expect
+          (= [true [0 1] "row" [0 1] ["a" "b"]]
+             (ev python-context
+                 (str "import pandas as pd\n"
+                      "df = pd.DataFrame({'x':[1,2]})\n" "before = isinstance(df.index, pd.Index)\n"
+                      "labels = df.index.tolist()\n" "df.index.name = 'row'\n"
+                      "named = df.index.name\n" "kept = list(df.index)\n"
+                      "df.index = ['a','b']\n" "[before, labels, named, kept, list(df.index)]"))))))
+  (it "gives Series the same Index object"
+      (with-python-context
+        (expect (= [true "ix" [10 20]]
+                   (ev python-context
+                       (str "import pandas as pd\n"
+                            "s = pd.Series([1,2], index=pd.Index([10,20], name='ix'))\n"
+                            "[isinstance(s.index, pd.Index), s.index.name, s.index.tolist()]"))))))
+  (it "renders through tabulate, index column included"
+      (with-python-context (expect (= "      x  y\n--  ---  ---\n 0    1  p\n 1    2  q"
+                                      (ev python-context
+                                          (str "import pandas as pd\n"
+                                               "from tabulate import tabulate\n"
+                                               "df = pd.DataFrame({'x':[1,2],'y':['p','q']})\n"
+                                               "tabulate(df, headers='keys', showindex=True)")))))))
