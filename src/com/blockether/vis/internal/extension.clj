@@ -1128,14 +1128,21 @@
 
 (defn- strict-samplable-node?
   "True when ONE wire-schema node can be sampled under provider grammar
-   constraints. The binding rule, measured live: every `object` node must close
-   itself with `additionalProperties false` and declare its properties (`For
-   'object' type, 'additionalProperties' must be explicitly set to false`). A
-   FREE-FORM object — `{:type \"object\"}` with no properties — is by definition
-   unconstrainable, so a tool carrying one can never be strict."
+   constraints. The binding rules, measured live:
+
+   - every node must SAY what it is — `:type`, a union (`:anyOf`/`:allOf`), a
+     `:$ref`, or a closed value set (`:enum`/`:const`). A node carrying only a
+     description cannot be compiled (`Invalid schema: Schema type is missing for
+     schema: {'description': …}`);
+   - every `object` node must close itself with `additionalProperties false` and
+     declare its properties (`For 'object' type, 'additionalProperties' must be
+     explicitly set to false`). A FREE-FORM object — `{:type \"object\"}` with no
+     properties — is by definition unconstrainable, so a tool carrying one can
+     never be strict."
   [node]
   (or (not (map? node))
-      (and (if (= "object" (:type node))
+      (and (or (:type node) (:anyOf node) (:allOf node) (:$ref node) (:enum node) (:const node))
+           (if (= "object" (:type node))
              (and (false? (:additionalProperties node)) (seq (:properties node)))
              true)
            (every? strict-samplable-node? (vals (:properties node)))
@@ -1144,7 +1151,8 @@
              (if (sequential? items)
                (every? strict-samplable-node? items)
                (strict-samplable-node? items)))
-           (every? strict-samplable-node? (concat (:anyOf node) (:allOf node))))))
+           (every? strict-samplable-node? (concat (:anyOf node) (:allOf node)))
+           true)))
 
 (defn strict-samplable-schema?
   "True when a WIRE schema (post-`wire-schema`) is inside the provider's strict
@@ -1170,6 +1178,165 @@
     (cond-> (assoc tool :schema wire)
       (strict-samplable-schema? wire)
       (assoc :strict true))))
+
+(defn- optional-parameter-count
+  "How many OPTIONAL properties a WIRE schema declares, counting every nested
+   object, list item, `$defs` entry and union branch.
+
+   This is the exact quantity Anthropic budgets: it compiles ONE grammar for all
+   strict tools of a request and refuses the whole request past its limit —
+   `Schemas contains too many optional parameters (72), which would make grammar
+   compilation inefficient … (limit: 24)`. Measured against the live API: the
+   number it reports is this recursive count summed over the STRICT tools only;
+   unconstrained tools are free."
+  [node]
+  (cond (map? node)
+        (let
+          [props
+           (:properties node)
+
+           items
+           (:items node)]
+
+          (+ (long (if (map? props) (count (remove (set (:required node)) (keys props))) 0))
+             (long (transduce (map optional-parameter-count)
+                              +
+                              0
+                              (concat (when (map? props) (vals props))
+                                      (vals (:$defs node))
+                                      (if (sequential? items) items (when items [items]))
+                                      (:anyOf node)
+                                      (:allOf node))))))
+        (sequential? node) (long (transduce (map optional-parameter-count) + 0 node))
+        :else 0))
+
+(def ^:private strict-optional-parameter-budget
+  "Optional parameters one request's strict tools may declare in total (Anthropic
+   grammar compilation). Beyond it the API 400s the ENTIRE request, so the budget
+   is enforced on our side before a tool surface ever goes out."
+  24)
+
+(defn- non-scalar-node?
+  "True when a wire-schema node is a container or a union — anything a model can
+   get structurally WRONG."
+  [node]
+  (and (map? node)
+       (boolean (or (contains? #{"array" "object"} (:type node))
+                    (:anyOf node)
+                    (:allOf node)
+                    (:$ref node)))))
+
+(defn- payload-risk
+  "How exposed a WIRE schema is to a mis-SERIALIZED argument, as a sort tier
+   (lower is more exposed):
+
+   0 — a NESTED container: a batch of maps, an array of arrays, a union of
+       shapes. Every mis-serialized argument in this repo's own gateway journals
+       was one of these (`patch \"edits\"` as JSON text, `grep \"include\"` as a
+       quoted list);
+   1 — a flat container: an array of strings;
+   2 — scalars only. Grammar constraint cannot change such a call, so it never
+       earns a slice of the request's grammar budget.
+
+   Tiering matters because that budget is far smaller than the tool surface: it
+   has to be spent where a wrong shape actually happens."
+  [schema]
+  (let [props (vals (:properties schema))]
+    (cond (some (fn [p]
+                  (and (non-scalar-node? p)
+                       (let [items (:items p)]
+                         (or (non-scalar-node? items)
+                             (and (sequential? items) (some non-scalar-node? items))
+                             (some non-scalar-node? (concat (:anyOf p) (:allOf p)))
+                             (= "object" (:type p))))))
+                props)
+          0
+          (some non-scalar-node? props) 1
+          :else 2)))
+
+(defn- schema-grammar-cost
+  "Size proxy for the grammar one schema compiles into: its structure, WITHOUT
+   descriptions (prose is not part of a grammar). Measured against the live
+   Anthropic API — the boundary sits between a surface scoring 1070 (accepted)
+   and one scoring 1120 (`The compiled grammar is too large`)."
+  [node]
+  (cond (map? node) (reduce-kv
+                      (fn [acc k v]
+                        (if (= :description k)
+                          acc
+                          (+ (long acc) 2 (count (name k)) (long (schema-grammar-cost v)))))
+                      0
+                      node)
+        (sequential? node) (reduce (fn [acc v]
+                                     (+ (long acc) 1 (long (schema-grammar-cost v))))
+                                   0
+                                   node)
+        (string? node) (+ 2 (count node))
+        :else 4))
+
+(def ^:private strict-grammar-budget
+  "Total `schema-grammar-cost` one request's strict tools may spend. Anthropic
+   compiles them into ONE grammar and refuses the whole request when it grows too
+   large; 1050 sits under the measured 1070-accepted / 1120-rejected boundary."
+  1050)
+
+(defn budget-strict-tools
+  "Keep `:strict` on as much of an advertised surface as ONE request can carry.
+
+   `advertise-tool` decides per tool whether a schema is grammar-samplable, but
+   the provider compiles ONE grammar for the whole request and rejects it whole
+   past either aggregate limit — `Schemas contains too many optional parameters
+   (72) … (limit: 24)` and `The compiled grammar is too large`. Both were
+   measured live; this is the aggregate gate over the FINAL surface (extension
+   natives plus engine-owned tools), and it is what keeps a growing tool surface
+   from 400-ing every request.
+
+   The budget fits roughly five tools out of two dozen, so it is spent by
+   `payload-risk` first — a batch of maps before an array of strings, scalars
+   never — then cheapest grammar first, ties by name, so the outcome is
+   deterministic. Everything else loses the flag and is sampled unconstrained,
+   exactly as before strict existed; the tool's own coercion stays its gate."
+  [tools]
+  (let
+    [tools
+     (vec tools)
+
+     cost
+     (into {}
+           (map-indexed (fn [i t]
+                          [i
+                           {:grammar (schema-grammar-cost (:schema t))
+                            :optional (optional-parameter-count (:schema t))
+                            :risk (payload-risk (:schema t))}]))
+           tools)
+
+     eligible
+     (keep-indexed (fn [i t]
+                     (when (and (:strict t) (< (long (:risk (cost i))) 2)) i))
+                   tools)
+
+     affordable
+     (->> eligible
+          (sort-by (juxt #(:risk (cost %)) #(:grammar (cost %)) #(:name (nth tools %))))
+          (reduce (fn [{:keys [grammar optional kept] :as acc} i]
+                    (let
+                      [g
+                       (+ (long grammar) (long (:grammar (cost i))))
+
+                       o
+                       (+ (long optional) (long (:optional (cost i))))]
+
+                      (if (and (<= g (long strict-grammar-budget))
+                               (<= o (long strict-optional-parameter-budget)))
+                        {:grammar g :optional o :kept (conj kept i)}
+                        acc)))
+                  {:grammar 0 :optional 0 :kept #{}})
+          :kept)]
+
+    (into []
+          (map-indexed (fn [i t]
+                         (if (or (not (:strict t)) (contains? affordable i)) t (dissoc t :strict))))
+          tools)))
 
 (defn native-tool-schemas
   "The model-facing `:tools` surface: `{:name :description :schema}` (plus

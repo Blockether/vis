@@ -4997,7 +4997,11 @@
 (defn- native-tools
   "The complete provider-visible native surface. Extension tools arrive finalized
    by `native-tool-schemas`; every engine-owned tool is finalized here, so no tool
-   can be advertised without an explicit raw-result contract."
+   can be advertised without an explicit raw-result contract.
+
+   `budget-strict-tools` runs LAST, over both halves at once: the provider's
+   strict grammar is compiled per request, so only the assembled surface knows
+   how much of it can stay constrained."
   [active-extensions caps env]
   (let
     [engine-tools (cond-> [(apropos-tool) (doc-tool)]
@@ -5006,9 +5010,9 @@
 
                     true
                     (conj (session-fold-tool) (python-execution-tool caps)))]
-    (into (extension/native-tool-schemas active-extensions env)
-          (map finalize-engine-native-tool)
-          engine-tools)))
+    (extension/budget-strict-tools (into (extension/native-tool-schemas active-extensions env)
+                                         (map finalize-engine-native-tool)
+                                         engine-tools))))
 
 (defn- advertised-native-capability-names
   "Provider-visible names plus Python compatibility names for active extension

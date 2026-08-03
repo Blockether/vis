@@ -647,3 +647,124 @@
                                                    :properties {"b" {:type "string"}}
                                                    :additionalProperties false}]}}
                         :additionalProperties false})))))
+
+(defn- batch-tool
+  "A strict-samplable tool taking a BATCH — an array of maps, `payload-risk` 0 —
+   plus `n` optional scalar properties."
+  [name n]
+  (extension/advertise-tool {:name name
+                             :description "d"
+                             :schema {:type "object"
+                                      :properties
+                                      (into {"edits" {:type "array"
+                                                      :items {:type "object"
+                                                              :properties {"path" {:type "string"}}
+                                                              :required ["path"]
+                                                              :additionalProperties false}}}
+                                            (map (fn [i]
+                                                   [(str "o" i) {:type "string"}]))
+                                            (range n))
+                                      :required ["edits"]
+                                      :additionalProperties false}}))
+
+(defn- flat-tool
+  "A strict-samplable tool whose only container is an array of STRINGS —
+   `payload-risk` 1."
+  [name]
+  (extension/advertise-tool {:name name
+                             :description "d"
+                             :schema {:type "object"
+                                      :properties {"paths" {:type "array" :items {:type "string"}}}
+                                      :required ["paths"]
+                                      :additionalProperties false}}))
+
+(defn- scalar-tool
+  "A strict-samplable tool with scalars only — `payload-risk` 2, nothing a grammar
+   could fix."
+  [name]
+  (extension/advertise-tool {:name name
+                             :description "d"
+                             :schema {:type "object"
+                                      :properties {"q" {:type "string"}}
+                                      :required ["q"]
+                                      :additionalProperties false}}))
+
+(def ^:private strict-grammar-budget-for-test
+  "The production grammar budget, read from the var the wire projection uses."
+  @#'extension/strict-grammar-budget)
+
+(defn- grammar-spend
+  "Total compiled-grammar cost of the tools that KEPT `:strict`."
+  [tools]
+  (reduce + 0 (map #(#'extension/schema-grammar-cost (:schema %)) (filter :strict tools))))
+
+(defdescribe
+  strict-budget-test
+  (it "a batch of maps is what earns the request's grammar budget"
+      ;; Every mis-serialized argument in this repo's journals was a nested
+      ;; container; a scalars-only tool cannot be malformed that way, so it never
+      ;; spends budget a batch tool could have used.
+      (let [tools (extension/budget-strict-tools [(scalar-tool "scalars") (batch-tool "batch" 0)])]
+        (expect (= [nil true] (mapv :strict tools)))))
+  (it "the more exposed payloads outbid the flatter one for a scarce budget"
+      ;; The flat array of strings is the CHEAPEST tool here and still loses: the
+      ;; batches of maps are ranked first, and what they leave does not fit it.
+      (let
+        [tools
+         (extension/budget-strict-tools (conj (mapv #(batch-tool (str "b" %) 1) (range 6))
+                                              (flat-tool "flat")))
+
+         strict
+         (into #{} (comp (filter :strict) (map :name)) tools)]
+
+        (expect (not (contains? strict "flat")))
+        (expect (seq strict))
+        (expect (every? #(= \b (first %)) strict))
+        (expect (>= (long strict-grammar-budget-for-test) (long (grammar-spend tools))))))
+  (it "the EXPENSIVE schemas lose strict once the request grammar is spent"
+      ;; Anthropic compiles ONE grammar per request: individually legal strict
+      ;; tools still 400 the whole call together. Cheapest first, deterministic.
+      (let
+        [tools
+         (extension/budget-strict-tools (mapv #(batch-tool (str "b" %) 0) (range 40)))
+
+         strict
+         (filter :strict tools)]
+
+        (expect (seq strict))
+        (expect (< (count strict) (count tools)))
+        (expect (>= (long strict-grammar-budget-for-test) (long (grammar-spend tools))))
+        (expect (= (mapv :name tools) (mapv :name (extension/budget-strict-tools tools))))))
+  (it "the optional-parameter limit binds before the grammar does"
+      ;; Measured live: `Schemas contains too many optional parameters … limit: 24`.
+      ;; Two 13-optional batches are cheap enough to compile and still illegal.
+      (let [tools (extension/budget-strict-tools [(batch-tool "a" 13) (batch-tool "b" 13)])]
+        (expect (= 1 (count (filter :strict tools))))
+        (expect (>= (long strict-grammar-budget-for-test) (long (grammar-spend tools))))
+        (expect (>= 24
+                    (reduce +
+                            0
+                            (map #(#'extension/optional-parameter-count (:schema %))
+                                 (filter :strict tools)))))))
+  (it "unconstrained tools cost nothing and are left alone"
+      ;; The provider counts the optional parameters of STRICT tools only, so an
+      ;; open/foreign payload never crowds out a constrained one.
+      (let
+        [foreign
+         {:name "mcpish" :description "d" :schema {:type "object"}}
+
+         tools
+         (extension/budget-strict-tools [foreign (batch-tool "a" 0)])]
+
+        (expect (nil? (:strict (first tools))))
+        (expect (true? (:strict (second tools))))
+        (expect (= "mcpish" (:name (first tools))))))
+  (it "nested optional properties are counted, exactly as the provider counts them"
+      (let [nested (batch-tool "nested" 0)]
+        ;; "path" is required; add one optional INSIDE the array items.
+        (expect (= 0 (#'extension/optional-parameter-count (:schema nested))))
+        (expect (= 1
+                   (#'extension/optional-parameter-count
+                    (assoc-in (:schema nested)
+                      [:properties "edits" :items :properties "ranges"]
+                      {:type "string"})))))))
