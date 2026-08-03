@@ -1102,7 +1102,58 @@ vis.extension(
             (binding [extension/*current-environment* env]
               (expect (= ["echo jailed" "echo mapped" true] (:result (run))))
               (expect (= [[env {"commands" ["echo jailed"]}] [env {"commands" ["echo mapped"]}]]
-                         @seen)))))))))
+                         @seen))))))))
+  (it
+    "unwraps the host tool ENVELOPE so a shelling extension crosses the boundary"
+    ;; Regression, issue #96: `jailed-shell` returns an `extension/success`
+    ;; envelope whose KEYWORD keys `->py` rejects, so every extension that
+    ;; shelled out died with "STRINGS-ONLY boundary violation: non-string-key
+    ;; :result" — blaming the extension for the framework's own payload.
+    (with-loaded
+      {"jail.py"
+       "import vis\ndef run():\n    \"Shell out.\"\n    r = vis.shell({'commands': ['echo hi']})\n    return [r['commands'][0]['stdout'], r['stage'], sorted(r.keys())]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+      (fn [_ _]
+        (let
+          [run
+           (symbol-fn (registered "jail") 'run)
+
+           env
+           {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
+
+          (with-redefs
+            [shell/jailed-shell (fn [_env opts]
+                                  (extension/success
+                                    {:result {"commands" [{"stdout" (first (get opts "commands"))}]
+                                              "stage" :run}
+                                     :op :shell
+                                     :metadata {:duration-ms 1}}))]
+            (binding [extension/*current-environment* env]
+              ;; Python sees the UNWRAPPED, deep-stringified `:result` only.
+              (expect (= ["echo hi" "run" ["commands" "stage"]] (:result (run))))))))))
+  (it
+    "raises a failing host tool envelope instead of handing Python the envelope"
+    (with-loaded
+      {"jail.py"
+       "import vis\ndef run():\n    \"Shell out.\"\n    return vis.shell({'commands': ['nope']})\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+      (fn [_ _]
+        (let
+          [run
+           (symbol-fn (registered "jail") 'run)
+
+           env
+           {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
+
+          (with-redefs
+            [shell/jailed-shell (fn [_env _opts]
+                                  (extension/failure {:error {:message "jail refused the command"}
+                                                      :op :shell}))]
+            (binding [extension/*current-environment* env]
+              ;; The failure raises in the extension frame, so the symbol call
+              ;; fails with the host's reason — never a bogus success carrying a
+              ;; keyword-keyed envelope as its payload.
+              (let [r (run)]
+                (expect (false? (:success? r)))
+                (expect (= "jail refused the command" (:message (:error r))))))))))))
 
 (it
   "rejects a Python set so serial command ordering cannot be lost"

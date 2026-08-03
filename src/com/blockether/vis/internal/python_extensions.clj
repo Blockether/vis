@@ -116,6 +116,52 @@
         (set? x) (mapv plainify x)
         :else x))
 
+(defn- stringify-deep
+  "Deep-convert host data to the strings-only shape the `->py` boundary
+   accepts, so a map carrying keyword keys AND keyword values (a svar
+   provider, a config, a selection event, a tool result) can cross INTO a
+   Python callback. Keyword/symbol keys and values become their name string
+   (leading `:` stripped, namespace kept); scalars pass through. `->py` forbids
+   keywords outright, so without this an enrich-models / on-selected / render
+   arg would throw a boundary violation before the Python fn ever runs."
+  [x]
+  (letfn [(k->s [k]
+            (cond (keyword? k) (subs (str k) 1)
+                  (symbol? k) (str k)
+                  (string? k) k
+                  :else (str k)))]
+    (cond (map? x) (into {}
+                         (map (fn [[k v]]
+                                [(k->s k) (stringify-deep v)]))
+                         x)
+          (sequential? x) (mapv stringify-deep x)
+          (set? x) (mapv stringify-deep x)
+          (keyword? x) (subs (str x) 1)
+          (symbol? x) (str x)
+          :else x)))
+
+(defn- host-tool-result
+  "Unwrap a HOST tool envelope into the payload Python asked for.
+
+   Host tool impls (`vis.shell` -> `foundation.shell/jailed-shell`) return an
+   `extension/success`/`failure` ENVELOPE — `{:result … :success? … :error …
+   :metadata …}` — whose keyword keys `->py` rejects outright. Handing that
+   straight back therefore killed every extension that shells out with
+   `STRINGS-ONLY boundary violation: non-string-key :result`, blaming the
+   extension for the framework's own payload. Python only ever wanted
+   `:result`, deep-stringified; a failing envelope becomes an ordinary
+   exception raised in the calling extension frame, where it can be caught.
+
+   Non-envelope values (a plain map, a string) pass through `stringify-deep`
+   unchanged, so a host callback that already returns wire data is unaffected."
+  [envelope]
+  (if (and (map? envelope) (contains? envelope :success?))
+    (if (:success? envelope)
+      (stringify-deep (:result envelope))
+      (throw (ex-info (or (not-empty (str (:message (:error envelope)))) "host tool call failed")
+                      {:type ::host-tool-failed :error (stringify-deep (:error envelope))})))
+    (stringify-deep envelope)))
+
 ;; =============================================================================
 ;; Durable state (`vis.state`) — backed by the `extension_aggregate` table
 ;; (one row per key, kind "py-state", :global scope), NOT the filesystem.
@@ -229,12 +275,15 @@
     (.putMember g
                 "__vis_host_jailed_shell__"
                 ;; Public extension calls use exactly one options map, identical
-                ;; to the native shell tool: {"commands": ["…"]}.
+                ;; to the native shell tool: {"commands": ["…"]}. The impl hands
+                ;; back a tool ENVELOPE; Python gets the unwrapped, stringified
+                ;; `:result` (see `host-tool-result`) and a failure raises.
                 (->executable (fn [opts]
-                                ((requiring-resolve
-                                   'com.blockether.vis.internal.foundation.shell/jailed-shell)
-                                  extension/*current-environment*
-                                  opts))))
+                                (host-tool-result
+                                  ((requiring-resolve
+                                     'com.blockether.vis.internal.foundation.shell/jailed-shell)
+                                    extension/*current-environment*
+                                    opts)))))
     (.putMember g
                 "__vis_host_request_input__"
                 ;; Typed human-input pause: one JSON request object in, one JSON
@@ -305,29 +354,6 @@
     (:session/id sctx)
     (assoc :session-id (:session/id sctx))))
 
-(defn- stringify-deep
-  "Deep-convert host data to the strings-only shape the `->py` boundary
-   accepts, so a map carrying keyword keys AND keyword values (a svar
-   provider, a config, a selection event, a tool result) can cross INTO a
-   Python callback. Keyword/symbol keys and values become their name string
-   (leading `:` stripped, namespace kept); scalars pass through. `->py` forbids
-   keywords outright, so without this an enrich-models / on-selected / render
-   arg would throw a boundary violation before the Python fn ever runs."
-  [x]
-  (letfn [(k->s [k]
-            (cond (keyword? k) (subs (str k) 1)
-                  (symbol? k) (str k)
-                  (string? k) k
-                  :else (str k)))]
-    (cond (map? x) (into {}
-                         (map (fn [[k v]]
-                                [(k->s k) (stringify-deep v)]))
-                         x)
-          (sequential? x) (mapv stringify-deep x)
-          (set? x) (mapv stringify-deep x)
-          (keyword? x) (subs (str x) 1)
-          (symbol? x) (str x)
-          :else x)))
 
 (defn- op-hook-payload
   "STRINGS-ONLY `{'op' 'args' ['result']}` payload for a Python op hook.
