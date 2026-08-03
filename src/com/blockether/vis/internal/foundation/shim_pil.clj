@@ -35,14 +35,22 @@
 
 (defonce ^:private counter (atom 0))
 
-;; Live draw runs: handle -> the cdylib image a run of consecutive ImageDraw ops
-;; shares. Converting the whole canvas into the cdylib and back on EVERY op is
-;; O(pixels) per op, which made character-by-character text rendering crawl;
-;; keeping the image live turns a run of N ops into ONE conversion. `entry`
-;; flushes it back into the raster before any other op observes the pixels.
+;; Live draw runs: handle -> the cdylib image a run of consecutive ImageDraw
+;; ops shares, plus the ops queued against it. Converting the whole canvas into
+;; the cdylib and back on EVERY op is O(pixels) per op -- and so is every
+;; `im/draw!` call itself (~1.4 ms on 800x600, whatever the shape is), because
+;; the canvas round-trips through the renderer per call. So a run of N ops keeps
+;; ONE live image AND crosses as ONE batch; `entry` flushes both before any
+;; other op observes the pixels.
 (defonce ^:private live-draws (atom {}))
 
-(declare flush-draws! take-draw!)
+(defonce ^:private pending-draws (atom {}))
+
+(def ^:private max-pending-draws
+  "Queued ops that force a flush -- bounds what one unread draw loop can pin."
+  4096)
+
+(declare flush-draws! take-draw! run-draws!)
 
 ;; ---------------------------------------------------------------------------
 ;; The raster. `getRGB`/`setRGB`/`getWidth`/`getHeight` keep exactly the
@@ -72,8 +80,8 @@
     h))
 
 (defn- raw-entry
-  "Registry entry WITHOUT flushing an in-flight draw run. Only the draw path,
-   which owns that run, may read an entry this way."
+  "Registry entry WITHOUT flushing an in-flight draw run. Only the flush path
+   itself may read an entry this way; anything else would observe stale pixels."
   [h]
   (get @registry (long h)))
 
@@ -81,6 +89,7 @@
 
 (defn- free-img!
   [h]
+  (swap! pending-draws dissoc (long h))
   (some-> (take-draw! h)
           im/close!)
   (swap! registry dissoc (long h))
@@ -232,9 +241,11 @@
       img)))
 
 (defn- flush-draws!
-  "Write a handle's in-flight draw image back into its raster and close it, so
-   every other op reads pixels that already include the drawing."
+  "Send a handle's queued draw ops to the cdylib, write the resulting image back
+   into its raster and close it, so every other op reads pixels that already
+   include the drawing."
   [h]
+  (run-draws! h)
   (when-let [img (take-draw! h)]
     (try (when-let [^Raster r (:img (raw-entry h))]
            (rgba->px! r (im/pixels img)))
@@ -1669,13 +1680,28 @@
         (swap! live-draws assoc (long h) img)
         img)))
 
+(defn- run-draws!
+  "Hand this handle's queued ops to the cdylib as ONE `im/draw!` batch."
+  [h]
+  (let [k (long h)]
+    (when-let [ops (seq (get @pending-draws k))]
+      (swap! pending-draws dissoc k)
+      (when-let [^Raster r (:img (raw-entry k))]
+        (im/draw! (draw-img k r) (vec ops)))))
+  nil)
+
 (defn- draw-into!
-  "Run a batch of `imaging` draw ops against this handle's raster. Vector drawing
-   lives in the cdylib (tiny-skia), so the pixels round-trip through a live image
-   -- one that STAYS live until another op reads the raster, so a run of draws
-   (per-character text, say) pays ONE canvas conversion instead of one per op."
-  [h ^Raster r ops]
-  (im/draw! (draw-img h r) (vec ops))
+  "Queue `ops` for this handle rather than drawing them now. Vector drawing lives
+   in the cdylib (tiny-skia) and every `im/draw!` call round-trips the whole
+   canvas through it, so a run of draws (per-character text, say) crosses as ONE
+   batch against ONE live image -- flushed by `flush-draws!` before anything
+   reads the pixels, and every `max-pending-draws` ops so the queue stays
+   bounded."
+  [h ops]
+  (let [k (long h)]
+    (when (<= (long max-pending-draws)
+              (count (get (swap! pending-draws update k (fnil into []) ops) k)))
+      (run-draws! k)))
   nil)
 
 (defn- arc-path
@@ -1736,12 +1762,7 @@
 (defn- op-draw
   [h op xy opts]
   (let
-    [{:keys [^Raster img]}
-     ;; NOT `entry`: this op owns the in-flight draw run, so flushing here would
-     ;; undo the batching.
-     (raw-entry h)
-
-     pts
+    [pts
      (mapv double xy)
 
      fill
@@ -1887,7 +1908,7 @@
 
        nil)]
 
-    (when (seq ops) (draw-into! h img ops))
+    (when (seq ops) (draw-into! h ops))
     nil))
 
 (defn- op-textbbox

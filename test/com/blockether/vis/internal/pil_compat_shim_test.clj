@@ -564,7 +564,18 @@
                                 "d.rectangle([0,0,3,3], fill=(1,2,3))\n" "c = im.copy()\n"
                                 "list(c.getpixel((2,2))) == [1,2,3] "
                                 "and im.tobytes()[:3] == bytes([1,2,3])"))))))
-  (it "a run of draws does not pay a whole-canvas conversion per op"
+  (it "a draw run past the flush ceiling keeps every op"
+      (with-python-context
+        (expect (= [[255 0 0] [255 0 0] [255 0 0]]
+                   (ev python-context
+                       ;; 5000 ops > `max-pending-draws`, so the queue is force-flushed
+                       ;; mid-run: the ops on both sides of the boundary must survive.
+                       (str "from PIL import Image, ImageDraw\n"
+                            "im = Image.new('RGB',(100,100),(0,0,0))\n"
+                            "d = ImageDraw.Draw(im)\n" "for i in range(5000):\n"
+                            "    d.point((i % 100, i // 100), fill=(255,0,0))\n"
+                            "[list(im.getpixel(p)) for p in [(0,0),(50,20),(99,49)]]"))))))
+  (it "a run of draws pays neither a canvas conversion nor a cdylib call per op"
       (with-python-context
         (let
           [t0
@@ -573,13 +584,16 @@
            painted
            (ev python-context
                (str "from PIL import Image, ImageDraw\n" "im = Image.new('RGB',(800,600),(0,0,0))\n"
-                    "d = ImageDraw.Draw(im)\n" "for i in range(200):\n"
-                    "    d.point((i,i), fill=(255,255,255))\n" "list(im.getpixel((199,199)))"))
+                    "d = ImageDraw.Draw(im)\n" "for i in range(2000):\n"
+                    "    d.point((i % 800, i % 600), fill=(255,255,255))\n"
+                    "list(im.getpixel((200,400)))"))
 
            ms
            (/ (- (System/nanoTime) t0) 1e6)]
 
           (expect (= [255 255 255] painted))
-          ;; Converting the 480k-pixel canvas in and out per op cost ~80 ms each
-          ;; -- about 16 s for this loop -- before the draw run was batched.
-          (expect (< ms 5000) (str "200 draws took " (long ms) " ms"))))))
+          ;; Converting the 480k-pixel canvas in and out per op cost ~80 ms each -- about
+          ;; 160 s for this loop. Even sharing ONE live image, a cdylib `draw` call per op
+          ;; still cost ~1.4 ms (~3 s here) because the canvas round-trips through the
+          ;; renderer per call. Queued as ONE batch, the whole run is a few milliseconds.
+          (expect (< ms 5000) (str "2000 draws took " (long ms) " ms"))))))
