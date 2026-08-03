@@ -335,6 +335,77 @@
         (expect (every? #(<= (p/display-width %) 8) ts) (str "got: " ts)))))
 
 ;; ---------------------------------------------------------------------------
+;; table links (issue #91)
+;; ---------------------------------------------------------------------------
+
+(defn- link-spans
+  "Body text + link spans of every entry that carries clickable links,
+   as `[body [{:col :width :url} ...]]`. `:line` starts with the block
+   marker (one zero-width char), and link `:col` is body-relative."
+  [entries]
+  (into []
+        (keep (fn [e]
+                (when-let [links (:links (:meta e))]
+                  [(subs (:line e) 1) links])))
+        entries))
+
+(defdescribe
+  table-link-test
+  (it "a link inside a table cell becomes a clickable span on its grid row"
+      ;; #91: `[label](url)` in a GFM table cell rendered as plain text and
+      ;; registered no `:url` click region, while the same link in a paragraph
+      ;; did. The grid painter owns the row style and cannot consume inline
+      ;; sentinels, so the span rides along as `:meta {:links ...}` instead.
+      (let
+        [url
+         "https://example.com/browse/CARS-9862"
+
+         entries
+         (layout/ast->entries [:ast
+                               [:table [:tr [:th "repo"] [:th "ticket"]]
+                                [:tr [:td "glms-web"] [:td [:a {:href url} "CARS-9862"]]]]]
+                              60)
+
+         spans
+         (link-spans entries)]
+
+        (expect (= [["│ glms-web │ CARS-9862 │" [{:col 13 :width 9 :url url}]]] spans))
+        ;; the span really covers the visible label
+        (let [[body [{:keys [col width]}]] (first spans)]
+          (expect (= "CARS-9862" (subs body col (+ (long col) (long width))))))
+        ;; the label itself stays plain text — no markdown syntax leaks
+        (expect (not-any? #(str/includes? (:line %) "](") entries))))
+  (it "a link wrapping inside its cell yields one span per physical row"
+      (let
+        [url
+         "https://example.com/a-very-long-target"
+
+         entries
+         (layout/ast->entries [:ast
+                               [:table [:tr [:th "k"] [:th "v"]]
+                                [:tr [:td "row"]
+                                 [:td "see " [:a {:href url} "the long link label"] " and "
+                                  [:a {:href "https://example.com/b"} "b"]]]]]
+                              26)
+
+         spans
+         (link-spans entries)]
+
+        (expect (= [["│ row │ see the long     │" [{:col 12 :width 8 :url url}]]
+                    ["│     │ link label and b │"
+                     [{:col 8 :width 10 :url url} {:col 23 :width 1 :url "https://example.com/b"}]]]
+                   spans))
+        (expect (every? (fn [[body links]]
+                          (every? (fn [{:keys [col width]}]
+                                    (let [seg (subs body col (+ (long col) (long width)))]
+                                      (and (= seg (str/trim seg)) (pos? (count seg)))))
+                                  links))
+                        spans))))
+  (it "table rows without links carry no link meta"
+      (let [entries (layout/ast->entries [:ast [:table [:tr [:th "A"]] [:tr [:td "1"]]]] 40)]
+        (expect (empty? (link-spans entries))))))
+
+;; ---------------------------------------------------------------------------
 ;; bdc79ae9 fixture — end-to-end regression
 ;; ---------------------------------------------------------------------------
 
@@ -524,16 +595,18 @@
                    (expect (str/includes? body "togglebody"))
                    (expect (not-any? #(= :toggle-details (get-in % [:meta :kind])) entries)))))
 
-(defdescribe wrap-cell-cols-delegation-test
+(defdescribe wrap-cell-lines-delegation-test
              (it "table-cell wrap IS the shared lanterna word-wrap (one implementation)"
-                 ;; `wrap-cell-cols` must produce exactly `p/word-wrap`'s lines
+                 ;; `wrap-cell-lines` must produce exactly `p/word-wrap`'s lines
                  ;; (`TerminalTextUtils/wordWrap` in the lanterna fork) so table cells
                  ;; break at the same points as every other wrapped surface — a
                  ;; hand-rolled divergent wrapper is the regression this pins against.
                  (doseq
                    [[s w] [["a quick brown fox jumps over it" 7] ["zażółć gęślą jaźń ✅ done" 6]
                            ["one-unbreakable-supertoken" 5] ["" 5] [nil 4] ["🎉🎉" 1]]]
-                   (expect (= (p/word-wrap (str s) (max 1 (long w))) (#'layout/wrap-cell-cols s w))
+                   (expect (= (p/word-wrap (str s) (max 1 (long w)))
+                              (mapv :text
+                                    (#'layout/wrap-cell-lines (mapv (fn [c] [c nil]) (str s)) w)))
                            (str "diverged from p/word-wrap for " (pr-str [s w]))))))
 
 ;; ---------------------------------------------------------------------------

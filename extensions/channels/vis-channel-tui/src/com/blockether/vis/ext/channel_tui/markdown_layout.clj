@@ -851,20 +851,67 @@
             (update l :runs #(into [bar] %)))
           compact)))
 
-(defn- inline-text
-  "Visible one-line text for inline children. Used by table cells,
-   where the table grid painter owns the row style and cannot safely
-   consume inline sentinels inside cells. Hard breaks collapse to a
-   space; links keep their visible label only."
-  ^String [children]
-  (->> (inlines->runs children #{} nil)
-       (map (fn [{:keys [text break?]}]
-              (if break? " " (or text ""))))
-       (apply str)
-       (#(str/replace % #"\s+" " "))
-       str/trim))
+(defn- inline-chars
+  "Visible characters of inline `children`, each paired with the href of the
+   link it belongs to (`nil` outside links): a vector of `[char href]`.
+   Used by table cells, where the table grid painter owns the row style and
+   cannot safely consume inline sentinels inside cells — the per-character
+   href is what lets `table->lines` hand the painter link CLICK REGIONS
+   instead. Hard breaks collapse to a space, whitespace runs collapse to a
+   single space, and both ends are trimmed, so the joined characters
+   (`chars->text`) are the cell's visible one-line text."
+  [children]
+  (let
+    [ws?
+     #{\space \tab \newline \formfeed \return (char 11)}
 
-(defn- table-cell-text [cell] (inline-text (node-children cell)))
+     pairs
+     (into []
+           (mapcat (fn [{:keys [text break? href style]}]
+                     (let
+                       [s
+                        (if break? " " (or text ""))
+
+                        h
+                        (when (and href (contains? style :link)) href)]
+
+                       (map (fn [c]
+                              [c h])
+                            s))))
+           (inlines->runs children #{} nil))
+
+     ;; `#"\s+" -> " "`: every whitespace run becomes ONE space keeping the
+     ;; href of the run's first character.
+     collapsed
+     (:out (reduce (fn [{:keys [out ws-run?]} [c h]]
+                     (cond (not (ws? c)) {:out (conj out [c h]) :ws-run? false}
+                           ws-run? {:out out :ws-run? true}
+                           :else {:out (conj out [\space h]) :ws-run? true}))
+                   {:out [] :ws-run? false}
+                   pairs))
+
+     ;; `str/trim`: drop leading/trailing characters <= space.
+     n
+     (count collapsed)
+
+     keep?
+     (fn [i]
+       (> (long (int (first (nth collapsed i)))) 32))
+
+     start
+     (long (or (first (filter keep? (range n))) n))
+
+     end
+     (long (or (first (filter keep? (range (dec n) (dec start) -1))) (dec start)))]
+
+    (subvec collapsed start (inc end))))
+
+(defn- chars->text
+  "Visible one-line text of an `inline-chars` pair vector."
+  ^String [pairs]
+  (apply str (map first pairs)))
+
+(defn- table-cell-chars [cell] (inline-chars (node-children cell)))
 
 (defn- pad-right-cols
   ^String [s width]
@@ -921,19 +968,90 @@
                         (str " " (pad-right-cols (nth cells i "") w) " │"))
                       widths))))
 
-(defn- wrap-cell-cols
-  "Word-wrap a table cell's flat text to `width` display columns via the ONE
-   shared, grapheme/EAW-aware word-wrap in the lanterna fork (`p/word-wrap`
-   -> `TerminalTextUtils/wordWrap`) — the same text-flow family the screen
-   paints with, so table-cell wrap points match every other wrapped surface.
+(defn- align-hrefs
+  "Href of every character of a wrapped `line`, recovered by re-aligning it
+   against the cell's `[char href]` `pairs` from cursor `i`. The wrap only
+   DROPS the whitespace it broke on and never rewrites characters, so a
+   forward scan that skips non-matching source characters restores the
+   mapping. Returns `[hrefs next-i]`."
+  [^String line pairs ^long i]
+  (let [n (count pairs)]
+    (loop
+      [k 0
+       i i
+       hrefs []]
 
-   Always returns at least one line (blank input -> [\"\"]) so empty cells
-   keep their grid row. A token wider than the column hard-breaks at grapheme
-   boundaries; a single glyph wider than the column (emoji in a width-1
-   column) lands alone on its own line, so the wrap always makes progress
-   and the caller's `fit` clips the overflow."
-  [s width]
-  (p/word-wrap (str (or s "")) (max 1 (long width))))
+      (if (>= k (count line))
+        [hrefs i]
+        (let
+          [c (.charAt line k)
+           i (long (loop [i i]
+                     (if (and (< i n) (not= c (first (nth pairs i)))) (recur (inc i)) i)))]
+
+          (recur (inc k) (min n (inc i)) (conj hrefs (when (< i n) (second (nth pairs i))))))))))
+
+(defn- href-spans
+  "Group a wrapped line's per-character `hrefs` into `{:col :width :url}`
+   display-column spans relative to the cell's first column, dropping and
+   clipping anything past `width`. Columns come from the display width of
+   the line's prefix, so wide glyphs land on the column the painter uses."
+  [^String line hrefs ^long width]
+  (let [n (count line)]
+    (loop
+      [k 0
+       spans []]
+
+      (if (>= k n)
+        spans
+        (let [h (nth hrefs k nil)]
+          (if (nil? h)
+            (recur (inc k) spans)
+            (let
+              [e (long (loop [e (inc k)]
+                         (if (and (< e n) (= h (nth hrefs e nil))) (recur (inc e)) e)))
+               col (long (p/display-width (subs line 0 k)))
+               w (long (p/display-width (subs line k e)))]
+
+              (recur e
+                     (if (or (>= col width) (<= w 0))
+                       spans
+                       (conj spans {:col col :width (min w (- width col)) :url h}))))))))))
+
+(defn- wrap-cell-lines
+  "Word-wrap one table cell (`pairs`, from `inline-chars`) to `width` display
+   columns, keeping its links. Returns a vector of
+   `{:text s :links [{:col :width :url}]}` — one entry per physical grid row,
+   with cell-relative link columns.
+
+   The wrap is the ONE shared, grapheme/EAW-aware word-wrap in the lanterna
+   fork (`p/word-wrap` -> `TerminalTextUtils/wordWrap`) — the same text-flow
+   family the screen paints with, so table-cell wrap points match every other
+   wrapped surface.
+
+   Always returns at least one line (blank input -> one blank line) so empty
+   cells keep their grid row. A token wider than the column hard-breaks at
+   grapheme boundaries; a single glyph wider than the column (emoji in a
+   width-1 column) lands alone on its own line, so the wrap always makes
+   progress and the caller's `fit` clips the overflow."
+  [pairs width]
+  (let
+    [width
+     (max 1 (long width))
+
+     lines
+     (p/word-wrap (chars->text pairs) width)]
+
+    (first (reduce (fn [[out i] line]
+                     (let
+                       [line
+                        (str line)
+
+                        [hrefs i]
+                        (align-hrefs line pairs (long i))]
+
+                       [(conj out {:text line :links (href-spans line hrefs width)}) i]))
+                   [[] 0]
+                   lines))))
 
 (defn- table->lines
   "Render canonical `:table` IR as TUI table rows. Unlike the old plain
@@ -946,7 +1064,14 @@
    over-wide cell word-wraps across as many physical rows as its tallest
    sibling in the logical row needs. Nothing is silently truncated —
    `fit` only clips the pathological case where the grid chrome alone
-   is wider than the bubble."
+   is wider than the bubble.
+
+   Cells keep their LINKS. The grid painter owns the row style and cannot
+   consume inline sentinels inside a cell, so a physical row is still one
+   flat `:table` run; its clickable spans ride along as
+   `:meta {:links [{:col :width :url}]}` in grid-relative display columns —
+   exactly the shape `ast->entries` produces for prose links, which the
+   painter turns into `:url` click regions."
   [node width _opts]
   (let
     [rows
@@ -962,7 +1087,7 @@
 
      raw-rows
      (mapv (fn [tr]
-             (mapv table-cell-text (node-children tr)))
+             (mapv table-cell-chars (node-children tr)))
            rows)
 
      cols
@@ -970,7 +1095,7 @@
 
      norm-rows
      (mapv (fn [row]
-             (mapv #(or (nth row % nil) "") (range cols)))
+             (mapv #(or (nth row % nil) []) (range cols)))
            raw-rows)]
 
     (if (or (zero? (long cols)) (empty? norm-rows))
@@ -978,7 +1103,7 @@
       (let
         [natural-widths
          (vec (for [i (range cols)]
-                (apply max 1 (map #(p/display-width (nth % i "")) norm-rows))))
+                (apply max 1 (map #(p/display-width (chars->text (nth % i []))) norm-rows))))
 
          cap
          (max 1 (long width))
@@ -994,6 +1119,15 @@
          (fn [s tag]
            {:runs [{:text (fit s) :style #{:table} :node node}] :block-tag tag})
 
+         ;; First display column of each cell inside the grid: left border
+         ;; plus its pad column, then every earlier column's width and its
+         ;; " │ " chrome.
+         offsets
+         (vec (reductions (fn [o w]
+                            (+ (long o) (long w) 3))
+                          2
+                          widths))
+
          ;; One LOGICAL row -> N physical grid rows: each cell wraps to
          ;; its column width, the row's height is its tallest cell, and
          ;; shorter cells pad with blank continuation lines.
@@ -1001,19 +1135,38 @@
          (fn [row tag]
            (let
              [cell-lines
-              (mapv (fn [cell w]
-                      (wrap-cell-cols cell w))
-                    row
-                    widths)
+              (mapv wrap-cell-lines row widths)
 
               height
               (long (apply max 1 (map count cell-lines)))]
 
              (mapv (fn [j]
-                     {:runs [{:text (fit (table-data-line (mapv #(nth % j "") cell-lines) widths))
-                              :style #{:table}
-                              :node node}]
-                      :block-tag tag})
+                     (let
+                       [texts
+                        (mapv (fn [lines]
+                                (or (:text (nth lines j nil)) ""))
+                              cell-lines)
+
+                        links
+                        (into []
+                              (comp (map-indexed
+                                      (fn [i lines]
+                                        (keep (fn [{:keys [col width url]}]
+                                                (let [c (+ (long (nth offsets i)) (long col))]
+                                                  (when (< c cap)
+                                                    {:col c
+                                                     :width (min (long width) (- cap c))
+                                                     :url url})))
+                                              (:links (nth lines j nil)))))
+                                    cat)
+                              cell-lines)]
+
+                       (cond->
+                         {:runs
+                          [{:text (fit (table-data-line texts widths)) :style #{:table} :node node}]
+                          :block-tag tag}
+                         (seq links)
+                         (assoc :meta {:links links}))))
                    (range height))))
 
          top
