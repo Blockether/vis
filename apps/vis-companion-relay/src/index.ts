@@ -328,9 +328,9 @@ async function pushHandler(request: Request, env: Env, deps: Deps): Promise<Resp
 
   /**
    * A provider's size verdict is final — Apple's `PayloadTooLarge`, Google's
-   * `INVALID_ARGUMENT`, which this relay would even read as a dead device — so
-   * the bytes are measured here instead of learned there. A preview is trimmed
-   * to what fits; a `data` map that does not fit is the caller's own bug and is
+   * `INVALID_ARGUMENT` — and a lost alert is all the caller gets back. So the
+   * bytes are measured here instead of learned there. A preview is trimmed to
+   * what fits; a `data` map that does not fit is the caller's own bug and is
    * answered without spending a round trip on it.
    */
   const payloadLimit = isApple ? APNS_MAX_PAYLOAD_BYTES : FCM_MAX_PAYLOAD_BYTES;

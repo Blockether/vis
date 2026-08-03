@@ -115,6 +115,19 @@ Public configuration lives in `wrangler.jsonc` `vars`: `APNS_KEY_ID`,
 Android; either alone is fine — `/healthz` reports which are live, and under
 `limits` the caps this relay enforces.
 
+`FCM_SERVICE_ACCOUNT` is the service-account **JSON itself**. A secret the relay
+cannot parse is not an error anywhere — it is simply `fcm.is_available: false`
+in `/healthz` — so read that endpoint back after uploading one. On macOS
+`security find-generic-password -w` prints **hex** whenever the stored value is
+not plain ASCII, and a private key never is; decode it before it reaches
+`wrangler`:
+
+```bash
+security find-generic-password -s vis-fcm -a service_account -w \
+  | python3 -c "import sys; sys.stdout.write(bytes.fromhex(sys.stdin.read().strip()).decode())" \
+  | npx wrangler secret put FCM_SERVICE_ACCOUNT
+```
+
 Then point a gateway at it:
 
 ```bash

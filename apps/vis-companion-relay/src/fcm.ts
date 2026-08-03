@@ -74,9 +74,9 @@ export async function accessToken(cfg: FcmConfig, deps: Deps): Promise<string | 
 }
 
 /**
- * Google's ceiling for one message. Over it FCM answers `INVALID_ARGUMENT`,
- * which this relay reads as a dead registration — so an oversized payload must
- * never reach Google, or a long notification would unregister a live phone.
+ * Google's ceiling for one message. Over it FCM answers `INVALID_ARGUMENT` and
+ * the alert is simply lost — a decision, never retried — so an oversized
+ * payload must be measured here rather than learned from a burnt round trip.
  */
 export const FCM_MAX_PAYLOAD_BYTES = 4096;
 
@@ -98,7 +98,14 @@ export function fcmPayload(deviceToken: string, notification: Notification): str
   });
 }
 
-export const FCM_DEAD_REASONS = new Set(["UNREGISTERED", "NOT_FOUND", "INVALID_ARGUMENT"]);
+/**
+ * Only a verdict on the REGISTRATION belongs here. `INVALID_ARGUMENT` (400) is
+ * Google's verdict on the REQUEST — a field it dislikes, a payload over the
+ * ceiling — and answering 410 to it would tell the gateway to forget a phone
+ * that is alive and reachable, over one bad message. That is the same line
+ * `gateway/fcm.clj` draws for a gateway pushing to Google directly.
+ */
+export const FCM_DEAD_REASONS = new Set(["UNREGISTERED", "NOT_FOUND"]);
 
 async function postFcm(
   cfg: FcmConfig,

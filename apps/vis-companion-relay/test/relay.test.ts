@@ -430,6 +430,31 @@ describe("pushing", () => {
     const grant = await mint(env, deps, { device_token: ANDROID_TOKEN, platform: "android" });
     expect((await handle(pushRequest(grant), env, deps)).status).toBe(410);
   });
+
+  /**
+   * A live phone used to be unregistered for one message Google disliked:
+   * INVALID_ARGUMENT (400) is a verdict on the REQUEST — a bad field, a token
+   * that is not even token-shaped, an oversized payload — never on the
+   * registration, yet the relay counted it among the reasons a token is gone
+   * for good and answered 410, which tells the gateway to forget the device.
+   */
+  it("keeps the device when Google only dislikes the message", async () => {
+    const fcm = fakeFetch((url) =>
+      url.includes("oauth2")
+        ? new Response(JSON.stringify({ access_token: "ya29.fake", expires_in: 3600 }), { status: 200 })
+        : new Response(
+            JSON.stringify({ error: { status: "INVALID_ARGUMENT", details: [{ errorCode: "INVALID_ARGUMENT" }] } }),
+            { status: 400 },
+          ),
+    );
+    const env = makeEnv();
+    const deps = makeDeps(fcm.fn);
+    const grant = await mint(env, deps, { device_token: ANDROID_TOKEN, platform: "android" });
+
+    const response = await handle(pushRequest(grant), env, deps);
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ is_delivered: false, reason: "INVALID_ARGUMENT" });
+  });
 });
 
 describe("what an unwelcome caller costs", () => {
