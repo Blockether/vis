@@ -169,5 +169,12 @@ needs a machine created with `rosetta = true` under `[machine]` in
 `containers.conf`. Where it was built does not change the asset — native-image
 targets the `x86-64-v3` baseline regardless of the builder's own CPU.
 
+The container build also needs those 16+ GB **inside** the Linux VM, which a default
+podman machine does not have. `bin/release-native` therefore looks past it: if the
+default connection is too small, it uses the first other machine that is running and
+large enough, and says which one it picked. `VIS_CONTAINER_CONNECTION=<machine>`
+forces a specific podman machine or docker context; `VIS_CONTAINER_CLI` forces the
+engine.
+
 On a platform with no published bundle, use `jvm`, or build a sidecar locally with
 `vis-agent update --jvm --rebuild`.

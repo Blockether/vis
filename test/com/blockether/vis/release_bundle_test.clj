@@ -160,3 +160,40 @@
                           (expect (str/includes? output "native-release.yml") output)
                           (expect (not (str/includes? output "building linux-x64")) output))
                         (finally (delete-tree! mac))))))
+
+(defdescribe
+  release-native-builder-machine-test
+  (it
+    "prefers a podman machine big enough for the builder over a small default"
+    (let
+      [mac
+       (fake-tools! "Darwin" "arm64")
+
+       podman
+       (io/file mac "podman")]
+
+      ;; Two machines, as on a real workstation: the everyday default with 2
+      ;; GiB (native-image OOMs there) and a dedicated 24 GiB builder.
+      (write-executable!
+        podman
+        (str "#!/usr/bin/env bash\n" "conn=\"\"\n"
+             "if [ \"${1:-}\" = \"--connection\" ]; then conn=\"$2\"; shift 2; fi\n"
+             "case \"${1:-}\" in\n"
+             "  --version) printf 'podman version 6.0.0\\n' ;;\n"
+             "  info)      if [ \"$conn\" = vis-builder ]; then printf '25769803776\\n';"
+             " else printf '2147483648\\n'; fi ;;\n"
+             "  system)    printf 'podman-machine-default\\nvis-builder\\n' ;;\n"
+             "  *)         exit 0 ;;\n" "esac\n"))
+      (try (let
+             [{:keys [exit output]} (run-release-native mac
+                                                        ["--targets" "linux-x64"]
+                                                        {"VIS_CONTAINER_CLI" (.getAbsolutePath
+                                                                               podman)
+                                                         "VIS_EMULATION_MAX_SECONDS" "-1"})]
+             ;; No VIS_CONTAINER_CONNECTION: the builder machine is found and used
+             ;; on its own, and the 2 GiB default never decides the run.
+             (expect (str/includes? output "vis-builder") output)
+             (expect (not (str/includes? output "only has 2 GB")) output)
+             ;; Emulation speed still gates the build itself.
+             (expect (not= 0 exit) output))
+           (finally (delete-tree! mac))))))

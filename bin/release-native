@@ -133,9 +133,10 @@ build_macos_arm64() {
 # `docker` on this host may BE podman (podman ships a `docker` shim) and podman
 # has no `buildx` subcommand, so resolve the engine first and then speak its
 # dialect. `VIS_CONTAINER_CLI` forces one; `VIS_CONTAINER_CONNECTION` selects a
-# non-default podman machine (`--connection`) or docker context (`--context`),
-# which is how this host builds in a VM sized for the builder JVM without
-# disturbing the small default machine everything else uses.
+# non-default podman machine (`--connection`) or docker context (`--context`).
+# It is rarely needed: when podman's default machine is too small for the
+# builder JVM, resolve_engine picks a bigger running machine by itself, so the
+# small everyday default is neither used nor disturbed.
 container_engine() {
   local candidate
   for candidate in ${VIS_CONTAINER_CLI:+"$VIS_CONTAINER_CLI"} docker podman; do
@@ -154,34 +155,62 @@ eng() { "$engine" ${engine_args[@]+"${engine_args[@]}"} "$@"; }
 
 probe_image="debian:bookworm-slim"
 
-resolve_engine() {
-  [[ -z "$engine" ]] || return 0
-  engine="$(container_engine)" || die "a linux target needs docker or podman on PATH"
-  flavor=docker
-  "$engine" --version 2>/dev/null | grep -qi podman && flavor=podman
-  engine_args=()
-  if [[ -n "${VIS_CONTAINER_CONNECTION:-}" ]]; then
-    if [[ "$flavor" == podman ]]; then
-      engine_args=(--connection "$VIS_CONTAINER_CONNECTION")
-    else
-      engine_args=(--context "$VIS_CONTAINER_CONNECTION")
-    fi
-  fi
-  eng info >/dev/null 2>&1 || \
-    die "$engine is installed but its Linux VM is not reachable" \
-        "podman: podman machine init (once), then podman machine start" \
-        "docker: start Docker Desktop"
-  # The builder JVM needs ~14 GiB INSIDE the VM. Both engines default to far less
-  # and the build dies in [4/8] with an OOM after ~40 wasted minutes.
+# The builder JVM needs ~14 GiB INSIDE the VM. Both engines default to far less
+# and the build dies in [4/8] with an OOM after ~40 wasted minutes.
+builder_min_mem=16000000000
+
+# RAM the connection currently selected in engine_args can offer; 0 when it is
+# unreachable or answers with something that is not a byte count.
+engine_memory() {
   local mem
   if [[ "$flavor" == podman ]]; then
     mem="$(eng info --format '{{.Host.MemTotal}}' 2>/dev/null || echo 0)"
   else
     mem="$(eng info --format '{{.MemTotal}}' 2>/dev/null || echo 0)"
   fi
-  if [[ "$mem" =~ ^[0-9]+$ ]] && (( mem > 0 && mem < 16000000000 )); then
+  [[ "$mem" =~ ^[0-9]+$ ]] || mem=0
+  printf '%s\n' "$mem"
+}
+
+# Choose the machine to build in. An explicit VIS_CONTAINER_CONNECTION always
+# wins. Otherwise, when podman's DEFAULT machine cannot hold the builder JVM —
+# it usually cannot, it is the small everyday one — any OTHER machine that is up
+# and big enough is taken automatically, so this script uses the dedicated
+# builder machine without having to be told about it.
+resolve_engine() {
+  [[ -z "$engine" ]] || return 0
+  engine="$(container_engine)" || die "a linux target needs docker or podman on PATH"
+  flavor=docker
+  "$engine" --version 2>/dev/null | grep -qi podman && flavor=podman
+  engine_args=()
+  local conn mem
+  if [[ -n "${VIS_CONTAINER_CONNECTION:-}" ]]; then
+    if [[ "$flavor" == podman ]]; then
+      engine_args=(--connection "$VIS_CONTAINER_CONNECTION")
+    else
+      engine_args=(--context "$VIS_CONTAINER_CONNECTION")
+    fi
+  elif [[ "$flavor" == podman ]] && (( $(engine_memory) < builder_min_mem )); then
+    for conn in $("$engine" system connection list --format '{{.Name}}' 2>/dev/null | tr -d '*' | sort -u); do
+      engine_args=(--connection "$conn")
+      mem="$(engine_memory)"
+      if (( mem >= builder_min_mem )); then
+        say "using podman connection $conn ($((mem / 1000000000)) GB) — the default machine is too small"
+        break
+      fi
+      engine_args=()
+    done
+  fi
+  eng info >/dev/null 2>&1 || \
+    die "$engine is installed but its Linux VM is not reachable" \
+        "podman: podman machine init (once), then podman machine start" \
+        "docker: start Docker Desktop"
+  mem="$(engine_memory)"
+  if (( mem > 0 && mem < builder_min_mem )); then
     die "$engine only has $((mem / 1000000000)) GB of RAM; this build needs >= 16 GB" \
-        "podman: podman machine stop && podman machine set --memory 24576 --cpus 8 && podman machine start" \
+        "podman: start the builder machine, or grow this one:" \
+        "        podman machine stop && podman machine set --memory 24576 --cpus 8 && podman machine start" \
+        "        (VIS_CONTAINER_CONNECTION=<machine> forces one explicitly)" \
         "docker: Docker Desktop -> Settings -> Resources -> Memory, then rerun."
   fi
 }
