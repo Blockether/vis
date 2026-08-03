@@ -57,7 +57,7 @@
 (defdescribe
   provider-inline-model-transient-test
   (it
-    "selects the default model inside the provider dialog instead of opening another dialog"
+    "selects and retains a live-catalog default model inside the provider dialog"
     (let
       [terminal
        (DefaultVirtualTerminal. (TerminalSize. 80 30))
@@ -66,6 +66,9 @@
        (doto (TerminalScreen. terminal) (.startScreen))
 
        selected
+       (atom nil)
+
+       saved
        (atom nil)
 
        seed
@@ -93,7 +96,9 @@
 
            vis/gateway-provider-model-options
            (fn [provider-id _]
-             {:models (if (= provider-id :alpha) ["alpha-1" "alpha-2"] ["beta-default" "beta-2"])
+             {:models (if (= provider-id :alpha)
+                        ["alpha-live" "alpha-1" "alpha-2"]
+                        ["beta-default" "beta-2"])
               :hidden-count 0})
 
            vis/gateway-set-router-default!
@@ -107,7 +112,7 @@
            (constantly [])
 
            vis/save-config!
-           (constantly nil)
+           #(reset! saved %)
 
            vis/load-config
            (constantly seed)
@@ -117,12 +122,17 @@
              (throw (ex-info "nested model dialog opened" {})))]
 
           ;; Default :beta starts first. Choose :alpha, open its actions, choose
-          ;; "Set as Default...", select the first inline model, then close.
+          ;; "Set as Default...", select the first live model, then close.
           (doseq
             [key-type [KeyType/ArrowDown KeyType/Enter KeyType/Enter KeyType/Enter KeyType/Escape]]
             (.addInput terminal (KeyStroke. key-type)))
           (provider/show-provider-dialog! screen seed)
-          (expect (= {:provider-id :alpha :model "alpha-1"} @selected)))
+          (expect (= {:provider-id :alpha :model "alpha-live"} @selected))
+          (expect (= ["alpha-1" "alpha-2" "alpha-live"]
+                     (->> (get @saved "providers")
+                          (some #(when (= :alpha (:id %)) %))
+                          :models
+                          (mapv :name)))))
         (finally (.stopScreen screen))))))
 
 (defdescribe provider-card-scroll-test

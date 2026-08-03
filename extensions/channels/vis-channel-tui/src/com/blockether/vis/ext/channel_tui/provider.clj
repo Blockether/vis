@@ -822,6 +822,19 @@
               (p/put-str! g text-x (+ row 2) (dlg/ellipsize (str "   " limit-summary) text-w)))
             (p/set-colors! g t/dialog-fg t/dialog-bg))))))
 
+(defn- ensure-provider-model
+  [items provider-id model]
+  (mapv (fn [provider]
+          (if (same-id? (:id provider) provider-id)
+            (update
+              provider
+              :models
+              (fn [models]
+                (let [models (vec (or models []))]
+                  (if (some #(= model (:name %)) models) models (conj models {:name model})))))
+            provider))
+        items))
+
 ;; Channel-neutral status / limits / persistence shapes — the core
 ;; provider service (channel-neutral). Aliased privately so
 ;; the dialog code below reads unchanged.
@@ -1766,6 +1779,9 @@
                                     ::rejected))]
 
                                (when-not (= selection ::rejected)
+                                 (swap! items ensure-provider-model
+                                   (:provider-id selection)
+                                   (:model selection))
                                  (if (= role :fallback)
                                    (reset! fallback-selection selection)
                                    (do ;; The daemon drops a fallback that collides with
