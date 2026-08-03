@@ -64,6 +64,16 @@ jobs:
           #   -J-Xmx10g  -> OutOfMemoryError: GC overhead limit      (9 min in)
           #   -J-Xmx12g  -> green until v0.1.22, OOM from v0.1.23 on
           #   -J-Xmx14g  -> green on arm64 through v0.1.24
+          #   no extra_args AND no swapfile (measured on v0.1.27, run
+          #   30813650461): the builder sizes its own heap from total RAM, then
+          #   both jobs sat in [2/8] analysis until "OutOfMemoryError: Java heap
+          #   space" — arm64 at 61 min, x64 at 76 min, with ZERO assets. The same
+          #   tag with the settings below was green at 97 min (arm64) and 72 min
+          #   (x64). Dropping the swapfile or the -J-Xmx/-J-Xms pair does not make
+          #   the build faster, it makes it fail slowly.
+          # The only real speed-ups left are a BIGGER BUILDER (self-hosted, like
+          # the macos job: 13 min) or `bin/release-native --tag vX.Y.Z --upload`
+          # on a 32 GB+ workstation, where analysis takes 166 s instead of 553 s.
           # DO NOT raise -J-Xmx above runner RAM again: the v0.1.14 attempts at
           # 18g/22g (plus a swapfile, G1, no -Xms) only moved the builder into
           # swap, where the analysis thrashes instead of finishing. And do NOT cap
