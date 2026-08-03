@@ -1583,28 +1583,32 @@ def ping():
     '''await ping() -> str — answer pong.'''
     return 'pong'
 
+def boom():
+    '''await boom() -> str — always raises.'''
+    raise ValueError('kaboom')
+
 vis.extension(name='rebuilder', description='rebuilder', alias='rb',
-              symbols=[vis.symbol(ping)])
+              symbols=[vis.symbol(ping), vis.symbol(boom)])
 ")
 
-(defdescribe python-extension-context-heal-test
-             (it "a symbol captured before a reload keeps working after the rebuild"
-                 ;; Sandbox bindings and cached session env rows capture the symbol fn ONCE,
-                 ;; over the context that was alive then. A `/reload` builds new contexts and
-                 ;; closes the old ones without re-binding anything, so every captured symbol
-                 ;; died with "Context execution was cancelled" until the session restarted.
-                 (with-loaded {"rebuilder.py" rebuilder-py}
-                              (fn [_ {:keys [ext-dir]}]
-                                (let [captured (symbol-fn (registered "rebuilder") 'ping)]
-                                  (expect (= "pong" (:result (captured))))
-                                  (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
-                                  (expect (= "pong" (:result (captured))))))))
-             (it "a symbol whose context was torn down rebuilds that context and answers"
-                 ;; Nothing reloaded — the context itself is gone (host teardown, cancel).
-                 ;; The loader's fingerprint gate would call a reload a no-op here, so the
-                 ;; failing call has to rebuild its own file.
-                 (with-loaded
-                   {"rebuilder.py" rebuilder-py}
+(defdescribe
+  python-extension-context-heal-test
+  (it "a symbol captured before a reload keeps working after the rebuild"
+      ;; Sandbox bindings and cached session env rows capture the symbol fn ONCE,
+      ;; over the context that was alive then. A `/reload` builds new contexts and
+      ;; closes the old ones without re-binding anything, so every captured symbol
+      ;; died with "Context execution was cancelled" until the session restarted.
+      (with-loaded {"rebuilder.py" rebuilder-py}
+                   (fn [_ {:keys [ext-dir]}]
+                     (let [captured (symbol-fn (registered "rebuilder") 'ping)]
+                       (expect (= "pong" (:result (captured))))
+                       (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
+                       (expect (= "pong" (:result (captured))))))))
+  (it "a symbol whose context was torn down rebuilds that context and answers"
+      ;; Nothing reloaded — the context itself is gone (host teardown, cancel).
+      ;; The loader's fingerprint gate would call a reload a no-op here, so the
+      ;; failing call has to rebuild its own file.
+      (with-loaded {"rebuilder.py" rebuilder-py}
                    (fn [_ _]
                      (let
                        [captured
@@ -1619,4 +1623,30 @@ vis.extension(name='rebuilder', description='rebuilder', alias='rb',
                        ;; symbol goes straight through
                        (expect (not (identical? dead (:context (first (vals @@#'pyx/loaded))))))
                        (expect (= "pong"
-                                  (:result ((symbol-fn (registered "rebuilder") 'ping))))))))))
+                                  (:result ((symbol-fn (registered "rebuilder") 'ping)))))))))
+  (it "context-dead? asks the context itself, it never matches error text"
+      ;; Liveness is a QUESTION for GraalVM, not a string to parse: a cheap
+      ;; `asValue` handshake returns on a live context and throws on a cancelled
+      ;; or closed one. A raised Python exception leaves the context alive.
+      (with-loaded {"rebuilder.py" rebuilder-py}
+                   (fn [_ _]
+                     (let [^Context live (:context (first (vals @@#'pyx/loaded)))]
+                       (expect (false? (#'pyx/context-dead? live)))
+                       (expect (false? (:success? ((symbol-fn (registered "rebuilder") 'boom)))))
+                       (expect (false? (#'pyx/context-dead? live)))
+                       (.close live true)
+                       (expect (true? (#'pyx/context-dead? live)))
+                       (expect (true? (#'pyx/context-dead? nil)))))))
+  (it "an ordinary Python error stays a failure and never rebuilds the context"
+      (with-loaded {"rebuilder.py" rebuilder-py}
+                   (fn [_ _]
+                     (let
+                       [before
+                        (:context (first (vals @@#'pyx/loaded)))
+
+                        res
+                        ((symbol-fn (registered "rebuilder") 'boom))]
+
+                       (expect (false? (:success? res)))
+                       (expect (str/includes? (get-in res [:error :message]) "kaboom"))
+                       (expect (identical? before (:context (first (vals @@#'pyx/loaded))))))))))

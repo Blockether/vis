@@ -385,23 +385,23 @@
    most ONE rebuild + retry instead of recursing through fresh adapters."
   false)
 
-(defn- context-gone?
-  "True when `t` (or one of its causes) is GraalVM's bare cancelled/closed-context
-   failure - what a callable bound to a torn-down GraalPy context throws. Same
-   shape `env-python/map-polyglot-error` flags as `:context-cancelled?`."
-  [^Throwable t]
-  (loop
-    [^Throwable e
-     t
+(defn- context-dead?
+  "True when `ctx` can no longer run guest code - it was cancelled or closed
+   underneath callables that were captured over it.
 
-     depth
-     0]
-
-    (cond (or (nil? e) (> depth 8)) false
-          (re-find #"Context execution was cancelled|Context is closed|Context is already closed"
-                   (str (ex-message e)))
-          true
-          :else (recur (.getCause e) (inc depth)))))
+   ASKED, never parsed. A torn-down context refuses at EVERY entry point, so the
+   cheapest possible handshake answers the question: `Context.asValue` of a host
+   long enters the context and executes nothing. It returns on a live context,
+   throws `PolyglotException` (`.isCancelled`) on a cancelled one and
+   `IllegalStateException` (\"The Context is already closed.\") on a closed one -
+   no error-message matching anywhere. Two consequences worth keeping: an
+   ordinary Python error leaves the context ALIVE, so it never triggers healing,
+   and an `interrupt` (issue #102) leaves it alive too, so an interrupted call
+   still surfaces as an interrupt. The probe runs under the same `locking ctx`
+   every call uses (reentrant), so a live context that is merely busy on another
+   thread is never mistaken for a dead one."
+  [^Context ctx]
+  (or (nil? ctx) (locking ctx (try (.asValue ctx (long 1)) false (catch Throwable _ true)))))
 
 (declare live-symbol-fn)
 
@@ -413,10 +413,12 @@
    SELF-HEALING (issue #103): a sandbox binding - and every cached session env
    row - captures THIS closure over the context that was alive at load time. A
    `/reload` (or any other rebuild) closes that context, and nothing re-binds
-   the already-captured fns, so every later call died with \"Context execution
-   was cancelled\" until the whole session was restarted. On exactly that
-   failure we re-resolve the freshest fn for `[ext-name sym]` - rebuilding the
-   file's context when the registry itself is stale - and retry the call ONCE."
+   the already-captured fns, so every later call died until the whole session
+   was restarted. On a failure we ASK the context whether it is still alive
+   (`context-dead?`); only when it is gone do we re-resolve the freshest fn for
+   `[ext-name sym]` - rebuilding the file's context when the registry itself is
+   stale - and retry the call ONCE. A live context means a genuine Python error,
+   which stays a plain failure envelope."
   [ext-name sym ^Context ctx ^Value pyfn]
   (fn [& args]
     (let [argv (vec args)]
@@ -424,7 +426,7 @@
            (catch Throwable t
              (if-let
                [fresh
-                (and (not *healing-symbol*) (context-gone? t) (live-symbol-fn ext-name sym ctx))]
+                (and (not *healing-symbol*) (context-dead? ctx) (live-symbol-fn ext-name sym ctx))]
                (binding [*healing-symbol* true]
                  (apply fresh argv))
                (extension/failure
@@ -1266,11 +1268,12 @@
    down underneath an already-captured binding (issue #103).
 
    `loaded` is the loader's own truth. When its entry for this extension still
-   points at `dead-ctx` the registry is stale too - a cached session env, a
-   sandbox binding and the registry can all hold the very same closed context -
-   so the file is re-evaluated HERE: `load-python-extensions!` would refuse,
-   because its fingerprint gate sees an unchanged file. Change listeners are
-   notified so the other live surfaces pick the fresh rows up as well.
+   points at `dead-ctx` - or at another context that is itself gone - the
+   registry is stale too: a cached session env, a sandbox binding and the
+   registry can all hold the very same closed context. The file is then
+   re-evaluated HERE, because `load-python-extensions!` would refuse: its
+   fingerprint gate sees an unchanged file. Change listeners are notified so the
+   other live surfaces pick the fresh rows up as well.
 
    Returns nil when the extension is gone or the rebuild fails; the caller then
    reports the original failure."
@@ -1282,7 +1285,7 @@
                                    @loaded))]
       (let
         [entry
-         (if-not (identical? dead-ctx (:context entry))
+         (if-not (or (identical? dead-ctx (:context entry)) (context-dead? (:context entry)))
            entry
            (let [rebuilt (load-file! (io/file path))]
              (swap! loaded assoc path (dissoc rebuilt :path))

@@ -2518,11 +2518,16 @@
      ;; `/reload`, or a cancellation closed it, and every later block then died
      ;; with GraalVM's bare "Context execution was cancelled." — no reason and no
      ;; recovery, so the model kept retrying valid code until the turn burned out.
+     ;; ASK the exception first — `PolyglotException.isCancelled` is GraalVM's own
+     ;; structural answer; the text match stays only for a cancellation RELAYED as
+     ;; some other throwable (host wrapper, closed-context IllegalStateException).
      context-cancelled?
-     (boolean (and base
-                   (re-find
-                     #"Context execution was cancelled|Context is closed|Context is already closed"
-                     (str base))))
+     (boolean (or (and (instance? PolyglotException e) (.isCancelled ^PolyglotException e))
+                  (and
+                    base
+                    (re-find
+                      #"Context execution was cancelled|Context is closed|Context is already closed"
+                      (str base)))))
 
      ;; Python indentation slip (a block not indented, or a stray indent).
      indent?
