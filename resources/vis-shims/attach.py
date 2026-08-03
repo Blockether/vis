@@ -58,7 +58,13 @@ def __vis_install_attach__():
         except Exception:
             return "application/octet-stream"
 
-    def __vis_emit_image_fence(disp, name, mt, nbytes):
+    def __vis_caption(label):
+        # A caption is exactly ONE line: the `vis-image` fence is line-structured,
+        # so a newline inside the label would corrupt the header the renderer parses.
+        text = " ".join(str(label).split()) if label is not None else ""
+        return text or None
+
+    def __vis_emit_image_fence(disp, name, mt, nbytes, label=None):
         # A `vis-image` fence (the same shape plt.show() emits): 5 header lines
         # (summary / host path / mime / WxH / size) a graphical TUI/web reads to
         # paint the picture inline, with the closing fence. No backslash escapes
@@ -83,6 +89,8 @@ def __vis_install_attach__():
         summary = (
             "[Image: " + str(name) + " " + str(w) + "×" + str(h) + ", " + size + "]"
         )
+        if label:
+            summary = summary + " " + str(label)
         fence = "`" * 4
         lines = [
             fence + "vis-image",
@@ -96,7 +104,7 @@ def __vis_install_attach__():
         print(chr(10).join(lines))
 
     def vis_attach_bytes(
-        data, filename, kind=None, media_type=None, display_only=False
+        data, filename, kind=None, media_type=None, display_only=False, label=None
     ):
         if isinstance(data, str):
             data = data.encode("utf-8")
@@ -104,6 +112,7 @@ def __vis_install_attach__():
         name = str(filename) if filename else "artifact"
         mt = media_type or __vis_guess_media_type(name, data)
         knd = kind or __vis_kind_for(mt)
+        cap = __vis_caption(label)
         b64 = _b64.b64encode(data).decode("ascii")
         rec = globals().get("__vis_record_attachment__")
         if rec is None:
@@ -113,10 +122,16 @@ def __vis_install_attach__():
             raise RuntimeError("vis_attach: " + str(env[1]))
         disp = env[1] if len(env) > 1 else None
         if disp:
-            __vis_emit_image_fence(disp, name, mt, len(data))
+            __vis_emit_image_fence(disp, name, mt, len(data), cap)
+        elif cap:
+            # No inline fence (a non-image artifact, or an image the host could not
+            # probe): the caption still has to reach whoever reads the block.
+            print("[Attached: " + name + "] " + cap)
         return None
 
-    def vis_attach(path, kind=None, media_type=None, filename=None, display_only=False):
+    def vis_attach(
+        path, kind=None, media_type=None, filename=None, display_only=False, label=None
+    ):
         if hasattr(path, "savefig"):
             import io
 
@@ -136,12 +151,18 @@ def __vis_install_attach__():
                 kind=kind,
                 media_type=media_type,
                 display_only=display_only,
+                label=label,
             )
         with open(path, "rb") as f:
             data = f.read()
         name = filename or _os.path.basename(str(path)) or "artifact"
         return vis_attach_bytes(
-            data, name, kind=kind, media_type=media_type, display_only=display_only
+            data,
+            name,
+            kind=kind,
+            media_type=media_type,
+            display_only=display_only,
+            label=label,
         )
 
     def vis_attachments():
@@ -199,16 +220,18 @@ def __vis_install_attach__():
         "Persist a produced file as a durable attachment. The sandbox-confined path "
         "is read, its media type inferred, and its bytes stored across restarts; images "
         "can replay to vision models. kind, media_type, and filename override inference. "
-        "display_only=True stores and displays the artifact but never sends the image to "
-        "the model; its bytes remain readable or available for one-request reinspection. "
-        "Returns None: call directly, do not print. Use vis_attachments() for metadata "
-        "and vis_attach_bytes() for in-memory bytes/str."
+        "label is a one-line caption printed with the artifact, so a series of shots says "
+        "which shot is which. display_only=True stores and displays the artifact but never "
+        "sends the image to the model; its bytes remain readable or available for "
+        "one-request reinspection. Returns None: call directly, do not print. Use "
+        "vis_attachments() for metadata and vis_attach_bytes() for in-memory bytes/str."
     )
     vis_attach_bytes.__doc__ = (
         "Persist bytes (or a UTF-8 str) as a durable attachment without a temporary "
-        "file; filename drives media-type inference. display_only=True stores and "
-        "displays the artifact but never sends the image to the model. Returns None: "
-        "call directly, do not print. Use vis_attachments() for metadata."
+        "file; filename drives media-type inference. label is a one-line caption printed "
+        "with the artifact. display_only=True stores and displays the artifact but never "
+        "sends the image to the model. Returns None: call directly, do not print. Use "
+        "vis_attachments() for metadata."
     )
 
     g = globals()
@@ -222,16 +245,18 @@ def __vis_install_attach__():
 
     docs = g.setdefault("__vis_docs__", {})
     docs["vis_attach"] = (
-        "vis_attach(path, kind=None, media_type=None, filename=None, display_only=False): "
-        "persist a produced file as a durable attachment across restarts; images can "
-        "replay to vision models. display_only=True stores/displays but never sends the "
-        "image to the model. Returns None; call, do not print. Use vis_attachments() "
-        "for metadata."
+        "vis_attach(path, kind=None, media_type=None, filename=None, display_only=False, "
+        "label=None): persist a produced file as a durable attachment across restarts; "
+        "images can replay to vision models. label is a one-line caption printed with the "
+        "artifact — the caption row of the inline image. display_only=True stores/displays "
+        "but never sends the image to the model. Returns None; call, do not print. Use "
+        "vis_attachments() for metadata."
     )
     docs["vis_attach_bytes"] = (
-        "vis_attach_bytes(data, filename, kind=None, media_type=None, display_only=False): "
-        "persist bytes/str as a durable attachment. display_only=True stores/displays "
-        "but never sends the image to the model. Returns None; call, do not print. Use "
+        "vis_attach_bytes(data, filename, kind=None, media_type=None, display_only=False, "
+        "label=None): persist bytes/str as a durable attachment. label is a one-line "
+        "caption printed with the artifact. display_only=True stores/displays but never "
+        "sends the image to the model. Returns None; call, do not print. Use "
         "vis_attachments() for metadata."
     )
     docs["vis_reinspect_attachment"] = (

@@ -168,7 +168,59 @@
         (expect (nil? (:error out)))
         (expect (= "plot.png" (:filename att)))
         (expect (= "image/png" (:media-type att)))
-        (expect (= "image" (:kind att))))))
+        (expect (= "image" (:kind att)))))
+  (it
+    "carries a label into the vis-image fence summary — the picture's caption row"
+    (let
+      [pctx
+       (ctx-with-root (temp-root))
+
+       out
+       (block
+         pctx
+         (str
+           "import base64\n"
+           "png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')\n"
+           "vis_attach_bytes(png, 'dot.png', label='Scoped to studio: 89 matches')\n"))
+
+       so
+       (str (:stdout out))]
+
+      (expect (nil? (:error out)))
+      ;; The SUMMARY line is what the TUI paints as the caption above the image,
+      ;; so a labeled series of shots says which shot is which.
+      (expect (re-find #"\[Image: dot\.png 1×1, [^\]]*\] Scoped to studio: 89 matches" so))))
+  (it "prints a caption line for a labeled artifact that has no inline fence"
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
+
+         out
+         (block pctx "vis_attach_bytes('a,b\\n1,2\\n', 'data.csv', label='fleet counts')\n")]
+
+        (expect (nil? (:error out)))
+        (expect (re-find #"\[Attached: data\.csv\] fleet counts" (str (:stdout out))))))
+  (it "vis_attach takes the same label kwarg for a file on disk"
+      (let
+        [root
+         (temp-root)
+
+         pctx
+         (ctx-with-root root)
+
+         out
+         (block pctx
+                (str "with open("
+                     (pr-str (str root "/note.txt"))
+                     ", 'w') as f:\n"
+                     "    f.write('hello')\n"
+                     "vis_attach("
+                     (pr-str (str root "/note.txt"))
+                     ", label='the note')\n"))]
+
+        (expect (nil? (:error out)))
+        (expect (some #(= "note.txt" (:filename %)) (:attachments out)))
+        (expect (re-find #"\[Attached: note\.txt\] the note" (str (:stdout out)))))))
 
 (defdescribe vis-attach-path-test
              (it "reads a confined file from disk and captures it"
