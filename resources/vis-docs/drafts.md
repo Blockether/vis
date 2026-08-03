@@ -374,11 +374,24 @@ keep the repository *and* the draft store inside that one mount.
 fallocate -l 60G /var/lib/vis-btrfs.img
 mkfs.btrfs /var/lib/vis-btrfs.img
 mkdir -p /srv/vis
-mount -o loop,compress=zstd /var/lib/vis-btrfs.img /srv/vis   # persist via /etc/fstab
+mount -o loop,compress=zstd,user_subvol_rm_allowed /var/lib/vis-btrfs.img /srv/vis
+chown -R "$SUDO_USER:$SUDO_USER" /srv/vis    # hand the mount to your login user
+# persist the same line via /etc/fstab so it survives a reboot
+
+# afterwards, as your normal user — no sudo from here on
 mkdir -p /srv/vis/code /srv/vis/drafts
 git clone <repo> /srv/vis/code/<repo>          # repository on the btrfs mount
 vis-agent -J-Dvis.drafts.dir=/srv/vis/drafts   # store on the SAME mount
 ```
+
+**Root is needed once, never at runtime.** Only `mkfs.btrfs`, `mount`, and the
+`chown` handing the mount to your user require privilege. Creating a subvolume
+and snapshotting it are unprivileged btrfs operations for the user who owns the
+directories, so Vis creates, applies, and abandons drafts with no `sudo`, no
+setuid helper, and no daemon. Mount with `user_subvol_rm_allowed` so removing a
+draft stays unprivileged on kernels older than 4.18 as well. macOS has no
+privileged step at all: `clonefile` is an ordinary syscall on the APFS volume
+that is already mounted.
 
 **Two btrfs mounts are not one filesystem.** A clone never crosses a filesystem
 boundary, so a btrfs repository plus an ext4 `~/.vis/drafts` — or a second
