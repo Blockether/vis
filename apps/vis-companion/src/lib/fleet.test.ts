@@ -10,6 +10,8 @@ import {
   reconcileMachines,
   scopedMachines,
   scopeError,
+  scopedConns,
+  searchTally,
   scopedSessions,
   type FleetMachine,
 } from './fleet';
@@ -144,5 +146,25 @@ describe('scopeError', () => {
 
   it('surfaces a total blackout for the unscoped fleet', () => {
     expect(scopeError([machine(studio, null, 'down'), machine(tower, null, 'offline')], null)).toBe('down');
+  });
+});
+
+describe('search across the fleet', () => {
+  it('an unscoped search targets every paired gateway, a scoped one targets that gateway', () => {
+    const conns = [studio, tower, vps];
+    expect(scopedConns(conns, null)).toEqual(conns);
+    expect(scopedConns(conns, tower.url)).toEqual([tower]);
+    // A scope left over from an unpaired machine must not silence the search.
+    expect(scopedConns(conns, 'http://gone.local:7890')).toEqual(conns);
+  });
+
+  it('tallies the hits and the machines that produced them', () => {
+    const filtered = [
+      { machine: machine(studio, [session('a'), session('b')]), sessions: [session('a')] },
+      { machine: machine(tower, [session('c')]), sessions: [] },
+      { machine: machine(vps, [session('d')]), sessions: [session('d')] },
+    ];
+    expect(searchTally(filtered)).toEqual({ matches: 2, machines: 2 });
+    expect(searchTally([])).toEqual({ matches: 0, machines: 0 });
   });
 });

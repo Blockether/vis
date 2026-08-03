@@ -22,6 +22,7 @@ import {
   scopedConns,
   scopedMachines,
   scopeError,
+  searchTally,
   type FleetMachine,
 } from '../lib/fleet';
 
@@ -367,6 +368,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   }, [deferredQuery, fleetKey, scope]);
 
   const matches = deferredQuery.trim() ? transcriptMatches : null;
+  const searching = deferredQuery.trim().length > 0;
 
   const inScope = useMemo(() => scopedMachines(machines, scope), [machines, scope]);
 
@@ -396,6 +398,10 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
       }),
     }));
   }, [inScope, deferredQuery, matches]);
+
+  // A filter is a FLEET question: it runs on every machine in scope, so the header
+  // reports what came back and from how many of them.
+  const searchCounts = useMemo(() => searchTally(filtered), [filtered]);
 
   const visible = useMemo(
     () => (sessions === null ? null : filtered.flatMap((entry) => entry.sessions)),
@@ -626,7 +632,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   // so there is no global window to grow. A search flattens every project open so
   // matches are never hidden behind a collapse.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
-  const forceExpand = deferredQuery.trim().length > 0;
+  const forceExpand = searching;
   const toggleProject = useCallback((key: string) => {
     setExpanded((previous) => {
       const next = new Set(previous);
@@ -703,25 +709,40 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                         could strand "●" from its "4 live". Each fact is now nowrap and
                         the groups are separated by SPACE rather than punctuation, so the
                         line can only break between facts. */}
-                    {machines.length > 1 && !scopeMachine && (
-                      <span className="whitespace-nowrap">{machines.length} machines</span>
-                    )}
-                    <span className="whitespace-nowrap">
-                      {totals.projects} {totals.projects === 1 ? 'project' : 'projects'}
-                      <span className="px-1 opacity-40">·</span>
-                      {totals.all} {totals.all === 1 ? 'session' : 'sessions'}
-                    </span>
-                    <span className={`whitespace-nowrap ${totals.live > 0 ? 'font-bold text-ok' : ''}`}>
-                      {totals.live > 0 ? '●' : '○'} {totals.live} live
-                    </span>
-                    {totals.unread > 0 && (
-                      <span
-                        className="whitespace-nowrap font-bold text-accent-ink"
-                        role="status"
-                        aria-live="polite"
-                      >
-                        {totals.unread} unread
-                      </span>
+                    {searching ? (
+                      <>
+                        <span className="whitespace-nowrap font-bold text-accent-ink">
+                          {searchCounts.matches} {searchCounts.matches === 1 ? 'match' : 'matches'}
+                        </span>
+                        {machines.length > 1 && !scopeMachine && (
+                          <span className="whitespace-nowrap">
+                            across {searchCounts.machines} of {machines.length} machines
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {machines.length > 1 && !scopeMachine && (
+                          <span className="whitespace-nowrap">{machines.length} machines</span>
+                        )}
+                        <span className="whitespace-nowrap">
+                          {totals.projects} {totals.projects === 1 ? 'project' : 'projects'}
+                          <span className="px-1 opacity-40">·</span>
+                          {totals.all} {totals.all === 1 ? 'session' : 'sessions'}
+                        </span>
+                        <span className={`whitespace-nowrap ${totals.live > 0 ? 'font-bold text-ok' : ''}`}>
+                          {totals.live > 0 ? '●' : '○'} {totals.live} live
+                        </span>
+                        {totals.unread > 0 && (
+                          <span
+                            className="whitespace-nowrap font-bold text-accent-ink"
+                            role="status"
+                            aria-live="polite"
+                          >
+                            {totals.unread} unread
+                          </span>
+                        )}
+                      </>
                     )}
                   </>
                 )}
@@ -868,7 +889,10 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
               const key = machineKey(machine.conn);
               const tally = tallies.get(key);
               return (
-                <section key={key} aria-label={`${machineLabel(machine.conn)} projects`}>
+                <section key={key} aria-label={machines.length > 1 ? `${machineLabel(machine.conn)} projects` : undefined}>
+                  {/* With one machine paired the fleet costs nothing — not the header,
+                      not the strip, and not even a landmark a screen reader has to walk
+                      past, which is why the section goes unnamed. */}
                   {/* The machine header exists only while there is more than one
                       machine to tell apart, and disappears once the strip has scoped
                       to one — the chip already says where you are. */}
@@ -915,7 +939,9 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                             ? 'This machine is not answering.'
                             : machine.sessions === null
                               ? 'Reading sessions...'
-                              : 'No sessions on this machine yet.'}
+                              : searching
+                                ? 'No matches on this machine.'
+                                : 'No sessions on this machine yet.'}
                         </p>
                       )
                     : groups.map(([project, projectSessions]) => (

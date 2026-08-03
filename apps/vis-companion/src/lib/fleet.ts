@@ -133,3 +133,21 @@ export function machineCounts(
     unread: rows.filter(isUnread).length,
   };
 }
+
+/**
+ * What the live filter matched, and on how many machines. A search spans every
+ * machine in scope, so the header has to be able to SAY so: "12 matches across
+ * 2 of 3 machines" is the only proof the query left this gateway. Machines with
+ * no hit still count as searched — they just contributed nothing.
+ */
+export function searchTally(
+  filtered: { machine: FleetMachine; sessions: Session[] }[],
+): { matches: number; machines: number } {
+  let matches = 0;
+  let machines = 0;
+  for (const entry of filtered) {
+    matches += entry.sessions.length;
+    if (entry.sessions.length > 0) machines += 1;
+  }
+  return { matches, machines };
+}
