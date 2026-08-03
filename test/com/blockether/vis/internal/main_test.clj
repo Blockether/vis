@@ -9,6 +9,16 @@
 (toggles/register-toggle!
   {:id "main_test_flag" :label "CLI toggle test flag" :default false :settings? false})
 
+(defn- gutter-columns
+  "Column where the description starts for every two-column `  TOKEN   Doc.` row
+   in `s`. A single entry means that block shares one description gutter."
+  [^String s]
+  (->> (str/split-lines s)
+       (keep (fn [^String line]
+               (when-let [[_ _ _ doc] (re-matches #"^ {2}(\S.*?)( {2,})(\S.*)$" line)]
+                 (- (count line) (count doc)))))
+       set))
+
 (defdescribe
   root-help-test
   (it
@@ -22,7 +32,35 @@
       (expect (.contains help "--full-trace-json-stream"))
       (expect (.contains help "--provider PROVIDER"))
       (expect (.contains help "--reasoning-effort"))
-      (expect (.contains help "COMMANDS")))))
+      (expect (.contains help "COMMANDS"))))
+  (it "aligns every block: headings at column 0, rows at column 2, one gutter each"
+      (let
+        [^String help
+         (commandline/render-tree (#'main/root-command))
+
+         commands-at
+         (.indexOf help "\nCOMMANDS\n")]
+
+        (expect (.contains help "\nUSAGE\n"))
+        (expect (pos? commands-at))
+        ;; The root doc used to be re-indented on top of its own layout, so its
+        ;; headings and rows both sat two columns right of the generated
+        ;; COMMANDS block. Nothing is indented twice any more.
+        (expect (nil? (re-find #"(?m)^ {3,}\S" help)))
+        (expect (= 1 (count (gutter-columns (subs help 0 commands-at)))))
+        (expect (= 1 (count (gutter-columns (subs help commands-at)))))))
+  (it "documents how to change the runtime distribution"
+      (let [^String help (commandline/render-tree (#'main/root-command))]
+        (expect (.contains help "RUNTIME (WHICH DISTRIBUTION RUNS)"))
+        (doseq
+          [row ["--native" "--jvm" "--dev" "VIS_RUNTIME=native|jvm|dev" "vis-agent runtime show"
+                "vis-agent runtime use NAME" "vis-agent update [RUNTIME]"]]
+          (expect (.contains help row)))))
+  (it "points at the configuration a run reads"
+      (let [^String help (commandline/render-tree (#'main/root-command))]
+        (expect (.contains help "CONFIGURATION"))
+        (expect (.contains help "~/.vis/config.yml"))
+        (expect (.contains help "<project>/vis.yml")))))
 
 (defdescribe
   fast-help-test

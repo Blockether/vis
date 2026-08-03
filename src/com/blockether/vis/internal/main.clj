@@ -3835,36 +3835,62 @@
 ;; calls and its commands appear here without any code change.
 ;; =============================================================================
 
+(def ^:private HELP_COL
+  "Column - relative to the two-space body indent - where every description in
+   the root doc starts. ONE gutter for USAGE, ONE-SHOT FLAGS, RUNTIME and
+   CONFIGURATION: per-section columns made the help screen look ragged."
+  31)
+
+(defn- help-row
+  "`TOKEN<pad>Description` on the shared `HELP_COL` gutter. A token wider than
+   the gutter still keeps one space, so nothing collides."
+  [token doc]
+  (let [pad (max 1 (- (long HELP_COL) (long (count token))))]
+    (str token (str/join (repeat pad \space)) doc)))
+
 (def ^:private DEFAULT_DOC
-  (str
-    "Vis - a coding agent that edits, runs and verifies code in your repo, with a persistent sandboxed Python REPL.\n"
-    "\n" "USAGE\n"
-    "  vis-agent [FLAGS] \"prompt\"          Run one-shot agent work.\n"
-    "  vis-agent [FLAGS]                    Show this help.\n"
-    "  vis-agent <command> [args...]        Run a command.\n"
-    "  vis-agent <command> --help           Show command help.\n"
-    "\n" "EXAMPLES\n"
-    "  vis-agent \"fix failing tests\"\n" "  vis-agent --json \"summarize this repo\"\n"
-    "  vis-agent --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"task\"\n"
-    "  vis-agent --full-trace-json-stream --db :memory \"debug startup\"\n"
-    "  vis-agent providers status\n" "  vis-agent sessions search sqlite\n"
-    "\n" "ONE-SHOT FLAGS\n"
-    "  --json                       Print result as JSON.\n"
-    "  --code                       Print only final answer code blocks.\n"
-    "  --raw                        Print plain text, no markdown styling.\n"
-    "  --toggles NAME=VAL[,..]      Set registered toggles for this run only (e.g. reasoning_level=deep).\n"
-    "  --full-trace-stream          Stream pretty human trace.\n"
-    "  --full-trace-json-stream     Stream raw JSON trace frames.\n"
-    "  --provider PROVIDER          Override provider.\n"
-    "  --model MODEL                Override model or use provider/model.\n"
-    "  --reasoning-effort E         Exact provider-native effort: high or max.\n"
-    "  --name NAME                  Agent name for this run.\n"
-    "  --db PATH|:memory            SQLite DB path or in-memory DB.\n"
-    "  --session-id ID              Continue an existing persisted session.\n"
-    "  --persist                    Persist as a :cli session.\n"
-    "  --debug, --verbose, -v       Enable verbose debug logging.\n"
-    "  --                           End flags: every later word is prompt text.\n"
-    "  --help, -h                   Show help."))
+  "Root help body. Section headings sit at column 0 and rows at column 2 -
+   `commandline/render-tree` renders this doc with the same geometry as the
+   COMMANDS block it appends, so write rows WITHOUT a leading indent."
+  (str/join
+    "\n"
+    ["Vis - a coding agent that edits, runs and verifies code in your repo, with a persistent sandboxed Python REPL."
+     "" "USAGE" (help-row "vis-agent [FLAGS] \"prompt\"" "Run one-shot agent work.")
+     (help-row "vis-agent <command> [args...]" "Run a command.")
+     (help-row "vis-agent <command> --help" "Show command help.")
+     (help-row "vis-agent [--help|--version]" "Show this help, or the version.") "" "ONE-SHOT FLAGS"
+     (help-row "--json" "Print result as JSON.")
+     (help-row "--code" "Print only final answer code blocks.")
+     (help-row "--raw" "Print plain text, no markdown styling.")
+     (help-row "--toggles NAME=VAL[,..]" "Set registered toggles for this run only.")
+     (help-row "--full-trace-stream" "Stream pretty human trace.")
+     (help-row "--full-trace-json-stream" "Stream raw JSON trace frames.")
+     (help-row "--provider PROVIDER" "Override provider.")
+     (help-row "--model MODEL" "Override model, or use provider/model.")
+     (help-row "--reasoning-effort E" "Exact provider-native effort: high or max.")
+     (help-row "--name NAME" "Agent name for this run.")
+     (help-row "--db PATH|:memory" "SQLite DB path or in-memory DB.")
+     (help-row "--session-id ID" "Continue an existing persisted session.")
+     (help-row "--persist" "Persist as a :cli session.")
+     (help-row "--debug, --verbose, -v" "Enable verbose debug logging.")
+     (help-row "--" "End flags: every later word is prompt text.")
+     (help-row "--help, -h" "Show help.") "" "RUNTIME (WHICH DISTRIBUTION RUNS)"
+     (help-row "--native" "Run the installed native runtime.")
+     (help-row "--jvm" "Run the release-tagged source Vis owns.")
+     (help-row "--dev" "Run your live checkout.")
+     (help-row "VIS_RUNTIME=native|jvm|dev" "The same choice, for one process.")
+     (help-row "vis-agent runtime show" "Name the runtime in effect and who chose it.")
+     (help-row "vis-agent runtime use NAME" "Persist native|jvm|dev|auto as the default.")
+     (help-row "vis-agent update [RUNTIME]" "Update it; --rebuild rebuilds the sidecar.") ""
+     "CONFIGURATION" (help-row "~/.vis/config.yml" "Global settings: providers, models, tools.")
+     (help-row "<project>/vis.yml" "Project settings; .vis/config.yml overrides it.")
+     (help-row "vis-agent providers status" "Show provider auth and model catalogs.")
+     (help-row "vis-agent doctor" "Diagnose config, extensions, stale state.") "" "EXAMPLES"
+     "vis-agent \"fix failing tests\"" "vis-agent --json \"summarize this repo\""
+     "vis-agent --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"task\""
+     "vis-agent --toggles reasoning_level=deep \"refactor carefully\""
+     "vis-agent --full-trace-json-stream --db :memory \"debug startup\""
+     "vis-agent --dev \"run this from my live checkout\"" "vis-agent sessions search sqlite"]))
 
 (defn root-command
   "Build the root `vis-agent` command tree. Subcommands are pulled fresh on

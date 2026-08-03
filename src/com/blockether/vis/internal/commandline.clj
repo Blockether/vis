@@ -502,6 +502,30 @@
                           (str/join " " path)
                           " <subcommand> --help\" for more details."))))]))))
 
+(def ^:private ROOT_HEADING_RE
+  "A bare ALL-CAPS line in a root doc is one of THAT doc's own section
+   headings (`USAGE`, `ONE-SHOT FLAGS`, `RUNTIME (WHICH DISTRIBUTION RUNS)`)."
+  #"^[A-Z][-A-Z0-9 ()/|,.:]*$")
+
+(defn- root-doc-block
+  "Lay the ROOT doc out on the same geometry as the generated blocks.
+
+   The root doc is not a paragraph: it carries USAGE / FLAGS / RUNTIME sections
+   that must line up with the `COMMANDS` block rendered below it. `doc-block`
+   indented every line by two, so the doc's own headings sat two columns right
+   of `COMMANDS` and its rows sat two columns right of the command rows - the
+   help screen looked doubly indented and misaligned. Here a heading keeps
+   column 0 and is styled like a generated section, body lines take the
+   two-space body indent, and blank lines stay blank (no trailing padding)."
+  [doc]
+  (when-not (str/blank? doc)
+    (->> (str/split-lines doc)
+         (map (fn [line]
+                (cond (str/blank? line) ""
+                      (re-matches ROOT_HEADING_RE line) (section line)
+                      :else (str "  " line))))
+         (str/join "\n"))))
+
 (defn render-tree
   "Top-level overview rendered when the binary is invoked with no
    arguments (or via `vis-agent help`). Shows the root doc, then a single
@@ -514,11 +538,11 @@
      col-w
      (col-width (map :cmd/name children) 16)
 
-     ;; Root doc may carry both a one-liner and an extended
-     ;; paragraph; render verbatim with a 2-space indent so it
-     ;; lines up with the COMMANDS body.
+     ;; Root doc may carry both a one-liner and its own sections; it is
+     ;; rendered on the COMMANDS geometry - headings at column 0, rows
+     ;; indented two spaces.
      doc
-     (doc-block (:cmd/doc root))]
+     (root-doc-block (:cmd/doc root))]
 
     (str/join "\n"
               (remove nil?

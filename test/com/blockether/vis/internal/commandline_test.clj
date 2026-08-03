@@ -112,3 +112,29 @@
           (expect (= 1 @calls))
           (expect (str/includes? out "DYNAMIC"))
           (expect (str/includes? out "body line"))))))
+
+;; =============================================================================
+;; render-tree -- the root doc owns its own layout.
+;; =============================================================================
+
+(defn- sectioned-root
+  []
+  {:cmd/name "vis-agent"
+   :cmd/doc (str "One-liner.\n"
+                 "\n" "USAGE\n"
+                 "vis-agent [FLAGS] \"prompt\"   Run one-shot agent work.\n" "\n"
+                 "RUNTIME (WHICH DISTRIBUTION RUNS)\n"
+                 "--dev                        Run your live checkout.")
+   :cmd/subcommands [{:cmd/name "doctor" :cmd/doc "Diagnose."}]})
+
+(defdescribe render-tree-root-doc-test
+             (it "keeps root-doc headings at column 0 and rows at column 2"
+                 (binding [commandline/*color-enabled?* false]
+                   (let [out (commandline/render-tree (sectioned-root))]
+                     (expect (str/includes? out "\nUSAGE\n  vis-agent [FLAGS] \"prompt\""))
+                     (expect (str/includes? out "\nRUNTIME (WHICH DISTRIBUTION RUNS)\n  --dev"))
+                     (expect (str/includes? out "\nCOMMANDS\n  doctor"))
+                     (expect (str/includes? out "  One-liner."))
+                     ;; No line is indented twice, and blank lines carry no padding.
+                     (expect (nil? (re-find #"(?m)^ {3,}\S" out)))
+                     (expect (nil? (re-find #"(?m)^ +$" out)))))))
