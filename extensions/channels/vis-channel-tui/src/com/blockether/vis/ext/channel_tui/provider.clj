@@ -789,9 +789,15 @@
                        :else t/status-bad))
       (p/put-str! g dot-col row "●"))
     ;; Line 2 - a connection / diagnostics error wins (red); otherwise the
-    ;; model + static limits summary. Surfacing `:error` here is what makes a
-    ;; dead local provider (Ollama / LM Studio not running) actually SAY so
-    ;; instead of just a silent red dot.
+    ;; routing line: the tagged model, or the catalog count. Surfacing `:error`
+    ;; here is what makes a dead local provider (Ollama / LM Studio not running)
+    ;; actually SAY so instead of just a silent red dot.
+    ;;
+    ;; Line 3 is the ACCOUNT line. The card already reserves three rows
+    ;; (`card-rows`) and used to leave the third one blank while the limits were
+    ;; glued behind the model with a " / " and chopped mid-word on a narrow
+    ;; dialog ("… (92992 left) · Ch"). One fact per line, the dead row earns its
+    ;; keep, and the tail ellipsizes instead of amputating.
     (let
       [error-text (when-not (or loading-status? loading-limits?)
                     (or (:error status)
@@ -801,19 +807,19 @@
         (do (p/set-fg! g t/status-bad)
             (p/put-str! g text-x (inc row) (dlg/ellipsize (str "   ⚠ " error-text) text-w)))
         ;; The tagged model repeats the row's chip, so PRIMARY/FALLBACK reads the
-        ;; same on both lines; the limits tail stays dim so the badge leads.
-        (do (draw-runs!
-              g
-              text-x
-              (inc row)
-              text-w
-              (if tag-role
-                [{:text "   "} {:text tag-glyph :fg tag-bg :bold? true}
-                 {:text (str tag-model) :fg t/dialog-fg} {:text "  "}
-                 {:text tag-word :fg tag-fg :bg tag-bg :bold? true}
-                 (when (seq limit-summary) {:text (str " / " limit-summary) :fg t/dialog-hint})]
-                [{:text (str "   " catalog-summary) :fg t/dialog-fg}
-                 (when (seq limit-summary) {:text (str " / " limit-summary) :fg t/dialog-hint})]))
+        ;; same on both lines; the limits stay dim so the badge leads.
+        (do (draw-runs! g
+                        text-x
+                        (inc row)
+                        text-w
+                        (if tag-role
+                          [{:text "   "} {:text tag-glyph :fg tag-bg :bold? true}
+                           {:text (str tag-model) :fg t/dialog-fg} {:text "  "}
+                           {:text tag-word :fg tag-fg :bg tag-bg :bold? true}]
+                          [{:text (str "   " catalog-summary) :fg t/dialog-fg}]))
+            (when (seq limit-summary)
+              (p/set-colors! g t/dialog-hint t/dialog-bg)
+              (p/put-str! g text-x (+ row 2) (dlg/ellipsize (str "   " limit-summary) text-w)))
             (p/set-colors! g t/dialog-fg t/dialog-bg))))))
 
 ;; Channel-neutral status / limits / persistence shapes — the core

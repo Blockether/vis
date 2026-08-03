@@ -1300,3 +1300,109 @@
              (expect (str/includes? default-card "DEFAULT"))
              (expect (not (str/includes? default-card "FALLBACK"))))
            (finally (.stopScreen screen))))))
+
+(defn- card-rows-text
+  "Paint one provider card into a fresh virtual terminal and return its three
+   rows as strings, so layout claims are read off the real back-buffer."
+  [inner-w provider limits]
+  (let
+    [terminal
+     (DefaultVirtualTerminal. (TerminalSize. 120 12))
+
+     screen
+     (doto (TerminalScreen. terminal) (.startScreen))]
+
+    (try (with-redefs [vis/provider-base-url (constantly "")]
+           ((deref #'provider/draw-provider-card!)
+             (.newTextGraphics screen)
+             0
+             0
+             inner-w
+             0
+             false
+             provider
+             {"is_authenticated" true "is_loading" false}
+             limits
+             {:provider-id :other :model "other-1"}
+             nil))
+         (mapv (fn [^long y]
+                 (str/trimr (str/join (for [x (range 120)]
+                                        (.getCharacterString
+                                          (.getBackCharacter screen (int x) (int y)))))))
+               [0 1 2])
+         (finally (.stopScreen screen)))))
+
+(defdescribe
+  provider-card-account-line-test
+  (it "gives the account limits the card's third row instead of chopping them onto the model line"
+      (let
+        [limits
+         {:status :ready
+          :static {}
+          :dynamic {:limits [{:id :premium_interactions
+                              :label "Premium interactions"
+                              :remaining 92992.0
+                              :limit 100000.0
+                              :used 7008.0} {:id :chat :label "Chat" :is-unlimited true}]}}
+
+         [_line1 line2 line3]
+         (card-rows-text 78 {:id :alpha :models ["m1" "m2"]} limits)]
+
+        (expect (str/includes? line2 "2 models available"))
+        (expect (not (str/includes? line2 "Premium interactions"))
+                "limits must no longer ride behind the model summary")
+        (expect (str/includes? line3 "Premium interactions"))
+        (expect (str/includes? line3 "(92992 left)"))
+        (expect (str/includes? line3 "Chat unlimited")
+                "the whole account line fits once it owns a row")))
+  (it "ellipsizes the account line on a narrow dialog instead of amputating it mid-word"
+      (let
+        [limits
+         {:status :ready
+          :static {}
+          :dynamic {:limits [{:id :premium_interactions
+                              :label "Premium interactions"
+                              :remaining 92992.0
+                              :limit 100000.0
+                              :used 7008.0} {:id :chat :label "Chat" :is-unlimited true}]}}
+
+         [_line1 _line2 line3]
+         (card-rows-text 36 {:id :alpha :models ["m1" "m2"]} limits)]
+
+        (expect (str/ends-with? line3 "…"))
+        (expect (<= (count line3) 36))))
+  (it
+    "keeps the account line under a tagged provider's model row"
+    (let
+      [limits
+       {:status :ready :static {} :dynamic {:limits [{:id :chat :label "Chat" :is-unlimited true}]}}
+
+       terminal
+       (DefaultVirtualTerminal. (TerminalSize. 120 12))
+
+       screen
+       (doto (TerminalScreen. terminal) (.startScreen))
+
+       row-text
+       (fn [^long y]
+         (str/join (for [x (range 120)]
+                     (.getCharacterString (.getBackCharacter screen (int x) (int y))))))]
+
+      (try (with-redefs [vis/provider-base-url (constantly "")]
+             ((deref #'provider/draw-provider-card!)
+               (.newTextGraphics screen)
+               0
+               0
+               78
+               0
+               false
+               {:id :alpha :models ["m1"]}
+               {"is_authenticated" true "is_loading" false}
+               limits
+               {:provider-id :alpha :model "alpha-1"}
+               nil))
+           (expect (str/includes? (row-text 1) "alpha-1"))
+           (expect (str/includes? (row-text 1) "DEFAULT"))
+           (expect (not (str/includes? (row-text 1) "Chat unlimited")))
+           (expect (str/includes? (row-text 2) "Chat unlimited"))
+           (finally (.stopScreen screen))))))
