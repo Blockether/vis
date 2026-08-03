@@ -217,4 +217,78 @@
       (clamp-eval-timeout-ms (max base (+ (* 1000 (long secs)) (long shell-timeout-eval-grace-ms))))
       base)))
 
+(def ^:dynamic *blocking-wall-park*
+  "Park hook installed by the innermost enclosing timeout wall: `(fn [thunk])`.
+
+   Every wall in this engine counts WALL-CLOCK time, so a legitimate block —
+   above all a `human-input` pause waiting on the operator — otherwise dies at
+   the wall with a bare `Timeout (120s)` while the dialog is still up. Code
+   about to park on a human answer calls [[park-blocking-wall]]; every
+   enclosing wall then stops its clock until the thunk returns."
+  nil)
+
+(defn park-blocking-wall
+  "Run `thunk` with every enclosing timeout wall parked. With no wall installed
+   (plain JVM call, tests) this is just `(thunk)`."
+  [thunk]
+  (if-let [park *blocking-wall-park*]
+    (park thunk)
+    (thunk)))
+
+(defn parkable-wall
+  "One MOVABLE wall clock for a bounded execution that began at `start` with
+   `timeout-ms` of budget.
+
+   Returns `{:deadline <atom epoch-ms> :park (fn [thunk])}`.
+
+   `park` is RE-ENTRANT: nested parks each push the deadline out to
+   [[MAX_EVAL_TIMEOUT_MS]] and only the OUTERMOST exit restores the base
+   budget, so an inner park returning cannot collapse the clock while an outer
+   park is still live. It also COMPOSES with the park inherited from
+   [[*blocking-wall-park*]], so parking an inner wall parks every enclosing one
+   too — a native tool that asks the operator a question must not be killed by
+   the Python eval watchdog wrapped around it."
+  [start timeout-ms]
+  (let
+    [timeout-ms
+     (long timeout-ms)
+
+     deadline
+     (atom (+ (long start) timeout-ms))
+
+     depth
+     (atom 0)
+
+     inherited
+     *blocking-wall-park*
+
+     park
+     (fn [thunk]
+       (swap! depth inc)
+       (reset! deadline (+ (System/currentTimeMillis) (long MAX_EVAL_TIMEOUT_MS)))
+       (try (thunk)
+            (finally (reset! deadline (+ (System/currentTimeMillis)
+                                         (if (pos? (long (swap! depth dec)))
+                                           (long MAX_EVAL_TIMEOUT_MS)
+                                           timeout-ms))))))]
+
+    {:deadline deadline
+     :park (if inherited
+             (fn [thunk]
+               (park #(inherited thunk)))
+             park)}))
+
+(defn await-wall
+  "Wait for `fut` until the CURRENT value of `deadline` passes, re-reading the
+   atom on every wake so a park that MOVED the wall extends the wait instead of
+   expiring. Returns `timeout-value` once the wall is really reached."
+  [fut deadline timeout-value]
+  (loop []
+
+    (let [remaining (- (long @deadline) (System/currentTimeMillis))]
+      (if (pos? remaining)
+        (let [r (deref fut remaining timeout-value)]
+          (if (identical? timeout-value r) (recur) r))
+        timeout-value))))
+
 (def ^:dynamic *rlm-context* "Dynamic context for RLM debug logging." nil)

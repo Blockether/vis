@@ -13,6 +13,8 @@
             [com.blockether.vis.internal.foundation.language-surface :as lsf]
             [com.blockether.vis.internal.titling :as titling]
             [com.blockether.vis.internal.runtime-settings :as rt]
+            [com.blockether.vis.internal.human-input :as hi]
+            [com.blockether.vis.internal.channel-events :as ce]
             [com.blockether.vis.internal.provider-error :as perr]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.registry :as registry]
@@ -5742,3 +5744,44 @@
             (hook))
           (expect (= cfg @built))
           (expect (= ::rebuilt @seated))))))
+
+(defdescribe human-input-parks-native-tool-wall-test
+             ;; REGRESSION: HITL. A native tool that ASKS the operator blocks in
+             ;; human-input/request!, and the native-tool wall used to bill that
+             ;; thinking time — the call died with a timeout while the dialog was
+             ;; still on screen and the answer was never applied.
+             (it "a human-input pause parks the tool wall instead of timing out"
+                 (let
+                   [chan
+                    (keyword "vis-test" (str "loop-hitl-" (random-uuid)))
+
+                    events
+                    (atom [])
+
+                    handler
+                    (fn [_env _input]
+                      (hi/request! {:title "Login"
+                                    :fields [{:id "otp" :label "OTP"}]
+                                    :timeout-ms 10000
+                                    :channel-ids [chan]}))]
+
+                   (ce/add-channel-event-listener! chan ::hitl-wall #(swap! events conj %))
+                   (try
+                     (let
+                       [answerer
+                        (future
+                          (loop [n 0]
+                            (if-let [request-id (some #(when (= :human-input/request (:op %))
+                                                         (:request-id %))
+                                                      @events)]
+                              ;; The operator takes MUCH longer than the 20ms + 1s wall.
+                              (do (Thread/sleep 1500) (hi/submit! request-id {"otp" "123456"}))
+                              (when (< n 400) (Thread/sleep 10) (recur (inc n))))))
+
+                        result
+                        ((deref #'lp/run-native-handler) handler {} {"timeout_ms" 20} "vis.ask")]
+
+                       (deref answerer 5000 nil)
+                       (expect (false? (:timeout? result)))
+                       (expect (true? (:is-submitted (:result result)))))
+                     (finally (ce/remove-channel-event-listener! chan ::hitl-wall))))))

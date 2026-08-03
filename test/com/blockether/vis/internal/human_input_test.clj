@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as ce]
             [com.blockether.vis.internal.human-input :as hi]
+            [com.blockether.vis.internal.runtime-settings :as rt]
             [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defn- fresh-channel
@@ -561,3 +562,78 @@
              (expect (= {:is-submitted false :reason "shutdown" :request-id rid}
                         (deref answer 2000 ::stuck)))
              (finally (hi/cancel-all! "cleanup") (future-cancel answer))))))
+
+(defn- await-true
+  "Poll `pred` for up to ~2s; another thread settles these requests."
+  [pred]
+  (loop [n 0]
+    (cond (pred) true
+          (< n 200) (do (Thread/sleep 10) (recur (inc n)))
+          :else false)))
+
+(defdescribe blocking-wall-park-test
+             ;; REGRESSION: HITL "is not working" — the dialog opened, the operator was
+             ;; still typing, and the enclosing timeout wall (the Python eval watchdog, the
+             ;; native-tool wall) billed that thinking time and killed the call with a bare
+             ;; `Timeout (120s)` while the dialog was still on screen.
+             (it
+               "parks the enclosing timeout wall until the operator answers"
+               (let
+                 [chan
+                  (fresh-channel)
+
+                  events
+                  (atom [])
+
+                  depth
+                  (atom 0)
+
+                  entered
+                  (promise)
+
+                  park
+                  (fn [thunk]
+                    (swap! depth inc)
+                    (deliver entered true)
+                    (try (thunk) (finally (swap! depth dec))))]
+
+                 (ce/add-channel-event-listener! chan ::park-collector #(swap! events conj %))
+                 (try (let
+                        [fut
+                         (future (binding [rt/*blocking-wall-park* park]
+                                   (hi/request! {:title "Login"
+                                                 :fields [{:id "otp" :label "OTP"}]
+                                                 :timeout-ms 5000
+                                                 :channel-ids [chan]})))
+
+                         request-id
+                         (await-request-id events)]
+
+                        ;; The wall is parked BEFORE anybody can possibly answer.
+                        (expect (true? (deref entered 2000 false)))
+                        (expect (= 1 @depth))
+                        (expect (:is-accepted (hi/submit! request-id {"otp" "123456"})))
+                        (let [answer (deref fut 5000 ::none)]
+                          (expect (true? (:is-submitted answer)))
+                          (expect (= "submitted" (:reason answer))))
+                        ;; …and the clock restarts the moment the answer lands.
+                        (expect (= 0 @depth)))
+                      (finally (ce/remove-channel-event-listener! chan ::park-collector))))))
+
+(defdescribe interrupted-request-test
+             ;; REGRESSION: interrupting the turn that opened the dialog left the entry in
+             ;; `pending` forever — a zombie dialog no channel could dismiss and no later
+             ;; request could reuse.
+             (it "an interrupted wait releases the request and closes the dialog"
+                 (let
+                   [{fut :future events :events request-id :request-id detach! :detach!}
+                    (start-request! (spec {:id "otp"}))]
+                   (try (expect (some? (hi/pending-request request-id)))
+                        (future-cancel fut)
+                        (expect (true? (await-true #(nil? (hi/pending-request request-id)))))
+                        (expect (true? (await-true #(boolean
+                                                      (some (fn [e]
+                                                              (and (= :human-input/close (:op e))
+                                                                   (= request-id (:request-id e))))
+                                                            @events)))))
+                        (finally (detach!))))))

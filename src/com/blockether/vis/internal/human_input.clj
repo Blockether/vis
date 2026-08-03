@@ -23,6 +23,7 @@
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as channel-events]
+            [com.blockether.vis.internal.runtime-settings :as rt]
             [taoensso.telemere :as tel]))
 
 (set! *warn-on-reflection* true)
@@ -691,7 +692,19 @@
                :msg "Human-input request opened"})
     (publish! (:channel-ids entry)
               {:op :human-input/request :request-id request-id :request (request->view entry)})
-    (let [result (deref (:promise entry) (:timeout-ms entry) ::timeout)]
+    (let
+      [result
+       ;; Waiting on a human is NOT wall-clock work an enclosing timeout may
+       ;; bill: park every enclosing wall (Python eval watchdog, native-tool
+       ;; wall) for as long as the operator takes. Without this the surrounding
+       ;; wall kills the thread at `Timeout (120s)` with the dialog still up.
+       (rt/park-blocking-wall (fn []
+                                (try (deref (:promise entry) (:timeout-ms entry) ::timeout)
+                                     (catch Throwable t
+                                       ;; Interrupt/cancel of the surrounding turn: release the entry
+                                       ;; and close the dialog, never leave a zombie pending request.
+                                       (force-cancel! request-id "interrupted")
+                                       (throw t)))))]
       (if (identical? ::timeout result)
         (do (settle! request-id {:is-submitted false :reason "timeout" :request-id request-id})
             ;; `settle!` delivered, or a submit! that won the race already did.

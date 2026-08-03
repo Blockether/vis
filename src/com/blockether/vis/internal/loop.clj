@@ -850,12 +850,23 @@
      reinspection-sink
      (atom [])
 
+     timeout-ms
+     (long (rt/eval-timeout-ms-for-code rt/*eval-timeout-ms* code))
+
+     ;; MOVABLE wall: a `human-input` pause inside the block parks this clock
+     ;; instead of dying at it (see rt/parkable-wall).
+     {eval-deadline :deadline eval-park :park}
+     (rt/parkable-wall (System/currentTimeMillis) timeout-ms)
+
      exec-future
      (cancellation/worker-future
        "vis-python-eval"
        (fn []
          (try (binding
-                [extension/*tool-event-sink*
+                [rt/*blocking-wall-park*
+                 eval-park
+
+                 extension/*tool-event-sink*
                  record-tool-event
 
                  mpl-capture/*attachment-reader*
@@ -883,11 +894,11 @@
                                   ;; code spinning forever — unwind it too.
                                   (interrupt-guest! python-context))))
 
-     timeout-ms
-     (long (rt/eval-timeout-ms-for-code rt/*eval-timeout-ms* code))
+     timeout-sentinel
+     (Object.)
 
      execution-result
-     (try (deref exec-future timeout-ms nil)
+     (try (rt/await-wall exec-future eval-deadline timeout-sentinel)
           (catch Throwable e
             (reset! thrown e)
             (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil))
@@ -895,7 +906,7 @@
             {:result nil :lru {} :error (python-op-error python-context e code)})
           (finally (when dispose-cancel-hook (try (dispose-cancel-hook) (catch Throwable _ nil)))))]
 
-    (if (nil? execution-result)
+    (if (identical? timeout-sentinel execution-result)
       (do (.cancel ^java.util.concurrent.Future exec-future true)
           ;; Eval timeout: the worker future is cancelled, but the guest frame is
           ;; only unwound by a Truffle safepoint interrupt.
@@ -1128,7 +1139,10 @@
    `:vis/outside-tool-wall`, a `(fn [thunk])` that PARKS the deadline while the
    thunk runs (wedge-guarded by MAX_EVAL_TIMEOUT_MS) and RESTARTS the clock when
    it returns — so a cold project-REPL boot never bills against the eval's
-   `timeout_ms` (see extension/run-outside-tool-wall)."
+   `timeout_ms` (see extension/run-outside-tool-wall). That same park is bound
+   as `rt/*blocking-wall-park*` around the handler, so a `human-input` pause
+   raised deep inside it stops this clock (and every enclosing one) instead of
+   dying at the wall while the operator is still typing."
   [handler environment input display-src]
   (let
     [start
@@ -1137,35 +1151,17 @@
      timeout-ms
      (long (rt/native-tool-timeout-ms input))
 
-     deadline
-     (atom (+ start timeout-ms))
-
-     park-depth
-     (atom 0)
-
-     outside-wall
-     (fn [thunk]
-       ;; RE-ENTRANT park. Native handlers nest this: run_tests wraps the
-       ;; WHOLE run (language-surface) AND clj-test-fn separately wraps its
-       ;; ensure-repl-for-dir! boot. A non-reentrant park let the INNER exit
-       ;; collapse the clock back to the base `timeout-ms` (30s) while the
-       ;; OUTER park was still live, so the actual test eval that ran after
-       ;; the boot got only 30s — a slow first-load / wedged eval then died
-       ;; at exactly 30000ms even though the pack budget is 290s. Fix: only
-       ;; the OUTERMOST park restores the base wall; a nested exit re-parks to
-       ;; MAX so the enclosing park (and its own budget) survives.
-       (swap! park-depth inc)
-       (reset! deadline (+ (System/currentTimeMillis) (long rt/MAX_EVAL_TIMEOUT_MS)))
-       (try (thunk)
-            (finally (reset! deadline (+ (System/currentTimeMillis)
-                                         (if (pos? (long (swap! park-depth dec)))
-                                           (long rt/MAX_EVAL_TIMEOUT_MS)
-                                           timeout-ms))))))
+     {:keys [deadline park]}
+     (rt/parkable-wall start timeout-ms)
 
      worker
      (cancellation/worker-future "vis-native-tool"
-                                 #(handler (assoc environment :vis/outside-tool-wall outside-wall)
-                                           input))
+                                 #(binding
+                                    [rt/*blocking-wall-park*
+                                     park]
+
+                                    (handler (assoc environment :vis/outside-tool-wall park)
+                                             input)))
 
      dispose-cancel-hook
      (when-let [cancel-token (:cancel-token environment)]
@@ -1186,17 +1182,10 @@
            [timeout-sentinel
             (Object.)
 
-            ;; The deadline is a MOVABLE atom (outside-wall parks/restarts it),
-            ;; so wait in a loop: a sentinel wake re-checks the CURRENT deadline
-            ;; and keeps waiting when the wall moved while we slept.
+            ;; The deadline is a MOVABLE atom (outside-wall / human-input park
+            ;; it), so this re-checks the CURRENT wall on every wake.
             ret
-            (loop []
-
-              (let [remaining (- (long @deadline) (System/currentTimeMillis))]
-                (if (pos? remaining)
-                  (let [r (deref worker remaining timeout-sentinel)]
-                    (if (identical? timeout-sentinel r) (recur) r))
-                  timeout-sentinel)))]
+            (rt/await-wall worker deadline timeout-sentinel)]
 
            (if (identical? timeout-sentinel ret)
              (do (.cancel ^java.util.concurrent.Future worker true)
