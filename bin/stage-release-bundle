@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Stage (and tar) ONE native release bundle — the single definition of what a
+# `vis-agent-<os>-<arch>-community.tar.gz` contains. Used by
+# .github/workflows/native-release.yml AND by bin/release-native, so a CI asset
+# and a locally built asset can never drift apart.
+#
+#   bin/stage-release-bundle target/vis vis-agent-linux-arm64-community.tar.gz
+#   bin/stage-release-bundle --from-dir out/linux-arm64 vis-agent-linux-arm64-community.tar.gz
+#
+# Bundle layout (exactly what `vis-agent update --native` unpacks):
+#   vis-agent             the public Bash wrapper
+#   vis-agent-native      the private native runtime
+#   vis-agent-resources/  GraalPy/Truffle language resources
+#   install-vis-agent     the installer, so a bundle can bootstrap itself
+#
+# The resources DIRECTORY is not optional. The image is built with
+# `-H:-IncludeLanguageResources -H:+CopyLanguageResources` (see
+# resources/META-INF/native-image/com.blockether/vis/native-image.properties):
+# the Python stdlib is no longer inside the executable, native-image writes it to
+# `resources/` next to the binary instead, and shipping the binary alone gives
+# every user a runtime whose first Python call dies with
+# "ModuleNotFoundError: No module named 'ast'". Hence: hard error, never a
+# warning.
+set -euo pipefail
+
+die() { printf 'stage-release-bundle: %s\n' "$@" >&2; exit 1; }
+
+repo_root="$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
+bundle="${VIS_BUNDLE_DIR:-$repo_root/target/release-bundle}"
+
+from_dir=""
+native=""
+asset=""
+while (( $# )); do
+  case "$1" in
+    --from-dir) from_dir="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]:-$0}"; exit 0 ;;
+    -*) die "unknown option $1" ;;
+    *)
+      if [[ -z "$native" && -z "$from_dir" ]]; then native="$1"
+      elif [[ -z "$asset" ]]; then asset="$1"
+      else die "too many arguments: $1"
+      fi
+      shift ;;
+  esac
+done
+
+[[ -n "$asset" ]] || die "usage: stage-release-bundle <native-binary>|--from-dir <dir> <asset.tar.gz>"
+
+rm -rf "$bundle"
+mkdir -p "$bundle"
+
+if [[ -n "$from_dir" ]]; then
+  # A bundle another builder already produced (the Dockerfile's `native-export`
+  # stage). Only re-check and pack it; never rewrite its wrapper from THIS
+  # checkout, or a cross-built asset would carry a wrapper the binary never saw.
+  [[ -d "$from_dir" ]] || die "no such directory: $from_dir"
+  for entry in vis-agent vis-agent-native install-vis-agent; do
+    [[ -f "$from_dir/$entry" ]] || die "$from_dir is missing $entry"
+    install -m 0755 "$from_dir/$entry" "$bundle/$entry"
+  done
+  [[ -d "$from_dir/vis-agent-resources" ]] || \
+    die "$from_dir is missing vis-agent-resources/ — the language-resources sidecar" \
+        "Rebuild it: the image must be built with -H:+CopyLanguageResources."
+  cp -R "$from_dir/vis-agent-resources" "$bundle/vis-agent-resources"
+else
+  [[ -x "$native" ]] || die "no native runtime at $native"
+  native_dir="$(cd -P "$(dirname "$native")" && pwd)"
+  resources="${VIS_NATIVE_RESOURCES:-$native_dir/resources}"
+  [[ -d "$resources" ]] || \
+    die "no language-resources sidecar at $resources" \
+        "native-image writes it beside the image when the build sets" \
+        "-H:+CopyLanguageResources; rebuild with 'clojure -T:build native'."
+  install -m 0755 "$repo_root/bin/vis-agent" "$bundle/vis-agent"
+  install -m 0755 "$native" "$bundle/vis-agent-native"
+  install -m 0755 "$repo_root/bin/install-vis-agent" "$bundle/install-vis-agent"
+  cp -R "$resources" "$bundle/vis-agent-resources"
+fi
+
+tar -C "$bundle" -czf "$asset" .
+printf 'stage-release-bundle: %s (%s)\n' "$asset" "$(du -sh "$asset" | cut -f1)"

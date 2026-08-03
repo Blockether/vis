@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# Build the native release assets ON THIS MACHINE and (optionally) attach them to
+# a release — the alternative to waiting on GitHub CI.
+#
+# WHY this exists (measured, not preference):
+#   * The image is GC-BOUND, not CPU-bound. The points-to analysis live set is
+#     ~13.7 GiB; a free 16 GB hosted runner spends 70-79 % of a ~2 h build in GC.
+#     A 32 GB+ machine never enters that regime and finishes in a fraction of it.
+#   * GitHub has NO macOS runner that fits: free arm64 macOS is 3 cores / 7 GB and
+#     even the paid macos-*-xlarge is 14 GB. The macOS asset can therefore ONLY
+#     come from an Apple-silicon machine like this one (or a self-hosted runner,
+#     which is the same machine wearing a CI hat).
+#   * On Apple silicon, linux-arm64 is a NATIVE docker build (no emulation), so
+#     this host can produce two of the three assets.
+#
+# Usage:
+#   bin/release-native                          # every target this host can build
+#   bin/release-native --targets macos-arm64
+#   bin/release-native --tag v0.1.25 --upload   # attach to that release
+#   bin/release-native --list
+#
+# Targets:
+#   macos-arm64  `clojure -T:build native` on this Mac  (>= 32 GB RAM)
+#   linux-arm64  docker buildx --target native-export --platform linux/arm64
+#   linux-x64    NOT built here. Under qemu the same analysis emulates for many
+#                hours and usually dies; that asset stays on CI:
+#                  gh workflow run native-release.yml -f tag=vX.Y.Z
+#
+# Assets land in the repo root as vis-agent-<os>-<arch>-community.tar.gz, exactly
+# like the CI ones — both go through bin/stage-release-bundle.
+set -euo pipefail
+
+repo_root="$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
+cd "$repo_root"
+
+say()  { printf '\033[1mrelease-native:\033[0m %s\n' "$*" >&2; }
+die()  { printf 'release-native: %s\n' "$@" >&2; exit 1; }
+
+targets=""
+tag=""
+upload=0
+list=0
+while (( $# )); do
+  case "$1" in
+    --targets) targets="${2:-}"; shift 2 ;;
+    --tag)     tag="${2:-}"; shift 2 ;;
+    --upload)  upload=1; shift ;;
+    --list)    list=1; shift ;;
+    -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]:-$0}"; exit 0 ;;
+    *) die "unknown argument $1" "Usage: bin/release-native [--targets a,b] [--tag vX.Y.Z] [--upload]" ;;
+  esac
+done
+
+host_os="$(uname -s)"
+host_arch="$(uname -m)"
+
+# What this host can actually build. Kept honest: an Intel Mac cannot produce the
+# arm64 assets, and no Mac produces linux-x64 without emulation.
+buildable=()
+case "$host_os/$host_arch" in
+  Darwin/arm64)
+    buildable=(macos-arm64 linux-arm64) ;;
+  Linux/aarch64|Linux/arm64)
+    buildable=(linux-arm64) ;;
+  Linux/x86_64)
+    buildable=(linux-x64) ;;
+  *)
+    die "no native release target for $host_os/$host_arch" ;;
+esac
+
+if (( list )); then
+  printf '%s\n' "${buildable[@]}"
+  exit 0
+fi
+
+if [[ -n "$targets" ]]; then
+  IFS=, read -r -a selected <<< "$targets"
+  for t in "${selected[@]}"; do
+    case " ${buildable[*]} " in
+      *" $t "*) ;;
+      *) die "this host ($host_os/$host_arch) cannot build '$t'" \
+             "It can build: ${buildable[*]}" ;;
+    esac
+  done
+else
+  selected=("${buildable[@]}")
+fi
+
+if (( upload )); then
+  [[ -n "$tag" ]] || tag="v$(tr -d '[:space:]' < VIS_VERSION)"
+  command -v gh >/dev/null 2>&1 || die "--upload needs the GitHub CLI (gh)"
+  gh release view "$tag" >/dev/null 2>&1 || \
+    die "no release for tag $tag" "Cut it first, or pass an existing --tag."
+fi
+
+# ── macos-arm64 ──────────────────────────────────────────────────────────────
+build_macos_arm64() {
+  local asset="vis-agent-macos-arm64-community.tar.gz"
+  say "building macos-arm64 (clojure -T:build native)"
+  # build.clj sizes the builder heap from this machine's RAM and re-execs under
+  # the pinned GraalVM CE by itself; nothing to tune here.
+  clojure -T:build native
+  bin/stage-release-bundle target/vis "$asset"
+  say "smoke: help + gateway boot"
+  target/release-bundle/vis-agent --native help >/dev/null
+  local out
+  out="$(target/release-bundle/vis-agent --native providers status anthropic 2>&1 || true)"
+  if printf '%s\n' "$out" | grep -q 'did not become ready'; then
+    printf '%s\n' "$out" >&2
+    die "the gateway daemon failed to boot — not shipping this binary"
+  fi
+  target/release-bundle/vis-agent --native gateway stop >/dev/null 2>&1 || true
+  # The sidecar is the whole point of this bundle: prove the runtime imports the
+  # Python stdlib THROUGH the staged directory, not through a build leftover.
+  say "smoke: GraalPy stdlib from the staged language resources"
+  VIS_NATIVE_RESOURCES="$repo_root/target/release-bundle/vis-agent-resources" \
+    target/release-bundle/vis-agent --native python -c "import ast, json, os; print('py-ok')" \
+    | grep -qx 'py-ok' || die "the staged language resources do not load: no Python stdlib"
+  built_asset="$asset"
+}
+
+# ── linux-arm64 (docker, native on Apple silicon) ────────────────────────────
+build_linux_arm64() {
+  local asset="vis-agent-linux-arm64-community.tar.gz"
+  local out="target/native-export/linux-arm64"
+  command -v docker >/dev/null 2>&1 || die "linux-arm64 needs docker"
+  # The builder JVM needs ~14 GiB INSIDE the VM. Docker Desktop defaults to far
+  # less and the build dies in [4/8] with an OOM after ~40 wasted minutes.
+  local mem
+  mem="$(docker info --format '{{.MemTotal}}' 2>/dev/null || echo 0)"
+  if [[ "$mem" =~ ^[0-9]+$ ]] && (( mem > 0 && mem < 16000000000 )); then
+    die "docker only has $((mem / 1000000000)) GB of RAM; this build needs >= 16 GB" \
+        "Docker Desktop -> Settings -> Resources -> Memory, then rerun."
+  fi
+  say "building linux-arm64 (docker buildx, native on this host)"
+  rm -rf "$out"
+  docker buildx build \
+    --target native-export \
+    --platform linux/arm64 \
+    --build-arg GRAAL_ARCH=aarch64 \
+    --output "type=local,dest=$out" \
+    .
+  bin/stage-release-bundle --from-dir "$out" "$asset"
+  say "smoke: help inside a linux/arm64 container"
+  docker run --rm --platform linux/arm64 \
+    -v "$repo_root/target/release-bundle:/bundle:ro" \
+    debian:bookworm-slim /bundle/vis-agent --native help >/dev/null
+  say "smoke: GraalPy stdlib inside that container"
+  docker run --rm --platform linux/arm64 \
+    -v "$repo_root/target/release-bundle:/bundle:ro" \
+    debian:bookworm-slim /bundle/vis-agent --native python -c "import ast; print('py-ok')" \
+    | grep -qx 'py-ok' || die "the linux-arm64 bundle cannot import the Python stdlib"
+  built_asset="$asset"
+}
+
+# Builders stream their (long) output straight to this terminal and hand the
+# finished asset back through `built_asset` — never through a command
+# substitution, which would swallow an hour of build log.
+assets=()
+built_asset=""
+for t in "${selected[@]}"; do
+  case "$t" in
+    macos-arm64) build_macos_arm64; assets+=("$built_asset") ;;
+    linux-arm64) build_linux_arm64; assets+=("$built_asset") ;;
+    linux-x64)   die "linux-x64 is a CI target: gh workflow run native-release.yml -f tag=${tag:-vX.Y.Z}" ;;
+  esac
+done
+
+say "built: ${assets[*]}"
+
+if (( upload )); then
+  say "uploading to $tag"
+  gh release upload "$tag" "${assets[@]}" --clobber
+  say "attached ${assets[*]} to $tag"
+else
+  say "not uploaded (pass --upload [--tag vX.Y.Z] to attach them to a release)"
+fi

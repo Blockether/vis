@@ -556,6 +556,13 @@ update_native() {
     die "update: the release bundle is missing its launcher or native runtime"
 
   mv -f "$unpack/vis-agent-native" "$native_dir/vis-agent-native"
+  # The language-resources sidecar travels WITH the runtime it was built for.
+  # Always clear the old one first: a bundle that predates -H:+CopyLanguageResources
+  # carries no directory, and its binary has the resources embedded, so a stale
+  # directory from a newer build must not survive a downgrade.
+  rm -rf "$native_dir/vis-agent-resources"
+  [[ ! -d "$unpack/vis-agent-resources" ]] || \
+    mv -f "$unpack/vis-agent-resources" "$native_dir/vis-agent-resources"
   if (( launcher_is_checkout )); then
     # Never overwrite a tracked development launcher: the released one lives in
     # Vis state; source stays the checkout's responsibility.
@@ -660,7 +667,22 @@ case "$runtime" in
     cd "$invocation_cwd"
     # Native-image does not derive Java's user.home from HOME. Pass it through
     # the wrapper so release and container builds never retain the builder's home.
-    run_measured_or_exec "process native runtime" "$native_runtime" "-Duser.home=${HOME:-$vis_home}" "$@"
+    # GraalPy/Truffle language resources are NOT inside the binary: the image is
+    # built with -H:+CopyLanguageResources, so they ship as a directory beside the
+    # runtime (see resources/META-INF/native-image/com.blockether/vis/
+    # native-image.properties). native-image finds `resources/` next to the
+    # executable by itself; the RELEASE bundle names the directory
+    # `vis-agent-resources` (the runtime is `vis-agent-native`, not `vis`), so
+    # point the engine at it explicitly. Without it every Python tool dies with
+    # "No module named 'ast'".
+    native_home="$(cd -P "$(dirname "$native_runtime")" && pwd)"
+    resource_args=()
+    for candidate in "${VIS_NATIVE_RESOURCES:-}" "$native_home/vis-agent-resources" "$native_home/resources"; do
+      [[ -n "$candidate" && -d "$candidate" ]] || continue
+      resource_args=("-Dpolyglot.engine.resourcePath=$candidate")
+      break
+    done
+    run_measured_or_exec "process native runtime" "$native_runtime" "-Duser.home=${HOME:-$vis_home}" ${resource_args[@]+"${resource_args[@]}"} "$@"
     ;;
   jvm|dev)
     source_root="$(find_jvm_source 2>/dev/null || true)"

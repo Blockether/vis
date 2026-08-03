@@ -10,6 +10,8 @@
 # Stages:
 #   jdk      — GraalVM CE 25.1.3 (see .graalvm-version), shared by build+runtime.
 #   builder  — clojure CLI + `clojure -T:build native`, produces target/vis.
+#   native-export — build-only: the release bundle as a bare filesystem, for
+#              `docker buildx --output type=local` cross-platform releases.
 #   model    — the Parakeet ASR model, fetched once into its own cache layer.
 #   browsers — spel (Playwright) + its browser bundles, in its own layer.
 #   runtime  — the binary, the model, and the agent toolchain.
@@ -165,7 +167,25 @@ RUN check-graal-pins
 RUN VIS_NATIVE_EXTRA_ARGS="-Duser.home=/home/vis ${VIS_NATIVE_EXTRA_ARGS}" \
     clojure -T:build native \
     && test -x target/vis \
+    && test -d target/resources \
     && ./target/vis --version
+
+# ── Stage: native-export ─────────────────────────────────────────────────────
+# Not part of the runtime image: a BUILD-ONLY stage whose whole filesystem is the
+# release bundle, so a machine with docker can produce another platform's asset
+# without a GitHub runner:
+#
+#   docker buildx build --target native-export --platform linux/arm64 \
+#     --build-arg GRAAL_ARCH=aarch64 --output type=local,dest=out .
+#
+# `bin/release-native` drives exactly that (it is how an Apple-silicon Mac builds
+# the linux-arm64 asset natively, with no qemu emulation). Layout matches what
+# `bin/vis-agent update` unpacks.
+FROM scratch AS native-export
+COPY --from=builder /build/target/vis /vis-agent-native
+COPY --from=builder /build/target/resources /vis-agent-resources
+COPY --from=builder /build/bin/vis-agent /vis-agent
+COPY --from=builder /build/bin/install-vis-agent /install-vis-agent
 
 # ── Stage: model ─────────────────────────────────────────────────────────────
 # The Parakeet ASR model. Published on the k2-fsa/sherpa-onnx `asr-models`
@@ -382,6 +402,11 @@ ENV VIS_PARAKEET_MODEL_DIR=/opt/vis/models/${PARAKEET_MODEL}
 # The Bash wrapper is the only public executable in every distribution. It pins
 # native-image's runtime user.home to HOME and selects the private sidecar.
 COPY --from=builder /build/target/vis /usr/local/bin/vis-agent-native
+# The GraalPy/Truffle language resources live BESIDE the binary (the image is
+# built with -H:+CopyLanguageResources, see native-image.properties). The wrapper
+# passes -Dpolyglot.engine.resourcePath for this exact directory name; without it
+# every Python tool dies with "No module named 'ast'".
+COPY --from=builder /build/target/resources /usr/local/bin/vis-agent-resources
 COPY --from=builder /build/bin/vis-agent /usr/local/bin/vis-agent
 RUN chmod 0755 /usr/local/bin/vis-agent /usr/local/bin/vis-agent-native
 
