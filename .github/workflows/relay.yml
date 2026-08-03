@@ -14,6 +14,11 @@ on:
       - ".github/workflows/relay.yml"
   workflow_dispatch:
 
+# Nothing here reads or writes the repository: the deploy credential is the
+# Cloudflare token, and it is an environment secret that only `main` can reach.
+permissions:
+  contents: read
+
 concurrency:
   group: relay-${{ github.ref }}
   cancel-in-progress: true
@@ -27,7 +32,11 @@ jobs:
     name: Typecheck and test
     runs-on: ubuntu-latest
     steps:
+      # `npm ci` runs third-party install scripts in the same job as the
+      # Cloudflare token; do not also hand them a git credential.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -47,6 +56,8 @@ jobs:
     environment: relay
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
