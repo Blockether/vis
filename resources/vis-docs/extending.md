@@ -321,8 +321,12 @@ and still work.
 Field `type` is one of `plaintext`, `password`, `multiline`, `select`,
 `multiselect`, `checkbox`. A field may also carry `placeholder`, `default`,
 `is_required`, `max_length`, and — for the two `select` types — `options`
-(strings, or `{"value": ..., "label": ...}` maps). Request options:
-`description`, `submit_label`, `cancel_label`, `is_cancellable`, and
+(strings, or `{"value": ..., "label": ...}` maps).
+
+The DIALOG itself takes the same optional `description`: prose under the title
+that says what the whole ask is about, before the operator reads a single field.
+It wraps onto as many lines as it needs, so a sentence is safe there. The other
+request options are `submit_label`, `cancel_label`, `is_cancellable`, and
 `timeout_ms` (default 5 minutes, capped at 1 hour).
 
 `is_required` is enforced, not decorated: every dialog marks the field

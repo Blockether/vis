@@ -584,3 +584,84 @@
         (expect (= #{SGR/ITALIC} (modifiers-of screen "Free text")))
         ;; The label above it is the bold one — the two must not read alike.
         (expect (= #{SGR/BOLD} (modifiers-of screen "Note"))))))
+
+(def ^:private prose
+  "Two sentences of dialog prose — wider than any dialog row, so it reaches the
+   operator only by wrapping."
+  (str "This ships the tagged build straight to production and pages the "
+       "engineer on duty, so read the target twice before you submit."))
+
+(defn- prose-words
+  "The words `rows` actually carry, in paint order — wrapping may re-break the
+   lines, but it may never lose or reorder a word."
+  [rows]
+  (mapcat #(str/split (str/trim (str (:text %))) #"\s+") rows))
+
+(defdescribe
+  wrapped-description-test
+  "A description is a SENTENCE, not a token. Ellipsizing it into one row throws
+   away exactly the half that explained the ask, so prose wraps onto as many
+   rows as it needs — the dialog's own description and every field's."
+  (it "wraps the dialog's own description onto as many rows as it needs"
+      (let
+        [rows
+         (hi/form-rows (hi/init-form {:id "r"
+                                      :title "Deploy"
+                                      :description prose
+                                      :fields [{:id "env" :type :plaintext :label "Env"}]})
+                       40)
+
+         head
+         (vec (take-while #(= :description (:kind %)) rows))]
+
+        (expect (< 1 (count head)))
+        (expect (every? #(<= (count (str (:text %))) 40) head))
+        ;; Nothing is thrown away: no ellipsis, and every word survives in order.
+        (expect (not-any? #(str/includes? (str (:text %)) "…") head))
+        (expect (= (str/split prose #"\s+") (prose-words head)))
+        ;; The blank spacer still separates the dialog prose from the first field.
+        (expect (= :blank (:kind (nth rows (count head)))))))
+  (it "wraps a field's description, still between its label and its input"
+      (let
+        [rows
+         (hi/form-rows (hi/init-form
+                         {:id "r"
+                          :title "Deploy"
+                          :fields [{:id "env" :type :plaintext :label "Env" :description prose}]})
+                       40)
+
+         i
+         (long (row-index rows #(= :label (:kind %))))
+
+         desc
+         (vec (take-while #(= :description (:kind %)) (drop (inc i) rows)))]
+
+        (expect (< 1 (count desc)))
+        (expect (= (str/split prose #"\s+") (prose-words desc)))
+        (expect (= :input (:kind (nth rows (+ i 1 (count desc))))))))
+  (it "leaves the plan unwrapped when no width is offered"
+      ;; The pure one-arity plan is what a caller measures without a terminal.
+      (let
+        [rows (hi/form-rows (hi/init-form {:id "r"
+                                           :title "Deploy"
+                                           :description prose
+                                           :fields [{:id "env" :type :plaintext}]}))]
+        (expect (= {:kind :description :text prose} (first rows)))
+        (expect (= :blank (:kind (second rows))))))
+  (it "paints the whole description instead of clipping it at the border"
+      (let
+        [{:keys [screen g]}
+         (virtual-screen)
+
+         _
+         (hi/paint! g
+                    80
+                    30
+                    (hi/init-form {:id "r"
+                                   :title "Deploy"
+                                   :description prose
+                                   :fields [{:id "env" :type :plaintext :label "Env"}]}))]
+
+        ;; The tail of the sentence is on screen only because it wrapped.
+        (expect (some? (screen-row-of screen "submit.")))
+        (expect (some? (screen-row-of screen "Env"))))))

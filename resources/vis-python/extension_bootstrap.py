@@ -284,7 +284,8 @@ def ask(title, fields, **options):
     # input), description (the italic line under that label), type, default,
     # is_required, placeholder, options, max_length.
     # Field types: plaintext, password, multiline, select, multiselect,
-    # checkbox. Options: description, submit_label, cancel_label,
+    # checkbox. Dialog options: description (prose under the title explaining
+    # what the whole ask is about — it wraps), submit_label, cancel_label,
     # is_cancellable, timeout_ms (default 5 min, capped at 1 hour).
     # A cancelled, timed-out or unanswered request returns a falsey Answer
     # whose `reason` says which — it never raises.

@@ -18,6 +18,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
+            [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
@@ -370,8 +371,32 @@
   [{:keys [label is-required]}]
   (str label (when is-required (str "  " required-marker))))
 
+(defn- description-rows
+  "`text` as `:description` rows, WORD-WRAPPED to `text-w` columns.
+
+   Prose is the one thing in this dialog that is a sentence, not a token: the
+   request's own description says what the whole ask is about, and a field's
+   explains that field. Clipping it to a single `…` row loses exactly the part
+   that was worth reading, so it wraps onto as many rows as it needs. `text-w`
+   nil means \"do not wrap\" — the pure plan a caller measures without a
+   terminal."
+  [text text-w]
+  (let
+    [text
+     (some-> text
+             str
+             not-empty)
+
+     width
+     (long (or text-w 0))]
+
+    (when text
+      (mapv (fn [line]
+              {:kind :description :text line})
+            (if (pos? width) (render/wrap-text text width) [text])))))
+
 (defn- field-rows
-  [form focus {:keys [id type] :as field}]
+  [form focus text-w {:keys [id type] :as field}]
   (let
     [stop-index
      (fn [pred]
@@ -383,8 +408,7 @@
      (get-in form [:values id])
 
      description
-     (when-let [text (:description field)]
-       [{:kind :description :text text}])
+     (description-rows (:description field) text-w)
 
      rows
      (cond (contains? text-types type)
@@ -454,16 +478,16 @@
       (conj {:kind :blank}))))
 
 (defn form-rows
-  "PURE paint plan: the ordered rows the dialog body draws for `form`."
-  [{:keys [request focus] :as form}]
-  (let
-    [description
-     (:description request)
+  "PURE paint plan: the ordered rows the dialog body draws for `form`.
 
-     head
-     (if description [{:kind :description :text description} {:kind :blank}] [])]
-
-    (into (vec head) (mapcat #(field-rows form (or focus 0) %)) (:fields request))))
+   `text-w` is the column budget prose gets — the request's description and
+   every field's wrap to it. Omit it (or pass nil) for the unwrapped plan."
+  ([form] (form-rows form nil))
+  ([{:keys [request focus] :as form} text-w]
+   (let
+     [head (when-let [rows (seq (description-rows (:description request) text-w))]
+             (conj (vec rows) {:kind :blank}))]
+     (into (vec head) (mapcat #(field-rows form (or focus 0) text-w %)) (:fields request)))))
 
 (defn focused-row
   "Index of the row carrying the focused stop, or 0."
@@ -621,14 +645,18 @@
    form is taller than the content area."
   [g ^long cols ^long rows form]
   (let
-    [plan
-     (form-rows form)
-
-     bar
+    [bar
      (hint form)
 
      content-w
      (dialogs/footer-content-width cols bar (dialogs/default-content-width cols))
+
+     plan
+     ;; Wrap prose to what the narrowest painted row can hold: the painter
+     ;; insets every row by 2 columns and gives one more to the scrollbar lane
+     ;; once the form overflows, so a wrapped line still fits after the plan
+     ;; itself decided the box is scrolling.
+     (form-rows form (max 1 (- content-w 3)))
 
      content-h
      (dialogs/adaptive-content-height rows (count plan))

@@ -301,6 +301,9 @@
        [env]
        (:fields (hi/pending-request request-id))]
 
+      ;; The dialog's OWN description crosses the seam, not just its fields': an
+      ;; ask says what it is about before the operator reads a single label.
+      (expect (= "Pick a target" (:description (hi/pending-request request-id))))
       ;; The dialog sees exactly what the Python spec asked for.
       (expect (= "env" (:name env)))
       (expect (= "Target" (:label env)))
