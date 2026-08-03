@@ -1046,9 +1046,13 @@
 
 (def ^:private wire-schema-constraint-keys
   "Validation-only JSON-schema keys STRIPPED from the model-facing tool schemas.
-   The engine keeps validating against the full `:ext.symbol/schema`; on the
-   wire these are pure token cost the model cannot act on. `additionalProperties`
-   is deliberately KEPT — strict-tools provider modes rely on it."
+   NOTHING re-validates an inbound tool input against `:ext.symbol/schema`: the
+   schema is a DECLARATION to the provider (plus prose for `doc`), and a provider
+   only guarantees conformance under opt-in grammar-constrained `strict` tools,
+   which svar does not send — so every tool coerces and checks its OWN arguments.
+   On the wire these keys are pure token cost the model cannot act on.
+   `additionalProperties` is deliberately KEPT — strict-tools provider modes
+   rely on it."
   [:minLength :maxLength :minItems :maxItems :minimum :maximum :minProperties :maxProperties])
 
 (defn- strip-schema-constraints
