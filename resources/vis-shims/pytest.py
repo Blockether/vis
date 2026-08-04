@@ -291,23 +291,53 @@ def __vis_install_pytest_compat__():
         def __getitem__(self, i):
             return (self.out, self.err)[i]
 
+    # The capture the run installed, so `capsys`/`capfd` can share it.
+    _ACTIVE_CAPTURE = {"cap": None}
+
     class CaptureFixture:
+        """`capsys` / `capfd`: a VIEW on the run's capture, not a second one.
+
+        Real pytest hands the fixture the SAME capture the run installed, so
+        `readouterr()` DRAINS it and whatever the test writes AFTERWARDS is still
+        replayed under a failure. Private buffers here used to swallow that tail
+        entirely. Only with the global capture off (`-s`) does the fixture divert
+        `sys.stdout`/`sys.stderr` itself -- pytest's `capsys` works under `-s` too.
+        """
+
         def __init__(self, fd=False):
+            self.fd = fd
+            self._glob = _ACTIVE_CAPTURE.get("cap")
             self._out = io.StringIO()
             self._err = io.StringIO()
             self._old = None
 
         def _start(self):
+            if self._glob is not None:
+                return
             self._old = (sys.stdout, sys.stderr)
             sys.stdout = self._out
             sys.stderr = self._err
 
         def _stop(self):
-            if self._old is not None:
-                sys.stdout, sys.stderr = self._old
-                self._old = None
+            # Sharing the run's capture leaves nothing to restore: the unread tail
+            # stays in it and is reported under the failure.
+            if self._old is None:
+                return
+            sys.stdout, sys.stderr = self._old
+            self._old = None
+            # pytest's `CaptureFixture.close` POPS whatever was never read back to
+            # the original streams, so under `-s` that tail still reaches the
+            # terminal instead of being dropped on the floor.
+            for _buf, _dst in ((self._out, sys.stdout), (self._err, sys.stderr)):
+                _tail = _buf.getvalue()
+                _buf.seek(0)
+                _buf.truncate(0)
+                if _tail:
+                    _dst.write(_tail)
 
         def readouterr(self):
+            if self._glob is not None:
+                return CaptureResult(*self._glob.snap())
             o = self._out.getvalue()
             e = self._err.getvalue()
             self._out.seek(0)
@@ -341,12 +371,16 @@ def __vis_install_pytest_compat__():
             self._old = (sys.stdout, sys.stderr)
             sys.stdout = self._out
             sys.stderr = self._err
+            # `capsys`/`capfd` read back from THIS capture while it is installed.
+            _ACTIVE_CAPTURE["cap"] = self
 
         def stop(self):
             if self._old is None:
                 return
             sys.stdout, sys.stderr = self._old
             self._old = None
+            if _ACTIVE_CAPTURE.get("cap") is self:
+                _ACTIVE_CAPTURE["cap"] = None
 
         def snap(self):
             # (out, err) written since the previous snapshot; the buffers are
@@ -1423,8 +1457,8 @@ def __vis_install_pytest_compat__():
             self.outcome = "passed"
             self.longrepr = ""
             self.duration = 0.0
-            # (stdout, stderr) this test wrote while global capture was on.
-            self.captured = ("", "")
+            # {phase: (stdout, stderr)} this test wrote while capture was on.
+            self.captured = {}
 
     _CHAR = {
         "passed": ".",
@@ -1478,10 +1512,18 @@ def __vis_install_pytest_compat__():
 
     def _run_one(nodeid, func, cls, pkwargs, marks, fm, src, fixparams=None, cap=None):
         r = _Result(nodeid)
-        # Global capture is accounted PER TEST: drop whatever was written before
-        # this one so a failure replays only its own output.
+        # Global capture is accounted PER TEST and PER PHASE, exactly as pytest
+        # reports it: drop whatever was written before this test, then snapshot at
+        # every phase boundary so setup/call/teardown output keeps its own banner.
         cap = cap or _NO_CAPTURE
         cap.snap()
+
+        def _snap(phase):
+            o, e = cap.snap()
+            if o or e:
+                _p = r.captured.get(phase, ("", ""))
+                r.captured[phase] = (_p[0] + o, _p[1] + e)
+
         skip_reason = _NOTSET
         xfail_mark = None
         usefix = []
@@ -1511,38 +1553,48 @@ def __vis_install_pytest_compat__():
             request._fixparams = dict(fixparams)
         callargs = dict(pkwargs)
         try:
-            for info in fm.fixtures.values():
-                if info.autouse:
-                    fm.resolve(info.name, request)
-            for _uf in usefix:
-                if fm.has(_uf):
-                    fm.resolve(_uf, request)
-            for pname in inspect.signature(func).parameters:
-                if pname in callargs or pname == "self":
-                    continue
-                if fm.has(pname):
-                    callargs[pname] = fm.resolve(pname, request)
-            t0 = time.time()
-            if cls is not None:
-                inst = cls()
-                if hasattr(inst, "setup_method"):
-                    try:
-                        inst.setup_method(func)
-                    except TypeError:
-                        inst.setup_method()
-                try:
-                    func(inst, **callargs)
-                finally:
-                    if hasattr(inst, "teardown_method"):
+            try:
+                for info in fm.fixtures.values():
+                    if info.autouse:
+                        fm.resolve(info.name, request)
+                for _uf in usefix:
+                    if fm.has(_uf):
+                        fm.resolve(_uf, request)
+                for pname in inspect.signature(func).parameters:
+                    if pname in callargs or pname == "self":
+                        continue
+                    if fm.has(pname):
+                        callargs[pname] = fm.resolve(pname, request)
+                inst = None
+                if cls is not None:
+                    inst = cls()
+                    if hasattr(inst, "setup_method"):
                         try:
-                            try:
-                                inst.teardown_method(func)
-                            except TypeError:
-                                inst.teardown_method()
-                        except Exception:
-                            pass
-            else:
-                func(**callargs)
+                            inst.setup_method(func)
+                        except TypeError:
+                            inst.setup_method()
+            finally:
+                # Fixture (and xunit) SETUP is over -- even if it BLEW UP, whose
+                # output pytest still reports as `Captured stdout setup`.
+                _snap("setup")
+            t0 = time.time()
+            try:
+                try:
+                    if inst is not None:
+                        func(inst, **callargs)
+                    else:
+                        func(**callargs)
+                finally:
+                    _snap("call")
+            finally:
+                if inst is not None and hasattr(inst, "teardown_method"):
+                    try:
+                        try:
+                            inst.teardown_method(func)
+                        except TypeError:
+                            inst.teardown_method()
+                    except Exception:
+                        pass
             r.duration = time.time() - t0
             for fin in reversed(request._finalizers):
                 try:
@@ -1584,8 +1636,9 @@ def __vis_install_pytest_compat__():
                 r.longrepr = _render_failure(e, src)
         finally:
             fm.teardown("function")
-            # Fixture teardown writes too, so snapshot AFTER it.
-            r.captured = cap.snap()
+            # Fixture finalizers and teardown write too: that is pytest's TEARDOWN
+            # phase, never the call's.
+            _snap("teardown")
         return r
 
     def _summary(results, write, elapsed, deselected=0, ctl=None):
@@ -1600,14 +1653,17 @@ def __vis_install_pytest_compat__():
             for r in fails:
                 write(_sep("_", r.nodeid) + _NL)
                 write(r.longrepr + _NL)
-                _cout, _cerr = getattr(r, "captured", ("", ""))
-                for _ctitle, _ctext in (
-                    ("Captured stdout call", _cout),
-                    ("Captured stderr call", _cerr),
-                ):
-                    if _ctext:
-                        write(_sep("-", _ctitle) + _NL)
-                        write(_ctext if _ctext.endswith(_NL) else _ctext + _NL)
+                _caps = getattr(r, "captured", None) or {}
+                # pytest attributes captured output to the PHASE that wrote it:
+                # `Captured stdout setup` / `... call` / `... teardown`.
+                for _cphase in ("setup", "call", "teardown"):
+                    _cout, _cerr = _caps.get(_cphase, ("", ""))
+                    for _cstream, _ctext in (("stdout", _cout), ("stderr", _cerr)):
+                        if _ctext:
+                            write(
+                                _sep("-", "Captured " + _cstream + " " + _cphase) + _NL
+                            )
+                            write(_ctext if _ctext.endswith(_NL) else _ctext + _NL)
         short = []
         for r in fails:
             short.append(
@@ -1630,7 +1686,7 @@ def __vis_install_pytest_compat__():
         order = ["failed", "error", "passed", "skipped", "xfailed", "xpassed"]
         label = {
             "failed": "failed",
-            "error": "errors",
+            "error": "error",
             "passed": "passed",
             "skipped": "skipped",
             "xfailed": "xfailed",
@@ -1638,8 +1694,12 @@ def __vis_install_pytest_compat__():
         }
         parts = []
         for k in order:
-            if counts.get(k):
-                parts.append(str(counts[k]) + " " + label[k])
+            _n = counts.get(k)
+            if _n:
+                # pytest writes "1 error" but "2 errors"; no other label pluralizes.
+                parts.append(
+                    str(_n) + " " + label[k] + ("s" if k == "error" and _n > 1 else "")
+                )
         if deselected:
             parts.append(str(deselected) + " deselected")
         tail = (

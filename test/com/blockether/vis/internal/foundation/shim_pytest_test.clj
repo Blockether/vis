@@ -782,3 +782,104 @@
                                         (str "'RC=' + str(rc) + ';leak='"
                                              " + str('FIRST-ONLY' in"
                                              " out.split('test_two.py::test_second')[-1])")))))))))
+
+(defn- capsys-flow-dir
+  "A temp dir with one FAILING test that drains `capsys` mid-test and then keeps
+   writing to both streams."
+  ^String []
+  (let [d (tmp-dir)]
+    (spit (str d "/test_capsys_flow.py")
+          (str "import sys\n" "def test_read_then_fail(capsys):\n"
+               "    print('BEFORE-READ')\n" "    o, e = capsys.readouterr()\n"
+               "    assert o == 'BEFORE-READ\\n', 'drained=' + repr(o)\n"
+               "    print('AFTER-READ-OUT')\n"
+               "    sys.stderr.write('AFTER-READ-ERR\\n')\n" "    assert 1 == 2\n"))
+    d))
+
+(defn- phase-dir
+  "A temp dir with one FAILING test whose fixture writes during SETUP and during
+   TEARDOWN, so each phase's output must be reported under its own banner."
+  ^String []
+  (let [d (tmp-dir)]
+    (spit (str d "/test_phases.py")
+          (str "import pytest, sys\n" "@pytest.fixture\n"
+               "def noisy():\n" "    print('SETUP-OUT')\n"
+               "    sys.stderr.write('SETUP-ERR\\n')\n" "    yield 1\n"
+               "    print('TEARDOWN-OUT')\n" "def test_phased(noisy):\n"
+               "    print('CALL-OUT')\n" "    assert 0\n"))
+    d))
+
+;; Regression, issue #110 (cross-validated against real pytest 9.0.2): the global
+;; capture and the `capsys` fixture were two SEPARATE captures, so everything a
+;; test printed after `capsys.readouterr()` vanished from the report instead of
+;; being replayed under the failure; and the one snapshot taken after teardown
+;; labelled setup and teardown output `... call`, a phase real pytest never
+;; attributes it to.
+(defdescribe
+  capture-parity-test
+  (it "replays what a test writes after capsys.readouterr() under the failure"
+      (let [d (capsys-flow-dir)]
+        (with-fs-context d
+                         (expect (= "RC=1;fail=True;out=True;err=True;drained=False"
+                                    (ev python-context
+                                        (capture-probe
+                                          (str "'" d "'")
+                                          (str "'RC=' + str(rc)"
+                                               " + ';fail=' + str('assert 1 == 2' in out)"
+                                               " + ';out=' + str('AFTER-READ-OUT' in out)"
+                                               " + ';err=' + str('AFTER-READ-ERR' in out)"
+                                               " + ';drained=' + str('BEFORE-READ' in out)"))))))))
+  (it "labels captured sections by phase: setup, call, teardown"
+      (let [d (phase-dir)]
+        (with-fs-context d
+                         (expect (= "so=True;se=True;call=True;td=True;order=True"
+                                    (ev python-context
+                                        (capture-probe
+                                          (str "'" d "'")
+                                          (str "'so=' + str('Captured stdout setup' in out)"
+                                               " + ';se=' + str('Captured stderr setup' in out)"
+                                               " + ';call=' + str('Captured stdout call' in out)"
+                                               " + ';td=' + str('Captured stdout teardown' in out)"
+                                               " + ';order=' + str(-1 < out.find('SETUP-OUT')"
+                                               " < out.find('CALL-OUT')"
+                                               " < out.find('TEARDOWN-OUT'))"))))))))
+  (it "pops a capsys tail nobody read back to the original stream under -s"
+      (let
+        [d
+         (tmp-dir)
+
+         _
+         (spit (str d "/test_pop.py")
+               (str "def test_pop(capsys):\n"
+                    "    print('CAPTURED-HELLO')\n" "    o, e = capsys.readouterr()\n"
+                    "    print('POPPED-' + o.strip())\n" "    print('TAIL-NEVER-READ')\n"))]
+
+        (with-fs-context d
+                         (expect (= "RC=0;pop=True;tail=True;live=True"
+                                    (ev python-context
+                                        (capture-probe
+                                          (str "'" d "', '-s'")
+                                          (str "'RC=' + str(rc)"
+                                               " + ';pop=' + str('POPPED-CAPTURED-HELLO' in out)"
+                                               " + ';tail=' + str('TAIL-NEVER-READ' in out)"
+                                               " + ';live=' + str(-1 < out.find('POPPED-')"
+                                               " < out.find('test session starts'))"))))))))
+  (it "counts a single setup error as pytest's `1 error`, not `1 errors`"
+      (let
+        [d
+         (tmp-dir)
+
+         _
+         (spit (str d "/test_boom.py")
+               (str "import pytest\n" "@pytest.fixture\n"
+                    "def boom():\n" "    raise RuntimeError('setup exploded')\n"
+                    "def test_uses_boom(boom):\n" "    pass\n"))]
+
+        (with-fs-context d
+                         (expect (= "RC=1;singular=True;plural=False"
+                                    (ev python-context
+                                        (capture-probe
+                                          (str "'" d "'")
+                                          (str "'RC=' + str(rc)"
+                                               " + ';singular=' + str('1 error in' in out)"
+                                               " + ';plural=' + str('1 errors' in out)")))))))))
