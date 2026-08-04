@@ -316,6 +316,53 @@ def __vis_install_pytest_compat__():
             self._err.truncate(0)
             return CaptureResult(o, e)
 
+    class _GlobalCapture:
+        """pytest's GLOBAL output capture (`--capture=fd|sys`, the default).
+
+        Everything the tests write to `sys.stdout` / `sys.stderr` is diverted
+        into per-test buffers and replayed only under a failure, as pytest's
+        `Captured stdout call` / `Captured stderr call` sections. `-s` /
+        `--capture=no` builds a DISABLED capture: the tests then write straight
+        through to the real streams.
+
+        The shim is pure Python with no file-descriptor redirection, so `fd` and
+        `sys` are the same swap here -- exactly as `capfd` already behaves.
+        """
+
+        def __init__(self, enabled):
+            self.enabled = enabled
+            self._old = None
+            self._out = io.StringIO()
+            self._err = io.StringIO()
+
+        def start(self):
+            if not self.enabled or self._old is not None:
+                return
+            self._old = (sys.stdout, sys.stderr)
+            sys.stdout = self._out
+            sys.stderr = self._err
+
+        def stop(self):
+            if self._old is None:
+                return
+            sys.stdout, sys.stderr = self._old
+            self._old = None
+
+        def snap(self):
+            # (out, err) written since the previous snapshot; the buffers are
+            # emptied, so one test never inherits another test's output.
+            if not self.enabled:
+                return ("", "")
+            o = self._out.getvalue()
+            e = self._err.getvalue()
+            self._out.seek(0)
+            self._out.truncate(0)
+            self._err.seek(0)
+            self._err.truncate(0)
+            return (o, e)
+
+    _NO_CAPTURE = _GlobalCapture(False)
+
     class MonkeyPatch:
         def __init__(self):
             self._undo = []
@@ -1376,6 +1423,8 @@ def __vis_install_pytest_compat__():
             self.outcome = "passed"
             self.longrepr = ""
             self.duration = 0.0
+            # (stdout, stderr) this test wrote while global capture was on.
+            self.captured = ("", "")
 
     _CHAR = {
         "passed": ".",
@@ -1427,8 +1476,12 @@ def __vis_install_pytest_compat__():
             pick = pick[2:].strip()
         return (" - " + pick) if pick else ""
 
-    def _run_one(nodeid, func, cls, pkwargs, marks, fm, src, fixparams=None):
+    def _run_one(nodeid, func, cls, pkwargs, marks, fm, src, fixparams=None, cap=None):
         r = _Result(nodeid)
+        # Global capture is accounted PER TEST: drop whatever was written before
+        # this one so a failure replays only its own output.
+        cap = cap or _NO_CAPTURE
+        cap.snap()
         skip_reason = _NOTSET
         xfail_mark = None
         usefix = []
@@ -1531,6 +1584,8 @@ def __vis_install_pytest_compat__():
                 r.longrepr = _render_failure(e, src)
         finally:
             fm.teardown("function")
+            # Fixture teardown writes too, so snapshot AFTER it.
+            r.captured = cap.snap()
         return r
 
     def _summary(results, write, elapsed, deselected=0, ctl=None):
@@ -1545,6 +1600,14 @@ def __vis_install_pytest_compat__():
             for r in fails:
                 write(_sep("_", r.nodeid) + _NL)
                 write(r.longrepr + _NL)
+                _cout, _cerr = getattr(r, "captured", ("", ""))
+                for _ctitle, _ctext in (
+                    ("Captured stdout call", _cout),
+                    ("Captured stderr call", _cerr),
+                ):
+                    if _ctext:
+                        write(_sep("-", _ctitle) + _NL)
+                        write(_ctext if _ctext.endswith(_NL) else _ctext + _NL)
         short = []
         for r in fails:
             short.append(
@@ -1745,6 +1808,7 @@ def __vis_install_pytest_compat__():
                             fm,
                             src,
                             dict(fmap, **indkw),
+                            ctl.get("cap"),
                         )
                         results.append(r)
                         ctl["done"] = ctl.get("done", 0) + 1
@@ -1994,6 +2058,8 @@ def __vis_install_pytest_compat__():
         maxfail = 0
         collect_only = False
         junitxml = None
+        # Capture method, pytest's own default: `fd` (here identical to `sys`).
+        capture = "fd"
         if args:
             if isinstance(args, str):
                 args = [args]
@@ -2007,6 +2073,16 @@ def __vis_install_pytest_compat__():
                     maxfail = 1
                 elif a in ("--collect-only", "--co"):
                     collect_only = True
+                elif a in ("-s", "--capture=no"):
+                    capture = "no"
+                elif a == "--capture":
+                    # The VALUE is a separate token: consume it, or `fd` would
+                    # be read as a PATH and the run would die "not found: fd".
+                    _i += 1
+                    if _i < len(args):
+                        capture = args[_i]
+                elif a.startswith("--capture="):
+                    capture = a.split("=", 1)[1]
                 elif a == "-k":
                     _i += 1
                     if _i < len(args):
@@ -2154,12 +2230,20 @@ def __vis_install_pytest_compat__():
             "pct": 0,
             "col": 0,
             "prefix": None,
+            # Global capture: OFF only under `-s` / `--capture=no`. With it on,
+            # the tests' stdout/stderr is diverted per test and replayed under a
+            # failure instead of leaking ahead of the (buffered) report.
+            "cap": _GlobalCapture(capture != "no"),
         }
-        for tests, fm, src, sel in groups:
-            if ctl["stop"]:
-                break
-            ctl["sel"] = sel
-            _run_group(tests, fm, src, results, write, verbose, ctl)
+        ctl["cap"].start()
+        try:
+            for tests, fm, src, sel in groups:
+                if ctl["stop"]:
+                    break
+                ctl["sel"] = sel
+                _run_group(tests, fm, src, results, write, verbose, ctl)
+        finally:
+            ctl["cap"].stop()
         for fpath, _e in load_errors:
             r = _Result(fpath)
             r.outcome = "error"

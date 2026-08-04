@@ -567,9 +567,10 @@
    the stream the run STARTED on saw it."
   [^Context c args-src]
   (ev c
-      (str "import pytest, io, contextlib\n" "_b = io.StringIO()\n"
-           "with contextlib.redirect_stdout(_b):\n" "    _rc = pytest.main(" args-src ")\n"
-           "str(_rc) + chr(0) + _b.getvalue()\n")))
+      (str "import pytest, io, contextlib\n"
+           "_b = io.StringIO()\n" "with contextlib.redirect_stdout(_b):\n"
+           "    _rc = pytest.main(" args-src
+           ")\n" "str(_rc) + chr(0) + _b.getvalue()\n")))
 
 (defdescribe
   terminal-report-test
@@ -579,36 +580,42 @@
    report — tests' own prints showed, `N failed` / FAILURES did not — and an
    internal error used to propagate out of `main`, losing the report with it.
    `--junitxml` is the machine-readable half of the same contract."
-  (it "reports even when a test leaves sys.stdout pointing elsewhere"
-      (let
-        [d
-         (tmp-dir)
+  (it
+    "reports even when a test leaves sys.stdout pointing elsewhere"
+    (let
+      [d
+       (tmp-dir)
 
-         f
-         (str d "/test_swap.py")]
+       f
+       (str d "/test_swap.py")]
 
-        (spit f
-              (str "import sys, io\n" "def test_ok():\n    print('own output')\n    assert True\n"
-                   "def test_swap():\n    sys.stdout = io.StringIO()\n    assert 1 == 2\n"))
-        (with-fs-context d
-                         (let
-                           [[rc restored out]
-                            (str/split (ev python-context
-                                           (str "import pytest, io, contextlib, sys\n"
-                                                "_b = io.StringIO()\n"
-                                                "with contextlib.redirect_stdout(_b):\n"
-                                                "    _rc = pytest.main(['" f "'])\n"
-                                                "    _ok = sys.stdout is _b\n"
-                                                "str(_rc) + chr(0) + ('RESTORED' if _ok else 'LEAKED')"
-                                                " + chr(0) + _b.getvalue()\n"))
-                                       #"\x00"
-                                       3)]
-
-                           (expect (= "1" rc))
-                           (expect (= "RESTORED" restored))
-                           (expect (str/includes? out "own output"))
-                           (expect (str/includes? out "1 failed, 1 passed"))
-                           (expect (str/includes? out "FAILED"))))))
+      (spit f
+            (str "import sys, io\n"
+                 "def test_ok():\n    print('own output')\n    assert True\n"
+                 "def test_swap():\n    sys.stdout = io.StringIO()\n    assert 1 == 2\n"))
+      (with-fs-context d
+                       (let
+                         [[rc restored out]
+                          (str/split
+                            (ev python-context
+                                (str "import pytest, io, contextlib, sys\n"
+                                     "_b = io.StringIO()\n" "with contextlib.redirect_stdout(_b):\n"
+                                     "    _rc = pytest.main(['" f
+                                     "'])\n" "    _ok = sys.stdout is _b\n"
+                                     "str(_rc) + chr(0) + ('RESTORED' if _ok else 'LEAKED')"
+                                     " + chr(0) + _b.getvalue()\n"))
+                            #"\x00"
+                            3)]
+                         (expect (= "1" rc))
+                         (expect (= "RESTORED" restored))
+                         ;; A PASSING test's stdout is CAPTURED (issue #110) — like real
+                         ;; pytest, it is not echoed into the report. What this case pins is
+                         ;; that the report itself still reaches the stream the run started
+                         ;; on, even after a test swapped `sys.stdout` from under it.
+                         (expect (str/includes? out "test session starts"))
+                         (expect (not (str/includes? out "own output")))
+                         (expect (str/includes? out "1 failed, 1 passed"))
+                         (expect (str/includes? out "FAILED"))))))
   (it "consumes the value of a value-taking option instead of collecting it"
       (let
         [d
@@ -620,12 +627,11 @@
         (spit f "def test_one():\n    assert True\n")
         (with-fs-context d
                          (let
-                           [[rc out]
-                            (str/split (captured python-context
-                                                 (str "['-p', 'no:cacheprovider', '" f "']"))
-                                       #"\x00"
-                                       2)]
-
+                           [[rc out] (str/split (captured
+                                                  python-context
+                                                  (str "['-p', 'no:cacheprovider', '" f "']"))
+                                                #"\x00"
+                                                2)]
                            (expect (= "0" rc))
                            (expect (str/includes? out "1 passed"))))))
   (it "--junitxml writes a JUnit report file and says so"
@@ -640,24 +646,22 @@
          (str d "/j.xml")]
 
         (spit f "def test_pass():\n    assert True\ndef test_fail():\n    assert 1 == 2\n")
-        (with-fs-context d
-                         (let
-                           [[rc out]
-                            (str/split (captured python-context
-                                                 (str "['" f "', '--junitxml=" x "']"))
-                                       #"\x00"
-                                       2)
+        (with-fs-context
+          d
+          (let
+            [[rc out]
+             (str/split (captured python-context (str "['" f "', '--junitxml=" x "']")) #"\x00" 2)
 
-                            xml
-                            (slurp x)]
+             xml
+             (slurp x)]
 
-                           (expect (= "1" rc))
-                           (expect (str/includes? out (str "generated xml file: " x)))
-                           (expect (str/includes? xml "<testsuite name=\"pytest\""))
-                           (expect (str/includes? xml "tests=\"2\""))
-                           (expect (str/includes? xml "failures=\"1\""))
-                           (expect (str/includes? xml "name=\"test_fail\""))
-                           (expect (str/includes? xml "<failure message="))))))
+            (expect (= "1" rc))
+            (expect (str/includes? out (str "generated xml file: " x)))
+            (expect (str/includes? xml "<testsuite name=\"pytest\""))
+            (expect (str/includes? xml "tests=\"2\""))
+            (expect (str/includes? xml "failures=\"1\""))
+            (expect (str/includes? xml "name=\"test_fail\""))
+            (expect (str/includes? xml "<failure message="))))))
   (it "reports an unwritable --junitxml target without failing the run"
       (let
         [d
@@ -667,18 +671,114 @@
          (str d "/test_ju.py")]
 
         (spit f "def test_one():\n    assert True\n")
-        (with-fs-context d
-                         (let
-                           [[rc out]
-                            (str/split (captured python-context
-                                                 (str "['" f "', '--junitxml=" d "']"))
-                                       #"\x00"
-                                       2)]
-
-                           (expect (= "0" rc))
-                           (expect (str/includes? out "1 passed"))
-                           (expect (str/includes? out "could not write xml file"))))))
+        (with-fs-context
+          d
+          (let
+            [[rc out]
+             (str/split (captured python-context (str "['" f "', '--junitxml=" d "']")) #"\x00" 2)]
+            (expect (= "0" rc))
+            (expect (str/includes? out "1 passed"))
+            (expect (str/includes? out "could not write xml file"))))))
   (it "turns an internal error into EXIT_INTERNALERROR with a visible report"
       (with-context (let [[rc out] (str/split (captured python-context "[], ns=5") #"\x00" 2)]
                       (expect (= "3" rc))
                       (expect (str/includes? out "INTERNALERROR"))))))
+
+(defn- capture-probe
+  "Source that runs `pytest.main(args)` with `sys.stdout` diverted into a
+   StringIO (the shim writes its report to whatever stream the run STARTED on),
+   then evaluates `tail` over the captured report text `out` and exit code `rc`."
+  [args tail]
+  (str "import io, sys, pytest\n"
+       "_buf = io.StringIO()\n"
+       "_old = sys.stdout\n"
+       "sys.stdout = _buf\n"
+       "try:\n"
+       "    rc = pytest.main(["
+       args
+       "])\n"
+       "finally:\n" "    sys.stdout = _old\n"
+       "out = _buf.getvalue()\n" tail))
+
+(defn- capture-dir
+  "A temp dir holding one noisy file: a PASSING test that prints, and a FAILING
+   one that writes to both stdout and stderr."
+  ^String []
+  (let [d (tmp-dir)]
+    (spit (str d "/test_noise.py")
+          (str "import sys\n"
+               "def test_quiet():\n" "    print('QUIET-OUT')\n"
+               "def test_loud():\n" "    print('LOUD-OUT')\n"
+               "    sys.stderr.write('LOUD-ERR\\n')\n" "    assert 1 == 2\n"))
+    d))
+
+;; Regression, issue #110: the shim had NO global output capture. `--capture=fd`
+;; / `--capture=sys` / `-s` were silently accepted no-ops, a test's stdout
+;; leaked out ahead of the (buffered) report, its stderr was dropped entirely,
+;; and a failing test's report carried no `Captured stdout/stderr call` section.
+(defdescribe
+  global-capture-test
+  (it "captures test output by default and replays it under the failure"
+      (let [d (capture-dir)]
+        (with-fs-context d
+                         (expect (= "RC=1;cap=True;err=True;quiet=False;after=True"
+                                    (ev python-context
+                                        (capture-probe
+                                          (str "'" d "'")
+                                          (str "'RC=' + str(rc)"
+                                               " + ';cap=' + str('Captured stdout call' in out)"
+                                               " + ';err=' + str('LOUD-ERR' in out)"
+                                               " + ';quiet=' + str('QUIET-OUT' in out)"
+                                               " + ';after=' + str(out.find('LOUD-OUT')"
+                                               " > out.find('test session starts') > -1)"))))))))
+  (it "-s writes straight through, ahead of the report, with no captured section"
+      (let [d (capture-dir)]
+        (with-fs-context d
+                         (expect (= "RC=1;cap=False;before=True"
+                                    (ev python-context
+                                        (capture-probe
+                                          (str "'" d "', '-s'")
+                                          (str "'RC=' + str(rc)"
+                                               " + ';cap=' + str('Captured stdout call' in out)"
+                                               " + ';before=' + str(-1 < out.find('LOUD-OUT')"
+                                               " < out.find('test session starts'))"))))))))
+  (it "--capture=no is -s"
+      (let [d (capture-dir)]
+        (with-fs-context d
+                         (expect (= "cap=False;before=True"
+                                    (ev python-context
+                                        (capture-probe
+                                          (str "'" d "', '--capture=no'")
+                                          (str "'cap=' + str('Captured stdout call' in out)"
+                                               " + ';before=' + str(-1 < out.find('LOUD-OUT')"
+                                               " < out.find('test session starts'))"))))))))
+  (it "--capture fd consumes its value instead of reading `fd` as a path"
+      (let [d (capture-dir)]
+        (with-fs-context d
+                         (expect
+                           (= "RC=1;notfound=False;cap=True"
+                              (ev python-context
+                                  (capture-probe
+                                    (str "'" d "', '--capture', 'fd'")
+                                    (str "'RC=' + str(rc)"
+                                         " + ';notfound=' + str('not found' in out)"
+                                         " + ';cap=' + str('Captured stdout call' in out)"))))))))
+  (it "one test never inherits another test's captured output"
+      (let
+        [d
+         (tmp-dir)
+
+         _
+         (spit (str d "/test_two.py")
+               (str "def test_first():\n" "    print('FIRST-ONLY')\n"
+                    "    assert 1 == 2\n" "def test_second():\n"
+                    "    print('SECOND-ONLY')\n" "    assert 1 == 3\n"))]
+
+        (with-fs-context
+          d
+          (expect (= "RC=1;leak=False"
+                     (ev python-context
+                         (capture-probe (str "'" d "'")
+                                        (str "'RC=' + str(rc) + ';leak='"
+                                             " + str('FIRST-ONLY' in"
+                                             " out.split('test_two.py::test_second')[-1])")))))))))

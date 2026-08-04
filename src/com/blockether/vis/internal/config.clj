@@ -150,6 +150,12 @@
 
 (def ^java.io.PrintStream original-stdout System/out)
 
+(def ^java.io.PrintStream original-stderr
+  "The process's REAL stderr, captured at load — before `init!` / `init-cli!` point
+   `System/err` at the log file. `vis-agent python` wires this into the GraalPy
+   Context so guest `sys.stderr` reaches the terminal instead of vis.log."
+  System/err)
+
 (defn init!
   "Redirect System/out and System/err to the log file. Lanterna uses
    tty-in / tty-out for terminal I/O. Call from the TUI entry point."

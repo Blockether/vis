@@ -1738,7 +1738,7 @@
    Shared by `create-python-context` (the main session sandbox) and `fork-context!`
    (each `sub_loop` child) so they are byte-for-byte the same sandbox — only the
    bound env (which ctx-atom the verbs close over) differs."
-  [custom-bindings roots-fn network-opts stdin]
+  [custom-bindings roots-fn network-opts stdin stderr]
   (let
     [stdout-baos
      (java.io.ByteArrayOutputStream.)
@@ -1826,11 +1826,17 @@
        ;; independent of IOAccess (which governs the filesystem).
        (.out stdout-baos)
        ;; `vis-agent python` (CLI) wires the human's REAL stdin so guest `sys.stdin`
-       ;; works alongside `-c`/FILE (real-python semantics). Agent sandboxes
-       ;; pass nil here and keep the default (no host stdin) — unchanged.
+       ;; works alongside `-c`/FILE (real-python semantics), and its REAL stderr so
+       ;; guest `sys.stderr` reaches the terminal: a Context with no `.err` inherits
+       ;; `System/err`, which `config/init-cli!` has already pointed at vis.log — so
+       ;; every guest traceback and warning was silently swallowed. Agent sandboxes
+       ;; pass nil for both and keep the defaults — unchanged.
        (cond->
          stdin
-         (.in ^java.io.InputStream stdin))
+         (.in ^java.io.InputStream stdin)
+
+         stderr
+         (.err ^java.io.OutputStream stderr))
        ;; Optional GraalPy background cycle-detector tuning (native-ext RSS);
        ;; a no-op unless a VIS_PY_GC_* env var is set.
        (apply-py-gc-options!)
@@ -2101,18 +2107,22 @@
    a transient `fork-context!` child, created solely for `sub_loop` parallelism.
    The 4-arity `stdin`
    (optional InputStream) is wired to the guest `sys.stdin` — used by `vis-agent python`
-   to forward the caller's real stdin; agent sandboxes leave it nil."
-  ([custom-bindings] (create-python-context custom-bindings nil nil nil))
-  ([custom-bindings roots-fn] (create-python-context custom-bindings roots-fn nil nil))
+   to forward the caller's real stdin; agent sandboxes leave it nil. The 5-arity
+   `stderr` (optional OutputStream) does the same for guest `sys.stderr`; nil keeps
+   the JVM's `System/err`."
+  ([custom-bindings] (create-python-context custom-bindings nil nil nil nil))
+  ([custom-bindings roots-fn] (create-python-context custom-bindings roots-fn nil nil nil))
   ([custom-bindings roots-fn network-opts]
-   (create-python-context custom-bindings roots-fn network-opts nil))
+   (create-python-context custom-bindings roots-fn network-opts nil nil))
   ([custom-bindings roots-fn network-opts stdin]
+   (create-python-context custom-bindings roots-fn network-opts stdin nil))
+  ([custom-bindings roots-fn network-opts stdin stderr]
    @graalvm-runtime-checked
    ;; Build/force the one process-wide Engine before the session Context. Child
    ;; sub-loops create their own restrictive Context only when true parallel
    ;; Python execution is requested; all contexts share this Engine's code cache.
    (try @shared-engine (catch Throwable _ nil))
-   (build-agent-context custom-bindings roots-fn network-opts stdin)))
+   (build-agent-context custom-bindings roots-fn network-opts stdin stderr)))
 
 (defn fork-context!
   "Fork a CHILD agent Context for a `sub_loop` — same deny-by-default sandbox as
@@ -2127,7 +2137,7 @@
   ([custom-bindings] (fork-context! custom-bindings nil nil))
   ([custom-bindings roots-fn] (fork-context! custom-bindings roots-fn nil))
   ([custom-bindings roots-fn network-opts]
-   (build-agent-context custom-bindings roots-fn network-opts nil)))
+   (build-agent-context custom-bindings roots-fn network-opts nil nil)))
 
 ;; =============================================================================
 ;; Eval — the loop's hook (a thin entry point so the spike + Python loop share

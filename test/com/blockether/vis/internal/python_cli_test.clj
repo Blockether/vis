@@ -400,3 +400,30 @@
             [config/load-config-raw (fn []
                                       {"python" {"source_paths" ["nope"]}})]
             (expect (empty? (roots root))))))))
+
+;; Regression, issue #110: the `vis-agent python` Context wired only `.out`, so
+;; guest `sys.stderr` fell through to `System/err` — which `config/init-cli!` has
+;; already pointed at vis.log. Every guest traceback, warning and
+;; `sys.stderr.write` was silently discarded, pytest's `-s` stderr included.
+(defdescribe python-cli-stderr-test
+             (it "wires guest sys.stderr to the process's real stderr, not the log file"
+                 (let
+                   [baos
+                    (java.io.ByteArrayOutputStream.)
+
+                    ps
+                    (java.io.PrintStream. baos true "UTF-8")
+
+                    ctx
+                    (with-redefs [config/original-stderr ps]
+                      (python-cli-context {:network? false}))]
+
+                   (try (let
+                          [{:keys [error]} (env/run-python-block
+                                             ctx
+                                             (str "import sys\n"
+                                                  "sys.stderr.write('ERR-DIRECT\\n')\n"
+                                                  "sys.stderr.flush()"))]
+                          (expect (nil? error))
+                          (expect (re-find #"ERR-DIRECT" (.toString baos "UTF-8"))))
+                        (finally (.close ^org.graalvm.polyglot.Context ctx))))))

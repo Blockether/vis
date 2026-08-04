@@ -3289,7 +3289,8 @@
                                 (fn []
                                   [cwd])
                                 {:enabled? (boolean network?)}
-                                System/in)]
+                                System/in
+                                config/original-stderr)]
 
     ;; Bind an empty standing `ctx` dict so the async runtime has it available.
     (env/bind-ctx! python-context {})
