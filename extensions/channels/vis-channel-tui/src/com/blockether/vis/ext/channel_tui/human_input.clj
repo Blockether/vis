@@ -20,7 +20,8 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
-            [com.blockether.vis.ext.channel-tui.theme :as t])
+            [com.blockether.vis.ext.channel-tui.theme :as t]
+            [com.blockether.vis.ext.channel-tui.transient :as tr])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
 (set! *warn-on-reflection* true)
@@ -648,92 +649,145 @@
   ^long [^long row-w]
   (max 1 (- row-w 2)))
 
+(def ^:private band-pad
+  "Columns of empty space on each end of the band's rules — the SAME inset
+   `render/draw-input-box!` gives the prompt's own top and bottom rules, so the
+   band lines up with the chrome it takes over instead of floating beside it."
+  2)
+
+(defn band-region
+  "PURE: the rectangle the in-session band paints into on a `cols`×`rows`
+   terminal whose transcript starts at `content-top`.
+
+   The session frame is SIDELESS — the prompt is two horizontal rules with no
+   `│` rails — so the band borrows exactly that: rules inset [[band-pad]]
+   columns and text one column further in. `:hint-row` is the prompt box's own
+   closing rule (always `rows - 3`, whatever height the editor grew to), which
+   is what keeps the echo area's two footer rows below the band alive.
+   `:min-row` is the floor: however tall the form, the header and the top of
+   the transcript stay on screen."
+  [^long cols ^long rows ^long content-top]
+  (let
+    [pad
+     (long band-pad)
+
+     min-row
+     (max 0 content-top)]
+
+    {:left (dec pad)
+     :inner-w (max 4 (- cols (* 2 pad)))
+     :hint-row (max (+ min-row 3) (- rows 3))
+     :min-row min-row}))
+
+(defn- clear-band-row!
+  "Blank one band row across the FULL terminal width. The band sits ON the live
+   transcript, not on a modal's own paper: anything it does not repaint would
+   show through between its rules."
+  [g ^long cols ^long row]
+  (p/set-colors! g t/dialog-fg t/dialog-bg)
+  (p/fill-rect! g 0 row cols 1))
+
+(defn- draw-rule!
+  "One of the band's horizontal rules, inset to the prompt's own columns.
+   Sideless, so no `├`/`┤` junctions: there are no rails for them to join."
+  [g ^long left ^long inner-w ^long row]
+  (p/set-colors! g t/border-fg t/dialog-bg)
+  (p/put-str! g (inc left) row (p/horiz-line inner-w)))
+
 (defn paint!
-  "Draw the human-input dialog for `form` over the whole screen. Returns the
-   `TerminalPosition` the caller should place the terminal cursor at (the
+  "Draw the human-input band for `form` INSIDE the session's own frame. Returns
+   the `TerminalPosition` the caller should place the terminal cursor at (the
    focused text field), or nil when no text field has focus.
 
-   Sized and decorated like every other dialog: shared chrome, a box wide
-   enough for the whole hint bar, and a scrollbar in the right gutter once the
-   form is taller than the content area.
+   A magit-style TRANSIENT, not a modal. The band is bottom-anchored on the
+   session's bottom chrome — it takes over the prompt's rows and grows UPWARD
+   over the transcript, never past `content-top` — and reads `───` / bold title /
+   `───` / the form / `───` / hint bar, the same chrome every other transient in
+   the TUI wears. The rule directly above the hint bar is the host's closing
+   rule, so the footer below the band is never swallowed.
 
-   TWO passes, because the box width is not known until the box is drawn: a
-   draft plan sizes the frame, then the real plan wraps to the width the frame
-   actually hands each row."
-  [g ^long cols ^long rows form]
-  (let
-    [bar
-     (hint form)
+   TWO passes over the plan, because a scrollbar costs a column: the first plan
+   sizes the band, and an overflowing one re-wraps one column narrower."
+  ([g cols rows form] (paint! g cols rows form 1))
+  ;; NOTE: no primitive hints on this arity — Clojure caps primitive-taking fns
+  ;; at four arguments — so the sizes are coerced inside the `let` instead.
+  ([g cols rows form content-top]
+   (let
+     [cols
+      (long cols)
 
-     content-w
-     (dialogs/footer-content-width cols bar (dialogs/default-content-width cols))
+      {:keys [left inner-w] :as region}
+      (band-region cols (long rows) (long content-top))
 
-     draft
-     ;; Sizing pass only: the chrome needs a content HEIGHT before it can
-     ;; report the width prose may use.
-     (form-rows form (prose-width (- content-w 2)))
+      left
+      (long left)
 
-     content-h
-     (dialogs/adaptive-content-height rows (count draft))
+      inner-w
+      (long inner-w)
 
-     bounds
-     (dialogs/draw-dialog-chrome! g cols rows (get-in form [:request :title]) content-w content-h)
+      bar
+      (hint form)
 
-     layout
-     (dialogs/dialog-layout bounds)
+      draft
+      ;; Sizing pass: how many rows the form wants decides where the band's
+      ;; top rule lands.
+      (form-rows form (prose-width inner-w))
 
-     left
-     (long (:left bounds))
+      {:keys [sep-row title-row title-rule-row body-top foot-rule-row foot-row visible top-limit]}
+      (tr/band-geometry region (count draft))
 
-     inner-w
-     (long (:inner-w bounds))
+      visible
+      (long visible)
 
-     content-top
-     (long (:content-top layout))
+      is-overflowing
+      (> (count draft) visible)
 
-     visible
-     (max 1 (long (:content-h layout)))
+      row-w
+      (if is-overflowing (dec inner-w) inner-w)
 
-     wide
-     ;; Painting pass: wrap to the drawn box, not to the guess that sized it.
-     (form-rows form (prose-width inner-w))
+      plan
+      ;; A scrollbar eats one column, so overflowing prose re-wraps one
+      ;; narrower — still overflowing, so this settles in one step.
+      (if is-overflowing (form-rows form (prose-width row-w)) draft)
 
-     is-overflowing
-     (> (count wide) visible)
+      total
+      (count plan)
 
-     row-w
-     (if is-overflowing (dec inner-w) inner-w)
+      start
+      (window-start plan visible)
 
-     plan
-     ;; A scrollbar eats one column, so overflowing prose re-wraps one narrower
-     ;; — still overflowing, so this settles in one step.
-     (if is-overflowing (form-rows form (prose-width row-w)) wide)
+      shown
+      (subvec (vec plan) (min start total) (min total (+ start visible)))]
 
-     total
-     (count plan)
-
-     start
-     (window-start plan visible)
-
-     shown
-     (subvec (vec plan) (min start total) (min total (+ start visible)))
-
-     cursor
-     (reduce (fn [acc [i entry]]
-               (or (paint-row! g left (+ content-top (long i)) row-w entry) acc))
-             nil
-             (map-indexed vector shown))]
-
-    (doseq [i (range (count shown) visible)]
-      (paint-row! g left (+ content-top (long i)) row-w {:kind :blank}))
-    (when is-overflowing
-      (scrollbar/draw! g
-                       {:col (+ left inner-w)
-                        :top content-top
-                        :track-h visible
-                        :total-h total
-                        :inner-h visible
-                        :scroll start}))
-    (dialogs/draw-hint-bar! g left (:hint-row layout) inner-w bar)
-    (p/clear-styles! g)
-    cursor))
+     (doseq [row (range (max 0 (long sep-row)) (inc (long foot-row)))]
+       (clear-band-row! g cols row))
+     (when (>= (long sep-row) (long top-limit)) (draw-rule! g left inner-w sep-row))
+     (when (> (long title-rule-row) (long title-row)) (draw-rule! g left inner-w title-rule-row))
+     (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
+       (draw-rule! g left inner-w foot-rule-row))
+     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+     (p/styled g
+               [p/BOLD]
+               (p/put-str! g
+                           (inc left)
+                           title-row
+                           (dialogs/ellipsize (str (get-in form [:request :title]))
+                                              (max 0 (- inner-w 2)))))
+     (let
+       [cursor (reduce (fn [acc [i entry]]
+                         (or (paint-row! g left (+ (long body-top) (long i)) row-w entry) acc))
+                       nil
+                       (map-indexed vector shown))]
+       (doseq [i (range (count shown) visible)]
+         (paint-row! g left (+ (long body-top) (long i)) row-w {:kind :blank}))
+       (when is-overflowing
+         (scrollbar/draw! g
+                          {:col (+ left inner-w)
+                           :top body-top
+                           :track-h visible
+                           :total-h total
+                           :inner-h visible
+                           :scroll start}))
+       (dialogs/draw-hint-bar! g left foot-row inner-w bar)
+       (p/clear-styles! g)
+       cursor))))

@@ -17,6 +17,7 @@ import { applyTheme } from '../lib/theme';
 import { ChipHeaderVariant, FleetStripVariant, MachineFirstVariant } from './variants';
 import { DataTableVariant } from './tableVariants';
 import { TallyBadgesVariant, TallyHeaderVariant, TallyStripVariant } from './tallyVariants';
+import { HUMAN_INPUT_STATES, HumanInputSheetVariant } from './humanInputVariants';
 import {
   MachineBannerVariant,
   MachineBlockVariant,
@@ -233,6 +234,14 @@ export const DESIGN_VARIANTS: DesignVariant[] = [
     states: ['default', 'open'],
     render: (state) => <DeleteKebabVariant state={state} />,
   },
+  {
+    id: 'human-input',
+    title: 'Human input · The run stopped to ask you',
+    blurb:
+      'A parked run is a bottom sheet on a phone and a card on a desk; the question scrolls, the two buttons that end the pause never do, and a pause with no way out never offers a Cancel.',
+    states: HUMAN_INPUT_STATES,
+    render: (state) => <HumanInputSheetVariant state={state} />,
+  },
 ];
 
 const noop = () => {};
@@ -285,7 +294,20 @@ function useShotReady() {
       if (cancelled) return;
       requestAnimationFrame(() =>
         requestAnimationFrame(() => {
-          if (!cancelled) flags.__designReady = true;
+          if (cancelled) return;
+          // A dialog does not arrive at full opacity: `DialogFrame` fades and
+          // lifts over 200ms out of its `@starting-style`. Two frames in, the
+          // camera catches a translucent frame over its own backdrop, and every
+          // contrast judgement made on that photograph is wrong. Wait for the
+          // finite animations to land; a spinner never finishes, so skip it.
+          void Promise.allSettled(
+            document
+              .getAnimations()
+              .filter((anim) => anim.effect?.getComputedTiming().iterations !== Infinity)
+              .map((anim) => anim.finished),
+          ).then(() => {
+            if (!cancelled) flags.__designReady = true;
+          });
         }),
       );
     };

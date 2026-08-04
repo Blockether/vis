@@ -277,8 +277,10 @@
 
                    (expect (some? pos))
                    (expect (str/includes? row "ab"))
-                   ;; The cursor sits one column past the typed text.
-                   (expect (= \space (.charAt row (.getColumn pos))))))
+                   ;; The cursor sits one column past the typed text. The band is
+                   ;; SIDELESS, so nothing is painted to the right of the value:
+                   ;; the trimmed row STOPS at the cursor's own blank column.
+                   (expect (= (+ 2 (str/index-of row "ab")) (.getColumn pos)))))
              (it "shows the mask, never the password plaintext"
                  (let
                    [{:keys [screen g]}
@@ -458,9 +460,11 @@
         (expect (str/includes? text "Enter submit"))
         (expect (str/includes? text "Esc cancel"))))
   (it "puts a scrollbar thumb in the gutter once the form outgrows the box"
+      ;; The band grows UPWARD over the transcript, so on a roomy terminal this
+      ;; form fits whole; it is a SHORT terminal that squeezes it into a window.
       (let [{:keys [screen g]} (virtual-screen)]
-        (hi/paint! g 80 30 (assoc (hi/init-form (request)) :focus 7))
-        (expect (str/includes? (screen-text screen) "█"))))
+        (hi/paint! g 80 16 (assoc (hi/init-form (request)) :focus 7))
+        (expect (str/includes? (screen-text screen) "\u2588"))))
   (it "leaves the gutter clean when the whole form fits"
       (let [{:keys [screen g]} (virtual-screen)]
         (hi/paint! g
@@ -471,6 +475,63 @@
                                   :fields [{:id "a" :type :checkbox :label "Yes"}]
                                   :is-cancellable true}))
         (expect (not (str/includes? (screen-text screen) "█"))))))
+
+(defn- rule-row?
+  "True when a painted row is one of the band's horizontal rules and NOTHING
+   else — no `│` rails and no `├`/`┤` junctions, because the session frame whose
+   chrome the band borrows is sideless."
+  [s]
+  (and (str/includes? s "───") (every? #{\space \─} s)))
+
+(defdescribe band-test
+             ;; The human-input prompt is a magit-style TRANSIENT inside the session, not a
+             ;; full-screen modal: it takes over the prompt's rows, grows upward over the
+             ;; transcript, and leaves the session's own footer breathing underneath.
+             (it "closes with the host's rule directly above its hint bar"
+                 (let [{:keys [screen g]} (virtual-screen)]
+                   (hi/paint! g 80 30 (hi/init-form (request)))
+                   ;; `rows - 3` is the prompt box's own closing rule; the hint bar lands
+                   ;; there and the rule right above it is the band's foot.
+                   (expect (str/includes? (screen-row screen 27) "Esc cancel"))
+                   (expect (rule-row? (screen-row screen 26)))))
+             (it "never swallows the session's bottom chrome"
+                 (let [{:keys [screen g]} (virtual-screen)]
+                   (hi/paint! g 80 30 (hi/init-form (request)))
+                   (expect (= "" (screen-row screen 28)))
+                   (expect (= "" (screen-row screen 29)))))
+             (it "stops at the top of the transcript instead of covering the header"
+                 (let [{:keys [screen g]} (virtual-screen)]
+                   (hi/paint! g 80 30 (assoc (hi/init-form (request)) :focus 7) 12)
+                   (expect (every? #(= "" (screen-row screen %)) (range 12)))
+                   (expect (str/includes? (screen-text screen) "Deploy"))))
+             (it "frames its title between two rules, the way every transient does"
+                 (let
+                   [{:keys [screen g]}
+                    (virtual-screen)
+
+                    _
+                    (hi/paint! g 80 30 (hi/init-form (request)))
+
+                    title-y
+                    (first (filter #(str/includes? (screen-row screen %) "Deploy") (range 30)))]
+
+                   (expect (some? title-y))
+                   (expect (rule-row? (screen-row screen (dec title-y))))
+                   (expect (rule-row? (screen-row screen (inc title-y))))))
+             (it "draws no side rails at all"
+                 (let [{:keys [screen g]} (virtual-screen)]
+                   (hi/paint! g 80 30 (hi/init-form (request)))
+                   (let [text (screen-text screen)]
+                     (expect (not (str/includes? text "│")))
+                     (expect (not (str/includes? text "├")))
+                     (expect (not (str/includes? text "┤"))))))
+             (it "anchors the band on the prompt's closing rule at any height"
+                 ;; PURE: whatever the editor grew to, the band's hint row is `rows - 3`.
+                 (expect (= 27 (:hint-row (hi/band-region 80 30 1))))
+                 (expect (= 37 (:hint-row (hi/band-region 80 40 1))))
+                 ;; ...unless the transcript's top would be crossed, which wins.
+                 (expect (= 1 (:left (hi/band-region 80 30 1))))
+                 (expect (= 12 (:min-row (hi/band-region 80 30 12))))))
 
 (defn- row-index
   "Index of the first plan row matching `pred`."

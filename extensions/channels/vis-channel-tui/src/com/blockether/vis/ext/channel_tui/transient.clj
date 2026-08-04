@@ -152,26 +152,28 @@
   ^long [spec]
   (+ 3 (count (rows spec))))
 
-(defn geometry
-  "PURE: which row of `region` every part of the popup lands on, for `spec`.
+(defn band-geometry
+  "PURE: which row of `region` every part of a band `n` display rows tall
+   lands on.
 
      `:sep-row`         the band's opening separator
      `:title-row`       the bold title, alone on its row
      `:title-rule-row`  the title's OWN rule, closing the title band
-     `:body-top`        first group header
+     `:body-top`        first display row
      `:visible`         display rows that actually fit (overflow is dropped)
      `:foot-rule-row`   the rule directly above the hint bar
      `:foot-row`        the hint bar (the host's own hint row)
      `:wipe-top`        first row the popup wipes before painting
 
-   Everything is clamped to `:min-row`, so a tall transient — or a short
-   terminal — stops at the host's content top instead of climbing over it."
-  [{:keys [hint-row min-row]} spec]
-  (let
-    [n
-     (count (rows spec))
+   Everything is clamped to `:min-row`, so a tall band — or a short
+   terminal — stops at the host's content top instead of climbing over it.
 
-     top-limit
+   The row count is the parameter, not the spec, because a band is not always a
+   transient: the human-input form paints its own plan rows into exactly this
+   geometry, and both must land on the same chrome."
+  [{:keys [hint-row min-row]} ^long n]
+  (let
+    [top-limit
      (long (or min-row 0))
 
      ;; The popup is GLUED to the frame's BOTTOM CHROME: the host paints
@@ -214,6 +216,12 @@
      ;; The closing rule is the floor: a page taller than the band it was given
      ;; loses its overflow rows rather than painting over the host's frame.
      :visible (min n (max 1 (- foot-rule-row body-top)))}))
+
+(defn geometry
+  "PURE: [[band-geometry]] for `spec`'s OWN display rows — where every part of
+   the popup lands."
+  [region spec]
+  (band-geometry region (count (rows spec))))
 
 ;;; ── Paint ───────────────────────────────────────────────────────────────────
 

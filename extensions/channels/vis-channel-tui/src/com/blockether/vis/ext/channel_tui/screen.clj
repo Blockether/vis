@@ -2304,10 +2304,12 @@
         (let [help-geom (components/help-overlay! g cols rows (:help-scroll db))]
           (when (not= (:max-scroll help-geom) (:help-scroll-max db))
             (state/dispatch [:set-help-scroll-max (:max-scroll help-geom)]))))
-      ;; A human-input dialog paints on top of even the help overlay and is
-      ;; the only surface allowed to own the text cursor while it is open.
+      ;; A human-input request is a magit-style TRANSIENT, not a modal: the band
+      ;; takes over the prompt's rows and grows upward over the transcript, never
+      ;; past the first message row, so the operator still sees WHAT they are
+      ;; answering. It paints last and owns the text cursor while it is open.
       (when-let [human-form (:human-input db)]
-        (if-let [pos (hi/paint! g cols rows human-form)]
+        (if-let [pos (hi/paint! g cols rows human-form messages-top)]
           (.setCursorPosition screen ^TerminalPosition pos)
           (.setCursorPosition screen nil)))
       (cr/commit-frame!)
@@ -2443,8 +2445,11 @@
                    :mcp-action
                    (fn [{:keys [server action]}] (mcp/run-action! screen server action))
 
+                   ;; Adding a provider is a BAND inside Settings, not a second
+                   ;; manager on top of it: same frame, same hint bar, and the
+                   ;; provider list it just changed stays visible behind it.
                    :provider-add
-                   (fn [_] (open-provider-modal! screen))
+                   (fn [{:keys [g region]}] (provider/add-provider-transient! screen g region))
 
                    ;; The provider's transient paints INSIDE the settings frame,
                    ;; so it borrows that frame's graphics and geometry.
