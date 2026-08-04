@@ -385,3 +385,95 @@
                  (doseq [symbol introspection/all-symbols]
                    (expect (true? (:ext.symbol/inject-env? symbol)))
                    (expect (nil? (:ext.symbol/before-fn symbol))))))
+
+(defdescribe
+  inspect-other-session-current-turn-test
+  ;; Regression (session 227812d4): `session_state("<other-id>")` built
+  ;; `:current-turn` from `env` alone, so inspecting ANOTHER session
+  ;; answered with the CALLER's own live turn — its user request, its
+  ;; attempts and its cost, filed under the other session's id.
+  (it "reports the INSPECTED session's latest turn, not the caller's own"
+      (let [s (vis/db-create-connection! :memory)]
+        (try (let
+               [mine (h/store-session! s {:channel :tui :title "Caller"})
+                other (h/store-session! s {:channel :tui :title "Inspected"})
+                _ (vis/db-store-session-turn!
+                    s
+                    {:parent-session-id mine :user-request "my own live request" :status :running})
+                other-turn (vis/db-store-session-turn! s
+                                                       {:parent-session-id other
+                                                        :user-request "their finished request"
+                                                        :status :done})
+                _ (h/store-iteration! s
+                                      {:session-turn-id other-turn
+                                       :code "(+ 1 1)"
+                                       :forms [{:src "(+ 1 1)" :result 2}]
+                                       :duration-ms 1})
+                data (:result
+                       (@#'introspection/foundation-inspect {:session-id mine :db-info s} other))
+                current (get data "current_turn")]
+
+               (expect (map? current))
+               (expect (= "their finished request" (get current "user_request")))
+               (expect (= (str other-turn) (str (get current "id"))))
+               ;; the live iteration pointer is env-local runtime state:
+               ;; it describes the caller, so it must not ride along.
+               (expect (not (contains? current "iteration"))))
+             (finally (vis/db-dispose-connection! s)))))
+  (it "still carries the live iteration pointer when inspecting the CURRENT session"
+      (let [s (vis/db-create-connection! :memory)]
+        (try
+          (let
+            [cid (h/store-session! s {:channel :tui :title "Caller"})
+             turn (vis/db-store-session-turn!
+                    s
+                    {:parent-session-id cid :user-request "my own live request" :status :running})
+             _ (h/store-iteration! s
+                                   {:session-turn-id turn
+                                    :code "(+ 1 1)"
+                                    :forms [{:src "(+ 1 1)" :result 2}]
+                                    :duration-ms 1})
+             env {:session-id cid :db-info s :turn-state-atom (atom {:iteration {:position 3}})}
+             current (get (:result (@#'introspection/foundation-inspect env cid)) "current_turn")]
+
+            (expect (= "my own live request" (get current "user_request")))
+            (expect (= 3 (get-in current ["iteration" "current"]))))
+          (finally (vis/db-dispose-connection! s))))))
+
+(defdescribe
+  iteration-form-error-ledger-test
+  ;; Regression (session 227812d4): `:failures`, `:diagnosis` and every
+  ;; attempt's `:error` were read off the ITERATION row (`(:error iteration)`),
+  ;; a key the projection never produces — errors and results live on the
+  ;; iteration's `:forms`. So a session full of blown-up python blocks still
+  ;; reported `failure_count 0` and `"error": null` on every attempt.
+  (it "surfaces an error carried on an iteration form"
+      (let [s (vis/db-create-connection! :memory)]
+        (try (let
+               [cid (h/store-session! s {:channel :tui :title "Failure fixture"})
+                turn (vis/db-store-session-turn!
+                       s
+                       {:parent-session-id cid :user-request "read the palette" :status :running})
+                code "mm = r[\"matches\"][\"palettes.ts\"]"
+                _ (h/store-iteration! s
+                                      {:session-turn-id turn
+                                       :code code
+                                       :forms [{:src code
+                                                :vis/tool-name "python_execution"
+                                                :error {:message "KeyError: 'palettes.ts'"}}]
+                                       :duration-ms 5})
+                data (:result
+                       (@#'introspection/foundation-inspect {:session-id cid :db-info s} cid))
+                failure (first (get data "failures"))
+                attempt (first (get-in data ["current_turn" "attempts"]))]
+
+               (expect (= 1 (get-in data ["diagnosis" "failure_count"])))
+               (expect (= "code" (get failure "source")))
+               (expect (= code (get failure "code")))
+               (expect (str/includes? (get failure "message") "KeyError"))
+               (expect (= "python_execution" (get failure "tool")))
+               ;; and the raw attempt keeps its error, so the documented
+               ;; [a for a in attempts if a["error"]] derivation works.
+               (expect (some? (get attempt "error")))
+               (expect (= code (get attempt "code"))))
+             (finally (vis/db-dispose-connection! s))))))

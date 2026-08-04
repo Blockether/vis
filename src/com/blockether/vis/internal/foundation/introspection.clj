@@ -103,17 +103,53 @@
 
     {:current (long current-position)}))
 
+(defn- iteration-forms
+  "The executed forms of one iteration row.
+
+   Results and errors live ONLY inside the persisted `:forms` envelope:
+   the row projection carries no top-level `:result`/`:error` column, so
+   `(:error iteration)` is nil even for an iteration that blew up."
+  [iteration]
+  (let [forms (:forms iteration)]
+    (if (sequential? forms) (vec forms) [])))
+
 (defn- attempts-from-iterations
   "Walk `iterations` (in DB order) and collect every executed
-   expression. Used by the current-turn snapshot and by attempt search."
+   expression. Used by the current-turn snapshot and by attempt search.
+
+   One entry per FORM, not per iteration: an iteration is an envelope
+   around the forms the model emitted, and the code/result/error of a
+   round hang off those forms."
   [_db-info iterations]
-  (mapv (fn [iteration]
-          {:iteration-id (:id iteration)
-           :iteration (:position iteration)
-           :code (:code iteration)
-           :result (:result iteration)
-           :error (:error iteration)
-           :duration-ms (:duration-ms iteration)})
+  (into []
+        (mapcat
+          (fn [iteration]
+            (let
+              [base
+               {:iteration-id (:id iteration)
+                :iteration (:position iteration)
+                :duration-ms (:duration-ms iteration)}
+
+               forms
+               (iteration-forms iteration)]
+
+              (if (seq forms)
+                (mapv (fn [form]
+                        (cond->
+                          (assoc base
+                            :code (or (:src form) (:code iteration))
+                            :result (:result form)
+                            :error (:error form))
+                          (:vis/tool-name form)
+                          (assoc :tool (:vis/tool-name form))
+
+                          (:duration-ms form)
+                          (assoc :duration-ms (:duration-ms form))))
+                      forms)
+                [(assoc base
+                   :code (:code iteration)
+                   :result nil
+                   :error nil)]))))
         iterations))
 
 (defn- format-provider-model
@@ -334,18 +370,25 @@
     "Read :message, :code, and :iteration; fix the smallest failing form before issuing new searches."))
 
 (defn- expression-failures-for-iteration
+  "Curated failure entries for one iteration - one per errored FORM.
+   The error is a property of the form, never of the iteration row."
   [_db-info iteration]
-  (if-let [error (:error iteration)]
-    (let [classification (classify-expression-failure (:code iteration) error)]
-      [{:source :code
-        :iteration-id (:id iteration)
-        :iteration (:position iteration)
-        :tool (tool-name-from-code (:code iteration))
-        :classification classification
-        :code (:code iteration)
-        :message (error-text error)
-        :advice (advice-for-classification classification)}])
-    []))
+  (into []
+        (keep (fn [form]
+                (when-let [error (:error form)]
+                  (let
+                    [code (or (:src form) (:code iteration))
+                     classification (classify-expression-failure code error)]
+
+                    {:source :code
+                     :iteration-id (:id iteration)
+                     :iteration (:position iteration)
+                     :tool (or (:vis/tool-name form) (tool-name-from-code code))
+                     :classification classification
+                     :code code
+                     :message (error-text error)
+                     :advice (advice-for-classification classification)}))))
+        (iteration-forms iteration)))
 
 (defn- failures-from-iterations
   [db-info iterations]
@@ -367,29 +410,37 @@
    the per-iteration data the prompt projection does NOT carry
    (attempts, provider/code failures, cost, elapsed-ms) plus the
    iteration pointer. The agent picks what it needs by map key
-   instead of querying SQLite manually."
-  [env]
-  (let [{:keys [db-info session-id]} env]
-    (when-let [turn (latest-turn db-info session-id)]
-      (let
-        [iterations (iteration-rows db-info (:id turn))
-         attempts (attempts-from-iterations db-info iterations)]
+   instead of querying SQLite manually.
 
-        ;; No `:errors` key: a `(filterv :error attempts)` would be a
-        ;; verbatim DUPLICATE of every errored attempt (full code+result
-        ;; again) that nothing consumes. `:failures` already carries the
-        ;; curated failure diagnostics, and the model can derive raw errored
-        ;; attempts itself: [a for a in r["attempts"] if a.get("error")].
-        (cond->
-          {:id (:id turn)
-           :user-request (:user-request turn)
-           :status (:status turn)
-           :attempts attempts
-           :failures (failures-from-iterations db-info iterations)
-           :iteration (iteration-pointer env)
-           :cost (turn-cost-summary turn)}
-          (elapsed-ms turn)
-          (assoc :elapsed-ms (elapsed-ms turn)))))))
+   Takes the session to snapshot explicitly: inspecting another
+   session must report THAT session's latest turn, not the caller's
+   own live one. The iteration pointer is env-local runtime state,
+   so it only rides along when the inspected session IS this one."
+  ([env] (turn-snapshot env (current-session-id env)))
+  ([env session-id]
+   (let [{:keys [db-info]} env]
+     (when-let [turn (latest-turn db-info session-id)]
+       (let
+         [iterations (iteration-rows db-info (:id turn))
+          attempts (attempts-from-iterations db-info iterations)]
+
+         ;; No `:errors` key: a `(filterv :error attempts)` would be a
+         ;; verbatim DUPLICATE of every errored attempt (full code+result
+         ;; again) that nothing consumes. `:failures` already carries the
+         ;; curated failure diagnostics, and the model can derive raw errored
+         ;; attempts itself: [a for a in r["attempts"] if a.get("error")].
+         (cond->
+           {:id (:id turn)
+            :user-request (:user-request turn)
+            :status (:status turn)
+            :attempts attempts
+            :failures (failures-from-iterations db-info iterations)
+            :cost (turn-cost-summary turn)}
+           (same-uuid? session-id (current-session-id env))
+           (assoc :iteration (iteration-pointer env))
+
+           (elapsed-ms turn)
+           (assoc :elapsed-ms (elapsed-ms turn))))))))
 
 (defn- session-snapshot
   "Map for a single session: identity + every turn rolled up to a
@@ -440,7 +491,9 @@
 ;; The agent never sees `env`; it calls e.g. the current-turn snapshot with zero args.
 ;; ---------------------------------------------------------------------------
 
-(defn- foundation-turn [env] (turn-snapshot env))
+(defn- foundation-turn
+  ([env] (turn-snapshot env))
+  ([env session-id] (turn-snapshot env session-id)))
 
 (defn- foundation-session
   "Snapshot for a session. The in-flight turn (= current `TURN_ID`)
@@ -1131,7 +1184,7 @@
      :session-id resolved-id
      :session-index (safe-call #(foundation-sessions-data env) [])
      :session session-summary
-     :current-turn (safe-call #(foundation-turn env) nil)
+     :current-turn (safe-call #(foundation-turn env resolved-id) nil)
      :failures failures
      :diagnosis diagnosis
      :session-forks forks
