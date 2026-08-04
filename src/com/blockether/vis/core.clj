@@ -821,7 +821,7 @@
   (requiring-resolve 'com.blockether.vis.internal.human-input/pending-request))
 
 (def human-input-secret-handle?
-  (requiring-resolve 'com.blockether.vis.internal.human-input/secret-handle?))
+  (requiring-resolve 'com.blockether.vis.internal.human-input.spec/secret-handle?))
 
 (def reveal-human-input-secret
   (requiring-resolve 'com.blockether.vis.internal.human-input/reveal-secret))

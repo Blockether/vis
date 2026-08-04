@@ -460,7 +460,7 @@
                     handle
                     (get-in (hi/coerce-values fields {"token" "hunter2"}) [:values "token"])]
 
-                   (expect (hi/secret-handle? handle))
+                   (expect (hs/secret-handle? handle))
                    (expect (not= "hunter2" handle))
                    (expect (not (str/includes? (pr-str handle) "hunter2")))
                    (expect (= "hunter2" (hi/reveal-secret handle)))
@@ -471,9 +471,9 @@
                  (let [fields (normalized-fields {:id "token" :type "password"})]
                    (expect (nil? (get-in (hi/coerce-values fields {}) [:values "token"])))))
              (it "knows a handle from any other string"
-                 (expect (not (hi/secret-handle? "hunter2")))
-                 (expect (not (hi/secret-handle? nil)))
-                 (expect (not (hi/secret-handle? 7)))))
+                 (expect (not (hs/secret-handle? "hunter2")))
+                 (expect (not (hs/secret-handle? nil)))
+                 (expect (not (hs/secret-handle? 7)))))
 
 (defdescribe
   request-lifecycle-test
@@ -958,7 +958,7 @@
 
         (expect (= "hunter42" (get-in answer [:values "pw"])))
         (expect (zero? (long (hi/forget-secrets!))))
-        (expect (hi/secret-handle? (get-in (hi/coerce-values (:fields request) good-sign-in)
+        (expect (hs/secret-handle? (get-in (hi/coerce-values (:fields request) good-sign-in)
                                            [:values "pw"])))
         (expect (pos? (long (hi/forget-secrets!)))))))
 
@@ -1186,14 +1186,71 @@
       (expect (= :vis/human-input-invalid-answer
                  (refusal-type #(#'hi/checked-answer
                                   "r1"
+                                  nil
                                   {:is-submitted true :reason "submitted" :request-id "r1"}))))
       (expect (= :vis/human-input-invalid-answer
                  (refusal-type
-                   #(#'hi/checked-answer "r1" {:is-submitted false :reason "cancelled"}))))
+                   #(#'hi/checked-answer "r1" nil {:is-submitted false :reason "cancelled"}))))
       (let
         [answer (hi/request! {:title "unmounted"
                               :fields [{:id "a"}]
                               :channel-ids [(fresh-channel)]
                               :timeout-ms 1000})]
         (expect (= "undeliverable" (:reason answer)))
-        (expect (nil? (hs/answer-error answer))))))
+        (expect (nil? (hs/answer-error nil answer)))))
+  (it
+    "checks a submitted answer against the very fields it answers"
+    ;; The values ARE the inputs' data, so they are declared like the inputs:
+    ;; a picker can only come back on an option it offered, a slider inside
+    ;; its own track, a code at its own width, and a `password` as a vault
+    ;; handle — the plaintext in an answer map is a leak, not a value. Nothing
+    ;; an extension writes reaches these: this is what a coercion bug would
+    ;; hand a blocked caller.
+    (let
+      [request
+       (hi/normalize-request
+         {:title "Deploy"
+          :fields [{:name "env" :type "select" :options ["dev" "prod"] :is-required true}
+                   {:name "pw" :type "password"} {:name "pct" :type "range" :min 0 :max 100 :step 5}
+                   {:name "grp"
+                    :type "group"
+                    :direction "row"
+                    :fields [{:name "code" :type "otp" :max-length 6}]}]
+          :timeout-ms 0})
+
+       fields
+       (:fields request)
+
+       answered
+       (fn [values]
+         {:is-submitted true :reason "submitted" :request-id "r1" :values values})
+
+       legal
+       {"env" "dev" "pw" nil "pct" 25 "code" nil}]
+
+      (expect (nil? (hs/answer-error fields (answered legal))))
+      ;; A value outside the domain its OWN field declared, named in the
+      ;; reason so the bug is findable.
+      (expect (str/includes? (hs/answer-error fields (answered (assoc legal "env" "staging")))
+                             "env"))
+      (expect (str/includes? (hs/answer-error fields (answered (assoc legal "pct" 500))) "pct"))
+      (expect (some? (hs/answer-error fields (answered (assoc legal "code" "12")))))
+      ;; The leak this seam exists to catch, and the handle that is fine.
+      (expect (some? (hs/answer-error fields (answered (assoc legal "pw" "hunter2")))))
+      (expect (nil? (hs/answer-error fields
+                                     (answered (assoc legal
+                                                 "pw" (str hs/secret-handle-prefix "abc"))))))
+      ;; A field nobody asked about, and a question left unanswered: both lose
+      ;; a value silently once an extension reads the map.
+      (expect (some? (hs/answer-error fields (answered (assoc legal "sudo" "yes")))))
+      (expect (some? (hs/answer-error fields (answered (dissoc legal "pct")))))
+      ;; A layout group answers nothing, so naming one is naming no field.
+      (expect (some? (hs/answer-error fields (answered (assoc legal "grp" "x")))))
+      ;; Not every settlement carries values, and an answer whose request
+      ;; already settled has no fields left to check against.
+      (expect (nil? (hs/answer-error fields
+                                     {:is-submitted false :reason "cancelled" :request-id "r1"})))
+      (expect (nil? (hs/answer-error nil (answered {"whatever" "x"}))))
+      (expect (= :vis/human-input-invalid-answer
+                 (refusal-type
+                   #(#'hi/checked-answer "r1" fields (answered (assoc legal "env" "staging")))))))))

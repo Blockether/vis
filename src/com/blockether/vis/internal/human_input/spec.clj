@@ -64,6 +64,18 @@
    past a dozen the boxes no longer fit a narrow dialog."
   {:length 6 :ceiling 12})
 
+(def secret-handle-prefix
+  "What a submitted `:password` becomes before its answer leaves the engine. The
+   plaintext stays in a process-local vault; this prefix is the whole difference
+   between an answer that is harmless in a log and a leaked credential, so the
+   answer contract is declared in terms of it."
+  "vis-secret:")
+
+(defn secret-handle?
+  "True when `value` is an opaque handle minted for a `:password` field."
+  [value]
+  (and (string? value) (str/starts-with? value secret-handle-prefix)))
+
 ;; ---------------------------------------------------------------------------
 ;; Predicates
 ;; ---------------------------------------------------------------------------
@@ -307,6 +319,100 @@
          values-iff-submitted?))
 
 ;; ---------------------------------------------------------------------------
+;; An answered VALUE — the field's own domain
+;; ---------------------------------------------------------------------------
+;;
+;; [[::answer-value]] says what a value may LOOK like; these say what it may BE
+;; for the field that asked the question. Coercion is hand-written per type and
+;; nothing declared what it produces, so a `:select` could come back on an
+;; option nobody offered, a slider outside its own track, a `:password` as the
+;; plaintext a transcript must never hold. Each domain is built FROM the field,
+;; so the declaration cannot drift from the question.
+
+(defn- typed-in-domain?
+  "Blank is how a surface says the human left a text field alone, and only an
+   OPTIONAL field may be left alone. A value that IS there fits the declared
+   length bounds — a blank one is not a short one, exactly as the parser reads
+   it."
+  [{:keys [is-required min-length max-length]} value]
+  (cond (nil? value) (not is-required)
+        (str/blank? value) (not is-required)
+        :else (and (or (nil? min-length) (<= (long min-length) (count value)))
+                   (or (nil? max-length) (<= (count value) (long max-length))))))
+
+(defn- secret-in-domain?
+  "A `:password` answers with a vault HANDLE. The plaintext has no business in an
+   answer map at all, and the length bounds describe what the human typed rather
+   than the handle it became."
+  [{:keys [is-required]} value]
+  (if (nil? value) (not is-required) (secret-handle? value)))
+
+(defn- selected-in-domain?
+  [{:keys [is-required] :as field} value]
+  (if (nil? value) (not is-required) (contains? (option-values field) value)))
+
+(defn- picked-in-domain?
+  "Every pick is an option that exists, named once; a required multiselect needs
+   at least one of them."
+  [{:keys [is-required] :as field} value]
+  (let [chosen (option-values field)]
+    (and (every? chosen value)
+         (= (count value) (count (set value)))
+         (or (non-empty? value) (not is-required)))))
+
+(defn- ticked-in-domain?
+  "A required checkbox is a consent box: `false` is not an answer to it."
+  [{:keys [is-required]} value]
+  (or (true? value) (not is-required)))
+
+(defn- slid-in-domain? [{lo :min hi :max} value] (<= (double lo) (double value) (double hi)))
+
+(defn- coded-in-domain?
+  [{:keys [is-required min-length max-length]} value]
+  (if (nil? value)
+    (not is-required)
+    (and (some? (re-matches #"\d+" value)) (<= (long min-length) (count value) (long max-length)))))
+
+(defmulti ^:private answer-form
+  "The form ONE answered value must take, derived from the very field that asked
+   for it: its own options, its own track, its own width."
+  :type)
+
+(defmethod answer-form :plaintext
+  [field]
+  (s/and (s/nilable string?) (partial typed-in-domain? field)))
+
+(defmethod answer-form :multiline
+  [field]
+  (s/and (s/nilable string?) (partial typed-in-domain? field)))
+
+(defmethod answer-form :password
+  [field]
+  (s/and (s/nilable string?) (partial secret-in-domain? field)))
+
+(defmethod answer-form :select
+  [field]
+  (s/and (s/nilable string?) (partial selected-in-domain? field)))
+
+(defmethod answer-form :multiselect
+  [field]
+  (s/and (s/coll-of string? :kind vector?) (partial picked-in-domain? field)))
+
+(defmethod answer-form :checkbox [field] (s/and boolean? (partial ticked-in-domain? field)))
+
+(defmethod answer-form :range [field] (s/and number? (partial slid-in-domain? field)))
+
+(defmethod answer-form :otp [field] (s/and (s/nilable string?) (partial coded-in-domain? field)))
+
+(defn- answerable
+  "Every field that holds an ANSWER. A `:group` is layout: it never appears in a
+   values map, its children answer in its place."
+  [fields]
+  (mapcat (fn [{:keys [type] :as field}]
+            (if (= :group type) (answerable (:fields field)) [field]))
+          fields))
+
+;; ---------------------------------------------------------------------------
 ;; Explaining a violation
 ;; ---------------------------------------------------------------------------
 
@@ -340,8 +446,35 @@
   [request]
   (error ::request request))
 
+(defn- values-error
+  "nil when `values` answers EXACTLY the answerable `fields` — no field left out,
+   none invented — with every value inside the domain its own field declared."
+  [fields values]
+  (let
+    [by-name
+     (into {} (map (juxt :name identity)) (answerable fields))
+
+     answered
+     (set (keys values))]
+
+    (or (when-let [extra (seq (sort (remove by-name answered)))]
+          (str "answers no such field: " (str/join ", " extra)))
+        (when-let [missing (seq (sort (remove answered (keys by-name))))]
+          (str "leaves unanswered: " (str/join ", " missing)))
+        (some (fn [[field-name value]]
+                (when-let [why (error (answer-form (get by-name field-name)) value)]
+                  (str field-name ": " why)))
+              values))))
+
 (defn answer-error
   "nil when `answer` is a legal answer to hand a blocked extension, else why it
-   is not."
-  [answer]
-  (error ::answer answer))
+   is not.
+
+   `fields` are the fields of the request being answered: a SUBMITTED answer is
+   checked against them too, so a value can only reach an extension for a field
+   that asked for it and only inside that field's own domain. nil `fields` means
+   the request settled while this answer was in flight — nobody is left to read
+   it, so its own shape is all there is to check."
+  [fields answer]
+  (or (error ::answer answer)
+      (when (and (seq fields) (:is-submitted answer)) (values-error fields (:values answer)))))

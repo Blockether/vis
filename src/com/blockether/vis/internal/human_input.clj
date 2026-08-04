@@ -22,9 +22,10 @@
    `keyword`-minting it, and names the key an author has to fix when it cannot.
    What it produces is DECLARED by `clojure.spec` in
    `com.blockether.vis.internal.human-input.spec`: every normalized field, every
-   normalized request and every answer handed back to a blocked extension is
-   checked against that contract, so an engine bug surfaces here instead of as a
-   half-built dialog three namespaces away. Coercion and validation live in
+   normalized request, and every answer handed back to a blocked extension — its
+   VALUES included, each against the domain the field that asked for it declared
+   — is checked against that contract, so an engine bug surfaces here instead of
+   as a half-built dialog three namespaces away. Coercion and validation live in
    one place, so the value an extension receives already matches the declared
    type: a `:checkbox` yields a boolean, a `:multiselect` a vector of declared
    option values, a `:select` one declared option value.
@@ -65,8 +66,6 @@
   [timeout-ms]
   (zero? (long (or timeout-ms no-timeout-ms))))
 
-(def ^:private secret-handle-prefix "vis-secret:")
-
 (defonce ^:private pending (atom {}))
 
 (defonce ^:private secrets (atom {}))
@@ -74,11 +73,6 @@
 ;; =============================================================================
 ;; Secret vault
 ;; =============================================================================
-
-(defn secret-handle?
-  "True when `value` is an opaque handle minted by a `:password` field."
-  [value]
-  (and (string? value) (str/starts-with? value secret-handle-prefix)))
 
 (def ^:private max-secrets
   "The vault only has to bridge a submitted password to the extension that asked
@@ -94,7 +88,7 @@
 
 (defn- stash-secret!
   [value]
-  (let [handle (str secret-handle-prefix (random-uuid))]
+  (let [handle (str hi-spec/secret-handle-prefix (random-uuid))]
     (swap! secrets #(evict-oldest (assoc % handle {:value value :at (System/nanoTime)})))
     handle))
 
@@ -181,9 +175,14 @@
 (defn- checked-answer
   "The answer a blocked extension is about to receive. A caller reads
    `:is-submitted`, `:reason` and `:values` without asking whether they are
-   there, so an answer missing one never leaves the engine."
-  [request-id answer]
-  (if-let [why (hi-spec/answer-error answer)]
+   there, so an answer missing one never leaves the engine.
+
+   `fields` are the fields of the request being answered, so a submitted answer
+   is also checked against the questions it answers: no field invented, none
+   dropped, every value inside its own field's domain, and a `:password` as the
+   vault HANDLE rather than the plaintext."
+  [request-id fields answer]
+  (if-let [why (hi-spec/answer-error fields answer)]
     (invalid-answer! request-id why)
     answer))
 
@@ -1004,8 +1003,10 @@
    racing a timeout, a double cancel)."
   [request-id result]
   ;; The one funnel every answer passes through — submitted, cancelled, timed
-  ;; out, undeliverable — so the contract is checked once, here.
-  (checked-answer request-id result)
+  ;; out, undeliverable — so the contract is checked once, here, against the very
+  ;; request being answered. The fields are read BEFORE the entry is removed: a
+  ;; refusal must not strand the thread parked on that promise.
+  (checked-answer request-id (:fields (get @pending request-id)) result)
   (let [[old _] (swap-vals! pending dissoc request-id)]
     (when-let [entry (get old request-id)]
       (deliver (:promise entry) result)
