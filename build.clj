@@ -317,8 +317,9 @@
   "Entry patterns dropped from the build-only uberjar. The jar DELIBERATELY keeps
    every platform's JNI libs (sherpa-onnx, onnxruntime, sqlite-jdbc), but the
    onnxruntime macOS libs drag ~16.5 MB of nested *.dSYM DWARF debug bundles
-   along; no runtime reads those."
+   along and its win-x64 entry drags a 286 MB *.pdb; no runtime reads either."
   ["ai/onnxruntime/native/.*\\.dSYM/.*"
+   "ai/onnxruntime/native/.*\\.pdb"
    ;; dep-jar warts: babashka/http-client ships scratch.clj and sci ships
    ;; scratch.cljs at the classpath ROOT of their published jars
    "scratch\\.cljs?"

@@ -45,7 +45,7 @@ vulnerable, and what does it do with data.*
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
 - **Direct dependency coordinates:** 69 unique, across 14 `deps.edn` modules (root + extensions).
-- **Declared jar footprint (direct coords):** ~194 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
+- **Declared jar footprint (direct coords):** ~237 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
 
@@ -251,7 +251,7 @@ _Local speech (sherpa-onnx / ONNX Runtime)._
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
 | `com.litongjava/sherpa-onnx-java-api` | `1.0.1` | Apache-2.0 | 7.7 MB | 3rd-party |
-| `com.microsoft.onnxruntime/onnxruntime` | `1.28.0` | MIT | 41.0 MB | 3rd-party |
+| `com.microsoft.onnxruntime/onnxruntime` | `1.17.1` | MIT | 83.5 MB | 3rd-party |
 
 ### `vis-language-clojure` extension
 
@@ -399,7 +399,7 @@ Heaviest direct artifacts (>= 1 MB):
 | Dependency | Version | Jar size |
 |---|---|---|
 | `org.graalvm.python/python-language` | `25.1.3` | 90.7 MB |
-| `com.microsoft.onnxruntime/onnxruntime` | `1.28.0` | 41.0 MB |
+| `com.microsoft.onnxruntime/onnxruntime` | `1.17.1` | 83.5 MB |
 | `org.graalvm.python/python-resources` | `25.1.3` | 13.8 MB |
 | `org.xerial/sqlite-jdbc` | `3.53.2.1` | 11.4 MB |
 | `org.bouncycastle/bcprov-jdk18on` | `1.85` | 9.8 MB |

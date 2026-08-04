@@ -58,7 +58,14 @@
   ([] (model-installed? (model-dir)))
   ([dir] (every? #(.isFile (io/file %)) (vals (model-files dir)))))
 
-(def ^:private onnxruntime-version "1.17.1")
+(def ^:private onnxruntime-version
+  "The ONNX Runtime sherpa's JNI is BUILT AGAINST, and therefore the exact
+   `com.microsoft.onnxruntime/onnxruntime` pin in deps.edn. It is two things at
+   once: the versioned filename macOS resolves through @rpath, and the ELF
+   symbol version node (`VERS_1.17.1`) Linux's dynamic linker demands. A newer
+   runtime keeps loading on macOS and dies on Linux with \"version `VERS_1.17.1'
+   not found\", so it is not a free upgrade; `onnxruntime-abi-test` guards it."
+  "1.17.1")
 
 (defn- native-platform
   []

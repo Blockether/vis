@@ -259,3 +259,36 @@
                (doseq [name (#'asr/onnxruntime-target-names platform)]
                  (expect (.isFile (io/file dir name)))))
              (finally (System/setProperty "user.home" previous) (#'asr/delete-dir! home))))))
+
+(defn- elf-version-nodes
+  "Every `VERS_x.y.z` ELF symbol-version token inside a classpath native library.
+   Both jars are fat, so this reads the same bytes on every build host — the
+   Linux libraries are inspectable from macOS."
+  [resource]
+  (with-open
+    [in (io/input-stream (or (io/resource resource)
+                             (throw (ex-info "Native library resource not found"
+                                             {:resource resource}))))]
+    (let [text (String. ^bytes (.readAllBytes in) java.nio.charset.StandardCharsets/ISO_8859_1)]
+      (set (re-seq #"VERS_\d+(?:\.\d+)+" text)))))
+
+;; Regression, issue #onnx-vers: every transcription on the Linux gateway died with
+;; "libonnxruntime.so: version `VERS_1.17.1' not found (required by
+;; libsherpa-onnx-jni.so)" — voice was dead in the container. The ONNX Runtime
+;; jar was pinned two years ahead (1.28.0, symbol node VERS_1.28.0) of the
+;; runtime sherpa's JNI is linked against (1.17.1). macOS never showed it:
+;; Mach-O has no symbol versioning, so copying the dylib under the versioned
+;; FILENAME was enough there, and the mismatch only bit ELF.
+(defdescribe onnxruntime-abi-test
+             (it "pins the exact ONNX Runtime ELF symbol version sherpa's JNI requires"
+                 (doseq [platform ["linux-x64" "linux-aarch64"]]
+                   (let
+                     [expected (str "VERS_" @#'asr/onnxruntime-version)
+                      required (elf-version-nodes (str "native/" platform "/libsherpa-onnx-jni.so"))
+                      provided (elf-version-nodes
+                                 (str "ai/onnxruntime/native/" platform "/libonnxruntime.so"))]
+
+                     ;; the constant is the contract: it names both the versioned filename
+                     ;; written into ~/lib/<platform> and the ABI sherpa was built against.
+                     (expect (= #{expected} required) platform)
+                     (expect (contains? provided expected) platform)))))
