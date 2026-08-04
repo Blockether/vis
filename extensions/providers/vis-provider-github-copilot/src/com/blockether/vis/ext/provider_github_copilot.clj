@@ -75,8 +75,10 @@
    "Copilot-Integration-Id" "vscode-chat"
    "User-Agent" "GitHubCopilotChat/0.26.7"})
 
-(def ^:private AUTH_FILE
-  "Persisted OAuth token file."
+(defn- auth-file
+  "Persisted OAuth token file. A FUNCTION: native-image folds top-level `def`s at
+   build time, which would bake the builder's home directory into the binary."
+  ^String []
   (str (System/getProperty "user.home") "/.vis/github-copilot-auth.json"))
 
 (def ^:private ^:const REFRESH_MARGIN_MS
@@ -151,7 +153,7 @@
   "Load persisted auth state from ~/.vis/github-copilot-auth.json.
    Returns map or nil."
   []
-  (let [f (io/file AUTH_FILE)]
+  (let [f (io/file (auth-file))]
     (when (.exists f)
       (try (json/read-json (slurp f) :key-fn auth-json-key) (catch Exception _ nil)))))
 
@@ -161,7 +163,7 @@
   [auth-state]
   (let [dir (io/file (str (System/getProperty "user.home") "/.vis"))]
     (when-not (.exists dir) (.mkdirs dir))
-    (spit AUTH_FILE (wire/json-str auth-state))))
+    (spit (auth-file) (wire/json-str auth-state))))
 
 (defn- normalize-account-type
   [value]
@@ -194,7 +196,7 @@
 (defn- delete-auth-file!
   "Remove persisted auth state."
   []
-  (let [f (io/file AUTH_FILE)]
+  (let [f (io/file (auth-file))]
     (when (.exists f) (.delete f))))
 
 ;; =============================================================================

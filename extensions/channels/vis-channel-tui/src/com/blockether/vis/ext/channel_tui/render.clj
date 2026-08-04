@@ -134,12 +134,15 @@
    (it is spliced in fresh by `progress->lines-data`); only the heavy trace
    re-walk of the actively-growing iteration is debounced. Env
    `VIS_LIVE_BODY_THROTTLE_MS`; defaults to 150. Set to 0 to disable the
-   throttle and defer to plain `cached*` (spinner-smooth, no debounce)."
-  (or (some-> (System/getenv "VIS_LIVE_BODY_THROTTLE_MS")
-              str/trim
-              not-empty
-              parse-long)
-      150))
+   throttle and defer to plain `cached*` (spinner-smooth, no debounce).
+
+   A `delay`, never an eager read: `native-image` initializes this namespace at
+   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
+  (delay (or (some-> (System/getenv "VIS_LIVE_BODY_THROTTLE_MS")
+                     str/trim
+                     not-empty
+                     parse-long)
+             150)))
 
 (defonce ^:private live-body-throttle-cell
   ;; One-slot debounce memo for the live progress body: {:key k :body b :at ms}.
@@ -157,12 +160,12 @@
    clock or a new turn) also recomputes — the debounce needs real elapsed time,
    so it never leaks one render's body into an unrelated same-instant render."
   [k now-ms compute-fn]
-  (if (pos? (long live-body-throttle-ms))
+  (if (pos? (long @live-body-throttle-ms))
     (let [{:keys [key body at]} @live-body-throttle-cell]
       (cond (= key k) (cached* k compute-fn)
             (and (some? body)
                  (let [dt (- (long now-ms) (long at))]
-                   (and (pos? dt) (< dt (long live-body-throttle-ms)))))
+                   (and (pos? dt) (< dt (long @live-body-throttle-ms)))))
             body
             :else (let [b (cached* k compute-fn)]
                     (reset! live-body-throttle-cell {:key k :body b :at (long now-ms)})

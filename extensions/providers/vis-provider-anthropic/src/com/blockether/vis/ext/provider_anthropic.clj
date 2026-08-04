@@ -36,7 +36,11 @@
 (def ^:private scopes
   "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload")
 
-(def ^:private auth-file (str (System/getProperty "user.home") "/.vis/anthropic-auth.json"))
+(defn- auth-file
+  "Persisted OAuth credentials. A FUNCTION: native-image folds top-level `def`s at
+   build time, which would bake the builder's home directory into the binary."
+  ^String []
+  (str (System/getProperty "user.home") "/.vis/anthropic-auth.json"))
 ;; base-url + default-models come from svar (single source of truth).
 (def ^:private ^:const refresh-margin-ms 300000)
 
@@ -204,7 +208,7 @@
 
 (defn- load-auth-file
   []
-  (let [f (io/file auth-file)]
+  (let [f (io/file (auth-file))]
     (when (.exists f)
       (try (json/read-json (slurp f) :key-fn auth-json-key) (catch Exception _ nil)))))
 
@@ -214,12 +218,13 @@
   [credentials]
   (let [^java.io.File dir (auth-dir)]
     (when-not (.exists dir) (.mkdirs dir))
-    (spit auth-file (vis/wire-json-str (assoc credentials :saved-at-ms (System/currentTimeMillis))))
+    (spit (auth-file)
+          (vis/wire-json-str (assoc credentials :saved-at-ms (System/currentTimeMillis))))
     credentials))
 
 (defn- delete-auth-file!
   []
-  (let [f (io/file auth-file)]
+  (let [f (io/file (auth-file))]
     (when (.exists f) (.delete f))))
 
 (defn detect-credentials
@@ -238,7 +243,7 @@
    HTTP 400. Returns `{:token <access-token>}`."
   (oauth/make-file-refresher
     {:load load-auth-file
-     :lock-path (str auth-file ".lock")
+     :lock-path (str (auth-file) ".lock")
      :saved-at :saved-at-ms
      :refresh-token :refresh-token
      :exchange! refresh-access-token!

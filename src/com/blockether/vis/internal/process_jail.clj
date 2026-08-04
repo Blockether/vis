@@ -184,9 +184,11 @@
 ;; replaces a former global `(allow file-read-metadata)` that leaked file existence
 ;; + size + mtime for every path on the host.
 (def ^:private macos-metadata-literals
-  (into ["/" "/Users" "/Volumes" "/private" "/opt" "/etc" "/var" "/tmp" "/home"]
-        (remove nil?)
-        [(System/getProperty "user.home") (System/getProperty "java.io.tmpdir")]))
+  ;; A `delay`, never an eager read: `native-image` initializes this namespace at
+  ;; BUILD time, so `user.home`/`java.io.tmpdir` would be the BUILDER's.
+  (delay (into ["/" "/Users" "/Volumes" "/private" "/opt" "/etc" "/var" "/tmp" "/home"]
+               (remove nil?)
+               [(System/getProperty "user.home") (System/getProperty "java.io.tmpdir")])))
 
 ;; Linux read-only system roots a confined child needs to launch a real toolchain
 ;; (dynamic loader, shared libs, shell, and -- once net is on -- TLS CAs + resolver
@@ -289,7 +291,7 @@
       "(allow file-read-metadata"
       (apply str
         (map #(str "(literal " (sbpl-quote %) ")")
-             (distinct (concat macos-metadata-literals (mapcat ancestor-dirs (concat rw ro))))))
+             (distinct (concat @macos-metadata-literals (mapcat ancestor-dirs (concat rw ro))))))
       (subpaths (concat macos-system-read-roots rw ro))
       ")"
       "(allow file-read*"

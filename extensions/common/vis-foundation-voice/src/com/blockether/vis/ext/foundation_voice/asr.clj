@@ -22,8 +22,11 @@
 (def model-url
   "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2")
 
-(def default-model-dir
-  "~/.vis model path used when no env/config override is set."
+(defn default-model-dir
+  "~/.vis model path used when no env/config override is set. A function, never a
+   top-level `def`: `native-image` initializes this namespace at BUILD time, so a
+   captured `user.home` would point every installed binary at the BUILDER's home."
+  []
   (str (System/getProperty "user.home") "/.vis/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"))
 
 (defn model-dir
@@ -36,7 +39,7 @@
               str
               str/trim
               not-empty)
-      default-model-dir))
+      (default-model-dir)))
 
 (defn model-files
   ([] (model-files (model-dir)))

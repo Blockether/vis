@@ -1798,8 +1798,8 @@
 
      with-throttle
      (fn [ms f]
-       (alter-var-root throttle-var (constantly ms))
-       (try (f) (finally (alter-var-root throttle-var (constantly 0)))))
+       (alter-var-root throttle-var (constantly (delay ms)))
+       (try (f) (finally (alter-var-root throttle-var (constantly (delay 0))))))
 
      prog
      (fn [txt]

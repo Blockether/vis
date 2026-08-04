@@ -267,11 +267,11 @@
                                        {"is_authenticated" true
                                         "source" "gateway"
                                         "provider_id" (name provider-id)
-                                        "config_path" vis/state-path})]
+                                        "config_path" (vis/state-path)})]
         (expect (= {"is_authenticated" true
                     "source" "gateway"
                     "provider_id" "openai"
-                    "config_path" vis/state-path}
+                    "config_path" (vis/state-path)}
                    (select-keys (@#'provider/gateway-provider-status-safe
                                  {:id :openai :api-key "sk-test" :models [{:name "gpt-5"}]})
                                 ["is_authenticated" "source" "provider_id" "config_path"])))))
@@ -609,7 +609,7 @@
                   {:id :openai-codex :base-url "https://chatgpt.com/backend-api" :api-key "tok"})]
           (expect (str/includes? text "Base URL: https://chatgpt.com/backend-api"))
           (expect (str/includes? text "Authenticated: yes"))
-          (expect (str/includes? text (str "Config path: " vis/state-path)))
+          (expect (str/includes? text (str "Config path: " (vis/state-path))))
           (expect (str/includes? text "Catalog RPM: 500"))
           (expect (str/includes? text "Catalog TPM: 2000000"))
           (expect

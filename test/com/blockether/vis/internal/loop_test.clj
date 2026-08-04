@@ -4525,7 +4525,7 @@
 
 (def ^:private gather-executor (deref #'lp/gather-executor))
 
-(def ^:private gather-max-threads (deref #'lp/gather-max-threads))
+(def ^:private gather-max-threads @@#'lp/gather-max-threads)
 
 (defdescribe
   gather-executor-resource-safety-test
@@ -5287,25 +5287,25 @@
     (it "heap-pressure? is disabled when BOTH gates are off"
         (expect (false? (with-redefs
                           [lp/env-heap-watermark-pct
-                           0
+                           (delay 0)
 
                            lp/env-heap-budget-mb
-                           0
+                           (delay 0)
 
                            lp/env-rss-budget-mb
-                           0]
+                           (delay 0)]
 
                           (heap-pressure?)))))
     (it "heap-pressure? fires on the absolute MB budget when the percent watermark can't reach"
         (expect (true? (with-redefs
                          [lp/env-heap-watermark-pct
-                          0
+                          (delay 0)
 
                           lp/env-heap-budget-mb
-                          1
+                          (delay 1)
 
                           lp/env-rss-budget-mb
-                          0]
+                          (delay 0)]
 
                          (heap-pressure?)))))))
 
@@ -5372,21 +5372,21 @@
              (it "starts for the absolute heap budget even when every older policy is off"
                  (let [enabled? (deref #'lp/env-reaper-enabled?)]
                    (expect (true? (with-redefs
-                                    [lp/env-reaper-interval-ms 1000
-                                     lp/env-idle-ttl-ms 0
-                                     lp/env-cache-max 0
-                                     lp/env-heap-watermark-pct 0
-                                     lp/env-heap-budget-mb 1
-                                     lp/env-rss-budget-mb 0]
+                                    [lp/env-reaper-interval-ms (delay 1000)
+                                     lp/env-idle-ttl-ms (delay 0)
+                                     lp/env-cache-max (delay 0)
+                                     lp/env-heap-watermark-pct (delay 0)
+                                     lp/env-heap-budget-mb (delay 1)
+                                     lp/env-rss-budget-mb (delay 0)]
 
                                     (enabled?))))
                    (expect (false? (with-redefs
-                                     [lp/env-reaper-interval-ms 1000
-                                      lp/env-idle-ttl-ms 0
-                                      lp/env-cache-max 0
-                                      lp/env-heap-watermark-pct 0
-                                      lp/env-heap-budget-mb 0
-                                      lp/env-rss-budget-mb 0]
+                                     [lp/env-reaper-interval-ms (delay 1000)
+                                      lp/env-idle-ttl-ms (delay 0)
+                                      lp/env-cache-max (delay 0)
+                                      lp/env-heap-watermark-pct (delay 0)
+                                      lp/env-heap-budget-mb (delay 0)
+                                      lp/env-rss-budget-mb (delay 0)]
 
                                      (enabled?))))))
              (it "samples bounded runtime metrics without mutating the cache"
@@ -5406,9 +5406,9 @@
 (defdescribe env-rss-pressure-test
              (it "detects native/process memory when JVM heap gates are disabled"
                  (let [pressure? (deref #'lp/heap-pressure?)]
-                   (with-redefs-fn {#'lp/env-heap-watermark-pct 0
-                                    #'lp/env-heap-budget-mb 0
-                                    #'lp/env-rss-budget-mb 1
+                   (with-redefs-fn {#'lp/env-heap-watermark-pct (delay 0)
+                                    #'lp/env-heap-budget-mb (delay 0)
+                                    #'lp/env-rss-budget-mb (delay 1)
                                     #'lp/process-rss-bytes (constantly (* 2 1024 1024))}
                      (fn []
                        (expect (true? (pressure?))))))))

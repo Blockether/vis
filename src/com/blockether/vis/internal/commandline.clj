@@ -262,16 +262,29 @@
 
 ;; ---- Color ------------------------------------------------------------------
 
-(def ^:dynamic *color-enabled?*
-  "Color output toggle. Auto-detects: TTY attached + no `NO_COLOR` env
-   + `TERM` not `dumb`. Override with `binding`. Tests run with
-   `System/console` returning nil, so colors are off by default and
-   substring assertions on `render-*` output stay stable."
+(defn- detect-color?
+  "TTY attached + no `NO_COLOR` + `TERM` not `dumb`, decided NOW.
+
+   Never a top-level `def`: `native-image` runs this namespace's initializers at
+   BUILD time, where there is no console, so a `def` would freeze `false` into the
+   binary and the native CLI would print help, tables and errors unstyled forever."
+  []
   (boolean (and (System/console)
                 (str/blank? (System/getenv "NO_COLOR"))
                 (not= "dumb" (System/getenv "TERM")))))
 
-(defn- ansi [code s] (if *color-enabled?* (str "\u001b[" code "m" s "\u001b[0m") (str s)))
+(def ^:dynamic *color-enabled?*
+  "Color override: `true`/`false` force it, `nil` (the default) auto-detects per
+   call via [[detect-color?]]. Tests run with `System/console` returning nil, so
+   colors stay off and substring assertions on `render-*` output stay stable."
+  nil)
+
+(defn color-enabled?
+  "Whether ANSI styling applies to this call."
+  []
+  (if (nil? *color-enabled?*) (detect-color?) (boolean *color-enabled?*)))
+
+(defn- ansi [code s] (if (color-enabled?) (str "\u001b[" code "m" s "\u001b[0m") (str s)))
 
 (defn- bold [s] (ansi "1" s))
 ;; Bright-black (`90`) instead of dim (`2`) - the standard ANSI "dim"

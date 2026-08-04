@@ -32,20 +32,29 @@
            (java.nio.file Files OpenOption)
            (java.nio.file.attribute FileAttribute PosixFilePermissions)))
 
-(def config-dir (str (System/getProperty "user.home") "/.vis"))
+(defn config-dir
+  "Vis' per-user config directory, `~/.vis`.
 
-(def state-path
+   A FUNCTION, never a top-level `def`: `native-image` initializes this namespace
+   at BUILD time, so a `def` reading `user.home` would fold the BUILDING machine's
+   home into the binary and every installed copy would read and write that path.
+   Everything below that touches the environment follows the same rule."
+  ^String []
+  (str (System/getProperty "user.home") "/.vis"))
+
+(defn state-path
   "Machine-owned RMW config store `~/.vis/state.yml` (YAML). Vis read-modify-writes
    this exact file — OAuth tokens, TUI-added providers, extension env overrides — so
    it is kept SEPARATE from the hand-written `~/.vis/config.yml` tier: the RMW cycle
    must never fold (and thus clobber) a user's hand-written YAML."
-  (str config-dir "/state.yml"))
+  ^String []
+  (str (config-dir) "/state.yml"))
 
-(def db-path (str config-dir "/vis.mdb"))
+(defn db-path ^String [] (str (config-dir) "/vis.mdb"))
 
-(def default-db-spec {:backend :sqlite :path db-path})
+(defn default-db-spec [] {:backend :sqlite :path (db-path)})
 
-(def ^:private ^String log-path (str config-dir "/vis.log"))
+(defn ^:private log-path ^String [] (str (config-dir) "/vis.log"))
 
 (def tty-in (delay (FileInputStream. "/dev/tty")))
 
@@ -153,18 +162,18 @@
   ;; adjacent `*out*`/`*err*` root rebinds.
   (alter-var-root #'*print-level* (constantly 10))
   (alter-var-root #'*print-length* (constantly 100))
-  (.mkdirs (io/file config-dir "logs"))
+  (.mkdirs (io/file (config-dir) "logs"))
   (let
     [raw-out
-     (FileOutputStream. log-path true)
+     (FileOutputStream. (log-path) true)
 
      log-stream
      (java.io.PrintStream. raw-out true)]
 
     (System/setOut log-stream)
     (System/setErr log-stream))
-  (alter-var-root #'*out* (constantly (io/writer log-path :append true)))
-  (alter-var-root #'*err* (constantly (io/writer log-path :append true)))
+  (alter-var-root #'*out* (constantly (io/writer (log-path) :append true)))
+  (alter-var-root #'*err* (constantly (io/writer (log-path) :append true)))
   (tel/remove-handler! :default/console)
   ;; `main/configure-logging!` may have already installed a `:file`
   ;; handler that points at the same `vis.log` path. Without this
@@ -174,7 +183,7 @@
   ;; handler so only one writer remains.
   (tel/remove-handler! :file)
   (tel/add-handler! :file/vis
-                    (tel/handler:file {:path log-path
+                    (tel/handler:file {:path (log-path)
                                        :interval :monthly
                                        :max-file-size 4000000
                                        :max-num-parts 8
@@ -195,18 +204,18 @@
   ;; adjacent `*out*`/`*err*` root rebinds.
   (alter-var-root #'*print-level* (constantly 10))
   (alter-var-root #'*print-length* (constantly 100))
-  (.mkdirs (io/file config-dir "logs"))
+  (.mkdirs (io/file (config-dir) "logs"))
   (let
     [raw-out
-     (FileOutputStream. log-path true)
+     (FileOutputStream. (log-path) true)
 
      log-stream
      (java.io.PrintStream. raw-out true)]
 
     (System/setOut log-stream)
     (System/setErr log-stream))
-  (alter-var-root #'*out* (constantly (io/writer log-path :append true)))
-  (alter-var-root #'*err* (constantly (io/writer log-path :append true)))
+  (alter-var-root #'*out* (constantly (io/writer (log-path) :append true)))
+  (alter-var-root #'*err* (constantly (io/writer (log-path) :append true)))
   (tel/remove-handler! :default/console)
   ;; Mirror `init!`: `main/configure-logging!` already installed a
   ;; `:file` handler pointing at the same path. Leaving it alive
@@ -214,7 +223,7 @@
   ;; takes over as the single writer.
   (tel/remove-handler! :file)
   (tel/add-handler! :file/vis
-                    (tel/handler:file {:path log-path
+                    (tel/handler:file {:path (log-path)
                                        :interval :monthly
                                        :max-file-size 4000000
                                        :max-num-parts 8
@@ -1039,7 +1048,7 @@
    project-root spelling. First existing file wins."
   []
   (mapv (fn [n]
-          (str config-dir "/" n))
+          (str (config-dir) "/" n))
         ["config.yml" "config.yaml" "vis.yml" "vis.yaml"]))
 
 (defn- deep-merge-config
@@ -1056,7 +1065,7 @@
    the YAML file Vis read-modify-writes. Machine-owned on purpose — kept out of the
    hand-written YAML merge so the RMW cycle never clobbers user files."
   []
-  (read-yaml-config-map-lenient state-path))
+  (read-yaml-config-map-lenient (state-path)))
 
 (defn load-global-yaml-config-raw
   "Load only the hand-written global YAML tier: the first existing of
@@ -1074,7 +1083,7 @@
    $HOME never aliases a global file as a project overlay."
   []
   (let [overlay-dir (io/file (System/getProperty "user.dir") ".vis")]
-    (when-not (= (.getCanonicalPath overlay-dir) (.getCanonicalPath (io/file config-dir)))
+    (when-not (= (.getCanonicalPath overlay-dir) (.getCanonicalPath (io/file (config-dir))))
       (some read-yaml-config-map-lenient (project-config-yaml-paths)))))
 
 (defn load-project-root-config-raw
@@ -1088,7 +1097,7 @@
   []
   (-> []
       (into (global-config-yaml-paths))
-      (conj state-path)
+      (conj (state-path))
       (into (project-root-yaml-paths))
       (into (project-config-yaml-paths))))
 
@@ -1354,7 +1363,7 @@
    ;; `load-config`, where `${NAME}` was already resolved. Writing that verbatim
    ;; would bake the secret into `state.yml` and quietly destroy the reference.
    (let [wire-config (restore-env-refs (->yaml-safe config))]
-     (config-spec/assert-config! wire-config state-path)
+     (config-spec/assert-config! wire-config (state-path))
      (let
        [previous-provider (some-> (active-provider-entry (load-global-config-raw))
                                   runtime-config)
@@ -1362,8 +1371,8 @@
                                   runtime-config)
         runtime-config (runtime-config wire-config)]
 
-       (ensure-private-dir! config-dir)
-       (spit-private! state-path (yamlstar/dump wire-config))
+       (ensure-private-dir! (config-dir))
+       (spit-private! (state-path) (yamlstar/dump wire-config))
        (invalidate-config-cache!)
        (when (provider-selection-changed? previous-provider selected-provider)
          (emit-provider-selected! {:previous-provider previous-provider
@@ -1460,7 +1469,7 @@
    (brand-new user) from a returning user who merely has no provider right now
    (e.g. removed their only one)."
   []
-  (and (not (provider-configured?)) (not (.exists (io/file state-path)))))
+  (and (not (provider-configured?)) (not (.exists (io/file (state-path))))))
 
 (def ^:private router-opts-keys
   "Keys forwarded from Vis config `:router` block into `svar/make-router`'s
@@ -1496,14 +1505,21 @@
 
 (def ^:dynamic *extension-dotenv-path*
   "Project `.env` consulted for extension-declared variables after the process environment.
-   It takes precedence over `.env.local`. Bind in tests; production defaults to the
-   process working directory."
-  (str (System/getProperty "user.dir") "/.env"))
+   It takes precedence over `.env.local`. `:cwd` (the default) resolves to
+   `<process working directory>/.env` when the lookup RUNS — resolving it in this
+   `def` would bake the native-image build directory into the binary. Bind a string
+   to point elsewhere, or nil to consult no file."
+  :cwd)
 
 (def ^:dynamic *extension-dotenv-local-path*
   "Project `.env.local` consulted after `.env` and before an unset result.
-   Bind in tests; production defaults to the process working directory."
-  (str (System/getProperty "user.dir") "/.env.local"))
+   Same `:cwd` / string / nil contract as [[*extension-dotenv-path*]]."
+  :cwd)
+
+(defn- dotenv-path
+  "Resolve a dotenv var: `:cwd` becomes `<user.dir><suffix>` NOW, anything else is used as is."
+  [v ^String suffix]
+  (if (= :cwd v) (str (System/getProperty "user.dir") suffix) v))
 
 (def ^:dynamic *extension-getenv*
   "Function used to read process environment variables. Bind in tests."
@@ -1545,7 +1561,9 @@
   [name]
   ;; `.env` deliberately takes precedence over `.env.local`; an explicit blank
   ;; assignment in `.env` masks a value from `.env.local`.
-  (some-> (some #(dotenv-assignment % name) [*extension-dotenv-path* *extension-dotenv-local-path*])
+  (some-> (some #(dotenv-assignment % name)
+                [(dotenv-path *extension-dotenv-path* "/.env")
+                 (dotenv-path *extension-dotenv-local-path* "/.env.local")])
           :value
           not-empty))
 
@@ -1580,7 +1598,7 @@
          {:backend :sqlite :path env-path})
        (some-> (get (load-config-raw) "db_spec")
                runtime-config)
-       default-db-spec)))
+       (default-db-spec))))
 
 ;; =============================================================================
 ;; Active provider state

@@ -41,10 +41,12 @@
 ;; Constants
 ;; =============================================================================
 
-(def ^:private AUTH_FILE
+(defn- auth-file
   "Persisted auth state. Shared file for both plans, keyed by
    `:coding` / `:pass` so logging out of one plan doesn't clobber
-   the other."
+   the other. A FUNCTION: native-image folds top-level `def`s at build
+   time, which would bake the builder's home into the binary."
+  ^String []
   (str (System/getProperty "user.home") "/.vis/zai-auth.json"))
 
 (def ^:private PLANS
@@ -84,7 +86,7 @@
   "Load `~/.vis/zai-auth.json` or nil. Returns the WHOLE map (both
    plans) so a single read serves callers querying any sibling plan."
   []
-  (let [f (io/file AUTH_FILE)]
+  (let [f (io/file (auth-file))]
     (when (.exists f)
       (try (json/read-json (slurp f) :key-fn auth-json-key) (catch Exception _ nil)))))
 
@@ -95,7 +97,7 @@
   [auth-state]
   (let [dir (io/file (str (System/getProperty "user.home") "/.vis"))]
     (when-not (.exists dir) (.mkdirs dir))
-    (spit AUTH_FILE (wire/json-str auth-state))))
+    (spit (auth-file) (wire/json-str auth-state))))
 
 (defn- update-plan!
   "Merge `slice` into the existing auth file under `plan-tag`. When
@@ -112,7 +114,7 @@
       (save-auth-file! next-state)
       ;; Empty file -> remove on disk so the file's existence stays
       ;; truthy with `detect-fn` semantics.
-      (let [f (io/file AUTH_FILE)]
+      (let [f (io/file (auth-file))]
         (when (.exists f) (.delete f))))
     next-state))
 
@@ -527,7 +529,7 @@
    `vis-agent providers logout <plan>` which dispatches to the per-plan
    logout-fn registered below."
   []
-  (let [f (io/file AUTH_FILE)]
+  (let [f (io/file (auth-file))]
     (when (.exists f) (.delete f)))
   :logged-out)
 

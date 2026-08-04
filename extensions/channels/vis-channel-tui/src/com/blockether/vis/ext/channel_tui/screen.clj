@@ -3306,8 +3306,11 @@
    path — all incremental fast paths (scroll, header-hover, partial-live,
    header-spinner) are disabled. A production escape hatch: if a fast path ever
    mis-paints on some terminal, this restores the always-full-repaint behaviour
-   without a rebuild."
-  (some? (System/getenv "VIS_FORCE_FULL_FRAME")))
+   without a rebuild.
+
+   A `delay`, never an eager read: `native-image` initializes this namespace at
+   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
+  (delay (some? (System/getenv "VIS_FORCE_FULL_FRAME"))))
 
 (defn- ease-step!
   "Advance the smooth-scroll / follow ease at most once per animation tick.
@@ -3351,7 +3354,7 @@
    FULL path every tick so the centered in-content loading spinner animates."
   [{:keys [last-db db last-layout last-hover current-hover cols same-size? animate? loading?
            scroll-anim? overlay-open? was-blocked?]}]
-  (let [eligible? (and (not force-full-frame?) (not overlay-open?) (not was-blocked?))
+  (let [eligible? (and (not @force-full-frame?) (not overlay-open?) (not was-blocked?))
         with-layout? (and eligible? same-size? last-layout)]
     (if (tab-content-loading? db)
       {:header-hover-only? false

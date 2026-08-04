@@ -49,9 +49,13 @@
 ;; ---------------------------------------------------------------------------
 (defonce ^:private registry (atom {}))
 
-(def ^:private ^java.io.File state-dir (io/file (System/getProperty "user.home") ".vis"))
+(defn- state-dir
+  "`~/.vis`, resolved per call: a top-level `def` would freeze the native-image
+   BUILDER's home into the binary."
+  ^java.io.File []
+  (io/file (System/getProperty "user.home") ".vis"))
 
-(def ^:private registry-file (io/file state-dir "resources.edn"))
+(defn- registry-file ^java.io.File [] (io/file (state-dir) "resources.edn"))
 
 (defonce ^:private registry-lock (Object.))
 
@@ -66,8 +70,8 @@
 (defn- write-persisted!
   [session->id->data]
   (locking registry-lock
-    (try (.mkdirs state-dir)
-         (spit registry-file (pr-str (or session->id->data {})))
+    (try (.mkdirs (state-dir))
+         (spit (registry-file) (pr-str (or session->id->data {})))
          (catch Throwable _ nil))))
 
 (defn- persist-snapshot!

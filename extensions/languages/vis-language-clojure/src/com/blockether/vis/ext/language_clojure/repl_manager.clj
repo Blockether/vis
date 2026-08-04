@@ -106,11 +106,13 @@
 ;; eval/test that targets it; a single daemon thread stops any REPL untouched for
 ;; `idle-reap-ms`. Set VIS_CLJ_REPL_IDLE_MS=0 to disable (or to a custom ms budget).
 (def ^:private idle-reap-ms
-  (let
-    [env (some-> (System/getenv "VIS_CLJ_REPL_IDLE_MS")
-                 str/trim
-                 not-empty)]
-    (or (when env (try (Long/parseLong env) (catch Exception _ nil))) (* 20 60 1000))))
+  ;; A `delay`, never an eager read: `native-image` initializes this namespace at
+  ;; BUILD time, so a top-level `getenv` would ship the BUILDER's answer.
+  (delay (let
+           [env (some-> (System/getenv "VIS_CLJ_REPL_IDLE_MS")
+                        str/trim
+                        not-empty)]
+           (or (when env (try (Long/parseLong env) (catch Exception _ nil))) (* 20 60 1000)))))
 
 (def ^:private reaper-tick-ms 60000)
 
@@ -756,7 +758,7 @@
    one wedged stop never blocks reaping the rest. The session's resource mirror
    self-prunes once `stop!` drops the process (its `:alive-fn` flips to false)."
   []
-  (when (pos? (long idle-reap-ms))
+  (when (pos? (long @idle-reap-ms))
     (let
       [now
        (System/currentTimeMillis)
@@ -771,7 +773,7 @@
           :when (not (:external? info))
           :let [t
                 (long (or (:last-touch info) (:started-at info) 0))]
-          :when (> (- now t) (long idle-reap-ms))]
+          :when (> (- now t) (long @idle-reap-ms))]
 
          [sid dir])]
 
@@ -783,7 +785,7 @@
    a no-op when idle reaping is disabled (`idle-reap-ms` <= 0). The thread is a
    daemon so it never keeps the JVM alive on shutdown."
   []
-  (when (and (pos? (long idle-reap-ms)) (compare-and-set! reaper nil ::starting))
+  (when (and (pos? (long @idle-reap-ms)) (compare-and-set! reaper nil ::starting))
     (let
       [t (Thread. ^Runnable
                   (fn []

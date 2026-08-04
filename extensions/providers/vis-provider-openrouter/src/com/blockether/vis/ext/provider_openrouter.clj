@@ -34,8 +34,10 @@
 ;; Constants
 ;; =============================================================================
 
-(def ^:private AUTH_FILE
-  "Persisted auth state for the single OpenRouter key."
+(defn- auth-file
+  "Persisted auth state for the single OpenRouter key. A FUNCTION: native-image folds
+   top-level `def`s at build time, which would bake the builder's home into the binary."
+  ^String []
   (str (System/getProperty "user.home") "/.vis/openrouter-auth.json"))
 
 (def ^:private PROVIDER_ID :openrouter)
@@ -76,7 +78,7 @@
 (defn- load-auth-file
   "Load `~/.vis/openrouter-auth.json` or nil. Never throws."
   []
-  (let [f (io/file AUTH_FILE)]
+  (let [f (io/file (auth-file))]
     (when (.exists f)
       (try (json/read-json (slurp f) :key-fn auth-json-key) (catch Exception _ nil)))))
 
@@ -86,11 +88,11 @@
   [auth-state]
   (let [dir (io/file (str (System/getProperty "user.home") "/.vis"))]
     (when-not (.exists dir) (.mkdirs dir))
-    (spit AUTH_FILE (vis/wire-json-str auth-state))))
+    (spit (auth-file) (vis/wire-json-str auth-state))))
 
 (defn- clear-auth-file!
   []
-  (let [f (io/file AUTH_FILE)]
+  (let [f (io/file (auth-file))]
     (when (.exists f) (.delete f))))
 
 ;; =============================================================================

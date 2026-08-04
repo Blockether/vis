@@ -809,16 +809,18 @@
          hydrated
          (atom [])]
 
-        (with-redefs-fn
-          {#'lp/db-info (constantly ::db)
-           #'persistance/db-list-session-turns (fn [_ _]
-                                                 rows)
-           #'persistance/db-list-turns-attachments (fn [_ ids]
-                                                     (zipmap ids (repeat [])))
-           (ns-resolve 'com.blockether.vis.internal.gateway.state 'TRANSCRIPT_PAGE_MAX_BYTES) 2000
-           #'state/transcript-turn (fn [_db _att row]
-                                     (swap! hydrated conj (:id row))
-                                     {:turn_id (:id row) :text (apply str (repeat 900 "x"))})}
+        (with-redefs-fn {#'lp/db-info (constantly ::db)
+                         #'persistance/db-list-session-turns (fn [_ _]
+                                                               rows)
+                         #'persistance/db-list-turns-attachments (fn [_ ids]
+                                                                   (zipmap ids (repeat [])))
+                         (ns-resolve 'com.blockether.vis.internal.gateway.state
+                                     'TRANSCRIPT_PAGE_MAX_BYTES)
+                         (delay 2000)
+                         #'state/transcript-turn (fn [_db _att row]
+                                                   (swap! hydrated conj (:id row))
+                                                   {:turn_id (:id row)
+                                                    :text (apply str (repeat 900 "x"))})}
           (fn []
             (let [page (state/transcript-page sid {:limit 10})]
               ;; ~930 encoded bytes per row against a 2000-byte budget: two rows
@@ -851,15 +853,17 @@
                  {:id (str "turn-" n) :position 1})
                (range 10))]
 
-        (with-redefs-fn
-          {#'lp/db-info (constantly ::db)
-           #'persistance/db-list-session-turns (fn [_ _]
-                                                 rows)
-           #'persistance/db-list-turns-attachments (fn [_ ids]
-                                                     (zipmap ids (repeat [])))
-           (ns-resolve 'com.blockether.vis.internal.gateway.state 'TRANSCRIPT_PAGE_MAX_BYTES) 100
-           #'state/transcript-turn (fn [_db _att row]
-                                     {:turn_id (:id row) :text (apply str (repeat 900 "x"))})}
+        (with-redefs-fn {#'lp/db-info (constantly ::db)
+                         #'persistance/db-list-session-turns (fn [_ _]
+                                                               rows)
+                         #'persistance/db-list-turns-attachments (fn [_ ids]
+                                                                   (zipmap ids (repeat [])))
+                         (ns-resolve 'com.blockether.vis.internal.gateway.state
+                                     'TRANSCRIPT_PAGE_MAX_BYTES)
+                         (delay 100)
+                         #'state/transcript-turn (fn [_db _att row]
+                                                   {:turn_id (:id row)
+                                                    :text (apply str (repeat 900 "x"))})}
           (fn []
             ;; An empty page would strand the client: it would fetch forever and
             ;; paint nothing.
@@ -2250,7 +2254,7 @@
 
 (defdescribe gateway-resource-bounds-test
              (it "retains only the configured replay tail"
-                 (with-redefs-fn {#'state/EVENT_RING_MAX 3}
+                 (with-redefs-fn {#'state/EVENT_RING_MAX (delay 3)}
                    (fn []
                      (let
                        [trim-ring
@@ -2279,7 +2283,7 @@
                     (promise)]
 
                    (.acquire semaphore)
-                   (try (with-redefs-fn {#'state/turn-permits semaphore}
+                   (try (with-redefs-fn {#'state/turn-permits (delay semaphore)}
                           (fn []
                             (add-watch waiting
                                        ::queued
@@ -2595,46 +2599,48 @@
              (expect (= "T-race" (:current-turn (get @reg sid))))
              (finally (swap! reg dissoc sid) (.delete (#'bus/session-file sid))))))))
 
-(defdescribe
-  transcript-byte-budget-test
-  "Windowed transcript pages stay bounded even when individual turns are large."
-  (it
-    "caps a window by encoded size and advances from the returned offset"
-    (let
-      [sid
-       (java.util.UUID/randomUUID)
+(defdescribe transcript-byte-budget-test
+             "Windowed transcript pages stay bounded even when individual turns are large."
+             (it
+               "caps a window by encoded size and advances from the returned offset"
+               (let
+                 [sid
+                  (java.util.UUID/randomUUID)
 
-       rows
-       (mapv (fn [n]
-               {:id (str "turn-" n) :position n})
-             (range 5))]
+                  rows
+                  (mapv (fn [n]
+                          {:id (str "turn-" n) :position n})
+                        (range 5))]
 
-      (with-redefs-fn
-        {#'lp/db-info (constantly ::db)
-         #'persistance/db-list-session-turns (fn [_ _]
-                                               rows)
-         #'persistance/db-list-turns-attachments (fn [_ ids]
-                                                   (zipmap ids (repeat [])))
-         (ns-resolve 'com.blockether.vis.internal.gateway.state 'TRANSCRIPT_PAGE_MAX_BYTES) 180
-         #'state/transcript-turn (fn [_db _att row]
-                                   {:turn_id (:id row) :payload (apply str (repeat 100 "x"))})}
-        (fn []
-          (let
-            [newest
-             (state/transcript-page sid {:limit 5})
+                 (with-redefs-fn {#'lp/db-info (constantly ::db)
+                                  #'persistance/db-list-session-turns (fn [_ _]
+                                                                        rows)
+                                  #'persistance/db-list-turns-attachments (fn [_ ids]
+                                                                            (zipmap ids
+                                                                                    (repeat [])))
+                                  (ns-resolve 'com.blockether.vis.internal.gateway.state
+                                              'TRANSCRIPT_PAGE_MAX_BYTES)
+                                  (delay 180)
+                                  #'state/transcript-turn
+                                  (fn [_db _att row]
+                                    {:turn_id (:id row) :payload (apply str (repeat 100 "x"))})}
+                   (fn []
+                     (let
+                       [newest
+                        (state/transcript-page sid {:limit 5})
 
-             earlier
-             (state/transcript-page sid {:offset 0 :limit (:offset newest)})]
+                        earlier
+                        (state/transcript-page sid {:offset 0 :limit (:offset newest)})]
 
-            ;; The row that BUSTS the budget is kept, not deferred: dropping it
-            ;; would make a single oversized turn (a big image attachment)
-            ;; unreachable on every page. Overshoot is bounded by one turn.
-            (expect (= ["turn-3" "turn-4"] (mapv #(get % "turn_id") (:turns newest))))
-            (expect (= 3 (:offset newest)))
-            (expect (:has-more newest))
-            (expect (= ["turn-1" "turn-2"] (mapv #(get % "turn_id") (:turns earlier))))
-            (expect (= 1 (:offset earlier)))
-            (expect (:has-more earlier))))))))
+                       ;; The row that BUSTS the budget is kept, not deferred: dropping it
+                       ;; would make a single oversized turn (a big image attachment)
+                       ;; unreachable on every page. Overshoot is bounded by one turn.
+                       (expect (= ["turn-3" "turn-4"] (mapv #(get % "turn_id") (:turns newest))))
+                       (expect (= 3 (:offset newest)))
+                       (expect (:has-more newest))
+                       (expect (= ["turn-1" "turn-2"] (mapv #(get % "turn_id") (:turns earlier))))
+                       (expect (= 1 (:offset earlier)))
+                       (expect (:has-more earlier))))))))
 
 (defdescribe
   submit-turn-sync-terminal-isolation-test

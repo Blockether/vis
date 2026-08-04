@@ -56,12 +56,15 @@
    ceiling, which never fully reclaimed under sustained turns (the observed
    process-thread growth). A BOUNDED platform pool caps that deterministically
    while still overlapping up to this many real tool calls. Override with
-   `VIS_GATHER_MAX_THREADS`; floored at 4. Default 32."
-  (max 4
-       (long (or (some-> (System/getenv "VIS_GATHER_MAX_THREADS")
-                         str/trim
-                         parse-long)
-                 32))))
+   `VIS_GATHER_MAX_THREADS`; floored at 4. Default 32.
+
+   A `delay`, never an eager read: `native-image` initializes this namespace at
+   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
+  (delay (max 4
+              (long (or (some-> (System/getenv "VIS_GATHER_MAX_THREADS")
+                                str/trim
+                                parse-long)
+                        32)))))
 
 (defonce ^:private ^ExecutorService gather-executor
   ;; Pool backing the sandbox `gather` builtin. Each thunk runs a GraalPy
@@ -101,7 +104,7 @@
                  :else (.run ^Runnable task))))]
 
     (doto (ThreadPoolExecutor. 0
-                               (int gather-max-threads)
+                               (int @gather-max-threads)
                                30
                                TimeUnit/SECONDS
                                (SynchronousQueue.)
@@ -11934,38 +11937,50 @@
 (def ^:private env-idle-ttl-ms
   "Idle window before a cached session env's GraalPy Context is disposed by the
    background reaper. Override with `VIS_ENV_IDLE_TTL_MS`; <= 0 disables the TTL
-   sweep. Default 15 min."
-  (or (some-> (System/getenv "VIS_ENV_IDLE_TTL_MS")
-              str/trim
-              parse-long)
-      (* 15 60 1000)))
+   sweep. Default 15 min.
+
+   A `delay`, never an eager read: `native-image` initializes this namespace at
+   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
+  (delay (or (some-> (System/getenv "VIS_ENV_IDLE_TTL_MS")
+                     str/trim
+                     parse-long)
+             (* 15 60 1000))))
 
 (def ^:private env-cache-max
   "Soft cap on resident session envs. After the TTL sweep, if the cache still
    exceeds this the reaper force-evicts the least-recently-active idle entries
    (still lock-guarded) until back under the cap. Override with
-   `VIS_ENV_CACHE_MAX`; <= 0 disables it. Default 8."
-  (or (some-> (System/getenv "VIS_ENV_CACHE_MAX")
-              str/trim
-              parse-long)
-      8))
+   `VIS_ENV_CACHE_MAX`; <= 0 disables it. Default 8.
+
+   A `delay`, never an eager read: `native-image` initializes this namespace at
+   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
+  (delay (or (some-> (System/getenv "VIS_ENV_CACHE_MAX")
+                     str/trim
+                     parse-long)
+             8)))
 
 (def ^:private env-reaper-interval-ms
   "How often the idle-env reaper wakes to sweep. Override with
-   `VIS_ENV_REAPER_INTERVAL_MS`. Default 60 s."
-  (or (some-> (System/getenv "VIS_ENV_REAPER_INTERVAL_MS")
-              str/trim
-              parse-long)
-      (* 60 1000)))
+   `VIS_ENV_REAPER_INTERVAL_MS`. Default 60 s.
+
+   A `delay`, never an eager read: `native-image` initializes this namespace at
+   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
+  (delay (or (some-> (System/getenv "VIS_ENV_REAPER_INTERVAL_MS")
+                     str/trim
+                     parse-long)
+             (* 60 1000))))
 
 (def ^:private env-max-turns-per-ctx
   "Turns a single session's GraalPy Context serves before the reaper recycles it
    between turns. Override with `VIS_ENV_MAX_TURNS_PER_CTX`; <= 0 disables.
-   Default 25."
-  (or (some-> (System/getenv "VIS_ENV_MAX_TURNS_PER_CTX")
-              str/trim
-              parse-long)
-      25))
+   Default 25.
+
+   A `delay`, never an eager read: `native-image` initializes this namespace at
+   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
+  (delay (or (some-> (System/getenv "VIS_ENV_MAX_TURNS_PER_CTX")
+                     str/trim
+                     parse-long)
+             25)))
 
 (def ^:private env-heap-watermark-pct
   "JVM heap-usage percent (used/max) at or above which the reaper treats the
@@ -11973,30 +11988,39 @@
    session env this sweep — ignoring the idle TTL — to shed GraalPy Contexts
    fast. A running turn holds its entry's lock so it is never evicted; the
    transcript reloads from the DB on the next touch. Override with
-   `VIS_ENV_HEAP_WATERMARK_PCT`; <= 0 disables the watermark. Default 85."
-  (or (some-> (System/getenv "VIS_ENV_HEAP_WATERMARK_PCT")
-              str/trim
-              parse-long)
-      85))
+   `VIS_ENV_HEAP_WATERMARK_PCT`; <= 0 disables the watermark. Default 85.
+
+   A `delay`, never an eager read: `native-image` initializes this namespace at
+   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
+  (delay (or (some-> (System/getenv "VIS_ENV_HEAP_WATERMARK_PCT")
+                     str/trim
+                     parse-long)
+             85)))
 
 (def ^:private env-heap-budget-mb
   "Absolute JVM heap-used ceiling in MB. At or above it, the reaper force-evicts
    every idle session env. Override with `VIS_ENV_HEAP_BUDGET_MB`; <= 0 disables.
    Default 2048 (2 GB), low enough to react before allocation bursts reach the
-   multi-gigabyte resident-set spikes seen under concurrent GraalPy turns."
-  (or (some-> (System/getenv "VIS_ENV_HEAP_BUDGET_MB")
-              str/trim
-              parse-long)
-      2048))
+   multi-gigabyte resident-set spikes seen under concurrent GraalPy turns.
+
+   A `delay`, never an eager read: `native-image` initializes this namespace at
+   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
+  (delay (or (some-> (System/getenv "VIS_ENV_HEAP_BUDGET_MB")
+                     str/trim
+                     parse-long)
+             2048)))
 
 (def ^:private env-rss-budget-mb
   "Resident-set ceiling in MB. JVM heap alone misses GraalPy/native allocations,
    so this gate also forces idle-env eviction when process RSS is high. Override
-   with `VIS_ENV_RSS_BUDGET_MB`; <= 0 disables. Default 3072 (3 GB)."
-  (or (some-> (System/getenv "VIS_ENV_RSS_BUDGET_MB")
-              str/trim
-              parse-long)
-      3072))
+   with `VIS_ENV_RSS_BUDGET_MB`; <= 0 disables. Default 3072 (3 GB).
+
+   A `delay`, never an eager read: `native-image` initializes this namespace at
+   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
+  (delay (or (some-> (System/getenv "VIS_ENV_RSS_BUDGET_MB")
+                     str/trim
+                     parse-long)
+             3072)))
 
 (defn- process-rss-bytes
   "Best-effort process resident set in bytes. Reads procfs on Linux and `ps` on
@@ -12043,13 +12067,13 @@
 
 (defn- memory-pressure-for-rss?
   [rss-bytes]
-  (or (and (pos? (long env-heap-watermark-pct))
-           (>= (long (heap-used-pct)) (long env-heap-watermark-pct)))
-      (and (pos? (long env-heap-budget-mb))
+  (or (and (pos? (long @env-heap-watermark-pct))
+           (>= (long (heap-used-pct)) (long @env-heap-watermark-pct)))
+      (and (pos? (long @env-heap-budget-mb))
            (let [rt (Runtime/getRuntime)]
-             (>= (- (.totalMemory rt) (.freeMemory rt)) (* (long env-heap-budget-mb) 1024 1024))))
-      (and (pos? (long env-rss-budget-mb))
-           (>= (long rss-bytes) (* (long env-rss-budget-mb) 1024 1024)))))
+             (>= (- (.totalMemory rt) (.freeMemory rt)) (* (long @env-heap-budget-mb) 1024 1024))))
+      (and (pos? (long @env-rss-budget-mb))
+           (>= (long rss-bytes) (* (long @env-rss-budget-mb) 1024 1024)))))
 
 (defn- heap-pressure?
   "True when JVM heap percentage, absolute heap, or process RSS crosses its
@@ -12205,10 +12229,10 @@
      (heap-pressure? rss-bytes)
 
      effective-ttl
-     (if pressure? 0 (long env-idle-ttl-ms))
+     (if pressure? 0 (long @env-idle-ttl-ms))
 
      ttl-evicted
-     (if (or pressure? (pos? (long env-idle-ttl-ms)))
+     (if (or pressure? (pos? (long @env-idle-ttl-ms)))
        (->> @cache
             (filter (fn [[_ entry]]
                       (>= (long (age entry)) (long effective-ttl))))
@@ -12218,13 +12242,13 @@
        0)
 
      lru-evicted
-     (if (pos? (long env-cache-max))
+     (if (pos? (long @env-cache-max))
        (let
          [snapshot
           @cache
 
           over
-          (- (long (count snapshot)) (long env-cache-max))]
+          (- (long (count snapshot)) (long @env-cache-max))]
 
          (if (pos? (long over))
            (->> snapshot
@@ -12276,7 +12300,7 @@
   (loop []
 
     (let
-      [continue? (try (Thread/sleep (long env-reaper-interval-ms))
+      [continue? (try (Thread/sleep (long @env-reaper-interval-ms))
                       (reap-idle-envs!)
                       true
                       (catch InterruptedException _ false)
@@ -12291,12 +12315,12 @@
 (defn- env-reaper-enabled?
   "True when the sweep interval and at least one eviction policy are enabled."
   []
-  (and (pos? (long env-reaper-interval-ms))
-       (or (pos? (long env-idle-ttl-ms))
-           (pos? (long env-cache-max))
-           (pos? (long env-heap-watermark-pct))
-           (pos? (long env-heap-budget-mb))
-           (pos? (long env-rss-budget-mb)))))
+  (and (pos? (long @env-reaper-interval-ms))
+       (or (pos? (long @env-idle-ttl-ms))
+           (pos? (long @env-cache-max))
+           (pos? (long @env-heap-watermark-pct))
+           (pos? (long @env-heap-budget-mb))
+           (pos? (long @env-rss-budget-mb)))))
 
 (defn- ensure-env-reaper!
   "Start the idle-env reaper daemon thread once, lazily, on the first cache
@@ -12693,8 +12717,8 @@
          (try (let [cur (or (get @cache k) entry)]
                 (touch-entry! cur)
                 (let [n (bump-turns! cur)]
-                  (if (and (pos? (long env-max-turns-per-ctx))
-                           (>= (long n) (long env-max-turns-per-ctx)))
+                  (if (and (pos? (long @env-max-turns-per-ctx))
+                           (>= (long n) (long @env-max-turns-per-ctx)))
                     ;; Layer 2: recycle this session's Context between turns so a
                     ;; single never-idle session can't grow it unbounded.
                     (try (recycle-env! k) (catch Throwable _ nil))

@@ -116,7 +116,10 @@
 ;; Source roots (filesystem)
 ;; =============================================================================
 
-(def ^:private home (System/getProperty "user.home"))
+(defn- home
+  "`user.home` read per call — a top-level `def` is folded at native-image build time."
+  ^String []
+  (System/getProperty "user.home"))
 
 (defn- dir ^java.io.File [& parts] (apply io/file parts))
 
@@ -166,7 +169,7 @@
   "Every `<cache>/<plugin>/<version>/<leaf>` directory that exists under the
    Claude Code plugin cache — one per installed plugin/version."
   [leaf]
-  (let [cache (dir home ".claude" "plugins" "cache")]
+  (let [cache (dir (home) ".claude" "plugins" "cache")]
     (when (existing-dir? cache)
       (for
         [plugin (.listFiles ^java.io.File cache)
@@ -241,7 +244,7 @@
          (walk-dirs parts)
 
          :home
-         [(apply dir home parts)]
+         [(apply dir (home) parts)]
 
          :plugins
          (plugin-leaf-dirs (first parts))

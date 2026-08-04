@@ -44,7 +44,11 @@
 
 (def ^:private CODEX_BASE_URL "https://chatgpt.com/backend-api")
 
-(def ^:private AUTH_FILE (str (System/getProperty "user.home") "/.vis/openai-codex-auth.json"))
+(defn- auth-file
+  "Persisted OAuth credentials. A FUNCTION: native-image folds top-level `def`s at
+   build time, which would bake the builder's home directory into the binary."
+  ^String []
+  (str (System/getProperty "user.home") "/.vis/openai-codex-auth.json"))
 
 (def ^:private ^:const REFRESH_MARGIN_MS (* 5 60 1000))
 
@@ -250,7 +254,7 @@
 
 (defn- load-auth-file
   []
-  (let [f (io/file AUTH_FILE)]
+  (let [f (io/file (auth-file))]
     (when (.exists f)
       (try (json/read-json (slurp f) :key-fn auth-json-key) (catch Exception _ nil)))))
 
@@ -260,12 +264,12 @@
   [credentials]
   (let [dir (io/file (str (System/getProperty "user.home") "/.vis"))]
     (when-not (.exists dir) (.mkdirs dir))
-    (spit AUTH_FILE (wire/json-str (assoc credentials :saved-at (System/currentTimeMillis))))
+    (spit (auth-file) (wire/json-str (assoc credentials :saved-at (System/currentTimeMillis))))
     credentials))
 
 (defn- delete-auth-file!
   []
-  (let [f (io/file AUTH_FILE)]
+  (let [f (io/file (auth-file))]
     (when (.exists f) (.delete f))))
 
 (defn detect-credentials
@@ -303,7 +307,7 @@
    HTTP 400. Returns the provider-token map."
   (oauth/make-file-refresher
     {:load load-auth-file
-     :lock-path (str AUTH_FILE ".lock")
+     :lock-path (str (auth-file) ".lock")
      :saved-at :saved-at
      :refresh-token :refresh-token
      :exchange! refresh-access-token!

@@ -318,7 +318,7 @@
        ;; endpoint for real.
        (contains? local-no-auth-provider-ids (:id provider)) (probe-local-reachable provider)
        (some? (:api-key provider))
-       {:is-authenticated true :source :config :config-path config/state-path}
+       {:is-authenticated true :source :config :config-path (config/state-path)}
        ;; No gap above means the helper DID produce a token just now.
        (some? (:api-key-command provider)) {:is-authenticated true :source :command}
        registered (or (safe-provider-status registered) {:is-authenticated false})
@@ -408,7 +408,7 @@
         env-vars
         (assoc :needs-env (str/join ", " env-vars)))
       (cond (some? (:api-key provider))
-            {:is-authenticated true :source :config :config-path config/state-path}
+            {:is-authenticated true :source :config :config-path (config/state-path)}
             (some? (:api-key-command provider)) {:is-authenticated true :source :command}
             :else {:is-authenticated nil :loading? true}))))
 

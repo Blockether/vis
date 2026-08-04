@@ -137,8 +137,8 @@
     "first-run connect persists; adding a second provider keeps both + globals"
     (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-test-" (System/nanoTime))]
       (try (with-redefs
-             [config/config-dir tmp
-              config/state-path (str tmp "/state.yml")
+             [config/config-dir (constantly tmp)
+              config/state-path (constantly (str tmp "/state.yml"))
               ;; isolate from any real project-local overlay / root YAML
               config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
               config/project-root-yaml-paths (constantly [])]
@@ -178,8 +178,8 @@
   (it "drops a flat `fallback_provider`/`fallback_model` tag naming the removal"
       (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-fb-" (System/nanoTime))]
         (try (with-redefs
-               [config/config-dir tmp
-                config/state-path (str tmp "/state.yml")
+               [config/config-dir (constantly tmp)
+                config/state-path (constantly (str tmp "/state.yml"))
                 config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
                 config/project-root-yaml-paths (constantly [])]
 
@@ -199,8 +199,8 @@
   (it "drops a qualified `provider/model` fallback tag with no `fallback_provider`"
       (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-fb-" (System/nanoTime))]
         (try (with-redefs
-               [config/config-dir tmp
-                config/state-path (str tmp "/state.yml")
+               [config/config-dir (constantly tmp)
+                config/state-path (constantly (str tmp "/state.yml"))
                 config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
                 config/project-root-yaml-paths (constantly [])]
 
@@ -214,8 +214,8 @@
   (it "keeps a fallback tag that names a DIFFERENT provider"
       (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-fb-" (System/nanoTime))]
         (try (with-redefs
-               [config/config-dir tmp
-                config/state-path (str tmp "/state.yml")
+               [config/config-dir (constantly tmp)
+                config/state-path (constantly (str tmp "/state.yml"))
                 config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
                 config/project-root-yaml-paths (constantly [])]
 
@@ -233,8 +233,8 @@
   (it "a slash INSIDE a fallback model id is not a provider tag"
       (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-fb-" (System/nanoTime))]
         (try (with-redefs
-               [config/config-dir tmp
-                config/state-path (str tmp "/state.yml")
+               [config/config-dir (constantly tmp)
+                config/state-path (constantly (str tmp "/state.yml"))
                 config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
                 config/project-root-yaml-paths (constantly [])]
 
@@ -257,8 +257,8 @@
   (it "reports no change when the provider is absent and holds no tag"
       (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-fb-" (System/nanoTime))]
         (try (with-redefs
-               [config/config-dir tmp
-                config/state-path (str tmp "/state.yml")
+               [config/config-dir (constantly tmp)
+                config/state-path (constantly (str tmp "/state.yml"))
                 config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
                 config/project-root-yaml-paths (constantly [])]
 
@@ -370,7 +370,7 @@
                   [])
 
                 config/state-path
-                "/nonexistent/state.yml"
+                (constantly "/nonexistent/state.yml")
 
                 config/project-root-yaml-paths
                 (fn []
@@ -435,7 +435,7 @@
            (spit nested-yml "system_prompt: FROM-NESTED\n")
            (with-redefs
              [config/state-path
-              (.getPath gstate)
+              (constantly (.getPath gstate))
 
               config/global-config-yaml-paths
               (fn []
@@ -486,7 +486,7 @@
            (spit gstate "system_prompt: FROM-STATE\n")
            (with-redefs
              [config/state-path
-              (.getPath gstate)
+              (constantly (.getPath gstate))
 
               config/global-config-yaml-paths
               (fn []
@@ -531,7 +531,7 @@
            (spit gstate "system_prompt: ONE\n")
            (with-redefs
              [config/state-path
-              (.getPath gstate)
+              (constantly (.getPath gstate))
 
               config/global-config-yaml-paths
               none

@@ -431,7 +431,7 @@
 
 
 
-(defonce polyglot-noise-silenced
+(def polyglot-noise-silenced
   ;; Route Truffle's own logging into the vis log file — the same sink
   ;; telemere's :file handler writes — instead of the controlling
   ;; terminal. Also removes the "[To redirect Truffle log output ...]"
@@ -442,13 +442,17 @@
   ;; (`engine.WarnVirtualThreadSupport` is an EXPERIMENTAL option:
   ;; setting it as a system property makes every Engine/Context build
   ;; THROW "must be enabled with allowExperimentalOptions").
-  (do (when-not (System/getProperty "polyglot.log.file")
-        (let [vis-dir (java.io.File. (System/getProperty "user.home") ".vis/logs")]
-          (.mkdirs vis-dir)
-          (System/setProperty "polyglot.log.file" (str (java.io.File. vis-dir "vis.log")))))
-      true))
+  ;;
+  ;; A `delay` forced from `shared-engine`, never a load-time `defonce`:
+  ;; `native-image` initializes this namespace at BUILD time, so an eager body
+  ;; would create the BUILDER's `~/.vis/logs` and bake that path into the image.
+  (delay (when-not (System/getProperty "polyglot.log.file")
+           (let [vis-dir (java.io.File. (System/getProperty "user.home") ".vis/logs")]
+             (.mkdirs vis-dir)
+             (System/setProperty "polyglot.log.file" (str (java.io.File. vis-dir "vis.log")))))
+         true))
 
-(defonce graal-resource-cache-redirected
+(def graal-resource-cache-redirected
   ;; GraalPy materializes its Python stdlib ("internal resources", from the
   ;; python-resources jar) under `$XDG_CACHE_HOME/org.graalvm.polyglot` (or
   ;; `~/.cache/org.graalvm.polyglot`) — at RUNTIME, on the JVM and on the
@@ -458,7 +462,8 @@
   ;; bootstrap dies with `ModuleNotFoundError: No module named 'ast'`. The
   ;; cache root is read ONCE per JVM (system property
   ;; `polyglot.engine.userResourceCache`) when internal resources initialize,
-  ;; so resolve it HERE — at ns load, before `shared-engine` can be forced.
+  ;; so resolve it lazily HERE, when `shared-engine` is first forced — a
+  ;; load-time `defonce` would run on the native-image BUILDER instead.
   ;; Precedence: explicit `-Dpolyglot.engine.userResourceCache` (untouched) >
   ;; `python.resource-cache` in merged vis.yml config > `~/.vis/cache/graal-resources`
   ;; (ALWAYS preferred: writable across sandboxed and normal runs, gitignored) >
@@ -467,45 +472,46 @@
   ;; unconditionally makes stdlib materialization behave identically whether or
   ;; not the sandbox happens to whitelist that root. Documented in
   ;; vis-docs/configuration.md § GraalPy internal-resource cache.
-  (or
-    (some? (System/getProperty "polyglot.engine.userResourceCache"))
-    (let
-      [expand-home
-       paths/expand-home
+  (delay
+    (or
+      (some? (System/getProperty "polyglot.engine.userResourceCache"))
+      (let
+        [expand-home
+         paths/expand-home
 
-       usable?
-       (fn [^java.io.File d]
-         (try (.mkdirs d)
-              (let [p (java.io.File. d ".vis-probe")]
-                (spit p "")
-                (.delete p)
-                true)
-              (catch Throwable _ false)))
+         usable?
+         (fn [^java.io.File d]
+           (try (.mkdirs d)
+                (let [p (java.io.File. d ".vis-probe")]
+                  (spit p "")
+                  (.delete p)
+                  true)
+                (catch Throwable _ false)))
 
-       ;; `python.resource-cache` from the merged YAML config tiers.
-       ;; requiring-resolve keeps this ns decoupled from config's load
-       ;; order; any config error degrades to the automatic behavior.
-       configured
-       (try (when-let
-              [path (some-> ((requiring-resolve
-                               'com.blockether.vis.internal.config/load-config-raw))
-                            (get-in ["python" "resource_cache"]))]
-              (java.io.File. ^String (expand-home path)))
-            (catch Throwable _ nil))
+         ;; `python.resource-cache` from the merged YAML config tiers.
+         ;; requiring-resolve keeps this ns decoupled from config's load
+         ;; order; any config error degrades to the automatic behavior.
+         configured
+         (try (when-let
+                [path (some-> ((requiring-resolve
+                                 'com.blockether.vis.internal.config/load-config-raw))
+                              (get-in ["python" "resource_cache"]))]
+                (java.io.File. ^String (expand-home path)))
+              (catch Throwable _ nil))
 
-       ;; Always land on a writable, gitignored cache dir; never keep the
-       ;; default `~/.cache/org.graalvm.polyglot` root.
-       chosen
-       (or (when (and configured (usable? configured)) configured)
-           (first (filter usable?
-                          [(java.io.File. (System/getProperty "user.home")
-                                          ".vis/cache/graal-resources")
-                           (java.io.File. ".graal-resources")])))]
+         ;; Always land on a writable, gitignored cache dir; never keep the
+         ;; default `~/.cache/org.graalvm.polyglot` root.
+         chosen
+         (or (when (and configured (usable? configured)) configured)
+             (first (filter usable?
+                            [(java.io.File. (System/getProperty "user.home")
+                                            ".vis/cache/graal-resources")
+                             (java.io.File. ".graal-resources")])))]
 
-      (when chosen
-        (System/setProperty "polyglot.engine.userResourceCache"
-                            (.getAbsolutePath ^java.io.File chosen)))
-      true)))
+        (when chosen
+          (System/setProperty "polyglot.engine.userResourceCache"
+                              (.getAbsolutePath ^java.io.File chosen)))
+        true))))
 
 ;; `engine.WarnVirtualThreadSupport=false` is applied INLINE on each
 ;; Engine/Context builder chain below (no shared helper: an untyped
@@ -593,6 +599,11 @@
   ;; bursts, at a slightly slower warm-up. Stable engine options; takes effect
   ;; on the next gateway start.
   (delay
+    ;; Both are load-order sensitive system properties: force them HERE, before
+    ;; the first Engine exists, so the RUNNING process (not the native-image
+    ;; builder) decides the Truffle log file and the resource-cache root.
+    @polyglot-noise-silenced
+    @graal-resource-cache-redirected
     (let
       [build-engine
        (fn ^Engine [^java.io.File load-file tune?]

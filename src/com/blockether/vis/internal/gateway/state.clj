@@ -36,12 +36,15 @@
 (def ^:private EVENT_RING_MAX
   "Per-session event-log ring size. Older events stay durable in the session
    transcript; the ring only backs short SSE cursor reconnects. Override with
-   `VIS_GATEWAY_EVENT_RING_MAX`; values <= 0 use the default of 2000."
-  (let
-    [configured (some-> (System/getenv "VIS_GATEWAY_EVENT_RING_MAX")
-                        str/trim
-                        parse-long)]
-    (if (pos? (long (or configured 0))) (long configured) 2000)))
+   `VIS_GATEWAY_EVENT_RING_MAX`; values <= 0 use the default of 2000.
+
+   A `delay`, never an eager read: `native-image` initializes this namespace at
+   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
+  (delay (let
+           [configured (some-> (System/getenv "VIS_GATEWAY_EVENT_RING_MAX")
+                               str/trim
+                               parse-long)]
+           (if (pos? (long (or configured 0))) (long configured) 2000))))
 
 (def ^:private RESULT_PR_LIMIT 4000)
 
@@ -149,14 +152,20 @@
   "Process-wide cap for simultaneously executing gateway turns. Each turn can
    own a GraalPy context and substantial transient heap, so per-session
    serialization alone is insufficient. Override with
-   `VIS_GATEWAY_MAX_CONCURRENT_TURNS`; values <= 0 use the default of 2."
-  (let
-    [configured (some-> (System/getenv "VIS_GATEWAY_MAX_CONCURRENT_TURNS")
-                        str/trim
-                        parse-long)]
-    (if (pos? (long (or configured 0))) (long configured) 50)))
+   `VIS_GATEWAY_MAX_CONCURRENT_TURNS`; values <= 0 use the default of 2.
 
-(defonce ^:private turn-permits (java.util.concurrent.Semaphore. (int MAX_CONCURRENT_TURNS) true))
+   A `delay`, never an eager read: `native-image` initializes this namespace at
+   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
+  (delay (let
+           [configured (some-> (System/getenv "VIS_GATEWAY_MAX_CONCURRENT_TURNS")
+                               str/trim
+                               parse-long)]
+           (if (pos? (long (or configured 0))) (long configured) 50))))
+
+;; A `delay`: the permit count is read from the environment, so the semaphore
+;; itself must be built by the RUNNING process, never baked into the image heap.
+(defonce ^:private turn-permits
+  (delay (java.util.concurrent.Semaphore. (int @MAX_CONCURRENT_TURNS) true)))
 
 (defonce ^:private turns-executing (atom 0))
 
@@ -170,7 +179,7 @@
   (try (loop []
 
          (cond (cancellation/cancelled? cancel-token) false
-               (try (.tryAcquire ^java.util.concurrent.Semaphore turn-permits
+               (try (.tryAcquire ^java.util.concurrent.Semaphore @turn-permits
                                  100
                                  java.util.concurrent.TimeUnit/MILLISECONDS)
                     (catch InterruptedException _ false))
@@ -181,7 +190,7 @@
 (defn- release-turn-permit!
   []
   (swap! turns-executing dec)
-  (.release ^java.util.concurrent.Semaphore turn-permits))
+  (.release ^java.util.concurrent.Semaphore @turn-permits))
 
 ;; =============================================================================
 ;; Event log + fan-out
@@ -196,7 +205,7 @@
     [ring (if (instance? clojure.lang.PersistentQueue events)
             events
             (into clojure.lang.PersistentQueue/EMPTY events))]
-    (if (> (count ring) (long EVENT_RING_MAX)) (recur (pop ring)) ring)))
+    (if (> (count ring) (long @EVENT_RING_MAX)) (recur (pop ring)) ring)))
 
 (defn- fan-out!
   "Deliver `event` to every local SSE sink for `sid`. Runs on the APPENDING
@@ -1668,12 +1677,15 @@
    applies to an UNWINDOWED request (the TUI's whole-transcript GET). At least
    one row always comes back, so an oversized turn still arrives and paging
    always advances. Override with `VIS_GATEWAY_TRANSCRIPT_PAGE_MAX_BYTES`;
-   values <= 0 use the default of 2 MiB."
-  (let
-    [configured (some-> (System/getenv "VIS_GATEWAY_TRANSCRIPT_PAGE_MAX_BYTES")
-                        str/trim
-                        parse-long)]
-    (if (pos? (long (or configured 0))) (long configured) (* 2 1024 1024))))
+   values <= 0 use the default of 2 MiB.
+
+   A `delay`, never an eager read: `native-image` initializes this namespace at
+   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
+  (delay (let
+           [configured (some-> (System/getenv "VIS_GATEWAY_TRANSCRIPT_PAGE_MAX_BYTES")
+                               str/trim
+                               parse-long)]
+           (if (pos? (long (or configured 0))) (long configured) (* 2 1024 1024)))))
 
 (defn- budgeted-page-turns
   "Hydrate `window` (oldest-first rows) from its NEWEST row BACKWARDS, stopping
@@ -1711,7 +1723,7 @@
         ;; so re-entering the session showed no image at all until the user
         ;; happened to scroll back. Overshoot is bounded by that single row, and
         ;; the page still always advances (`dropped` counts the rows below it).
-        (if (> bytes' (long TRANSCRIPT_PAGE_MAX_BYTES))
+        (if (> bytes' (long @TRANSCRIPT_PAGE_MAX_BYTES))
           [(vec (conj rows row)) i]
           (recur (dec i) (conj rows row) bytes'))))))
 
@@ -4491,7 +4503,7 @@
             :turns-running (count (keep :current-turn entries))
             :turns-executing @turns-executing
             :turns-waiting @turns-waiting
-            :turn-concurrency-limit MAX_CONCURRENT_TURNS
+            :turn-concurrency-limit @MAX_CONCURRENT_TURNS
             :turns-queued (reduce + 0 (map count-queued entries))
             :replay-events-retained (reduce + 0 (map #(count (:events %)) entries))
             :auth-refresh (lp/auth-refresh-metrics)})))
