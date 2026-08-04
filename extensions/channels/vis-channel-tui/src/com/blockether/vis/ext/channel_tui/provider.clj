@@ -1094,45 +1094,45 @@
 
    The band paints ITS OWN rows and nothing above them: whatever the caller has
    on screen — the card, the settings list — stays visible behind it, exactly
-   like magit. A caller that pages bands of different heights clears the rows it
-   owns with `tr/clear-rows!` first."
-  [^TerminalScreen screen g {:keys [left inner-w hint-row text-w min-row]} title spec]
-  (tr/run! (dlg/transient-host screen g)
-           {:left left :inner-w inner-w :hint-row hint-row :text-w text-w :min-row min-row}
-           (assoc spec :title title)))
+   like magit. A caller that pages bands of different heights hands the region a
+   `:band` atom, and each band then also erases the previous one's leftovers."
+  [^TerminalScreen screen g {:keys [left inner-w hint-row text-w min-row band]} title spec]
+  (tr/run!
+    (dlg/transient-host screen g)
+    {:left left :inner-w inner-w :hint-row hint-row :text-w text-w :min-row min-row :band band}
+    (assoc spec :title title)))
 
 (defn- run-model-transient!
   "Magit transient model picker for `provider`: one keystroke per model, `n` / `p`
    to page a long catalog, `*` to expand the models the gateway hid. Returns the
    chosen model id, or nil when the user backed out with Esc."
   [^TerminalScreen screen g geom provider entries preferred marks page-size]
-  (loop
-    [entries
-     entries
+  (let
+    ;; Pages differ in height, and a shorter page must leave nothing of the
+    ;; taller one above it — but that is ALL it may erase. The `:band` atom
+    ;; remembers where the last band started (the host's own atom when the
+    ;; picker is opened from one of the host's bands, ours otherwise). Wiping
+    ;; down from `:min-row` instead took the HOST's content with it: setting a
+    ;; default or fallback model from Settings blanked the settings pane behind
+    ;; the popup, frame and all.
+    [geom (update geom :band #(or % (atom nil)))]
+    (loop
+      [entries entries
+       page 0]
 
-     page
-     0]
+      (let
+        [title (str (vis/display-label (:id provider)) " — models")
+         picked (:action (run-transient! screen
+                                         g
+                                         geom
+                                         title
+                                         (model-transient-spec entries page marks page-size)))]
 
-    (let
-      [title
-       (str (vis/display-label (:id provider)) " — models")
-
-       ;; Pages differ in height, and this popup reclaims the provider card's
-       ;; rows: the picker OWNS every row from `:min-row` down, so it erases that
-       ;; area itself before each page instead of asking the band to paint over
-       ;; rows that were never its own.
-       _
-       (tr/clear-rows! g geom (:min-row geom) (dec (long (:hint-row geom))))
-
-       picked
-       (:action
-         (run-transient! screen g geom title (model-transient-spec entries page marks page-size)))]
-
-      (cond (nil? picked) nil
-            (= picked :show-all) (recur (build-model-list provider preferred true) 0)
-            (= picked ::next-page) (recur entries (inc page))
-            (= picked ::prev-page) (recur entries (dec page))
-            :else picked))))
+        (cond (nil? picked) nil
+              (= picked :show-all) (recur (build-model-list provider preferred true) 0)
+              (= picked ::next-page) (recur entries (inc page))
+              (= picked ::prev-page) (recur entries (dec page))
+              :else picked)))))
 
 (defn api-key-transient-spec
   "PURE: the magit transient an API-key sign-in runs. `k` reads the key INLINE on
@@ -1749,7 +1749,10 @@
            :inner-w inner-w
            :hint-row hint-row
            :text-w (max 0 (- inner-w 4))
-           :min-row (+ (long content-top) (long card-rows) (long card-gap))}]
+           :min-row (+ (long content-top) (long card-rows) (long card-gap))
+           ;; One memory for every band this dialog runs: a shorter band erases
+           ;; the taller one it replaces, and nothing else.
+           :band (atom nil)}]
 
          ;; Clear content area
          (p/set-bg! g t/dialog-bg)

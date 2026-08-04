@@ -1701,42 +1701,53 @@
 ;; was an empty box with one popup floating in it, sidebar rail included. A band
 ;; is magit chrome — the buffer it is about stays painted above it.
 (defn- settings-provider-band-frames
-  "Drive Settings (parked on Providers) → Enter on the provider row, off a fixed
-   config so the capture never touches the machine's own providers or gateway.
+  "Drive Settings (parked on Providers) → `keystrokes` — Enter on the provider
+   row, then whatever the flow under test needs — off a fixed config so the
+   capture never touches the machine's own providers, gateway or model catalog.
 
    The fixture provider id is deliberately one NO provider extension registers:
    `display-label` hands a registered preset its own branding, so a preset id
    renders as `OpenAI Codex (ChatGPT OAuth)` in a run that loaded that extension
    and verbatim in one that did not — the whole aggregate suite versus this
    namespace alone."
-  [^long cols ^long rows]
-  (with-redefs
-    [vis/load-config
-     (constantly
-       {:providers [{:id :acme-llm}] :default-provider "acme-llm" :default-model "acme-1"})
+  ([^long cols ^long rows] (settings-provider-band-frames cols rows [:enter :esc :esc]))
+  ([^long cols ^long rows keystrokes]
+   (with-redefs
+     [vis/load-config
+      (constantly
+        {:providers [{:id :acme-llm}] :default-provider "acme-llm" :default-model "acme-1"})
 
-     vis/authenticated-preset-providers
-     (constantly [])
+      vis/authenticated-preset-providers
+      (constantly [])
 
-     provider/gateway-provider-status-safe
-     (constantly nil)]
+      vis/gateway-provider-model-options
+      (constantly {:models ["acme-1" "acme-2" "acme-3"] :hidden-count 0})
 
-    (let
-      [res (cap/capture! {:cols cols
-                          :rows rows
-                          :keys [:enter :esc :esc]
-                          :paint!
-                          (fn [{:keys [screen]}]
-                            (dlg/settings-dialog!
-                              screen
-                              {}
-                              {:focus-section "Providers"
-                               :provider-transient
-                               (fn [{:keys [g region provider-id]}]
-                                 (provider/provider-transient! screen g region provider-id))}))})]
-      (when-let [t (:error res)]
-        (throw t))
-      (mapv #(cap/frame-text res %) (range (count (:frames res)))))))
+      vis/gateway-set-router-default!
+      (constantly nil)
+
+      vis/gateway-set-router-fallback!
+      (constantly nil)
+
+      provider/gateway-provider-status-safe
+      (constantly nil)]
+
+     (let
+       [res (cap/capture! {:cols cols
+                           :rows rows
+                           :keys keystrokes
+                           :paint!
+                           (fn [{:keys [screen]}]
+                             (dlg/settings-dialog!
+                               screen
+                               {}
+                               {:focus-section "Providers"
+                                :provider-transient
+                                (fn [{:keys [g region provider-id]}]
+                                  (provider/provider-transient! screen g region provider-id))}))})]
+       (when-let [t (:error res)]
+         (throw t))
+       (mapv #(cap/frame-text res %) (range (count (:frames res))))))))
 
 (defdescribe settings-provider-transient-keeps-settings-visible-test
              (it "paints the provider band INSIDE a Settings frame that still shows its own rows"
@@ -1769,3 +1780,60 @@
                    (expect (str/includes? final "── Providers"))
                    (expect (str/includes? final "acme-llm"))
                    (expect (not (str/includes? final "— actions"))))))
+
+;; ── Regression (user report): "there is still problem with the transients in
+;; the settings when I'm setting default or fallback provider … why top is
+;; hidden" ────────────────────────────────────────────────────────────────────
+;; `d` / `f` on a provider's band open the MODEL picker, and the picker erased
+;; every row from the settings list's TOP down to the hint bar before painting
+;; each page: the Settings frame became one popup floating in an empty pane —
+;; rows, section headers and the sidebar rail all wiped. A band owns the rows it
+;; paints; the only rows it may erase above them are a PREVIOUS band's leftovers.
+(defn- settings-model-band
+  "The frame where the model picker (`d` on the provider's own band) is up."
+  [^long cols ^long rows]
+  (first (filter #(str/includes? % "acme-llm — models")
+                 (settings-provider-band-frames cols rows [:enter \d :esc :esc]))))
+
+(defdescribe settings-model-transient-keeps-settings-visible-test
+             (it
+               "keeps the settings list painted while the model picker band is up"
+               (let
+                 [band
+                  (settings-model-band 100 30)
+
+                  rows
+                  (str/split-lines band)
+
+                  band-top
+                  (long (first (keep-indexed (fn [i s]
+                                               (when (str/includes? s "acme-llm — models") i))
+                                             rows)))
+
+                  ;; What the settings dialog itself owns: the rows between the
+                  ;; search box's rule — the one carrying the sidebar's `┬`
+                  ;; junction — and the band's own opening rule.
+                  list-rows
+                  (->> (take band-top rows)
+                       (drop-while #(not (str/includes? % "┬")))
+                       rest
+                       butlast)
+
+                  ;; A settings row is SPLIT by the sidebar rail, so it carries
+                  ;; a third `│`; a wiped row carries only the frame's two.
+                  kept
+                  (filter #(<= 3 (count (re-seq #"│" %))) list-rows)]
+
+                 ;; The picker is up …
+                 (expect (str/includes? band "Models"))
+                 (expect (str/includes? band "acme-1"))
+                 ;; … over a list that is still THERE. Before the fix every one
+                 ;; of these rows was blank paper.
+                 (expect (<= 2 (count kept)))
+                 (expect (every? #(re-find #"\w" %) kept))
+                 ;; One dialog, not a popup floating in an empty pane.
+                 (expect (= 1 (count (re-seq #"✕" band))))))
+             (it "leaves nothing of the actions band above a shorter model band"
+                 (let [band (settings-model-band 100 30)]
+                   (expect (not (str/includes? band "— actions")))
+                   (expect (not (str/includes? band "Set as Default..."))))))

@@ -4830,7 +4830,13 @@
                                                               :inner-w inner-w
                                                               :hint-row hint-row
                                                               :text-w (max 1 (- (long inner-w) 2))
-                                                              :min-row list-top}
+                                                              :min-row list-top
+                                                              ;; One memory per
+                                                              ;; activation: a
+                                                              ;; band erases the
+                                                              ;; band before it,
+                                                              ;; never the list.
+                                                              :band (atom nil)}
                                                              values
                                                              callbacks
                                                              selected-row))
