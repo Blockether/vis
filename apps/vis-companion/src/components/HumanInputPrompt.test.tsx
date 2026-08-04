@@ -110,4 +110,15 @@ describe('human input sheet', () => {
     expect(html).toContain('[x]');
     expect(html).toContain('Halt on the first regression');
   });
+
+  // The question IS the dialog's title, and the shared frame clipped it to one
+  // line: on a phone the header read "How much of the error budget may …",
+  // which is no longer a question anyone can answer.
+  it('shows the whole question in the header', () => {
+    const html = markup('slider');
+    const heading = /<h2[^>]*>[\s\S]*?<\/h2>/.exec(html)?.[0] ?? '';
+    expect(heading).toContain(HUMAN_INPUT_REQUESTS.slider.title);
+    expect(heading).not.toContain('truncate');
+    expect(heading).toContain('line-clamp-3');
+  });
 });

@@ -118,7 +118,13 @@ export function DialogFrame({
       aria-label={title}
     >
       <header className="relative flex min-h-9 items-center justify-center bg-dialog-title px-12 py-1.5 text-dialog-title-foreground sm:min-h-8">
-        <h2 className="truncate font-mono text-body font-bold tracking-wide">{title}</h2>
+        {/* A dialog title can be a whole question from `vis.ask`; wrap it (bounded) instead of eating it. */}
+        <h2
+          className="line-clamp-3 text-center font-mono text-body font-bold tracking-wide"
+          title={title}
+        >
+          {title}
+        </h2>
         {onClose && (
           <button
             type="button"
