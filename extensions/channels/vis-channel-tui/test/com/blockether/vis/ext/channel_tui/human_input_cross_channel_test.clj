@@ -14,6 +14,7 @@
   (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.screen :as screen]
+            [com.blockether.vis.ext.channel-tui.human-input :as tui-hi]
             [com.blockether.vis.internal.gateway.human-input :as gw]
             [com.blockether.vis.internal.gateway.state :as gw-state]
             [com.blockether.vis.internal.human-input :as engine]
@@ -186,9 +187,14 @@
                  (is (some? (gw/request-of sid rid))))
                (testing "the TUI's blank answer is rejected with the SAME message"
                  ;; One validator lives in the engine, so neither surface can
-                 ;; drift into accepting what the other refuses.
+                 ;; drift into accepting what the other refuses. The TUI runs it
+                 ;; LOCALLY and never sends the blank answer at all, so the
+                 ;; parity to prove is between the app's rejection and the
+                 ;; message the band puts under the field.
                  (press! (KeyStroke. KeyType/Enter))
-                 (is (= (:errors app-outcome) (get-in @state/app-db [:human-input :errors])))
+                 (let [form (:human-input @state/app-db)]
+                   (is (true? (:is-submit-attempted form)))
+                   (is (= (:errors app-outcome) (tui-hi/visible-errors form))))
                  (is (tui-open? rid))))
              (testing "an accepted answer still ends the pause everywhere"
                (press! (stroke \k) (KeyStroke. KeyType/Enter))
@@ -389,3 +395,65 @@
                (is (await-true #(nil? (:human-input @state/app-db))))
                (is (empty? (gw/pending sid))))
              (finally (engine/cancel-all! "cleanup") (future-cancel answer)))))))
+
+;; A one-time code and a field's rules are ENGINE data. The app answers over
+;; HTTP and the terminal answers with keystrokes, so the only way neither can
+;; drift is that both are judged by the same sentence, from the same request.
+(deftest an-otp-and-its-rules-hold-on-both-surfaces-test
+  (with-surfaces!
+    (fn [seen]
+      (let
+        [sid
+         (str (random-uuid))
+
+         rid
+         (str "req-" (random-uuid))
+
+         answer
+         (ask! sid
+               rid
+               [{:id "code" :type "otp" :label "One-time code" :is-required true :max-length 4}
+                {:id "notify"
+                 :type "plaintext"
+                 :label "Notify"
+                 :default "ops@example.com"
+                 :validate :email}])]
+
+        (try (is (await-true #(tui-open? rid)))
+             (is (await-true #(seq (events-of seen "human_input.request" rid))))
+             (testing "the rules reach the app as DATA, so it can refuse before it sends"
+               (let
+                 [fields
+                  (get-in (second (first (events-of seen "human_input.request" rid)))
+                          ["request" "fields"])
+
+                  by-id
+                  (into {} (map (juxt #(get % "id") identity)) fields)]
+
+                 (is (= "otp" (get-in by-id ["code" "type"])))
+                 ;; One `max_length` and no `min_length` means a FIXED length:
+                 ;; four boxes, and four digits is the only answer that fits.
+                 (is (= 4 (get-in by-id ["code" "min_length"])))
+                 (is (= 4 (get-in by-id ["code" "max_length"])))
+                 (is (= [{"kind" "type" "type" "email" "message" "must be an email address"}]
+                        (get-in by-id ["notify" "validate"])))))
+             (testing "the app's bad answer is refused field by field"
+               (let [outcome (gw/submit! rid {"code" "12ab" "notify" "nope"})]
+                 (is (false? (:is-accepted outcome)))
+                 (is (= {"code" "must be digits only" "notify" "must be an email address"}
+                        (:errors outcome)))
+                 (is (some? (gw/request-of sid rid)))))
+             (testing "digits typed into the terminal fill the boxes and release the run"
+               ;; The band drops everything that is not a digit, so a fat-fingered
+               ;; letter never even reaches the engine.
+               (press! (stroke \1)
+                       (stroke \x)
+                       (stroke \2)
+                       (stroke \3)
+                       (stroke \4)
+                       (KeyStroke. KeyType/Enter))
+               (let [result (deref answer 2000 ::timeout)]
+                 (is (true? (:is-submitted result)))
+                 (is (= "1234" (get-in result [:values "code"])))
+                 (is (= "ops@example.com" (get-in result [:values "notify"])))))
+             (finally (engine/cancel! rid "cleanup")))))))

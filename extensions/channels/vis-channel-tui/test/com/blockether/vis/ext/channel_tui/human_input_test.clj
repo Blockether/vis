@@ -11,6 +11,7 @@
             [com.blockether.vis.ext.channel-tui.human-input :as hi]
             [com.blockether.vis.ext.channel-tui.screen :as screen]
             [com.blockether.vis.ext.channel-tui.state :as state]
+            [com.blockether.vis.internal.human-input :as engine]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna SGR TerminalSize TextCharacter]
            [com.googlecode.lanterna.input KeyStroke KeyType]
@@ -183,14 +184,20 @@
 (defdescribe submit-and-cancel-test
              (it "Enter asks for submit and hands back values keyed by field id"
                  (let
-                   [form
-                    (feed (hi/init-form (request)) [(ch \a)])
+                   [pristine
+                    (hi/init-form (request))
+
+                    form
+                    (feed pristine [(ch \a) {:kind :next} (ch \p)])
 
                     {:keys [action]}
                     (hi/handle-event form {:kind :enter})]
 
+                   ;; An empty REQUIRED field is caught right here — the form
+                   ;; refuses itself instead of asking the engine to say no.
+                   (expect (nil? (:action (hi/handle-event pristine {:kind :enter}))))
                    (expect (= :submit action))
-                   (expect (= {"user" "a" "pass" "" "env" "dev" "tags" [] "ok" false "note" ""}
+                   (expect (= {"user" "a" "pass" "p" "env" "dev" "tags" [] "ok" false "note" ""}
                               (hi/submit-values form)))))
              (it "Escape cancels a cancellable request and is inert otherwise"
                  (let
@@ -372,20 +379,27 @@
                                      {:is-accepted true})]
           (reset! state/app-db {:render-version 0})
           (state/dispatch [:human-input-open (hi/init-form (request))])
-          (doseq [key [(stroke \b) (stroke \o) (KeyStroke. KeyType/Enter)]]
+          (doseq
+            [key [(stroke \b) (stroke \o) (KeyStroke. KeyType/ArrowDown) (stroke \p)
+                  (KeyStroke. KeyType/Enter)]]
             (#'screen/human-input-key! @state/app-db key))
           (expect (= "req-1" (first @submitted)))
           (expect (= "bo" (get-in @submitted [1 "user"])))
+          (expect (= "p" (get-in @submitted [1 "pass"])))
           (expect (nil? (:human-input @state/app-db))))))
   (it "keeps the dialog open and shows the engine's errors on a rejected answer"
       (with-redefs
         [vis/submit-human-input! (fn [_ _]
-                                   {:is-accepted false :errors {"pass" "Password is required"}})]
+                                   {:is-accepted false :errors {"pass" "Password is expired"}})]
         (reset! state/app-db {:render-version 0})
         (state/dispatch [:human-input-open (hi/init-form (request))])
-        (#'screen/human-input-key! @state/app-db (KeyStroke. KeyType/Enter))
+        ;; Both required fields are filled, so the form's OWN rules pass and the
+        ;; answer actually reaches the engine — which is the one refusing it here.
+        (doseq
+          [key [(stroke \b) (KeyStroke. KeyType/ArrowDown) (stroke \p) (KeyStroke. KeyType/Enter)]]
+          (#'screen/human-input-key! @state/app-db key))
         (expect (= "req-1" (get-in @state/app-db [:human-input :request :id])))
-        (expect (= {"pass" "Password is required"} (get-in @state/app-db [:human-input :errors])))))
+        (expect (= {"pass" "Password is expired"} (get-in @state/app-db [:human-input :errors])))))
   (it "cancels the pending request on Escape"
       (let [cancelled (atom nil)]
         (with-redefs
@@ -995,3 +1009,133 @@
                                                  :fields [{:id "a" :type :checkbox :label "Yes"}]
                                                  :is-cancellable true})))]
         (expect (not= "" (screen-row screen 28))))))
+
+;; =============================================================================
+;; One-time codes and per-field validation
+;; =============================================================================
+
+(defn- otp-request
+  "A view built by the ENGINE itself, so these tests pin the real contract and
+   not a hand-written guess at it."
+  ([] (otp-request 6 6))
+  ([lo hi]
+   (engine/request->view
+     (engine/normalize-request
+       {"title" "Confirm the code"
+        "fields"
+        [{"name" "email" "label" "Email" "is_required" true "validate" [{"type" "email"}]}
+         {"name" "code" "type" "otp" "label" "One-time code" "min_length" lo "max_length" hi}]}))))
+
+(defn- otp-form
+  "The OTP request with the cursor already on its boxes."
+  ([] (otp-form 6 6))
+  ([lo hi] (assoc (hi/init-form (otp-request lo hi)) :focus 1)))
+
+(defn- otp-row [form] (first (filter #(= :otp (:kind %)) (hi/form-rows form 60))))
+
+(defdescribe
+  otp-field-test
+  (it "draws one box per digit and fills them left to right"
+      (expect (= "[ ] [ ] [ ] [ ] [ ] [ ]" (:text (otp-row (otp-form)))))
+      (expect (= "[1] [2] [ ] [ ] [ ] [ ]" (:text (otp-row (feed (otp-form) [(ch \1) (ch \2)]))))))
+  (it "takes digits only, so a pasted `123-456` arrives as the code"
+      ;; A paste reaches the dialog as its characters; dropping everything that
+      ;; is not a digit IS the paste handler.
+      (let [form (feed (otp-form) (map ch "123-456"))]
+        (expect (= "123456" (get-in form [:values "code"])))
+        (expect (= "[1] [2] [3] [4] [5] [6]" (:text (otp-row form))))))
+  (it "refuses a seventh digit instead of scrolling the boxes"
+      (expect (= "123456" (get-in (feed (otp-form) (map ch "1234567")) [:values "code"]))))
+  (it "parks the cursor in the box the next digit lands in"
+      (expect (= 0 (:cursor (otp-row (otp-form)))))
+      (expect (= 2 (:cursor (otp-row (feed (otp-form) [(ch \1) (ch \2)])))))
+      (expect (= 1 (:cursor (otp-row (feed (otp-form) [(ch \1) (ch \2) {:kind :backspace}])))))
+      ;; Full boxes keep the caret ON the last one — there is no seventh box to
+      ;; point at.
+      (expect (= 5 (:cursor (otp-row (feed (otp-form) (map ch "123456")))))))
+  (it "erases and walks like the text field it is"
+      (let [form (feed (otp-form) (map ch "1234"))]
+        (expect (= "123" (get-in (feed form [{:kind :backspace}]) [:values "code"])))
+        (expect (= "134"
+                   (get-in (feed form [{:kind :left} {:kind :left} {:kind :backspace}])
+                           [:values "code"])))))
+  (it "says so when it accepts a RANGE of lengths"
+      ;; Eight empty boxes cannot show that four of them are already enough.
+      (expect (= "[ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ]  (4–8 digits)" (:text (otp-row (otp-form 4 8)))))
+      (expect (= "[1] [2] [3] [4] [ ] [ ] [ ] [ ]  (4–8 digits)"
+                 (:text (otp-row (feed (otp-form 4 8) (map ch "1234")))))))
+  (it "offers the digits in the hint bar"
+      (expect (some #{["0–9" "fill"]} (hi/hint (otp-form))))
+      (expect (nil? (some #{["0–9" "fill"]} (hi/hint (hi/init-form (otp-request))))))))
+
+(defdescribe
+  field-validation-test
+  (it "a PRISTINE field never nags"
+      ;; The engine already has a complaint about the empty required email; a
+      ;; form that turns red before it has been filled in is the thing every
+      ;; form library exists to prevent.
+      (let [form (hi/init-form (otp-request))]
+        (expect (= {"email" "is required"} (hi/live-errors form)))
+        (expect (= {} (hi/visible-errors form)))
+        (expect (nil? (some #{:error} (map :kind (hi/form-rows form 60)))))))
+  (it "a field complains once it has been left"
+      (let [form (feed (hi/init-form (otp-request)) [(ch \n) (ch \o) {:kind :next}])]
+        (expect (contains? (:touched form) "email"))
+        (expect (= {"email" "must be an email address"} (hi/visible-errors form)))
+        (expect (some #{"must be an email address"} (map :text (hi/form-rows form 60))))))
+  (it "a refused submit reddens the whole form and lands on the first complaint"
+      (let
+        [{:keys [form action]} (hi/handle-event (feed (otp-form) (map ch "123")) {:kind :submit})]
+        (expect (nil? action))
+        (expect (true? (:is-submit-attempted form)))
+        ;; The cursor jumps back to the email, the earliest thing that is wrong.
+        (expect (= 0 (:focus form)))
+        (expect (= {"email" "is required" "code" "must be 6 digits"} (hi/visible-errors form)))))
+  (it "an answer that satisfies every rule submits"
+      (let
+        [form (feed (hi/init-form (otp-request))
+                    (concat (map ch "ops@example.com") [{:kind :next}] (map ch "123456")))]
+        (expect (= {} (hi/visible-errors form)))
+        (expect (= :submit (:action (hi/handle-event form {:kind :submit}))))))
+  (it "runs the rule the field declares, not a hard-coded list"
+      (let
+        [request
+         (engine/request->view (engine/normalize-request
+                                 {"title" "Ship"
+                                  "fields" [{"name" "tag"
+                                             "label" "Tag"
+                                             "validate" [{"pattern" "^v[0-9]+$"
+                                                          "message" "tags look like v12"}]}]}))
+
+         typed
+         #(feed (assoc (hi/init-form request) :is-submit-attempted true) (map ch %))]
+
+        (expect (= {"tag" "tags look like v12"} (hi/visible-errors (typed "nope"))))
+        (expect (= {} (hi/visible-errors (typed "v12"))))))
+  (it "a confirmation field is checked against the field it confirms"
+      (let
+        [request
+         (engine/request->view (engine/normalize-request
+                                 {"title" "Set a password"
+                                  "fields" [{"name" "pw" "type" "password" "label" "Password"}
+                                            {"name" "again"
+                                             "type" "password"
+                                             "label" "Repeat it"
+                                             "validate" [{"matches" "pw"}]}]}))
+
+         form
+         (feed (assoc (hi/init-form request) :is-submit-attempted true)
+               (concat (map ch "hunter2") [{:kind :next}] (map ch "hunter")))]
+
+        (expect (= {"again" "must match Password"} (hi/visible-errors form)))
+        (expect (= {} (hi/visible-errors (feed form [(ch \2)]))))))
+  (it "editing a field drops the engine's own message for it"
+      (let
+        [form (-> (hi/init-form (otp-request))
+                  (hi/set-errors {"email" "that address bounced"}))]
+        (expect (= "that address bounced" (get (hi/visible-errors form) "email")))
+        ;; The stale verdict is gone the moment the value changes; what is left
+        ;; is the live rule's own opinion of what has been typed so far.
+        (expect (= "must be an email address"
+                   (get (hi/visible-errors (feed form [(ch \a)])) "email")))
+        (expect (= {} (hi/visible-errors (feed form (map ch "a@b.co"))))))))

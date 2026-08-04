@@ -7,11 +7,21 @@ import {
   humanInputRange,
   humanInputRequestFromWire,
   humanInputRequestsFromWire,
+  humanInputErrors,
+  humanInputFieldError,
+  humanInputFormBlur,
+  humanInputFormChange,
+  humanInputFormErrors,
+  humanInputFormStart,
+  humanInputFormSubmit,
+  humanInputOtp,
+  humanInputOtpDigits,
   initialHumanInputValues,
   isHumanInputAnswerable,
   isHumanInputBlank,
   isHumanInputEvent,
   toggleHumanInputOption,
+  type HumanInputField,
   type HumanInputRequest,
 } from './human-input';
 
@@ -58,6 +68,8 @@ describe('humanInputRequestFromWire', () => {
       'ok:checkbox',
       'tags:multiselect',
       'risk:range',
+      'code:otp',
+      'notify:plaintext',
     ]);
     // name keys the answer, label is what the dialog shows, description is the
     // italic line under it.
@@ -129,6 +141,8 @@ describe('initialHumanInputValues', () => {
       key: '',
       ok: true,
       risk: 2.5,
+      code: '',
+      notify: '',
       tags: [],
     });
   });
@@ -168,7 +182,8 @@ describe('required fields', () => {
     const request = parsed();
     const values = initialHumanInputValues(request);
     expect(isHumanInputAnswerable(request, values)).toBe(false);
-    expect(isHumanInputAnswerable(request, { ...values, key: 'secret' })).toBe(true);
+    expect(isHumanInputAnswerable(request, { ...values, key: 'secret' })).toBe(false);
+    expect(isHumanInputAnswerable(request, { ...values, key: 'secret', code: '1234' })).toBe(true);
   });
 
   it('treats blank space and an empty choice as unanswered', () => {
@@ -268,5 +283,182 @@ describe('range fields', () => {
     // the far left of the track forever.
     expect(isHumanInputBlank(risk, 0)).toBe(false);
     expect(isHumanInputBlank(risk, undefined)).toBe(true);
+  });
+});
+
+const only = (extra: Record<string, unknown>): { request: HumanInputRequest; field: HumanInputField } => {
+  const request = humanInputRequestFromWire({
+    id: 'r',
+    title: 'T',
+    fields: [{ id: 'f', ...extra }],
+  }) as HumanInputRequest;
+  return { request, field: request.fields[0] as HumanInputField };
+};
+
+describe('otp fields', () => {
+  it('is six boxes unless the engine asked for another size', () => {
+    expect(humanInputOtp(only({ type: 'otp' }).field)).toEqual({ min: 6, max: 6 });
+    expect(humanInputOtp(only({ type: 'otp', min_length: 4, max_length: 8 }).field)).toEqual({
+      min: 4,
+      max: 8,
+    });
+  });
+
+  it('keeps the digits out of whatever was pasted', () => {
+    const { field } = only({ type: 'otp' });
+    // A provider prints a code as `123 456`, a human copies the whole SMS line,
+    // and both have to land six digits in six boxes rather than nothing at all.
+    expect(humanInputOtpDigits(field, '123 456')).toBe('123456');
+    expect(humanInputOtpDigits(field, 'code: 12-34-56')).toBe('123456');
+    expect(humanInputOtpDigits(field, '1234567890')).toBe('123456');
+    expect(humanInputOtpDigits(field, 'nope')).toBe('');
+  });
+
+  it('is unfinished until every box is full, in the engine’s words', () => {
+    const { request, field } = only({ type: 'otp', is_required: true });
+    expect(humanInputFieldError(field, '', {})).toBe('is required');
+    expect(humanInputFieldError(field, '1234', {})).toBe('must be 6 digits');
+    expect(humanInputFieldError(field, '12x456', {})).toBe('must be digits only');
+    expect(humanInputFieldError(field, '123456', {})).toBeUndefined();
+    expect(isHumanInputAnswerable(request, { f: '123456' })).toBe(true);
+  });
+
+  it('says at least / at most when the engine allows a span', () => {
+    const { field } = only({ type: 'otp', min_length: 4, max_length: 8 });
+    expect(humanInputFieldError(field, '123', {})).toBe('must be at least 4 digits');
+    expect(humanInputFieldError(field, '123456789', {})).toBe('must be at most 8 digits');
+    expect(humanInputFieldError(field, '12345', {})).toBeUndefined();
+  });
+});
+
+describe('validation rules', () => {
+  it('checks the named shapes the engine checks, and prints ITS message', () => {
+    const { field } = only({
+      type: 'plaintext',
+      validate: [{ kind: 'type', type: 'email', message: 'must be an email address' }],
+    });
+    expect(humanInputFieldError(field, 'nope', {})).toBe('must be an email address');
+    expect(humanInputFieldError(field, 'ops@example.com', {})).toBeUndefined();
+    // A rule NEVER fires on a blank optional field — that is `is_required`'s job.
+    expect(humanInputFieldError(field, '', {})).toBeUndefined();
+  });
+
+  it('runs a pattern, a length and a bound', () => {
+    const pattern = only({
+      type: 'plaintext',
+      validate: [{ kind: 'pattern', pattern: '^OPS-\\d+$', message: 'must look like OPS-1234' }],
+    }).field;
+    expect(humanInputFieldError(pattern, 'nope', {})).toBe('must look like OPS-1234');
+    expect(humanInputFieldError(pattern, 'OPS-7', {})).toBeUndefined();
+
+    const length = only({
+      type: 'plaintext',
+      validate: [{ kind: 'length', min: 3, message: 'must be at least 3 characters' }],
+    }).field;
+    expect(humanInputFieldError(length, 'ab', {})).toBe('must be at least 3 characters');
+    expect(humanInputFieldError(length, 'abc', {})).toBeUndefined();
+
+    const bounds = only({
+      type: 'plaintext',
+      validate: [{ kind: 'bounds', max: 9, message: 'must be at most 9' }],
+    }).field;
+    expect(humanInputFieldError(bounds, '12', {})).toBe('must be at most 9');
+    expect(humanInputFieldError(bounds, 'seven', {})).toBe('must be a number');
+    expect(humanInputFieldError(bounds, '9', {})).toBeUndefined();
+  });
+
+  it('compares one field with another', () => {
+    const { field } = only({
+      type: 'password',
+      validate: [{ kind: 'matches', field: 'pass', message: 'must match Password' }],
+    });
+    expect(humanInputFieldError(field, 'b', { pass: 'a' })).toBe('must match Password');
+    expect(humanInputFieldError(field, 'a', { pass: 'a' })).toBeUndefined();
+  });
+
+  it('lets a rule the app has never heard of through to the engine', () => {
+    // A newer daemon talking to an older app must not have its answer refused
+    // here for a shape this build cannot even evaluate.
+    const { field } = only({
+      type: 'plaintext',
+      validate: [{ kind: 'type', type: 'iban', message: 'must be an IBAN' }],
+    });
+    expect(humanInputFieldError(field, 'whatever', {})).toBeUndefined();
+  });
+
+  it('reads the rules the engine put on the wire', () => {
+    const notify = parsed().fields.find((row) => row.id === 'notify') as HumanInputField;
+    expect(notify.validate).toEqual([
+      { kind: 'type', type: 'email', message: 'must be an email address' },
+      { kind: 'length', max: 60, message: 'keep it short' },
+    ]);
+    expect(humanInputErrors(parsed(), { notify: 'nope' })).toMatchObject({
+      notify: 'must be an email address',
+    });
+  });
+});
+
+describe('the form state machine', () => {
+  const request = () =>
+    humanInputRequestFromWire({
+      id: 'r',
+      title: 'T',
+      fields: [
+        { id: 'who', type: 'plaintext', is_required: true },
+        { id: 'code', type: 'otp' },
+      ],
+    }) as HumanInputRequest;
+
+  it('starts pristine and silent, however wrong it already is', () => {
+    const form = humanInputFormStart(request());
+    expect(form).toEqual({ values: { who: '', code: '' }, touched: [], isSubmitAttempted: false });
+    // Shouting "is required" at a form nobody has touched is the oldest form
+    // bug there is.
+    expect(humanInputFormErrors(form, request())).toEqual({});
+  });
+
+  it('speaks up about a field the operator has been in', () => {
+    const start = humanInputFormStart(request());
+    expect(humanInputFormErrors(humanInputFormBlur(start, 'who'), request())).toEqual({
+      who: 'is required',
+    });
+    const typed = humanInputFormChange(start, 'code', '12');
+    expect(typed.touched).toEqual(['code']);
+    expect(humanInputFormErrors(typed, request())).toEqual({ code: 'must be 6 digits' });
+    // …and stays quiet about the one it has not.
+    expect(humanInputFormErrors(typed, request())['who']).toBeUndefined();
+  });
+
+  it('reveals everything at once when submit is pressed, and sends nothing', () => {
+    const attempt = humanInputFormSubmit(humanInputFormStart(request()), request());
+    expect(attempt.isReady).toBe(false);
+    expect(attempt.errors).toEqual({ who: 'is required' });
+    expect(attempt.form.isSubmitAttempted).toBe(true);
+    expect(humanInputFormErrors(attempt.form, request())).toEqual({ who: 'is required' });
+  });
+
+  it('lets a complete answer through untouched', () => {
+    const answered = humanInputFormChange(humanInputFormStart(request()), 'who', 'ops');
+    const attempt = humanInputFormSubmit(answered, request());
+    expect(attempt.isReady).toBe(true);
+    expect(attempt.form).toBe(answered);
+    expect(attempt.form.values).toEqual({ who: 'ops', code: '' });
+  });
+
+  it('shows the engine’s own refusal whether or not the field was touched', () => {
+    const form = humanInputFormStart(request());
+    expect(humanInputFormErrors(form, request(), { who: 'The daemon says no.' })).toEqual({
+      who: 'The daemon says no.',
+    });
+  });
+
+  it('touches a field once, however many times it is edited', () => {
+    const twice = humanInputFormChange(
+      humanInputFormChange(humanInputFormStart(request()), 'who', 'o'),
+      'who',
+      'op',
+    );
+    expect(twice.touched).toEqual(['who']);
+    expect(humanInputFormBlur(twice, 'who').touched).toEqual(['who']);
   });
 });

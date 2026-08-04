@@ -319,9 +319,9 @@ that label. `id` and `help` are the legacy spellings of `name` and `description`
 and still work.
 
 Field `type` is one of `plaintext`, `password`, `multiline`, `select`,
-`multiselect`, `checkbox`, `range`. A field may also carry `placeholder`,
-`default`, `is_required`, `max_length`, and — for the two `select` types —
-`options` (strings, or `{"value": ..., "label": ...}` maps).
+`multiselect`, `checkbox`, `range`, `otp`. A field may also carry `placeholder`,
+`default`, `is_required`, `min_length`, `max_length`, `validate`, and — for the
+two `select` types — `options` (strings, or `{"value": ..., "label": ...}` maps).
 
 A `range` is a bounded number: `min` (default 0), `max` (default 100) and `step`
 (default 1). It answers with a number, not a string — a `long` when all three
@@ -329,6 +329,46 @@ bounds are whole, otherwise a `double` — and the engine clamps nothing: a valu
 outside `[min, max]` is refused like any other bad answer. The TUI draws it as a
 slider you nudge with `←`/`→` (`Home`/`End` for the bounds); the app draws a real
 slider.
+
+An `otp` is a one-time code, entered as one box per digit. `min_length` and
+`max_length` say how many (default 6, at most 12; give only `max_length` for a
+fixed length). Only digits get in — typing a letter does nothing, and pasting
+`123 456` fills the boxes instead of dropping six characters into one. The answer
+is the digit string.
+
+### Validating a field
+
+`validate` is a rule or a list of rules run against the answer *after* it has
+been coerced, and every rule is data — the surfaces run the same rules while you
+type, so the dialog says what is wrong before it is sent:
+
+```python
+vis.ask("Sign up", [
+    {"name": "email", "label": "Email", "validate": "email"},
+    {"name": "slug", "label": "Project", "validate": [
+        {"pattern": "^[a-z][a-z0-9-]*$", "message": "lowercase, digits and dashes"},
+        {"max_length": 32},
+    ]},
+    {"name": "pass", "label": "Password", "type": "password",
+     "validate": {"min_length": 12}},
+    {"name": "again", "label": "Repeat it", "type": "password",
+     "validate": {"matches": "pass"}},
+])
+```
+
+A rule is a **type name** (`email`, `url`, `uuid`, `digits`, `alpha`,
+`alphanumeric`, `slug`, `integer`, `number`) or a map holding exactly one of
+`type`, `pattern` (a regex, unanchored — write `^…$` yourself), `min_length`,
+`max_length`, `min`, `max` (numeric bounds), or `matches` (the `name` of another
+field that must hold the same text). Add `message` to any of them to replace the
+default wording; the first failing rule wins. A rule never fires on a blank
+answer — emptiness is `is_required`'s job, not a rule's.
+
+Clojure callers can also pass a **function** of the value: `nil`/`true` accepts,
+`false` refuses with `is not valid` (or your `message`), and a string IS the
+error message. Functions run in the engine only — a surface never sees them, so
+the dialog checks the data rules while you type and the function has the last
+word on submit.
 
 The DIALOG itself takes the same optional `description`: prose under the title
 that says what the whole ask is about, before the operator reads a single field.

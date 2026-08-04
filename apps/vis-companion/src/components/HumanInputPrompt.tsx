@@ -5,13 +5,19 @@ import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
   applyHumanInputEvent,
-  initialHumanInputValues,
-  isHumanInputAnswerable,
-  isHumanInputEvent,
   clampHumanInputRange,
+  humanInputFormBlur,
+  humanInputFormChange,
+  humanInputFormErrors,
+  humanInputFormStart,
+  humanInputFormSubmit,
+  humanInputOtp,
+  humanInputOtpDigits,
   humanInputRange,
+  isHumanInputEvent,
   toggleHumanInputOption,
   type HumanInputField,
+  type HumanInputForm,
   type HumanInputRequest,
   type HumanInputValues,
 } from '../lib/human-input';
@@ -43,7 +49,7 @@ export function HumanInputPrompt({
   sid: string;
 }) {
   const [pending, setPending] = useState<HumanInputRequest[]>([]);
-  const [values, setValues] = useState<HumanInputValues>({});
+  const [form, setForm] = useState<HumanInputForm>(() => humanInputFormStart(null));
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -84,14 +90,14 @@ export function HumanInputPrompt({
   // paints — and a keyed reset here keeps a queued second request from
   // inheriting the answer typed into the first.
   useEffect(() => {
-    setValues(request ? initialHumanInputValues(request) : {});
+    setForm(humanInputFormStart(request));
     setFieldErrors({});
     setError(null);
     setBusy(false);
   }, [request]);
 
   const setValue = useCallback((id: string, value: HumanInputValues[string]) => {
-    setValues((current) => ({ ...current, [id]: value }));
+    setForm((current) => humanInputFormChange(current, id, value));
     setFieldErrors((current) => {
       if (!(id in current)) return current;
       const next = { ...current };
@@ -100,19 +106,27 @@ export function HumanInputPrompt({
     });
   }, []);
 
+  // Leaving a field is the other half of "pristine": the answer is unchanged,
+  // but the operator has now seen it, so its error may speak.
+  const blur = useCallback((id: string) => {
+    setForm((current) => humanInputFormBlur(current, id));
+  }, []);
+
   const drop = useCallback((id: string) => {
     setPending((current) => current.filter((row) => row.id !== id));
   }, []);
 
   const submit = useCallback(() => {
-    // The engine REFUSES an answer that leaves a required field blank. Checking
-    // it here too means no path — the button, a stray Enter, a future shortcut —
-    // can send one and bounce the operator off a rejection banner.
-    if (!request || busy || !isHumanInputAnswerable(request, values)) return;
+    if (!request || busy) return;
+    // Pressing submit on an answer the engine would refuse REVEALS why instead of
+    // sending it: every error becomes visible at once and nothing leaves here.
+    const attempt = humanInputFormSubmit(form, request);
+    setForm(attempt.form);
+    if (!attempt.isReady) return;
     setBusy(true);
     setError(null);
     client
-      .submitHumanInput(sid, request.id, values)
+      .submitHumanInput(sid, request.id, attempt.form.values)
       .then((outcome) => {
         if (outcome?.is_accepted) {
           // The close event drops it too; doing it here as well keeps the
@@ -128,7 +142,7 @@ export function HumanInputPrompt({
         setError(cause instanceof Error ? cause.message : 'Could not send this answer.');
         setBusy(false);
       });
-  }, [busy, client, drop, request, sid, values]);
+  }, [busy, client, drop, form, request, sid]);
 
   const cancel = useCallback(() => {
     if (!request || busy) return;
@@ -178,7 +192,10 @@ export function HumanInputPrompt({
   return createPortal(
     <HumanInputSheet
       request={request}
-      values={values}
+      values={form.values}
+      touched={form.touched}
+      isSubmitAttempted={form.isSubmitAttempted}
+      onBlur={blur}
       fieldErrors={fieldErrors}
       error={error}
       busy={busy}
@@ -206,6 +223,9 @@ export function HumanInputSheet({
   busy = false,
   waiting = 0,
   bodyRef,
+  touched = [],
+  isSubmitAttempted = false,
+  onBlur,
   onChange,
   onSubmit,
   onCancel,
@@ -217,11 +237,17 @@ export function HumanInputSheet({
   busy?: boolean;
   waiting?: number;
   bodyRef?: React.RefObject<HTMLDivElement | null>;
+  touched?: readonly string[];
+  isSubmitAttempted?: boolean;
+  onBlur?: (id: string) => void;
   onChange: (id: string, value: HumanInputValues[string]) => void;
   onSubmit: () => void;
   onCancel: () => void;
 }) {
-  const answerable = isHumanInputAnswerable(request, values);
+  // The whole pristine/touched question, answered in one line: a field speaks
+  // once it has been touched or once submit was pressed, and the engine's own
+  // refusal is laid over the top of that.
+  const errors = humanInputFormErrors({ values, touched, isSubmitAttempted }, request, fieldErrors);
 
   // A phone answers with its thumb, so the sheet sits on the BOTTOM edge and
   // only becomes a centred card once there is a mouse-sized window.
@@ -262,7 +288,7 @@ export function HumanInputSheet({
                 )}
                 <Button
                   className="flex-1 sm:flex-none"
-                  disabled={busy || !answerable}
+                  disabled={busy}
                   onClick={onSubmit}
                 >
                   {busy ? 'Sending...' : request.submit_label}
@@ -296,7 +322,8 @@ export function HumanInputSheet({
                 key={`${request.id}:${field.id}`}
                 field={field}
                 value={values[field.id]}
-                error={fieldErrors[field.id]}
+                error={errors[field.id]}
+                {...(onBlur ? { onBlur } : {})}
                 disabled={busy}
                 onChange={onChange}
                 onSubmit={onSubmit}
@@ -345,6 +372,7 @@ function HumanInputFieldRow({
   error,
   disabled,
   onChange,
+  onBlur,
   onSubmit,
 }: {
   field: HumanInputField;
@@ -352,10 +380,12 @@ function HumanInputFieldRow({
   error?: string;
   disabled: boolean;
   onChange: (id: string, value: HumanInputValues[string]) => void;
+  onBlur?: (id: string) => void;
   onSubmit: () => void;
 }) {
   const chosen = Array.isArray(value) ? value : [];
   const options = field.options ?? [];
+  const leave = () => onBlur?.(field.id);
 
   if (field.type === 'checkbox') {
     const on = value === true;
@@ -367,6 +397,7 @@ function HumanInputFieldRow({
           aria-pressed={on}
           className="flex w-full items-center gap-2 border border-edge bg-input px-2.5 py-1 text-left font-mono text-meta text-white transition-colors hover:border-accent focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted sm:text-ui"
           onClick={() => onChange(field.id, !on)}
+          onBlur={leave}
         >
           <span aria-hidden="true">{on ? '[x]' : '[ ]'}</span>
           <span className="truncate">{field.label}</span>
@@ -399,6 +430,7 @@ function HumanInputFieldRow({
                       : option.value,
                   )
                 }
+                onBlur={leave}
               >
                 <span aria-hidden="true">{isMulti ? (on ? '[x]' : '[ ]') : on ? '●' : '○'}</span>
                 <span className="truncate">{option.label}</span>
@@ -426,6 +458,7 @@ function HumanInputFieldRow({
             aria-label={field.label}
             className="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-edge accent-accent disabled:cursor-not-allowed"
             onChange={(event) => onChange(field.id, clampHumanInputRange(field, event.target.valueAsNumber))}
+            onBlur={leave}
           />
           <span className="shrink-0 font-mono text-meta tabular-nums text-white sm:text-ui">{current}</span>
         </div>
@@ -438,6 +471,21 @@ function HumanInputFieldRow({
 
   const text = typeof value === 'string' ? value : '';
 
+  if (field.type === 'otp') {
+    return (
+      <FieldShell field={field} {...(error ? { error } : {})}>
+        <OtpBoxes
+          field={field}
+          value={text}
+          disabled={disabled}
+          onChange={onChange}
+          onSubmit={onSubmit}
+          {...(onBlur ? { onBlur } : {})}
+        />
+      </FieldShell>
+    );
+  }
+
   if (field.type === 'multiline') {
     return (
       <FieldShell field={field} {...(error ? { error } : {})}>
@@ -449,6 +497,7 @@ function HumanInputFieldRow({
           {...(field.placeholder ? { placeholder: field.placeholder } : {})}
           className="w-full resize-y border border-edge bg-input px-2.5 py-1 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted sm:text-ui"
           onChange={(event) => onChange(field.id, event.target.value)}
+          onBlur={leave}
         />
       </FieldShell>
     );
@@ -463,6 +512,7 @@ function HumanInputFieldRow({
         {...(field.max_length ? { maxLength: field.max_length } : {})}
         {...(field.placeholder ? { placeholder: field.placeholder } : {})}
         onChange={(event) => onChange(field.id, event.target.value)}
+        onBlur={leave}
         // A one-line field has nothing to do with a bare Enter, so it answers
         // the question — the reflex every login form in the world has taught.
         onKeyDown={(event) => {
@@ -472,5 +522,112 @@ function HumanInputFieldRow({
         }}
       />
     </FieldShell>
+  );
+}
+
+/**
+ * A one-time code is entered as BOXES, one digit each — the shape every bank and
+ * every 2FA screen has taught, and the same `[1] [2] [3] [ ] [ ] [ ]` the TUI
+ * band paints. Only digits get in, wherever they come from: typing, an SMS
+ * autofill, or a paste of the whole `123 456` line, which fills the boxes from
+ * the caret onward instead of dropping six characters into one box.
+ */
+function OtpBoxes({
+  field,
+  value,
+  disabled,
+  onChange,
+  onBlur,
+  onSubmit,
+}: {
+  field: HumanInputField;
+  value: string;
+  disabled: boolean;
+  onChange: (id: string, value: HumanInputValues[string]) => void;
+  onBlur?: (id: string) => void;
+  onSubmit: () => void;
+}) {
+  const { min, max } = humanInputOtp(field);
+  const digits = humanInputOtpDigits(field, value);
+  const boxes = useRef<Array<HTMLInputElement | null>>([]);
+
+  const focusAt = (index: number) => {
+    const box = boxes.current[Math.max(0, Math.min(max - 1, index))];
+    box?.focus();
+    box?.select();
+  };
+
+  const fill = (index: number, raw: string) => {
+    const typed = humanInputOtpDigits(field, raw);
+    if (!typed) return;
+    const next = humanInputOtpDigits(
+      field,
+      digits.slice(0, index) + typed + digits.slice(index + typed.length),
+    );
+    onChange(field.id, next);
+    focusAt(index + typed.length);
+  };
+
+  const keyDown = (index: number, event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      onSubmit();
+      return;
+    }
+    if (event.key === 'Backspace') {
+      // An empty box deletes the one BEFORE it — otherwise a correction takes
+      // two presses and the caret never walks back.
+      event.preventDefault();
+      const at = digits[index] === undefined ? index - 1 : index;
+      if (at < 0) return;
+      onChange(field.id, digits.slice(0, at) + digits.slice(at + 1));
+      focusAt(at);
+      return;
+    }
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      focusAt(index - 1);
+    }
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      focusAt(index + 1);
+    }
+  };
+
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label={field.label}>
+        {Array.from({ length: max }, (_unused, index) => (
+          <input
+            key={index}
+            ref={(box) => {
+              boxes.current[index] = box;
+            }}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={1}
+            disabled={disabled}
+            // Only the FIRST box asks for the code, or a platform autofill offers
+            // the same six digits six times over.
+            autoComplete={index === 0 ? 'one-time-code' : 'off'}
+            aria-label={`${field.label} digit ${index + 1}`}
+            value={digits[index] ?? ''}
+            className="h-11 w-9 min-w-0 flex-1 border border-edge bg-input text-center font-mono text-body tabular-nums text-white focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted sm:flex-none"
+            onChange={(event) => fill(index, event.target.value)}
+            onPaste={(event) => {
+              event.preventDefault();
+              fill(index, event.clipboardData.getData('text'));
+            }}
+            onKeyDown={(event) => keyDown(index, event)}
+            onFocus={(event) => event.target.select()}
+            onBlur={() => onBlur?.(field.id)}
+          />
+        ))}
+      </div>
+      <p className="font-mono text-chip text-dialog-hint">
+        {min === max ? `${max} digits` : `${min}–${max} digits`}
+      </p>
+    </div>
   );
 }

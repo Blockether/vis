@@ -21,12 +21,16 @@
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
-            [com.blockether.vis.ext.channel-tui.transient :as tr])
+            [com.blockether.vis.ext.channel-tui.transient :as tr]
+            [com.blockether.vis.internal.human-input :as engine])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
 (set! *warn-on-reflection* true)
 
-(def ^:private text-types "Field types edited as free text." #{:plaintext :password :multiline})
+(def ^:private text-types
+  "Field types edited as free text — `:otp` among them: it is typed, erased and
+   walked exactly like a text field, it only LOOKS like a row of boxes."
+  #{:plaintext :password :multiline :otp})
 
 (def ^:private choice-types
   "Field types whose stops are individual options."
@@ -89,6 +93,38 @@
          "–"
          hi
          ")")))
+
+(def ^:private otp-defaults
+  "Digits an `:otp` field falls back to — the engine's own default, so a view
+   that somehow arrives without bounds still draws the six boxes everyone
+   expects from a one-time code."
+  {:min-length 6 :max-length 6})
+
+(defn- otp-slots
+  "`{:lo :hi}` — the fewest and the most digits this `:otp` field accepts."
+  [field]
+  (let
+    [hi
+     (max 1 (long (or (:max-length field) (:max-length otp-defaults))))
+
+     lo
+     (max 1 (min hi (long (or (:min-length field) (:min-length otp-defaults)))))]
+
+    {:lo lo :hi hi}))
+
+(def ^:private otp-cell-w "`[7] ` — one box, its digit, and the gap to the next box." 4)
+
+(defn- otp-text
+  "`[1] [2] [3] [ ] [ ] [ ]` — one box per digit the field takes, filled left to
+   right. A field that accepts a RANGE of lengths says so after the boxes: eight
+   empty boxes cannot show that six of them are already enough."
+  [{:keys [lo hi]} value]
+  (let [digits (str value)]
+    (str (str/join " "
+                   (map (fn [i]
+                          (str "[" (if (< (long i) (count digits)) (nth digits i) \space) "]"))
+                        (range hi)))
+         (when (not= (long lo) (long hi)) (str "  (" lo "–" hi " digits)")))))
 
 (def ^:private mask-char "Password fields never render their plaintext." \u2022)
 
@@ -158,6 +194,10 @@
                     (:fields request))
      :stops (stops request)
      :focus 0
+     ;; Pristine: nothing has been touched, nothing has been submitted, so
+     ;; nothing is allowed to be red yet.
+     :touched #{}
+     :is-submit-attempted false
      :errors {}}))
 
 (defn request-id "The engine request id this form answers." [form] (get-in form [:request :id]))
@@ -178,8 +218,20 @@
 
 (defn- move-focus
   [{:keys [stops] :as form} delta]
-  (let [n (count stops)]
-    (if (zero? n) form (assoc form :focus (mod (+ (long (:focus form 0)) (long delta)) n)))))
+  (let
+    [n
+     (count stops)
+
+     left
+     (:field-id (focused-stop form))]
+
+    (if (zero? n)
+      form
+      ;; Leaving a field is what BLURS it, and a blurred field has earned the
+      ;; right to complain — see [[visible-errors]].
+      (cond-> (assoc form :focus (mod (+ (long (:focus form 0)) (long delta)) n))
+        left
+        (update :touched (fnil conj #{}) left)))))
 
 (defn- clamp ^long [^long v ^long lo ^long hi] (max lo (min hi v)))
 
@@ -213,6 +265,12 @@
 
      max-length
      (:max-length field)
+
+     s
+     ;; An `:otp` field takes DIGITS, and that filter IS the paste handler:
+     ;; pasting `123-456`, or a whole SMS line, fills the boxes with the code
+     ;; that was in it instead of refusing the paste.
+     (if (= :otp (:type field)) (str/replace (str s) #"\D" "") (str s))
 
      room
      (if max-length (max 0 (- (long max-length) (count text))) (count s))
@@ -343,6 +401,48 @@
                                   :else {:kind :char :char (char c)}))
         nil))))
 
+;; =============================================================================
+;; Validation
+;; =============================================================================
+
+(defn live-errors
+  "Every complaint the ENGINE has about the values `form` holds right now, as
+   `{field-id message}`. Computed HERE — the same coercion and the same rules,
+   with no round trip — and PURE, so the painter may ask on every keystroke."
+  [form]
+  (let
+    [{:keys [is-accepted errors]} (engine/validate-values (get-in form [:request :fields])
+                                                          (:values form))]
+    (if is-accepted {} (or errors {}))))
+
+(defn visible-errors
+  "The complaints the operator is actually SHOWN — Formik's rule, for Formik's
+   reason: a PRISTINE field never nags. A field speaks up once it has been left
+   (touched, i.e. blurred) or once a submit has been attempted; a message the
+   engine itself sent back always shows."
+  [form]
+  (let
+    [shown? (fn [field-id]
+              (or (boolean (:is-submit-attempted form)) (contains? (:touched form) field-id)))]
+    (merge (into {} (filter (comp shown? key)) (live-errors form)) (:errors form))))
+
+(defn- refuse-submit
+  "A refused submission: every field may now complain, and the cursor lands on
+   the first one that does."
+  [form errors]
+  (let
+    [bad
+     (set (keys errors))
+
+     idx
+     (first (keep-indexed (fn [i {:keys [field-id]}]
+                            (when (contains? bad field-id) i))
+                          (:stops form)))]
+
+    (cond-> (assoc form :is-submit-attempted true)
+      idx
+      (assoc :focus idx))))
+
 (defn- multiline-focus?
   [form]
   (let [stop (focused-stop form)]
@@ -383,18 +483,26 @@
                    range-stop? (nudge-range form field-id delta)
                    :else form)))
 
+     submit
+     ;; The form refuses ITSELF before the engine is asked: every rule the view
+     ;; carries runs against the values as they stand, and a failure only turns
+     ;; the form red and parks the cursor on the first complaint.
+     (fn []
+       (let [errors (live-errors form)]
+         (if (seq errors) (stay (refuse-submit form errors)) {:form form :action :submit})))
+
      press
      (fn []
-       (if (and (= :cancel button) (not (get-in form [:request :is-cancellable] true)))
-         (stay form)
-         {:form form :action (or button :submit)}))]
+       (if (= :cancel button)
+         (if (get-in form [:request :is-cancellable] true) {:form form :action :cancel} (stay form))
+         (submit)))]
 
     (case kind
       :cancel
       (if (get-in form [:request :is-cancellable] true) {:form form :action :cancel} (stay form))
 
       :submit
-      {:form form :action :submit}
+      (submit)
 
       :enter
       (cond (multiline-focus? form) (stay (insert-text form field-id "\n"))
@@ -448,21 +556,8 @@
   "Attach the engine's per-field rejection messages and move focus to the first
    offending field so the operator lands on what needs fixing."
   [form errors]
-  (let
-    [errors
-     (or errors {})
-
-     bad
-     (set (keys errors))
-
-     idx
-     (first (keep-indexed (fn [i {:keys [field-id]}]
-                            (when (contains? bad field-id) i))
-                          (:stops form)))]
-
-    (cond-> (assoc form :errors errors)
-      idx
-      (assoc :focus idx))))
+  (let [errors (or errors {})]
+    (assoc (refuse-submit form errors) :errors errors)))
 
 ;; =============================================================================
 ;; Paint plan
@@ -522,7 +617,7 @@
             (if (pos? width) (render/wrap-text text width) [text])))))
 
 (defn- field-rows
-  [form focus text-w {:keys [id type] :as field}]
+  [form errors focus text-w {:keys [id type] :as field}]
   (let
     [stop-index
      (fn [pred]
@@ -537,7 +632,19 @@
      (description-rows (:description field) text-w)
 
      rows
-     (cond (contains? text-types type)
+     (cond (= :otp type) (let
+                           [idx
+                            (stop-index #(= id (:field-id %)))
+
+                            slots
+                            (otp-slots field)]
+
+                           [{:kind :otp
+                             :field-id id
+                             :text (otp-text slots value)
+                             :cursor (min (cursor-of form id) (max 0 (dec (long (:hi slots)))))
+                             :is-focused (= idx focus)}])
+           (contains? text-types type)
            (let
              [idx
               (stop-index #(= id (:field-id %)))
@@ -612,8 +719,8 @@
       (if (= :checkbox type)
         (into (vec rows) description)
         (into (into [{:kind :label :text (label-text field)}] description) rows))
-      (get-in form [:errors id])
-      (conj {:kind :error :text (get-in form [:errors id])})
+      (get errors id)
+      (conj {:kind :error :text (get errors id)})
 
       true
       (conj {:kind :blank}))))
@@ -644,9 +751,14 @@
   ([form] (form-rows form nil))
   ([{:keys [request focus] :as form} text-w]
    (let
-     [head (when-let [rows (seq (description-rows (:description request) text-w))]
-             (conj (vec rows) {:kind :blank}))]
-     (into (vec head) (mapcat #(field-rows form (or focus 0) text-w %)) (:fields request)))))
+     [head
+      (when-let [rows (seq (description-rows (:description request) text-w))]
+        (conj (vec rows) {:kind :blank}))
+
+      errors
+      (visible-errors form)]
+
+     (into (vec head) (mapcat #(field-rows form errors (or focus 0) text-w %)) (:fields request)))))
 
 (defn focused-row
   "Index of the row carrying the focused stop, or 0."
@@ -687,6 +799,9 @@
      multi?
      (multiline-focus? form)
 
+     otp?
+     (= :otp (:type (field-by-id form (:field-id stop))))
+
      action
      (fn [label fallback]
        (str/lower-case (or (not-empty (str label)) fallback)))]
@@ -694,6 +809,9 @@
     (cond-> [["↑/↓" "move"]]
       (contains? #{:checkbox :select-option :multi-option} (:kind stop))
       (conj ["Space" "toggle"])
+
+      otp?
+      (conj ["0–9" "fill"])
 
       (= :range (:kind stop))
       (conj ["←/→" "adjust"])
@@ -823,6 +941,19 @@
 
     :range
     (do (dialogs/draw-selectable-row! g left row inner-w (:is-focused entry) (:text entry)) nil)
+
+    ;; The boxes are a selectable row like any other; what is special is that the
+    ;; TERMINAL cursor is parked inside the active box, so the operator sees
+    ;; where the next digit lands instead of guessing.
+    :otp
+    (do (dialogs/draw-selectable-row! g left row inner-w (:is-focused entry) (:text entry))
+        (when (:is-focused entry)
+          (p/cursor-pos (min (+ (long left) (long inner-w))
+                             (+ (long left)
+                                2
+                                (long p/SELECTION_WIDTH)
+                                (* (long otp-cell-w) (long (:cursor entry 0)))))
+                        row)))
 
     :action
     (do (paint-actions! g left row inner-w (:buttons entry)) nil)

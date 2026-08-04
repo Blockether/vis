@@ -12,6 +12,9 @@
  *   uncancellable  there is no way out; nothing may pretend otherwise
  *   rejected    the engine refused the answer and has to say where
  *   minimal     a one-line question must not look like an empty dialog
+ *   slider      a bounded number is answered by dragging, not by typing
+ *   otp         a half-typed code and an address that is not one: the only
+ *               state where the form is ARGUING with the operator
  *
  * The backdrop is a parked transcript, because a modal photographed on white
  * paper never shows whether it reads as an interruption.
@@ -179,6 +182,36 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
     cancel_label: 'Hold',
     is_cancellable: true,
   },
+  otp: {
+    id: 'req-otp',
+    title: 'Confirm the release with your one-time code',
+    description: 'The signing key is behind two factors; the code rotates every 30 seconds.',
+    source: 'release.sh',
+    fields: [
+      field('code', 'otp', 'One-time code', {
+        is_required: true,
+        description: 'From the authenticator on your phone',
+        min_length: 6,
+        max_length: 6,
+      }),
+      field('notify', 'plaintext', 'Notify on failure', {
+        placeholder: 'you@example.com',
+        validate: [{ kind: 'type', type: 'email', message: 'must be an email address' }],
+      }),
+    ],
+    submit_label: 'Sign',
+    cancel_label: 'Cancel',
+    is_cancellable: true,
+  },
+};
+
+/**
+ * A photograph of an empty form proves nothing about validation, so the `otp`
+ * state is shot mid-answer: three of six digits, and an address that is not
+ * one. Both fields are touched, which is the only way the errors are visible.
+ */
+const HUMAN_INPUT_SEEDS: Record<string, Record<string, string>> = {
+  otp: { code: '408', notify: 'ops@' },
 };
 
 /** The parked run behind the sheet: the last thing the agent said before it stopped. */
@@ -206,13 +239,15 @@ export const HUMAN_INPUT_STATES = Object.keys(HUMAN_INPUT_REQUESTS);
 
 /**
  * Every state is the same component under a different request, so a change to
- * the shipped sheet shows up in all five photographs at once.
+ * the shipped sheet shows up in every photograph at once.
  */
 
 export function HumanInputSheetVariant({ state }: { state: string }) {
   const request = HUMAN_INPUT_REQUESTS[state];
   const [values, setValues] = useState(() =>
-    request ? initialHumanInputValues(request) : {},
+    request
+      ? { ...initialHumanInputValues(request), ...(HUMAN_INPUT_SEEDS[state] ?? {}) }
+      : {},
   );
   if (!request) throw new Error(`no human-input request for state "${state}"`);
   const noop = () => {};
@@ -236,6 +271,9 @@ export function HumanInputSheetVariant({ state }: { state: string }) {
               }
             : {})}
           {...(state === 'long' ? { waiting: 2 } : {})}
+          {...(state === 'otp'
+            ? { touched: ['code', 'notify'], isSubmitAttempted: true }
+            : {})}
           onChange={(id, value) => setValues((prev) => ({ ...prev, [id]: value }))}
           onSubmit={noop}
           onCancel={noop}

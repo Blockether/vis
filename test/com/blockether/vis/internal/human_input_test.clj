@@ -728,3 +728,226 @@
       (expect (= {"pct" "must be between 0 and 10"} (:errors (hi/coerce-values fields {"pct" 11}))))
       (expect (= {"pct" "must be between 0 and 10"} (:errors (hi/coerce-values fields {"pct" -1}))))
       (expect (= {"pct" "must be a number"} (:errors (hi/coerce-values fields {"pct" "loud"})))))))
+
+(defn- otp-field
+  "A normalized `:otp` field from the spec keys a caller would actually write."
+  [& {:as spec}]
+  (hi/normalize-field (merge {"name" "code" "type" "otp"} spec)))
+
+(defdescribe
+  otp-field-test
+  (it "is six digits when the spec says nothing"
+      (let [field (otp-field)]
+        (expect (= 6 (:min-length field)))
+        (expect (= 6 (:max-length field)))
+        (expect (= [:ok "123456"] (hi/coerce-value field "123456")))))
+  (it "reads the code however the provider printed it"
+      (let [field (otp-field)]
+        (expect (= [:ok "123456"] (hi/coerce-value field "123 456")))
+        (expect (= [:ok "123456"] (hi/coerce-value field "123-456")))
+        (expect (= [:ok "123456"] (hi/coerce-value field " 12 34 56 ")))))
+  (it "takes digits and nothing else"
+      (expect (= [:error "must be digits only"] (hi/coerce-value (otp-field) "12a456")))
+      (expect (= [:error "must be digits only"] (hi/coerce-value (otp-field) "12.456")))
+      (expect (= [:error "must be a one-time code"] (hi/coerce-value (otp-field) ["1" "2"]))))
+  (it "names the exact length when there is only one"
+      (let [field (otp-field "max_length" 4)]
+        (expect (= [:error "must be 4 digits"] (hi/coerce-value field "123")))
+        (expect (= [:error "must be 4 digits"] (hi/coerce-value field "12345")))
+        (expect (= [:ok "1234"] (hi/coerce-value field "1234")))))
+  (it "accepts any length between :min_length and :max_length"
+      (let [field (otp-field "min_length" 4 "max_length" 8)]
+        (expect (= 4 (:min-length field)))
+        (expect (= 8 (:max-length field)))
+        (expect (= [:error "must be at least 4 digits"] (hi/coerce-value field "123")))
+        (expect (= [:error "must be at most 8 digits"] (hi/coerce-value field "123456789")))
+        (expect (= [:ok "12345"] (hi/coerce-value field "12345")))))
+  (it "leaves an untouched optional code unanswered, and refuses a blank required one"
+      (expect (= [:ok nil] (hi/coerce-value (otp-field) nil)))
+      (expect (nil? (:default (otp-field))))
+      (expect (= [:error "is required"] (hi/coerce-value (otp-field "is_required" true) "  "))))
+  (it "refuses a spec whose boxes could never be filled"
+      (expect (throws? clojure.lang.ExceptionInfo #(otp-field "max_length" 0)))
+      (expect (throws? clojure.lang.ExceptionInfo #(otp-field "max_length" 99)))
+      (expect (throws? clojure.lang.ExceptionInfo #(otp-field "min_length" 8 "max_length" 4)))
+      (expect (throws? clojure.lang.ExceptionInfo #(otp-field "max_length" "six"))))
+  (it "validates its own :default like any other answer"
+      (expect (= "123456" (:default (otp-field "default" "123 456"))))
+      (expect (throws? clojure.lang.ExceptionInfo #(otp-field "default" "12")))))
+
+(defn- sign-in-request
+  "Two passwords and an email — the form every validation feature is for."
+  [& {:as overrides}]
+  (hi/normalize-request
+    (merge {"title" "Sign in"
+            "fields"
+            [{"name" "email" "is_required" true "validate" "email"}
+             {"name" "pw"
+              "type" "password"
+              "label" "Password"
+              "is_required" true
+              "validate" [{"min_length" 8 "message" "at least 8 characters"}
+                          {"pattern" "[0-9]" "message" "needs a digit"}]}
+             {"name" "pw2" "type" "password" "is_required" true "validate" {"matches" "pw"}}]}
+           overrides)))
+
+(defn- errors
+  "The `field id -> message` map a submission of `values` would be refused with."
+  [request values]
+  (or (:errors (hi/validate-values (:fields request) values)) {}))
+
+(def ^:private good-sign-in {"email" "ada@example.com" "pw" "hunter42" "pw2" "hunter42"})
+
+(defdescribe
+  validation-test
+  (it "accepts the form it was written for"
+      (let [answer (hi/validate-values (:fields (sign-in-request)) good-sign-in)]
+        (expect (:is-accepted answer))
+        (expect (= "ada@example.com" (get-in answer [:values "email"])))))
+  (it "reports every bad field at once, one message each"
+      (expect (= {"email" "must be an email address"
+                  "pw" "at least 8 characters"
+                  "pw2" "must match Password"}
+                 (errors (sign-in-request) {"email" "ada" "pw" "short1" "pw2" "other"}))))
+  (it "gives the first rule that has something to say"
+      (expect (= {"pw" "needs a digit"}
+                 (errors (sign-in-request)
+                         (assoc good-sign-in
+                           "pw" "hunterrr"
+                           "pw2" "hunterrr")))))
+  (it "names the field a :matches rule points at by its LABEL"
+      (expect (= [{:kind :matches :field "pw" :message "must match Password"}]
+                 (:validate (nth (:fields (sign-in-request)) 2))))
+      (expect (= {"pw2" "no, the other one"}
+                 (errors (sign-in-request "fields"
+                                          [{"name" "pw" "type" "password"}
+                                           {"name" "pw2"
+                                            "type" "password"
+                                            "validate" {"matches" "pw"
+                                                        "message" "no, the other one"}}])
+                         {"pw" "a" "pw2" "b"}))))
+  (it "refuses a :matches rule that names no field of the request"
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(hi/normalize-request
+                          {"title" "t" "fields" [{"name" "a" "validate" {"matches" "ghost"}}]}))))
+  (it "checks the shape of an answer, never whether there IS one"
+      ;; A rule and `:is-required` answer two different questions: an optional
+      ;; email that was left blank is fine, a required one is refused as missing.
+      (let
+        [optional (hi/normalize-request {"title" "t"
+                                         "fields" [{"name" "email" "validate" "email"}]})]
+        (expect (= {} (errors optional {"email" ""})))
+        (expect (= {} (errors optional {})))
+        (expect (= {"email" "must be an email address"} (errors optional {"email" "nope"})))))
+  (it "knows the everyday formats so a spec does not have to spell them out"
+      (let
+        [request (hi/normalize-request {"title" "t"
+                                        "fields" [{"name" "site" "validate" "url"}
+                                                  {"name" "pin" "validate" "digits"}
+                                                  {"name" "age" "validate" "integer"}
+                                                  {"name" "slug" "validate" "slug"}]})]
+        (expect (= {}
+                   (errors
+                     request
+                     {"site" "https://example.com" "pin" "0042" "age" "-7" "slug" "hello-world"})))
+        (expect (= {"site" "must be a URL"
+                    "pin" "must be digits only"
+                    "age" "must be a whole number"
+                    "slug" "must be a slug — lowercase words joined by dashes"}
+                   (errors
+                     request
+                     {"site" "example dot com" "pin" "12a" "age" "7.5" "slug" "Hello World"})))))
+  (it "takes a pattern as a constraint the answer must satisfy somewhere"
+      (let
+        [request (hi/normalize-request
+                   {"title" "t"
+                    "fields"
+                    [{"name" "ticket"
+                      "validate" {"pattern" "^VIS-[0-9]+$" "message" "must be a VIS ticket"}}
+                     {"name" "shout" "validate" {"pattern" "!" "message" "needs a bang"}}]})]
+        (expect (= {} (errors request {"ticket" "VIS-108" "shout" "hey!"})))
+        (expect (= {"ticket" "must be a VIS ticket" "shout" "needs a bang"}
+                   (errors request {"ticket" "vis 108" "shout" "hey"})))))
+  (it "takes a bare #\"…\" literal and hands the surface its source, not the object"
+      (let
+        [request (hi/normalize-request {"title" "t"
+                                        "fields" [{"name" "pin" "validate" #"^[0-9]{3}$"}]})]
+        (expect
+          (= [{:kind :pattern :pattern "^[0-9]{3}$" :message "must match the expected format"}]
+             (-> request
+                 :fields
+                 first
+                 :validate)))
+        (expect (= {} (errors request {"pin" "123"})))
+        (expect (= {"pin" "must match the expected format"} (errors request {"pin" "12"})))
+        (expect (string? (-> (hi/request->view request)
+                             :fields
+                             first
+                             :validate
+                             first
+                             :pattern)))))
+  (it "bounds a number and lengths a string"
+      (let
+        [request (hi/normalize-request {"title" "t"
+                                        "fields" [{"name" "port"
+                                                   "validate" [{"min" 1024} {"max" 65535}]}
+                                                  {"name" "nick" "validate" {"max_length" 4}}]})]
+        (expect (= {} (errors request {"port" "8080" "nick" "ada"})))
+        (expect (= {"port" "must be at least 1024" "nick" "must be at most 4 characters"}
+                   (errors request {"port" "80" "nick" "adalovelace"})))
+        (expect (= {"port" "must be a number"} (errors request {"port" "eighty"})))))
+  (it "runs a Clojure function and takes its word for it"
+      (let
+        [request (hi/normalize-request {"title" "t"
+                                        "fields" [{"name" "team"
+                                                   :validate #(when-not (= "ops" %)
+                                                                "must be an ops team")}
+                                                  {"name" "flag" :validate (constantly false)}
+                                                  {"name" "boom"
+                                                   :validate (fn [_]
+                                                               (throw (ex-info "nope" {})))}]})]
+        (expect (= {} (errors request {"team" "ops" "flag" nil "boom" nil})))
+        (expect (= {"team" "must be an ops team"
+                    "flag" "is not valid"
+                    "boom" "could not be validated: nope"}
+                   (errors request {"team" "sre" "flag" "x" "boom" "x"})))))
+  (it "refuses a rule that checks two things, or nothing it knows"
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(hi/normalize-field {"name" "a"
+                                             "validate" {"pattern" "x" "type" "email"}})))
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(hi/normalize-field {"name" "a" "validate" "postcode"})))
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(hi/normalize-field {"name" "a" "validate" {"message" "hi"}}))))
+  (it "sends a surface the declarative rules and keeps the functions home"
+      ;; A fn cannot cross the wire, so it is dropped from the view — and still
+      ;; enforced by the engine, which is the only place a submission lands.
+      (let
+        [request
+         (hi/normalize-request
+           {"title" "t" "fields" [{"name" "a" "validate" [{"type" "email"} (constantly "no")]}]})
+
+         view-field
+         (first (:fields (hi/request->view request)))]
+
+        (expect (= [{:kind :type :type "email" :message "must be an email address"}]
+                   (:validate view-field)))
+        (expect (= {"a" "no"} (errors request {"a" "ada@example.com"})))))
+  (it "never mints a vault handle just to answer whether a form is valid"
+      ;; The TUI calls `validate-values` on every keystroke; if that stashed
+      ;; secrets, typing a password would fill the vault one character at a time.
+      (let
+        [request
+         (sign-in-request)
+
+         _
+         (hi/forget-secrets!)
+
+         answer
+         (hi/validate-values (:fields request) good-sign-in)]
+
+        (expect (= "hunter42" (get-in answer [:values "pw"])))
+        (expect (zero? (long (hi/forget-secrets!))))
+        (expect (hi/secret-handle? (get-in (hi/coerce-values (:fields request) good-sign-in)
+                                           [:values "pw"])))
+        (expect (pos? (long (hi/forget-secrets!)))))))

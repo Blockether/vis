@@ -321,7 +321,18 @@
              :min 0
              :max 10
              :step 0.5
-             :default 2.5}]})
+             :default 2.5}
+            {:id "code"
+             :type "otp"
+             :label "One-time code"
+             :description "From the authenticator on your phone"
+             :is-required true
+             :min-length 4
+             :max-length 6}
+            {:id "notify"
+             :type "plaintext"
+             :label "Notify"
+             :validate [:email {:max-length 60 :message "keep it short"}]}]})
 
 (defn- fixture-file
   "`apps/vis-companion/src/lib/human-input.fixture.json`, found from the working

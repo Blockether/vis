@@ -69,6 +69,35 @@
       "default": 2.5,
       "description": "How much of the error budget this may spend",
       "step": 0.5
+    },
+    {
+      "description": "From the authenticator on your phone",
+      "is_required": true,
+      "max_length": 6,
+      "min_length": 4,
+      "name": "code",
+      "type": "otp",
+      "label": "One-time code",
+      "id": "code"
+    },
+    {
+      "id": "notify",
+      "name": "notify",
+      "type": "plaintext",
+      "label": "Notify",
+      "is_required": false,
+      "validate": [
+        {
+          "kind": "type",
+          "type": "email",
+          "message": "must be an email address"
+        },
+        {
+          "kind": "length",
+          "max": 60,
+          "message": "keep it short"
+        }
+      ]
     }
   ],
   "session_id": "sid-1",

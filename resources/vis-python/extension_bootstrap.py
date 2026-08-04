@@ -282,10 +282,17 @@ def ask(title, fields, **options):
     #
     # Field keys: name (keys the answer in `values`), label (shown above the
     # input), description (the italic line under that label), type, default,
-    # is_required, placeholder, options, max_length, and min/max/step for a
-    # 'range' field (defaults 0/100/1 — it answers with a NUMBER).
+    # is_required, placeholder, options, min_length, max_length, validate, and
+    # min/max/step for a 'range' field (defaults 0/100/1 — it answers with a
+    # NUMBER). An 'otp' is a one-time code in digit boxes: min_length/max_length
+    # say how many (default 6, at most 12), digits only, paste fills the boxes.
+    # validate is a rule or list of rules checked after coercion: a type name
+    # ('email', 'url', 'uuid', 'digits', 'alpha', 'alphanumeric', 'slug',
+    # 'integer', 'number') or a map with exactly one of type/pattern/min_length/
+    # max_length/min/max/matches (another field's name) plus an optional
+    # 'message'. Blank answers are is_required's job, never a rule's.
     # Field types: plaintext, password, multiline, select, multiselect,
-    # checkbox, range. Dialog options: description (prose under the title explaining
+    # checkbox, range, otp. Dialog options: description (prose under the title explaining
     # what the whole ask is about — it wraps), submit_label, cancel_label,
     # is_cancellable, timeout_ms (default 5 min, capped at 1 hour).
     # A cancelled, timed-out or unanswered request returns a falsey Answer

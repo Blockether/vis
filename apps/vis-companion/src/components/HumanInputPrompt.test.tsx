@@ -20,6 +20,8 @@ function markup(state: string, extra: Record<string, unknown> = {}, values?: Hum
   );
 }
 
+const otpValues = initialHumanInputValues(HUMAN_INPUT_REQUESTS.otp);
+
 /**
  * The outer HTML of the first element whose attributes contain `marker`, found
  * by walking tag depth — enough of a parser to ask "is this inside that?".
@@ -61,13 +63,19 @@ describe('human input sheet', () => {
     expect(cancellable).toContain('Not now');
   });
 
-  it('refuses to submit an answer the engine would reject anyway', () => {
-    // `disabled` is also a Tailwind variant on every button, so this asks for
-    // the ATTRIBUTE, not for the word.
+  it('refuses a pristine form by NAMING what is missing, not by dying quietly', () => {
+    // A disabled button with no reason next to it is the worst answer to "why
+    // can I not send this": the sheet stays pressable and says why instead.
     const off = (html: string) => /<button[^>]*\sdisabled=""/.test(html);
     const buttons = 'flex gap-2 sm:justify-end';
-    expect(off(element(markup('minimal'), buttons))).toBe(true);
-    expect(off(element(markup('minimal', {}, { branch: 'fix/108' }), buttons))).toBe(false);
+    const pristine = markup('minimal');
+    expect(off(element(pristine, buttons))).toBe(false);
+    expect(pristine).not.toContain('is required');
+    // Pressed once, every error is earned and every error shows.
+    expect(markup('minimal', { isSubmitAttempted: true })).toContain('is required');
+    // Touching that one field is enough on its own.
+    expect(markup('minimal', { touched: ['branch'] })).toContain('is required');
+    expect(markup('minimal', {}, { branch: 'fix/108' })).not.toContain('is required');
   });
 
   it('says that the run is blocked, and how many more are behind it', () => {
@@ -120,5 +128,45 @@ describe('human input sheet', () => {
     expect(heading).toContain(HUMAN_INPUT_REQUESTS.slider.title);
     expect(heading).not.toContain('truncate');
     expect(heading).toContain('line-clamp-3');
+  });
+
+  it('enters a one-time code as one box per digit, not as a text field', () => {
+    const html = markup('otp', {}, { ...otpValues, code: '408' });
+    const boxes = html.match(/<input[^>]*aria-label="One-time code digit \d"[^>]*>/g) ?? [];
+    expect(boxes).toHaveLength(6);
+    // The keypad, not the alphabet: a code field that opens a QWERTY keyboard on
+    // a phone costs the operator every tap it takes to find the numbers.
+    expect(boxes[0]).toContain('inputMode="numeric"');
+    expect(boxes[0]).toContain('pattern="[0-9]*"');
+    expect(boxes[0]).toContain('maxLength="1"');
+    // Only the FIRST box may claim the SMS autofill, or one code arrives six times.
+    expect(boxes[0]).toContain('autoComplete="one-time-code"');
+    expect(boxes[1]).toContain('autoComplete="off"');
+    expect(boxes.slice(0, 4).map((box) => /value="(\d?)"/.exec(box)?.[1])).toEqual([
+      '4',
+      '0',
+      '8',
+      '',
+    ]);
+    expect(html).toContain('6 digits');
+  });
+
+  // Formik's lesson, and the reason `touched` exists at all: a form that shouts
+  // before anyone has typed is noise, and one that stays quiet after a bad
+  // answer is a trap. The sheet must do neither.
+  it('names a broken field only once that field has been touched', () => {
+    const values = { ...otpValues, code: '408', notify: 'ops@' };
+    const pristine = markup('otp', {}, values);
+    expect(pristine).not.toContain('must be an email address');
+    expect(pristine).not.toContain('must be 6 digits');
+
+    const touched = markup('otp', { touched: ['code', 'notify'] }, values);
+    expect(touched).toContain('must be 6 digits');
+    expect(touched).toContain('must be an email address');
+
+    // A refused submit reveals every field at once, touched or not.
+    expect(markup('otp', { isSubmitAttempted: true }, values)).toContain(
+      'must be an email address',
+    );
   });
 });

@@ -23,6 +23,7 @@
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as channel-events]
+            [com.blockether.vis.internal.human-input.validation :as validation]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [taoensso.telemere :as tel]))
 
@@ -36,7 +37,8 @@
    "select" :select
    "multiselect" :multiselect
    "checkbox" :checkbox
-   "range" :range})
+   "range" :range
+   "otp" :otp})
 
 (def ^:private text-types #{:plaintext :password :multiline})
 
@@ -150,7 +152,7 @@
   "Every key a field spec may carry, in its canonical snake_case spelling.
    `id` and `help` are the legacy names of `name` and `description`."
   #{"name" "id" "type" "label" "description" "help" "is_required" "placeholder" "options"
-    "max_length" "default" "min" "max" "step"})
+    "min_length" "max_length" "default" "min" "max" "step" "validate"})
 
 (def ^:private option-keys "Every key one `:options` entry may carry." #{"value" "label"})
 
@@ -239,12 +241,15 @@
         (= "false" (str value)) false
         :else (invalid-field! field-id (str label " must be a boolean"))))
 
-(defn- normalize-max-length
-  [field-id value]
+(defn- normalize-length
+  "A `:min_length`/`:max_length` character count. `label` is the key the spec
+   actually wrote, so a refusal names the key the author has to fix."
+  [field-id label value]
   (when (some? value)
-    (let [n (long (if (number? value) value (parse-long (str value))))]
-      (when-not (pos? n) (invalid-field! field-id ":max-length must be positive"))
-      n)))
+    (let [n (if (number? value) value (parse-long (str value)))]
+      (when-not (and (number? n) (integer? n) (pos? (long n)))
+        (invalid-field! field-id (str label " must be a positive whole number")))
+      (long n))))
 
 (defn- normalize-number
   [field-id label value fallback]
@@ -279,6 +284,32 @@
       (invalid-field! field-id ":max must be greater than :min"))
     (when-not (pos? (double step)) (invalid-field! field-id ":step must be positive"))
     {:min lo :max hi :step step}))
+
+(def ^:private otp-defaults
+  "Six digits is what a one-time code IS on almost every service that sends one,
+   and twelve is where a row of boxes stops fitting a narrow terminal band."
+  {:length 6 :ceiling 12})
+
+(defn- normalize-otp
+  "How many digits the boxes hold. `:min_length` defaults to `:max_length`, so a
+   plain `otp` field is the fixed six-digit code everybody means; giving both
+   makes the code variable-length, which is what a spec asks for when the sender
+   is not under its control."
+  [field-id field]
+  (let
+    [hi
+     (or (normalize-length field-id ":max_length" (pick field "max_length" :max-length))
+         (long (:length otp-defaults)))
+
+     lo
+     (or (normalize-length field-id ":min_length" (pick field "min_length" :min-length)) hi)]
+
+    (when (> (long lo) (long hi))
+      (invalid-field! field-id ":max_length must be at least :min_length"))
+    (when (> (long hi) (long (:ceiling otp-defaults)))
+      (invalid-field! field-id
+                      (str ":max_length must be at most " (:ceiling otp-defaults) " digits")))
+    {:min-length lo :max-length hi}))
 
 (declare coerce-value)
 
@@ -319,6 +350,19 @@
      description
      (trimmed (pick field "description" :description "help" :help))
 
+     ;; An `:otp` derives its own lengths from the same two keys — how many
+     ;; boxes it draws IS its length — so it must not be length-checked twice.
+     min-length
+     (when-not (= :otp field-type)
+       (normalize-length field-id ":min_length" (pick field "min_length" :min-length)))
+
+     max-length
+     (when-not (= :otp field-type)
+       (normalize-length field-id ":max_length" (pick field "max_length" :max-length)))
+
+     validate
+     (validation/normalize-rules (pick field "validate" :validate) #(invalid-field! field-id %))
+
      spec
      (cond->
        {:id field-id
@@ -346,8 +390,17 @@
        (= :range field-type)
        (merge (normalize-range field-id field))
 
-       (normalize-max-length field-id (pick field "max_length" :max-length))
-       (assoc :max-length (normalize-max-length field-id (pick field "max_length" :max-length))))
+       (= :otp field-type)
+       (merge (normalize-otp field-id field))
+
+       min-length
+       (assoc :min-length min-length)
+
+       max-length
+       (assoc :max-length max-length)
+
+       (seq validate)
+       (assoc :validate validate))
 
      raw-default
      (pick field "default" :default)
@@ -441,6 +494,17 @@
      (when-not (apply distinct? (map :name fields))
        (invalid-request! "field names must be distinct"))
 
+     ;; `:matches` names a SIBLING, so it can only be resolved once every field
+     ;; in the request is known — a confirmation field is normally declared
+     ;; before the password it confirms is even parsed.
+     fields
+     (mapv (fn [{:keys [id validate] :as field}]
+             (if (seq validate)
+               (assoc field
+                 :validate (validation/resolve-matches validate fields #(invalid-field! id %)))
+               field))
+           fields)
+
      session-id
      (or (trimmed (pick request "session_id" :session-id)) (ambient-session-id))]
 
@@ -468,7 +532,7 @@
 ;; =============================================================================
 
 (defn- coerce-text
-  [{:keys [type is-required max-length]} value]
+  [{:keys [type is-required min-length max-length]} value]
   (let
     [text
      (cond (nil? value) ""
@@ -486,9 +550,13 @@
 
     (cond (= ::invalid text) [:error "must be text"]
           (and is-required (str/blank? text)) [:error "is required"]
+          ;; A blank optional answer is not a short one: length bounds describe
+          ;; the shape of a value that IS there, exactly like the rules do.
+          (str/blank? text) [:ok (when (= :multiline type) (when-not (empty? text) text))]
+          (and min-length (< (count text) (long min-length)))
+          [:error (str "must be at least " min-length " characters")]
           (and max-length (> (count text) (long max-length)))
           [:error (str "must be at most " max-length " characters")]
-          (str/blank? text) [:ok (when (= :multiline type) (when-not (empty? text) text))]
           :else [:ok text])))
 
 (defn- coerce-select
@@ -564,6 +632,33 @@
           [:ok (long (Math/round (double n)))]
           :else [:ok (double n)])))
 
+(defn- coerce-otp
+  "A one-time code is DIGITS, however the human pasted them. Spaces and dashes
+   are how every provider prints a code (`123 456`, `123-456`), so they are
+   separators here rather than a typo the operator has to go back and delete."
+  [{:keys [is-required min-length max-length]} value]
+  (let
+    [lo
+     (long (or min-length (:length otp-defaults)))
+
+     hi
+     (long (or max-length (:length otp-defaults)))
+
+     digits
+     (cond (nil? value) ""
+           (coll? value) ::invalid
+           :else (str/replace (str value) #"[\s-]" ""))]
+
+    (cond (= ::invalid digits) [:error "must be a one-time code"]
+          ;; Nothing typed is nothing answered — nil, exactly like an empty text
+          ;; field, so an untouched optional code does not become a `""` default.
+          (str/blank? digits) (if is-required [:error "is required"] [:ok nil])
+          (not (re-matches #"[0-9]+" digits)) [:error "must be digits only"]
+          (= lo hi) (if (= (count digits) hi) [:ok digits] [:error (str "must be " hi " digits")])
+          (< (count digits) lo) [:error (str "must be at least " lo " digits")]
+          (> (count digits) hi) [:error (str "must be at most " hi " digits")]
+          :else [:ok digits])))
+
 (defn coerce-value
   "Coerce and validate one raw `value` against normalized `field`. Returns
    `[:ok coerced]` or `[:error message]`."
@@ -573,44 +668,72 @@
         (= :multiselect type) (coerce-multiselect field value)
         (= :checkbox type) (coerce-checkbox field value)
         (= :range type) (coerce-range field value)
+        (= :otp type) (coerce-otp field value)
         :else [:error "unknown field type"]))
 
+(defn- coerce-all
+  "Coerce every field's raw value. Pure: `{:values … :errors …}`, no vault."
+  [fields values]
+  (let [values (or values {})]
+    (reduce (fn [acc {:keys [id] :as field}]
+              (let
+                [raw (cond (contains? values id) (get values id)
+                           (contains? values (keyword id)) (get values (keyword id))
+                           ;; Absent means "the human left it alone" — the field's
+                           ;; declared default stands in, then gets validated like
+                           ;; any other value.
+                           :else (:default field))
+                 [status result] (coerce-value field raw)]
+
+                (if (= :error status)
+                  (assoc-in acc [:errors id] result)
+                  ;; Every field id is present in `:values`, so a caller can
+                  ;; read a field without knowing whether it was filled in.
+                  (assoc-in acc [:values id] result))))
+            {:values {} :errors {}}
+            fields)))
+
+(defn- check-all
+  "Run each field's `:validate` rules over the COERCED values. A field the type
+   already rejected is left alone: one message per field, and the one that
+   explains the earliest problem."
+  [fields {:keys [values errors]}]
+  {:values values
+   :errors (reduce (fn [acc {:keys [id validate]}]
+                     (if (or (empty? validate) (contains? acc id))
+                       acc
+                       (if-let [message (validation/check validate (get values id) values)]
+                         (assoc acc id message)
+                         acc)))
+                   errors
+                   fields)})
+
+(defn validate-values
+  "Coerce and rule-check a raw `field id -> value` map against a request's
+   `fields`. Returns `{:is-accepted true :values …}` or
+   `{:is-accepted false :errors {id message}}`.
+
+   Pure — no vault, no state, no side effect of any kind. That is the point: a
+   surface calls this on EVERY keystroke to decide what to underline, and only
+   a real submission goes through [[coerce-values]]."
+  [fields values]
+  (let [{:keys [values errors]} (check-all fields (coerce-all fields values))]
+    (if (seq errors) {:is-accepted false :errors errors} {:is-accepted true :values values})))
+
 (defn coerce-values
-  "Coerce a raw `field id -> value` map against a request's `fields`. Returns
-   `{:is-accepted true :values …}` or `{:is-accepted false :errors {id msg}}`.
+  "[[validate-values]] for a SUBMISSION: identical answer, except that accepted
    `:password` values are replaced with opaque vault handles."
   [fields values]
-  (let
-    [values
-     (or values {})
-
-     results
-     (reduce (fn [acc {:keys [id] :as field}]
-               (let
-                 [raw
-                  (cond (contains? values id) (get values id)
-                        (contains? values (keyword id)) (get values (keyword id))
-                        ;; Absent means "the human left it alone" — the field's
-                        ;; declared default stands in, then gets validated like
-                        ;; any other value.
-                        :else (:default field))
-
-                  [status result]
-                  (coerce-value field raw)]
-
-                 (if (= :error status)
-                   (assoc-in acc [:errors id] result)
-                   ;; Every field id is present in `:values`, so a caller can
-                   ;; read a field without knowing whether it was filled in.
-                   (assoc-in acc
-                     [:values id]
-                     (if (and (:is-secret field) (some? result)) (stash-secret! result) result)))))
-             {:values {} :errors {}}
-             fields)]
-
-    (if (seq (:errors results))
-      {:is-accepted false :errors (:errors results)}
-      {:is-accepted true :values (:values results)})))
+  (let [result (validate-values fields values)]
+    (if-not (:is-accepted result)
+      result
+      (assoc result
+        :values
+        (reduce (fn [acc {:keys [id is-secret]}]
+                  (let [value (get acc id)]
+                    (if (and is-secret (some? value)) (assoc acc id (stash-secret! value)) acc)))
+                (:values result)
+                fields)))))
 
 ;; =============================================================================
 ;; Channel projection
@@ -618,11 +741,18 @@
 
 (defn request->view
   "The channel/wire-facing projection of a pending request: the spec a dialog
-   needs, and nothing a channel must not see (no promise, no submitted values)."
+   needs, and nothing a channel must not see (no promise, no submitted values,
+   and no validator FUNCTION — a fn cannot cross the wire, so a surface gets the
+   declarative rules and the engine still enforces every one of them)."
   [request]
   (-> request
       (dissoc :promise :channel-ids)
-      (assoc :fields (mapv #(dissoc % :is-secret) (:fields request)))))
+      (assoc :fields (mapv (fn [field]
+                             (let [rules (validation/wire-rules (:validate field))]
+                               (cond-> (dissoc field :is-secret :validate)
+                                 (seq rules)
+                                 (assoc :validate rules))))
+                           (:fields request)))))
 
 (defn- publish!
   "Publish `event` on every channel in `channel-ids` and return how many
