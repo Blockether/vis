@@ -264,6 +264,55 @@ class Answer:
             sorted(self.values),
         )
 
+def _field_specs(fields, validators):
+    # Canonicalize a field TREE to snake_case string keys and pull the `validate`
+    # callables out of it.
+    #
+    # A validator is a FUNCTION, and a function is not JSON, so it never leaves
+    # this process: every field's callables are popped out of the spec and kept
+    # in `validators` by field name. The host is told only HOW MANY each field
+    # declared and is handed a callback it re-enters on the thread the human
+    # submitted on. Groups nest, so this walks the whole tree.
+    if not isinstance(fields, (list, tuple)) or not fields:
+        raise TypeError('a form needs a non-empty list of field specs')
+
+    def one(f):
+        if not isinstance(f, dict):
+            raise TypeError('each field spec is a dict of snake_case string keys')
+        spec = dict((str(k), v) for k, v in f.items())
+        checks = spec.pop('validate', None)
+        if checks is not None:
+            if callable(checks):
+                checks = [checks]
+            if not isinstance(checks, (list, tuple)) or not checks or not all(
+                callable(c) for c in checks
+            ):
+                raise TypeError(
+                    'validate is a function, or a list of functions, taking the '
+                    'value (and optionally every value) and answering None or a '
+                    'message string'
+                )
+            name = str(spec.get('name') or spec.get('id') or '').strip()
+            if not name:
+                raise TypeError('a field with validate needs a name')
+            validators[name] = list(checks)
+        children = spec.get('fields')
+        if isinstance(children, (list, tuple)):
+            spec['fields'] = [one(c) for c in children]
+        return spec
+
+    return [one(f) for f in fields]
+
+
+def _request_spec(title, fields, options, validators):
+    # The request object the host receives. Dialog options first, then the title
+    # and the field tree, so neither can be shadowed by an option key.
+    request = dict((str(k), v) for k, v in options.items())
+    request['title'] = str(title)
+    request['fields'] = _field_specs(fields, validators)
+    return request
+
+
 def ask(title, fields, **options):
     # Pause and ask the human for typed values, then BLOCK until they answer.
     #
@@ -328,42 +377,8 @@ def ask(title, fields, **options):
     # you — even an indefinite ask cannot wait on a human who was never asked.
     import inspect
     import json
-    if not isinstance(fields, (list, tuple)) or not fields:
-        raise TypeError('ask needs a non-empty list of field specs')
-
-    # A validator is a FUNCTION, and a function is not JSON, so it never leaves
-    # this process: every field's `validate` callables are popped out of the spec
-    # and kept here by field name. The host is told only HOW MANY each field has
-    # and is handed `_run`, which it calls back on the thread the human submitted
-    # on. Groups nest, so this walks the tree.
     validators = {}
-
-    def _spec(f):
-        if not isinstance(f, dict):
-            raise TypeError('each field spec is a dict of snake_case string keys')
-        spec = dict((str(k), v) for k, v in f.items())
-        checks = spec.pop('validate', None)
-        if checks is not None:
-            if callable(checks):
-                checks = [checks]
-            if not isinstance(checks, (list, tuple)) or not checks or not all(
-                callable(c) for c in checks
-            ):
-                raise TypeError(
-                    'validate is a function, or a list of functions, taking the '
-                    'value (and optionally every value) and answering None or a '
-                    'message string'
-                )
-            name = str(spec.get('name') or spec.get('id') or '').strip()
-            if not name:
-                raise TypeError('a field with validate needs a name')
-            validators[name] = list(checks)
-        children = spec.get('fields')
-        if isinstance(children, (list, tuple)):
-            spec['fields'] = [_spec(c) for c in children]
-        return spec
-
-    specs = [_spec(f) for f in fields]
+    request = _request_spec(title, fields, options, validators)
 
     def _run(name, index, value_json, values_json):
         # One validator, one value, one verdict. A raise is deliberately NOT
@@ -384,15 +399,137 @@ def ask(title, fields, **options):
             return json.dumps(False)
         return json.dumps(verdict if isinstance(verdict, str) else str(verdict))
 
-    request = dict((str(k), v) for k, v in options.items())
-    request['title'] = str(title)
-    request['fields'] = specs
     answer_json = _host['request_input'](
         json.dumps(request),
         json.dumps(dict((k, len(v)) for k, v in validators.items())),
         _run,
     )
     return Answer(json.loads(answer_json))
+
+# -- Form builders ------------------------------------------------------------
+# One helper per node type, named exactly like Clojure's
+# `com.blockether.vis.human-input`: the type IS the function and the name is
+# POSITIONAL, so a misspelled type is a NameError on the spot instead of a
+# refused request, and every other key stays the snake_case spelling `ask`
+# documents.
+#
+#   answer = vis.ask('Deploy', [
+#       vis.heading('Target'),
+#       vis.paragraph('Staging pages nobody.'),
+#       vis.row(vis.select('env', ['staging', 'prod'], label='Where',
+#                          is_required=True),
+#               vis.slider('canary', min=0, max=100, step=5)),
+#       vis.password('token', label='Deploy token', is_required=True),
+#   ])
+#
+# A builder is a plain dict, so a form stays printable and can be assembled in a
+# loop. Nothing here talks to the host: `vis.check(...)` is the one call that
+# asks whether a whole form is valid.
+
+
+def _node(type_name, name, spec):
+    node = dict((str(k), v) for k, v in spec.items())
+    node['type'] = type_name
+    node['name'] = str(name)
+    return node
+
+
+def plaintext(name, **spec):
+    # One typed line, answered as a string.
+    return _node('plaintext', name, spec)
+
+
+def password(name, **spec):
+    # A masked line, answered as an opaque 'vis-secret:' handle: `reveal` it on
+    # the trusted side, never log it.
+    return _node('password', name, spec)
+
+
+def multiline(name, **spec):
+    # A text box, answered as a string that keeps its newlines.
+    return _node('multiline', name, spec)
+
+
+def select(name, options, **spec):
+    # Choose exactly ONE of `options` (plain strings, or `vis.option(...)`
+    # pairs); answered as the chosen value.
+    spec['options'] = list(options)
+    return _node('select', name, spec)
+
+
+def multiselect(name, options, **spec):
+    # Choose ANY of `options`; answered as a list, empty when nothing is ticked.
+    spec['options'] = list(options)
+    return _node('multiselect', name, spec)
+
+
+def checkbox(name, **spec):
+    # One box, answered as a bool. `is_required=True` means it must end up
+    # TICKED, not merely present.
+    return _node('checkbox', name, spec)
+
+
+def slider(name, **spec):
+    # A number on a track: min / max / step, 0 / 100 / 1 by default, answered as
+    # a NUMBER. It is `range` on the wire; the builder is `slider` so it never
+    # shadows the builtin.
+    return _node('range', name, spec)
+
+
+def otp(name, **spec):
+    # A one-time code in digit boxes: min_length / max_length say how many
+    # (6 by default, 12 at most), digits only, paste fills the boxes.
+    return _node('otp', name, spec)
+
+
+def option(value, label=None):
+    # One entry of a select / multiselect: the value that is ANSWERED and the
+    # words shown for it. Given no label, the value shows itself.
+    return {'value': value} if label is None else {'value': value, 'label': label}
+
+
+def row(*fields):
+    # Lay these nodes out side by side. A group answers nothing and never
+    # appears in `values`, which stays flat however deep the tree goes.
+    return {'type': 'group', 'direction': 'row', 'fields': list(fields)}
+
+
+def column(*fields):
+    # Stack these nodes, the default arrangement: worth saying out loud inside a
+    # `row`.
+    return {'type': 'group', 'direction': 'column', 'fields': list(fields)}
+
+
+def heading(text):
+    # A section title. Pure decoration: no name, no value, never focusable.
+    return {'type': 'heading', 'text': str(text)}
+
+
+def paragraph(text):
+    # Prose under a title, wrapped. Pure decoration, exactly like `heading`.
+    return {'type': 'paragraph', 'text': str(text)}
+
+
+def check(title, fields, **options):
+    # None when this form is VALID, else the ONE line saying what to fix. The
+    # very seam `ask` crosses, minus the human: the host runs the real request
+    # normalizer and throws the result away, so nothing is drawn, published or
+    # parked, and no validator function is called.
+    #
+    #   why = vis.check('Deploy', [vis.select('env', [])])
+    #   # 'Invalid human-input field env: select needs at least one option'
+    #
+    # `vis-agent extension check <file.py>` runs this same check over every
+    # `vis.ask(...)` in a file without importing it.
+    import json
+
+    verdict = json.loads(
+        _host['check_input'](json.dumps(_request_spec(title, fields, options, {}))),
+    )
+    if verdict.get('is_valid'):
+        return None
+    return str(verdict.get('error') or 'invalid human-input request')
+
 
 def reveal(handle):
     # Resolve an opaque `vis-secret:` handle to its plaintext, or None when the
@@ -420,6 +557,7 @@ _vis_mod.__dict__["_host"] = {
     "notify": __vis_host_notify__,
     "jailed_shell": __vis_host_jailed_shell__,
     "request_input": __vis_host_request_input__,
+    "check_input": __vis_host_check_input__,
     "reveal_secret": __vis_host_reveal_secret__,
     "forget_secret": __vis_host_forget_secret__,
 }

@@ -321,6 +321,17 @@
                           validators-json
                           run))))))
     (.putMember g
+                "__vis_host_check_input__"
+                ;; The same seam as `request_input`, minus the human: one JSON
+                ;; request object in, one JSON verdict out. Nothing is drawn,
+                ;; published or parked and no validator runs, so `vis.check(...)`
+                ;; can prove a form an extension just built -- and
+                ;; `vis-agent extension check` can prove one it never ran.
+                (->executable (fn [request-json]
+                                ((requiring-resolve
+                                   'com.blockether.vis.internal.human-input/check-json)
+                                  request-json))))
+    (.putMember g
                 "__vis_host_reveal_secret__"
                 (->executable (fn [handle]
                                 ((requiring-resolve
@@ -332,6 +343,44 @@
                                 (boolean ((requiring-resolve
                                             'com.blockether.vis.internal.human-input/forget-secret!)
                                            (str handle))))))))
+
+(def ^:no-doc host-member-names
+  "Every `__vis_host_*` global the bootstrap reads out of a context's bindings.
+
+   The bootstrap builds its `_host` dict at MODULE level, so a member nobody
+   bound is a `NameError` before the extension's first line runs. Both binders
+   are checked against this list by a test, which is why adding a host call means
+   adding it here."
+  ["__vis_host_state_get__" "__vis_host_state_put__" "__vis_host_state_del__" "__vis_host_log__"
+   "__vis_host_notify__" "__vis_host_jailed_shell__" "__vis_host_request_input__"
+   "__vis_host_check_input__" "__vis_host_reveal_secret__" "__vis_host_forget_secret__"])
+
+(defn ^:no-doc bind-inert-host!
+  "Bind every host member as a REFUSAL, so the `vis` module can be BUILT without
+   any of it being usable.
+
+   `vis-agent extension check` needs the real module -- it reads the builders and
+   the exported names straight out of it -- but a static check runs nobody's side
+   effects. A stub that throws is how the checker stays honest about what it did
+   not run: a form is judged by the engine on the Clojure side, never by
+   executing the extension.
+
+   `overrides` may hand back ONE member by name: the checker binds the real
+   `__vis_host_check_input__`, because validating a request reads nothing, writes
+   nothing and asks nobody."
+  ([^Context ctx] (bind-inert-host! ctx nil))
+  ([^Context ctx overrides]
+   (let [g (.getBindings ctx "python")]
+     (doseq [member host-member-names]
+       (.putMember g
+                   ^String member
+                   (->executable (or (get overrides member)
+                                     (fn [& _]
+                                       (throw (ex-info (str "host call "
+                                                            member
+                                                            " is not available while checking")
+                                                       {:type :vis/extension-check-inert
+                                                        :member member}))))))))))
 
 ;; =============================================================================
 ;; Adapters — Python callables wrapped as the Clojure fns the extension

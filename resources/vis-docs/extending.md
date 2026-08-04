@@ -452,6 +452,66 @@ dimmed italics, both straight on the dialog paper: the pale input surface belong
 to things you can type into, and decoration is not one of them. The app renders
 the same two as an `h3` and a `p`.
 
+### Builders instead of dicts
+
+A field is a dict, and a dict is easy to misspell. The `vis` module ships one
+builder per node type: the type is the function you call, and the node is checked
+the moment it is built, so a bad `default` or an unknown key raises at the line
+that wrote it instead of in front of the human.
+
+```python
+form = vis.column(
+    vis.heading("Target"),
+    vis.paragraph("Staging pages nobody."),
+    vis.row(
+        vis.select(
+            "env",
+            [vis.option("staging", "Staging"), vis.option("prod")],
+            is_required=True,
+        ),
+        vis.slider("canary", label="Canary %", min=0, max=100, step=5, default=10),
+    ),
+    vis.checkbox("ack", label="I read the runbook", is_required=True),
+    vis.password("token", label="Deploy token", is_required=True),
+)
+
+answer = vis.ask("Deploy", [form], submit_label="Ship it")
+```
+
+The full set: `plaintext`, `password`, `multiline`, `select`, `multiselect`,
+`checkbox`, `slider`, `otp`, `option`, `row`, `column`, `heading`, `paragraph`.
+The range field is spelled `slider` so it never shadows the `range` builtin;
+everything else is the wire type. Keyword arguments are the field keys you
+already know (`label=`, `description=`, `default=`, `is_required=`, `min=`,
+`validate=` ...) and are passed through untouched, so there is no second
+vocabulary beside the one above.
+
+Buttons are not nodes: a dialog has exactly the two a dialog has, and you name
+them with `submit_label=` and `cancel_label=` (or drop the second one with
+`is_cancellable=False`).
+
+### Checking a form without asking
+
+`vis.check(title, fields, **options)` runs the very same validator `vis.ask`
+runs and then throws nothing away: it returns `None` when the request is valid,
+and the one-line reason when it is not. No dialog opens and nobody is
+interrupted, so it is what a test asserts on and what a tool can call before it
+decides to ask.
+
+```python
+vis.check("Deploy", [vis.select("env", [])])
+# -> 'Invalid human-input field env: select needs at least one option'
+
+vis.check("Deploy", [vis.plaintext("who"), vis.password("who")])
+# -> 'Invalid human-input request: field names must be distinct'
+
+vis.check("Deploy", [vis.plaintext("who")])
+# -> None
+```
+
+`vis-agent extension check <path>` is this same seam applied to a file you have
+not run: see **Checking an extension before it runs** below.
+
 ### Validating a field
 
 `validate` is a **function** — or a list of functions — that you write. There is
@@ -668,6 +728,40 @@ A single `.py` file is the simplest extension. For anything larger, drop a
 
 So an ordinary Python project becomes a Vis extension by adding one
 `extension.py` on top that imports it.
+
+### Checking an extension before it runs
+
+```
+vis-agent extension check                       # every file that would load
+vis-agent extension check .vis/extensions/deploy.py
+```
+
+The check never runs your extension. The file is parsed, and three questions get
+answered from the parse tree alone:
+
+* does it parse at all;
+* does it only reach for `vis.<name>` that the `vis` module actually has, so
+  `vis.plaintxt(...)` is caught here instead of in front of a human;
+* would every `vis.ask(...)` / `vis.check(...)` request be accepted - judged by
+  the same engine seam `vis.check` uses, never a second opinion about it.
+
+That is possible because the builders are pure: reconstructing
+`vis.select("env", [])` builds a dict and touches nothing else. An argument that
+cannot be known without running the file (a field list handed in as a parameter,
+an f-string title, a comprehension) is reported as **skipped** rather than
+guessed at.
+
+```
+FAIL .vis/extensions/deploy.py  (2 forms checked, 1 skipped)
+  .vis/extensions/deploy.py:31:12: invalid-request: Invalid human-input field env: select needs at least one option
+  .vis/extensions/deploy.py:44:12: unknown-attribute: the vis module has no plaintxt
+1 file, 2 forms checked, 2 problems
+```
+
+The exit code is `1` when anything was refused, so it drops straight into a
+pre-commit hook or CI. A file that registers nothing (`no-extension`) and a file
+that cannot be read (`unreadable`) are problems too - a run over a directory
+always reaches the last file and reports every one of them.
 
 ### Testing your Python extension
 
@@ -960,6 +1054,32 @@ User-facing `/commands` (TUI and companion) are data too:
 ```
 
 Return `{:slash/status :ok | :error, :slash/title "…"}` plus optional `:slash/data`.
+
+### Asking the human (Clojure)
+
+`com.blockether.vis.core/request-human-input!` takes the same request map the
+Python side sends, and `com.blockether.vis.human-input` builds it with the same
+names - the only namespace besides `core` an extension imports:
+
+```clojure
+(require '[com.blockether.vis.core :as vis]
+         '[com.blockether.vis.human-input :as hi])
+
+(vis/request-human-input!
+  (hi/form {:title "Deploy" :submit-label "Ship it"}
+           (hi/heading "Target")
+           (hi/paragraph "Staging pages nobody.")
+           (hi/row (hi/select "env" ["staging" "prod"] {:label "Environment"
+                                                        :is-required true})
+                   (hi/slider "canary" {:label "Canary %" :min 0 :max 100 :step 5}))
+           (hi/checkbox "ack" {:label "I read the runbook" :is-required true})
+           (hi/password "token" {:label "Deploy token" :is-required true})))
+```
+
+Every builder returns the plain map you could have typed by hand, and validates
+it on the way out: `(hi/select "env" [])` throws at that line. `hi/form` does the
+same for the assembled request, and `hi/check` answers instead of throwing -
+`nil` when the request is fine, one line of prose when it is not.
 
 ### Shipping doc pages
 

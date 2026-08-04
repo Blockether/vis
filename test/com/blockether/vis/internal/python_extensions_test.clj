@@ -1754,3 +1754,85 @@ vis.extension(name='rebuilder', description='rebuilder', alias='rb',
                        (expect (false? (:success? res)))
                        (expect (str/includes? (get-in res [:error :message]) "kaboom"))
                        (expect (identical? before (:context (first (vals @@#'pyx/loaded))))))))))
+
+;; =============================================================================
+;; Human-input form builders on the `vis` module
+;; =============================================================================
+
+(def ^:private forms-py
+  "'''Form builder fixture: composes a request and checks it without asking.'''
+import vis
+
+
+def forms_report():
+    '''await forms_report() -> {'ok', ...} - build a form and check it.'''
+    good = vis.column(
+        vis.heading('Target'),
+        vis.paragraph('Staging pages nobody.'),
+        vis.row(
+            vis.select(
+                'env',
+                [vis.option('staging', 'Staging'), vis.option('prod')],
+                is_required=True,
+                default='prod',
+            ),
+            vis.slider('canary', min=0, max=100, step=5, default=10),
+        ),
+        vis.plaintext('who', label='Deployer'),
+        vis.multiline('note'),
+        vis.multiselect('regions', ['eu', 'us']),
+        vis.otp('code', min_length=6, max_length=6),
+        vis.checkbox('ack', is_required=True),
+        vis.password('token'),
+    )
+    return {
+        'ok': vis.check('Deploy', [good], submit_label='Ship it'),
+        'kind': good['type'] + ':' + good['direction'],
+        'ink': good['fields'][0],
+        'slider_type': good['fields'][2]['fields'][1]['type'],
+        'bad_option': vis.check('Deploy', [vis.select('env', [])]),
+        'bad_track': vis.check('Deploy', [vis.slider('canary', min=5, max=2)]),
+        'bad_names': vis.check('Deploy', [vis.plaintext('who'), vis.password('who')]),
+        'bad_title': vis.check('', [vis.plaintext('who')]),
+        'bad_key': vis.check('Deploy', [vis.plaintext('who', required=True)]),
+    }
+
+
+vis.extension(
+    name='forms',
+    description='Form builder fixture extension.',
+    version='0.1.0',
+    kind='integration',
+    alias='forms',
+    symbols=[vis.symbol(forms_report, tag='observation')],
+)
+")
+
+(defdescribe human-input-builders-test
+             (it "gives Python extensions the same form builders, checked by the engine itself"
+                 (with-loaded
+                   {"forms.py" forms-py}
+                   (fn [_ _]
+                     (let
+                       [ext
+                        (registered "forms")
+
+                        res
+                        (:result ((symbol-fn ext 'report)))]
+
+                       ;; the builders compose plain wire data: a group, and nameless ink
+                       (expect (= "group:column" (get res "kind")))
+                       (expect (= {"type" "heading" "text" "Target"} (get res "ink")))
+                       ;; `slider` is spelled so it never shadows the `range` builtin
+                       (expect (= "range" (get res "slider_type")))
+                       ;; a valid request is answered with None, never an exception
+                       (expect (nil? (get res "ok")))
+                       ;; and every mistake comes back as the engine's own one-line reason
+                       (expect (= "Invalid human-input field env: select needs at least one option"
+                                  (get res "bad_option")))
+                       (expect (= "Invalid human-input field canary: :max must be greater than :min"
+                                  (get res "bad_track")))
+                       (expect (= "Invalid human-input request: field names must be distinct"
+                                  (get res "bad_names")))
+                       (expect (str/includes? (get res "bad_title") "non-blank :title"))
+                       (expect (str/includes? (get res "bad_key") "unknown field key")))))))

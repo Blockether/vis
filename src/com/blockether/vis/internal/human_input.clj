@@ -1327,3 +1327,40 @@
          request!
          answer->wire
          json/write-json-str))))
+
+(def ^:private spec-error-types
+  "The two `ex-info` types a bad SPEC throws. [[check]] answers those as a
+   reason; anything else is a bug in the engine and keeps flying."
+  #{:vis/human-input-invalid-request :vis/human-input-invalid-field})
+
+(defn check
+  "Why `request` is not a valid human-input spec, as ONE line, or `nil` when it
+   is fine.
+
+   The very seam [[request!]] takes, minus the human: [[normalize-request]] runs
+   for its refusals and its result is dropped, so an extension can prove a form
+   it just built without mounting a dialog, publishing an event or parking a
+   thread. Only a spec problem answers a reason -- an engine bug still throws."
+  [request]
+  (try (normalize-request request)
+       nil
+       (catch clojure.lang.ExceptionInfo e
+         (if (contains? spec-error-types (:type (ex-data e))) (ex-message e) (throw e)))))
+
+(defn check-json
+  "The strings-only mirror of [[check]], for the Python boundary: a JSON request
+   object in, a JSON verdict out -- `{\"is_valid\": true, \"error\": null}` or
+   `{\"is_valid\": false, \"error\": \"<one line>\"}`.
+
+   Total by construction: unreadable JSON, a JSON array where an object belongs
+   and a refused spec all come back as the same verdict shape, because the
+   caller is a static check that must report every file rather than die on the
+   first one."
+  [request-json]
+  (json/write-json-str (try (let [request (json/read-json (str request-json) :key-fn identity)]
+                              (when-not (map? request)
+                                (invalid-request! "request must be a JSON object"))
+                              (if-let [why (check (dissoc request "channel_id" "channel_ids"))]
+                                {"is_valid" false "error" why}
+                                {"is_valid" true "error" nil}))
+                            (catch Exception e {"is_valid" false "error" (ex-message e)}))))

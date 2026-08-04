@@ -3158,6 +3158,33 @@
           "It is auto-loaded when you run vis-agent from this project (or from ~/.vis/vis-extensions)."))))
   (shutdown-agents))
 
+(defn- cli-extension-check!
+  "Static-check Python extension files WITHOUT running them.
+
+   Reports per file, then exits 1 if anything was refused, so it drops straight
+   into a pre-commit hook or CI. Paths may be files or directories; with none, the
+   extension directories vis itself loads are checked."
+  [_parsed residual]
+  (config/init-cli!)
+  (let
+    [ec
+     (fn [sym]
+       (requiring-resolve (symbol "com.blockether.vis.internal.extension-check" (name sym))))
+
+     paths
+     (vec (remove #(str/starts-with? (str %) "-") residual))
+
+     files
+     ((ec 'expand-paths) paths)]
+
+    (if (empty? files)
+      (stdout!
+        "No Python extension files found. Pass a file or a directory, or add one to .vis/extensions/.")
+      (let [reports ((ec 'check-files) files)]
+        (stdout! ((ec 'report-text) reports))
+        (when-not ((ec 'ok?) reports) (shutdown-agents) (System/exit 1))))
+    (shutdown-agents)))
+
 
 
 
@@ -3866,7 +3893,15 @@
           :cmd/examples
           ["vis-agent extension scaffold my-tools"
            "vis-agent extension scaffold my-tools --dir ~/.vis/vis-extensions/my-tools"]
-          :cmd/run-fn cli-extensions-scaffold!}]]
+          :cmd/run-fn cli-extensions-scaffold!}
+         {:cmd/name "check"
+          :cmd/parent ["extension"]
+          :cmd/internal? true
+          :cmd/doc "Statically check Python extension files without running them."
+          :cmd/usage "vis-agent extension check [PATH ...]"
+          :cmd/examples ["vis-agent extension check"
+                         "vis-agent extension check .vis/extensions/deploy.py"]
+          :cmd/run-fn cli-extension-check!}]]
   (registry/register-cmd! spec))
 
 ;; =============================================================================
