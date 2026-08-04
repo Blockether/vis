@@ -2014,21 +2014,28 @@
 ;;; ── Confirm dialog ──────────────────────────────────────────────────────────
 (defn- draw-button!
   "Draw a confirm-dialog action button in the shared blockether look (mirroring
-   `components/action-button!` and the spel-bridge modal): both caps are the same
-   filled ` label ` pill and only the FILL differs — the SELECTED button takes the
-   ink fill with a cream bold label, the other the muted fill. No `▏`/`▕` rails:
-   a button here is a solid pill. Same width either way, so the row stays put as
-   the choice moves. Returns the consumed width."
-  [g col row label selected?]
+   `components/action-button!` and the spel-bridge modal): every state is the same
+   filled ` label ` pill and only the COLOUR differs. `Yes` is the PRIMARY cap (ink
+   fill, cream bold label) and `No` the muted secondary — and whichever one the
+   choice sits on takes the ACCENT fill, the same colour the active tab wears. No
+   `▏`/`▕` rails and no marker glyph: a button here is a solid pill and focus is a
+   colour. Same width in every state, so the row stays put as the choice moves.
+   Returns the consumed width."
+  [g col row label {:keys [variant is-focused]}]
   (let
     [col
      (long col)
 
      w
-     (+ 2 (count label))]
+     (+ 2 (count label))
+
+     [fg bg]
+     (cond is-focused [t/header-active-tab-fg t/header-active-tab-bg]
+           (= :primary variant) [t/dialog-bg t/dialog-hint-key]
+           :else [t/dialog-bg t/dialog-hint])]
 
     (p/clear-styles! g)
-    (p/set-colors! g t/dialog-bg (if selected? t/dialog-hint-key t/dialog-hint))
+    (p/set-colors! g fg bg)
     (p/enable! g p/BOLD)
     (p/put-str! g col row (str " " label " "))
     (p/clear-styles! g)
@@ -2113,12 +2120,12 @@
         ;; Buttons - side by side
         (p/set-bg! g t/dialog-bg)
         (p/fill-rect! g (inc (long left)) btn-row inner-w 1)
-        (draw-button! g btn-start btn-row btn-yes (= @focus 0))
+        (draw-button! g btn-start btn-row btn-yes {:variant :primary :is-focused (= @focus 0)})
         (draw-button! g
                       (+ (long btn-start) (long btn-w) (long btn-gap))
                       btn-row
                       btn-no
-                      (= @focus 1))
+                      {:variant :secondary :is-focused (= @focus 1)})
         (draw-hint-bar! g
                         left
                         hint-row

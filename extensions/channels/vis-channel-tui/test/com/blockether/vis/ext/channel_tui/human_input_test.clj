@@ -11,6 +11,7 @@
             [com.blockether.vis.ext.channel-tui.human-input :as hi]
             [com.blockether.vis.ext.channel-tui.screen :as screen]
             [com.blockether.vis.ext.channel-tui.state :as state]
+            [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.human-input :as engine]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize TextCharacter]
@@ -620,7 +621,7 @@
         (expect (str/blank? hints))
         (expect (not (str/includes? hints "submit")))
         (expect (not (str/includes? hints "cancel")))))
-  (it "walks the • cursor onto a cap instead of recolouring it"
+  (it "parks no marker glyph beside a cap — the cap's own colour is the cursor"
       (let
         [form
          (hi/init-form (request))
@@ -634,11 +635,14 @@
              (hi/paint! g 80 30 f)
              (screen-row screen (- (long (:hint-row (hi/band-region 80 30 1))) 2))))]
 
-        ;; The `•` is the same cursor glyph every checkbox and radio row wears.
-        (expect (str/includes? (bar-of (assoc form :focus (dec cancel-idx))) "•  Submit "))
-        (expect (str/includes? (bar-of (assoc form :focus cancel-idx)) "\u2022  Cancel"))
-        ;; ...and it is the only thing that moves — Submit keeps its pill either way.
-        (expect (str/includes? (bar-of (assoc form :focus cancel-idx)) " Submit "))))
+        ;; The `•` cursor glyph the checkbox and radio rows wear has no business on
+        ;; a pill that recolours itself when focus arrives, and the gutter it
+        ;; needed had to be reserved in every state just to keep the row still.
+        (doseq [f [form (assoc form :focus (dec cancel-idx)) (assoc form :focus cancel-idx)]]
+          (let [bar (bar-of f)]
+            (expect (str/includes? bar " Submit "))
+            (expect (str/includes? bar " Cancel"))
+            (expect (not (str/includes? bar "•")))))))
   (it "marks exactly the focused button and keeps the buttons out of the body"
       (let
         [form
@@ -1050,9 +1054,11 @@
         (expect (= ["Ship it" "Hold"] (mapv :label (:buttons (hi/action-bar custom)))))
         (expect (= ["Submit"] (mapv :label (:buttons (hi/action-bar locked)))))
         (expect (= 3 (count (:stops locked))))))
-  (it "ranks the caps by FILL, and the ranking never follows the cursor"
+  (it "ranks the caps by FILL, and paints the FOCUSED one in the accent"
       ;; The solid pill used to mean "the cap a chord fires", so walking onto
-      ;; Cancel repainted Submit as the quiet action and the form lost its default.
+      ;; Cancel repainted Submit as the quiet action and the form lost its
+      ;; default; then focus was spelled as a `•` in a reserved gutter instead of
+      ;; being what a button's own colour already says.
       (let
         [form
          (hi/init-form (request))
@@ -1063,13 +1069,22 @@
          [submit-bg cancel-bg]
          (cap-bgs form)
 
-         [held-submit-bg held-cancel-bg]
+         [focused-submit-bg quiet-cancel-bg]
+         (cap-bgs (assoc form :focus (dec cancel-idx)))
+
+         [quiet-submit-bg focused-cancel-bg]
          (cap-bgs (assoc form :focus cancel-idx))]
 
-        ;; Primary vs secondary: two different fills, both solid.
+        ;; Cursor elsewhere: two different fills, both solid.
         (expect (not= submit-bg cancel-bg))
-        (expect (= submit-bg held-submit-bg))
-        (expect (= cancel-bg held-cancel-bg)))))
+        ;; Focus is a COLOUR — the product's accent, the same fill the active tab
+        ;; wears — and it is the only thing that moves with the cursor.
+        (expect (= t/header-active-tab-bg focused-submit-bg))
+        (expect (= t/header-active-tab-bg focused-cancel-bg))
+        ;; ...while RANK stays put: Submit is the primary cap even when the cursor
+        ;; is parked on Cancel.
+        (expect (= submit-bg quiet-submit-bg))
+        (expect (= cancel-bg quiet-cancel-bg)))))
 
 ;; The band is bottom-anchored over exactly the rows the composer occupies, and
 ;; the prompt — not the composer — owns the keyboard while it is up (issue #108).

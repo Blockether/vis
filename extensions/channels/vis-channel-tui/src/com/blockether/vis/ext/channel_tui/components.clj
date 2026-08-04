@@ -168,31 +168,47 @@
 
 (defn action-button!
   "Neobrutalist dialog/action button — the shared blockether look (the spel-bridge
-   web modal). Both variants are the SAME filled cap ` label `; only the FILL
-   carries the hierarchy: `:primary` is the ink fill with a cream bold label (the
-   confirming action, e.g. Connect), `:secondary` the muted fill (the alternative,
-   e.g. Cancel). No `▏`/`▕` side rails and no `[ … ]` ASCII — a button in this
-   product is a solid pill, and an outline that only appears on the quiet action
-   read like a different widget instead of a quieter one.
+   web modal). Every state is the SAME filled cap ` label `; only the COLOUR moves.
 
-   Which cap has the CURSOR is deliberately NOT this function's business: the
-   caller draws the project-wide `•` marker (`p/selection-prefix`) beside it, so
-   walking focus with ↑/↓ never repaints `Submit` as the secondary action.
+   Two axes, two palettes, no glyphs:
 
-   Both variants consume the SAME width — `(display-width label) + 2` — so a row of
+   - RANK, while the cursor is elsewhere: `:primary` is the ink fill with a cream
+     bold label (the confirming action, e.g. Connect), `:secondary` the muted fill
+     (the alternative, e.g. Cancel).
+   - FOCUS, `:is-focused`: the cap takes the product's ACCENT fill — the very
+     `header-active-tab-bg`/`-fg` pair the active tab wears, which has real
+     contrast on every bundled palette (indigo on the neutral themes, amber on
+     blockether's). Focus is a COLOUR, not a bullet parked beside the pill: no
+     marker column, nothing for the caller to reserve, no row that reflows.
+
+   One colour per question: the accent says WHERE THE CURSOR IS, and the fill of
+   the caps it is not on still says which of them matters. Rank never follows the
+   cursor, so walking onto Cancel cannot demote Submit.
+
+   No `▏`/`▕` side rails and no `[ … ]` ASCII — a button in this product is a
+   solid pill, and an outline that only appears on the quiet action read like a
+   different widget instead of a quieter one.
+
+   Every state consumes the SAME width — `(display-width label) + 2` — so a row of
    buttons never shifts. Registers a `:kind` click region (merging `:extra`) when
    `:register?` is set. Returns the consumed width."
   ([g col row label] (action-button! g col row label nil))
-  ([g col row label {:keys [variant kind extra register?] :or {variant :secondary register? false}}]
+  ([g col row label
+    {:keys [variant is-focused kind extra register?] :or {variant :secondary register? false}}]
    (let
      [col
       (long col)
 
       w
-      (+ 2 (p/display-width label))]
+      (+ 2 (p/display-width label))
+
+      [fg bg]
+      (cond is-focused [t/header-active-tab-fg t/header-active-tab-bg]
+            (= :primary variant) [t/dialog-bg t/dialog-hint-key]
+            :else [t/dialog-bg t/dialog-hint])]
 
      (p/clear-styles! g)
-     (p/set-colors! g t/dialog-bg (if (= :primary variant) t/dialog-hint-key t/dialog-hint))
+     (p/set-colors! g fg bg)
      (p/enable! g p/BOLD)
      (p/put-str! g col row (str " " label " "))
      (p/clear-styles! g)

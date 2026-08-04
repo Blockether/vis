@@ -926,18 +926,21 @@
    SHARED neobrutalist cap `components/action-button!` — the same control the
    confirm dialog and the spel-bridge modal use:
 
-     •  Submit    Cancel
+     Submit   Cancel
 
-   The FILL ranks the actions and never moves: `:submit` is the PRIMARY cap (ink
-   fill, cream bold label), every other cap is SECONDARY (muted fill). The CURSOR
-   is the project-wide `•` marker in front of the cap — the very glyph every
-   checkbox and radio row wears (`dialogs/draw-selectable-row!`) — so a cap is
-   just another row ↑/↓ walks onto, and no colour has to do two jobs at once.
+   Nothing but COLOUR distinguishes the caps, and colour answers both questions at
+   once without a glyph: the cap under the cursor wears the product's ACCENT fill
+   (the active tab's own colours), and the caps it is not on keep their RANK —
+   `:submit` is the PRIMARY ink fill, every other cap the muted secondary. So the
+   accent says where you are and the ink says what matters, and walking ↑/↓ never
+   demotes Submit.
 
-   Nothing stencils a chord beside a cap: the caps ARE the visible way to end the
-   pause, and `Enter`/`Esc` printed next to them only named a shortcut for the
-   control already under the cursor. Both marker states and both variants measure
-   the same, so the row never shifts as focus moves.
+   No `•` marker beside a cap: a marker is a second alphabet for something the
+   fill already says, and it cost the row two columns of gutter that had to be
+   reserved in both states. Nothing stencils a chord either — the caps ARE the
+   visible way to end the pause, and `Enter`/`Esc` printed next to them only named
+   a shortcut for the control already under the cursor. Every state measures the
+   same, so the row never shifts as focus moves.
 
    Pinned rather than scrolled with the fields, because the two controls that
    END the pause are exactly the ones a long form must never push out of view."
@@ -955,16 +958,14 @@
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc left) row inner-w 1)
     (reduce (fn [^long col {:keys [action label is-focused]}]
-              (let [w (+ (long p/SELECTION_WIDTH) 2 (long (p/display-width label)))]
+              (let [w (+ 2 (long (p/display-width label)))]
                 (when (<= (+ col w) right)
-                  (p/set-colors! g t/dialog-fg t/dialog-bg)
-                  (p/put-str! g col row (p/selection-prefix is-focused))
                   (components/action-button! g
-                                             (+ col (long p/SELECTION_WIDTH))
+                                             col
                                              row
                                              label
-                                             {:variant
-                                              (if (= :submit action) :primary :secondary)}))
+                                             {:variant (if (= :submit action) :primary :secondary)
+                                              :is-focused is-focused}))
                 (+ col w 2)))
             (inc left)
             buttons)
