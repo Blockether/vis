@@ -6,9 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+# A push to main must be verified, so a run on main is never cancelled: with a
+# rapid series of merges the next push would supersede the previous commit's run
+# before it finished, and main can go a whole afternoon untested (four runs in a
+# row were cancelled that way). Runs on main queue behind each other instead;
+# a PR branch still supersedes its own earlier run, which is what nobody misses.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # Full test suite on Linux + macOS only. vis embeds GraalPy (Truffle) + rift
