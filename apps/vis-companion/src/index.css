@@ -235,6 +235,32 @@
   --font-mono: 'JetBrains Mono Variable', 'SFMono-Regular', Consolas, monospace;
 }
 
+/* Machine identity hues (see `src/lib/machine-colors.ts`). Sixteen categorical
+   colours at ONE oklch lightness (L 0.62), so a machine's rail carries the same
+   weight whichever hue it drew, and a single hex works in BOTH palettes: every
+   entry clears 3:1 on the light page (#faf3eb) and 4.7:1 on the dark one
+   (#0f1117). These are the only colours in the app that do NOT come from the
+   gateway theme — a machine's identity must not change when the palette does.
+   Hues 130-168 are missing on purpose: green is LIVE on this screen. */
+@theme {
+  --color-machine-teal: #019d7e;
+  --color-machine-aqua: #0a9a96;
+  --color-machine-cyan: #1196aa;
+  --color-machine-azure: #0292c3;
+  --color-machine-blue: #1b88e8;
+  --color-machine-indigo: #617beb;
+  --color-machine-violet: #886fe3;
+  --color-machine-purple: #a663d1;
+  --color-machine-orchid: #bd5ab6;
+  --color-machine-magenta: #cd5395;
+  --color-machine-rose: #d7506f;
+  --color-machine-coral: #d95445;
+  --color-machine-orange: #d26004;
+  --color-machine-bronze: #ba7402;
+  --color-machine-brass: #a58108;
+  --color-machine-olive: #8e8b10;
+}
+
 /* Transcript entry motion — keyframes, NOT `@starting-style` + transition.
    WebKit applies starting styles to dynamically inserted nodes late (partial
    support before Safari 18, still a frame behind on device), so the element

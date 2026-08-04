@@ -5,6 +5,8 @@ import {
   type ReactNode,
 } from 'react';
 
+import type { MachineColor } from '../lib/machine-colors';
+
 // Ref-forwarding: a button that ANCHORS something (a popover, a focus return) has
 // to be measurable by its owner, and cloning the element's classes at the call site
 // to get a bare <button> is how a design system drifts.
@@ -262,4 +264,24 @@ export function MachineBanner({ children }: { children: ReactNode }) {
       {children}
     </header>
   );
+}
+
+/**
+ * The rail that CONTAINS a machine: one 2px line in the machine's own hue running
+ * down everything it owns, banner included. A project boundary is a hairline and a
+ * machine boundary is a colour change — the eye can see where `tower` ends without
+ * reading a single word. Without a colour there is no rail: a fleet of one is not
+ * a boundary, so a solo machine pays nothing for the concept.
+ */
+export function MachineRail({ color, children }: { color?: MachineColor; children: ReactNode }) {
+  if (!color) return <>{children}</>;
+  return <div className={`border-l-2 ${color.rail}`}>{children}</div>;
+}
+
+/**
+ * The machine's hue as a solid block, worn by its banner and its scope chip, so
+ * the chip you tapped and the rail you got back are visibly the same machine.
+ */
+export function MachineMark({ color }: { color: MachineColor }) {
+  return <span className={`size-1.5 shrink-0 ${color.dot}`} aria-hidden="true" />;
 }

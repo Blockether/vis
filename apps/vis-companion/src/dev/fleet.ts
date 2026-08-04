@@ -17,6 +17,8 @@ export interface FleetMachine {
   state: 'online' | 'offline' | 'auth';
   /** Round-trip of the last health probe, shown only when online. */
   latencyMs?: number;
+  /** Fixture-only: whose sessions this machine shows (a cloned machine borrows them). */
+  sourceId?: string;
 }
 
 export interface FleetSession {
@@ -133,3 +135,22 @@ export const byProject = (sessions: FleetSession[]): [string, FleetSession[]][] 
 };
 
 export const projectRoot = (sessions: FleetSession[]): string => sessions[0]?.root ?? '';
+
+/**
+ * A fleet big enough to falsify a per-machine COLOUR: sixteen hues are only worth
+ * defining if eight paired gateways still read as eight different machines. The
+ * clones borrow a real machine's sessions so the blocks have believable bodies.
+ */
+export const manyMachines = (count: number): FleetMachine[] =>
+  Array.from({ length: count }, (_, index) => {
+    const source = MACHINES[index % MACHINES.length];
+    return index < MACHINES.length
+      ? { ...source, state: 'online' as const }
+      : {
+          id: `${source.id}-clone-${index}`,
+          label: `${source.label}-${index}`,
+          state: 'online' as const,
+          latencyMs: 6 + index * 3,
+          sourceId: source.id,
+        };
+  });

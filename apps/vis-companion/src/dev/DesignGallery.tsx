@@ -21,9 +21,18 @@ import {
   MachineBannerVariant,
   MachineBlockVariant,
   MachineGutterVariant,
+  MachinePaletteVariant,
+  MachineRailBandVariant,
   MachineRailVariant,
   MachineShippedVariant,
 } from './machineVariants';
+import {
+  MenuBandVariant,
+  MenuCapVariant,
+  MenuCrownVariant,
+  MenuLiftVariant,
+  MenuShippedVariant,
+} from './menuVariants';
 
 // Registered last so the four machine-separation proposals sit together in the index.
 
@@ -116,11 +125,27 @@ export const DESIGN_VARIANTS: DesignVariant[] = [
   },
   {
     id: 'machine-rail',
-    title: 'Machine C · Rail',
+    title: 'Machine C · Rail (per-machine colour)',
     blurb:
-      'One rail runs down everything a machine owns, so containment is continuous instead of being re-asserted by each header.',
-    states: ['default', 'offline', 'solo'],
+      'Every paired machine keeps one of sixteen hues: a rail down everything it owns, the same block in its banner, so a machine boundary is a colour change instead of one more line.',
+    states: ['default', 'offline', 'many', 'solo'],
     render: (state) => <MachineRailVariant state={state} />,
+  },
+  {
+    id: 'machine-rail-band',
+    title: 'Machine C2 · Rail + band',
+    blurb:
+      'The coloured rail with the page-coloured band kept between machines — the shot decides whether the band still earns its 12px once the rails differ.',
+    states: ['default', 'offline', 'many', 'solo'],
+    render: (state) => <MachineRailBandVariant state={state} />,
+  },
+  {
+    id: 'machine-palette',
+    title: 'Machine palette · 16 hues',
+    blurb:
+      'The identity palette as a set: one lightness so no machine outshouts another, no green because green means LIVE, and every swatch has to hold on paper and on ink.',
+    states: ['default'],
+    render: () => <MachinePaletteVariant />,
   },
   {
     id: 'machine-block',
@@ -129,6 +154,46 @@ export const DESIGN_VARIANTS: DesignVariant[] = [
       'Air says a machine ENDED and a sticky tracked banner says which one begins; the band is charged once per extra machine and never to a solo fleet.',
     states: ['default', 'offline', 'solo'],
     render: (state) => <MachineBlockVariant state={state} />,
+  },
+  {
+    id: 'menu-shipped',
+    title: 'Menu 0 · Shipped (grey)',
+    blurb:
+      'The question a session cannot be created without answering is typed in hint grey on the same paper as the rows under it.',
+    states: ['create', 'start', 'offline'],
+    render: (state) => <MenuShippedVariant state={state} />,
+  },
+  {
+    id: 'menu-cap',
+    title: 'Menu A · Amber cap',
+    blurb:
+      'A 3px Blockether rule seals the TOP edge and the question takes amber ink: the menu gets a lid, the rows keep the quiet.',
+    states: ['create', 'start', 'offline'],
+    render: (state) => <MenuCapVariant state={state} />,
+  },
+  {
+    id: 'menu-band',
+    title: 'Menu B · Amber title band',
+    blurb:
+      'The question becomes a filled Blockether band — the dialog title bar in yellow — and every later band stays grey, so the menu has exactly one head.',
+    states: ['create', 'start', 'offline'],
+    render: (state) => <MenuBandVariant state={state} />,
+  },
+  {
+    id: 'menu-lift',
+    title: 'Menu C · Dialog chrome, amber lifted',
+    blurb:
+      'The dialog title bar itself, with the amber slab thrown UPWARD instead of down: the menu hangs from its own yellow.',
+    states: ['create', 'start', 'offline'],
+    render: (state) => <MenuLiftVariant state={state} />,
+  },
+  {
+    id: 'menu-crown',
+    title: 'Menu D · Crown (band, nothing underneath)',
+    blurb:
+      'B with the drop slab gone neutral: Blockether yellow is spent exactly once, on the top edge and the question, and never below the menu.',
+    states: ['create', 'start', 'offline'],
+    render: (state) => <MenuCrownVariant state={state} />,
   },
 ];
 

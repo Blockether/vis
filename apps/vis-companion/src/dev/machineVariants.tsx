@@ -22,10 +22,17 @@
 
 import type { ReactNode } from 'react';
 
-import { MachineBanner, MachineGap } from '../components/ui';
+import { MachineBanner, MachineGap, MachineMark, MachineRail } from '../components/ui';
+import {
+  MACHINE_COLORS,
+  assignMachineColors,
+  machineColor,
+  type MachineColor,
+} from '../lib/machine-colors';
 import {
   MACHINES,
   byProject,
+  manyMachines,
   projectRoot,
   sessionsOf,
   type FleetMachine,
@@ -47,7 +54,17 @@ const STATUS_DOT: Record<FleetSession['status'], string> = {
 function machinesFor(state: string): FleetMachine[] {
   if (state === 'solo') return MACHINES.slice(0, 1);
   if (state === 'offline') return MACHINES;
+  if (state === 'many') return manyMachines(8);
   return MACHINES.filter((machine) => machine.state === 'online');
+}
+
+/** Every machine on screen, on its own hue — the map the rails are drawn from. */
+function fleetColors(state: string): Map<string, MachineColor> {
+  return assignMachineColors(machinesFor(state).map((machine) => machine.id));
+}
+
+function colorOf(colors: Map<string, MachineColor>, machine: FleetMachine): MachineColor {
+  return machineColor(colors, machine.id);
 }
 
 /** One session, at the shipped row's weight and rhythm. */
@@ -131,6 +148,7 @@ function ProjectSection({ project, sessions }: { project: string; sessions: Flee
 }
 
 /** The projects of one machine, or its degraded line when it is not answering. */
+/** The projects of one machine, or its degraded line when it is not answering. */
 function MachineBody({ machine }: { machine: FleetMachine }) {
   if (machine.state !== 'online') {
     return (
@@ -141,7 +159,7 @@ function MachineBody({ machine }: { machine: FleetMachine }) {
   }
   return (
     <>
-      {byProject(sessionsOf(machine.id)).map(([project, sessions]) => (
+      {byProject(sessionsOf(machine.sourceId ?? machine.id)).map(([project, sessions]) => (
         <ProjectSection key={project} project={project} sessions={sessions} />
       ))}
     </>
@@ -149,15 +167,25 @@ function MachineBody({ machine }: { machine: FleetMachine }) {
 }
 
 /** Name, health dot and project count — the payload every header carries. */
-function MachineFacts({ machine }: { machine: FleetMachine }) {
-  const projects = byProject(sessionsOf(machine.id)).length;
+/**
+ * Name, mark and project count — the payload every header carries. With a `color`
+ * the health dot becomes the machine's own hue: health is already a WORD here
+ * (`offline`, plus a Retry and a line in the body), while the hue is the only
+ * thing tying this banner to the rail below it and to the chip above it.
+ */
+function MachineFacts({ machine, color }: { machine: FleetMachine; color?: MachineColor }) {
+  const projects = byProject(sessionsOf(machine.sourceId ?? machine.id)).length;
   return (
     <>
       <span className="flex min-w-0 items-center gap-2">
-        <span
-          className={`size-1.5 shrink-0 ${machine.state === 'online' ? 'bg-ok' : 'bg-dialog-hint'}`}
-          aria-hidden="true"
-        />
+        {color ? (
+          <MachineMark color={color} />
+        ) : (
+          <span
+            className={`size-1.5 shrink-0 ${machine.state === 'online' ? 'bg-ok' : 'bg-dialog-hint'}`}
+            aria-hidden="true"
+          />
+        )}
         <span className="truncate font-mono text-ui font-bold text-white">{machine.label}</span>
       </span>
       <span className="flex shrink-0 items-center gap-2 font-mono text-chip text-dialog-hint">
@@ -319,7 +347,48 @@ export function MachineBannerVariant({ state }: { state: string }) {
  * slab: the line ENDS, and that is the boundary. Costs 12px of row width on a
  * phone, which is the price of the tree.
  */
+/**
+ * C — RAIL, IN THE MACHINE'S OWN COLOUR. Every paired gateway draws one hue out of
+ * the sixteen in `src/lib/machine-colors.ts` and keeps it: a 2px rail down
+ * everything it owns, banner included, and the same block in the banner and in the
+ * scope chip. A boundary between two machines is then a COLOUR CHANGE — visible
+ * before a word is read, and still visible scrolled to a random row deep inside a
+ * machine, which a one-off band between blocks cannot be. Costs 12px of row width
+ * on a phone, and nothing at all with one machine paired.
+ */
 export function MachineRailVariant({ state }: { state: string }) {
+  const colors = fleetColors(state);
+  return (
+    <Proposal
+      state={state}
+      block={({ machine, solo }) =>
+        solo ? (
+          <section>
+            <MachineBody machine={machine} />
+          </section>
+        ) : (
+          <section>
+            <MachineRail color={colorOf(colors, machine)}>
+              <MachineBanner>
+                <MachineFacts machine={machine} color={colorOf(colors, machine)} />
+              </MachineBanner>
+              <MachineBody machine={machine} />
+            </MachineRail>
+          </section>
+        )
+      }
+    />
+  );
+}
+
+/**
+ * C2 — RAIL + BAND. The same coloured rail, with the page-coloured band kept
+ * between blocks: the colour answers "whose rows are these", the air answers "this
+ * machine ENDED". The question the shots have to settle is whether the band still
+ * earns its 12px once the rails are different colours.
+ */
+export function MachineRailBandVariant({ state }: { state: string }) {
+  const colors = fleetColors(state);
   return (
     <Proposal
       state={state}
@@ -329,19 +398,51 @@ export function MachineRailVariant({ state }: { state: string }) {
             <MachineBody machine={machine} />
           </section>
         ) : (
-          <section className={index > 0 ? 'border-t-2 border-edge-strong' : ''}>
-            <header className="flex items-center justify-between gap-3 bg-panel px-3 pb-1.5 pt-2.5 sm:px-4">
-              <MachineFacts machine={machine} />
-            </header>
-            <div
-              className={`ml-3 border-l-2 sm:ml-4 ${machine.state === 'online' ? 'border-ok' : 'border-edge-strong'}`}
-            >
+          <section>
+            {index > 0 && <MachineGap />}
+            <MachineRail color={colorOf(colors, machine)}>
+              <MachineBanner>
+                <MachineFacts machine={machine} color={colorOf(colors, machine)} />
+              </MachineBanner>
               <MachineBody machine={machine} />
-            </div>
+            </MachineRail>
           </section>
         )
       }
     />
+  );
+}
+
+/**
+ * The palette itself, so the sixteen hues can be judged as a set instead of two at
+ * a time: one lightness, no green (green is LIVE), and every swatch has to hold on
+ * BOTH the light page and the dark one — flip the theme and nothing may drop out.
+ */
+export function MachinePaletteVariant() {
+  return (
+    <section className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col sm:px-6 sm:py-6">
+      <div className="flex min-h-0 flex-col overflow-hidden border-b border-dialog-edge bg-panel sm:border">
+        <header className="border-b border-edge-strong bg-panel px-3 py-2 sm:px-4">
+          <p className="font-mono text-ui font-bold uppercase tracking-[0.12em] text-white">
+            Machine hues
+          </p>
+          <p className="mt-0.5 font-mono text-meta text-dialog-hint">
+            16 identities · one lightness · no green
+          </p>
+        </header>
+        <div className="grid min-h-0 flex-1 grid-cols-2 overflow-y-auto sm:grid-cols-4">
+          {MACHINE_COLORS.map((color) => (
+            <div
+              key={color.name}
+              className={`flex min-h-16 items-center gap-2 border-b border-r border-dialog-edge border-l-2 px-3 py-3 ${color.rail}`}
+            >
+              <MachineMark color={color} />
+              <span className="truncate font-mono text-ui font-bold text-white">{color.name}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 

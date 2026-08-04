@@ -8,6 +8,8 @@ import {
   LiveTally,
   MachineBanner,
   MachineGap,
+  MachineMark,
+  MachineRail,
   Spinner,
   UnreadBadge,
 } from '../components/ui';
@@ -17,6 +19,7 @@ import type { GatewayConn, Session, SessionUsage, WorkspaceDraft } from '../lib/
 import { homeifyPath } from '../lib/path';
 import { onWake } from '../lib/wake';
 import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
+import { assignMachineColors, machineColor } from '../lib/machine-colors';
 import { PencilIcon, SwipeActions, TrashIcon } from '../components/SwipeActions';
 import { DEFAULT_SESSION_PAGE_SIZE, getSessionsPerPage, subscribeSessionsPerPage } from '../lib/storage';
 import { hostOf } from '../lib/endpoints';
@@ -506,6 +509,15 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   const hasScopeStrip = showsScopeStrip(machines);
   const showMachineHeaders = machines.length > 1 && !scopeMachine;
 
+  // One hue per paired machine, assigned from the machine's own key, so a rail
+  // keeps its colour across reloads and reorderings and two machines side by side
+  // never share one. Colour is what the eye reads before the name, and the same
+  // hue rides the scope chip above the list and the rail down its left.
+  const machineColors = useMemo(
+    () => assignMachineColors(machines.map((machine) => machineKey(machine.conn))),
+    [machines],
+  );
+
   // A scope narrowed to a dead machine is not an empty machine: with the rest of
   // the fleet hidden, that machine's failure IS the screen.
   const scopedError = scopeError(machines, scope);
@@ -916,6 +928,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                   className={chipClass(scope === key)}
                   onClick={() => selectScope(scope === key ? null : key)}
                 >
+                  <MachineMark color={machineColor(machineColors, key)} />
                   {machineLabel(machine.conn)}
                   {machine.error ? (
                     <span className="opacity-70">offline</span>
@@ -981,16 +994,23 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                       label is read. It is charged once per EXTRA machine — the first
                       block starts flush, and a solo fleet never pays it. */}
                   {showMachineHeaders && index > 0 && <MachineGap />}
+                  {/* Everything one machine owns hangs off ITS rail: a project
+                      boundary is a hairline, a machine boundary is a colour
+                      change, so where `tower` ends is seen before it is read.
+                      With a single machine paired there is no colour and no
+                      rail — the concept costs a solo user nothing. */}
+                  <MachineRail color={showMachineHeaders ? machineColor(machineColors, key) : undefined}>
                   {/* The machine header exists only while there is more than one
                       machine to tell apart, and disappears once the strip has scoped
                       to one — the chip already says where you are. */}
                   {showMachineHeaders && (
                     <MachineBanner>
                       <span className="flex min-w-0 items-center gap-2">
-                        <span
-                          className={`size-1.5 shrink-0 ${machine.error ? 'bg-dialog-hint' : 'bg-ok'}`}
-                          aria-hidden="true"
-                        />
+                        {/* The machine's hue, not its health: health is a WORD
+                            here (`offline`, with a Retry beside it), while the
+                            colour is the only thing tying this banner to the
+                            rail below it and to the chip above it. */}
+                        <MachineMark color={machineColor(machineColors, key)} />
                         <span className="truncate font-mono text-ui font-bold text-white">
                           {machineLabel(machine.conn)}
                         </span>
@@ -1053,6 +1073,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                           drafts={draftMessages}
                         />
                       ))}
+                  </MachineRail>
                 </section>
               );
             })}

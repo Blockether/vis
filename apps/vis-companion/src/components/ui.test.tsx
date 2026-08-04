@@ -1,7 +1,15 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import { LiveTally, MachineBanner, MachineGap, UnreadBadge } from './ui';
+import { MACHINE_COLORS } from '../lib/machine-colors';
+import {
+  LiveTally,
+  MachineBanner,
+  MachineGap,
+  MachineMark,
+  MachineRail,
+  UnreadBadge,
+} from './ui';
 
 // The live count wears the SAME filled block as the unread badge, in green:
 // `macbook \u25ae3\u25ae\u25ae4\u25ae` — one shape, two colours, running then
@@ -102,5 +110,43 @@ describe('MachineBanner', () => {
     expect(html).toContain('sticky');
     expect(html).toContain('top-0');
     expect(html).toContain('studio-mbp');
+  });
+});
+
+// A machine's hue is what separates two computers before a single word is read:
+// the rail runs down everything it owns, and the same hue marks its banner and
+// its scope chip so the chip you tapped and the rows you got back match.
+describe('MachineRail', () => {
+  it('draws the machine colour as a 2px rail down its block', () => {
+    const html = renderToStaticMarkup(
+      <MachineRail color={MACHINE_COLORS[3]}>rows</MachineRail>,
+    );
+
+    expect(html).toContain('border-l-2');
+    expect(html).toContain(MACHINE_COLORS[3].rail);
+    expect(html).toContain('rows');
+  });
+
+  it('gives two machines two DIFFERENT rails', () => {
+    const first = renderToStaticMarkup(<MachineRail color={MACHINE_COLORS[0]}>a</MachineRail>);
+    const second = renderToStaticMarkup(<MachineRail color={MACHINE_COLORS[1]}>a</MachineRail>);
+
+    expect(first).not.toBe(second);
+  });
+
+  // One machine paired is not a boundary, so the concept has to vanish entirely
+  // rather than indent the whole list by two pixels of some arbitrary hue.
+  it('is nothing at all without a colour', () => {
+    expect(renderToStaticMarkup(<MachineRail>rows</MachineRail>)).toBe('rows');
+  });
+});
+
+describe('MachineMark', () => {
+  it('is the rail hue as a solid block, and decoration only', () => {
+    const html = renderToStaticMarkup(<MachineMark color={MACHINE_COLORS[7]} />);
+
+    expect(html).toContain(MACHINE_COLORS[7].dot);
+    expect(html).toContain('aria-hidden="true"');
+    expect(html).not.toContain('bg-ok');
   });
 });
