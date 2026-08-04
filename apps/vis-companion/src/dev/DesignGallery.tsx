@@ -33,6 +33,12 @@ import {
   MenuLiftVariant,
   MenuShippedVariant,
 } from './menuVariants';
+import {
+  DeleteFooterVariant,
+  DeleteKebabVariant,
+  DeleteShippedVariant,
+  DeleteTrashHeaderVariant,
+} from './deleteVariants';
 
 // Registered last so the four machine-separation proposals sit together in the index.
 
@@ -194,6 +200,38 @@ export const DESIGN_VARIANTS: DesignVariant[] = [
       'B with the drop slab gone neutral: Blockether yellow is spent exactly once, on the top edge and the question, and never below the menu.',
     states: ['create', 'start', 'offline'],
     render: (state) => <MenuCrownVariant state={state} />,
+  },
+  {
+    id: 'delete-shipped',
+    title: 'Delete 0 · Shipped (bare ✕)',
+    blurb:
+      'The only place in the app where "delete" is drawn as a ✕: it reads as "close", matches nothing else, and a control that erases 40 looks identical to one that erases 1.',
+    states: ['default', 'confirm'],
+    render: (state) => <DeleteShippedVariant state={state} />,
+  },
+  {
+    id: 'delete-trash',
+    title: 'Delete A · Trash + label',
+    blurb:
+      'The same TrashIcon the row swipe-delete uses, with "Delete all N" spelled out. Correct semantics, and the count arrives before you commit.',
+    states: ['default', 'confirm'],
+    render: (state) => <DeleteTrashHeaderVariant state={state} />,
+  },
+  {
+    id: 'delete-footer',
+    title: 'Delete B · Danger footer',
+    blurb:
+      'No control in the persistent header at all. Open the group and the blast radius — "Delete all N sessions" — is a full-width action that can never be read as "close".',
+    states: ['collapsed', 'open'],
+    render: (state) => <DeleteFooterVariant state={state} />,
+  },
+  {
+    id: 'delete-kebab',
+    title: 'Delete C · Overflow (⋯)',
+    blurb:
+      'The destructive action leaves the header entirely and lives behind a kebab menu, so a thumb cannot reach it by accident.',
+    states: ['default', 'open'],
+    render: (state) => <DeleteKebabVariant state={state} />,
   },
 ];
 

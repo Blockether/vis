@@ -172,6 +172,9 @@ function useNow(intervalMs: number): number {
  */
 const START_MENU_WIDTH = 320;
 
+/** Width of the project-group kebab menu — must match the `sm:w-64` it paints itself at. */
+const PROJECT_MENU_WIDTH = 256;
+
 /**
  * Where a new session begins. `trunk` is the plain session this screen always made:
  * the agent edits the project directly. The other two are DRAFTS — isolated clones
@@ -1293,11 +1296,11 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                       ? rowAction.mode === 'rename'
                         ? 'Saving...'
                         : actionProgress
-                          ? `Deleting ${actionProgress.done} of ${actionProgress.total}...`
-                          : 'Deleting...'
+                          ? `Purging ${actionProgress.done} of ${actionProgress.total}...`
+                          : rowAction.mode === 'project' ? 'Purging...' : 'Deleting...'
                       : rowAction.mode === 'rename'
                         ? 'Save'
-                        : 'Delete'}
+                        : rowAction.mode === 'project' ? 'Purge' : 'Delete'}
                   </Button>
                 </div>
               </div>
@@ -1505,12 +1508,12 @@ function rowActionCopy(
   const count = plan.sessionIds.length;
   const sessions = `${count} ${count === 1 ? 'session' : 'sessions'}`;
   return {
-    title: plan.kind === 'project' ? 'Delete project' : 'Delete sessions',
+    title: 'Purge sessions',
     subject: `${action.project} · ${machine}`,
     body:
       plan.kind === 'project'
-        ? `Delete this project and all ${sessions} in it, with every transcript, from ${machine}? This cannot be undone.`
-        : `Delete all ${sessions} in this group, with every transcript, from ${machine}? They share a workspace but no saved project, so nothing else is removed. This cannot be undone.`,
+        ? `Purge all ${sessions} in this project, with every transcript, from ${machine}? This cannot be undone.`
+        : `Purge all ${sessions} in this group, with every transcript, from ${machine}? They share a workspace but no saved project, so nothing else is removed. This cannot be undone.`,
     live: action.sessions.filter(sessionIsLive).length,
   };
 }
@@ -1562,6 +1565,38 @@ const ProjectGroup = memo(function ProjectGroup({
   const renameRow = useCallback((session: Session) => onRename(session, conn), [onRename, conn]);
   const deleteRow = useCallback((session: Session) => onDelete(session, conn), [onDelete, conn]);
 
+  // The group's destructive action lives behind a kebab, not a bare ✕: a ✕ reads as
+  // "close," and one that deletes 40 sessions is drawn identically to one that deletes 1.
+  // The ⋯ is a neutral overflow control; "Delete all N" rides inside it carrying its count.
+  const [menu, setMenu] = useState<{ top: number; left: number } | null>(null);
+  const kebabRef = useRef<HTMLButtonElement>(null);
+  const openMenu = useCallback(() => {
+    setMenu(menuPosition(kebabRef.current?.getBoundingClientRect(), PROJECT_MENU_WIDTH));
+  }, []);
+  const closeMenu = useCallback((restoreFocus = false) => {
+    setMenu(null);
+    if (restoreFocus) kebabRef.current?.focus();
+  }, []);
+  // Same lifecycle as the start-in menu: Escape closes and hands focus back, and a resize
+  // (the phone keyboard alone fires one) RE-ANCHORS rather than dismissing — a control that
+  // closes on the frame it opens reads as dead. The kebab scrolls with the list, so a scroll
+  // closes it instead of leaving a detached popover pinned to where the kebab used to be.
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu(true);
+    };
+    const onScroll = () => setMenu(null);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('resize', openMenu);
+    document.addEventListener('scroll', onScroll, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', openMenu);
+      document.removeEventListener('scroll', onScroll, true);
+    };
+  }, [menu, closeMenu, openMenu]);
+
   // A coarse clock ages the recency window: once a session is more than an hour past
   // its last activity it leaves the collapsed peek on its own, no refresh needed.
   const now = useNow(RECENT_WINDOW_MS / 60);
@@ -1588,6 +1623,7 @@ const ProjectGroup = memo(function ProjectGroup({
   const remaining = isOpen ? Math.max(0, sessions.length - shown) : 0;
 
   return (
+    <>
     <section className="border-t border-dialog-edge first:border-t-0" aria-label={`${project} sessions`}>
       <header className="flex items-stretch bg-panel-2">
         <button
@@ -1624,12 +1660,15 @@ const ProjectGroup = memo(function ProjectGroup({
             offer a control that deletes 40. */}
         {!needle && (
           <button
+            ref={kebabRef}
             type="button"
-            onClick={() => onDeleteProject(project, sessions, conn)}
-            aria-label={`Delete ${project} with all ${sessions.length} of its sessions`}
-            className="flex min-h-11 shrink-0 items-center justify-center px-3 font-mono text-ui text-dialog-hint transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none motion-reduce:transition-none sm:px-4"
+            onClick={() => (menu ? closeMenu() : openMenu())}
+            aria-haspopup="menu"
+            aria-expanded={menu !== null}
+            aria-label="Project actions"
+            className="flex min-h-11 shrink-0 items-center justify-center px-3 font-mono text-ui text-dialog-hint transition-colors duration-150 hover:bg-hover hover:text-white focus-visible:bg-hover focus-visible:text-white focus-visible:outline-none motion-reduce:transition-none sm:px-4"
           >
-            <span aria-hidden="true">✕</span>
+            <span aria-hidden="true">⋯</span>
           </button>
         )}
       </header>
@@ -1660,6 +1699,47 @@ const ProjectGroup = memo(function ProjectGroup({
         </div>
       )}
     </section>
+    {menu &&
+      createPortal(
+        <div
+          className="fixed inset-0 z-50 bg-black/40 sm:bg-transparent"
+          role="presentation"
+          onClick={() => closeMenu(true)}
+        >
+          {/* Phones get a bottom sheet; from `sm` up it is a popover pinned under the kebab. */}
+          <div
+            role="menu"
+            aria-label={`Actions for ${project}`}
+            className="absolute inset-x-0 bottom-0 max-h-[70vh] overflow-y-auto overscroll-contain border-t-2 border-accent bg-panel pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-auto sm:bottom-auto sm:left-[var(--menu-left)] sm:top-[var(--menu-top)] sm:w-64 sm:border sm:border-dialog-edge sm:pb-0 sm:shadow-[8px_8px_0_var(--line2)]"
+            style={{ '--menu-top': `${menu.top}px`, '--menu-left': `${menu.left}px` } as CSSProperties}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                closeMenu();
+                onDeleteProject(project, sessions, conn);
+              }}
+              className="flex w-full items-center gap-3 px-3 py-3 text-left transition-colors duration-150 hover:bg-err/15 focus-visible:bg-err/15 focus-visible:outline-none motion-reduce:transition-none"
+            >
+              <span className="shrink-0 text-err">
+                <TrashIcon />
+              </span>
+              <span className="min-w-0">
+                <span className="block font-mono text-ui font-bold text-err">
+                  Purge all {sessions.length} {sessions.length === 1 ? 'session' : 'sessions'}
+                </span>
+                <span className="mt-0.5 block font-mono text-meta text-dialog-hint">
+                  Removes every transcript in this project on this machine. This cannot be undone.
+                </span>
+              </span>
+            </button>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 });
 
