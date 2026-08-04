@@ -560,9 +560,10 @@
       (assoc :fields (mapv #(dissoc % :is-secret) (:fields request)))))
 
 (defn- publish!
+  "Publish `event` on every channel in `channel-ids` and return how many
+   listeners it actually reached across all of them."
   [channel-ids event]
-  (doseq [channel-id channel-ids]
-    (channel-events/publish-channel-event! channel-id event)))
+  (transduce (map #(channel-events/publish-channel-event! % event)) + 0 channel-ids))
 
 ;; =============================================================================
 ;; Registry
@@ -668,7 +669,14 @@
 
    or
 
-     :is-submitted false, :reason \"cancelled\"/\"timeout\"/…, plus :request-id
+     :is-submitted false, :reason \"cancelled\"/\"timeout\"/\"undeliverable\"/…,
+     plus :request-id
+
+   `\"undeliverable\"` is the honest answer when the event reached ZERO
+   listeners: no surface is mounted on any channel the request names, so no
+   dialog can be drawn and nobody can answer. That returns AT ONCE and logs an
+   error naming the request — parking the caller for the full timeout would
+   report a run nobody was ever shown as if a human had ignored it.
 
    `:password` values in `:values` are opaque handles — see [[reveal-secret]]."
   [request]
@@ -690,26 +698,40 @@
                       :fields (mapv :id (:fields entry))
                       :timeout-ms (:timeout-ms entry)}
                :msg "Human-input request opened"})
-    (publish! (:channel-ids entry)
-              {:op :human-input/request :request-id request-id :request (request->view entry)})
-    (let
-      [result
-       ;; Waiting on a human is NOT wall-clock work an enclosing timeout may
-       ;; bill: park every enclosing wall (Python eval watchdog, native-tool
-       ;; wall) for as long as the operator takes. Without this the surrounding
-       ;; wall kills the thread at `Timeout (120s)` with the dialog still up.
-       (rt/park-blocking-wall (fn []
-                                (try (deref (:promise entry) (:timeout-ms entry) ::timeout)
-                                     (catch Throwable t
-                                       ;; Interrupt/cancel of the surrounding turn: release the entry
-                                       ;; and close the dialog, never leave a zombie pending request.
-                                       (force-cancel! request-id "interrupted")
-                                       (throw t)))))]
-      (if (identical? ::timeout result)
-        (do (settle! request-id {:is-submitted false :reason "timeout" :request-id request-id})
-            ;; `settle!` delivered, or a submit! that won the race already did.
-            @(:promise entry))
-        result))))
+    (if (zero? (long (publish! (:channel-ids entry)
+                               {:op :human-input/request
+                                :request-id request-id
+                                :request (request->view entry)})))
+      (do (tel/log! {:level :error
+                     :id ::request-undeliverable
+                     :data {:request-id request-id
+                            :title (:title entry)
+                            :channel-ids (:channel-ids entry)
+                            :session-id (:session-id entry)}
+                     :msg (str "Human-input request reached no channel — nothing is mounted on "
+                               (pr-str (:channel-ids entry))
+                               ", so no dialog can be drawn and nobody can answer")})
+          (settle! request-id {:is-submitted false :reason "undeliverable" :request-id request-id})
+          ;; `settle!` delivered, unless a racing submit! got there first.
+          @(:promise entry))
+      (let
+        [result
+         ;; Waiting on a human is NOT wall-clock work an enclosing timeout may
+         ;; bill: park every enclosing wall (Python eval watchdog, native-tool
+         ;; wall) for as long as the operator takes. Without this the surrounding
+         ;; wall kills the thread at `Timeout (120s)` with the dialog still up.
+         (rt/park-blocking-wall (fn []
+                                  (try (deref (:promise entry) (:timeout-ms entry) ::timeout)
+                                       (catch Throwable t
+                                         ;; Interrupt/cancel of the surrounding turn: release the entry
+                                         ;; and close the dialog, never leave a zombie pending request.
+                                         (force-cancel! request-id "interrupted")
+                                         (throw t)))))]
+        (if (identical? ::timeout result)
+          (do (settle! request-id {:is-submitted false :reason "timeout" :request-id request-id})
+              ;; `settle!` delivered, or a submit! that won the race already did.
+              @(:promise entry))
+          result)))))
 
 ;; =============================================================================
 ;; Strings-only boundary — what a Python extension actually calls

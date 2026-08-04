@@ -18,7 +18,8 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.human-input :as hi]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
+            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+            [taoensso.telemere :as tel]))
 
 (defn- spec
   [& {:as overrides}]
@@ -151,6 +152,26 @@
                             (is (empty? (events-of seen "human_input.request" rid)))
                             (is (empty? (events-of seen "human_input.close" rid))))
                           (finally (hi/cancel! rid "cleanup"))))))))
+
+(deftest sessionless-request-is-logged-test
+  ;; Regression, issue #104: a request that named no session was dropped here in
+  ;; silence. The companion app never learned the run was parked, and nothing in
+  ;; the logs said a request had been thrown away — the operator saw a run that
+  ;; simply stopped.
+  (let
+    [rid
+     (str "req-" (random-uuid))
+
+     {signals :signals}
+     (tel/with-signals (gw-hi/on-channel-event! {:op :human-input/request
+                                                 :request-id rid
+                                                 :request {:id rid :title "Key?"}}))]
+
+    (is (some (fn [signal]
+                (and (= :warn (:level signal))
+                     (= ::gw-hi/request-without-session (:id signal))
+                     (= rid (:request-id (:data signal)))))
+              signals))))
 
 (deftest push-alerts-a-parked-run-test
   (testing "a blocked run pushes on its own collapse lane"

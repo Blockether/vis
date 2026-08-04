@@ -16,12 +16,14 @@
        can answer a request it finds already open.
 
    A request raised outside a gateway session carries no `:session-id`. It is
-   still published (the TUI shows it) and silently skipped here — a session
-   event with no session has nowhere to go."
+   still published (the TUI shows it), but it cannot become a session event —
+   that drop is LOGGED here rather than silent, because it means an app operator
+   never learns the run is waiting."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as channel-events]
             [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.internal.human-input :as human-input]))
+            [com.blockether.vis.internal.human-input :as human-input]
+            [taoensso.telemere :as tel]))
 
 (set! *warn-on-reflection* true)
 
@@ -69,12 +71,22 @@
 
 (defn on-channel-event!
   "Translate one `:app` channel event into a session event. Unknown ops are
-   ignored — the channel bus is shared."
+   ignored — the channel bus is shared.
+
+   A request that names no session cannot become a session event, so the app can
+   never show it. That is a real hole in a run, not a routine skip: it is logged
+   at `:warn` naming the request, instead of vanishing here in silence."
   [event]
   (case (:op event)
     :human-input/request
-    (when-let [sid (session-of (:request event))]
-      (state/append-event! sid "human_input.request" {:request (:request event)}))
+    (if-let [sid (session-of (:request event))]
+      (state/append-event! sid "human_input.request" {:request (:request event)})
+      (tel/log! {:level :warn
+                 :id ::request-without-session
+                 :data {:request-id (or (:request-id event) (:id (:request event)))
+                        :title (:title (:request event))}
+                 :msg (str "Human-input request names no session — the companion app cannot be "
+                           "told this run is parked")}))
 
     :human-input/close
     ;; `:session-id` rides on the close event itself: by the time it is

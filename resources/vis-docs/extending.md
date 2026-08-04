@@ -337,7 +337,9 @@ engine rejects such an answer even when it arrives straight over HTTP. A require
 `vis.ask` never raises for a refusal: cancelling or timing out returns a falsey
 `Answer` whose `reason` says which (`cancelled`, `timeout`, or whatever reason
 the host cancelled with). `answer.values` always carries every field, defaults
-included.
+included. A run with no surface mounted to show the dialog answers
+`undeliverable` immediately — and logs an error naming the request — instead of
+parking your extension until the timeout.
 
 **Secrets never round-trip as plaintext.** A `password` field answers with an
 opaque `vis-secret:` handle; `answer.reveal("token")` (or `vis.reveal(handle)`)

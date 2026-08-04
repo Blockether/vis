@@ -288,7 +288,9 @@ def ask(title, fields, **options):
     # what the whole ask is about — it wraps), submit_label, cancel_label,
     # is_cancellable, timeout_ms (default 5 min, capped at 1 hour).
     # A cancelled, timed-out or unanswered request returns a falsey Answer
-    # whose `reason` says which — it never raises.
+    # whose `reason` says which — it never raises. `reason == 'undeliverable'`
+    # means no surface was mounted to show the dialog: the host logged an error
+    # and gave up at once instead of parking you until the timeout.
     import json
     if not isinstance(fields, (list, tuple)) or not fields:
         raise TypeError('ask needs a non-empty list of field specs')

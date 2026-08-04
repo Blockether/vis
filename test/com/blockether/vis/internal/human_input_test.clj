@@ -4,7 +4,17 @@
             [com.blockether.vis.internal.channel-events :as ce]
             [com.blockether.vis.internal.human-input :as hi]
             [com.blockether.vis.internal.runtime-settings :as rt]
-            [lazytest.core :refer [defdescribe expect it throws?]]))
+            [lazytest.core :refer [defdescribe expect it throws?]]
+            [taoensso.telemere :as tel]))
+
+(defn- signal?
+  "True when `signals` carries a signal of `level` and `id` naming `request-id`."
+  [signals level id request-id]
+  (boolean (some (fn [signal]
+                   (and (= level (:level signal))
+                        (= id (:id signal))
+                        (= request-id (:request-id (:data signal)))))
+                 signals)))
 
 (defn- fresh-channel
   "A channel id no other test (or a mounted channel) can collide with — the
@@ -274,51 +284,58 @@
 
 (defdescribe
   python-json-seam-test
-  (it
-    "takes snake_case strings in and hands snake_case strings back"
-    (let
-      [title
-       (str "Deploy " (random-uuid))
+  (it "takes snake_case strings in and hands snake_case strings back"
+      ;; A request is only pending while some channel is mounted to draw it, and a
+      ;; bare JVM has none — stand one up on a default channel so the seam, not
+      ;; the empty process, is what this test measures.
+      (ce/add-channel-event-listener! :tui
+                                      ::json-seam
+                                      (fn [_]))
+      (try
+        (let
+          [title
+           (str "Deploy " (random-uuid))
 
-       answer-json
-       (future (hi/request-json! (json/write-json-str {"title" title
-                                                       "description" "Pick a target"
-                                                       ;; Channel routing is host-side — a guest cannot aim the
-                                                       ;; dialog anywhere, so this key is dropped, not honoured.
-                                                       "channel_ids" ["nowhere"]
-                                                       "timeout_ms" 20000
-                                                       "fields" [{"name" "env"
-                                                                  "label" "Target"
-                                                                  "description" "Where it lands."
-                                                                  "type" "select"
-                                                                  "options" ["staging" "prod"]
-                                                                  "is_required" true}
-                                                                 {"name" "note"
-                                                                  "type" "plaintext"}]})))
+           answer-json
+           (future (hi/request-json! (json/write-json-str {"title" title
+                                                           "description" "Pick a target"
+                                                           ;; Channel routing is host-side — a guest cannot aim the
+                                                           ;; dialog anywhere, so this key is dropped, not honoured.
+                                                           "channel_ids" ["nowhere"]
+                                                           "timeout_ms" 20000
+                                                           "fields"
+                                                           [{"name" "env"
+                                                             "label" "Target"
+                                                             "description" "Where it lands."
+                                                             "type" "select"
+                                                             "options" ["staging" "prod"]
+                                                             "is_required" true}
+                                                            {"name" "note" "type" "plaintext"}]})))
 
-       request-id
-       (await-pending-id title)
+           request-id
+           (await-pending-id title)
 
-       [env]
-       (:fields (hi/pending-request request-id))]
+           [env]
+           (:fields (hi/pending-request request-id))]
 
-      ;; The dialog's OWN description crosses the seam, not just its fields': an
-      ;; ask says what it is about before the operator reads a single label.
-      (expect (= "Pick a target" (:description (hi/pending-request request-id))))
-      ;; The dialog sees exactly what the Python spec asked for.
-      (expect (= "env" (:name env)))
-      (expect (= "Target" (:label env)))
-      (expect (= "Where it lands." (:description env)))
-      (expect (true? (:is-required env)))
-      ;; Required is enforced for a JSON caller too, not just a dialog.
-      (expect (false? (:is-accepted (hi/submit! request-id {"note" "hi"}))))
-      (expect (true? (:is-accepted (hi/submit! request-id {"env" "prod" "note" "hi"}))))
-      (let [answer (json/read-json @answer-json :key-fn identity)]
-        (expect (= #{"is_submitted" "reason" "request_id" "values"} (set (keys answer))))
-        (expect (true? (get answer "is_submitted")))
-        (expect (= "submitted" (get answer "reason")))
-        (expect (= request-id (get answer "request_id")))
-        (expect (= {"env" "prod" "note" "hi"} (get answer "values"))))))
+          ;; The dialog's OWN description crosses the seam, not just its fields': an
+          ;; ask says what it is about before the operator reads a single label.
+          (expect (= "Pick a target" (:description (hi/pending-request request-id))))
+          ;; The dialog sees exactly what the Python spec asked for.
+          (expect (= "env" (:name env)))
+          (expect (= "Target" (:label env)))
+          (expect (= "Where it lands." (:description env)))
+          (expect (true? (:is-required env)))
+          ;; Required is enforced for a JSON caller too, not just a dialog.
+          (expect (false? (:is-accepted (hi/submit! request-id {"note" "hi"}))))
+          (expect (true? (:is-accepted (hi/submit! request-id {"env" "prod" "note" "hi"}))))
+          (let [answer (json/read-json @answer-json :key-fn identity)]
+            (expect (= #{"is_submitted" "reason" "request_id" "values"} (set (keys answer))))
+            (expect (true? (get answer "is_submitted")))
+            (expect (= "submitted" (get answer "reason")))
+            (expect (= request-id (get answer "request_id")))
+            (expect (= {"env" "prod" "note" "hi"} (get answer "values")))))
+        (finally (ce/remove-channel-event-listener! :tui ::json-seam))))
   (it "reports a misspelled key from the JSON seam instead of dropping it"
       (let
         [message (refusal #(hi/request-json! (json/write-json-str
@@ -538,11 +555,20 @@
         [rid
          (str "must-answer-" (random-uuid))
 
+         chan
+         (fresh-channel)
+
+         _
+         (ce/add-channel-event-listener! chan
+                                         ::must-answer
+                                         (fn [_]))
+
          answer
          (future (hi/request! {:id rid
                                :title "Deploy"
                                :is-cancellable false
                                :timeout-ms 3000
+                               :channel-ids [chan]
                                :fields [{:id "note" :is-required true}]}))
 
          parked?
@@ -561,7 +587,9 @@
              (expect (= 1 (hi/cancel-all! "shutdown")))
              (expect (= {:is-submitted false :reason "shutdown" :request-id rid}
                         (deref answer 2000 ::stuck)))
-             (finally (hi/cancel-all! "cleanup") (future-cancel answer))))))
+             (finally (ce/remove-channel-event-listener! chan ::must-answer)
+                      (hi/cancel-all! "cleanup")
+                      (future-cancel answer))))))
 
 (defn- await-true
   "Poll `pred` for up to ~2s; another thread settles these requests."
@@ -637,3 +665,24 @@
                                                                    (= request-id (:request-id e))))
                                                             @events)))))
                         (finally (detach!))))))
+
+(defdescribe undeliverable-request-test
+             ;; Regression, issue #104: a request published to channels nobody is mounted on
+             ;; parked the extension for its whole timeout and then answered `"timeout"`, as
+             ;; if a human had ignored a dialog that was never drawn — and not one log line
+             ;; said the request had reached zero surfaces.
+             (it "fails fast, and loudly, when no channel is listening"
+                 (let
+                   [rid
+                    (str "undeliverable-" (random-uuid))
+
+                    {answer :value signals :signals}
+                    (tel/with-signals (hi/request! {:id rid
+                                                    :title "Deploy"
+                                                    :timeout-ms 2000
+                                                    :fields [{:id "env"}]
+                                                    :channel-ids [(fresh-channel)]}))]
+
+                   (expect (= {:is-submitted false :reason "undeliverable" :request-id rid} answer))
+                   (expect (nil? (hi/pending-request rid)))
+                   (expect (signal? signals :error ::hi/request-undeliverable rid)))))
