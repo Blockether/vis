@@ -289,8 +289,8 @@
 
                    (expect (str/includes? text "Deploy"))
                    (expect (str/includes? text "Pick the target"))
-                   (expect (str/includes? text "User  REQUIRED"))
-                   (expect (str/includes? text "Password  REQUIRED"))
+                   (expect (str/includes? text "User *"))
+                   (expect (str/includes? text "Password *"))
                    (expect (str/includes? text "Dev"))))
              (it "places the terminal cursor inside the focused text field"
                  (let
@@ -337,7 +337,10 @@
                     (assoc (hi/init-form (request)) :focus 7)
 
                     _
-                    (hi/paint! g 80 30 form)
+                    ;; 20 rows, not 30: the whole form FITS in a 30-row terminal, so
+                    ;; nothing scrolls there and this assertion only ever proved that
+                    ;; the label it looked for was spelled differently.
+                    (hi/paint! g 80 20 form)
 
                     text
                     (screen-text screen)]
@@ -832,10 +835,11 @@
   "Three names, three jobs, drawn in that order: the bold LABEL says what the
    field is, the ITALIC description explains it, and only then comes the input.
    Prose that arrives after the box you already filled is prose nobody reads."
-  (it "says REQUIRED beside the label of every field the engine will refuse"
+  (it "marks every field the engine will refuse with a `*` after its label"
       ;; The engine rejects a submission that leaves one of these blank, so the
-      ;; dialog names them BEFORE the operator hits enter — in full, not as a `*`
-      ;; nobody reads.
+      ;; dialog names them BEFORE the operator hits enter — with the web's own mark.
+      ;; Spelling `REQUIRED` out beside every label said the same word down the whole
+      ;; form and shoved the labels apart.
       (let
         [rows
          (hi/form-rows (hi/init-form (request)))
@@ -853,11 +857,31 @@
                           :fields
                           [{:id "ok" :type :checkbox :label "Confirm" :is-required true}]}))]
 
-        (expect (= "User  REQUIRED" (label-of "User")))
-        (expect (= "Password  REQUIRED" (label-of "Password")))
+        (expect (= "User *" (label-of "User")))
+        (expect (= "Password *" (label-of "Password")))
         (expect (= "Env" (label-of "Env")))
         ;; A checkbox carries its own label, so the marker rides the box itself.
-        (expect (= "Confirm  REQUIRED" (:text (first checkbox-rows))))))
+        (expect (= "Confirm *" (:text (first checkbox-rows))))
+        ;; The row also SAYS it is required, which is what lets the painter ink
+        ;; exactly that cell red instead of guessing at a trailing glyph.
+        (expect (true? (:is-required (first checkbox-rows))))))
+  (it "paints that `*` in the error colour, and nothing else on the row"
+      ;; A required field is a refusal waiting to happen, so its mark wears the very
+      ;; red the field's error line will — while the label keeps the ink that says
+      ;; whether the keyboard is in it.
+      (let [form (hi/init-form (request))]
+        (expect (= t/footer-error-fg (:fg (cell-under form "*"))))
+        (expect (not= t/footer-error-fg (:fg (cell-under form "User"))))))
+  (it "seats a checkbox's own `*` on the field surface the box sits on"
+      (let
+        [cell (cell-under (hi/init-form
+                            {:id "r"
+                             :title "T"
+                             :fields
+                             [{:id "ok" :type :checkbox :label "Confirm" :is-required true}]})
+                          "*")]
+        (expect (= t/footer-error-fg (:fg cell)))
+        (expect (= t/input-field-bg (:bg cell)))))
   (it "puts a field's description between its label and its input"
       (let
         [rows

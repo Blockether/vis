@@ -322,8 +322,17 @@ function FieldShell({
     <div className="space-y-1">
       <span className="block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
         {field.label}
-        {/* Said in full, not as a `*`: this is the field that will refuse the form. */}
-        {field.is_required && <span className="ml-1.5 text-err">REQUIRED</span>}
+        {/* The web's own mark, and the TUI band now draws the same one: a red `*`,
+            not the word REQUIRED shouted beside every label. Screen readers still
+            get the word. */}
+        {field.is_required && (
+          <>
+            <span aria-hidden="true" className="ml-1 text-err">
+              *
+            </span>
+            <span className="sr-only"> required</span>
+          </>
+        )}
       </span>
       {field.description && (
         <p className="font-mono text-chip italic text-dialog-hint">{field.description}</p>

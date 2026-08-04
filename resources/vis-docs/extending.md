@@ -416,7 +416,7 @@ cannot both hold a `host`.
 The group crosses the wire as a tree — `{"type": "group", "direction": "row",
 "fields": [...]}` — so both surfaces read one layout instead of inventing their
 own. The TUI splits the band's width across a `row`: each column keeps its own
-label, `REQUIRED` marker, error line and cursor, `←`/`→` still move inside a
+label, required `*`, error line and cursor, `←`/`→` still move inside a
 field and `↑`/`↓` between them in reading order. The app renders a
 `fieldset`/`legend` with the same row or column flex, wrapping on a phone instead
 of overflowing.
@@ -487,8 +487,8 @@ can carry on alone names its wait and gets a falsey `Answer` whose `reason` is
 the same instant the extension resumes, so a form nobody can answer is never left
 on screen.
 
-`is_required` is enforced, not decorated: every dialog marks the field
-**REQUIRED** next to its label, and a blank one is refused on confirmation — by
+`is_required` is enforced, not decorated: every dialog marks the field with a red
+`*` next to its label, and a blank one is refused on confirmation — by
 the engine, so an answer that arrives straight over HTTP is judged by exactly the
 same rule as one typed into a dialog. A required `checkbox` has to be ticked —
 `false` is not an answer to it.

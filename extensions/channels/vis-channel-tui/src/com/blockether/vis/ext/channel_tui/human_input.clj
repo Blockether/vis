@@ -567,14 +567,18 @@
   (if (= :password type) (apply str (repeat (count (str value)) mask-char)) (str value)))
 
 (def ^:private required-marker
-  "Said in full, next to the label. A lone `*` is a footnote nobody reads, and the
-   engine REFUSES a submission that leaves one of these blank — so the dialog has
-   to name the fields that will bounce it before the operator hits enter."
-  "REQUIRED")
+  "The web's own mark for a field that cannot be left blank, and the terminal wears
+   the same one: a `*` right after the label, in `t/footer-error-fg`. Spelling
+   `REQUIRED` out beside every label shouted the same word down the whole form and
+   shoved the labels apart; one red cell says it without competing with the label it
+   annotates — and the engine REFUSES a submission that leaves such a field blank,
+   so the warning colour is the honest one.
 
-(defn- label-text
-  [{:keys [label is-required]}]
-  (str label (when is-required (str "  " required-marker))))
+   The leading space belongs to the marker: it is the gap from the label, and it is
+   what lets a painter find the marker at the END of an already-ellipsized row."
+  " *")
+
+(defn- label-text [{:keys [label is-required]}] (str label (when is-required required-marker)))
 
 (defn- description-rows
   "`text` as `:description` rows, WORD-WRAPPED to `text-w` columns.
@@ -761,6 +765,7 @@
              (= :checkbox type) [{:kind :checkbox
                                   :field-id id
                                   :text (label-text field)
+                                  :is-required (boolean (:is-required field))
                                   :is-checked (boolean value)
                                   :is-focused (= idx focus)}]
              (contains? choice-types type)
@@ -789,7 +794,10 @@
       (cond->
         (if (= :checkbox type)
           (into (vec rows) description)
-          (into (into [{:kind :label :text (label-text field) :is-active-field is-active-field}]
+          (into (into [{:kind :label
+                        :text (label-text field)
+                        :is-required (boolean (:is-required field))
+                        :is-active-field is-active-field}]
                       description)
                 rows))
         (get errors id)
@@ -948,6 +956,14 @@
                         row
                         (dialogs/ellipsize (str text) (max 0 (- (long inner-w) 2))))))
 
+(defn- paint-required!
+  "Re-ink a row's trailing [[required-marker]] in the error colour, on whatever paper
+   the row is already wearing. It is the same red the field's error line uses,
+   because it names the same refusal — one turn earlier."
+  [g col row bg]
+  (p/set-colors! g t/footer-error-fg bg)
+  (p/put-str! g col row required-marker)
+  (p/set-colors! g t/dialog-fg t/dialog-bg))
 
 (defn- paint-actions!
   "The PINNED action bar: every button the request offers on ONE row, drawn as the
@@ -1029,13 +1045,29 @@
         nil)
 
     :label
-    (do (p/set-colors! g (if (:is-active-field entry) t/dialog-fg t/dialog-hint) t/dialog-bg)
-        (p/fill-rect! g (inc (long left)) row inner-w 1)
-        (let [text (dialogs/ellipsize (str (:text entry)) (max 0 (- (long inner-w) 2)))]
-          (if (:is-active-field entry)
-            (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row text))
-            (p/put-str! g (inc (long left)) row text)))
-        nil)
+    (let
+      [fg
+       (if (:is-active-field entry) t/dialog-fg t/dialog-hint)
+
+       shown
+       (dialogs/ellipsize (str (:text entry)) (max 0 (- (long inner-w) 2)))
+
+       ;; The `*` is the last thing on the row, so it is inked red only when it
+       ;; actually survived the ellipsis — a truncated label must not stain its
+       ;; own tail.
+       mark?
+       (boolean (and (:is-required entry) (str/ends-with? shown required-marker)))
+
+       head
+       (if mark? (subs shown 0 (- (count shown) (count required-marker))) shown)]
+
+      (p/set-colors! g fg t/dialog-bg)
+      (p/fill-rect! g (inc (long left)) row inner-w 1)
+      (if (:is-active-field entry)
+        (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row head))
+        (p/put-str! g (inc (long left)) row head))
+      (when mark? (paint-required! g (+ (inc (long left)) (count head)) row t/dialog-bg))
+      nil)
 
     :error
     (do (paint-plain! g left row inner-w t/footer-error-fg (:text entry)) nil)
@@ -1044,14 +1076,24 @@
     ;; the same field surface a typed row does. Focus is the surface, the ring and
     ;; the bold ink — never a marker in front of the row.
     :checkbox
-    (do (dialogs/draw-field-row! g
-                                 left
-                                 row
-                                 inner-w
-                                 (:is-focused entry)
-                                 (str (dialogs/choice-mark false (:is-checked entry))
-                                      (:text entry)))
-        nil)
+    (let
+      [content
+       (str (dialogs/choice-mark false (:is-checked entry)) (:text entry))
+
+       shown
+       (dialogs/ellipsize content (dialogs/field-content-w inner-w))
+
+       text-left
+       (dialogs/draw-field-row! g left row inner-w (:is-focused entry) content)]
+
+      ;; A checkbox carries its own label, so its `*` rides the field surface the
+      ;; box sits on — re-inked there, in the same red every other label uses.
+      (when (and (:is-required entry) (str/ends-with? shown required-marker))
+        (paint-required! g
+                         (+ (long text-left) (- (count shown) (count required-marker)))
+                         row
+                         (if (:is-focused entry) t/input-field-bg (t/field-resting-bg))))
+      nil)
 
     ;; One row shape, TWO toggle vocabularies. An exclusive `:select` option wears
     ;; the shared ●/○ radio mark — picking one drops the other; an inclusive
