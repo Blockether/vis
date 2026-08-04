@@ -1925,9 +1925,15 @@
    that stops a turn — the gateway terminal, a cancel, the not-running
    reconcile, the next turn starting — would otherwise drop everything the user
    watched the moment the turn ended (issue #61). Parking is idempotent and
-   writes only onto a still-pending placeholder that has no trace yet."
+   writes only onto a still-pending placeholder that has no trace yet.
+
+   Settling also RE-PINS the viewport: the live bubble is about to be replaced by
+   the taller final one, and a FOLLOW reader left holding the old tail row would
+   ease down to the new bottom — the end-of-turn self-scroll. `scroll/settle`
+   locks follow to the exact bottom and leaves a parked `:at` reader alone."
   [db]
   (assoc (park-live-trace db)
+    :scroll (scroll/settle (:scroll db))
     :loading? false
     :cancelling? false
     :progress nil
@@ -2644,8 +2650,7 @@
     (cond->
       (-> db
           clear-active-turn-state
-          (assoc :messages (drop-pending-turn-messages (:messages db))
-                 :scroll scroll/follow)
+          (assoc :messages (drop-pending-turn-messages (:messages db)))
           (update :input-history
                   (fn [xs]
                     (let [xs (vec (or xs []))]
@@ -3837,7 +3842,7 @@
                                                                       (:trace terminal)
                                                                       nil
                                                                       options))
-                                                    :scroll scroll/follow)))}
+                                                    :scroll (scroll/settle (:scroll workspace)))))}
             :else {:db db
                    :fx [[:dispatch
                          [:message-received workspace-id (terminal-content terminal) options]]]}))))
@@ -4818,7 +4823,7 @@
                                                                       :terminal-pending :trace]))))
                                                nil
                                                completion))
-                                 :scroll scroll/follow)
+                                 :scroll (scroll/settle (:scroll workspace)))
              :else
              (let
                [trace

@@ -1043,6 +1043,47 @@
           (expect (= scroll/follow (landed scroll/follow)))
           ;; reading history: the result must not move the viewport at all
           (expect (= (scroll/parked 30) (landed (scroll/parked 30))))))
+    (it "cancelling a turn settles the view instead of easing to the new tail"
+        ;; Regression (TUI "cancelling reflows the transcript, as if it
+        ;; scrolled"): only the normal turn-end path was settled, so every cancel
+        ;; path — the gateway's terminal sync and the daemon's cancel ACK — still
+        ;; left FOLLOW pinned to the OLD tail row, and the next frames eased down
+        ;; to the taller settled bubble.
+        (let
+          [cancelling (fn [sc extra]
+                        (merge {:active-tab-id :main
+                                :session {:id "s1"}
+                                :loading? true
+                                :cancelling? true
+                                :cancelling-at-ms 1000
+                                :cancel-token :token
+                                :gateway-turn-id "turn-1"
+                                :live-turn-client-id "c1"
+                                :input {}
+                                :messages [{:role :user :text "hi" :client-turn-id "c1"}
+                                           {:role :assistant :pending? true :client-turn-id "c1"}]
+                                :progress {:iterations [{:id :i1 :forms [{:id :f1}]}]}
+                                :scroll sc}
+                               extra))
+           synced (fn [sc]
+                    (:scroll (:db ((ev :sync-turn-terminal)
+                                    (cancelling sc nil)
+                                    [:sync-turn-terminal :main
+                                     {:turn-id "turn-1" :client-id "c1" :status "cancelled"}]))))
+           acked (fn [sc extra]
+                   (:scroll (:db ((ev :gateway-cancel-result)
+                                   (cancelling sc extra)
+                                   [:gateway-cancel-result 1000 {:status "cancelling"}]))))
+           submitted {:submitted-input {:text "hi" :pastes {} :paste-counter 0}}]
+
+          ;; an ease was in flight when the user hit Esc
+          (expect (= scroll/follow (synced {:mode :follow :pos 100})))
+          (expect (= scroll/follow (acked {:mode :follow :pos 100} nil)))
+          ;; the ACK that hands the submitted prompt back must not move the view
+          (expect (= scroll/follow (acked {:mode :follow :pos 100} submitted)))
+          ;; reading history while a cancel lands: the viewport stays exactly put
+          (expect (= (scroll/parked 30) (synced (scroll/parked 30))))
+          (expect (= (scroll/parked 30) (acked (scroll/parked 30) submitted)))))
     (it "send-message re-pins to a CLEAN FOLLOW"
         (let
           [send-message-fn (ev :send-message)
