@@ -16,6 +16,7 @@
    and one per select/multiselect OPTION — so ↑/↓/Tab walks the form the way
    the settings dialog walks its rows."
   (:require [clojure.string :as str]
+            [com.blockether.vis.ext.channel-tui.components :as components]
             [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
@@ -167,7 +168,7 @@
 
    A transient that can only be accepted by a chord is a transient nobody
    accepts: these are the LAST stops, so ↓ walks off the final field straight
-   onto `[ Submit ]` and Enter presses it. Cancel only exists when the request
+   onto the `Submit` cap and Enter presses it. Cancel only exists when the request
    allows it — an uncancellable ask must not offer a button that does nothing."
   [request]
   (let
@@ -494,7 +495,7 @@
             ;; natural "I'm done" key — toggling first would make a
             ;; single-option form impossible to accept, so options
             ;; toggle with Space and Enter always submits. On a BUTTON
-            ;; it presses that button, which is the only way `[ Cancel ]`
+            ;; it presses that button, which is the only way `Cancel`
             ;; is reachable without knowing Esc.
             :else (press))
 
@@ -776,7 +777,8 @@
         (conj {:kind :blank})))))
 
 (defn action-bar
-  "The request's own buttons as ONE row: `[ Submit ] Enter   [ Cancel ] Esc`.
+  "The request's own buttons as ONE row: the solid ` Submit ` pill with its Enter
+   chord, then the outlined `▏Cancel▕` with Esc.
 
    Each cap carries the chord that presses it, so the band names an action
    EXACTLY ONCE. The hint bar a row below deliberately says nothing about submit
@@ -865,14 +867,21 @@
       (min start label-idx))))
 
 (defn hint
-  "Hint-bar pairs for `form` — the chord list changes with the focused field.
-   Spelled the canonical dialog way: `↑/↓` chords and lowercase actions.
+  "Hint-bar pairs for `form` — TYPING chords only, spelled the canonical dialog
+   way: chord, then a lowercase action.
 
-   NAVIGATION AND TYPING ONLY. Submit and cancel are NOT here: [[action-bar]]
-   paints those two controls one row above with their own chords on the caps, so
-   a hint pair for either would print the same verb twice, a row apart. The one
-   Enter that belongs here is the multiline NEWLINE — that is a typing chord, and
-   it is also why the submit cap switches to `^S`."
+   NAVIGATION IS NOT A HINT. `↑/↓ move` used to lead this list on every single
+   pause: a permanent row of chrome teaching the one thing every terminal
+   operator already knows, printed under a form whose focus ring already shows
+   where the cursor is. So the bar is EMPTY unless the FOCUSED stop accepts a
+   chord the band itself cannot show — Space on a toggle, digits in an OTP, ←/→
+   on a slider, Enter for a newline.
+
+   Submit and cancel are not here either: [[action-bar]] paints those two
+   controls one row above with their own chords ON the caps, so a hint pair for
+   either would print the same verb twice, a row apart. The one Enter that
+   belongs here is the multiline NEWLINE — that is a typing chord, and it is also
+   why the submit cap switches to `^S`."
   [form]
   (let
     [stop
@@ -881,7 +890,7 @@
      otp?
      (= :otp (:type (field-by-id form (:field-id stop))))]
 
-    (cond-> [["↑/↓" "move"]]
+    (cond-> []
       (contains? #{:checkbox :select-option :multi-option} (:kind stop))
       (conj ["Space" "toggle"])
 
@@ -920,9 +929,18 @@
 
 
 (defn- paint-actions!
-  "The PINNED action bar: every button the request offers on ONE row, the focused
-   one bold behind the shared cursor glyph, each cap followed by the DIM chord
-   that presses it — `[ Submit ] Enter   [ Cancel ] Esc`.
+  "The PINNED action bar: every button the request offers on ONE row, drawn as the
+   SHARED neobrutalist cap `components/action-button!` — the same control the
+   confirm dialog and the spel-bridge modal use — each followed by the DIM chord
+   that presses it:
+
+     ` Submit ` Enter   `▏Cancel▕` Esc
+
+   The FILL is the focus marker, so no `•` bullet and no `[ … ]` ASCII brackets:
+   the cap the chord would fire RIGHT NOW is a solid ink pill with a cream bold
+   label, every other cap a cream outline between `▏`/`▕` rails. From a field
+   that is Submit (Enter submits); once ↓ walks onto a cap, it is that cap. Both
+   variants measure the same, so the row never shifts as focus moves.
 
    The chord rides the cap instead of the hint bar because the hint bar sits one
    row below: spelled in both places, the band printed `submit` and `cancel`
@@ -939,33 +957,40 @@
      (long inner-w)
 
      right
-     (+ left inner-w -1)]
+     (+ left inner-w -1)
+
+     ;; Focus may be on a FIELD, in which case Enter still submits — so the
+     ;; solid pill falls back to the submit cap instead of leaving the row
+     ;; without a default action.
+     on-cap?
+     (boolean (some :is-focused buttons))]
 
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc left) row inner-w 1)
-    (reduce (fn [^long col {:keys [label is-focused] chord :key}]
+    (reduce (fn [^long col {:keys [action label is-focused] chord :key}]
               (let
-                [cap
-                 (str (p/selection-prefix is-focused) "[ " label " ]")
+                [cap-w
+                 (+ 2 (long (p/display-width label)))
 
                  chord
                  (if (str/blank? (str chord)) "" (str " " chord))
-
-                 cap-w
-                 (long (p/display-width cap))
 
                  w
                  (+ cap-w (long (p/display-width chord)))]
 
                 (when (<= (+ col w) right)
-                  (p/set-colors! g t/dialog-fg t/dialog-bg)
-                  (if is-focused
-                    (p/styled g [p/BOLD] (p/put-str! g col row cap))
-                    (p/put-str! g col row cap))
+                  (components/action-button!
+                    g
+                    col
+                    row
+                    label
+                    {:variant (if (or is-focused (and (not on-cap?) (= :submit action)))
+                                :primary
+                                :secondary)})
                   (when (seq chord)
                     (p/set-colors! g t/dialog-hint t/dialog-bg)
                     (p/put-str! g (+ col cap-w) row chord)))
-                (+ col w 1)))
+                (+ col w 2)))
             (inc left)
             buttons)
     nil))
@@ -1150,8 +1175,8 @@
    other transient in the TUI wears. The rule directly above the hint bar is the
    host's closing rule, so the footer below the band is never swallowed.
 
-   The action bar is PINNED: only the fields scroll under it, so `[ Submit ]`
-   and `[ Cancel ]` stay on screen for a form of any length.
+   The action bar is PINNED: only the fields scroll under it, so the `Submit`
+   and `Cancel` caps stay on screen for a form of any length.
 
    TWO passes over the plan, because a scrollbar costs a column: the first plan
    sizes the band, and an overflowing one re-wraps one column narrower."

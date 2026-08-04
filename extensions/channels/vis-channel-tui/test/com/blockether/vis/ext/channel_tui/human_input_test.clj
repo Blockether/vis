@@ -255,7 +255,9 @@
 (defdescribe hint-test
              (it "keeps submit and cancel out of the hint bar"
                  (let [pairs (hi/hint (hi/init-form (request)))]
-                   (expect (some #{["↑/↓" "move"]} pairs))
+                   ;; Navigation is not a hint: `↑/↓ move` used to lead every
+                   ;; pause's bar. A plain text field earns NO chords at all.
+                   (expect (empty? pairs))
                    (expect (not-any? #{"submit" "cancel" "press"} (map second pairs)))
                    (expect (not-any? #{"Esc" "^S"} (map first pairs)))))
              (it "offers Enter as a newline chord inside a multiline field"
@@ -471,7 +473,7 @@
       (expect (some #{(canonical-row (fn [g]
                                        (dialogs/draw-text-input-field! g 0 0 40 "" 0 "who")))}
                     (painted-rows (assoc (hi/init-form (request)) :focus 0) "who"))))
-  (it "spells its hint bar the canonical way — ↑/↓ chords, lowercase actions"
+  (it "keeps navigation chords and ASCII button brackets off the screen"
       (let
         [{:keys [screen g]}
          (virtual-screen)
@@ -482,7 +484,12 @@
          text
          (screen-text screen)]
 
-        (expect (str/includes? text "↑/↓ move"))
+        ;; `↑/↓ move` was a permanent row of chrome for the one chord every
+        ;; terminal operator already knows.
+        (expect (not (str/includes? text "↑/↓")))
+        ;; The caps are the SHARED neobrutalist chip, not `[ … ]` ASCII.
+        (expect (not (str/includes? text "[ Submit ]")))
+        (expect (not (str/includes? text "[ Cancel ]")))
         ;; The two actions are spelled ONCE, on the pinned caps — the hint bar
         ;; must not print them a second time one row lower.
         (expect (not (str/includes? text "Enter submit")))
@@ -518,10 +525,12 @@
   ;; transcript, and leaves the session's own footer breathing underneath.
   (it "closes with the host's rule directly above its hint bar"
       (let [{:keys [screen g]} (virtual-screen)]
-        (hi/paint! g 80 30 (hi/init-form (request)))
+        ;; Focus the multiline field so the bar has a chord worth printing at
+        ;; all — navigation alone no longer earns a hint pair.
+        (hi/paint! g 80 30 (assoc (hi/init-form (request)) :focus 7))
         ;; `rows - 3` is the prompt box's own closing rule; the hint bar lands
         ;; there and the rule right above it is the band's foot.
-        (expect (str/includes? (screen-row screen 27) "↑/↓ move"))
+        (expect (str/includes? (screen-row screen 27) "Enter newline"))
         (expect (rule-row? (screen-row screen 26)))))
   (it "never swallows the session's bottom chrome"
       (let [{:keys [screen g]} (virtual-screen)]
@@ -552,7 +561,7 @@
         (expect (rule-row? (screen-row screen (dec title-y))))
         (expect (rule-row? (screen-row screen (inc title-y))))))
   ;; Regression, issue #108: a form taller than the band scrolled its own
-  ;; `[ Submit ]` / `[ Cancel ]` out of sight, so the only visible way to end
+  ;; the `Submit` / `Cancel` caps out of sight, so the only visible way to end
   ;; the pause was to guess a key.
   (it "pins the action bar above the closing rule, however tall the form"
       (let
@@ -569,8 +578,9 @@
          (screen-row screen (dec foot-rule-y))]
 
         (expect (rule-row? (screen-row screen foot-rule-y)))
-        (expect (str/includes? bar "[ Submit ]"))
-        (expect (str/includes? bar "[ Cancel ]"))))
+        ;; Solid pill for the cap Enter would fire, outline rails for the other.
+        (expect (str/includes? bar " Submit "))
+        (expect (str/includes? bar "▏Cancel▕"))))
   ;; Regression: the band said the same two things twice — the pinned
   ;; `[ Submit ]` / `[ Cancel ]` row and, one row under it, a hint bar reading
   ;; `Enter submit · Esc cancel`. Two rows of chrome, one meaning.
@@ -591,9 +601,11 @@
          hints
          (str/lower-case (screen-row screen hint-y))]
 
-        (expect (str/includes? bar "[ Submit ] Enter"))
-        (expect (str/includes? bar "[ Cancel ] Esc"))
-        (expect (str/includes? hints "move"))
+        (expect (str/includes? bar " Submit  Enter"))
+        (expect (str/includes? bar "▏Cancel▕ Esc"))
+        ;; ...and with focus on a plain text field the bar below has nothing to
+        ;; say at all — no `move`, and still no submit/cancel.
+        (expect (str/blank? hints))
         (expect (not (str/includes? hints "submit")))
         (expect (not (str/includes? hints "cancel")))))
   (it "marks exactly the focused button and keeps the buttons out of the body"
