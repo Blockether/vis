@@ -18,12 +18,19 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { Preferences } from '@capacitor/preferences';
 import { bridged } from './bridge';
 import type { ComposerPaste } from './paste';
+import type { PendingAttachment } from './attachments';
 
 const DRAFT_MESSAGES_KEY = 'vis.draftMessages';
 /** Sessions that keep a draft message. Oldest-touched entries drop past this. */
 const MAX_DRAFT_MESSAGES = 40;
 /** Per-message ceiling for collapsed paste bodies; beyond it the paste is dropped. */
 const MAX_PASTE_CHARS = 200_000;
+/**
+ * Attachment payload the store may PERSIST, newest draft message first. Memory
+ * keeps every attachment you picked; storage is finite, and blowing its quota on
+ * photos would take the typed words down with them.
+ */
+const MAX_STORED_ATTACHMENT_CHARS = 4_000_000;
 const WRITE_DEBOUNCE_MS = 400;
 
 export interface DraftMessage {
@@ -32,6 +39,8 @@ export interface DraftMessage {
   pastes: ComposerPaste[];
   /** Highest paste id handed out, so a restored composer keeps numbering. */
   counter: number;
+  /** Images and files staged in the composer, unsent work exactly like the text. */
+  attachments: PendingAttachment[];
   /** Last touched, for pruning. */
   at: number;
 }
@@ -41,6 +50,7 @@ export type DraftMessageStore = Record<string, DraftMessage>;
 export const EMPTY_DRAFT_MESSAGE: DraftMessage = {
   text: '',
   pastes: [],
+  attachments: [],
   counter: 0,
   at: 0,
 };
@@ -80,6 +90,29 @@ export function subscribe(listener: () => void): () => void {
   };
 }
 
+/**
+ * Attachments a previous run persisted. `previewUrl` IS the base64 data URL, so
+ * it is rebuilt here instead of being stored twice.
+ */
+function parseAttachments(value: unknown): PendingAttachment[] {
+  if (!Array.isArray(value)) return [];
+  const out: PendingAttachment[] = [];
+  for (const item of value) {
+    const attachment = (item ?? {}) as Partial<PendingAttachment>;
+    if (typeof attachment.base64 !== 'string' || !attachment.base64) continue;
+    if (typeof attachment.filename !== 'string' || typeof attachment.media_type !== 'string') continue;
+    out.push({
+      id: typeof attachment.id === 'string' ? attachment.id : crypto.randomUUID(),
+      filename: attachment.filename,
+      media_type: attachment.media_type,
+      base64: attachment.base64,
+      previewUrl: attachment.base64,
+      size: typeof attachment.size === 'number' ? attachment.size : attachment.base64.length,
+    });
+  }
+  return out;
+}
+
 function parseStore(raw: string | null): DraftMessageStore {
   if (!raw) return {};
   try {
@@ -92,6 +125,7 @@ function parseStore(raw: string | null): DraftMessageStore {
       out[key] = {
         text: message.text,
         pastes: Array.isArray(message.pastes) ? (message.pastes as ComposerPaste[]) : [],
+        attachments: parseAttachments((message as { attachments?: unknown }).attachments),
         counter: typeof message.counter === 'number' ? message.counter : 0,
         at: typeof message.at === 'number' ? message.at : 0,
       };
@@ -143,19 +177,26 @@ export async function readDraftMessage(key: string): Promise<DraftMessage> {
 }
 
 /**
- * Record what is in the composer right now. Empty text with no pastes REMOVES
- * the entry — a cleared composer must not resurrect on the next visit.
+ * Record what is in the composer right now. Empty text with no pastes and no
+ * attachments REMOVES the entry — a cleared composer must not resurrect on the
+ * next visit.
  */
 export function writeDraftMessage(
   key: string,
-  message: { text: string; pastes?: Iterable<ComposerPaste>; counter?: number },
+  message: {
+    text: string;
+    pastes?: Iterable<ComposerPaste>;
+    attachments?: Iterable<PendingAttachment>;
+    counter?: number;
+  },
 ): void {
   const current = (store ??= {});
   const text = message.text;
   const pastes = Array.from(message.pastes ?? []).filter(
     (paste) => text.includes(paste.token) && paste.content.length <= MAX_PASTE_CHARS,
   );
-  if (!text.trim() && !pastes.length) {
+  const attachments = Array.from(message.attachments ?? []);
+  if (!text.trim() && !pastes.length && !attachments.length) {
     if (!(key in current)) return;
     delete current[key];
   } else {
@@ -163,19 +204,41 @@ export function writeDraftMessage(
     if (
       previous
       && previous.text === text
-      && previous.pastes.length === pastes.length
-      && previous.pastes.every((paste, i) => paste.token === pastes[i]?.token)
+      && sameKeys(previous.pastes.map((paste) => paste.token), pastes.map((paste) => paste.token))
+      && sameKeys(
+        previous.attachments.map((attachment) => attachment.id),
+        attachments.map((attachment) => attachment.id),
+      )
     ) return;
-    current[key] = { text, pastes, counter: message.counter ?? 0, at: Date.now() };
+    current[key] = {
+      text,
+      pastes,
+      attachments,
+      counter: message.counter ?? 0,
+      at: Date.now(),
+    };
   }
   dirty = true;
   schedule();
   announce();
 }
 
+function sameKeys(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((key, i) => key === b[i]);
+}
+
 /** Forget one session's draft message (it was sent, or its session is gone). */
 export function clearDraftMessage(key: string): void {
   writeDraftMessage(key, { text: '' });
+}
+
+/**
+ * This draft message is unsent work. An attachment with no words counts: the
+ * picture you picked before walking away is as unsent as a typed sentence, and
+ * a list that only looks at `text` drops the session holding it.
+ */
+export function draftMessageHasUnsent(message: DraftMessage | undefined): boolean {
+  return Boolean(message && (message.text.trim() || message.attachments.length > 0));
 }
 
 function prune(current: DraftMessageStore): DraftMessageStore {
@@ -186,6 +249,40 @@ function prune(current: DraftMessageStore): DraftMessageStore {
     .slice(0, MAX_DRAFT_MESSAGES);
   const out: DraftMessageStore = {};
   for (const key of kept) out[key] = current[key];
+  return out;
+}
+
+type StoredAttachment = Omit<PendingAttachment, 'previewUrl'>;
+type StoredMessage = Omit<DraftMessage, 'attachments'> & { attachments: StoredAttachment[] };
+
+/**
+ * What goes to disk. Attachments are base64, so a couple of photos dwarf every
+ * word in the store: past the budget the NEWEST draft messages keep their
+ * attachments and older ones are persisted as text alone. Memory is untouched —
+ * dropping a picture from storage must never drop it from a composer you are
+ * still looking at.
+ */
+function persistable(current: DraftMessageStore): Record<string, StoredMessage> {
+  const out: Record<string, StoredMessage> = {};
+  let budget = MAX_STORED_ATTACHMENT_CHARS;
+  const newestFirst = Object.keys(current)
+    .sort((a, b) => (current[b]?.at ?? 0) - (current[a]?.at ?? 0));
+  for (const key of newestFirst) {
+    const message = current[key];
+    const attachments: StoredAttachment[] = [];
+    for (const attachment of message.attachments) {
+      if (attachment.base64.length > budget) continue;
+      budget -= attachment.base64.length;
+      attachments.push({
+        id: attachment.id,
+        filename: attachment.filename,
+        media_type: attachment.media_type,
+        base64: attachment.base64,
+        size: attachment.size,
+      });
+    }
+    out[key] = { ...message, attachments };
+  }
   return out;
 }
 
@@ -207,7 +304,7 @@ export async function flushDraftMessages(): Promise<void> {
   if (!dirty || !store) return;
   dirty = false;
   store = prune(store);
-  const value = JSON.stringify(store);
+  const value = JSON.stringify(persistable(store));
   try {
     globalThis.localStorage?.setItem(DRAFT_MESSAGES_KEY, value);
   } catch {

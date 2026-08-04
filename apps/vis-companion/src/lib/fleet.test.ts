@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   creatableMachines,
+  dirtyFirst,
   fleetError,
   isFleetLoaded,
   machineCounts,
@@ -13,7 +14,6 @@ import {
   scopedConns,
   searchTally,
   scopedSessions,
-  sessionIsDirty,
   sessionIsEmpty,
   sessionIsListed,
   showsScopeStrip,
@@ -193,14 +193,6 @@ describe('dirty sessions', () => {
     expect(sessionIsEmpty(fresh({ live: true }))).toBe(false);
   });
 
-  it('is dirty only when an empty session holds unsent words', () => {
-    expect(sessionIsDirty(fresh(), true)).toBe(true);
-    expect(sessionIsDirty(fresh(), false)).toBe(false);
-    // Words in a session that already has history are just a draft reply; the
-    // row was always listed and there is nothing to warn about.
-    expect(sessionIsDirty(fresh({ turn_count: 2 }), true)).toBe(false);
-  });
-
   it('lists a dirty session and keeps hiding the abandoned taps', () => {
     expect(sessionIsListed(fresh(), true)).toBe(true);
     expect(sessionIsListed(fresh(), false)).toBe(false);
@@ -214,5 +206,26 @@ describe('showsScopeStrip', () => {
     // Solo: no strip, so the header line is the only surface left to count on.
     expect(showsScopeStrip([machine(studio, [])])).toBe(false);
     expect(showsScopeStrip([])).toBe(false);
+  });
+});
+
+// Unsent work lives on THIS device only, and the session holding it is usually
+// empty — bottom of every timestamp order there is. So it is pinned to the top
+// of the list instead, or you never see it again.
+describe('dirtyFirst', () => {
+  it('floats the rows holding unsent work, keeping the gateway order inside each half', () => {
+    const rows = [session('a'), session('b'), session('c'), session('d')];
+    const holding = new Set(['b', 'd']);
+    expect(dirtyFirst(rows, (row) => holding.has(row.id)).map((row) => row.id)).toEqual([
+      'b',
+      'd',
+      'a',
+      'c',
+    ]);
+  });
+
+  it('leaves a list with nothing unsent exactly as it came', () => {
+    const rows = [session('a'), session('b')];
+    expect(dirtyFirst(rows, () => false)).toBe(rows);
   });
 });

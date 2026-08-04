@@ -1148,7 +1148,12 @@ export function SessionScreen({
   const [capabilities, setCapabilities] = useState<GatewayCapabilities | null>(() =>
     client.cachedCapabilities(),
   );
-  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  // Staged files are part of the unsent message, not a side effect of the screen:
+  // they are seeded from the stored draft message on the FIRST frame, exactly like
+  // its text, so leaving and reopening a session does not eat the picture.
+  const [attachments, setAttachments] = useState<PendingAttachment[]>(() => [
+    ...peekDraftMessage(draftMessageId).attachments,
+  ]);
   // Native hides two distinct acts behind one composer control, so the plus has
   // to ask which one: the OS gallery sheet never opens a shutter.
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
@@ -1379,7 +1384,7 @@ export function SessionScreen({
       (client.cachedTranscript(sid) ?? []).filter((turn) => !isRunningRow(turn)).map(rowId),
     );
     setSession(client.cachedSession(sid));
-    setAttachments([]);
+    setAttachments([...peekDraftMessage(draftMessageId).attachments]);
     setPastes(new Map());
     setEditingPaste(null);
     pasteCounterRef.current = 0;
@@ -3015,11 +3020,12 @@ export function SessionScreen({
     watchDraftMessageExits();
     void readDraftMessage(draftMessageId).then((message) => {
       if (cancelled) return;
-      if (message.text) {
+      if (message.text || message.attachments.length > 0) {
         setPrompt((current) => current || message.text);
         setPastes((current) =>
           current.size ? current : new Map(message.pastes.map((paste) => [paste.id, paste])),
         );
+        setAttachments((current) => (current.length ? current : [...message.attachments]));
         pasteCounterRef.current = Math.max(pasteCounterRef.current, message.counter);
       }
       draftMessageReadyRef.current = true;
@@ -3038,9 +3044,10 @@ export function SessionScreen({
     writeDraftMessage(draftMessageId, {
       text: prompt,
       pastes: pastes.values(),
+      attachments,
       counter: pasteCounterRef.current,
     });
-  }, [draftMessageReady, draftMessageId, prompt, pastes]);
+  }, [draftMessageReady, draftMessageId, prompt, pastes, attachments]);
 
   // Take what the system share sheet, an Android SEND or a Shortcuts run
   // dropped on us. AFTER the draft message hydrates: the restore above adopts

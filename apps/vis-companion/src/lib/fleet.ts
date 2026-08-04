@@ -183,18 +183,30 @@ export function sessionIsEmpty(session: Session): boolean {
 }
 
 /**
- * DIRTY: empty on the gateway, but this device is still holding words typed
- * into its composer. Hiding it as "empty" stranded them — the session was gone
- * from the list, so there was no way back to what you wrote and no way to
- * delete the session holding it. A dirty row is listed, badged and openable.
+ * Unsent work FIRST, everything else in the order the gateway sent.
+ *
+ * A draft message lives on THIS device only: the fleet cannot remind you about
+ * it from another machine, and the session holding it is usually empty, so it
+ * sorts to the bottom of every timestamp order there is. So it goes on top —
+ * stably, so the canonical live-first order survives inside each half.
  */
-export function sessionIsDirty(session: Session, hasDraftMessage: boolean): boolean {
-  return hasDraftMessage && sessionIsEmpty(session);
+export function dirtyFirst(
+  sessions: Session[],
+  hasDraftMessage: (session: Session) => boolean,
+): Session[] {
+  const dirty: Session[] = [];
+  const rest: Session[] = [];
+  for (const session of sessions) {
+    (hasDraftMessage(session) ? dirty : rest).push(session);
+  }
+  return dirty.length === 0 ? sessions : [...dirty, ...rest];
 }
 
 /**
- * Rows the list paints. An empty session earns its place only by being dirty:
- * that is what keeps abandoned taps out of the list without eating unsent work.
+ * Rows the list paints. An empty session earns its place only by holding unsent
+ * work: that keeps abandoned "New session" taps out of the list without stranding
+ * what you typed — hiding those rows left no way back to the words and no way to
+ * delete the session holding them.
  */
 export function sessionIsListed(session: Session, hasDraftMessage: boolean): boolean {
   return !sessionIsEmpty(session) || hasDraftMessage;

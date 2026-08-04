@@ -12,13 +12,18 @@ import { DEFAULT_SESSION_PAGE_SIZE, getSessionsPerPage, subscribeSessionsPerPage
 import { hostOf } from '../lib/endpoints';
 import {
   clearDraftMessage,
+  draftMessageHasUnsent,
   draftMessageKey,
+  EMPTY_DRAFT_MESSAGE,
   flushDraftMessages,
   useDraftMessages,
+  type DraftMessage,
   type DraftMessageStore,
 } from '../lib/draft-messages';
+import type { PendingAttachment } from '../lib/attachments';
 import {
   creatableMachines,
+  dirtyFirst,
   fleetError,
   isFleetLoaded,
   machineCounts,
@@ -30,7 +35,6 @@ import {
   scopedMachines,
   scopeError,
   searchTally,
-  sessionIsDirty,
   sessionIsListed,
   sessionIsLive,
   showsScopeStrip,
@@ -411,20 +415,25 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
     const needle = deferredQuery.trim().toLowerCase();
     return inScope.map((machine) => {
       const base = clientFor(machine.conn).base;
+      const draftFor = (session: Session) => draftMessages[draftMessageKey(base, session.id)];
+      const sessions = (machine.sessions ?? []).filter((session) => {
+        const draft = draftFor(session);
+        if (!sessionIsListed(session, draftMessageHasUnsent(draft))) return false;
+        return (
+          !needle ||
+          sessionSearchText(session).includes(needle) ||
+          // A dirty row has no title and no transcript: what waits in its composer
+          // — the words AND the names of the files staged with them — is the only
+          // thing a query could match it on.
+          draftSearchText(draft).includes(needle) ||
+          matches?.has(session.id) === true
+        );
+      });
+      // Unsent work floats to the top of its machine, and with it the project
+      // group that owns it: see `dirtyFirst`.
       return {
         machine,
-        sessions: (machine.sessions ?? []).filter((session) => {
-          const unsent = draftMessages[draftMessageKey(base, session.id)]?.text.trim() ?? '';
-          if (!sessionIsListed(session, unsent !== '')) return false;
-          return (
-            !needle ||
-            sessionSearchText(session).includes(needle) ||
-            // A dirty row has no title and no transcript: the words waiting in its
-            // composer are the only thing a query could match it on.
-            unsent.toLowerCase().includes(needle) ||
-            matches?.has(session.id) === true
-          );
-        }),
+        sessions: dirtyFirst(sessions, (session) => draftMessageHasUnsent(draftFor(session))),
       };
     });
   }, [inScope, deferredQuery, matches, draftMessages]);
@@ -1290,7 +1299,7 @@ const ProjectGroup = memo(function ProjectGroup({
   conn: GatewayConn;
   matches: Map<string, SessionMatch> | null;
   needle: string;
-  /** Unsent composer text for the whole fleet; each row reads its own entry. */
+  /** Unsent composer content for the whole fleet; each row reads its own entry. */
   drafts: DraftMessageStore;
   onOpen: Props['onOpen'];
   onRename: (session: Session, conn: GatewayConn) => void;
@@ -1314,8 +1323,15 @@ const ProjectGroup = memo(function ProjectGroup({
   // its last activity it leaves the collapsed peek on its own, no refresh needed.
   const now = useNow(RECENT_WINDOW_MS / 60);
   const collapsedSessions = useMemo(
-    () => sessions.filter((session) => sessionFresh(session, now)),
-    [sessions, now],
+    // A row holding unsent work is never hidden by collapsing: it is the one thing
+    // in this list that exists on this device alone.
+    () =>
+      sessions.filter(
+        (session) =>
+          draftMessageHasUnsent(drafts[draftMessageKey(base, session.id)])
+          || sessionFresh(session, now),
+      ),
+    [sessions, now, drafts, base],
   );
 
   // Expanded pages its own history in place; collapsing exposes the live few plus any
@@ -1368,7 +1384,7 @@ const ProjectGroup = memo(function ProjectGroup({
             <SessionRow
               key={session.id}
               session={session}
-              unsent={drafts[draftMessageKey(base, session.id)]?.text.trim() ?? ''}
+              draft={drafts[draftMessageKey(base, session.id)] ?? EMPTY_DRAFT_MESSAGE}
               conn={conn}
               match={matches?.get(session.id) ?? null}
               needle={needle}
@@ -1399,7 +1415,7 @@ const STATS_MOTION_MS = 200;
 
 const SessionRow = memo(function SessionRow({
   session,
-  unsent,
+  draft,
   conn,
   match,
   needle,
@@ -1408,8 +1424,8 @@ const SessionRow = memo(function SessionRow({
   onDelete,
 }: {
   session: Session;
-  /** Unsent composer text for this session; '' when there is none. */
-  unsent: string;
+  /** This device's unsent composer content for the session; EMPTY when there is none. */
+  draft: DraftMessage;
   conn: GatewayConn;
   match: SessionMatch | null;
   needle: string;
@@ -1419,11 +1435,15 @@ const SessionRow = memo(function SessionRow({
 }) {
   const status = statusLabel(session);
   const timestamp = session.modified_at ?? session.last_active_at ?? session.created_at;
-  // DIRTY: nothing in this session but the words left in its composer. It has no
-  // title either, so those words name the row — otherwise it reads "Untitled
-  // session" and nothing on screen says why it is worth opening.
-  const isDirty = sessionIsDirty(session, unsent !== '');
-  const title = session.title?.trim() || (isDirty ? firstLine(unsent) : '') || 'Untitled session';
+  // DIRTY: this device is holding composer content nobody has sent — words, a
+  // picture, a file. When the session has no title of its own, that content names
+  // the row, which otherwise reads "Untitled session" with nothing on screen to
+  // say why it is worth opening.
+  const hasUnsent = draftMessageHasUnsent(draft);
+  const title =
+    session.title?.trim()
+    || (hasUnsent ? firstLine(draft.text) || attachmentSummary(draft.attachments) : '')
+    || 'Untitled session';
   const live = sessionIsLive(session);
   const turns = Number(session.turn_count ?? 0);
   // Turns that finished while this session was closed: the one thing a relative
@@ -1517,10 +1537,10 @@ const SessionRow = memo(function SessionRow({
                 {unread > 1 ? `${unread} new` : 'new'}
               </span>
             )}
-            {isDirty && (
+            {hasUnsent && (
               <span
                 className="inline-flex items-center border border-warn-strong px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-warn-strong"
-                title="Unsent message — open it to keep writing, or swipe to delete"
+                title="Unsent message waiting in this session's composer"
               >
                 dirty
               </span>
@@ -1967,6 +1987,13 @@ function statusDot(session: Session): string {
   return 'border border-dialog-hint';
 }
 
+function draftSearchText(draft: DraftMessage | undefined): string {
+  if (!draft) return '';
+  return [draft.text, ...draft.attachments.map((attachment) => attachment.filename)]
+    .join(' ')
+    .toLowerCase();
+}
+
 function sessionSearchText(session: Session): string {
   return [
     session.title,
@@ -2124,4 +2151,13 @@ function draftHint(draft: WorkspaceDraft): string {
 function firstLine(text: string): string {
   const line = text.split('\n', 1)[0]?.trim() ?? '';
   return line.length > 80 ? `${line.slice(0, 79)}\u2026` : line;
+}
+
+// An unsent message can be nothing but a picture. Then the attachment names the
+// row, because "Untitled session" says nothing about what is waiting in it.
+function attachmentSummary(attachments: PendingAttachment[]): string {
+  const first = attachments[0];
+  if (!first) return '';
+  const name = firstLine(first.filename) || first.media_type;
+  return attachments.length > 1 ? `${name} +${attachments.length - 1}` : name;
 }

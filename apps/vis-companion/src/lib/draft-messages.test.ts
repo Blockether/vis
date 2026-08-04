@@ -23,12 +23,15 @@ vi.mock('@capacitor/preferences', () => ({
 
 import {
   clearDraftMessage,
+  draftMessageHasUnsent,
   draftMessageKey,
+  flushDraftMessages,
   hydrateDraftMessages,
   peekDraftMessage,
   subscribe,
   writeDraftMessage,
 } from './draft-messages';
+import type { PendingAttachment } from './attachments';
 
 const key = draftMessageKey('http://studio.local:7890', 'abc');
 
@@ -66,5 +69,53 @@ describe('draft message subscribers', () => {
     stop();
     expect(snapshots).toHaveLength(2);
     expect(snapshots[0]).not.toBe(snapshots[1]);
+  });
+});
+
+// An unsent message is not only text. A picture staged in the composer was
+// dropped the moment the screen unmounted: the store kept the words, forgot the
+// image, and a session holding nothing but that image did not even count as
+// unsent work — so its row was hidden as "empty".
+describe('draft message attachments', () => {
+  const image = (name: string): PendingAttachment => {
+    const base64 = `data:image/png;base64,${name}`;
+    return {
+      id: `id-${name}`,
+      filename: `${name}.png`,
+      media_type: 'image/png',
+      base64,
+      previewUrl: base64,
+      size: base64.length,
+    };
+  };
+
+  beforeEach(async () => {
+    native.store.clear();
+    await hydrateDraftMessages();
+    clearDraftMessage(key);
+  });
+
+  it('holds an image with no words, and calls it unsent', () => {
+    writeDraftMessage(key, { text: '', attachments: [image('shot')] });
+    expect(peekDraftMessage(key).attachments).toEqual([image('shot')]);
+    expect(draftMessageHasUnsent(peekDraftMessage(key))).toBe(true);
+  });
+
+  it('forgets the message once the last word AND the last attachment are gone', () => {
+    writeDraftMessage(key, { text: 'look', attachments: [image('shot')] });
+    writeDraftMessage(key, { text: '', attachments: [] });
+    expect(peekDraftMessage(key).attachments).toEqual([]);
+    expect(draftMessageHasUnsent(peekDraftMessage(key))).toBe(false);
+  });
+
+  it('survives a restart, preview rebuilt from the stored data URL', async () => {
+    writeDraftMessage(key, { text: 'look at this', attachments: [image('shot')] });
+    await flushDraftMessages();
+
+    vi.resetModules();
+    const reloaded = await import('./draft-messages');
+    const message = await reloaded.readDraftMessage(key);
+    expect(message.text).toBe('look at this');
+    expect(message.attachments).toEqual([image('shot')]);
   });
 });
