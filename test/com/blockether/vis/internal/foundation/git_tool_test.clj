@@ -354,7 +354,36 @@
       (expect (= "⎇ push origin main (exit 1)"
                  (:summary (render {"args" ["push" "origin" "main"] "exit" 1}))))
       (expect (= "⎇ status --short (timed out)"
-                 (:summary (render {"args" ["status" "--short"] "timed_out" true}))))))
+                 (:summary (render {"args" ["status" "--short"] "timed_out" true})))))
+  ;; Regression, reported card `⎇ add <four long paths>`: the collapsed headline
+  ;; was UNBOUNDED, so a `git add` of four repo paths wrapped over four rows of
+  ;; the card — and the **COMMAND** fence directly under it repeated the very
+  ;; same 370 characters, printing one command twice.
+  (it
+    "bounds a long argument list on the headline, full command in the body"
+    (let
+      [paths
+       ["extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/components.clj"
+        "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/dialogs.clj"
+        "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/human_input.clj"
+        "extensions/channels/vis-channel-tui/test/com/blockether/vis/ext/channel_tui/human_input_test.clj"]
+
+       {:keys [summary body]}
+       (render {"args" (into ["add"] paths) "exit" 0})]
+
+      (expect (<= (count summary) 74) summary)
+      (expect (str/ends-with? summary "\u2026"))
+      (expect (str/starts-with? summary "⎇ add extensions/"))
+      ;; Nothing is lost: the fence still carries every path verbatim.
+      (expect (str/includes? body (str "git add " (str/join " " paths))))))
+  (it "drops the COMMAND fence when the headline already IS the whole command"
+      (let
+        [{:keys [summary body]}
+         (render {"args" ["status" "--short"] "exit" 0 "stdout" " M src/core.clj\n"})]
+        (expect (= "⎇ status --short" summary))
+        (expect (not (str/includes? body "**COMMAND**")) body)
+        (expect (str/includes? body "**STATUS**"))
+        (expect (str/includes? body " M src/core.clj")))))
 
 (defdescribe
   git-pending-call-render-test

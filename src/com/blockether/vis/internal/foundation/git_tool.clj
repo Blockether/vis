@@ -197,6 +197,12 @@
 ;; a crammed argument. Like the shell renderer, git writes normal output to
 ;; stderr on success (progress, hints), so the
 ;; `stderr:` label rides along only when the command actually FAILED.
+;;
+;; The headline is ONE bounded row ([[headline-max-chars]]) and the body never
+;; repeats it: a `**COMMAND**` fence appears only when the headline elided
+;; something (a clipped argument list, a lifted commit message). `git add` with
+;; four repo paths used to wrap its heading over four rows and then print the
+;; very same 370 characters again in the fence below it.
 ;; =============================================================================
 
 (defn- fence
@@ -282,16 +288,22 @@
               (if (str/blank? l) ">" (str "> " l))))
        (str/join "\n")))
 
-(defn- clip-subject
-  "Clamp a commit SUBJECT to `max-len` chars for the one-line headline, adding
-   a single-glyph ellipsis, so a really long subject (or a run-on first
-   paragraph) can't blow out the collapsed card. The FULL message still renders
-   untruncated as the blockquote body below, so nothing is lost — only the
-   headline preview is bounded."
-  ([s] (clip-subject s 72))
-  ([s ^long max-len]
-   (let [s (str/trim (str s))]
-     (if (> (count s) max-len) (str (str/trimr (subs s 0 (max 0 (dec max-len)))) "\u2026") s))))
+(def ^:private headline-max-chars
+  "Bound for ONE git command's collapsed headline (args, commit subject included).
+   A git command is unbounded — `add` with a dozen repo paths, a run-on commit
+   subject — and an unbounded headline WRAPS across the collapsed card over rows
+   the `**COMMAND**` fence right below already carries verbatim. Same job as
+   `shell`'s chip clip."
+  72)
+
+(defn- clip-chip
+  "Clamp a one-line headline to `max-len` chars, adding a single-glyph ellipsis,
+   so a really long argument list (or commit subject) can't blow out the collapsed
+   card. The FULL text still renders untruncated in the body below, so nothing is
+   lost — only the headline preview is bounded."
+  [s ^long max-len]
+  (let [s (str/trim (str s))]
+    (if (> (count s) max-len) (str (str/trimr (subs s 0 (max 0 (dec max-len)))) "\u2026") s)))
 
 (defn- git-command-line
   "The `git <args…>` line a card shows for one command — the same text whether it
@@ -300,13 +312,13 @@
   (str "git " (str/join " " args)))
 
 (defn- git-headline
-  "The collapsed HEADLINE args for one git command. A `commit` lifts its SUBJECT
-   (first message line) out of `-m` and onto the line after an em-dash
-   (`commit — subject`) when `show-subject?`, dropping the now-redundant `-m`
-   flags; any OTHER flag (`--amend`, `-a`, …) survives. Shared by the finished
-   card and the pending one, so a running git call already wears the headline it
-   keeps — a failure just turns the subject off so the `(exit N)` note stays the
-   focus."
+  "The collapsed HEADLINE args for one git command, clipped to
+   [[headline-max-chars]]. A `commit` lifts its SUBJECT (first message line) out of
+   `-m` and onto the line after an em-dash (`commit — subject`) when
+   `show-subject?`, dropping the now-redundant `-m` flags; any OTHER flag
+   (`--amend`, `-a`, …) survives. Shared by the finished card and the pending one,
+   so a running git call already wears the headline it keeps — a failure just turns
+   the subject off so the `(exit N)` note stays the focus."
   [args show-subject?]
   (let
     [msg
@@ -327,9 +339,10 @@
        show?
        (remove #{"-m" "--message"}))]
 
-    (cond-> (str/join " " base)
-      show?
-      (str " \u2014 " (clip-subject subject)))))
+    (-> (cond-> (str/join " " base)
+          show?
+          (str " \u2014 " subject))
+        (clip-chip headline-max-chars))))
 
 (defn- render-git-result
   [r]
@@ -363,14 +376,24 @@
                 ;; is a row only when it was actually hit.
                 ["timeout" (when (get r "timed_out") (str default-timeout-secs "s"))]])
 
+     head
+     (git-headline args (not failed?))
+
+     ;; The card's own heading IS the command whenever the headline shows every
+     ;; token: a COMMAND fence under it would then print the same line twice. It
+     ;; earns its place only when the headline elided something — a clipped
+     ;; argument list, or a commit whose `-m` values were lifted out.
+     full-command?
+     (= head (str/join " " args))
+
      body
-     (->> [(section "COMMAND" (git-command-line args) "bash") (section "STATUS" status)
-           (when msg (prose-section "MESSAGE" (quote-block msg)))
+     (->> [(when-not full-command? (section "COMMAND" (git-command-line args) "bash"))
+           (section "STATUS" status) (when msg (prose-section "MESSAGE" (quote-block msg)))
            (section "STDOUT" (get r "stdout")) (section "STDERR" (get r "stderr"))]
           (remove nil?)
           (str/join "\n\n"))]
 
-    {:summary (str "⎇ " (git-headline args (not failed?)) note) :body (when (seq body) body)}))
+    {:summary (str "⎇ " head note) :body (when (seq body) body)}))
 
 (defn- render-git-batch-result
   "Render one expandable result card with each command's own stdout/stderr intact.
