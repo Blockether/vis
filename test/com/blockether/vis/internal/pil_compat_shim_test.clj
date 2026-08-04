@@ -4,7 +4,8 @@
    published into `sys.modules` (so `from PIL import Image` works) and backed by
    the host com.blockether/imaging renderer. All image ops delegate across the
    boundary to the host `__vis_pil_*` callables, keeping the pixels on the JVM."
-  (:require [com.blockether.imaging :as im]
+  (:require [clojure.repl :as repl]
+            [com.blockether.imaging :as im]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.foundation.shim-pil :as shim-pil]
@@ -600,12 +601,17 @@
           (expect (< ms 1000) (str "2000 draws took " (long ms) " ms")))))
   ;; Regression: the flush converted the canvas with `aset-byte`, i.e.
   ;; `java.lang.reflect.Array/setByte` -- four reflective stores per pixel, 65 ms per
-  ;; 800x600 flush against 1.8 ms for the inlined store. Neither a wall-clock budget nor
-  ;; a canvas-size ratio catches that portably: a loaded runner failed the clock at
-  ;; 2350 ms with nothing wrong, and on a runner whose fixed per-eval cost is small the
-  ;; 480k-pixel canvas legitimately costs ~120x the 1.2k-pixel one. So time the
-  ;; reflective store ITSELF, on this machine and in this JVM, against the shipped
-  ;; conversion of the same raster: the margin is a property of the code, not the host.
+  ;; 800x600 flush against 1.8 ms for the inlined store. No stopwatch pins that
+  ;; portably, and three have now failed: a wall-clock budget went red on a loaded
+  ;; runner at 2350 ms with nothing wrong; a canvas-size ratio went red because a
+  ;; 480k-pixel canvas legitimately costs ~120x a 1.2k-pixel one; and timing the
+  ;; reflective store against the shipped conversion in the same JVM -- ten warm-ups,
+  ;; best of five each -- still read 32 ms against 37 ms on CI, where a runner
+  ;; grinding through 6129 test cases never lets either loop leave the interpreter
+  ;; (the same measurement is 1 ms against 46 ms on an idle machine). The margin is a
+  ;; property of the CODE, not of the host, so assert the code: the conversion yields
+  ;; exactly the reference bytes, and it names `aset` on a `^bytes` local -- never a
+  ;; reflective or per-pixel store.
   (it
     "converting a drawn canvas does not pay a reflective store per pixel"
     (let
@@ -621,59 +627,44 @@
        raster
        (shim-pil/->Raster px w h 0xff000000)
 
-       inlined
-       (fn []
-         (#'shim-pil/raster->rgba raster))
-
        reflective
-       (fn []
-         (let
-           [n
-            (alength ^ints px)
+       (let
+         [n
+          (alength ^ints px)
 
-            b
-            (byte-array (* 4 n))]
+          b
+          (byte-array (* 4 n))]
 
-           (dotimes [i n]
-             (let
-               [p (bit-or 0xff000000 (bit-and 0xffffffff (aget ^ints px i)))
-                o (* 4 i)]
+         (dotimes [i n]
+           (let
+             [p (bit-or 0xff000000 (bit-and 0xffffffff (aget ^ints px i)))
+              o (* 4 i)]
 
-               (aset-byte b o (unchecked-byte (bit-and (bit-shift-right p 16) 0xff)))
-               (aset-byte b (+ o 1) (unchecked-byte (bit-and (bit-shift-right p 8) 0xff)))
-               (aset-byte b (+ o 2) (unchecked-byte (bit-and p 0xff)))
-               (aset-byte b (+ o 3) (unchecked-byte (bit-and (bit-shift-right p 24) 0xff)))))
-           b))
+             (aset-byte b o (unchecked-byte (bit-and (bit-shift-right p 16) 0xff)))
+             (aset-byte b (+ o 1) (unchecked-byte (bit-and (bit-shift-right p 8) 0xff)))
+             (aset-byte b (+ o 2) (unchecked-byte (bit-and p 0xff)))
+             (aset-byte b (+ o 3) (unchecked-byte (bit-and (bit-shift-right p 24) 0xff)))))
+         b)
 
-       ;; Warm both paths well past the JIT's OSR threshold, then take each
-       ;; path's BEST of five conversions. A three-shot stopwatch over two warm-up
-       ;; rounds is what made this red on CI: the shipped loop was still
-       ;; interpreted when the clock started (48 ms per conversion on the runner
-       ;; against 1 ms here), so the margin read 2.7x with nothing wrong. The
-       ;; minimum is the round where the machine was not busy somewhere else.
-       ms
-       (fn [f]
-         (dotimes [_ 10]
-           (f))
-         (reduce min
-                 (repeatedly 5
-                             #(let [t0 (System/nanoTime)]
-                                (f)
-                                (/ (- (System/nanoTime) t0) 1e6)))))
+       names
+       (into #{}
+             (comp (filter symbol?) (map str))
+             (tree-seq coll?
+                       seq
+                       (read-string
+                         (repl/source-fn
+                           'com.blockether.vis.internal.foundation.shim-pil/raster->rgba))))
 
-       fast
-       (ms inlined)
+       offenders
+       (filterv #(re-find #"^aset-|reflect\.|etRGB" %) names)]
 
-       slow
-       (ms reflective)]
-
-      (expect (Arrays/equals ^bytes (inlined) ^bytes (reflective)))
-      (expect (< (* 4 fast) slow)
-              (str "the shipped conversion took "
-                   (long fast)
-                   " ms where four reflective stores per pixel took "
-                   (long slow)
-                   " ms -- no faster than reflection")))))
+      (expect (Arrays/equals ^bytes (#'shim-pil/raster->rgba raster) ^bytes reflective))
+      (expect (contains? names "aset")
+              "raster->rgba no longer stores through `aset` on a ^bytes local")
+      (expect (empty? offenders)
+              (str "raster->rgba reaches for "
+                   (pr-str offenders)
+                   " -- a reflective or per-pixel store")))))
 
 (defdescribe
   pil-font-family-test
@@ -736,24 +727,23 @@
 ;; logo with Pillow's own spelling `im.quantize(colors=8, method=Image.MEDIANCUT)`
 ;; died with "module 'PIL.Image' has no attribute 'MEDIANCUT'" -- the shim never
 ;; published the Quantize/Dither/Palette constants Pillow staples onto the module.
-(defdescribe
-  pil-quantize-constant-regression-test
-  (it "publishes the Quantize/Dither/Palette constants on the module and the enums"
-      (with-python-context
-        (expect (= [0 1 2 3 0 3 0 1 true]
-                   (ev python-context
-                       (str "from PIL import Image\n"
-                            "[Image.MEDIANCUT, Image.MAXCOVERAGE, Image.FASTOCTREE, "
-                            "Image.LIBIMAGEQUANT, Image.NONE, Image.FLOYDSTEINBERG, "
-                            "Image.WEB, Image.ADAPTIVE, "
-                            "Image.Quantize.MEDIANCUT == Image.MEDIANCUT "
-                            "and Image.Dither.FLOYDSTEINBERG == Image.FLOYDSTEINBERG "
-                            "and Image.Palette.ADAPTIVE == Image.ADAPTIVE]"))))))
-  (it "quantize accepts method=Image.MEDIANCUT and returns a palette image"
-      (with-python-context
-        (expect (true? (ev python-context
-                           (str "from PIL import Image\n"
-                                "im = Image.new('RGB',(8,8),(200,30,40))\n"
-                                "q = im.quantize(colors=8, method=Image.MEDIANCUT, "
-                                "dither=Image.Dither.NONE)\n"
-                                "q.mode == 'P' and len(q.getpalette()) >= 3")))))))
+(defdescribe pil-quantize-constant-regression-test
+             (it "publishes the Quantize/Dither/Palette constants on the module and the enums"
+                 (with-python-context
+                   (expect (= [0 1 2 3 0 3 0 1 true]
+                              (ev python-context
+                                  (str "from PIL import Image\n"
+                                       "[Image.MEDIANCUT, Image.MAXCOVERAGE, Image.FASTOCTREE, "
+                                       "Image.LIBIMAGEQUANT, Image.NONE, Image.FLOYDSTEINBERG, "
+                                       "Image.WEB, Image.ADAPTIVE, "
+                                       "Image.Quantize.MEDIANCUT == Image.MEDIANCUT "
+                                       "and Image.Dither.FLOYDSTEINBERG == Image.FLOYDSTEINBERG "
+                                       "and Image.Palette.ADAPTIVE == Image.ADAPTIVE]"))))))
+             (it "quantize accepts method=Image.MEDIANCUT and returns a palette image"
+                 (with-python-context
+                   (expect (true? (ev python-context
+                                      (str "from PIL import Image\n"
+                                           "im = Image.new('RGB',(8,8),(200,30,40))\n"
+                                           "q = im.quantize(colors=8, method=Image.MEDIANCUT, "
+                                           "dither=Image.Dither.NONE)\n"
+                                           "q.mode == 'P' and len(q.getpalette()) >= 3")))))))
