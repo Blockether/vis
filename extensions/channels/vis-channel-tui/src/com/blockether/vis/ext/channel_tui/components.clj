@@ -168,40 +168,33 @@
 
 (defn action-button!
   "Neobrutalist dialog/action button — the shared blockether look (the spel-bridge
-   web modal): `:variant :primary` paints a SOLID ink cap with a cream bold label
-   (the default/confirming action, e.g. Connect); any other variant paints an
-   OUTLINE cap — cream ground, ink bold label flanked by `▏`/`▕` side rails (the
-   Cancel/secondary action). `:focused?` promotes ANY button to the solid primary
-   fill so keyboard focus reads as the active choice.
+   web modal). Both variants are the SAME filled cap ` label `; only the FILL
+   carries the hierarchy: `:primary` is the ink fill with a cream bold label (the
+   confirming action, e.g. Connect), `:secondary` the muted fill (the alternative,
+   e.g. Cancel). No `▏`/`▕` side rails and no `[ … ]` ASCII — a button in this
+   product is a solid pill, and an outline that only appears on the quiet action
+   read like a different widget instead of a quieter one.
+
+   Which cap has the CURSOR is deliberately NOT this function's business: the
+   caller draws the project-wide `•` marker (`p/selection-prefix`) beside it, so
+   walking focus with ↑/↓ never repaints `Submit` as the secondary action.
 
    Both variants consume the SAME width — `(display-width label) + 2` — so a row of
-   buttons never shifts as focus moves. Registers a `:kind` click region (merging
-   `:extra`) when `:register?` is set. Returns the consumed width."
+   buttons never shifts. Registers a `:kind` click region (merging `:extra`) when
+   `:register?` is set. Returns the consumed width."
   ([g col row label] (action-button! g col row label nil))
-  ([g col row label
-    {:keys [variant focused? kind extra register?] :or {variant :secondary register? false}}]
+  ([g col row label {:keys [variant kind extra register?] :or {variant :secondary register? false}}]
    (let
      [col
       (long col)
 
       w
-      (+ 2 (p/display-width label))
-
-      solid?
-      (or (boolean focused?) (= variant :primary))]
+      (+ 2 (p/display-width label))]
 
      (p/clear-styles! g)
-     (if solid?
-       (do (p/set-colors! g t/dialog-bg t/dialog-hint-key)
-           (p/enable! g p/BOLD)
-           (p/put-str! g col row (str " " label " ")))
-       (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-           (p/put-str! g col row "▏")
-           (p/set-colors! g t/dialog-fg t/dialog-bg)
-           (p/enable! g p/BOLD)
-           (p/put-str! g (inc col) row label)
-           (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-           (p/put-str! g (+ col (dec w)) row "▕")))
+     (p/set-colors! g t/dialog-bg (if (= :primary variant) t/dialog-hint-key t/dialog-hint))
+     (p/enable! g p/BOLD)
+     (p/put-str! g col row (str " " label " "))
      (p/clear-styles! g)
      (when (and register? kind)
        (cr/register! (merge {:bounds {:row row :col col :width w} :kind kind :enabled? true}

@@ -777,37 +777,30 @@
         (conj {:kind :blank})))))
 
 (defn action-bar
-  "The request's own buttons as ONE row: the solid ` Submit ` pill with its Enter
-   chord, then the outlined `▏Cancel▕` with Esc.
+  "The request's own buttons as ONE row: the solid ` Submit ` pill, then the muted
+   ` Cancel ` one.
 
-   Each cap carries the chord that presses it, so the band names an action
-   EXACTLY ONCE. The hint bar a row below deliberately says nothing about submit
-   or cancel ([[hint]]): it used to reprint these very labels as
+   PRIMARY vs SECONDARY is a SEMANTIC ranking, not a focus state — submit is the
+   confirming action and keeps the ink fill wherever the cursor is, so walking the
+   caps never promotes Cancel to look like the default. `:is-focused` says which
+   cap the cursor sits on, and the painter answers it with the project-wide `•`
+   marker instead of a second colour.
+
+   No chord travels with a button: a cap is a focus stop reached with ↑/↓ like
+   every other row of the form. The hint bar one row below stays silent about
+   submit and cancel too ([[hint]]) — it used to reprint these very labels as
    `Enter submit · Esc cancel`, two rows of chrome for one meaning.
-
-   `:key` is the chord that fires the button FROM WHERE FOCUS IS. Enter submits
-   from a field or from a focused cap, but inside a multiline field Enter opens a
-   newline and `^S` is the only thing that ends the pause — so the cap says `^S`
-   while that field has focus.
 
    PINNED by the painter under the scrolling body instead of trailing it, so a
    form taller than the band can never push the two controls that END the pause
    off the screen — the same reason the companion pins them in its footer."
-  [{:keys [stops focus] :as form}]
+  [{:keys [stops focus]}]
   (let
-    [submit-key
-     (if (multiline-focus? form) "^S" "Enter")
-
-     buttons
-     (into []
-           (keep-indexed (fn [i {:keys [kind action label]}]
-                           (when (= :action kind)
-                             {:action action
-                              :label label
-                              :key (if (= :cancel action) "Esc" submit-key)
-                              :is-focused (= i (or focus 0))})))
-           stops)]
-
+    [buttons (into []
+                   (keep-indexed (fn [i {:keys [kind action label]}]
+                                   (when (= :action kind)
+                                     {:action action :label label :is-focused (= i (or focus 0))})))
+                   stops)]
     (when (seq buttons) {:kind :action :buttons buttons})))
 
 (defn form-rows
@@ -931,20 +924,20 @@
 (defn- paint-actions!
   "The PINNED action bar: every button the request offers on ONE row, drawn as the
    SHARED neobrutalist cap `components/action-button!` — the same control the
-   confirm dialog and the spel-bridge modal use — each followed by the DIM chord
-   that presses it:
+   confirm dialog and the spel-bridge modal use:
 
-     ` Submit ` Enter   `▏Cancel▕` Esc
+     •  Submit    Cancel
 
-   The FILL is the focus marker, so no `•` bullet and no `[ … ]` ASCII brackets:
-   the cap the chord would fire RIGHT NOW is a solid ink pill with a cream bold
-   label, every other cap a cream outline between `▏`/`▕` rails. From a field
-   that is Submit (Enter submits); once ↓ walks onto a cap, it is that cap. Both
-   variants measure the same, so the row never shifts as focus moves.
+   The FILL ranks the actions and never moves: `:submit` is the PRIMARY cap (ink
+   fill, cream bold label), every other cap is SECONDARY (muted fill). The CURSOR
+   is the project-wide `•` marker in front of the cap — the very glyph every
+   checkbox and radio row wears (`dialogs/draw-selectable-row!`) — so a cap is
+   just another row ↑/↓ walks onto, and no colour has to do two jobs at once.
 
-   The chord rides the cap instead of the hint bar because the hint bar sits one
-   row below: spelled in both places, the band printed `submit` and `cancel`
-   twice over.
+   Nothing stencils a chord beside a cap: the caps ARE the visible way to end the
+   pause, and `Enter`/`Esc` printed next to them only named a shortcut for the
+   control already under the cursor. Both marker states and both variants measure
+   the same, so the row never shifts as focus moves.
 
    Pinned rather than scrolled with the fields, because the two controls that
    END the pause are exactly the ones a long form must never push out of view."
@@ -957,39 +950,21 @@
      (long inner-w)
 
      right
-     (+ left inner-w -1)
-
-     ;; Focus may be on a FIELD, in which case Enter still submits — so the
-     ;; solid pill falls back to the submit cap instead of leaving the row
-     ;; without a default action.
-     on-cap?
-     (boolean (some :is-focused buttons))]
+     (+ left inner-w -1)]
 
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc left) row inner-w 1)
-    (reduce (fn [^long col {:keys [action label is-focused] chord :key}]
-              (let
-                [cap-w
-                 (+ 2 (long (p/display-width label)))
-
-                 chord
-                 (if (str/blank? (str chord)) "" (str " " chord))
-
-                 w
-                 (+ cap-w (long (p/display-width chord)))]
-
+    (reduce (fn [^long col {:keys [action label is-focused]}]
+              (let [w (+ (long p/SELECTION_WIDTH) 2 (long (p/display-width label)))]
                 (when (<= (+ col w) right)
-                  (components/action-button!
-                    g
-                    col
-                    row
-                    label
-                    {:variant (if (or is-focused (and (not on-cap?) (= :submit action)))
-                                :primary
-                                :secondary)})
-                  (when (seq chord)
-                    (p/set-colors! g t/dialog-hint t/dialog-bg)
-                    (p/put-str! g (+ col cap-w) row chord)))
+                  (p/set-colors! g t/dialog-fg t/dialog-bg)
+                  (p/put-str! g col row (p/selection-prefix is-focused))
+                  (components/action-button! g
+                                             (+ col (long p/SELECTION_WIDTH))
+                                             row
+                                             label
+                                             {:variant
+                                              (if (= :submit action) :primary :secondary)}))
                 (+ col w 2)))
             (inc left)
             buttons)

@@ -487,13 +487,16 @@
         ;; `↑/↓ move` was a permanent row of chrome for the one chord every
         ;; terminal operator already knows.
         (expect (not (str/includes? text "↑/↓")))
-        ;; The caps are the SHARED neobrutalist chip, not `[ … ]` ASCII.
+        ;; The caps are the SHARED neobrutalist chip: filled pills, never `[ … ]`
+        ;; ASCII and never `▏…▕` outlines.
         (expect (not (str/includes? text "[ Submit ]")))
         (expect (not (str/includes? text "[ Cancel ]")))
-        ;; The two actions are spelled ONCE, on the pinned caps — the hint bar
-        ;; must not print them a second time one row lower.
-        (expect (not (str/includes? text "Enter submit")))
-        (expect (not (str/includes? text "Esc cancel")))))
+        (expect (not (str/includes? text "▏")))
+        (expect (not (str/includes? text "▕")))
+        ;; The two actions are spelled ONCE, on the pinned caps — no chord beside
+        ;; them, and no hint bar reprinting them one row lower.
+        (expect (not (str/includes? text "Enter")))
+        (expect (not (str/includes? text "Esc")))))
   (it "puts a scrollbar thumb in the gutter once the form outgrows the box"
       ;; The band grows UPWARD over the transcript, so on a roomy terminal this
       ;; form fits whole; it is a SHORT terminal that squeezes it into a window.
@@ -578,13 +581,17 @@
          (screen-row screen (dec foot-rule-y))]
 
         (expect (rule-row? (screen-row screen foot-rule-y)))
-        ;; Solid pill for the cap Enter would fire, outline rails for the other.
+        ;; Ink pill for Submit, muted pill for Cancel — two filled caps, no rails.
         (expect (str/includes? bar " Submit "))
-        (expect (str/includes? bar "▏Cancel▕"))))
+        (expect (str/includes? bar " Cancel"))
+        (expect (not (str/includes? bar "▏")))
+        (expect (not (str/includes? bar "▕")))))
   ;; Regression: the band said the same two things twice — the pinned
   ;; `[ Submit ]` / `[ Cancel ]` row and, one row under it, a hint bar reading
-  ;; `Enter submit · Esc cancel`. Two rows of chrome, one meaning.
-  (it "states each action once — the chord rides the cap, never the hint bar"
+  ;; `Enter submit · Esc cancel`. Two rows of chrome for one meaning — and the
+  ;; chords stencilled ON the caps were a third: a cap is a focus stop ↑/↓ walks
+  ;; onto, so it needs no shortcut printed beside it.
+  (it "states each action once — on its cap, with no chord and no second row"
       (let
         [{:keys [screen g]}
          (virtual-screen)
@@ -599,15 +606,39 @@
          (screen-row screen (- hint-y 2))
 
          hints
-         (str/lower-case (screen-row screen hint-y))]
+         (str/lower-case (screen-row screen hint-y))
 
-        (expect (str/includes? bar " Submit  Enter"))
-        (expect (str/includes? bar "▏Cancel▕ Esc"))
+         text
+         (screen-text screen)]
+
+        (expect (str/includes? bar " Submit "))
+        (expect (str/includes? bar " Cancel"))
+        (expect (not (str/includes? text "Enter")))
+        (expect (not (str/includes? text "Esc")))
         ;; ...and with focus on a plain text field the bar below has nothing to
         ;; say at all — no `move`, and still no submit/cancel.
         (expect (str/blank? hints))
         (expect (not (str/includes? hints "submit")))
         (expect (not (str/includes? hints "cancel")))))
+  (it "walks the • cursor onto a cap instead of recolouring it"
+      (let
+        [form
+         (hi/init-form (request))
+
+         cancel-idx
+         (dec (count (:stops form)))
+
+         bar-of
+         (fn [f]
+           (let [{:keys [screen g]} (virtual-screen)]
+             (hi/paint! g 80 30 f)
+             (screen-row screen (- (long (:hint-row (hi/band-region 80 30 1))) 2))))]
+
+        ;; The `•` is the same cursor glyph every checkbox and radio row wears.
+        (expect (str/includes? (bar-of (assoc form :focus (dec cancel-idx))) "•  Submit "))
+        (expect (str/includes? (bar-of (assoc form :focus cancel-idx)) "\u2022  Cancel"))
+        ;; ...and it is the only thing that moves — Submit keeps its pill either way.
+        (expect (str/includes? (bar-of (assoc form :focus cancel-idx)) " Submit "))))
   (it "marks exactly the focused button and keeps the buttons out of the body"
       (let
         [form
@@ -666,6 +697,28 @@
   [screen needle]
   (let [y (screen-row-of screen needle)]
     (when y (modifiers-at screen (.indexOf ^String (screen-row screen y) ^String needle) y))))
+
+(defn- bg-of
+  "The background colour the back buffer holds on the first cell of `needle` —
+   which FILL a painted cap wears."
+  [^TerminalScreen screen needle]
+  (let
+    [y
+     (long (screen-row-of screen needle))
+
+     x
+     (.indexOf ^String (screen-row screen y) ^String needle)]
+
+    (.getBackgroundColor ^TextCharacter (.getBackCharacter screen (int x) (int y)))))
+
+(defn- cap-bgs
+  "The fills the painted action row gives `form`'s Submit and Cancel caps."
+  [form]
+  (let [{:keys [screen g]} (virtual-screen)]
+    (hi/paint! g 80 30 form)
+    ;; The row is right-trimmed, so the LAST cap keeps only its leading pad cell —
+    ;; which is fill either way.
+    [(bg-of screen " Submit ") (bg-of screen " Cancel")]))
 
 (defdescribe
   label-and-description-test
@@ -997,19 +1050,26 @@
         (expect (= ["Ship it" "Hold"] (mapv :label (:buttons (hi/action-bar custom)))))
         (expect (= ["Submit"] (mapv :label (:buttons (hi/action-bar locked)))))
         (expect (= 3 (count (:stops locked))))))
-  (it "prints on each cap the chord that fires it"
+  (it "ranks the caps by FILL, and the ranking never follows the cursor"
+      ;; The solid pill used to mean "the cap a chord fires", so walking onto
+      ;; Cancel repainted Submit as the quiet action and the form lost its default.
       (let
         [form
-         (hi/init-form (slider-request))
+         (hi/init-form (request))
 
-         multiline
-         (assoc (hi/init-form (request)) :focus 7)]
+         cancel-idx
+         (dec (count (:stops form)))
 
-        (expect (= ["Enter" "Esc"] (mapv :key (:buttons (hi/action-bar form)))))
-        (expect (= ["Enter" "Esc"] (mapv :key (:buttons (hi/action-bar (assoc form :focus 2))))))
-        ;; Inside a multiline field Enter opens a newline, so the cap has to name
-        ;; the chord that actually ends the pause.
-        (expect (= ["^S" "Esc"] (mapv :key (:buttons (hi/action-bar multiline))))))))
+         [submit-bg cancel-bg]
+         (cap-bgs form)
+
+         [held-submit-bg held-cancel-bg]
+         (cap-bgs (assoc form :focus cancel-idx))]
+
+        ;; Primary vs secondary: two different fills, both solid.
+        (expect (not= submit-bg cancel-bg))
+        (expect (= submit-bg held-submit-bg))
+        (expect (= cancel-bg held-cancel-bg)))))
 
 ;; The band is bottom-anchored over exactly the rows the composer occupies, and
 ;; the prompt — not the composer — owns the keyboard while it is up (issue #108).

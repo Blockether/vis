@@ -2014,11 +2014,11 @@
 ;;; ── Confirm dialog ──────────────────────────────────────────────────────────
 (defn- draw-button!
   "Draw a confirm-dialog action button in the shared blockether look (mirroring
-   `components/action-button!` and the spel-bridge modal): the FOCUSED/selected
-   button is a solid ink cap with a cream bold label (the primary/confirming
-   action); the other is an OUTLINE cap — cream ground, ink bold label flanked by
-   `▏`/`▕` side rails. Same width either way, so the row stays put as focus moves.
-   Returns the consumed width."
+   `components/action-button!` and the spel-bridge modal): both caps are the same
+   filled ` label ` pill and only the FILL differs — the SELECTED button takes the
+   ink fill with a cream bold label, the other the muted fill. No `▏`/`▕` rails:
+   a button here is a solid pill. Same width either way, so the row stays put as
+   the choice moves. Returns the consumed width."
   [g col row label selected?]
   (let
     [col
@@ -2028,17 +2028,9 @@
      (+ 2 (count label))]
 
     (p/clear-styles! g)
-    (if selected?
-      (do (p/set-colors! g t/dialog-bg t/dialog-hint-key)
-          (p/enable! g p/BOLD)
-          (p/put-str! g col row (str " " label " ")))
-      (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-          (p/put-str! g col row "▏")
-          (p/set-colors! g t/dialog-fg t/dialog-bg)
-          (p/enable! g p/BOLD)
-          (p/put-str! g (inc col) row label)
-          (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-          (p/put-str! g (+ col (dec w)) row "▕")))
+    (p/set-colors! g t/dialog-bg (if selected? t/dialog-hint-key t/dialog-hint))
+    (p/enable! g p/BOLD)
+    (p/put-str! g col row (str " " label " "))
     (p/clear-styles! g)
     w))
 
