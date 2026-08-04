@@ -40,6 +40,15 @@ import {
   DeleteShippedVariant,
   DeleteTrashHeaderVariant,
 } from './deleteVariants';
+import {
+  START_STATES,
+  StartAskVariant,
+  StartCommandVariant,
+  StartRecentsVariant,
+  StartRowVariant,
+  StartSheetVariant,
+  StartShippedVariant,
+} from './startVariants';
 
 // Registered last so the four machine-separation proposals sit together in the index.
 
@@ -54,6 +63,54 @@ export interface DesignVariant {
 }
 
 export const DESIGN_VARIANTS: DesignVariant[] = [
+  {
+    id: 'start-shipped',
+    title: 'Start 0 · Shipped (three questions)',
+    blurb:
+      'Which machine, which workspace, what to call the draft — three surfaces and a keyboard before the one answer that matters, the first message, can be typed at all.',
+    states: START_STATES['start-shipped'],
+    render: () => <StartShippedVariant />,
+  },
+  {
+    id: 'start-ask',
+    title: 'Start A · Ask box (type first)',
+    blurb:
+      'New session opens the COMPOSER, not a question: the destination is one grey line you can tap, pre-answered from last time, and Send is what creates the session.',
+    states: START_STATES['start-ask'],
+    render: (state) => <StartAskVariant state={state} />,
+  },
+  {
+    id: 'start-recents',
+    title: 'Start B · Recent destinations',
+    blurb:
+      'The menu stops asking and starts offering: every row is a whole answer (machine + project + workspace) ranked by recency, so a repeat start is ONE tap.',
+    states: START_STATES['start-recents'],
+    render: (state) => <StartRecentsVariant state={state} />,
+  },
+  {
+    id: 'start-row',
+    title: 'Start C · The list is the picker',
+    blurb:
+      'No chooser at all: a + on every machine and project header, so WHERE you tap answers machine and project, and the workspace fork is a two-row press-menu.',
+    states: START_STATES['start-row'],
+    render: (state) => <StartRowVariant state={state} />,
+  },
+  {
+    id: 'start-sheet',
+    title: 'Start D · One sheet, nothing sequential',
+    blurb:
+      'The same three questions, all visible and all pre-answered, over the first-message box: never a wizard, and the draft name is an inline field instead of a second dialog.',
+    states: START_STATES['start-sheet'],
+    render: (state) => <StartSheetVariant state={state} />,
+  },
+  {
+    id: 'start-command',
+    title: 'Start E · The filter box starts sessions',
+    blurb:
+      'The control already at the top of the list becomes the command bar: type, and the first row is “Start · vis on studio-mbp”. Enter, and the prompt is already sent.',
+    states: START_STATES['start-command'],
+    render: () => <StartCommandVariant />,
+  },
   {
     id: 'a-chip',
     title: 'A · Provenance chip',

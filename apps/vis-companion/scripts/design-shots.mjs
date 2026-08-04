@@ -113,7 +113,7 @@ async function main() {
   const written = [];
   try {
     const shots = (await readShotMatrix(session, server.url)).filter(
-      (shot) => !args.only || shot.id === args.only,
+      (shot) => !args.only || args.only.split(',').includes(shot.id),
     );
     if (shots.length === 0) throw new Error(`no proposals matched --only ${args.only}`);
     for (const shot of shots) {
