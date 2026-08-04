@@ -1001,10 +1001,10 @@
 
 
 (defn- paint-row!
-  "Paint one plan row. Selectable rows go through the SHARED dialog painters
-   (`dialogs/draw-checkbox-item!`, `dialogs/draw-radio-item!`,
-   `dialogs/draw-field-row!`, `dialogs/draw-input-item!`) so this dialog cannot
-   drift from the rest of the TUI.
+  "Paint one plan row. Every focusable row of the form — typed line, digit boxes,
+   option, checkbox, slider — goes through the SHARED field painters
+   (`dialogs/draw-field-row!`, `dialogs/draw-input-item!`) so it looks like an
+   input and cannot drift from the rest of the TUI.
 
    Every row of a field also paints its FOCUS: the section the keyboard is in
    takes the ink — bold label, readable prose, an inked field — and the ones it
@@ -1040,14 +1040,17 @@
     :error
     (do (paint-plain! g left row inner-w t/footer-error-fg (:text entry)) nil)
 
+    ;; A checkbox, an option and a slider are answers being GIVEN, so they ride
+    ;; the same field surface a typed row does. Focus is the surface, the ring and
+    ;; the bold ink — never a marker in front of the row.
     :checkbox
-    (do (dialogs/draw-checkbox-item! g
-                                     left
-                                     row
-                                     inner-w
-                                     (:is-focused entry)
-                                     (:is-checked entry)
-                                     (:text entry))
+    (do (dialogs/draw-field-row! g
+                                 left
+                                 row
+                                 inner-w
+                                 (:is-focused entry)
+                                 (str (dialogs/choice-mark false (:is-checked entry))
+                                      (:text entry)))
         nil)
 
     ;; One row shape, TWO toggle vocabularies. An exclusive `:select` option wears
@@ -1058,18 +1061,17 @@
     ;; already draws the two marks apart, so this is also what keeps the surfaces
     ;; speaking one vocabulary.
     :option
-    (do ((if (:is-exclusive entry) dialogs/draw-radio-item! dialogs/draw-checkbox-item!)
+    (do (dialogs/draw-field-row!
           g
           left
           row
           inner-w
           (:is-focused entry)
-          (:is-checked entry)
-          (:text entry))
+          (str (dialogs/choice-mark (:is-exclusive entry) (:is-checked entry)) (:text entry)))
         nil)
 
     :range
-    (do (dialogs/draw-selectable-row! g left row inner-w (:is-focused entry) (:text entry)) nil)
+    (do (dialogs/draw-field-row! g left row inner-w (:is-focused entry) (:text entry)) nil)
 
     ;; The digit boxes are an INPUT, so they ride the same field surface a typed
     ;; row does; what is special is that the TERMINAL cursor is parked inside the
@@ -1077,13 +1079,8 @@
     ;; guessing.
     :otp
     (let
-      [text-left (dialogs/draw-field-row! g
-                                          left
-                                          row
-                                          inner-w
-                                          (:is-active-field entry)
-                                          (:is-focused entry)
-                                          (:text entry))]
+      [text-left
+       (dialogs/draw-field-row! g left row inner-w (:is-active-field entry) (:text entry))]
       (when (:is-focused entry)
         (p/cursor-pos (min (+ (long left) (long inner-w))
                            (+ (long text-left) 1 (* (long otp-cell-w) (long (:cursor entry 0)))))
@@ -1135,7 +1132,6 @@
                                  row
                                  inner-w
                                  (:is-active-field entry)
-                                 (:is-focused entry)
                                  text
                                  cursor
                                  (:placeholder entry))]

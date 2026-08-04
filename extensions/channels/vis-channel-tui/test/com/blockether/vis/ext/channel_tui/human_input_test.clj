@@ -464,44 +464,71 @@
   canonical-presentation-test
   "Cross-validation against the canonical TUI dialog vocabulary: the same row
    painters, the same hint-bar spelling, the same scrollbar gutter."
-  (it "paints checkbox rows exactly like every other dialog checkbox"
+  (it "paints checkbox rows on the shared form-field surface"
       (let [rows (painted-rows (assoc (hi/init-form (request)) :focus 6) "Confirm")]
         (expect (some #{(canonical-row
                           (fn [g]
-                            (dialogs/draw-checkbox-item! g 0 0 40 true false "Confirm")))}
+                            (dialogs/draw-field-row! g
+                                                     0
+                                                     0 40
+                                                     true (str (dialogs/choice-mark false false)
+                                                               "Confirm"))))}
                       rows))
         ;; The checkbox row IS the label — no duplicate bold label row above it.
         (expect (= 1 (count rows)))))
   (it "paints select options with the shared ●/○ status marks"
       (expect (some #{(canonical-row (fn [g]
-                                       (dialogs/draw-radio-item! g 0 0 40 true true "Dev")))}
+                                       (dialogs/draw-field-row! g
+                                                                0
+                                                                0 40
+                                                                true (str (dialogs/choice-mark true
+                                                                                               true)
+                                                                          "Dev"))))}
                     (painted-rows (assoc (hi/init-form (request)) :focus 2) "Dev")))
       (expect (some #{(canonical-row (fn [g]
-                                       (dialogs/draw-radio-item! g 0 0 40 false false "Prod")))}
+                                       (dialogs/draw-field-row!
+                                         g
+                                         0
+                                         0 40
+                                         false (str (dialogs/choice-mark true false) "Prod"))))}
                     (painted-rows (assoc (hi/init-form (request)) :focus 2) "Prod"))))
   ;; Regression: EVERY option row was painted with the radio ●/○ mark, so a
   ;; `multiselect` — where several answers are legal — looked exactly like the
   ;; `select` above it and nothing on the screen said "choose any".
-  (it
-    "paints multiselect options as INCLUSIVE checkbox boxes, never radio dots"
-    (let
-      [rows (into (painted-rows (assoc (hi/init-form (request)) :focus 4) "Alpha")
-                  (painted-rows (assoc (hi/init-form (request)) :focus 4) "Beta"))]
-      (expect (some #{(canonical-row (fn [g]
-                                       (dialogs/draw-checkbox-item! g 0 0 40 true false "Alpha")))}
-                    rows))
-      (expect (some #{(canonical-row (fn [g]
-                                       (dialogs/draw-checkbox-item! g 0 0 40 false false "Beta")))}
-                    rows))
-      (expect (not-any? #(or (str/includes? % "●") (str/includes? % "○")) rows))))
+  (it "paints multiselect options as INCLUSIVE checkbox boxes, never radio dots"
+      (let
+        [rows (into (painted-rows (assoc (hi/init-form (request)) :focus 4) "Alpha")
+                    (painted-rows (assoc (hi/init-form (request)) :focus 4) "Beta"))]
+        (expect (some #{(canonical-row (fn [g]
+                                         (dialogs/draw-field-row!
+                                           g
+                                           0
+                                           0 40
+                                           true (str (dialogs/choice-mark false false) "Alpha"))))}
+                      rows))
+        (expect (some #{(canonical-row (fn [g]
+                                         (dialogs/draw-field-row!
+                                           g
+                                           0
+                                           0 40
+                                           false (str (dialogs/choice-mark false false) "Beta"))))}
+                      rows))
+        (expect (not-any? #(or (str/includes? % "●") (str/includes? % "○")) rows))))
   (it "fills the box of a chosen inclusive option and leaves its sibling empty"
       (let [form (feed (assoc (hi/init-form (request)) :focus 4) [(ch \space)])]
         (expect (some #{(canonical-row (fn [g]
-                                         (dialogs/draw-checkbox-item! g 0 0 40 true true "Alpha")))}
+                                         (dialogs/draw-field-row!
+                                           g
+                                           0
+                                           0 40
+                                           true (str (dialogs/choice-mark false true) "Alpha"))))}
                       (painted-rows form "Alpha")))
-        (expect (some #{(canonical-row
-                          (fn [g]
-                            (dialogs/draw-checkbox-item! g 0 0 40 false false "Beta")))}
+        (expect (some #{(canonical-row (fn [g]
+                                         (dialogs/draw-field-row!
+                                           g
+                                           0
+                                           0 40
+                                           false (str (dialogs/choice-mark false false) "Beta"))))}
                       (painted-rows form "Beta")))))
   (it "never lends the inclusive box to an EXCLUSIVE option"
       (let
@@ -511,7 +538,7 @@
         (expect (not-any? #(str/includes? % "[") rows))))
   (it "paints text fields with the shared input row painter"
       (expect (some #{(canonical-row (fn [g]
-                                       (dialogs/draw-input-item! g 0 0 40 true true "" 0 "who")))}
+                                       (dialogs/draw-input-item! g 0 0 40 true "" 0 "who")))}
                     (painted-rows (assoc (hi/init-form (request)) :focus 0) "who"))))
   (it "keeps navigation chords and ASCII button brackets off the screen"
       (let
@@ -542,7 +569,7 @@
       ;; form fits whole; it is a SHORT terminal that squeezes it into a window.
       (let [{:keys [screen g]} (virtual-screen)]
         (hi/paint! g 80 16 (assoc (hi/init-form (request)) :focus 7))
-        (expect (str/includes? (screen-text screen) "\u2588"))))
+        (expect (str/includes? (screen-text screen) "█"))))
   (it "leaves the gutter clean when the whole form fits"
       (let [{:keys [screen g]} (virtual-screen)]
         (hi/paint! g
@@ -711,9 +738,9 @@
              (hi/paint! g 80 30 f)
              (screen-row screen (- (long (:hint-row (hi/band-region 80 30 1))) 2))))]
 
-        ;; The `•` cursor glyph the checkbox and radio rows wear has no business on
-        ;; a pill that recolours itself when focus arrives, and the gutter it
-        ;; needed had to be reserved in every state just to keep the row still.
+        ;; The `•` cursor glyph a LIST row wears has no business on a pill that
+        ;; recolours itself when focus arrives, and the gutter it needed had to be
+        ;; reserved in every state just to keep the row still.
         (doseq [f [form (assoc form :focus (dec cancel-idx)) (assoc form :focus cancel-idx)]]
           (let [bar (bar-of f)]
             (expect (str/includes? bar " Submit "))
@@ -1320,7 +1347,22 @@
   (it "drops the `› ` prompt now that the field itself is visible"
       (let [{:keys [screen g]} (virtual-screen)]
         (hi/paint! g 80 30 (hi/init-form (otp-request)))
-        (expect (not (str/includes? (screen-text screen) "›"))))))
+        (expect (not (str/includes? (screen-text screen) "›")))))
+  ;; Regression: focus in a form was ALSO spelled as a `•` in a reserved gutter —
+  ;; the checkbox, option and slider rows still wore that marker after the typed
+  ;; rows had stopped needing it, so the form shouted "active" in two alphabets at
+  ;; once and no row lined up under its own label.
+  (it "spells focus with the surface alone — no `•` marker in front of a row"
+      (let [form (assoc (hi/init-form (request)) :focus 2)]
+        (doseq [needle ["Dev" "Prod" "Alpha" "Beta" "Confirm"]]
+          (expect (seq (painted-rows form needle)))
+          (expect (not-any? #(str/starts-with? % "•") (painted-rows form needle))))))
+  (it "seats an option and a checkbox on the very field surface a typed value uses"
+      (let [form (assoc (hi/init-form (request)) :focus 2)]
+        (expect (= t/input-field-bg (:bg (cell-under form "Dev"))))
+        (expect (= (t/field-resting-bg) (:bg (cell-under form "Prod"))))
+        (expect (= t/input-field-bg
+                   (:bg (cell-under (assoc (hi/init-form (request)) :focus 6) "Confirm")))))))
 
 (defdescribe
   otp-field-test

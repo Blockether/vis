@@ -665,12 +665,15 @@
        (p/set-colors! g t/dialog-fg t/dialog-bg)))))
 
 (defn draw-selectable-row!
-  "The ONE focusable-row painter: `p/selection-prefix`'s cursor glyph, the text,
-   bold while the cursor is on it.
+  "The ONE focusable-row painter for LIST dialogs: `p/selection-prefix`'s cursor
+   glyph, the text, bold while the cursor is on it.
 
-   `draw-checkbox-item!` and `draw-radio-item!` are this row with a status glyph
-   in front of the label, and any new focusable row — a slider, an action button
-   — joins them here instead of inventing a second way to look selected."
+   `draw-checkbox-item!` is this row with a status glyph in front of the label,
+   and any new focusable LIST row joins them here instead of inventing a second
+   way to look selected. A form is the other family: its rows are drawn as
+   INPUTS on their own surface (`draw-field-row!`) and wear no cursor glyph at
+   all, because a `•` in front of every row says the same thing about all of
+   them."
   [g left row inner-w selected? text]
   (let
     [draw-text (ellipsize (str (p/selection-prefix selected?) text) (max 0 (- (long inner-w) 2)))]
@@ -680,32 +683,25 @@
       (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row draw-text))
       (p/put-str! g (inc (long left)) row draw-text))))
 
-(defn draw-checkbox-item!
-  "MULTI-choice row — cursor glyph, a `[✓]`/`[ ]` box, then the label. The one
-   checkbox row painter in the TUI: list dialogs and the human-input form both
-   draw through it so the vocabulary never drifts."
-  ;; `> [✓] label` when selected, `  [✓] label` otherwise. The cursor
-  ;; glyph and the checkbox glyph carry independent meaning: the
-  ;; first says "this row is the cursor", the second says "this
-  ;; option is currently on". Drop the accent-bg highlight — the `>`
-  ;; alone is the selection cue. Anchored at `(inc left)` so the
-  ;; marker sits right at the dialog's inner edge (see `draw-list-item!`).
-  [g left row inner-w selected? checked? label]
-  (draw-selectable-row! g left row inner-w selected? (str "[" (if checked? "✓" " ") "] " label)))
+(defn choice-mark
+  "The status glyph a choice row wears in front of its label. An EXCLUSIVE choice
+   takes the shared ●/○ pair the settings rows and the footer already speak — pick
+   one and the other drops; an INCLUSIVE one takes the `[✓]`/`[ ]` box — pick as
+   many as apply. One place, so \"choose one\" and \"choose any\" can never end up
+   looking alike."
+  [exclusive? checked?]
+  (if exclusive?
+    (str (if checked? p/STATUS_ON p/STATUS_OFF) " ")
+    (str "[" (if checked? "✓" " ") "] ")))
 
-(defn draw-radio-item!
-  "SINGLE-choice twin of `draw-checkbox-item!` — `• ● label` / `  ○ label`.
-   The cursor glyph says which row the cursor is on; the shared status mark
-   (`p/STATUS_ON` picked, `p/STATUS_OFF` not) says which option is chosen, the
-   same on/off glyph pair the settings rows and the footer already speak.
-   Anchored at `(inc left)` like every other dialog row."
+(defn draw-checkbox-item!
+  "MULTI-choice LIST row — cursor glyph, a `[✓]`/`[ ]` box, then the label. The
+   cursor glyph and the checkbox glyph carry independent meaning: the first says
+   \"this row is the cursor\", the second says \"this option is currently on\".
+   Anchored at `(inc left)` so the marker sits right at the dialog's inner edge
+   (see `draw-list-item!`)."
   [g left row inner-w selected? checked? label]
-  (draw-selectable-row! g
-                        left
-                        row
-                        inner-w
-                        selected?
-                        (str (if checked? p/STATUS_ON p/STATUS_OFF) " " label)))
+  (draw-selectable-row! g left row inner-w selected? (str (choice-mark false checked?) label)))
 
 (def ^:private field-pad
   "Columns of breathing room inside a form field's surface, one on each side —
@@ -714,40 +710,37 @@
   1)
 
 (defn field-content-w
-  "Columns a form field's TEXT gets on an `inner-w`-wide dialog row: the cursor
-   gutter, the focus ring and the field's own padding come off the top. Public
-   because paint and cursor placement have to measure the very same field."
+  "Columns a form field's TEXT gets on an `inner-w`-wide dialog row: the focus
+   ring and the field's own padding come off the top. Public because paint and
+   cursor placement have to measure the very same field."
   ^long [inner-w]
-  (max 1 (- (long inner-w) 2 (long p/SELECTION_WIDTH) 1 (* 2 (long field-pad)))))
+  (max 1 (- (long inner-w) 2 1 (* 2 (long field-pad)))))
 
 (defn draw-field-row!
-  "FORM-FIELD row — the typed twin of `draw-checkbox-item!` and `draw-radio-item!`:
-   the SAME cursor gutter, then the field's own SURFACE. A field is drawn as a
-   field — `input-field-bg`, padded a space each side, the very control
-   `components/find-bar!` paints its query box with — so an empty field is still
-   visibly a field and every input in the TUI is the same object.
+  "FORM-FIELD row — the ONE painter for every focusable row of a form, typed or
+   toggled. A field is drawn as a field: `input-field-bg`, padded a space each
+   side, the very control `components/find-bar!` paints its query box with — so an
+   empty field is still visibly a field and every input in the TUI is the same
+   object. It starts at the dialog's own inner edge, directly under its label.
 
    Focus is the other half, and it is said three ways at once: the focused field
    wears the accent ring `▎` down its left edge, keeps the full field surface, and
    takes the ink (`box-fg`, bold). A field the keyboard is NOT in loses the ring,
-   recedes to `theme/field-resting-bg` and dims to `dialog-hint`. A form that
-   paints five fields at full strength has told the operator nothing about which
-   one takes the next keystroke.
+   recedes to `theme/field-resting-bg` and dims to `dialog-hint`. That contrast IS
+   the cursor in a form — there is no `•` gutter, because a marker in front of
+   every row says the same thing about all of them.
 
-   `caret?` says this ROW carries the cursor glyph — one line of a focused
-   multiline field lights the whole field but marks only the line being typed.
-
-   `content` is the field's already-rendered text (`ada@example.com`,
-   `[1] [2] [ ]`). Returns the column its first cell landed on, so a caller that
-   owns the terminal cursor can place it."
-  [g left row inner-w focused? caret? content]
+   `content` is the field's already-rendered text (`ada@example.com`, `[1] [2] [ ]`,
+   `● Dev`). Returns the column its first cell landed on, so a caller that owns
+   the terminal cursor can place it."
+  [g left row inner-w focused? content]
   (let
     [content-w
      (field-content-w inner-w)
 
      ;; ring cell, then the inner pad, then the text.
      field-left
-     (+ (long left) 1 (long p/SELECTION_WIDTH))
+     (inc (long left))
 
      text-left
      (+ (long field-left) 1 (long field-pad))
@@ -755,11 +748,10 @@
      shown
      (ellipsize (str content) content-w)]
 
-    ;; The row is cleared on the dialog's own paper first: the cursor gutter and
-    ;; anything past the field's right edge belong to the body, not to the field.
+    ;; The row is cleared on the dialog's own paper first: anything past the
+    ;; field's right edge belongs to the body, not to the field.
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc (long left)) row inner-w 1)
-    (p/put-str! g (inc (long left)) row (p/selection-prefix (boolean caret?)))
     (p/set-colors! g
                    (if focused? t/box-fg t/dialog-hint)
                    (if focused? t/input-field-bg (t/field-resting-bg)))
@@ -778,7 +770,7 @@
    scroll that keeps the cursor inside the field and the dim `placeholder` an
    empty field shows. Returns the `TerminalPosition` the caller parks the
    terminal cursor at."
-  [g left row inner-w focused? caret? text cursor placeholder]
+  [g left row inner-w focused? text cursor placeholder]
   (let
     [content-w
      (field-content-w inner-w)
@@ -799,7 +791,7 @@
      (zero? (count text))
 
      text-left
-     (draw-field-row! g left row inner-w focused? caret? (if blank? "" visible))]
+     (draw-field-row! g left row inner-w focused? (if blank? "" visible))]
 
     (when (and placeholder blank?)
       ;; The hint rides the field's OWN surface — a resting field must not light
