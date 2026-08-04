@@ -286,3 +286,28 @@ _rq.request = _echo
                        "and resp.info() is resp.headers and resp.version == 11 and resp.readable() "
                        "and n == 2 and bytes(buf) == b'ab' and resp.drain_conn() is None "
                        "and resp.status == 204 and resp.status_code == 204"))))))
+
+;; Regression, CI ubuntu-latest: the shim imported the stdlib `uuid` at install
+;; time for one multipart boundary. `uuid` is platform-divergent AT IMPORT --
+;; the darwin branch is a no-op while Linux pulls in `platform` -- so on the
+;; Ubuntu runner every urllib3 test died with
+;; `ModuleNotFoundError: No module named 'urllib3'`: the lazy loader swallowed
+;; the shim's own exception and let the import machinery blame a missing module.
+(defdescribe urllib3-load-independence-test
+             (it "loads and encodes multipart with the stdlib uuid module unavailable"
+                 (let [c (:python-context (ep/create-python-context {}))]
+                   (expect (true? (ev c
+                                      (str "import sys\n"
+                                           "sys.modules['uuid'] = None\n" "import urllib3\n"
+                                           "b, ct = urllib3.encode_multipart_formdata({'a': '1'})\n"
+                                           "ct.startswith('multipart/form-data; boundary=') "
+                                           "and b.startswith(('--' + ct.split('=')[1]).encode()) "
+                                           "and b.endswith(b'--\\r\\n')"))))))
+             (it "names the shim and the real cause when a shim cannot load"
+                 (let [c (:python-context (ep/create-python-context {}))]
+                   (expect (true? (ev c
+                                      (str "import sys\n" "sys.modules['json'] = None\n"
+                                           "out = 'imported'\n" "try:\n"
+                                           "    import urllib3\n" "except ImportError as e:\n"
+                                           "    out = str(e)\n"
+                                           "'json' in out and 'urllib3' in out")))))))

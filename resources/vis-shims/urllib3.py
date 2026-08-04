@@ -1,5 +1,5 @@
 def __vis_install_urllib3__():
-    import sys as _sys, types as _types, json as _json, uuid as _uuid
+    import sys as _sys, types as _types, json as _json, os as _os
     import urllib.parse as _up
 
     _bi = _sys.modules["builtins"]
@@ -276,7 +276,7 @@ def __vis_install_urllib3__():
     def encode_multipart_formdata(fields, boundary=None):
         """Encodes `fields` as multipart/form-data, like urllib3.filepost."""
         if boundary is None:
-            boundary = _uuid.uuid4().hex
+            boundary = _os.urandom(16).hex()
         out = []
         for k, v in _pairs(fields):
             filename = None

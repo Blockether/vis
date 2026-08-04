@@ -29,19 +29,28 @@ def __vis_init_lazy__():
 
     class _Finder:
         def find_spec(self, fullname, path=None, target=None):
-            try:
-                sid = reg.get(fullname)
-                if sid is None:
-                    sid = reg.get(fullname.split(".")[0])
-                if sid is None:
-                    return None
-                _load(sid)
-                m = _sys.modules.get(fullname)
-                if m is None:
-                    return None
-                return _u.spec_from_loader(fullname, _Preloaded(m))
-            except Exception:
+            sid = reg.get(fullname) or reg.get(fullname.split(".")[0])
+            if sid is None:
                 return None
+            try:
+                _load(sid)
+            except Exception as exc:
+                # A shim that raises while loading must say so. Returning None here
+                # let the import machinery fall through to "No module named 'x'",
+                # which hid a platform-specific failure inside the shim behind a
+                # message that pointed at the wrong problem entirely.
+                raise ImportError(
+                    "vis shim '"
+                    + str(sid)
+                    + "' failed while importing '"
+                    + fullname
+                    + "': "
+                    + repr(exc)
+                ) from exc
+            m = _sys.modules.get(fullname)
+            if m is None:
+                return None
+            return _u.spec_from_loader(fullname, _Preloaded(m))
 
     class _Lazy:
         def __init__(self, sid, name):
