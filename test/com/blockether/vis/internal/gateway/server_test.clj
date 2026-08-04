@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.gateway.server-test
   (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+            [babashka.http-client :as http]
             [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp-core]
@@ -230,7 +231,7 @@
                                               :saw-client? true
                                               :started-at-ms (System/currentTimeMillis)
                                               :clients {}
-                                              :sse-clients #{}}
+                                              :sse-clients {}}
                                              (fn []
                                                ((rv 'maybe-stop-when-idle!))
                                                (Thread/sleep 80)
@@ -246,7 +247,7 @@
                                               :saw-client? true
                                               :started-at-ms (System/currentTimeMillis)
                                               :clients {}
-                                              :sse-clients #{}}
+                                              :sse-clients {}}
                                              (fn []
                                                ((rv 'maybe-stop-when-idle!))
                                                (is (wait-until #(= 1 @stops))))))))))
@@ -262,11 +263,123 @@
                                               :saw-client? true
                                               :started-at-ms (System/currentTimeMillis)
                                               :clients {"c1" {:pid 12345 :kind "clojure-client"}}
-                                              :sse-clients #{}}
+                                              :sse-clients {}}
                                              (fn []
                                                ((rv 'reap-client-leases!))
                                                ((rv 'maybe-stop-when-idle!))
                                                (is (wait-until #(= 1 @stops))))))))))
+
+;; Regression (reported: "closing the TUI does not close the gateway"): a TUI that
+;; quit released its client lease immediately, but the SSE stream it had open was
+;; counted as a separate client until the server's own 15s heartbeat write finally
+;; failed - so a managed daemon kept running long after its last TUI was gone, and
+;; a pump parked in `.poll` was not woken by closing the socket at all.
+
+(deftest killed-client-sse-stream-does-not-pin-managed-daemon
+  (testing "an SSE stream whose owner process is gone is closed and stops counting"
+    (let
+      [stops
+       (atom 0)
+
+       closed
+       (atom 0)]
+
+      (with-stop-stub! stops
+                       {#'discovery/pid-alive-cached? (constantly false)}
+                       (fn []
+                         (with-server-state! {:managed? true
+                                              :saw-client? true
+                                              :started-at-ms (System/currentTimeMillis)
+                                              :clients {}
+                                              :sse-clients {"s1" {:pid 12345
+                                                                  :close! #(swap! closed inc)}}}
+                                             (fn []
+                                               ((rv 'reap-sse-clients!))
+                                               (is (= 1 @closed))
+                                               (is (empty? (:sse-clients @(server-state))))
+                                               ((rv 'maybe-stop-when-idle!))
+                                               (is (wait-until #(= 1 @stops))))))))))
+
+(deftest remote-sse-client-without-a-pid-is-never-reaped
+  (testing "a phone/browser stream carries no local pid, so liveness is not guessed"
+    (let
+      [stops
+       (atom 0)
+
+       closed
+       (atom 0)]
+
+      (with-stop-stub! stops
+                       {#'discovery/pid-alive-cached? (fn [_]
+                                                        (throw (ex-info "must not probe" {})))}
+                       (fn []
+                         (with-server-state! {:managed? true
+                                              :saw-client? true
+                                              :started-at-ms (System/currentTimeMillis)
+                                              :clients {}
+                                              :sse-clients {"s1" {:pid nil
+                                                                  :close! #(swap! closed inc)}}}
+                                             (fn []
+                                               ((rv 'reap-sse-clients!))
+                                               (is (zero? @closed))
+                                               (is (= 1 ((rv 'client-count))))
+                                               ((rv 'maybe-stop-when-idle!))
+                                               (Thread/sleep 80)
+                                               (is (zero? @stops)))))))))
+
+(deftest closing-an-sse-stream-unblocks-a-pump-parked-on-the-heartbeat
+  (testing "the writer must exit at once, not at the next 15s keepalive"
+    (let
+      [out
+       (java.io.ByteArrayOutputStream.)
+
+       queue
+       (java.util.concurrent.ArrayBlockingQueue. 8)
+
+       dead?
+       (volatile! false)
+
+       unsubscribed
+       (atom 0)
+
+       close!
+       ((rv 'sse-closer) out queue dead? #(swap! unsubscribed inc))
+
+       pump
+       (future ((rv 'pump-sse!)
+                 out
+                 queue
+                 dead?
+                 (fn [_])))]
+
+      (Thread/sleep 50)
+      (close!)
+      (is (not= ::timeout (deref pump 2000 ::timeout)))
+      (is @dead?)
+      (is (= 1 @unsubscribed)))))
+
+(deftest sse-owner-pid-is-read-from-the-client-header
+  (testing "only a local vis client sends X-Vis-Client-Pid; anything else owns no pid"
+    (let [client-pid (rv 'request-client-pid)]
+      (is (= 4242 (client-pid {:headers {"x-vis-client-pid" "4242"}})))
+      (is (nil? (client-pid {:headers {"x-vis-client-pid" "phone"}})))
+      (is (nil? (client-pid {:headers {}}))))))
+
+(deftest gateway-requests-carry-the-client-pid-header
+  (testing "the daemon can only reap a dead owner if every request names its process"
+    (let
+      [sent
+       (atom nil)
+
+       gw-send!
+       (ns-resolve 'com.blockether.vis.internal.gateway.client 'gw-send!)]
+
+      (with-redefs-fn {#'http/request (fn [request]
+                                        (reset! sent request)
+                                        {:status 200 :body "{}"})}
+        (fn []
+          (gw-send! {:host "127.0.0.1" :port 7890 :secret "s"} "GET" "/v1/events" {:as :stream})
+          (is (= (str (discovery/current-pid)) (get-in @sent [:headers "X-Vis-Client-Pid"]))))))))
 
 (deftest client-count-is-constant-time-and-does-not-probe-pids
   (testing "status reads the already-reaped lease map without OS liveness work"
@@ -660,7 +773,7 @@
                (java.io.ByteArrayOutputStream.)
 
                body
-               (multi-sse-body [[sid-a 0] [sid-b 0]] false)
+               (multi-sse-body [[sid-a 0] [sid-b 0]] false nil)
 
                fut
                (future (try (write-body body {} baos) (catch Throwable _ nil)))]
@@ -729,7 +842,7 @@
                 {"type" "turn.started" "turn_id" "t-live" "session_id" sid-live})
               (let
                 [body
-                 (multi-sse-body [[sid-live 0] [sid-idle 0]] false)
+                 (multi-sse-body [[sid-live 0] [sid-idle 0]] false nil)
 
                  fut
                  (future (try (write-body body {} baos) (catch Throwable _ nil)))]

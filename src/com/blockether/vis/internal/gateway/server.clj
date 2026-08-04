@@ -156,6 +156,22 @@
                                         :dead dead
                                         :duplicates duplicates})))))))
 
+(defn- reap-sse-clients!
+  "Close every SSE stream whose owning process is gone.
+
+   An exiting TUI releases its client lease at once (and a killed one has its
+   lease compacted within a second), but the event stream it had open kept
+   counting as a client of its own until a keepalive write finally failed - so a
+   managed daemon outlived its last TUI by up to `HEARTBEAT_MS`. Streams without
+   a pid (remote companion/browser clients) own no local process and are never
+   touched."
+  []
+  (when-let [state @server-state]
+    (doseq [[sub-id {:keys [pid close!]}] (:sse-clients state)]
+      (when (and pid (not (discovery/pid-alive-cached? pid)))
+        (swap! server-state update :sse-clients dissoc sub-id)
+        (when close! (try (close!) (catch Throwable _ nil)))))))
+
 (defn- gateway-client-metrics
   []
   (let
@@ -298,6 +314,7 @@
                                        (when @server-state
                                          (ensure-self-registered!)
                                          (reap-client-leases!)
+                                         (reap-sse-clients!)
                                          (maybe-stop-when-idle!)
                                          (recur)))
                                      (catch Throwable t
@@ -405,18 +422,40 @@
               parse-long)
       0))
 
+(defn- request-client-pid
+  "OS pid of the LOCAL vis process that opened this connection, from the
+   `X-Vis-Client-Pid` header every gateway client sends. Remote clients (phone,
+   browser) send none: such a stream owns no local pid and is never pid-reaped."
+  [request]
+  (some-> (get-in request [:headers "x-vis-client-pid"])
+          parse-long))
+
+(def ^:private sse-wake
+  "Sentinel queued to unpark a pump parked in `.poll`; never written to a socket."
+  ::sse-wake)
+
+(defn- sse-closer
+  "Zero-arg terminator for ONE SSE connection: mark it dead, unsubscribe, close
+   the socket, and unpark the writer. The wake sentinel is the point - a pump
+   parked in `.poll` does not notice a closed socket until its next
+   `HEARTBEAT_MS` keepalive write throws, which is exactly how long a daemon
+   kept counting a client that had already vanished."
+  [^OutputStream out ^ArrayBlockingQueue queue dead? unsubscribe!]
+  (fn []
+    (vreset! dead? true)
+    (try (unsubscribe!) (catch Throwable _ nil))
+    (try (.close out) (catch Throwable _ nil))
+    (.offer queue sse-wake)
+    nil))
+
 (defn- sse-sink
   "NON-BLOCKING fan-out sink for one SSE connection: offer the event onto the
    bounded `queue`, never touch the socket. On overflow (the client is not
-   draining) the subscriber is dead — mark it, unsubscribe, and close `out`
-   so a writer thread parked in a socket write unblocks with an IO error.
-   The appending (turn) thread NEVER waits here."
-  [^OutputStream out ^ArrayBlockingQueue queue dead? unsubscribe!]
+   draining) the subscriber is dead - `close!` unsubscribes it, closes the
+   socket and unparks the writer. The appending (turn) thread NEVER waits here."
+  [^ArrayBlockingQueue queue close!]
   (fn [event]
-    (when-not (.offer queue event)
-      (vreset! dead? true)
-      (try (unsubscribe!) (catch Throwable _ nil))
-      (try (.close out) (catch Throwable _ nil)))))
+    (when-not (.offer queue event) (close!))))
 
 (defn- pump-sse!
   "Drain `queue` onto the connection — the SINGLE writer loop, run on the SSE
@@ -428,9 +467,11 @@
   (loop []
 
     (when-not @dead?
-      (if-let [event (.poll queue (long HEARTBEAT_MS) TimeUnit/MILLISECONDS)]
-        (write! event)
-        (do (.write out (.getBytes ": ping\n\n" StandardCharsets/UTF_8)) (.flush out)))
+      (let [event (.poll queue (long HEARTBEAT_MS) TimeUnit/MILLISECONDS)]
+        (cond (nil? event) (do (.write out (.getBytes ": ping\n\n" StandardCharsets/UTF_8))
+                               (.flush out))
+              (identical? sse-wake event) nil
+              :else (write! event)))
       (recur))))
 
 (defn- sse-proxy-pad!
@@ -521,7 +562,7 @@
    event can land in both replay and the queue). A stalled client fills its
    own queue and is dropped — it can never park the turn's appender or
    sibling watchers."
-  [sid cursor proxied?]
+  [sid cursor proxied? owner-pid]
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
@@ -541,8 +582,11 @@
            dead?
            (volatile! false)
 
+           close!
+           (sse-closer out queue dead? #(state/unsubscribe! sid sub-id))
+
            sink
-           (sse-sink out queue dead? #(state/unsubscribe! sid sub-id))
+           (sse-sink queue close!)
 
            write!
            (fn [event]
@@ -554,7 +598,8 @@
           (swap! server-state (fn [st]
                                 (-> st
                                     (assoc :saw-client? true)
-                                    (update :sse-clients (fnil conj #{}) sub-id))))
+                                    (assoc-in [:sse-clients sub-id]
+                                              {:pid owner-pid :close! close!}))))
           (try (when proxied? (sse-proxy-pad! out))
                (let [replay (state/subscribe! sid sub-id sink @last-seq)]
                  (sse-ready! out sid @last-seq)
@@ -563,7 +608,7 @@
                (pump-sse! out queue dead? write!)
                (catch Throwable _ nil)
                (finally (state/unsubscribe! sid sub-id)
-                        (swap! server-state update :sse-clients disj sub-id)
+                        (swap! server-state update :sse-clients dissoc sub-id)
                         (maybe-stop-when-idle!)
                         (try (.close out) (catch Throwable _ nil))))))))
 
@@ -584,7 +629,8 @@
                        ;; forwarding header = an edge proxy sits in the path —
                        ;; only then is the anti-buffering pad worth its bytes
                        (boolean (some #(get-in request [:headers %])
-                                      ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"])))}
+                                      ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"]))
+                       (request-client-pid request))}
       (session-404 (get-in request [:path-params :sid])))))
 
 (defn- parse-multi-sids
@@ -644,7 +690,7 @@
    each session's monotonic stream independently. Replays each session
    (events past its cursor) then drains live; an idle gap emits the shared
    heartbeat, and a dead client's IO error → unsubscribe of every session."
-  [sid+cursors proxied?]
+  [sid+cursors proxied? owner-pid]
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
@@ -669,8 +715,11 @@
              (doseq [[sid _] sid+cursors]
                (state/unsubscribe! sid sub-id)))
 
+           close!
+           (sse-closer out queue dead? unsubscribe-all!)
+
            sink
-           (sse-sink out queue dead? unsubscribe-all!)
+           (sse-sink queue close!)
 
            write!
            (fn [event]
@@ -683,7 +732,8 @@
           (swap! server-state (fn [st]
                                 (-> st
                                     (assoc :saw-client? true)
-                                    (update :sse-clients (fnil conj #{}) sub-id))))
+                                    (assoc-in [:sse-clients sub-id]
+                                              {:pid owner-pid :close! close!}))))
           (try (when proxied? (sse-proxy-pad! out))
                (doseq [[sid requested-cursor] sid+cursors]
                  (let [cursor (resolve-sse-cursor sid requested-cursor)]
@@ -696,7 +746,7 @@
                (pump-sse! out queue dead? write!)
                (catch Throwable _ nil)
                (finally (unsubscribe-all!)
-                        (swap! server-state update :sse-clients disj sub-id)
+                        (swap! server-state update :sse-clients dissoc sub-id)
                         (maybe-stop-when-idle!)
                         (try (.close out) (catch Throwable _ nil))))))))
 
@@ -714,8 +764,8 @@
                  "X-Accel-Buffering" "no"}
        :body (multi-sse-body sid+cursors
                              (boolean (some #(get-in request [:headers %])
-                                            ["cf-ray" "cf-connecting-ip" "x-forwarded-for"
-                                             "via"])))}
+                                            ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"]))
+                             (request-client-pid request))}
       (error-response 400 :bad-request "no valid sids"))))
 
 ;; =============================================================================
@@ -3448,7 +3498,7 @@
                            :token-path (str path)
                            :db db
                            :clients {}
-                           :sse-clients #{}
+                           :sse-clients {}
                            :client-registrations-total 0
                            :client-releases-total 0
                            :client-replacements-total 0

@@ -98,7 +98,8 @@
                   (merge (protocol/client-headers client-label)
                          headers
                          {"Accept" (if (= as :stream) "text/event-stream" "application/json")
-                          "X-Vis-Gateway-Secret" (str secret)})
+                          "X-Vis-Gateway-Secret" (str secret)
+                          "X-Vis-Client-Pid" (str (discovery/current-pid))})
                   (= as :stream)
                   (assoc "Accept-Encoding" "identity"))}
       (some? body)
