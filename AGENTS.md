@@ -92,7 +92,7 @@ Render paint work in the `vis-channel-tui` REPL using Lanterna `DefaultVirtualTe
 
 ## Companion GUI design shots
 
-UX proposals are **made in the app and photographed**, never described in prose. The TUI has its capture journal; the companion has the design gallery.
+UX proposals are **made in the app and photographed**, never described in prose. The TUI has `cap/shot!`; the companion has the design gallery.
 
 - The harness lives in `apps/vis-companion`: `src/dev/fleet.ts` (fixture data), `src/dev/variants.tsx` (one exported component per proposal, driven by a `state` prop), `src/dev/DesignGallery.tsx` (the `DESIGN_VARIANTS` registry), `scripts/design-shots.mjs` (`npm run design:shots`).
 - Dev-only route: `#/__design` lists the proposals, `#/__design?v=<id>&state=<state>&theme=light|dark` renders exactly one alone, so the viewport IS the proposal. `main.tsx` reaches it behind `import.meta.env.DEV`; nothing shipped imports `src/dev/**`.
