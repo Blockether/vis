@@ -77,7 +77,7 @@ function NewSessionButton() {
       <span className="inline-flex min-h-6 items-center border border-accent bg-accent px-2 py-0.5 font-mono text-chip font-bold text-accent-foreground">
         New session
       </span>
-      <span className="inline-flex min-h-6 items-center border border-l-0 border-accent bg-contrast px-2 py-0.5 font-mono text-chip text-contrast-foreground">
+      <span className="inline-flex min-h-6 items-center border border-l-accent-foreground/30 border-accent bg-accent px-2 py-0.5 font-mono text-chip font-bold text-accent-foreground">
         ▾
       </span>
     </div>

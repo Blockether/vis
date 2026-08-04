@@ -13,7 +13,7 @@ import type { MachineColor } from '../lib/machine-colors';
 export const Button = forwardRef<
   HTMLButtonElement,
   ButtonHTMLAttributes<HTMLButtonElement> & {
-    variant?: 'solid' | 'ghost' | 'quiet' | 'danger' | 'contrast';
+    variant?: 'solid' | 'ghost' | 'quiet' | 'danger';
     /**
      * Press feedback. `scale` is the default nudge; `none` is for a button that
      * ANCHORS something (a popover) or sits in a segmented group — a transform
@@ -36,11 +36,9 @@ export const Button = forwardRef<
     quiet:
       'border-transparent bg-transparent text-dialog-hint hover:border-edge-strong hover:bg-hover hover:text-accent-ink disabled:border-transparent disabled:bg-transparent disabled:text-muted',
     danger: `border-err/40 bg-err/10 text-err hover:border-err hover:bg-err hover:text-white ${dimmed}`,
-    // Dark chrome for a segment that must NOT read as a second accent block (the
-    // caret half of a split button). The dialog-title pair is the palette's own
-    // title-bar ink + its guaranteed-legible foreground, so it tracks the theme
-    // instead of hardcoding black.
-    contrast: `border-dialog-title bg-dialog-title text-dialog-title-foreground hover:border-dialog-title hover:bg-dialog-title/85 ${dimmed}`,
+    // A split button's caret half is NOT a second variant: it is `solid` with a
+    // hairline in `accent-foreground`. Dark chrome next to an amber primary reads
+    // as a disabled slab, and nobody presses a control that looks switched off.
   }[variant];
   // The transform utilities are OMITTED rather than overridden: `active:scale-100`
   // and `active:scale-[0.98]` have equal specificity, so a call-site override would

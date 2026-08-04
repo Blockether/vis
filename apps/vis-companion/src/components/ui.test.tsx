@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { MACHINE_COLORS } from '../lib/machine-colors';
 import {
+  Button,
   LiveTally,
   MachineBanner,
   MachineGap,
@@ -10,6 +11,40 @@ import {
   MachineRail,
   UnreadBadge,
 } from './ui';
+
+// Regression (reported: "why we still have this chevron here showing something is
+// collapsible if we cannot click it — let's have just one color"): the caret half of
+// the New session split control was painted in the dark title-bar ink, so an amber
+// primary carried a charcoal slab that read as switched-off chrome — the one half
+// that DOES open a menu looked like the one half nobody may press.
+describe('split button', () => {
+  const split = () =>
+    renderToStaticMarkup(
+      <span className="flex items-stretch">
+        <Button pressEffect="none" className="border-r-0">New session</Button>
+        <Button pressEffect="none" aria-haspopup="menu" className="border-l-accent-foreground/30">
+          <span aria-hidden>▾</span>
+        </Button>
+      </span>,
+    );
+
+  it('paints both halves in the one accent, split by a hairline of its own ink', () => {
+    const html = split();
+
+    expect(html.match(/(?<!:)bg-accent(?![/-])/g)).toHaveLength(2);
+    expect(html).toContain('border-l-accent-foreground/30');
+    expect(html).not.toContain('bg-dialog-title');
+    expect(html).not.toContain('text-dialog-title-foreground');
+  });
+
+  it('leaves the caret pressable, so the chevron is a promise the control keeps', () => {
+    const html = split();
+
+    expect(html.match(/<button/g)).toHaveLength(2);
+    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).not.toContain('disabled=""');
+  });
+});
 
 // The live count wears the SAME filled block as the unread badge, in green:
 // `macbook \u25ae3\u25ae\u25ae4\u25ae` — one shape, two colours, running then

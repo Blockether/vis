@@ -981,7 +981,14 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                 there is no workspace question yet, because there is no MACHINE yet:
                 both halves then open the same chooser, and picking a machine creates
                 the session there. Scope one machine in the strip and the tap goes
-                straight through again. */}
+                straight through again.
+
+                ONE colour, both halves. The caret used to be painted in the dark
+                title-bar ink, and a dark slab bolted to an amber primary reads as
+                chrome that is switched off — people asked why the app ships a caret
+                it will not let them press. It is the same button, so it is the same
+                amber; only a hairline in the button's own ink says where the second
+                hit target starts. */}
             <div className="flex shrink-0 items-stretch">
               <Button
                 variant="solid"
@@ -1017,9 +1024,9 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
               </Button>
               <Button
                 ref={startAnchorRef}
-                variant="contrast"
+                variant="solid"
                 pressEffect="none"
-                className="min-h-6 border-l-dialog-title-foreground/30 px-2 py-0.5 font-mono text-chip sm:min-h-6"
+                className="min-h-6 border-l-accent-foreground/30 px-2 py-0.5 font-mono text-chip sm:min-h-6"
                 disabled={createBusy || machines.length === 0 || !!scopeMachine?.error}
                 aria-haspopup="menu"
                 aria-expanded={startMenu !== null}

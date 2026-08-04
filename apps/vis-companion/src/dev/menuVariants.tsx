@@ -119,7 +119,7 @@ function Backdrop() {
           <span className="border border-accent bg-accent px-2 py-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
             New session
           </span>
-          <span className="border border-l-0 border-accent bg-panel px-1.5 py-1 font-mono text-chip text-white">
+          <span className="border border-l-accent-foreground/30 border-accent bg-accent px-1.5 py-1 font-mono text-chip font-bold text-accent-foreground">
             ▾
           </span>
         </span>
