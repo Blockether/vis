@@ -787,10 +787,15 @@
 
       ;; Mid-window fast path parses the message's Markdown projection only
       ;; for the visible window; no renderer tree is stored on the message.
+      ;; It carries no line meta either, so every clickable block inside the
+      ;; window is inert — a `vis-table` grid exists to be clicked (the click
+      ;; opens the whole sheet), so a message holding one keeps the full
+      ;; projection.
       windowed?
       (and window-start
            window-num
            (not (:traces message))
+           (not (str/includes? (str (:text message)) "````vis-table"))
            (#{:assistant :user} (:role message))
            (not (str/blank? (:text message))))]
 

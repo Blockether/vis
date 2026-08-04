@@ -12,7 +12,10 @@
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.table :as table]
-            [com.blockether.vis.ext.channel-tui.terminals :as term])
+            [com.blockether.vis.ext.channel-tui.terminals :as term]
+            [com.blockether.vis.ext.channel-tui.virtual :as virtual]
+            [com.blockether.vis.internal.loop :as vloop]
+            [com.blockether.vis.internal.render :as ast])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
@@ -129,12 +132,20 @@
                    (str "3x" n-rows) "64 B" "name,qty,note"]
                   (map #(str "row" % "," % ",note" %) (range n-rows)))))
 
-(defn- table-render
-  [body]
+(defn- markdown-render
+  "The transcript path, end to end: raw Markdown text through the REAL parse the
+   TUI runs on every message, then the painter."
+  [md]
   (render/format-answer-markdown-data
-    [:ast {} [:code {:lang "vis-table"} body]]
+    (ast/markdown->ast md)
     76
     {:session-id "s1" :session-turn-id "t1" :detail-expansions {} :section :user}))
+
+(defn- table-render
+  "One fence body, rendered the way the transcript renders it — wrapped in the
+   four backticks `vis_attach` prints, never as a hand-built code node."
+  [body]
+  (markdown-render (str "````vis-table\n" body "\n````\n")))
 
 (defn- plain
   "Human-visible text of a rendered line: ANSI colour and zero-width sentinels
@@ -414,3 +425,84 @@
              (expect (str/includes? txt "Esc"))
              (expect (some #(str/includes? % "─") rows)))
            (finally (.stopScreen screen))))))
+
+;;; ── cross-surface: the TUI paints what the ENGINE hands the human ────────────
+
+(def ^:private wire-fence
+  "The block `vis_attach` really prints for a CSV artifact — four backticks, five
+   header lines, then the payload; `shim-attach-test` pins that shape byte for
+   byte on the engine side. The note cell carries a quoted comma: the field a
+   naive split tears in half."
+  (str "````vis-table\n" "[Table: fleet.csv 2 rows × 3 cols, 64 B] fleet counts\n"
+       "fleet.csv\n" "text/csv\n"
+       "3x2\n" "64 B\n"
+       "name,qty,note\n" "machine-0,7,\"note, with comma\"\n"
+       "machine-1,120,plain\n" "````\n"))
+
+(defdescribe
+  vis-table-cross-surface-test
+  (it "the printed fence survives the REAL Markdown parse as one vis-table node"
+      (let
+        [codes (filterv #(and (vector? %) (= :code (first %)))
+                 (tree-seq vector? seq (ast/markdown->ast wire-fence)))]
+        (expect (= 1 (count codes)))
+        (expect (= "vis-table" (:lang (second (first codes)))))))
+  (it "a quoted comma stays ONE cell from the fence to the painted grid"
+      (let
+        [r
+         (markdown-render wire-fence)
+
+         joined
+         (str/join "\n" (map plain (:lines r)))
+
+         csv
+         (:csv (first (keep :table (:line-meta r))))]
+
+        (expect (str/includes? joined "note, with comma"))
+        (expect (= ["machine-0" "7" "note, with comma"] (nth (table/parse-csv csv) 1)))))
+  (it "the body the engine hands the human is the fence VERBATIM, and it paints"
+      (let
+        [card
+         (#'vloop/tool-result-display {:stdout wire-fence} "python_execution" {})
+
+         tbls
+         (keep :table (:line-meta (markdown-render (str (:body card)))))]
+
+        (expect (= wire-fence (str (:body card))))
+        (expect (= "fleet.csv" (:name (first tbls))))
+        (expect (= 2 (:rows (first tbls))))))
+  (it "the model-facing text keeps the headline, loses the rows, paints no grid"
+      (let [wire (#'vloop/elide-table-fences wire-fence)]
+        (expect (str/includes? wire "[Table: fleet.csv 2 rows × 3 cols, 64 B] fleet counts"))
+        (expect (str/includes? wire "vis_read_attachment"))
+        (expect (not (str/includes? wire "machine-0")))
+        (expect (not (str/includes? wire "````")))
+        ;; and what the model reads is prose, not a clickable grid
+        (expect (empty? (keep :table (:line-meta (markdown-render wire)))))))
+  (it "clicking the preview opens the dialog on the WHOLE sheet"
+      (let
+        [{:keys [name csv]}
+         (first (keep :table (:line-meta (table-render (fence 15)))))
+
+         c
+         (dlg/table-modal-component name (table/parse-csv csv))
+
+         m
+         (measure c (:init c))]
+
+        ;; the transcript previews 10 rows; the sheet behind it has all 15
+        (expect (= "fleet.csv" name))
+        (expect (= 15 (:total m)))
+        (expect (str/includes? (:title m) "15 rows × 3 cols"))))
+  (it "a grid keeps its click meta even when the mid-scroll window asks for one"
+      ;; The windowed fast path emits no line meta at all, so a grid painted
+      ;; through it would look right and do nothing on click.
+      (let
+        [msg
+         {:role :assistant :text wire-fence}
+
+         windowed
+         (virtual/project-message msg 76 {} {:session-id "s1" :window-start 0 :window-num 12})]
+
+        (expect (seq (keep :table (:line-meta windowed))))
+        (expect (= "fleet.csv" (:name (first (keep :table (:line-meta windowed)))))))))
