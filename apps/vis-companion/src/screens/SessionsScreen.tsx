@@ -64,7 +64,15 @@ import {
   sessionIsListed,
   sessionIsLive,
   showsScopeStrip,
+  isDraftWorkspace,
+  projectPath,
   startAsk,
+  START_IDLE,
+  startFlowName,
+  startFlowOn,
+  startFlowOpen,
+  startFlowPick,
+  type StartFlow,
   type FleetMachine,
 } from '../lib/fleet';
 
@@ -215,21 +223,20 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   // "Creating..." is a lie while a 12k-file repo is being cloned, so the busy word
   // follows the WORK: fork, enter, or plain create.
   const [createBusyLabel, setCreateBusyLabel] = useState('Creating...');
-  // New session is a SPLIT control. The caret half opens this menu, which is the only
-  // place in the app that answers "in which workspace?" — the web twin of `/draft new`,
-  // `/draft blank` and `/draft resume`. Portalled and viewport-anchored because the
-  // header panel clips its overflow.
-  const [startMenu, setStartMenu] = useState<{ top: number; left: number } | null>(null);
-  // The machine picked INSIDE that menu, when the fleet could not name one. It is
-  // the ANSWER to the menu's first question and lives exactly as long as the menu.
-  const [startOn, setStartOn] = useState<GatewayConn | null>(null);
-  const startAnchorRef = useRef<HTMLButtonElement>(null);
-  // null = never read for this menu opening; [] = read, nothing parked.
-  const [drafts, setDrafts] = useState<WorkspaceDraft[] | null>(null);
-  const [draftsError, setDraftsError] = useState<string | null>(null);
+  // New session is a SPLIT control, and the whole order behind it — which machine,
+  // which workspace, what to call the draft — is ONE value, so leaving it anywhere
+  // forgets every answer in it. Portalled and viewport-anchored because the header
+  // panel clips its overflow.
+  const [startFlow, setStartFlow] = useState<StartFlow>(START_IDLE);
+  const startMenu = startFlow.step === 'menu' ? startFlow.at : null;
   // Forking asks for the draft's name first: the gateway rejects a blank label, and
   // the name is what `/draft list` and every later resume will show.
-  const [namePrompt, setNamePrompt] = useState<{ clean: boolean } | null>(null);
+  const namePrompt = startFlow.step === 'name' ? startFlow : null;
+  const startAnchorRef = useRef<HTMLButtonElement>(null);
+  // One entry per machine+repo, kept across openings; see `forgetParkedDrafts`.
+  const [draftsCache, setDraftsCache] = useState<
+    Record<string, { rows: WorkspaceDraft[]; error: string | null }>
+  >({});
   const [draftLabel, setDraftLabel] = useState('');
   const pollStartedAt = useRef<number | null>(null);
   // Swipe-revealed row actions, plus the group header's project delete. One dialog
@@ -588,10 +595,10 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
 
   const selectScope = useCallback((next: string | null) => {
     setScope(next);
-    // Drafts are repo-scoped ON a machine: the parked list belongs to whichever
-    // machine the next session is created on.
-    setDrafts(null);
-    setStartMenu(null);
+    // Drafts are repo-scoped ON a machine, and the scope is what decides which
+    // machine the next session lands on: the open order asks a question that just
+    // changed underneath it, so it ends rather than answering the old one.
+    setStartFlow(START_IDLE);
   }, []);
 
   /**
@@ -605,7 +612,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   const scopeTarget = newSessionTarget(machines, scope);
   // Several machines: the menu asks WHICH first, and that answer — not a session on
   // trunk — is what the workspace question below is then asked about.
-  const ask = startAsk(machines, scopeTarget, startOn);
+  const ask = startAsk(machines, scopeTarget, startFlowOn(startFlow));
   const target = ask.on;
   const targetMachine = ask.machine;
   const draftProbe = useMemo(
@@ -626,50 +633,76 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   useEffect(() => {
     draftsSourceRef.current = draftsSource;
   }, [draftsSource]);
+  // The answer for that key, KEPT. Creating a session mints a row in the very repo
+  // the picker reads, so the menu reopens on a list this screen already holds:
+  // going back to the gateway for an answer that cannot have changed is exactly the
+  // "Reading drafts..." jump on every single New session. Presence of the entry —
+  // not `null` rows — is what "already read" means, so a repo with nothing parked
+  // is an answer too and is not re-asked either.
+  const draftsEntry = draftsCache[draftsSourceKey] ?? null;
+  const drafts = draftsEntry?.rows ?? null;
+  const draftsError = draftsEntry?.error ?? null;
+  const isDraftsRead = draftsEntry !== null;
 
-  const openStartMenu = useCallback(() => {
-    setStartMenu(menuPosition(startAnchorRef.current?.getBoundingClientRect(), START_MENU_WIDTH));
+  // A fork or a resume changed THAT repo's parked list. Forget that one key; every
+  // other machine and repo keeps the list it already paid for.
+  const forgetParkedDrafts = useCallback((key: string) => {
+    setDraftsCache((cache) => {
+      if (!(key in cache)) return cache;
+      const next = { ...cache };
+      delete next[key];
+      return next;
+    });
   }, []);
 
-  const closeStartMenu = useCallback((restoreFocus = false) => {
-    setStartMenu(null);
-    // A dismissed menu keeps no answers: the next opening asks which machine again
-    // rather than aiming at one the user chose for a menu that is gone.
-    setStartOn(null);
+  const openStartMenu = useCallback(() => {
+    const at = menuPosition(startAnchorRef.current?.getBoundingClientRect(), START_MENU_WIDTH);
+    // Re-anchoring an OPEN menu keeps the machine already picked: a resize is not an
+    // answer, and on a phone the keyboard fires one in the very tap that opens it.
+    setStartFlow((flow) => startFlowOpen(flow, at));
+  }, []);
+
+  // Leaving the order — tap outside, Escape, Cancel, or a session actually created
+  // — forgets every answer in it, INCLUDING which machine. That machine used to
+  // outlive the dialog it was picked for: the next "New session" tap found a target
+  // already set and created a session on it without asking a single question.
+  const leaveStart = useCallback((restoreFocus = false) => {
+    setStartFlow(START_IDLE);
     if (restoreFocus) startAnchorRef.current?.focus();
   }, []);
 
-  // Read the parked drafts the first time the menu opens, and again after a fork or
-  // resume invalidated the list. A failure is reported IN the menu: the three fixed
+  // Read the parked drafts ONCE per machine+repo, and again only after a fork or a
+  // resume dropped that key. A failure is reported IN the menu: the three fixed
   // choices above it still work without it.
   //
-  // Deps are the OPEN flag and the read's key, never the menu position or the
-  // machine object: on a phone the on-screen keyboard fires `resize` in the very
-  // tap that opens the menu, and the fleet poll replaces the machine every few
-  // seconds — depending on either aborted this request on the frame it started,
-  // over and over, and the menu never left "Reading drafts...".
+  // Deps are the OPEN flag, whether that key is already answered, and the key —
+  // never the menu position or the machine object: on a phone the on-screen keyboard
+  // fires `resize` in the very tap that opens the menu, and the fleet poll replaces
+  // the machine every few seconds. Depending on either aborted this request on the
+  // frame it started, over and over, and the menu never left "Reading drafts...".
   useEffect(() => {
-    if (!isStartMenuOpen || drafts !== null) return;
+    if (!isStartMenuOpen || isDraftsRead) return;
     const source = draftsSourceRef.current;
     // That machine's first session list has not landed: keep reading, do not
     // answer "nothing parked" on behalf of a project we have not seen yet.
     if (source.kind === 'wait') return;
+    const key = draftsSourceKey;
+    const remember = (rows: WorkspaceDraft[], error: string | null) =>
+      setDraftsCache((cache) => ({ ...cache, [key]: { rows, error } }));
     if (source.kind === 'none') {
-      setDrafts([]);
+      remember([], null);
       return;
     }
     const controller = new AbortController();
-    setDraftsError(null);
     void clientFor(source.conn)
       .drafts(source.sid, controller.signal)
-      .then((rows) => setDrafts(rows))
+      .then((rows) => remember(rows, null))
       .catch((cause) => {
         if (controller.signal.aborted) return;
-        setDrafts([]);
-        setDraftsError((cause as Error).message);
+        remember([], (cause as Error).message);
       });
     return () => controller.abort();
-  }, [isStartMenuOpen, drafts, draftsSourceKey]);
+  }, [isStartMenuOpen, isDraftsRead, draftsSourceKey]);
 
   // An anchored popover whose anchor moved is a lie, so a resize RE-ANCHORS it to
   // the live caret; only a caret that has left the document closes it. Closing on
@@ -680,7 +713,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   useEffect(() => {
     if (!startMenu) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeStartMenu(true);
+      if (event.key === 'Escape') leaveStart(true);
     };
     window.addEventListener('keydown', onKey);
     window.addEventListener('resize', openStartMenu);
@@ -688,7 +721,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('resize', openStartMenu);
     };
-  }, [startMenu, closeStartMenu, openStartMenu]);
+  }, [startMenu, leaveStart, openStartMenu]);
 
   /**
    * Create the session, then put it where the user asked. The workspace move is a
@@ -708,7 +741,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
       startIn.kind === 'fork' ? 'Forking...' : startIn.kind === 'resume' ? 'Entering...' : 'Creating...',
     );
     setCreateError(null);
-    closeStartMenu();
+    leaveStart();
     try {
       const api = clientFor(on);
       const session = await api.createSession({});
@@ -722,7 +755,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
           throw cause;
         }
         // The repo's draft list just changed; re-read it next time the menu opens.
-        setDrafts(null);
+        forgetParkedDrafts(draftsSourceKey);
       }
       await load();
       if (session.id) await onOpen(on, session.id, true);
@@ -734,17 +767,19 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   }
 
   function askDraftName(clean: boolean) {
-    setStartMenu(null);
+    if (!target) return;
     setDraftLabel('');
-    setNamePrompt({ clean });
+    // The machine travels WITH the order into the name dialog, instead of waiting
+    // behind it in a state of its own that dismissing the dialog would leave set.
+    setStartFlow(startFlowName(target, clean));
   }
 
   function commitDraftName() {
     const label = draftLabel.trim();
-    if (!namePrompt || !label) return;
-    const clean = namePrompt.clean;
-    setNamePrompt(null);
-    void createSession({ kind: 'fork', label, clean });
+    if (startFlow.step !== 'name' || !label) return;
+    const { on, clean } = startFlow;
+    setStartFlow(START_IDLE);
+    void createSession({ kind: 'fork', label, clean }, on);
   }
 
   const startRename = useCallback((session: Session, conn: GatewayConn) => {
@@ -1039,7 +1074,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                     : 'Choose which machine the new session runs on'
                 }
                 title={scopeTarget ? 'Start in a draft' : 'Choose a machine'}
-                onClick={() => (startMenu ? closeStartMenu() : openStartMenu())}
+                onClick={() => (startMenu ? leaveStart() : openStartMenu())}
               >
                 <span aria-hidden>▾</span>
               </Button>
@@ -1314,7 +1349,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
         <div
           className="fixed inset-0 z-50 bg-black/40 sm:bg-transparent"
           role="presentation"
-          onClick={() => closeStartMenu(true)}
+          onClick={() => leaveStart(true)}
         >
           {/* Phones get a bottom sheet (thumb-reachable, full width, safe-area aware);
               from `sm` up it becomes a popover pinned under the caret it came from. */}
@@ -1402,12 +1437,10 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                         hint={`${count} ${count === 1 ? 'session' : 'sessions'} · ${hostOf(machine.conn.url)}`}
                         badge={tally?.live ? `${tally.live} live` : undefined}
                         onSelect={() => {
-                          // An ANSWER, never the whole order: the workspace question is
-                          // next, and the drafts it offers are parked on THIS machine, so
-                          // the empty read taken while no machine was chosen is dropped.
-                          setDrafts(null);
-                          setDraftsError(null);
-                          setStartOn(machine.conn);
+                          // An ANSWER, never the whole order: the workspace question
+                          // comes next, and the drafts it offers are parked on THIS
+                          // machine — another key, read on the very next frame.
+                          setStartFlow((flow) => startFlowPick(flow, machine.conn));
                         }}
                       />
                     );
@@ -1424,7 +1457,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]"
           role="presentation"
-          onClick={() => setNamePrompt(null)}
+          onClick={() => leaveStart()}
         >
           <div
             className="w-full max-w-md"
@@ -1433,7 +1466,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
           >
             <DialogFrame
               title={namePrompt.clean ? 'Name the clean draft' : 'Name the draft'}
-              onClose={() => setNamePrompt(null)}
+              onClose={() => leaveStart()}
             >
               <div className="space-y-3 p-4">
                 <p className="font-mono text-meta text-dialog-hint">
@@ -1457,7 +1490,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                   />
                 </label>
                 <div className="flex justify-end gap-2">
-                  <Button variant="ghost" onClick={() => setNamePrompt(null)}>
+                  <Button variant="ghost" onClick={() => leaveStart()}>
                     Cancel
                   </Button>
                   <Button
@@ -2260,31 +2293,6 @@ function projectLabel(session: Session): string {
 
 function projectRoot(sessions: Session[]): string {
   return homeifyPath(sessions.map(projectPath).find(Boolean));
-}
-
-// A DRAFT is a per-session clone parked at ~/.vis/drafts/<repo>/<label>; it is
-// a workspace of the session, never a project of its own. `is_draft` is the
-// gateway fact (list rows carry it); the path shape is the fallback for a
-// gateway older than the flag, so an out-of-date daemon does not resurrect the
-// one-project-per-draft bug.
-const DRAFT_ROOT = /(^|\/)\.vis\/drafts\//;
-
-function isDraftWorkspace(session: Session): boolean {
-  const workspace = session.workspace;
-  if (!workspace) return false;
-  if (typeof workspace.is_draft === 'boolean') return workspace.is_draft;
-  return DRAFT_ROOT.test(workspace.root ?? '');
-}
-
-// The path a session GROUPS under: the repo it belongs to, which for a draft is
-// `repo_root` and not the clone it happens to be checked out in.
-function projectPath(session: Session): string {
-  const workspace = session.workspace;
-  if (!workspace) return '';
-  const path = isDraftWorkspace(session)
-    ? workspace.repo_root || workspace.root
-    : workspace.root || workspace.repo_root;
-  return path?.replace(/\/+$/, '') || '';
 }
 
 function sessionFresh(session: Session, now: number): boolean {

@@ -1,3 +1,4 @@
+import type { MenuPosition } from './anchored-menu';
 import { hostOf } from './endpoints';
 import type { GatewayConn, Session } from './types';
 
@@ -284,17 +285,101 @@ export function projectDelete(sessions: Session[]): ProjectDelete {
 export type DraftsRead =
   | { kind: 'wait' }
   | { kind: 'none' }
-  | { kind: 'read'; conn: GatewayConn; sid: string };
+  | { kind: 'read'; conn: GatewayConn; sid: string; repo: string };
 
 export function draftsRead(machine: FleetMachine | null, probe: Session | null): DraftsRead {
   if (!machine) return { kind: 'none' };
   // Still loading — but a machine that FAILED to load has answered: no drafts.
   if (machine.sessions === null && !machine.error) return { kind: 'wait' };
-  if (!probe) return { kind: 'none' };
-  return { kind: 'read', conn: machine.conn, sid: probe.id };
+  const repo = probe ? projectPath(probe) : '';
+  if (!probe || !repo) return { kind: 'none' };
+  return { kind: 'read', conn: machine.conn, sid: probe.id, repo };
 }
 
-/** Identity of a read: same key, same request — do not start it again. */
+/**
+ * Identity of a read: same key, same list — do not read it again, and paint what
+ * that key already answered.
+ *
+ * Keyed on the machine and the REPO, never on the probe session: the session is
+ * only the door the gateway opens a repo's drafts through. "New session" mints a
+ * row in that same repo, which then becomes the probe — so a session-keyed read
+ * changed identity on every create, threw away a list it already had, and sent the
+ * picker back to "Reading drafts..." every single time the menu opened.
+ */
 export function draftsReadKey(read: DraftsRead): string {
-  return read.kind === 'read' ? `${machineKey(read.conn)}\u0000${read.sid}` : read.kind;
+  return read.kind === 'read' ? `${machineKey(read.conn)}\u0000${read.repo}` : read.kind;
+}
+
+// A DRAFT is a per-session clone parked at ~/.vis/drafts/<repo>/<label>; it is a
+// workspace of the session, never a project of its own. `is_draft` is the gateway
+// fact (list rows carry it); the path shape is the fallback for a gateway older
+// than the flag, so an out-of-date daemon does not resurrect the
+// one-project-per-draft bug.
+const DRAFT_ROOT = /(^|\/)\.vis\/drafts\//;
+
+export function isDraftWorkspace(session: Session): boolean {
+  const workspace = session.workspace;
+  if (!workspace) return false;
+  if (typeof workspace.is_draft === 'boolean') return workspace.is_draft;
+  return DRAFT_ROOT.test(workspace.root ?? '');
+}
+
+/**
+ * The path a session GROUPS under: the repo it belongs to, which for a draft is
+ * `repo_root` and not the clone it happens to be checked out in. It is also the
+ * scope of the parked-drafts list, which is why the drafts read keys on it.
+ */
+export function projectPath(session: Session): string {
+  const workspace = session.workspace;
+  if (!workspace) return '';
+  const path = isDraftWorkspace(session)
+    ? workspace.repo_root || workspace.root
+    : workspace.root || workspace.repo_root;
+  return path?.replace(/\/+$/, '') || '';
+}
+
+/**
+ * The whole "New session" order, as ONE value.
+ *
+ * It asks at most three questions, in this order: WHICH machine (only when the
+ * scope cannot name one), which workspace, and — for a fork — what to call the
+ * draft. Every answer belongs to the order and to nothing else, so LEAVING it (a
+ * tap outside, Escape, Cancel) forgets all of them and the next "New session" tap
+ * starts again at the first unanswered question.
+ *
+ * That is the entire point of one value. The picked machine used to live in a
+ * state of its own, which the name dialog's dismissal never cleared: the next tap
+ * found the leftover, took it for an answer, and created a session on that machine
+ * without asking anything at all.
+ */
+export type StartFlow =
+  | { step: 'idle' }
+  | { step: 'menu'; at: MenuPosition; on: GatewayConn | null }
+  | { step: 'name'; on: GatewayConn; clean: boolean };
+
+/** No order in progress — and therefore no answers lying around. */
+export const START_IDLE: StartFlow = { step: 'idle' };
+
+/**
+ * Open the menu, or RE-ANCHOR the open one: a resize is not an answer, so the
+ * machine already picked survives it. No anchor left to hang from ends the order.
+ */
+export function startFlowOpen(flow: StartFlow, at: MenuPosition | null): StartFlow {
+  if (!at) return START_IDLE;
+  return { step: 'menu', at, on: flow.step === 'menu' ? flow.on : null };
+}
+
+/** Answer WHICH machine — an answer inside the order, never the whole order. */
+export function startFlowPick(flow: StartFlow, on: GatewayConn): StartFlow {
+  return flow.step === 'menu' ? { ...flow, on } : flow;
+}
+
+/** Hand the order to the name dialog, WITH the machine the fork happens on. */
+export function startFlowName(on: GatewayConn, clean: boolean): StartFlow {
+  return { step: 'name', on, clean };
+}
+
+/** The machine this order aims at so far, or `null` while nothing has answered. */
+export function startFlowOn(flow: StartFlow): GatewayConn | null {
+  return flow.step === 'idle' ? null : flow.on;
 }

@@ -21,6 +21,11 @@ import {
   sessionIsListed,
   showsScopeStrip,
   startAsk,
+  START_IDLE,
+  startFlowName,
+  startFlowOn,
+  startFlowOpen,
+  startFlowPick,
   type FleetMachine,
 } from './fleet';
 import type { GatewayConn, Session } from './types';
@@ -148,7 +153,13 @@ describe('startAsk', () => {
   it('reads the parked drafts off the machine just picked, not "none"', () => {
     expect(draftsRead(startAsk(fleet, null, null).machine, null)).toEqual({ kind: 'none' });
     const ask = startAsk(fleet, null, tower);
-    expect(draftsRead(ask.machine, session('c'))).toEqual({ kind: 'read', conn: tower, sid: 'c' });
+    const probe = session('c', { workspace: { root: '/Users/me/vis' } });
+    expect(draftsRead(ask.machine, probe)).toEqual({
+      kind: 'read',
+      conn: tower,
+      sid: 'c',
+      repo: '/Users/me/vis',
+    });
   });
 
   it('a machine unpaired under the open menu cannot answer for the session', () => {
@@ -278,14 +289,19 @@ describe('dirtyFirst', () => {
 // keyboard fires `resize` in the very tap that opens the menu), so the in-flight
 // request was aborted and restarted on every one of those frames.
 describe('draftsRead', () => {
-  const parked = session('s1');
+  const parked = session('s1', { workspace: { root: '/Users/me/vis' } });
 
   it('reads the parked list through the probe session on the target machine', () => {
     expect(draftsRead(machine(studio, [parked]), parked)).toEqual({
       kind: 'read',
       conn: studio,
       sid: 's1',
+      repo: '/Users/me/vis',
     });
+  });
+
+  it('has nothing to read through a session that names no workspace', () => {
+    expect(draftsRead(machine(studio, [session('s1')]), session('s1'))).toEqual({ kind: 'none' });
   });
 
   it('keys a read by machine and probe, so a poll replacing the objects never restarts it', () => {
@@ -310,6 +326,42 @@ describe('draftsRead', () => {
     expect(draftsReadKey(draftsRead(machine(studio, null), null))).toBe('wait');
     expect(draftsRead(machine(studio, []), null)).toEqual({ kind: 'none' });
     expect(draftsRead(null, null)).toEqual({ kind: 'none' });
+  });
+
+  // Regression (reported: "I click new session, I get the machine, and then I'm seeing
+  // those drafts — it's always jumping because it drops from the gateway. Do we have to
+  // do the same request for every new session?"): the read was keyed on the PROBE
+  // SESSION, and "New session" mints a row in that very repo which then becomes the
+  // probe. Same machine, same repo, same list — but a brand-new key, so nothing could
+  // ever be reused and the picker fell back to "Reading drafts..." every single time.
+  it('keeps one key when a newer session in the same repo becomes the probe', () => {
+    const repo = { root: '/Users/me/vis' };
+    const parkedIn = session('s1', { workspace: repo });
+    const minted = session('s2', { workspace: repo });
+    expect(draftsReadKey(draftsRead(machine(studio, [minted, parkedIn]), minted))).toBe(
+      draftsReadKey(draftsRead(machine(studio, [parkedIn]), parkedIn)),
+    );
+  });
+
+  it('re-keys when the next session would be read out of another repo', () => {
+    const here = session('s1', { workspace: { root: '/Users/me/vis' } });
+    const there = session('s2', { workspace: { root: '/Users/me/spel' } });
+    expect(draftsReadKey(draftsRead(machine(studio, [here]), here))).not.toBe(
+      draftsReadKey(draftsRead(machine(studio, [there]), there)),
+    );
+  });
+
+  // A draft's clone is not a project: the drafts of `~/.vis/drafts/vis/x` are the
+  // drafts of `~/vis`, so a session sitting in one reads the same list under the
+  // same key as a session on trunk.
+  it('keys a session parked in a draft under the repo the draft belongs to', () => {
+    const trunk = session('s1', { workspace: { root: '/Users/me/vis' } });
+    const inDraft = session('s2', {
+      workspace: { root: '/Users/me/.vis/drafts/vis/wire', repo_root: '/Users/me/vis', is_draft: true },
+    });
+    expect(draftsReadKey(draftsRead(machine(studio, [inDraft]), inDraft))).toBe(
+      draftsReadKey(draftsRead(machine(studio, [trunk]), trunk)),
+    );
   });
 });
 
@@ -350,5 +402,53 @@ describe('projectDelete', () => {
     ];
     expect(rows.filter((row) => sessionIsListed(row, false))).toHaveLength(1);
     expect(projectDelete(rows).sessionIds).toEqual(['named', 'hidden']);
+  });
+});
+
+// Regression (reported: "I click new session, I click the machine, I pick my new
+// draft, then I go outside of that — and clicking new session once again creates a
+// session automatically, which is wrong. I should go over the same dialogs again"):
+// the picked machine lived in a state of its own that the name dialog's dismissal
+// never cleared, so the next tap found a leftover answer and created the session
+// without asking anything.
+describe('StartFlow', () => {
+  const at = { top: 120, left: 40 };
+
+  it('opens with nothing answered yet', () => {
+    const open = startFlowOpen(START_IDLE, at);
+    expect(open).toEqual({ step: 'menu', at, on: null });
+    expect(startFlowOn(open)).toBeNull();
+  });
+
+  it('remembers which machine the order is for, up to the name dialog', () => {
+    const picked = startFlowPick(startFlowOpen(START_IDLE, at), tower);
+    expect(startFlowOn(picked)).toBe(tower);
+    expect(startFlowOn(startFlowName(tower, true))).toBe(tower);
+  });
+
+  it('forgets the picked machine when the order is left', () => {
+    const named = startFlowName(tower, false);
+    expect(startFlowOn(START_IDLE)).toBeNull();
+    // Dismissing the name dialog IS leaving the order: the next tap must ask again.
+    expect(startFlowOn(startFlowOpen(START_IDLE, at))).toBeNull();
+    expect(named).not.toEqual(START_IDLE);
+  });
+
+  it('survives a re-anchor, because a resize is not an answer', () => {
+    const picked = startFlowPick(startFlowOpen(START_IDLE, at), studio);
+    const moved = startFlowOpen(picked, { top: 200, left: 40 });
+    expect(moved).toEqual({ step: 'menu', at: { top: 200, left: 40 }, on: studio });
+  });
+
+  it('ends the order when there is no anchor left to hang the menu from', () => {
+    expect(startFlowOpen(startFlowPick(startFlowOpen(START_IDLE, at), studio), null)).toBe(
+      START_IDLE,
+    );
+  });
+
+  it('ignores a machine picked while no menu is asking', () => {
+    expect(startFlowPick(START_IDLE, tower)).toBe(START_IDLE);
+    const named = startFlowName(studio, true);
+    expect(startFlowPick(named, tower)).toBe(named);
   });
 });
