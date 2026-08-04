@@ -68,7 +68,7 @@ different one.
 | `vis-agent update` | whichever runtime is in effect |
 | `vis-agent update --native` | downloads the newest release bundle — wrapper and sidecar together |
 | `vis-agent update --jvm` | fetches tags and checks the owned checkout out at the newest `vX.Y.Z`, then refreshes the `vis-agent` command from that source |
-| `vis-agent update --dev` | `git fetch` + `git pull --ff-only` in the dev checkout — the only update that follows a branch |
+| `vis-agent update --dev` | clones the dev checkout on `main` when that path holds none, otherwise `git fetch` + `git pull --ff-only` — the only update that follows a branch |
 | `vis-agent update vX.Y.Z` | that release instead of the newest: bundle for `native`, tag for `jvm` |
 | `vis-agent update <sha\|branch>` | any target that is not `vX.Y.Z` is a git ref, so it pins the owned checkout and implies `--jvm` |
 | `vis-agent update --rebuild` | after a source update, builds the sidecar locally (`clojure -T:build native`); pairs with `--jvm` or `--dev` |
@@ -116,7 +116,7 @@ checkout's own wrapper.
 | `~/.vis/install/vis-agent-native` | the private native runtime |
 | `~/.vis/install/src` | the checkout Vis owns: one shallow, detached commit, no branches, no remote-tracking refs |
 | `~/.vis/install/ref` | the tag or commit that checkout sits at; `runtime show` marks it `DRIFTED` when `HEAD` no longer matches |
-| `$VIS_DEV_CHECKOUT` (default `~/vis`) | the live checkout `dev` runs |
+| `$VIS_DEV_CHECKOUT` (default `~/vis`) | the live checkout `dev` runs; `vis-agent update --dev` clones it there on `main` when it is missing |
 
 That is the entire runtime state. Deleting `~/.vis/runtime` returns to
 automatic; deleting `~/.vis/install` is a full reset.

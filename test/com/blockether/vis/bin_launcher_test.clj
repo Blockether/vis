@@ -663,68 +663,122 @@
           (expect (str/includes? (:output (run! ["runtime" "show"])) "Pinned at:    v0.1.10"))
           (finally (delete-tree! root))))))
 
+(defn- dev-checkout-fixture
+  "A sandboxed wrapper install plus a throwaway origin whose only branch is
+   `main`. The dev checkout is only a PATH here: each test decides whether one
+   exists, because acquiring it is the wrapper's job."
+  []
+  (let
+    [root
+     (.toFile (Files/createTempDirectory "vis-agent-update-dev-test-" (make-array FileAttribute 0)))
+
+     origin
+     (doto (io/file root "origin") .mkdirs)
+
+     install-dir
+     (doto (io/file root "install") .mkdirs)
+
+     home
+     (doto (io/file root "home") .mkdirs)
+
+     vis-home
+     (doto (io/file home ".vis") .mkdirs)
+
+     tools
+     (doto (io/file root "tools") .mkdirs)
+
+     checkout
+     (io/file root "checkout")
+
+     launcher
+     (io/file install-dir "vis-agent")
+
+     run!
+     (wrapper-runner {:launcher launcher :cwd root :home home :vis-home vis-home :tools tools})
+
+     commit!
+     (fn [content]
+       (spit (io/file origin "f") content)
+       (git! origin "add" "-A")
+       (git! origin "commit" "-qm" (str "commit " content)))]
+
+    (copy-launcher! launcher)
+    (git! origin "init" "-q" "-b" "main" ".")
+    (spit (io/file origin "deps.edn") "{}")
+    (commit! "one")
+    {:root root
+     :origin origin
+     :checkout checkout
+     :vis-home vis-home
+     :run! run!
+     :commit! commit!
+     :clone-checkout!
+     (fn []
+       (git! root "clone" "-q" (.getAbsolutePath origin) (.getAbsolutePath checkout)))
+     :dev-env {"VIS_DEV_CHECKOUT" (.getAbsolutePath checkout)
+               "VIS_REPO_URL" (.getAbsolutePath origin)}}))
+
 (defdescribe
   wrapper-update-dev-test
-  (it
-    "updates the live checkout for the bare word `dev`, not only for `--dev`"
-    (let
-      [root
-       (.toFile (Files/createTempDirectory "vis-agent-update-dev-test-"
-                                           (make-array FileAttribute 0)))
-
-       origin
-       (doto (io/file root "origin") .mkdirs)
-
-       install-dir
-       (doto (io/file root "install") .mkdirs)
-
-       home
-       (doto (io/file root "home") .mkdirs)
-
-       vis-home
-       (doto (io/file home ".vis") .mkdirs)
-
-       tools
-       (doto (io/file root "tools") .mkdirs)
-
-       checkout
-       (io/file root "checkout")
-
-       launcher
-       (io/file install-dir "vis-agent")
-
-       run!
-       (wrapper-runner {:launcher launcher :cwd root :home home :vis-home vis-home :tools tools})
-
-       dev-env
-       {"VIS_DEV_CHECKOUT" (.getAbsolutePath checkout)}]
-
-      (try (copy-launcher! launcher)
-           (git! origin "init" "-q" "-b" "main" ".")
-           (spit (io/file origin "deps.edn") "{}")
-           (spit (io/file origin "f") "one")
-           (git! origin "add" "-A")
-           (git! origin "commit" "-qm" "one")
-           (git! root "clone" "-q" (.getAbsolutePath origin) (.getAbsolutePath checkout))
-           (spit (io/file origin "f") "two")
-           (git! origin "add" "-A")
-           (git! origin "commit" "-qm" "two")
-           ;; `update dev` names the dev runtime. It used to fall through to the
-           ;; target case and pin the source Vis owns to a ref called 'dev'.
-           (let [{:keys [exit output]} (run! ["update" "dev"] dev-env)]
-             (expect (= 0 exit) output)
-             (expect (str/includes? output "checkout updated") output)
-             (expect (not (str/includes? output "pinning source")) output))
-           (expect (= "two" (slurp (io/file checkout "f"))))
-           ;; dev follows its branch, so a target beside it is a refusal.
-           (let [{:keys [exit output]} (run! ["update" "dev" "v1.2.3"] dev-env)]
-             (expect (= 1 exit) output)
-             (expect (str/includes? output "takes no target") output))
-           ;; A runtime already named makes the word a ref again.
-           (let [{:keys [exit output]} (run! ["update" "--native" "dev"] dev-env)]
-             (expect (= 1 exit) output)
-             (expect (str/includes? output "expected a release tag") output))
-           (finally (delete-tree! root))))))
+  (it "updates the live checkout for the bare word `dev`, not only for `--dev`"
+      (let [{:keys [root checkout run! commit! clone-checkout! dev-env]} (dev-checkout-fixture)]
+        (try (clone-checkout!)
+             (commit! "two")
+             ;; `update dev` names the dev runtime. It used to fall through to the
+             ;; target case and pin the source Vis owns to a ref called 'dev'.
+             (let [{:keys [exit output]} (run! ["update" "dev"] dev-env)]
+               (expect (= 0 exit) output)
+               (expect (str/includes? output "checkout updated") output)
+               (expect (not (str/includes? output "pinning source")) output))
+             (expect (= "two" (slurp (io/file checkout "f"))))
+             ;; dev follows its branch, so a target beside it is a refusal.
+             (let [{:keys [exit output]} (run! ["update" "dev" "v1.2.3"] dev-env)]
+               (expect (= 1 exit) output)
+               (expect (str/includes? output "takes no target") output))
+             ;; A runtime already named makes the word a ref again.
+             (let [{:keys [exit output]} (run! ["update" "--native" "dev"] dev-env)]
+               (expect (= 1 exit) output)
+               (expect (str/includes? output "expected a release tag") output))
+             (finally (delete-tree! root)))))
+  ;; Regression: switching to dev without a checkout used to be a dead end —
+  ;; `vis-agent update` died with "no git checkout at ~/vis" and told the user to
+  ;; clone it by hand. Dev means main, and the wrapper clones it itself.
+  (it "clones the dev checkout on main when there is none yet"
+      (let [{:keys [root checkout run! commit! dev-env]} (dev-checkout-fixture)]
+        (try (expect (not (.exists (io/file checkout ".git"))))
+             (let [{:keys [exit output]} (run! ["update" "dev"] dev-env)]
+               (expect (= 0 exit) output)
+               (expect (str/includes? output "cloning") output)
+               (expect (not (str/includes? output "no git checkout")) output))
+             (expect (.isDirectory (io/file checkout ".git")))
+             (expect (.isFile (io/file checkout "deps.edn")))
+             ;; Dev means MAIN: a branch to follow, not a detached pin.
+             (expect (= "main"
+                        (str/trim (:output (git! checkout "rev-parse" "--abbrev-ref" "HEAD")))))
+             (expect (= "one" (slurp (io/file checkout "f"))))
+             ;; And the clone it just made is one it can fast-forward next time.
+             (commit! "two")
+             (let [{:keys [exit output]} (run! ["update" "dev"] dev-env)]
+               (expect (= 0 exit) output)
+               (expect (str/includes? output "checkout updated") output))
+             (expect (= "two" (slurp (io/file checkout "f"))))
+             (finally (delete-tree! root)))))
+  (it "points a switch to dev at the command that fetches the checkout"
+      (let [{:keys [root checkout run! dev-env]} (dev-checkout-fixture)]
+        (try (let [{:keys [exit output]} (run! ["runtime" "use" "dev"] dev-env)]
+               (expect (= 0 exit) output)
+               (expect (str/includes? output "vis-agent update --dev") output))
+             (expect (not (.exists checkout)))
+             (finally (delete-tree! root)))))
+  (it "refuses to clone over a directory that is not a checkout"
+      (let [{:keys [root checkout run! dev-env]} (dev-checkout-fixture)]
+        (try (.mkdirs checkout)
+             (spit (io/file checkout "mine.txt") "not a checkout")
+             (let [{:keys [exit output]} (run! ["update" "dev"] dev-env)]
+               (expect (= 1 exit) output)
+               (expect (str/includes? output "is not a git checkout") output))
+             (expect (= "not a checkout" (slurp (io/file checkout "mine.txt"))))
+             (finally (delete-tree! root))))))
 
 (defdescribe
   wrapper-update-command-test

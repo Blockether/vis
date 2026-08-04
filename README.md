@@ -69,6 +69,9 @@ opt in; it is never picked for you, not even from inside a Vis checkout.
 | `dev` | a live checkout (`~/vis`, or `$VIS_DEV_CHECKOUT`), tracking its branch |
 | `auto` | no choice at all: native if installed, else tagged source |
 
+Dev mode is the one runtime Vis fetches a checkout for: with nothing at that
+path, `vis-agent update` clones the repository there on `main`.
+
 ```bash
 vis-agent runtime show
 vis-agent runtime use native|jvm|dev|auto   # persisted default

@@ -396,7 +396,7 @@ runtime_readiness() {
     dev)
       say "dev follows the live checkout at $dev_checkout (VIS_DEV_CHECKOUT overrides it)"
       if [[ ! -f "$dev_checkout/deps.edn" ]]; then
-        say "there is no checkout there yet — clone one, or point VIS_DEV_CHECKOUT at yours"
+        say "there is no checkout there yet — get it: vis-agent update --dev"
       fi
       say_missing_clojure
       ;;
@@ -563,10 +563,31 @@ sync_wrapper_from_source() {
 
 # ── update: dev runtime ──────────────────────────────────────────────────────
 # The only runtime that follows a moving branch, so the only update that pulls.
+# It is also the only checkout Vis CREATES: choosing dev and having no checkout
+# yet is one clone away, never an errand handed back to the user. Dev means main
+# — a branch to follow, not a pin.
+clone_dev_checkout() {
+  local parent
+  if [[ -e "$dev_checkout" && -n "$(ls -A "$dev_checkout" 2>/dev/null || true)" ]]; then
+    die "update --dev: $dev_checkout is not a git checkout, and it is not empty" \
+        "Move it aside, or point VIS_DEV_CHECKOUT at your own checkout."
+  fi
+  parent="$(dirname "$dev_checkout")"
+  mkdir -p "$parent" 2>/dev/null \
+    || die "update --dev: cannot create $parent for the dev checkout" \
+           "Check its permissions, or point VIS_DEV_CHECKOUT at a writable path."
+  say "cloning $vis_repo_slug into $dev_checkout (dev follows main)"
+  git clone --branch main "$vis_repo_url" "$dev_checkout" || exit 1
+  say "dev checkout ready at $dev_checkout on main; the dev runtime uses it on the next launch"
+}
+
 update_dev() {
   require_cmd git "the dev runtime"
-  [[ -d "$dev_checkout/.git" ]] || die "update --dev: no git checkout at $dev_checkout" \
-                                       "Clone one there, or point VIS_DEV_CHECKOUT at it."
+  # A fresh clone is already at its branch tip, so there is nothing left to pull.
+  if [[ ! -d "$dev_checkout/.git" ]]; then
+    clone_dev_checkout
+    return 0
+  fi
   say "updating $dev_checkout (git fetch + pull --ff-only)"
   git -C "$dev_checkout" fetch --tags origin || exit 1
   git -C "$dev_checkout" pull --ff-only || {
@@ -797,7 +818,7 @@ case "$runtime" in
     if [[ -z "$source_root" ]]; then
       if (( dev_mode )); then
         die "the dev runtime is selected ($runtime_origin), but $dev_checkout is not a checkout" \
-            "Clone one there (or set VIS_DEV_CHECKOUT)," \
+            "Clone it:  vis-agent update --dev (or set VIS_DEV_CHECKOUT)," \
             "or leave dev mode: vis-agent runtime use auto"
       fi
       die "the jvm runtime is selected ($runtime_origin), but no source is installed" \
