@@ -3105,3 +3105,70 @@
                #(expect (= {:status "cancelling"} (state/cancel-turn! sid "t1"))))
              (expect (= [] @writes))
              (finally (swap! registry dissoc sid))))))
+
+(defdescribe
+  delete-session-teardown-test
+  ;; Regression: DELETE /v1/sessions/:id ran the ENTIRE live-session teardown on
+  ;; the request thread — `resources/stop-all!` (background shells, managed
+  ;; REPLs, each stop-fn free to block) and then `lp/close!` (up to 5s waiting on
+  ;; the turn lock before disposing the polyglot Context). Deleting a session the
+  ;; user had just worked in held the HTTP response for seconds, and the
+  ;; companion's non-dismissable "Deleting..." modal froze the whole sessions
+  ;; screen behind it. The delete must cost the DB removal, nothing more.
+  (it
+    "returns once the session row is gone and tears the live runtime down off the request thread"
+    (let
+      [sid
+       (str "delete-teardown-" (java.util.UUID/randomUUID))
+
+       registry
+       @#'state/registry
+
+       deleted
+       (atom [])
+
+       stopped
+       (promise)
+
+       closed
+       (promise)
+
+       release
+       (promise)]
+
+      (try (swap! registry assoc sid {:turns {}})
+           (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.resources/stop-all!)
+                            (fn [_sid]
+                              ;; a slow stop-fn: a background shell that takes its time dying
+                              (deref release 2000 :timeout)
+                              (deliver stopped true))
+                            #'lp/close! (fn [_sid]
+                                          (deliver closed true))
+                            #'lp/db-info (constantly :db)
+                            (requiring-resolve
+                              'com.blockether.vis.internal.workspace/discard-session-clones!)
+                            (fn [_db _sid]
+                              nil)
+                            #'persistance/db-delete-session-tree! (fn [_db id]
+                                                                    (swap! deleted conj id))}
+             (fn []
+               (let
+                 [started
+                  (System/nanoTime)
+
+                  fut
+                  (state/close-session! sid)
+
+                  elapsed-ms
+                  (/ (- (System/nanoTime) started) 1e6)]
+
+                 (expect (< elapsed-ms 500) (str "close-session! blocked for " elapsed-ms "ms"))
+                 ;; the row is already gone everywhere a client can look
+                 (expect (= [sid] @deleted))
+                 (expect (not (contains? @registry sid)))
+                 (deliver release true)
+                 (when (instance? java.util.concurrent.Future fut)
+                   (.get ^java.util.concurrent.Future fut))
+                 (expect (true? (deref stopped 5000 false)))
+                 (expect (true? (deref closed 5000 false))))))
+           (finally (deliver release true) (swap! registry dissoc sid))))))

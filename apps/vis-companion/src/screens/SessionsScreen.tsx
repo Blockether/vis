@@ -668,8 +668,11 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
     setActionError(null);
   }, []);
 
+  // Dismissable even mid-request. A delete is already on the wire and cannot be
+  // taken back, but the SCREEN must always come back: a confirm dialog that
+  // refuses to close until the gateway answers reads as a frozen app (and with
+  // an unreachable machine it stayed up for the full request timeout).
   function closeRowAction() {
-    if (actionBusy) return;
     setRowAction(null);
     setActionError(null);
   }
@@ -1128,7 +1131,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                 )}
                 {actionError && <Banner kind="err">{actionError}</Banner>}
                 <div className="flex justify-end gap-2">
-                  <Button variant="ghost" disabled={actionBusy} onClick={closeRowAction}>
+                  <Button variant="ghost" onClick={closeRowAction}>
                     Cancel
                   </Button>
                   <Button

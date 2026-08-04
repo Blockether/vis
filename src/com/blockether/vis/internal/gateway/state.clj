@@ -4398,24 +4398,55 @@
     (try (lp/close! sid) (catch Throwable _ nil)))
   nil)
 
-(defn close-session!
-  "DELETE a session: dispose the live environment, trash the session's draft
-   clones (primary + auto-cloned filesystem roots — only DRAFTS have clones; a
-   trunk workspace's roots are the user's real dirs and are never touched),
-   then delete the session tree. Idempotent. NOTE: this is the DELETE path —
-   merely quitting/closing a session (navigating away, no server call) keeps
-   the draft intact so it can be resumed."
+(defonce ^:private teardown-executor
+  ;; Single daemon thread: runs live-session teardown OFF the request thread.
+  ;; Stopping background shells and managed REPLs waits on real processes, and
+  ;; `lp/close!` waits up to 5s on the turn lock before disposing the polyglot
+  ;; Context — seconds of work that a DELETE must never charge to the caller.
+  (delay (java.util.concurrent.Executors/newSingleThreadExecutor
+           (reify
+             java.util.concurrent.ThreadFactory
+               (newThread [_ r]
+                 (doto (Thread. ^Runnable r "vis-session-teardown") (.setDaemon true)))))))
+
+(defn- teardown-session-async!
+  "Stop `sid`'s background resources and dispose its live environment off the
+   calling thread. Returns a Future callers/tests can await; the session is
+   already gone from the DB and the registry by the time this is submitted, so
+   nothing a client can observe waits on it. Best-effort: a failed teardown is
+   swallowed rather than resurrecting the deleted session."
   [sid]
-  (try (resources/stop-all! sid) (catch Throwable _ nil))
-  (try (lp/close! sid) (catch Throwable _ nil))
+  (.submit ^java.util.concurrent.ExecutorService @teardown-executor
+           ^Callable
+           (fn []
+             (try (resources/stop-all! sid) (catch Throwable _ nil))
+             (try (lp/close! sid) (catch Throwable _ nil))
+             nil)))
+
+(defn close-session!
+  "DELETE a session: trash the session's draft clones (primary + auto-cloned
+   filesystem roots — only DRAFTS have clones; a trunk workspace's roots are the
+   user's real dirs and are never touched), delete the session tree, and drop it
+   from this process. Idempotent. Returns the teardown Future.
+
+   THE RESPONSE COSTS THE DB REMOVAL, NOTHING MORE. Disposing the live runtime
+   (background shells, managed REPLs, the polyglot Context) used to run right
+   here on the request thread, so deleting a session the user had just worked in
+   held DELETE open for seconds — long enough for the companion's confirm modal
+   to read as a frozen screen. Teardown now runs on `teardown-session-async!`,
+   after the session has already stopped existing for every client.
+
+   NOTE: this is the DELETE path — merely quitting/closing a session (navigating
+   away, no server call) keeps the draft intact so it can be resumed."
+  [sid]
   ;; trash on-disk clones BEFORE the DB tree (delete) so the workspace row is
   ;; still resolvable; draft-only, so this can never delete a real directory.
   (try (workspace/discard-session-clones! (lp/db-info) sid) (catch Throwable _ nil))
-  (try (lp/delete! sid) (catch Throwable _ nil))
+  (try (persistance/db-delete-session-tree! (lp/db-info) sid) (catch Throwable _ nil))
   (swap! registry dissoc sid)
   (bus/forget! sid)
   (swap! hydrate-monitors dissoc (str sid))
-  nil)
+  (teardown-session-async! sid))
 
 (defn set-title! [sid title] (when (lp/by-id sid) (lp/set-title! sid title) (soul sid)))
 
