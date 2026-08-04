@@ -114,8 +114,8 @@
 (defn- rgb [^TextColor color] [(.getRed color) (.getGreen color) (.getBlue color)])
 
 (defn cell
-  "One Lanterna `TextCharacter` as a raster cell — `{:ch :fg :bg :bold}` holding the
-   colours a TERMINAL would really show.
+  "One Lanterna `TextCharacter` as a raster cell — `{:ch :fg :bg :bold :italic
+   :underline}` holding the colours AND the styles a TERMINAL would really show.
 
    Lanterna's `DEFAULT` colour means \"whatever the host terminal paints\", and
    `.getRed` reports it as ANSI black — which is why an unpainted cell used to
@@ -144,8 +144,15 @@
       {:ch (or (.getCharacterString tc) " ")
        :fg (if reversed? bg fg)
        :bg (if reversed? fg bg)
-       :bold (boolean (.contains mods SGR/BOLD))})
-    {:ch " " :fg (rgb tui-theme/text-fg) :bg (rgb tui-theme/terminal-bg) :bold false}))
+       :bold (boolean (.contains mods SGR/BOLD))
+       :italic (boolean (.contains mods SGR/ITALIC))
+       :underline (boolean (.contains mods SGR/UNDERLINE))})
+    {:ch " "
+     :fg (rgb tui-theme/text-fg)
+     :bg (rgb tui-theme/terminal-bg)
+     :bold false
+     :italic false
+     :underline false}))
 
 (defn- capture-grid
   "Snapshot the Lanterna back-buffer as a rows×cols vector of `cell` maps."
@@ -560,9 +567,14 @@
   [^String s]
   (and (= 1 (.length s)) (< (int (.charAt s 0)) 0x1100)))
 
+(defn- run-style
+  "The styling a cell carries into the raster: `[fg bold italic underline]`."
+  [c]
+  [(:fg c) (boolean (:bold c)) (boolean (:italic c)) (boolean (:underline c))])
+
 (defn- text-runs
   "Split one captured row into `{:x :style :text}` runs of consecutive cells that
-   share fg + bold — one draw op instead of one per column."
+   share `run-style` — one draw op instead of one per column."
   [row]
   (loop
     [cells
@@ -574,13 +586,12 @@
     (if-let [[i c] (first cells)]
       (let
         [ch (or (:ch c) " ")
-         style [(:fg c) (boolean (:bold c))]]
+         style (run-style c)]
 
         (if (narrow? ch)
           (let
             [run (take-while (fn [[_ d]]
-                               (and (narrow? (or (:ch d) " "))
-                                    (= style [(:fg d) (boolean (:bold d))])))
+                               (and (narrow? (or (:ch d) " ")) (= style (run-style d))))
                              (rest cells))]
             (recur (drop (inc (count run)) cells)
                    (conj out
@@ -671,62 +682,169 @@
         (conj {:op :rect :x cx :y cy :w t :h (- (+ y0 h) cy) :fill fill})))
     []))
 
+(def ^:private italic-shear
+  "Slant of a synthetic italic, in x per y away from the baseline.
+
+   The embedded mono face ships upright ONLY — no oblique cut — so `:italic true`
+   on a draw op paints the very same outlines back. An italic run is therefore
+   drawn upright on its own layer and sheared about its baseline, which is what a
+   terminal without an oblique face does too."
+  0.2)
+
+(defn- glyph-op
+  "The text draw op for one run.
+
+   The embedded mono face has a SINGLE weight, so `:weight 700` would paint the
+   same outlines back: bold STROKES the glyph in its own colour instead, scaled
+   with the type size so it holds at every `:font-size`."
+  [{:keys [x style text]} py cw ascent size letter-spacing]
+  (let [[fg bold] style]
+    (cond->
+      {:op :text
+       :text text
+       :x (* (long x) (long cw))
+       :y (+ (long py) (long ascent))
+       :fill (hex-color fg)
+       :size size
+       :family mono-family
+       :letter-spacing letter-spacing}
+      bold
+      (assoc :stroke
+        (hex-color fg) :stroke-width
+        (/ (double size) 24.0)))))
+
+(defn- underline-op
+  "The rule an UNDERLINE run paints: a bar just under the baseline in the run's
+   own ink, spanning its cells — the TERMINAL's underline, not a font feature, so
+   a run of underlined blanks is a line too."
+  [{:keys [x style text]} py cw ch ascent]
+  (let
+    [fg
+     (first style)
+
+     t
+     (max 1 (long (Math/round (/ (double ch) 14.0))))]
+
+    {:op :rect
+     :x (* (long x) (long cw))
+     :y (+ (long py) (long ascent) t)
+     :w (* (count text) (long cw))
+     :h t
+     :fill (hex-color fg)}))
+
 (defn- grid->ops
-  "Vector drawing ops for one captured grid: background rectangles (runs of equal
-   bg merged), then box-drawing bars, then the glyph runs."
+  "Drawing ops for one captured grid, in two layers.
+
+   `:base` is everything upright — background rectangles (runs of equal bg
+   merged), box-drawing bars, underline rules, then the glyph runs. `:italic`
+   holds the italic runs alone and `:italic-rows` the cell rows they sit on, so
+   `paint-grid!` can shear those rows and composite them back."
   [grid cw ch ascent size letter-spacing]
-  (into
-    []
-    (mapcat
-      (fn [[y row]]
-        (let [py (* (long y) (long ch))]
-          (concat (for
-                    [g (partition-by (comp :bg second) (map-indexed vector row))
-                     :let [x (ffirst g)]]
+  (reduce
+    (fn [acc [y row]]
+      (let
+        [py
+         (* (long y) (long ch))
 
-                    {:op :rect
-                     :x (* (long x) (long cw))
-                     :y py
-                     :w (* (count g) (long cw))
-                     :h ch
-                     :fill (hex-color (:bg (second (first g))))})
-                  (mapcat (fn [[x c]]
-                            (box-ops c (* (long x) (long cw)) py cw ch))
-                          (map-indexed vector row))
-                  (for
-                    [{:keys [x style text]}
-                     ;; box cells are already drawn as bars — blank them
-                     ;; out so their glyph cannot be painted on top
-                     (text-runs (mapv #(cond-> % (box-arms (:ch %)) (assoc :ch " ")) row))
-                     :when (pos? (count (str/trim text)))
-                     :let [[fg bold] style]]
+         backgrounds
+         (for
+           [g
+            (partition-by (comp :bg second) (map-indexed vector row))
 
-                    (cond->
-                      {:op :text
-                       :text text
-                       :x (* (long x) (long cw))
-                       :y (+ py (long ascent))
-                       :fill (hex-color fg)
-                       :size size
-                       :family mono-family
-                       :letter-spacing letter-spacing}
-                      ;; The embedded mono face has a SINGLE weight, so
-                      ;; asking for `:weight 700` paints the same outlines
-                      ;; back. Stroke the glyph in its own colour instead --
-                      ;; synthetic bold, scaled with the type size so it
-                      ;; holds at every `:font-size`.
-                      bold
-                      (assoc :stroke
-                        (hex-color fg) :stroke-width
-                        (/ (double size) 24.0)))))))
-      (map-indexed vector grid))))
+            :let [x
+                  (ffirst g)]]
+
+           {:op :rect
+            :x (* (long x) (long cw))
+            :y py
+            :w (* (count g) (long cw))
+            :h ch
+            :fill (hex-color (:bg (second (first g))))})
+
+         bars
+         (mapcat (fn [[x c]]
+                   (box-ops c (* (long x) (long cw)) py cw ch))
+                 (map-indexed vector row))
+
+         ;; box cells are already drawn as bars — blank them out so their
+         ;; glyph cannot be painted on top
+         runs
+         (text-runs (mapv #(cond-> % (box-arms (:ch %)) (assoc :ch " ")) row))
+
+         rules
+         (for
+           [{:keys [style] :as run}
+            runs
+
+            :when (nth style 3)]
+
+           (underline-op run py cw ch ascent))
+
+         glyphs
+         (for
+           [{:keys [style text] :as run}
+            runs
+
+            :when (pos? (count (str/trim text)))]
+
+           [(nth style 2) (glyph-op run py cw ascent size letter-spacing)])
+
+         italic
+         (keep (fn [[italic? op]]
+                 (when italic? op))
+               glyphs)]
+
+        (-> acc
+            (update :base
+                    into
+                    (concat backgrounds
+                            bars
+                            rules
+                            (keep (fn [[italic? op]]
+                                    (when-not italic? op))
+                                  glyphs)))
+            (update :italic into italic)
+            (cond->
+              (seq italic)
+              (update :italic-rows conj y)))))
+    {:base [] :italic [] :italic-rows #{}}
+    (map-indexed vector grid)))
+
+(defn- paint-grid!
+  "Paint one captured grid into `im` — the ONE path every still and every video
+   frame goes through, so a screenshot and a frame of the screencast are the same
+   picture.
+
+   The upright layer goes straight through imaging's draw ops; the italic layer is
+   drawn on a transparent layer, then composited back one raster row at a time,
+   each row displaced by `italic-shear` about the baseline. Only the cell rows
+   that actually carry italic are touched."
+  [im grid cw ch ascent size letter-spacing]
+  (let [{:keys [base italic italic-rows]} (grid->ops grid cw ch ascent size letter-spacing)]
+    (img/draw! im base)
+    (when (seq italic)
+      (let
+        [w (img/width im)
+         h (img/height im)]
+
+        (with-open [layer (img/blank w h "#00000000")]
+          (img/draw! layer italic)
+          (doseq
+            [y (sort italic-rows)
+             dy (range (long ch))
+             :let [py (+ (* (long y) (long ch)) (long dy))
+                   dx (Math/round (* (double italic-shear) (double (- (long ascent) (long dy)))))]
+             :when (< py (long h))]
+
+            (with-open [strip (img/crop layer 0 py w 1)]
+              (img/paste! im strip (int dx) (int py)))))))))
 
 (defn grid->png!
   "Rasterize ONE captured grid to `out` as a PNG and return the output File.
 
    The whole \"look at the pixels\" path: a Lanterna back-buffer becomes an image
    in process, through the SAME ops the MP4 emitter encodes, in the theme's own
-   colours."
+   colours. Test helper `capture/shot!` wraps this into a one-call screenshot."
   ^File [grid out {:keys [font-size] :or {font-size 18}}]
   (let
     [{:keys [cw ch ascent letter-spacing]}
@@ -739,7 +857,7 @@
       [im (img/blank (* (long (reduce max 0 (map count grid))) (long cw))
                      (* (count grid) (long ch))
                      (hex-color (rgb tui-theme/terminal-bg)))]
-      (img/draw! im (grid->ops grid cw ch ascent font-size (double letter-spacing)))
+      (paint-grid! im grid cw ch ascent font-size (double letter-spacing))
       (img/save! im out-file))
     out-file))
 
@@ -762,7 +880,7 @@
      ^bytes (aget ^"[[B" (.getData pic) 0)]
 
     (with-open [im (img/blank w h "black")]
-      (img/draw! im (grid->ops grid cw ch ascent size letter-spacing))
+      (paint-grid! im grid cw ch ascent size letter-spacing)
       (let
         [src ^bytes (img/pixels im)
          n (* (long w) (long h))]

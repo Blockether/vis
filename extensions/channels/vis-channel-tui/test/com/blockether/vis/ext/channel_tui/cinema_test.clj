@@ -48,12 +48,12 @@
    (let [t (.getBytes tag "US-ASCII")]
      (first (for
               [i (range (long from) (- (alength ba) (alength t)))
-               :when (every? #(= (aget ba (+ i (long %))) (aget t (int %))) (range (alength t)))]
+               :when (every? #(= (aget ba (+ (long i) (long %))) (aget t (int %))) (range (alength t)))]
 
               i)))))
 
 (defn- u16
-  [^bytes ba i]
+  [^bytes ba ^long i]
   (+ (* 256 (bit-and (aget ba (int i)) 0xff)) (bit-and (aget ba (int (inc i))) 0xff)))
 
 (defn- avc-dimensions
@@ -64,7 +64,7 @@
   [^bytes ba]
   (when-let [stsd (ascii-index ba "stsd")]
     (when-let [i (ascii-index ba "avc1" stsd)]
-      [(u16 ba (+ i 28)) (u16 ba (+ i 30))])))
+      [(u16 ba (+ (long i) 28)) (u16 ba (+ (long i) 30))])))
 
 (defdescribe frames->mp4-test
              (it "writes a real, non-empty MP4 container"
@@ -106,10 +106,28 @@
                    (expect (> inked (* 1.5 blank))))))
 
 (defn- png!
+  "One captured grid straight to a PNG path, through the shared capture helper."
   [nm grid]
-  (let [out (io/file (System/getProperty "java.io.tmpdir") nm)]
-    (.deleteOnExit out)
-    (str (cinema/grid->png! grid out {:font-size 16}))))
+  (cap/shot!
+    {:grid grid :out (str (System/getProperty "java.io.tmpdir") "/" nm) :font-size 16 :trim false}))
+
+(defn- styled
+  "A captured row with `k` (`:bold` `:italic` `:underline`) set on every cell."
+  [row k]
+  (mapv #(assoc % k true) row))
+
+(defn- left-ink
+  "Raster row → its LEFTMOST inked column, for every row that carries ink. A slant
+   shows up here as a profile that leans, where upright type gives a flat one."
+  [rows]
+  (into {}
+        (keep-indexed (fn [y row]
+                        (when-let
+                          [x (first (keep-indexed (fn [x px]
+                                                    (when (not= [255 255 255] px) x))
+                                                  row))]
+                          [y x]))
+                      rows)))
 
 (defdescribe
   grid->png-test
@@ -154,11 +172,7 @@
       (let
         [ink
          (fn [nm bold]
-           (->> (cap/png-rows (png! nm [(row "Name Size" 12 [0 0 0] [255 255 255] bold)]))
-                (apply concat)
-                (filter (fn [[r g b]]
-                          (< (+ (long r) (long g) (long b)) 384)))
-                count))
+           (cap/ink (png! nm [(row "Name Size" 12 [0 0 0] [255 255 255] bold)])))
 
          plain
          (ink "vis-cinema-plain.png" false)
@@ -167,4 +181,58 @@
          (ink "vis-cinema-bold.png" true)]
 
         (expect (pos? plain))
-        (expect (> heavy (* 1.1 plain))))))
+        (expect (> heavy (* 1.1 plain)))))
+  (it "slants an ITALIC run instead of painting it upright"
+      ;; Regression: the embedded mono face ships upright ONLY, so `:italic true`
+      ;; on a draw op paints the very same outlines back -- every `p/ITALIC` cell
+      ;; the transcript, the dialogs and the header paint was photographed as
+      ;; roman text.
+      (let
+        [roman
+         (cap/png-rows (png! "vis-cinema-roman.png" [(row "Name Size" 12 [0 0 0] [255 255 255])]))
+
+         slanted
+         (cap/png-rows (png! "vis-cinema-italic.png"
+                             [(styled (row "Name Size" 12 [0 0 0] [255 255 255]) :italic)]))
+
+         upright-profile
+         (left-ink roman)
+
+         slanted-profile
+         (left-ink slanted)
+
+         top
+         (apply min (keys upright-profile))
+
+         bottom
+         (apply max (keys upright-profile))]
+
+        (expect (seq upright-profile))
+        (expect (not= roman slanted))
+        ;; a shear MOVES ink sideways; it must not lose the type on the way
+        (expect (< 0.7 (/ (double (cap/ink slanted)) (double (cap/ink roman))) 1.4))
+        ;; the top of the glyphs leans right, the baseline stays where it was
+        (expect (> (long (get slanted-profile top)) (+ 2 (long (get upright-profile top)))))
+        (expect (<= (long (get slanted-profile bottom))
+                    (+ 1 (long (get upright-profile bottom)))))))
+  (it "paints an UNDERLINE run as a real rule under the baseline"
+      ;; Regression: `SGR/UNDERLINE` -- every link the TUI prints -- was dropped by
+      ;; the capture outright, so an underlined run rasterized as plain text.
+      (let
+        [rule?
+         (fn [rows]
+           (boolean (some (fn [r]
+                            (every? #(not= [255 255 255] %) (take 80 r)))
+                          rows)))
+
+         plain
+         (cap/png-rows (png! "vis-cinema-plain-rule.png"
+                             [(row "Name Size" 12 [0 0 0] [255 255 255])]))
+
+         lined
+         (cap/png-rows (png! "vis-cinema-underline.png"
+                             [(styled (row "Name Size" 12 [0 0 0] [255 255 255]) :underline)]))]
+
+        (expect (not (rule? plain)))
+        (expect (rule? lined))
+        (expect (> (cap/ink lined) (cap/ink plain))))))

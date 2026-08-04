@@ -7,8 +7,7 @@
    Everything except the paint is a pure function of immutable data, so the
    viewer's behaviour is pinned WITHOUT a terminal; the one paint test drives a
    real Lanterna virtual terminal and reads its back-buffer."
-  (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis.ext.channel-tui.capture :as cap]
             [com.blockether.vis.ext.channel-tui.cinema :as cinema]
@@ -307,21 +306,17 @@
    measure of how heavy that line of type is, through the same ops the screencast
    encodes.
 
-   \"Not the paper\" is too blunt for a row that carries a coloured band: the whole
-   band would count as ink. The raster's top row sits ABOVE every glyph, so the
-   colours in it are exactly this line's backgrounds (and its vertical bars, which
-   run the full cell height) — everything else on the line is type."
+   The raster's TOP row is handed to `cap/ink` as the paper: it sits above every
+   glyph, so its colours are exactly this line's backgrounds and its full-height
+   bars. \"Not the dominant colour\" would count the header's whole coloured band
+   as type and drown the difference."
   [nm cells]
   (let
-    [raster
-     (cap/png-rows (str (cinema/grid->png! [cells]
-                                           (io/file (System/getProperty "java.io.tmpdir") nm)
-                                           {:font-size 16})))
-
-     paper
-     (set (first raster))]
-
-    (count (remove paper (apply concat raster)))))
+    [raster (cap/png-rows (cap/shot! {:grid [cells]
+                                      :out (str (System/getProperty "java.io.tmpdir") "/" nm)
+                                      :font-size 16
+                                      :trim false}))]
+    (cap/ink raster (set (first raster)))))
 
 (defdescribe
   vis-table-card-chrome-test
