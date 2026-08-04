@@ -2627,6 +2627,75 @@
         (expect (= [] (persistance/db-native-result-index-for-session s nil)))
         (expect (= [] (persistance/db-native-result-index-for-session s (random-uuid)))))))
 
+;; Regression: the model reads a result back with the coordinate the transcript
+;; PRINTS above it (`# t5/i1`), not with the 24-char `toolu_…` id under it, and
+;; nothing could resolve that coordinate — `ntr["t5/i1"]` was always a KeyError.
+(defdescribe
+  native-result-index-for-scope-test
+  "`db-native-result-index-for-scope` resolves ONE transcript coordinate
+   (`tN/iM`) to the native results that iteration stored, labelled exactly like
+   the browse index. Iteration-wide: an iteration that called several tools
+   resolves to several entries, and the caller decides what to do with that."
+  (let
+    [form (fn [scope id tool result]
+            (cond->
+              {:scope scope
+               :tag :observation
+               :src (str tool "(\"x\")")
+               :svar/tool-call-id id
+               :vis/tool-name tool}
+              result
+              (assoc :result result)))]
+    (it
+      "resolves a coordinate to that iteration's result-bearing forms"
+      (let
+        [s (h/store)
+         cid (h/store-session! s {:channel :cli})
+         tid1 (vis/db-store-session-turn! s {:parent-session-id cid :user-request "t1"})
+         _ (h/store-iteration! s
+                               {:session-turn-id tid1
+                                :status :done
+                                :idx 0
+                                :code "grep"
+                                :forms [(form "t1/i1" "toolu_A" "grep" {:op "grep"})
+                                        ;; same iteration, second native call
+                                        (form "t1/i1" "toolu_B" "cat" {:op "cat"})
+                                        ;; print-only python_execution form: no :result
+                                        (form "t1/i1" "toolu_P" "python_execution" nil)]})
+         tid2 (vis/db-store-session-turn! s {:parent-session-id cid :user-request "t2"})
+         _ (h/store-iteration! s
+                               {:session-turn-id tid2
+                                :status :done
+                                :idx 0
+                                :code "ls"
+                                ;; a FORM scope (`/fK`) is the same iteration
+                                :forms [(form "t2/i1/f1" "toolu_C" "ls" {:op "ls"})]})]
+
+        (expect (= ["toolu_A" "toolu_B"]
+                   (mapv :id (persistance/db-native-result-index-for-scope s cid "t1/i1"))))
+        (expect (= ["grep" "cat"]
+                   (mapv :tool (persistance/db-native-result-index-for-scope s cid "t1/i1"))))
+        ;; a form scope resolves to its iteration, and past turns stay reachable
+        (expect (= ["toolu_C"]
+                   (mapv :id (persistance/db-native-result-index-for-scope s cid "t2/i1"))))
+        (expect (= ["toolu_C"]
+                   (mapv :id (persistance/db-native-result-index-for-scope s cid "t2/i1/f1"))))
+        ;; internal row id never leaks
+        (expect (every? #(nil? (:row-id %))
+                        (persistance/db-native-result-index-for-scope s cid "t1/i1")))
+        ;; the browse index carries the coordinate too, so a listed id can be
+        ;; named by the scope the transcript shows
+        (expect (= #{"t1/i1" "t2/i1"}
+                   (set (map :scope (persistance/db-native-result-index-for-session s cid)))))
+        ;; an iteration that stored nothing, and a coordinate that is not one
+        (expect (= [] (persistance/db-native-result-index-for-scope s cid "t9/i9")))
+        (expect (= [] (persistance/db-native-result-index-for-scope s cid "toolu_A")))
+        (expect (= [] (persistance/db-native-result-index-for-scope s cid nil)))))
+    (it "unknown / nil session is a safe empty index"
+        (let [s (h/store)]
+          (expect (= [] (persistance/db-native-result-index-for-scope s nil "t1/i1")))
+          (expect (= [] (persistance/db-native-result-index-for-scope s (random-uuid) "t1/i1")))))))
+
 ;; ─── projects (cross-channel) + movable project sessions + ownership (V6/V7) ───
 
 (defdescribe

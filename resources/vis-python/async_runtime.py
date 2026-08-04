@@ -2009,16 +2009,92 @@ class __VisNativeResults__:
         self.__vis_cache__[__vis_id__] = __vis_v__
         return __vis_v__
 
+    def __vis_coord__(self, __vis_k__):
+        # The transcript COORDINATE a result was printed under (`# t5/i1`), or None
+        # when this key is not one — a `toolu_…` id, an int, a form scope's own
+        # `t5/i1/f2` (which is the same iteration, so it normalizes to `t5/i1`).
+        # This is the handle the model actually has: the header above the result.
+        if not isinstance(__vis_k__, str):
+            return None
+        __vis_p__ = __vis_k__.strip().lower().split("/")
+        if len(__vis_p__) < 2:
+            return None
+        __vis_t__ = __vis_p__[0]
+        __vis_i__ = __vis_p__[1]
+        if (
+            __vis_t__[:1] == "t"
+            and __vis_t__[1:].isdigit()
+            and __vis_i__[:1] == "i"
+            and __vis_i__[1:].isdigit()
+        ):
+            return __vis_t__ + "/" + __vis_i__
+        return None
+
+    def __vis_at_coord__(self, __vis_c__):
+        # Resolve ONE coordinate through the host: the labelled entries that
+        # iteration stored. Exactly one → that result (cached under the coordinate
+        # too, so a re-read costs nothing). Several → the iteration ran several
+        # native tools and only the caller knows which it meant, so NAME them
+        # instead of guessing.
+        try:
+            __vis_hits__ = __vis_native_result_scope__(__vis_c__) or []
+        except Exception:
+            __vis_hits__ = []
+        __vis_entries__ = []
+        for __vis_e__ in __vis_hits__:
+            try:
+                __vis_eid__ = __vis_e__.get("id")
+                __vis_lab__ = " · ".join(
+                    [
+                        __vis_x__
+                        for __vis_x__ in (
+                            __vis_eid__,
+                            __vis_e__.get("tool"),
+                            __vis_e__.get("gist"),
+                        )
+                        if __vis_x__
+                    ]
+                )
+            except Exception:
+                __vis_eid__ = None
+                __vis_lab__ = ""
+            if __vis_eid__:
+                __vis_entries__.append((__vis_eid__, __vis_lab__))
+        if len(__vis_entries__) == 1:
+            __vis_v__ = self[__vis_entries__[0][0]]
+            self.__vis_cache__[__vis_c__] = __vis_v__
+            return __vis_v__
+        if not __vis_entries__:
+            raise KeyError(
+                "no native tool result at "
+                + repr(__vis_c__)
+                + " — that iteration stored no native tool result (a python_execution "
+                "call returns what it print()s, not a stored value). Use ntr.describe() "
+                "to see which coordinates this turn stored."
+            )
+        raise KeyError(
+            repr(__vis_c__)
+            + " ran "
+            + str(len(__vis_entries__))
+            + " native tools — read one by id: "
+            + "; ".join([__vis_p2__[1] for __vis_p2__ in __vis_entries__])
+        )
+
     def __vis_prime__(self, __vis_ids__):
         # Pre-populate from ONE batched host query. Only ids we have NOT already
         # resolved (cached hit OR proven missing) are queried — a re-read of an
         # id primed by an earlier block hits the in-process cache with NO new DB
         # round-trip. Absent ids are recorded as missing so a later __getitem__
         # raises immediately (no redundant fetch).
+        # A literal COORDINATE in the block is not an id and is never primed here:
+        # it resolves through `__vis_at_coord__` at read time, and priming it would
+        # only mark it missing.
         __vis_need__ = [
             i
             for i in __vis_ids__
-            if i not in self.__vis_cache__ and i not in self.__vis_missing__
+            if i not in self.__vis_cache__
+            and i not in self.__vis_missing__
+            and self.__vis_coord__(i) is None
         ]
         if not __vis_need__:
             return
@@ -2041,6 +2117,11 @@ class __VisNativeResults__:
     def __getitem__(self, __vis_id__):
         if __vis_id__ in self.__vis_cache__:
             return self.__vis_cache__[__vis_id__]
+        # The transcript heads every result with its coordinate and only foots it
+        # with the id, so `ntr["t5/i1"]` is a first-class read.
+        __vis_c__ = self.__vis_coord__(__vis_id__)
+        if __vis_c__ is not None:
+            return self.__vis_at_coord__(__vis_c__)
         if __vis_id__ not in self.__vis_missing__:
             # Lazy single-id fetch (dynamic key the pre-scan couldn't see).
             try:
@@ -2054,8 +2135,9 @@ class __VisNativeResults__:
             "no native tool result for "
             + repr(__vis_id__)
             + " — that tool_use id is unknown or produced no return (a python_execution "
-            "call returns what it print()s, not a stored value). Re-run the tool, or use "
-            "the exact tool_use id shown on a prior tool_result."
+            "call returns what it print()s, not a stored value). Re-run the tool, use "
+            "the exact tool_use id shown on a prior tool_result, or the transcript "
+            'coordinate printed above it (ntr["tN/iM"]).'
         )
 
     def get(self, __vis_id__, __vis_default__=None):
@@ -2180,7 +2262,9 @@ class __VisNativeResults__:
             return "result"
 
     def describe(self, limit=20, ids=None):
-        # ['toolu_01Tc… · grep · session_fold, 6 file names', …]
+        # ['toolu_01Tc… · t7/i3 · grep · session_fold, 6 file names', …] — the
+        # coordinate is what the transcript shows above the result, so a listed id
+        # can also be read back as ntr["t7/i3"].
         __vis_idx__ = self.__vis_index__()
         __vis_lbl__ = {}
         if __vis_idx__ is not None:
@@ -2191,6 +2275,7 @@ class __VisNativeResults__:
                             [
                                 __vis_x__
                                 for __vis_x__ in (
+                                    __vis_e__.get("scope"),
                                     __vis_e__.get("tool"),
                                     __vis_e__.get("gist"),
                                 )

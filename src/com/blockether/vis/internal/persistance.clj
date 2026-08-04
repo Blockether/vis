@@ -620,6 +620,11 @@
 ;; keeping browse output local while exact `ntr[id]` recovery remains session-wide.
 (defdelegate db-native-result-index-for-latest-turn [db-info session-id])
 
+;; One transcript COORDINATE (`tN/iM`) → the native results that iteration stored.
+;; The transcript heads every result with its coordinate, so `ntr["t5/i1"]` has to
+;; resolve; several native calls in one iteration yield several entries.
+(defdelegate db-native-result-index-for-scope [db-info session-id scope])
+
 ;; --- Extension aggregate sidecars ---
 (defdelegate db-create-extension-aggregate! [db-info opts])
 

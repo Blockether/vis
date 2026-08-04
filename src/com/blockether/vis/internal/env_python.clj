@@ -2003,7 +2003,8 @@
                                   ;; ntr/native_tools_results host callbacks:
                                   ;; plain sync lookups, never awaitable thunks.
                                   "__vis_native_result_prime__" "__vis_native_result_fetch__"
-                                  "__vis_native_result_ids__" "__vis_native_result_index__"})
+                                  "__vis_native_result_ids__" "__vis_native_result_index__"
+                                  "__vis_native_result_scope__"})
                         distinct
                         vec)]
       (.putMember g "__vis_defer_names__" (->py defer-names))

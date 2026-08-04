@@ -11529,8 +11529,10 @@
         (fn native-result-ids []
           (vec (persistance/db-native-result-ids-for-session db-info session-id)))
         ;; `index` is the LABELLED discovery callback behind `ntr.describe()`:
-        ;; {"id" "tool" "gist"} per latest-turn result, newest first, and NOT one
-        ;; payload is thawed to build it. Exact `ntr[id]` recovery remains session-wide.
+        ;; {"id" "scope" "tool" "gist"} per latest-turn result, newest first, and NOT
+        ;; one payload is thawed to build it. `scope` is the transcript coordinate the
+        ;; result was printed under, so a listed id can be named the way the model saw
+        ;; it. Exact `ntr[id]` recovery remains session-wide.
         (symbol "__vis_native_result_index__")
         (fn native-result-index []
           (mapv (fn [e]
@@ -11538,9 +11540,26 @@
                     (:tool e)
                     (assoc "tool" (str (:tool e)))
 
+                    (:scope e)
+                    (assoc "scope" (str (:scope e)))
+
                     (:gist e)
                     (assoc "gist" (str (:gist e)))))
-                (persistance/db-native-result-index-for-latest-turn db-info session-id)))}
+                (persistance/db-native-result-index-for-latest-turn db-info session-id)))
+        ;; `scope` resolves ONE transcript coordinate (`tN/iM`, the header the model
+        ;; actually reads above a result) to the labelled entries that iteration stored,
+        ;; across the whole branch. Several native calls in one iteration resolve to
+        ;; several entries; the sandbox names them instead of guessing.
+        (symbol "__vis_native_result_scope__")
+        (fn native-result-scope [scope]
+          (mapv (fn [e]
+                  (cond-> {"id" (str (:id e))}
+                    (:tool e)
+                    (assoc "tool" (str (:tool e)))
+
+                    (:gist e)
+                    (assoc "gist" (str (:gist e)))))
+                (persistance/db-native-result-index-for-scope db-info session-id (str scope))))}
        ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
        ;; binding map so none of the child-dispatch verbs are
        ;; bound (sub_loop + parallel/sequence/selector/retry).

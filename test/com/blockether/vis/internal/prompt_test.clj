@@ -114,10 +114,13 @@
           "on the second occurrence factor it out and call the helper"
           "Call advertised native tools directly" "for unadvertised sandbox" "read-only `session`"
           "raw data, not rendered text" "Use documented keys" "never a `session_fold` receipt"
+          ;; The transcript HEADS every result with its coordinate and only foots it with the
+          ;; `toolu_…` id, so the coordinate is a first-class `ntr` key and the core says so.
           "# saved:" "Before re-running or scanning transcript" "recover raw result" "saved id"
-          "`ntr.describe()`" "labelled candidates" "not `ntr.keys()`/`items()` to discover results"
-          "shape before indexing" "inspect keys/types" "then adapt"
-          "do not print it or call `repl` status merely to" "reproduce before editing"
+          "the coordinate" "above it (`ntr[\"t5/i1\"]`)" "`ntr.describe()`" "labelled candidates"
+          "not `ntr.keys()`/`items()` to discover results" "shape before indexing"
+          "inspect keys/types" "then adapt" "do not print it or call `repl` status merely to"
+          "reproduce before editing"
           ;; Reproduction is REPL-first and the reproduction SURVIVES as a suite test:
           ;; a bare "reproduce" was read as an ad-hoc check that vanished with the session,
           ;; leaving fixed bugs with nothing pinning them.
@@ -159,7 +162,7 @@
         (expect (str/includes? text required)))
       ;; Python's native-result retrieval contract belongs in the execution-surface
       ;; guidance because it controls context shaping across every native tool.
-      (expect (= 1 (count (re-seq #"ntr\[tool_id\]" text))))
+      (expect (= 1 (count (re-seq #"ntr\[key\]" text))))
       (doseq
         [surplus ["Keep managed REPLs across turns" "Native results are `ntr[tool_id]`"
                   "Raise vis bugs/issues" "After 3 failures" "Complete tasks autonomously"

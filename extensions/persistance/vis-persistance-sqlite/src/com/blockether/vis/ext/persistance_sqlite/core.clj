@@ -4122,12 +4122,34 @@
    decode pass, never correctness."
   20000)
 
+(defn- ntr-scope-key
+  "Normalized ITERATION coordinate of a stored form's `:scope`: `\"t5/i1\"` for both
+   an iteration scope and a form scope (`\"t5/i1/f2\"`), nil for anything that is
+   not a coordinate. The transcript HEADS every tool result with this string, so
+   it is the handle a reader actually has — the `toolu_…` id is the one it does
+   not."
+  [scope]
+  (let
+    [parts
+     (str/split (str/lower-case (str/trim (str scope))) #"/")
+
+     numbered?
+     (fn [prefix part]
+       (and (string? part)
+            (str/starts-with? part prefix)
+            (some? (re-matches #"[0-9]+" (subs part (count prefix))))))]
+
+    (when (and (numbered? "t" (first parts)) (numbered? "i" (second parts)))
+      (str (first parts) "/" (second parts)))))
+
 (defn- ntr-entries-of-forms
   "Light index entries for ONE iteration's decoded `:forms`: every form carrying
-   both a provider tool_use id and a `:result`, labelled with the tool that ran
-   and that call's own op-card summary so a stored result can be CHOSEN before
-   it is fetched. Print-only `python_execution` forms (`:stdout`, no `:result`)
-   are skipped — exactly the rule `db-native-results-for-tool-ids` looks up by."
+   both a provider tool_use id and a `:result`, labelled with the tool that ran,
+   that call's own op-card summary and the transcript COORDINATE it was printed
+   under, so a stored result can be CHOSEN — and named the way the transcript
+   names it — before it is fetched. Print-only `python_execution` forms
+   (`:stdout`, no `:result`) are skipped — exactly the rule
+   `db-native-results-for-tool-ids` looks up by."
   [row-id forms]
   (into []
         (keep (fn [form]
@@ -4136,6 +4158,9 @@
                     (cond-> {:row-id row-id :id id}
                       (not (str/blank? (str (:vis/tool-name form))))
                       (assoc :tool (str (:vis/tool-name form)))
+
+                      (some? (ntr-scope-key (:scope form)))
+                      (assoc :scope (ntr-scope-key (:scope form)))
 
                       (not (str/blank? (str (:result-summary form))))
                       (assoc :gist (str (:result-summary form))))))))
@@ -4234,6 +4259,29 @@
                   (let [id (:id entry)]
                     (when-not (contains? @seen id) (vswap! seen conj id) (dissoc entry :row-id)))))
           (if latest-turn-id (ntr-state-index db-info state-ids [latest-turn-id]) []))))
+
+(defn db-native-result-index-for-scope
+  "Index entries for ONE transcript coordinate: every result-bearing native form
+   the iteration `scope` (`\"tN/iM\"`, or a form scope `\"tN/iM/fK\"`) stored on this
+   session branch, in the order that iteration ran them, de-duped by id and
+   without `:row-id`.
+
+   This is what makes `ntr[\"t5/i1\"]` resolvable: the transcript labels results by
+   coordinate, so the coordinate has to be a key. An iteration that called SEVERAL
+   native tools yields several entries — the caller names them rather than
+   guessing which one was meant. A coordinate that stored nothing, or a string
+   that is not a coordinate at all, is an empty index, never an error."
+  [db-info session-id scope]
+  (if-let [coord (ntr-scope-key scope)]
+    (let [seen (volatile! #{})]
+      (into []
+            (keep (fn [entry]
+                    (let [id (:id entry)]
+                      (when (and (= coord (:scope entry)) (not (contains? @seen id)))
+                        (vswap! seen conj id)
+                        (dissoc entry :row-id)))))
+            (ntr-branch-index db-info session-id)))
+    []))
 
 (defn db-native-result-ids-for-session
   "List every persisted NATIVE tool_use id (`:svar/tool-call-id`) in THIS

@@ -700,6 +700,103 @@
           (expect (str/includes? out "stored native results"))
           (expect (str/includes? out "ntr.describe()"))))))
 
+;; Regression: every tool result in the transcript is HEADED with its coordinate
+;; (`# t5/i1`) and only footed with the `toolu_…` id, so the model reached for the
+;; coordinate — and `ntr["t5/i1"]` always raised `no native tool result for
+;; 't5/i1' — that tool_use id is unknown`, an error that named the wrong problem
+;; and left no way to recover the result without re-running the tool.
+(defdescribe
+  ntr-coordinate-test
+  "A transcript COORDINATE (`tN/iM`) is a first-class `ntr` key: it resolves to
+   the native result that iteration stored, without the model having to copy a
+   24-character `toolu_…` id. An iteration that ran SEVERAL native tools never
+   guesses — it names them and asks for one."
+  (let
+    [context-with
+     (fn [scope-fn]
+       (let [own (:python-context (ep/create-python-context {}))]
+         (ep/set-python-binding! own (symbol "__vis_native_result_scope__") scope-fn)
+         own))
+
+     run
+     (fn [ctx code]
+       (str (:stdout (ep/run-python-block ctx code))))]
+
+    (it "a coordinate resolves to that iteration's one stored result"
+        (let
+          [fetched
+           (atom [])
+
+           own
+           (context-with (fn [scope]
+                           (when (= "t5/i1" scope)
+                             [{"id" "toolu_A" "tool" "grep" "gist" "26 hits"}])))]
+
+          (ep/set-python-binding! own
+                                  (symbol "__vis_native_result_fetch__")
+                                  (fn [id]
+                                    (swap! fetched conj id)
+                                    (when (= "toolu_A" id) {"op" "grep" "hit_count" 26})))
+          (let [out (run own (str "r = ntr['t5/i1']\n" "print(r['op'], r['hit_count'])\n"))]
+            (expect (str/includes? out "grep 26"))
+            ;; the coordinate is resolved to the id, and only the ID is fetched
+            (expect (= ["toolu_A"] @fetched)))))
+    (it "a form scope and the verbose alias resolve the same iteration"
+        (let
+          [own (context-with (fn [scope]
+                               (when (= "t5/i1" scope) [{"id" "toolu_A" "tool" "cat"}])))]
+          (ep/set-python-binding! own
+                                  (symbol "__vis_native_result_fetch__")
+                                  (fn [id]
+                                    (when (= "toolu_A" id) {"op" "cat"})))
+          (expect (str/includes? (run own "print(ntr['t5/i1/f2']['op'])\n") "cat"))
+          (expect (str/includes? (run own "print(native_tools_results['T5/I1']['op'])\n") "cat"))))
+    (it "an iteration with several native calls names them instead of guessing"
+        (let
+          [own
+           (context-with (fn [_]
+                           [{"id" "toolu_A" "tool" "grep"} {"id" "toolu_B" "tool" "cat"}]))
+
+           out
+           (run own
+                (str "try:\n" "    ntr['t5/i1']\n"
+                     "except KeyError as e:\n" "    print(str(e))\n"))]
+
+          (expect (str/includes? out "t5/i1"))
+          (expect (str/includes? out "toolu_A"))
+          (expect (str/includes? out "grep"))
+          (expect (str/includes? out "toolu_B"))
+          (expect (str/includes? out "cat"))))
+    (it "a coordinate that stored nothing says so, and points at describe()"
+        (let
+          [own
+           (context-with (fn [_]
+                           []))
+
+           out
+           (run own
+                (str "try:\n" "    ntr['t9/i9']\n"
+                     "except KeyError as e:\n" "    print(str(e))\n"))]
+
+          (expect (str/includes? out "t9/i9"))
+          (expect (str/includes? out "ntr.describe()"))
+          ;; the id-shaped miss keeps naming the coordinate as an option
+          (expect (str/includes? (run own
+                                      (str "try:\n" "    ntr['toolu_NOPE']\n"
+                                           "except KeyError as e:\n" "    print(str(e))\n"))
+                                 "tN/iM"))))
+    (it "describe() labels each id with the coordinate the transcript shows"
+        (let [own (:python-context (ep/create-python-context {}))]
+          (ep/set-python-binding!
+            own
+            (symbol "__vis_native_result_index__")
+            (fn []
+              [{"id" "toolu_A" "scope" "t7/i3" "tool" "grep" "gist" "26 hits"}]))
+          (expect (str/includes? (run own
+                                      (str "for line in ntr.describe(ids=['toolu_A']):\n"
+                                           "    print(line)\n"))
+                                 "toolu_A · t7/i3 · grep · 26 hits"))))))
+
 (defdescribe collect-garbage-gil-budget-test
              ;; Regression: `collect-garbage!` runs in `loop/send!`'s `finally`, i.e. between
              ;; the engine unwinding and `gateway.state/run-turn!` appending the terminal
