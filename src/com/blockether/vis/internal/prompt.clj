@@ -568,8 +568,11 @@
    `:shim/name` is internal identity only; imports and direct globals come from
    their explicit metadata so an id such as `attach` is never presented as a module.
 
-   When shell is active, name only the POSIX compatibility routing. The shell
-   symbol's own docs remain the single authority for its invocation grammar."
+   The process surface is stated either way. With shell active, name only the POSIX
+   compatibility routing — the shell symbol's own docs remain the single authority
+   for its invocation grammar. With shell OFF, say plainly that `subprocess` /
+   `os.system` / `os.popen` are disabled and disallowed: silence read as an invitation
+   to try, and the attempt only surfaced as an opaque spawn failure."
   [active-extensions]
   (let
     [shims
@@ -593,24 +596,28 @@
      auto-imports
      (str/join "`, `" env-python/AUTO_IMPORTED_PYTHON_NAMES)]
 
-    (prompt-block "sandbox-shims"
-                  (str "Auto-imported by `python_execution` (no `import`): `"
-                       auto-imports
-                       "`."
-                       (when (seq shim-imports)
-                         (str "\nPreinstalled shim modules (no pip; import before use and alias in "
-                              "the same block, e.g. `import numpy as np`; `np`/`pd` are never "
-                              "auto-created): `"
-                              (str/join "`, `" shim-imports)
-                              "`."))
-                       (when (seq shim-globals)
-                         (str "\nPrebound shim globals (use directly; never import them): `"
-                              (str/join "`, `" shim-globals)
-                              "`."))
-                       (when shell?
-                         (str
-                           "\n`subprocess`, `os.system`, and `os.popen` route through the active "
-                           "`shell` tool; use that tool's authoritative contract for calls."))))))
+    (prompt-block
+      "sandbox-shims"
+      (str "Auto-imported by `python_execution` (no `import`): `"
+           auto-imports
+           "`."
+           (when (seq shim-imports)
+             (str "\nPreinstalled shim modules (no pip; import before use and alias in "
+                  "the same block, e.g. `import numpy as np`; `np`/`pd` are never "
+                  "auto-created): `"
+                  (str/join "`, `" shim-imports)
+                  "`."))
+           (when (seq shim-globals)
+             (str "\nPrebound shim globals (use directly; never import them): `"
+                  (str/join "`, `" shim-globals)
+                  "`."))
+           (if shell?
+             (str "\n`subprocess`, `os.system`, and `os.popen` route through the active "
+                  "`shell` tool; use that tool's authoritative contract for calls.")
+             (str "\nShell commands are DISABLED in this sandbox: there is no `shell` tool, and "
+                  "`subprocess`, `os.system`, and `os.popen` are NOT allowed — every spawn "
+                  "attempt raises. No external process can run here, so use the native tools "
+                  "instead of looking for a way around it."))))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime

@@ -179,43 +179,51 @@
                   ;; op `wait`), never the tool-local prohibition.
                   "`time.sleep`" "`asyncio.sleep`" "poll in Python"]]
         (expect (not (str/includes? text surplus))))))
-  (it "advertises exact model-facing Python capabilities, never internal shim ids"
-      (let
-        [shims [{:shim/name "attach"
-                 :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments"
-                                "vis_read_attachment" "vis_reinspect_attachment"]}
-                {:shim/name "fonttools" :shim/imports ["brotli" "fontTools"]}
-                {:shim/name "numpy" :shim/imports ["numpy"]}
-                {:shim/name "pil" :shim/imports ["PIL"]}
-                {:shim/name "tzdata" :shim/imports ["zoneinfo"]}]]
-        (with-redefs [extension/sandbox-shims (constantly shims)]
-          (let [text (#'prompt/sandbox-shims-prompt-block nil)]
-            (expect (< (count text) 1200))
-            (expect (not (str/includes? text "Not supported:")))
-            (expect (not (str/includes? text "apropos")))
-            (expect (not (str/includes? text "doc(name)")))
-            (expect (str/includes? text "Auto-imported by `python_execution`"))
-            (expect (str/includes? text "Preinstalled shim modules"))
-            (expect (str/includes? text "import numpy as np"))
-            (expect (str/includes? text "never auto-created"))
-            (doseq [module ["PIL" "brotli" "fontTools" "numpy" "zoneinfo"]]
-              (expect (str/includes? text (str "`" module "`"))))
-            (expect (str/includes? text "Prebound shim globals"))
-            (doseq
-              [global ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_read_attachment"
-                       "vis_reinspect_attachment"]]
-              (expect (str/includes? text (str "`" global "`"))))
-            (expect (not (str/includes? text "`attach`")))
-            ;; No shell layer active ⇒ no shell sentence.
-            (expect (not (str/includes? text "subprocess")))
-            (doseq [name env-python/AUTO_IMPORTED_PYTHON_NAMES]
-              (expect (str/includes? text (str "`" name "`"))))))))
+  (it
+    "advertises exact model-facing Python capabilities, never internal shim ids"
+    (let
+      [shims [{:shim/name "attach"
+               :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments"
+                              "vis_read_attachment" "vis_reinspect_attachment"]}
+              {:shim/name "fonttools" :shim/imports ["brotli" "fontTools"]}
+              {:shim/name "numpy" :shim/imports ["numpy"]} {:shim/name "pil" :shim/imports ["PIL"]}
+              {:shim/name "tzdata" :shim/imports ["zoneinfo"]}]]
+      (with-redefs [extension/sandbox-shims (constantly shims)]
+        (let [text (#'prompt/sandbox-shims-prompt-block nil)]
+          (expect (< (count text) 1200))
+          (expect (not (str/includes? text "Not supported:")))
+          (expect (not (str/includes? text "apropos")))
+          (expect (not (str/includes? text "doc(name)")))
+          (expect (str/includes? text "Auto-imported by `python_execution`"))
+          (expect (str/includes? text "Preinstalled shim modules"))
+          (expect (str/includes? text "import numpy as np"))
+          (expect (str/includes? text "never auto-created"))
+          (doseq [module ["PIL" "brotli" "fontTools" "numpy" "zoneinfo"]]
+            (expect (str/includes? text (str "`" module "`"))))
+          (expect (str/includes? text "Prebound shim globals"))
+          (doseq
+            [global ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_read_attachment"
+                     "vis_reinspect_attachment"]]
+            (expect (str/includes? text (str "`" global "`"))))
+          (expect (not (str/includes? text "`attach`")))
+          ;; With no shell layer active the block must SAY the process surface is
+          ;; gone: silence read as "maybe try `subprocess`", and every attempt then
+          ;; died on an opaque spawn failure instead of being ruled out up front.
+          (expect (str/includes? text "Shell commands are DISABLED"))
+          (expect (str/includes? text "NOT allowed"))
+          (expect (str/includes? text "No external process can run here"))
+          (doseq [banned ["subprocess" "os.system" "os.popen"]]
+            (expect (str/includes? text banned)))
+          (expect (not (str/includes? text "route through the active")))
+          (doseq [name env-python/AUTO_IMPORTED_PYTHON_NAMES]
+            (expect (str/includes? text (str "`" name "`"))))))))
   (it "names POSIX routing without duplicating the shell contract"
       ;; Invocation syntax belongs to the shell symbol docs; this supplemental
       ;; block only exposes otherwise-undiscoverable compatibility routing.
       (let [text (#'prompt/sandbox-shims-prompt-block [{:ext/name "foundation-shell"}])]
         (expect (< (count text) 1500))
         (expect (str/includes? text "active `shell` tool"))
+        (expect (not (str/includes? text "DISABLED")))
         (expect (str/includes? text "subprocess"))
         (expect (str/includes? text "os.system"))
         (expect (str/includes? text "os.popen"))
