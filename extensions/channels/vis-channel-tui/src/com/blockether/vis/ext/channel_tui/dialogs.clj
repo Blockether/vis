@@ -4113,9 +4113,11 @@
 
    `region` is already in `tr/run!` geometry (`:left`, `:inner-w`, `:hint-row`,
    `:text-w`, `:min-row`); the band floors itself under the row list so the rows
-   it is about stay painted above it."
+   it is about stay painted above it. It NEVER wipes them: the settings list is
+   the context the band is about, exactly what magit keeps visible behind a
+   popup."
   [^TerminalScreen screen g region spec]
-  (:action (tr/run! (transient-host screen g) (assoc region :clear-above? true) spec)))
+  (:action (tr/run! (transient-host screen g) region spec)))
 
 (defn- activate-settings-row!
   [^TerminalScreen screen g region values callbacks row]

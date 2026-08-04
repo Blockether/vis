@@ -1639,3 +1639,73 @@
                      (expect (= false @start-called?))
                      (expect (str/includes? (str @message) "api_key_command"))))))
 
+;; ── Regression (user report): "when I open the fucking providers and click on
+;; active providers the transient is hiding the full render of the fucking
+;; settings" ─────────────────────────────────────────────────────────────────
+;; Enter on a provider row ran its magit band with `:clear-above? true`, so the
+;; band wiped EVERY row from the settings list's top down: the Settings frame
+;; was an empty box with one popup floating in it, sidebar rail included. A band
+;; is magit chrome — the buffer it is about stays painted above it.
+(defn- settings-provider-band-frames
+  "Drive Settings (parked on Providers) → Enter on the provider row, off a fixed
+   config so the capture never touches the machine's own providers or gateway."
+  [^long cols ^long rows]
+  (with-redefs
+    [vis/load-config
+     (constantly
+       {:providers [{:id :openai-codex}] :default-provider "openai-codex" :default-model "gpt-5"})
+
+     vis/authenticated-preset-providers
+     (constantly [])
+
+     provider/gateway-provider-status-safe
+     (constantly nil)]
+
+    (let
+      [res (cap/capture! {:cols cols
+                          :rows rows
+                          :keys [:enter :esc :esc]
+                          :paint!
+                          (fn [{:keys [screen]}]
+                            (dlg/settings-dialog!
+                              screen
+                              {}
+                              {:focus-section "Providers"
+                               :provider-transient
+                               (fn [{:keys [g region provider-id]}]
+                                 (provider/provider-transient! screen g region provider-id))}))})]
+      (when-let [t (:error res)]
+        (throw t))
+      (mapv #(cap/frame-text res %) (range (count (:frames res)))))))
+
+(defdescribe settings-provider-transient-keeps-settings-visible-test
+             (it "paints the provider band INSIDE a Settings frame that still shows its own rows"
+                 (let
+                   [frames
+                    (settings-provider-band-frames 100 30)
+
+                    band
+                    (first (filter #(str/includes? % "openai-codex — actions") frames))]
+
+                   (expect (some? band))
+                   ;; The band is there …
+                   (expect (str/includes? band "Set as Default..."))
+                   ;; … and so is the Settings frame it lives in: title, sidebar
+                   ;; rail and the rows above the band, none of them wiped. The
+                   ;; rail is the tell — it starts on the list's own top row, so
+                   ;; a band that erased the pane erased it too.
+                   (expect (str/includes? band "Settings"))
+                   (expect (str/includes? band "Terminal UI"))
+                   ;; Still ONE dialog on screen, never a second box.
+                   (expect (= 1 (count (re-seq #"✕" band))))))
+             (it "restores the whole settings list when the band closes"
+                 (let
+                   [frames
+                    (settings-provider-band-frames 100 30)
+
+                    final
+                    (last frames)]
+
+                   (expect (str/includes? final "── Providers"))
+                   (expect (str/includes? final "openai-codex"))
+                   (expect (not (str/includes? final "— actions"))))))

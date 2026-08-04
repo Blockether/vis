@@ -1088,17 +1088,22 @@
                 (conj {:title "Commands" :items commands}))})))
 
 (defn- run-transient!
-  "Embed ONE transient (`tr/run!`) INSIDE the provider dialog's own frame: same
-   box, same hint row, no second window. Nothing in this dialog is a flag, so the
-   spec needs no option reader."
-  [^TerminalScreen screen g {:keys [left inner-w hint-row text-w min-row]} title spec]
+  "Embed ONE transient (`tr/run!`) INSIDE the caller's own frame: same box, same
+   hint row, no second window. Nothing in this dialog is a flag, so the spec needs
+   no option reader.
+
+   `:clear-above?` is the CALLER's call and rides in on `region`: a fixed-height
+   band leaves the host's content painted above it (magit), and only a host that
+   pages bands of different heights — the model picker — owns the rows from
+   `:min-row` down."
+  [^TerminalScreen screen g {:keys [left inner-w hint-row text-w min-row clear-above?]} title spec]
   (tr/run! (dlg/transient-host screen g)
            {:left left
             :inner-w inner-w
             :hint-row hint-row
             :text-w text-w
             :min-row min-row
-            :clear-above? true}
+            :clear-above? (boolean clear-above?)}
            (assoc spec :title title)))
 
 (defn- run-model-transient!
@@ -1118,8 +1123,14 @@
        (str (vis/display-label (:id provider)) " — models")
 
        picked
-       (:action
-         (run-transient! screen g geom title (model-transient-spec entries page marks page-size)))]
+       (:action (run-transient! screen
+                                g
+                                ;; Pages differ in height: this popup owns every row from
+                                ;; `:min-row` down, so a shorter page cannot leave the
+                                ;; previous one's rows stranded above it.
+                                (assoc geom :clear-above? true)
+                                title
+                                (model-transient-spec entries page marks page-size)))]
 
       (cond (nil? picked) nil
             (= picked :show-all) (recur (build-model-list provider preferred true) 0)
