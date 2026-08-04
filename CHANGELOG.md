@@ -7,6 +7,356 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.28] - 2026-08-04
+
+### Changed
+- Release v0.1.28
+- Serve the installer and the vis-agent command as release assets
+- Crown the start menu with the Blockether yellow
+- Keep the start menu reading parked drafts when the menu is re-anchored
+- Ship a dark-theme vis logo and un-matte the transparent marks
+- Fix numpy and PIL sandbox shim gaps for image work
+- Take the keyboard down before the attachment sheet
+- Delete a session without waiting on its live teardown
+- Point the design-shots section at cap/shot!
+- Make TUI screenshots one call and paint italic and underline like a terminal
+- Build the OAuth file refresher lazily so its lock path is the user's
+- Re-anchor the start menu on resize instead of closing it
+- Fix disclosure copy targets landing one row above the painted body
+- Photograph where the Blockether yellow goes on the start menu
+- Read the environment at runtime, not at native-image build time
+- Give every machine its own coloured rail in the sessions list
+- Give every commit on main its own CI run
+- Rasterize a bold run as bold, not as the mono face's only weight
+- Never cancel a CI run for the commit already on main
+- Select the runtime an update names
+- Invert the vis-table card header onto its own dark band
+- Clone the dev checkout on main when there is none
+- Separate machines in the sessions list with air and a banner
+- Keep the vis-table card's row bands inside the frame
+- Dress the vis-table card as a sheet: muted rules, banded head, zebra rows
+- Prove the canvas flush beats reflection, not a stopwatch
+- Float sessions holding unsent work and keep their attachments
+- Offer none authentication in the paramiko shim SSH server
+- Make the urllib3 shim a package, not one flat module
+- Lighten the live badge to a green FILL, not the green ink
+- Rasterize captured TUI frames in Clojure, in the theme's own colours
+- Report the inspected session's turn and form-level failures
+- Ignore Wrangler local dev state
+- Give the live count the unread badge's filled block, in green
+- Refresh the companion incremental build info
+- Record svar 0.7.100 in the dependency audit
+- Judge the PIL pixel-read budget by canvas ratio, not wall clock
+- Report the real cause when a lazy Python shim fails to import
+- Render a vis-table preview as one stretched card
+- Pin ruff at 0.3.4, whose reported version is the released one
+- Cross-validate the vis-table pipeline on the TUI
+- Cap a turn whose provider never answered at a tight first-output ceiling
+- Stop cancel from settling a live turn's durable row
+- Keep attached CSV rows out of model context and rebuild the grid
+- Fail a Python lint/format target that holds no Python
+- Bracket the live count in a scope chip
+- Name the publisher's relay by default on the gateway too
+- Let the scope strip own the fleet's live and unread counts
+- Let a device name the relay that sealed its grant
+- Add ruled-grid and cell-inspector table design proposals
+- Reformat the bs4 shim with ruff
+- Count the files a Python lint read, not the ones with findings
+- Show unread as the filled badge, not a bare number
+- Report rows changed from sqlite3 executemany
+- Make the urllib3 shim match urllib3 2.x behaviour
+- Render tables through a vendored python-tabulate
+- Page the CSV table viewer instead of filtering it
+- Show a chip's live count as a coloured (N)
+- Drop unresolvable fault locations from Clojure test results
+- Keep an Android device Google only disliked one message from
+- Decide a notification's size before a provider does
+- Add a vis-table design gallery variant
+- Name the relay a machine chose, and say so when it refuses one
+- Make the requests and httpx shims behave like the real clients
+- Ask a stumbling relay twice and never hand a grant to cleartext
+- Fetch the relay healthcheck URL the workflow was given
+- Register through the relay when a machine holds no push key
+- Expose httpx.Response.elapsed in the sandbox shim
+- Price strict tools by the provider's real grammar slots
+- Render attached CSV as an interactive table in TUI and companion
+- Grant the relay workflow only what a deploy needs
+- Bound the relay's request body and never leak a stack trace
+- Stream iterable request bodies instead of form-encoding them
+- Correct the APNs environment-retry comment for a stateless relay
+- Seal the relay's grants and delete its database
+- Meter the relay's public routes before they can cost anything
+- Deploy the relay from CI on every commit that touches it
+- Relay push through a grant so a gateway needs no signing key
+- Size the fleet scope chips to the app control scale
+- Keep sessions with unsent messages in the companion list as dirty rows
+- Accept a label caption on vis_attach and vis_attach_bytes
+- Constrain sampling of the tools whose payload can be mis-serialized
+- Document red-then-green regression discipline and link regression tests to their issues
+- Document that APNs and FCM credentials bind to the app build
+- Report companion search as a fleet question
+- Make struct_patch `match` a sub-expression selector under every locator
+- Organize companion sessions by machine
+- Keep a timed-out Python block's output and budget HTTP evals
+- Derive per-tool strict sampling from the wire schema
+- Add companion design gallery for screenshotted UI proposals
+- Keep enforceable schema constraints on the model-facing wire
+- Detect awaitables by type so BeautifulSoup survives auto-settle
+- Name the sending gateway in every push alert
+- Accept a scheme-less gateway address in the connect form
+- Paint authored line breaks in the companion thinking card
+- Correct the tool-schema docstring: nothing re-validates inbound input
+- Run the container gateway on the JVM instead of the native binary
+- Keep a shell command's own line structure in the COMMAND card
+- Coerce a stringified patch edits batch instead of refusing it
+- Keep tool-authored blank lines inside op-card sections
+- Enforce queue retraction at the single queued-turn writer
+- Run settings MCP and provider verbs as magit transients
+- Render a pending git call with the finished card's renderers
+- Coerce reversed and non-positive cat windows instead of failing the read
+- Make the TUI queue mirror survive repeats, cancels and acks
+- Pin the Character/codePointAt registration every YAML read needs
+- Render a running native call with the finished card's own renderer
+- Name the offending cat range window in the rejection message
+- Correct the queue-mirror identity docstring for optimistic rows
+- Show a queued TUI submission the instant it is sent
+- Extract the magit transient into an embeddable component
+- Key the live render cache on a running call's display fields
+- Render a running native call as its own op-card
+- Guard TUI submissions in flight against double queueing
+- Move providers into TUI Settings
+- Carry native input on every pending tool-call block
+- Pin svar 0.7.99 so provider responses are never interned
+- Default TUI frame renders to the bundled JetBrains Mono
+- Pass the requested font family through the PIL shim bridge
+- Detect a dead GraalPy context by asking it, not by matching error text
+- Cap rendered TUI frame PNGs at 1024px per side
+- Heal Python extension symbols whose context was torn down
+- Pin svar 0.7.98 so tool arguments are never interned
+- Narrow the tool-call door to model drift and extension EDN
+- Bind the session environment for Python hook callbacks
+- Record the measured cost of dropping builder swap and heap limits
+- Measure the wire image cap on the base64 payload
+- Render TUI capture frames legibly and under a 2000px cap
+- Stamp every Python sandbox shim with __file__ and __version__
+- Pin svar 0.7.97 for strings-only tool arguments
+- Drop launcher-owned runtime and update commands from the binary
+- Guarantee every wire image is measured under the pixel ceiling
+- Normalize svar tool calls to strings at one engine door
+- Cap wire image dimensions so many-image requests survive
+- Pin the owned source checkout instead of cloning it
+- Cross the PIL draw bridge once per run and convert rasters without reflection
+- Glue the magit transient band to the dialog's bottom chrome
+- Pin that a tapped notification lands on its session screen
+- Batch PIL draw ops into one cdylib call
+- Open the session a tapped notification is about after a cold start
+- Stringify keyword tool-argument values at the svar edge
+- Pin the status-bar padding of the chrome-less session screen
+- Batch PIL shim drawing through one live imaging image
+- Keep companion chrome when a notification opens a session
+- Anchor magit transient band to its own hint bar
+- Fall back to any healthy container engine in release-native
+- Carry the vis-agent command through a source update
+- Accept bare runtime words in vis-agent update
+- Document Python layout-read warnings and venv interpreter resolution
+- Never prompt for a credential the machine mints itself
+- release: update release notes for v0.1.27
+
+### Package changes
+
+#### com.blockether/vis
+- Release v0.1.28 (95469bf91)
+- Serve the installer and the vis-agent command as release assets (e1f106241)
+- Crown the start menu with the Blockether yellow (49ccf1b15)
+- Keep the start menu reading parked drafts when the menu is re-anchored (18eadb087)
+- Ship a dark-theme vis logo and un-matte the transparent marks (ec8343973)
+- Fix numpy and PIL sandbox shim gaps for image work (5d1944e16)
+- Take the keyboard down before the attachment sheet (8f2a0f339)
+- Delete a session without waiting on its live teardown (7d90486fb)
+- Point the design-shots section at cap/shot! (d45ddf0e0)
+- Make TUI screenshots one call and paint italic and underline like a terminal (367bbe19b)
+- Build the OAuth file refresher lazily so its lock path is the user's (0ff2630a3)
+- Re-anchor the start menu on resize instead of closing it (a859de278)
+- Photograph where the Blockether yellow goes on the start menu (19416e983)
+- Read the environment at runtime, not at native-image build time (0d980d92c)
+- Give every machine its own coloured rail in the sessions list (e8b2b563e)
+- Give every commit on main its own CI run (e819e86c4)
+- Never cancel a CI run for the commit already on main (451fa1e36)
+- Select the runtime an update names (a09ee8b9c)
+- Clone the dev checkout on main when there is none (3f0f26627)
+- Separate machines in the sessions list with air and a banner (ed538a7a4)
+- Prove the canvas flush beats reflection, not a stopwatch (0bf4e7d20)
+- Float sessions holding unsent work and keep their attachments (563738cdd)
+- Offer none authentication in the paramiko shim SSH server (ca2d8e1b0)
+- Make the urllib3 shim a package, not one flat module (297543cf0)
+- Lighten the live badge to a green FILL, not the green ink (86575fd5e)
+- Rasterize captured TUI frames in Clojure, in the theme's own colours (7d62afb1b)
+- Report the inspected session's turn and form-level failures (9f700957a)
+- Ignore Wrangler local dev state (d05b62c20)
+- Give the live count the unread badge's filled block, in green (6480d32d4)
+- Refresh the companion incremental build info (0cdb59d82)
+- Record svar 0.7.100 in the dependency audit (6b7b4cbaa)
+- Judge the PIL pixel-read budget by canvas ratio, not wall clock (9641dffef)
+- Report the real cause when a lazy Python shim fails to import (a60ade92e)
+- Pin ruff at 0.3.4, whose reported version is the released one (36d8e805b)
+- Cap a turn whose provider never answered at a tight first-output ceiling (6060ebdcc)
+- Stop cancel from settling a live turn's durable row (0a92426f7)
+- Keep attached CSV rows out of model context and rebuild the grid (0e4242f92)
+- Bracket the live count in a scope chip (afa1480a1)
+- Name the publisher's relay by default on the gateway too (774e9b99e)
+- Let the scope strip own the fleet's live and unread counts (31c4bb444)
+- Let a device name the relay that sealed its grant (7a87cbf8f)
+- Add ruled-grid and cell-inspector table design proposals (8781c07cf)
+- Reformat the bs4 shim with ruff (161430165)
+- Show unread as the filled badge, not a bare number (3abd1b858)
+- Report rows changed from sqlite3 executemany (de25ca3f3)
+- Make the urllib3 shim match urllib3 2.x behaviour (6c0f57375)
+- Render tables through a vendored python-tabulate (943f7b74b)
+- Page the CSV table viewer instead of filtering it (faf5f94ec)
+- Show a chip's live count as a coloured (N) (5086b22cd)
+- Keep an Android device Google only disliked one message from (9c803eff8)
+- Decide a notification's size before a provider does (4a3d96cff)
+- Add a vis-table design gallery variant (6500d3d2e)
+- Name the relay a machine chose, and say so when it refuses one (1e938b352)
+- Make the requests and httpx shims behave like the real clients (fe5175e4b)
+- Ask a stumbling relay twice and never hand a grant to cleartext (63b849b87)
+- Fetch the relay healthcheck URL the workflow was given (300444b66)
+- Register through the relay when a machine holds no push key (8f0d4a259)
+- Expose httpx.Response.elapsed in the sandbox shim (ea0f30b75)
+- Price strict tools by the provider's real grammar slots (b6e72492c)
+- Render attached CSV as an interactive table in TUI and companion (6ea932a46)
+- Grant the relay workflow only what a deploy needs (f39021e51)
+- Bound the relay's request body and never leak a stack trace (84bd31f12)
+- Stream iterable request bodies instead of form-encoding them (94970f570)
+- Correct the APNs environment-retry comment for a stateless relay (e19c030d7)
+- Seal the relay's grants and delete its database (1bdd8f5bd)
+- Meter the relay's public routes before they can cost anything (a821eedb8)
+- Deploy the relay from CI on every commit that touches it (56fe51321)
+- Relay push through a grant so a gateway needs no signing key (e2b8afa2d)
+- Size the fleet scope chips to the app control scale (33479369c)
+- Keep sessions with unsent messages in the companion list as dirty rows (052ac305b)
+- Accept a label caption on vis_attach and vis_attach_bytes (063e9fac0)
+- Constrain sampling of the tools whose payload can be mis-serialized (b0b8699e5)
+- Document red-then-green regression discipline and link regression tests to their issues (28c3efb05)
+- Document that APNs and FCM credentials bind to the app build (21d1e8ba3)
+- Report companion search as a fleet question (ab5bc6be4)
+- Make struct_patch `match` a sub-expression selector under every locator (6d78ec191)
+- Organize companion sessions by machine (ea200ee24)
+- Keep a timed-out Python block's output and budget HTTP evals (7bc2c93e1)
+- Derive per-tool strict sampling from the wire schema (14d11f638)
+- Add companion design gallery for screenshotted UI proposals (8412114d8)
+- Keep enforceable schema constraints on the model-facing wire (4b82fb470)
+- Detect awaitables by type so BeautifulSoup survives auto-settle (4d21cb772)
+- Name the sending gateway in every push alert (db80d9ad4)
+- Accept a scheme-less gateway address in the connect form (a29819910)
+- Paint authored line breaks in the companion thinking card (25988a469)
+- Correct the tool-schema docstring: nothing re-validates inbound input (2537cc54b)
+- Run the container gateway on the JVM instead of the native binary (bc473e2d1)
+- Keep a shell command's own line structure in the COMMAND card (966352609)
+- Coerce a stringified patch edits batch instead of refusing it (81730582e)
+- Render a pending git call with the finished card's renderers (436cc17b0)
+- Coerce reversed and non-positive cat windows instead of failing the read (d4e1c0c1f)
+- Pin the Character/codePointAt registration every YAML read needs (39acd8439)
+- Render a running native call with the finished card's own renderer (42dec7b04)
+- Name the offending cat range window in the rejection message (bd36a7bfd)
+- Render a running native call as its own op-card (d39ddf82b)
+- Carry native input on every pending tool-call block (f4aafdc17)
+- Pin svar 0.7.99 so provider responses are never interned (cf3e00bca)
+- Default TUI frame renders to the bundled JetBrains Mono (8b379d1f1)
+- Pass the requested font family through the PIL shim bridge (c591fd622)
+- Detect a dead GraalPy context by asking it, not by matching error text (15df749f7)
+- Heal Python extension symbols whose context was torn down (a1654168c)
+- Pin svar 0.7.98 so tool arguments are never interned (640085960)
+- Narrow the tool-call door to model drift and extension EDN (7a5b76538)
+- Bind the session environment for Python hook callbacks (133de48cc)
+- Record the measured cost of dropping builder swap and heap limits (c13bb7fb9)
+- Measure the wire image cap on the base64 payload (0dfa76363)
+- Stamp every Python sandbox shim with __file__ and __version__ (a176541f4)
+- Pin svar 0.7.97 for strings-only tool arguments (a8443d0d9)
+- Drop launcher-owned runtime and update commands from the binary (555a52d75)
+- Guarantee every wire image is measured under the pixel ceiling (9782a139f)
+- Normalize svar tool calls to strings at one engine door (583c359e8)
+- Cap wire image dimensions so many-image requests survive (5b8d5df2f)
+- Pin the owned source checkout instead of cloning it (bf42529be)
+- Cross the PIL draw bridge once per run and convert rasters without reflection (75f894a5a)
+- Glue the magit transient band to the dialog's bottom chrome (b12b18a4c)
+- Pin that a tapped notification lands on its session screen (dab963288)
+- Batch PIL draw ops into one cdylib call (ea08babc6)
+- Open the session a tapped notification is about after a cold start (71ecc2a93)
+- Stringify keyword tool-argument values at the svar edge (8b2363d15)
+- Pin the status-bar padding of the chrome-less session screen (dc86aa54a)
+- Batch PIL shim drawing through one live imaging image (9715dde2b)
+- Keep companion chrome when a notification opens a session (bc36b82a9)
+- Fall back to any healthy container engine in release-native (27d4e9be1)
+- Carry the vis-agent command through a source update (69f2c71d8)
+- Accept bare runtime words in vis-agent update (271f5f91f)
+- Document Python layout-read warnings and venv interpreter resolution (031d08cb5)
+- Never prompt for a credential the machine mints itself (543df0972)
+- release: update release notes for v0.1.27 (14db65ea6)
+
+#### com.blockether/vis-channel-tui
+- Make TUI screenshots one call and paint italic and underline like a terminal (367bbe19b)
+- Fix disclosure copy targets landing one row above the painted body (c2cd40d3b)
+- Read the environment at runtime, not at native-image build time (0d980d92c)
+- Rasterize a bold run as bold, not as the mono face's only weight (46590f686)
+- Invert the vis-table card header onto its own dark band (52c059fab)
+- Keep the vis-table card's row bands inside the frame (0e3fafe24)
+- Dress the vis-table card as a sheet: muted rules, banded head, zebra rows (e5e38270e)
+- Rasterize captured TUI frames in Clojure, in the theme's own colours (7d62afb1b)
+- Render a vis-table preview as one stretched card (7d21dbd90)
+- Cross-validate the vis-table pipeline on the TUI (a53af2392)
+- Page the CSV table viewer instead of filtering it (faf5f94ec)
+- Render attached CSV as an interactive table in TUI and companion (6ea932a46)
+- Keep tool-authored blank lines inside op-card sections (f0207533b)
+- Enforce queue retraction at the single queued-turn writer (62941ef45)
+- Run settings MCP and provider verbs as magit transients (da6cf30f7)
+- Make the TUI queue mirror survive repeats, cancels and acks (d7f582c78)
+- Render a running native call with the finished card's own renderer (42dec7b04)
+- Correct the queue-mirror identity docstring for optimistic rows (6fb63767b)
+- Show a queued TUI submission the instant it is sent (a9324f3f9)
+- Extract the magit transient into an embeddable component (cf9327a9e)
+- Key the live render cache on a running call's display fields (15ef8f46d)
+- Render a running native call as its own op-card (d39ddf82b)
+- Guard TUI submissions in flight against double queueing (67ee89fe7)
+- Move providers into TUI Settings (b789941f4)
+- Default TUI frame renders to the bundled JetBrains Mono (8b379d1f1)
+- Pass the requested font family through the PIL shim bridge (c591fd622)
+- Cap rendered TUI frame PNGs at 1024px per side (396c0090d)
+- Render TUI capture frames legibly and under a 2000px cap (7a9eb30be)
+- Glue the magit transient band to the dialog's bottom chrome (b12b18a4c)
+- Anchor magit transient band to its own hint bar (dcc6d81ec)
+- Never prompt for a credential the machine mints itself (543df0972)
+
+#### com.blockether/vis-foundation-voice
+- Read the environment at runtime, not at native-image build time (0d980d92c)
+
+#### com.blockether/vis-language-clojure
+- Read the environment at runtime, not at native-image build time (0d980d92c)
+- Drop unresolvable fault locations from Clojure test results (bfb63ad9f)
+
+#### com.blockether/vis-language-python
+- Fail a Python lint/format target that holds no Python (6dc17beb0)
+- Count the files a Python lint read, not the ones with findings (09383af1c)
+
+#### com.blockether/vis-provider-anthropic
+- Build the OAuth file refresher lazily so its lock path is the user's (0ff2630a3)
+- Read the environment at runtime, not at native-image build time (0d980d92c)
+
+#### com.blockether/vis-provider-github-copilot
+- Read the environment at runtime, not at native-image build time (0d980d92c)
+
+#### com.blockether/vis-provider-openai-codex
+- Build the OAuth file refresher lazily so its lock path is the user's (0ff2630a3)
+- Read the environment at runtime, not at native-image build time (0d980d92c)
+
+#### com.blockether/vis-provider-openrouter
+- Read the environment at runtime, not at native-image build time (0d980d92c)
+
+#### com.blockether/vis-provider-zai
+- Read the environment at runtime, not at native-image build time (0d980d92c)
+
+
+
 ## [v0.1.27] - 2026-08-03
 
 ### Changed
@@ -3023,7 +3373,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.27...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.28...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -3046,3 +3396,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.25]: https://github.com/Blockether/vis/releases/tag/v0.1.25
 [v0.1.26]: https://github.com/Blockether/vis/releases/tag/v0.1.26
 [v0.1.27]: https://github.com/Blockether/vis/releases/tag/v0.1.27
+[v0.1.28]: https://github.com/Blockether/vis/releases/tag/v0.1.28
