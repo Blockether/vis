@@ -1551,8 +1551,12 @@
            (cancellation/cancellation-token)
 
            stall
-           (atom
-             {:phase :provider-call :started? true :last-ms (- (System/currentTimeMillis) 60000)})]
+           ;; `:produced?` — this turn STREAMED and then went quiet, which is what
+           ;; the full stall ceiling is for.
+           (atom {:phase :provider-call
+                  :started? true
+                  :produced? true
+                  :last-ms (- (System/currentTimeMillis) 60000)})]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
                ;; await INSIDE with-redefs so the async watchdog thread reads the
@@ -1582,6 +1586,7 @@
            stall
            (atom {:phase :iteration-final
                   :started? true
+                  :produced? true
                   :last-ms (- (System/currentTimeMillis) 60000)})]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
@@ -1662,6 +1667,9 @@
                   state/CANCEL_TERMINAL_GRACE_MS
                   50
 
+                  state/SILENT_CANCEL_TERMINAL_GRACE_MS
+                  50
+
                   state/fail-orphaned-turn!
                   (fn [_sid _tid _token reason]
                     (reset! landed reason)
@@ -1701,6 +1709,104 @@
                  (expect (false? (await-cancel token 1500))))
                (expect (nil? (:stalled? @stall)))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
+    (it "counts the bare :provider-call marker as a lifecycle stamp, not output"
+        ;; Regression: the engine emits `{:phase :provider-call}` the INSTANT the
+        ;; request goes out, and the stall state counted it as model output. A
+        ;; turn the provider never answered therefore looked like a producing one
+        ;; and kept both the full cancel grace and the full stall ceiling.
+        (let [marker (advance {} {:phase :provider-call :iteration 0 :started-at-ms 1} 100)]
+          (expect (= {:phase :provider-call :last-ms 100} marker))
+          (expect (true? (:produced? (advance marker {:phase :content :delta "hi"} 200))))))
+    (it "force-cancels a started turn the provider never answered at all"
+        ;; Regression: a turn sat 3m47s with zero iterations, holding the whole
+        ;; session queue, because silence from the very first byte was budgeted
+        ;; like a stream that died mid-answer (`TURN_STALL_TIMEOUT_MS`, 6min).
+        (let
+          [sid
+           (str "stall-" (java.util.UUID/randomUUID))
+
+           tid
+           "t1"
+
+           token
+           (cancellation/cancellation-token)
+
+           stall
+           (atom
+             {:phase :provider-call :started? true :last-ms (- (System/currentTimeMillis) 60000)})]
+
+          (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
+               (with-redefs
+                 [state/TURN_FIRST_OUTPUT_TIMEOUT_MS
+                  150
+
+                  state/TURN_STALL_TIMEOUT_MS
+                  300000]
+
+                 (watchdog sid tid token stall)
+                 (expect (true? (await-cancel token 4000))))
+               (expect (true? (:stalled? @stall)))
+               (expect (str/includes? (str (:stall-detail @stall)) "no output at all"))
+               (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
+    (it "holds a turn that already streamed output to the full stall ceiling"
+        (let
+          [sid
+           (str "stall-" (java.util.UUID/randomUUID))
+
+           tid
+           "t1"
+
+           token
+           (cancellation/cancellation-token)
+
+           stall
+           (atom {:phase :provider-call
+                  :started? true
+                  :produced? true
+                  :last-ms (- (System/currentTimeMillis) 60000)})]
+
+          (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
+               (with-redefs
+                 [state/TURN_FIRST_OUTPUT_TIMEOUT_MS
+                  150
+
+                  state/TURN_STALL_TIMEOUT_MS
+                  300000]
+
+                 (watchdog sid tid token stall)
+                 (expect (false? (await-cancel token 1200))))
+               (expect (nil? (:stalled? @stall)))
+               (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
+    (it "never applies the first-output ceiling to a turn queueing for a permit"
+        ;; Waiting behind another session's turn for the process-wide execution
+        ;; permit is queueing, not a wedged provider.
+        (let
+          [sid
+           (str "stall-" (java.util.UUID/randomUUID))
+
+           tid
+           "t1"
+
+           token
+           (cancellation/cancellation-token)
+
+           stall
+           (atom {:phase :awaiting-permit
+                  :started? true
+                  :last-ms (- (System/currentTimeMillis) 60000)})]
+
+          (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
+               (with-redefs
+                 [state/TURN_FIRST_OUTPUT_TIMEOUT_MS
+                  150
+
+                  state/TURN_STALL_TIMEOUT_MS
+                  300000]
+
+                 (watchdog sid tid token stall)
+                 (expect (false? (await-cancel token 1200))))
+               (expect (nil? (:stalled? @stall)))
+               (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     (it "guards a turn whose record is still running after the pin moved on"
         (let
           [sid
@@ -1710,8 +1816,10 @@
            (cancellation/cancellation-token)
 
            stall
-           (atom
-             {:phase :provider-call :started? true :last-ms (- (System/currentTimeMillis) 60000)})]
+           (atom {:phase :provider-call
+                  :started? true
+                  :produced? true
+                  :last-ms (- (System/currentTimeMillis) 60000)})]
 
           (try (swap! registry assoc
                  sid

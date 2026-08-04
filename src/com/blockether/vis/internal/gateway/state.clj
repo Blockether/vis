@@ -1977,6 +1977,37 @@
    event, so the turn never finishes and the queued backlog never drains."
   (* 6 60 1000))
 
+(def ^:private TURN_FIRST_OUTPUT_TIMEOUT_MS
+  "Tight ceiling for a STARTED turn that has produced nothing at all: no token,
+   no reasoning, no tool call — only the `:provider-call` marker saying the
+   request left the building.
+
+   [[TURN_STALL_TIMEOUT_MS]] is sized for a stream that died MID-answer and sits
+   deliberately above svar's 5-minute semantic watchdog. Applying that same budget
+   to silence from the very first byte is what let the reported turn sit 3m47s
+   with zero iterations, freezing the session queue behind it while the user
+   watched a spinner. A streaming provider that has not emitted one byte in two
+   minutes is wedged, not slow — and the resulting failure is TRANSIENT, so the
+   queue re-runs the message on backoff and an over-eager trip costs one retry."
+  (* 2 60 1000))
+
+(def ^:private first-output-exempt-phases
+  "Phases where a started turn may legitimately still owe its first output:
+   queueing for the process-wide execution permit behind another session's turn is
+   waiting, not wedging. Such a turn is still held to the full
+   [[TURN_STALL_TIMEOUT_MS]]."
+  #{:awaiting-permit})
+
+(defn- stall-detail-text
+  "What the watchdog actually observed, recorded by it on the shared `stall` atom.
+   The failure the user reads must name the real idle time and phase — quoting
+   [[TURN_STALL_TIMEOUT_MS]] told a turn killed at the first-output ceiling that it
+   had waited six minutes."
+  [stall]
+  (or (:stall-detail (some-> stall
+                             deref))
+      (str "no output for " TURN_STALL_TIMEOUT_MS "ms")))
+
 (def ^:private stall-exempt-phases
   "Phases where a running turn may legitimately produce NO chunk for a long time
    — a slow shell-run / Python-eval / native tool. The stall watchdog NEVER
@@ -1986,17 +2017,37 @@
    never sit idle for `TURN_STALL_TIMEOUT_MS`."
   #{:form-start :form-result :tool-start :shell-run :shell-bg})
 
+(def ^:private stall-lifecycle-phases
+  "Phases whose chunks are engine LIFECYCLE markers, not model output. `loop`
+   emits `{:phase :provider-call}` the moment it STARTS the call, so counting it
+   as output made a turn that never received one token look like a producing turn:
+   it kept the full cancel grace and the full [[TURN_STALL_TIMEOUT_MS]] ceiling.
+   The marker still moves the idle deadline — the wait legitimately begins there —
+   it just no longer claims the model said anything."
+  #{:provider-call})
+
 (defn- advance-turn-stall-state
   "Records the live phase, but moves the deadline only for real progress.
    Streaming callbacks carry cumulative text plus `:delta`; an empty delta is
-   an SSE heartbeat/no-op and must not keep a wedged turn alive."
+   an SSE heartbeat/no-op and must not keep a wedged turn alive.
+
+   `:produced?` is stricter than the deadline: only actual model output sets it,
+   never a [[stall-lifecycle-phases]] marker. It is the flag that separates a turn
+   the provider is answering slowly from one it never answered at all."
   [state chunk now]
-  (let [meaningful? (or (not (contains? chunk :delta)) (seq (:delta chunk)) (:done? chunk))]
+  (let
+    [meaningful?
+     (or (not (contains? chunk :delta)) (seq (:delta chunk)) (:done? chunk))
+
+     output?
+     (and meaningful? (not (contains? stall-lifecycle-phases (:phase chunk))))]
+
     (cond-> (assoc state :phase (:phase chunk))
       meaningful?
-      (assoc :last-ms
-        now :produced?
-        true))))
+      (assoc :last-ms now)
+
+      output?
+      (assoc :produced? true))))
 
 
 (defonce ^:private turn-terminal-claims
@@ -2190,70 +2241,85 @@
    — until a terminal exists for it.
 
    While the turn still owes a terminal ([[turn-watchdog-live?]]) it polls the
-   shared `stall` atom (`run-turn!` records the live phase plus the last
-   meaningful-progress wall-clock; the worker stamps `:started?` the moment its
-   body begins). Two ceilings:
+   shared `stall` atom (`run-turn!` records the live phase, the last
+   meaningful-progress wall-clock, and whether the model has produced anything at
+   all; the worker stamps `:started?` the moment its body begins). Three ceilings:
 
      - a turn whose worker body NEVER began trips after
        [[TURN_LAUNCH_TIMEOUT_MS]] — the orphaned launch;
-     - a started turn with no meaningful progress in a non-exempt phase trips
-       after [[TURN_STALL_TIMEOUT_MS]] — the stalled provider stream.
+     - a started turn that has produced NO output yet trips after
+       [[TURN_FIRST_OUTPUT_TIMEOUT_MS]] — the provider that never answered;
+     - a started turn that streamed and then went quiet in a non-exempt phase
+       trips after [[TURN_STALL_TIMEOUT_MS]] — the stalled provider stream.
 
    Tripping cancels the token, closing the in-flight stream so the blocked worker
    unwinds and the queue drains. A wedged worker can ignore `cancel!` forever
    (uninterruptible native code) — and a launch that never produced a worker has
    nothing to unwind at all — so the watchdog then GUARANTEES the terminal: if
-   nobody landed one within [[CANCEL_TERMINAL_GRACE_MS]] it lands `turn.failed`
-   itself. Every `turn.started` therefore ends in a terminal event.
+   nobody landed one within this turn's [[cancel-terminal-grace-ms]] it lands
+   `turn.failed` itself. Every `turn.started` therefore ends in a terminal event.
 
    Self-terminating: exits as soon as the turn no longer owes a terminal."
   [sid tid cancel-token stall]
   (let
-    [check-ms (-> (min (long TURN_STALL_TIMEOUT_MS) (long TURN_LAUNCH_TIMEOUT_MS))
+    [check-ms (-> (min (long TURN_STALL_TIMEOUT_MS)
+                       (long TURN_FIRST_OUTPUT_TIMEOUT_MS)
+                       (long TURN_LAUNCH_TIMEOUT_MS))
                   (quot 8)
                   (max 1000)
                   (min 20000))]
-    (doto (Thread.
-            ^Runnable
-            (fn []
-              (try (loop []
+    (doto
+      (Thread.
+        ^Runnable
+        (fn []
+          (try
+            (loop []
 
-                     (Thread/sleep check-ms)
-                     (when (turn-watchdog-live? sid tid cancel-token)
-                       (let
-                         [{:keys [phase last-ms started?]} @stall
-                          idle-ms (- (System/currentTimeMillis) (long (or last-ms 0)))
-                          tripped? (if started?
-                                     (and (not (contains? stall-exempt-phases phase))
-                                          (>= idle-ms (long TURN_STALL_TIMEOUT_MS)))
-                                     (>= idle-ms (long TURN_LAUNCH_TIMEOUT_MS)))]
+              (Thread/sleep check-ms)
+              (when (turn-watchdog-live? sid tid cancel-token)
+                (let
+                  [{:keys [phase last-ms started? produced?]} @stall
+                   idle-ms (- (System/currentTimeMillis) (long (or last-ms 0)))
+                   ;; Nothing from the model yet — and not merely queueing
+                   ;; for the execution permit.
+                   silent?
+                   (and started? (not produced?) (not (contains? first-output-exempt-phases phase)))
+                   ceiling (long (cond (not started?) TURN_LAUNCH_TIMEOUT_MS
+                                       silent? TURN_FIRST_OUTPUT_TIMEOUT_MS
+                                       :else TURN_STALL_TIMEOUT_MS))
+                   tripped? (if started?
+                              (and (not (contains? stall-exempt-phases phase)) (>= idle-ms ceiling))
+                              (>= idle-ms ceiling))]
 
-                         (if tripped?
-                           (let
-                             [reason (if started?
-                                       (str "provider stream stalled: no output for " idle-ms
-                                            "ms in phase " phase)
-                                       (str "turn never started running: no worker activity for "
-                                            idle-ms
-                                            "ms"))]
-                             (tel/log! :warn
-                                       ["gateway: turn made no progress — force-cancelling" tid
-                                        reason])
-                             (swap! stall assoc :stalled? true)
-                             (cancellation/cancel! cancel-token
-                                                   (if started? :stall-watchdog :launch-watchdog))
-                             ;; Last line of defence: the cancel normally makes the
-                             ;; worker (or the cancel hook) land the terminal. When
-                             ;; neither can, land it here — a `turn.started` with no
-                             ;; terminal is what wedges a session forever.
-                             (Thread/sleep (long CANCEL_TERMINAL_GRACE_MS))
-                             (when (turn-watchdog-live? sid tid cancel-token)
-                               (fail-orphaned-turn! sid tid cancel-token reason)))
-                           (recur)))))
-                   (catch InterruptedException _ nil)
-                   (catch Throwable t
-                     (tel/log! :error ["gateway: turn watchdog failed" tid (ex-message t)]))))
-            (str "gateway-turn-stall-watchdog-" tid))
+                  (if tripped?
+                    (let
+                      [detail (cond (not started?) (str "no worker activity for " idle-ms "ms")
+                                    silent? (str "no output at all for " idle-ms
+                                                 "ms since the turn started, in phase " phase)
+                                    :else (str "no output for " idle-ms "ms in phase " phase))
+                       reason (if started?
+                                (str "provider stream stalled: " detail)
+                                (str "turn never started running: " detail))]
+
+                      (tel/log! :warn
+                                ["gateway: turn made no progress — force-cancelling" tid reason])
+                      (swap! stall assoc :stalled? true :stall-detail detail)
+                      (cancellation/cancel! cancel-token
+                                            (if started? :stall-watchdog :launch-watchdog))
+                      ;; Last line of defence: the cancel normally makes the
+                      ;; worker (or the cancel hook) land the terminal. When
+                      ;; neither can, land it here — a `turn.started` with no
+                      ;; terminal is what wedges a session forever. A turn
+                      ;; that produced nothing has nothing to flush, so it
+                      ;; gets the short grace.
+                      (Thread/sleep (cancel-terminal-grace-ms stall))
+                      (when (turn-watchdog-live? sid tid cancel-token)
+                        (fail-orphaned-turn! sid tid cancel-token reason)))
+                    (recur)))))
+            (catch InterruptedException _ nil)
+            (catch Throwable t
+              (tel/log! :error ["gateway: turn watchdog failed" tid (ex-message t)]))))
+        (str "gateway-turn-stall-watchdog-" tid))
       (.setDaemon true)
       (.start))
     nil))
@@ -2419,7 +2485,7 @@
                (and (= "failed" status) (empty? content-blocks)) "turn_failed")
 
          failure-text
-         (cond stalled? (str "Provider stream stalled: no output for " TURN_STALL_TIMEOUT_MS "ms")
+         (cond stalled? (str "Provider stream stalled: " (stall-detail-text stall))
                failure-code (or (some-> (:error result)
                                         str
                                         str/trim
@@ -2526,9 +2592,8 @@
 
            err
            (cond user-cancel? nil
-                 stalled? (str "provider stream stalled: no output for "
-                               TURN_STALL_TIMEOUT_MS
-                               "ms (force-cancelled)")
+                 stalled?
+                 (str "provider stream stalled: " (stall-detail-text stall) " (force-cancelled)")
                  :else (ex-message t))]
 
           (if user-cancel?
