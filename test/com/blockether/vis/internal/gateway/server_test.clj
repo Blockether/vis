@@ -1576,3 +1576,57 @@
               (let [resp ((rv 'remove-provider-handler) {:path-params {:provider-id "ghost"}})]
                 (is (= 200 (:status resp)))
                 (is (false? (get (wire/parse-json (:body resp)) "is_removed")))))))))))
+
+(deftest delete-project-blast-radius-is-explicit-on-the-wire-test
+  ;; The default DELETE only ever scattered members back to project-less, and no
+  ;; client could remove a project together with its sessions. Recursion is
+  ;; OPT-IN and answers with the ids, because the caller has to prune local rows,
+  ;; snapshots and unsent drafts without racing a re-read.
+  (let
+    [pid
+     (java.util.UUID/randomUUID)
+
+     sids
+     [(str (java.util.UUID/randomUUID)) (str (java.util.UUID/randomUUID))]
+
+     calls
+     (atom [])
+
+     stub
+     (fn
+       ([p] (swap! calls conj [p nil])
+        {:project_id (str p) :deleted_session_ids [] :session_count 0})
+       ([p opts] (swap! calls conj [p opts])
+        {:project_id (str p) :deleted_session_ids sids :session_count (count sids)}))
+
+     handler
+     (rv 'delete-project-handler)]
+
+    (with-redefs-fn {#'state/delete-project! stub}
+      (fn []
+        (testing "a plain DELETE stays the body-less 204 scatter"
+          (let [response (handler {:path-params {:pid (str pid)} :query-params {}})]
+            (is (= 204 (:status response)))
+            (is (nil? (:body response)))
+            (is (= [[pid nil]] @calls))))
+        (reset! calls [])
+        (testing "is_recursive=true is 200 and reports every deleted session id"
+          (let
+            [response
+             (handler {:path-params {:pid (str pid)} :query-params {"is_recursive" "true"}})
+
+             body
+             (wire/parse-json (:body response))]
+
+            (is (= 200 (:status response)))
+            (is (= [[pid {:is-recursive true}]] @calls))
+            (is (= sids (get body "deleted_session_ids")))
+            (is (= 2 (get body "session_count")))
+            (is (= (str pid) (get body "project_id")))))
+        (reset! calls [])
+        (testing "a malformed project id is a 404, never a silent empty recursion"
+          (let
+            [response (handler {:path-params {:pid "not-a-uuid"}
+                                :query-params {"is_recursive" "true"}})]
+            (is (= 404 (:status response)))
+            (is (empty? @calls))))))))

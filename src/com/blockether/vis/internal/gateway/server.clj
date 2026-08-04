@@ -1897,11 +1897,28 @@
                   (project-404 pid-str)))))
 
 (defn- delete-project-handler
-  "DELETE /v1/projects/:pid — member sessions scatter back to project-less."
+  "DELETE /v1/projects/:pid[?is_recursive=true] — by default member sessions
+   scatter back to project-less (204, body-less).
+
+   `is_recursive=true` DELETES every member session (and its draft clones) before
+   dropping the project row, and answers 200 with `{project_id,
+   deleted_session_ids, session_count}`: a client needs those ids to prune local
+   state (rows, snapshots, unsent drafts) without racing a re-read."
   [request]
-  (some-> (path-pid request)
-          state/delete-project!)
-  {:status 204 :headers {} :body nil})
+  (let
+    [pid-str
+     (get-in request [:path-params :pid])
+
+     pid
+     (path-pid request)]
+
+    (if (= "true" (get-in request [:query-params "is_recursive"]))
+      (if pid
+        (json-response (state/delete-project! pid {:is-recursive true}))
+        (project-404 pid-str))
+      (do (some-> pid
+                  state/delete-project!)
+          {:status 204 :headers {} :body nil}))))
 
 (defn- reorder-project-sessions-handler
   "PATCH /v1/projects/:pid/sessions {order:[sid…]} — persist the manual order of

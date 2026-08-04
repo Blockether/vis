@@ -2666,24 +2666,49 @@
                                    :stalled? stalled?
                                    :retry-after-ms (failure-retry-after-ms {:throwable t})})))))))
 
+(def ^:private WATCHDOG_CANCEL_REASONS
+  "Cancel reasons that mean \"nobody ever ran this turn\", never \"the user stopped
+   it\": both are [[start-turn-stall-watchdog!]] force-cancelling a turn that made
+   no progress."
+  #{:stall-watchdog :launch-watchdog})
+
 (defn- cancel-waiting-turn!
   "Land a turn cancelled while waiting for the global execution permit without
    constructing a Python environment. Also the backstop's landing path.
 
    Claims the turn's ONE terminal, so it is a no-op when the worker already
-   landed (or is about to land) its own."
+   landed (or is about to land) its own.
+
+   WHO fired the token decides WHICH terminal this is, because a force-cancel has
+   TWO landing paths racing on the same grace: the watchdog's own
+   [[fail-orphaned-turn!]] and this one, reached through the backstop or the
+   launch's cancel hook. Landing a watchdog cancel as `turn.cancelled` told
+   [[after-turn-terminal!]] the turn had ended cancelled but neither stalled nor
+   stopped by the user, which drains nothing, re-queues nothing and pauses
+   nothing: the request was silently dropped and the whole backlog stayed `queued`
+   behind a session with no current turn, so re-sending only added another row
+   that could never run. A stall is a failure — delegate it."
   [sid tid cancel-token]
-  (when (claim-turn-terminal! sid tid cancel-token)
-    (finish-turn!
-      sid
-      tid
-      {:status "cancelled" :role "assistant" :content [] :completed_at (System/currentTimeMillis)})
-    (append-event! sid "turn.cancelled" (turn-terminal-payload sid tid "cancelled"))
-    (emit-context-updated! sid)
-    (after-turn-terminal!
-      sid
-      tid
-      {:failed? false :transient? false :cancel-token cancel-token :stalled? false})))
+  (if-let [why (WATCHDOG_CANCEL_REASONS (cancellation/cancel-reason cancel-token))]
+    (fail-orphaned-turn! sid
+                         tid
+                         cancel-token
+                         (if (= :launch-watchdog why)
+                           "turn never started running: force-cancelled with no worker activity"
+                           "provider stream stalled: force-cancelled with no output"))
+    (when (claim-turn-terminal! sid tid cancel-token)
+      (finish-turn! sid
+                    tid
+                    {:status "cancelled"
+                     :role "assistant"
+                     :content []
+                     :completed_at (System/currentTimeMillis)})
+      (append-event! sid "turn.cancelled" (turn-terminal-payload sid tid "cancelled"))
+      (emit-context-updated! sid)
+      (after-turn-terminal!
+        sid
+        tid
+        {:failed? false :transient? false :cancel-token cancel-token :stalled? false}))))
 
 (defn- launch-turn-worker!
   [sid tid request
@@ -2707,6 +2732,25 @@
        ;; which the announcement — or the worker — fails to come into existence.
        _
        (start-turn-stall-watchdog! sid tid cancel-token stall)
+
+       _
+       (append-event! sid
+                      "turn.started"
+                      (cond->
+                        {:turn_id tid
+                         :request (or display-request request)
+                         :display_request display-request
+                         :started_at (or (get-in @registry [sid :turns tid :started_at])
+                                         (System/currentTimeMillis))}
+                        queued?
+                        (assoc :queued? true)
+
+                        (get-in @registry [sid :turns tid :idempotency_key])
+                        (assoc :idempotency_key
+                          (get-in @registry [sid :turns tid :idempotency_key]))
+
+                        (seq attachments)
+                        (assoc :attachments attachments)))
 
        ;; Single-claim ticket for this turn's ONE terminal landing. `turn.started`
        ;; is already on the wire and `:current-turn` already points at `tid`, so
@@ -2733,25 +2777,6 @@
                                  tid
                                  request
                                  {:messages messages
-       _
-       (append-event! sid
-                      "turn.started"
-                      (cond->
-                        {:turn_id tid
-                         :request (or display-request request)
-                         :display_request display-request
-                         :started_at (or (get-in @registry [sid :turns tid :started_at])
-                                         (System/currentTimeMillis))}
-                        queued?
-                        (assoc :queued? true)
-
-                        (get-in @registry [sid :turns tid :idempotency_key])
-                        (assoc :idempotency_key
-                          (get-in @registry [sid :turns tid :idempotency_key]))
-
-                        (seq attachments)
-                        (assoc :attachments attachments)))
-
                                   :model model
                                   :reasoning-default reasoning-default
                                   :cancel-token cancel-token
@@ -3808,6 +3833,18 @@
                (swap! registry assoc-in [sid :turns tid :cancelling_at] (System/currentTimeMillis))
                (some-> (:cancel-token turn)
                        (cancellation/cancel! source))
+               ;; A stop must ALWAYS resolve. Firing the token only unwinds a
+               ;; worker that EXISTS and registered its hook — a turn whose launch
+               ;; never got that far, or whose worker is parked in uninterruptible
+               ;; code, ignored the cancel completely and kept `:current-turn`
+               ;; forever, so Esc did nothing at all and every later message piled
+               ;; up behind a turn nobody was running. Claim-guarded: a no-op the
+               ;; instant a real terminal lands.
+               (start-cancel-terminal-backstop! sid
+                                                tid
+                                                (:cancel-token turn)
+                                                CANCEL_TERMINAL_GRACE_MS
+                                                cancel-waiting-turn!)
                {:status "cancelling"})))))
 
 (defn cancel-current-turn!
@@ -3833,18 +3870,6 @@
    RejectedExecutionException surfaced as a bogus \"Provider unavailable\".
    Best-effort; returns the number of turns signalled."
   []
-               ;; A stop must ALWAYS resolve. Firing the token only unwinds a
-               ;; worker that EXISTS and registered its hook — a turn whose launch
-               ;; never got that far, or whose worker is parked in uninterruptible
-               ;; code, ignored the cancel completely and kept `:current-turn`
-               ;; forever, so Esc did nothing at all and every later message piled
-               ;; up behind a turn nobody was running. Claim-guarded: a no-op the
-               ;; instant a real terminal lands.
-               (start-cancel-terminal-backstop! sid
-                                                tid
-                                                (:cancel-token turn)
-                                                CANCEL_TERMINAL_GRACE_MS
-                                                cancel-waiting-turn!)
   (reduce (fn [n sess]
             (reduce (fn [n turn]
                       (if (and (= "running" (:status turn)) (:cancel-token turn))
@@ -4387,11 +4412,28 @@
 
 (defn update-project! [pid opts] (project-wire (lp/update-project! pid opts)))
 
+(declare close-session!)
+
 (defn delete-project!
-  "Delete a project; its member sessions scatter back to project-less (never deleted)."
-  [pid]
-  (lp/delete-project! pid)
-  true)
+  "Delete a project. By DEFAULT its member sessions scatter back to project-less
+   (conversations are never deleted).
+
+   With `{:is-recursive true}` every member session is DELETED first via
+   `close-session!` (draft clones trashed, session tree dropped, runtime torn
+   down off-thread) and only then is the project row removed — sessions first, so
+   an interrupted teardown leaves a project holding survivors rather than
+   orphaned sessions. Real workspace directories are never touched.
+
+   Membership comes from the DB (`lp/project-session-ids`), not from any client's
+   filtered list. Returns `{:project_id … :deleted_session_ids […]
+   :session_count n}`; the ids let a caller prune local state without racing a
+   re-read."
+  ([pid] (delete-project! pid nil))
+  ([pid {:keys [is-recursive]}]
+   (let [sids (if is-recursive (lp/project-session-ids pid) [])]
+     (run! close-session! sids)
+     (lp/delete-project! pid)
+     {:project_id (str pid) :deleted_session_ids (mapv str sids) :session_count (count sids)})))
 
 (defn assign-project!
   "Assign a session to `pid` (nil clears / removes from project). Returns the refreshed soul."

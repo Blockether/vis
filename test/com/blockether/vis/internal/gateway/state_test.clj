@@ -3311,3 +3311,104 @@
                  (#'state/append-event! sid "turn.started" {:turn_id tid})))
              (expect (= [true false false] @published))
              (finally (swap! registry dissoc sid))))))
+
+(defdescribe
+  stall-force-cancel-requeues-test
+  ;; Regression, issue #105: a stall force-cancel has TWO landing paths racing on
+  ;; the same grace, and only the watchdog's own knew it was a stall. When the
+  ;; backstop (or the launch's cancel hook) won, the turn landed `turn.cancelled`
+  ;; — cancelled but neither stalled nor stopped by the user — which drains
+  ;; nothing, re-queues nothing and pauses nothing: the request was silently
+  ;; dropped and every later message sat `queued` behind a session with no current
+  ;; turn, permanently, however many times it was re-sent.
+  (it
+    "lands a stall-class failure and re-queues the message the turn never ran"
+    (let
+      [sid
+       (str "stall-backstop-" (java.util.UUID/randomUUID))
+
+       registry
+       @#'state/registry
+
+       token
+       (cancellation/cancellation-token)
+
+       events
+       (atom [])
+
+       launched
+       (atom [])]
+
+      (cancellation/cancel! token :stall-watchdog)
+      (try (swap! registry assoc
+             sid
+             {:next-seq 0
+              :current-turn "t1"
+              :turn-order ["t1" "t2"]
+              :turns {"t1" {:turn_id "t1" :status "running" :request "one" :cancel-token token}
+                      "t2" {:turn_id "t2" :status "queued" :request "two" :queued_at 2}}})
+           (with-redefs-fn {#'state/append-event! (fn [_sid type _payload & _opts]
+                                                    (swap! events conj type)
+                                                    nil)
+                            #'state/emit-context-updated! (fn [_sid]
+                                                            nil)
+                            #'state/schedule-auto-resume! (fn [& _]
+                                                            nil)
+                            #'state/launch-turn-worker! (fn [_sid tid & _]
+                                                          (swap! launched conj tid)
+                                                          nil)}
+             (fn []
+               (#'state/cancel-waiting-turn! sid "t1" token)))
+           ;; a watchdog force-cancel is a FAILURE, never a user stop
+           (expect (= ["turn.failed" "queue.paused"] @events))
+           ;; and the message it never ran is back on the queue for the retry
+           (expect (= "queued" (get-in @registry [sid :turns "t1" :status])))
+           (expect (= "one" (get-in @registry [sid :turns "t1" :request])))
+           (expect (some? (get-in @registry [sid :queue-paused])))
+           ;; the backlog is HELD for the auto-resume, not drained past t1
+           (expect (= [] @launched))
+           (expect (= "queued" (get-in @registry [sid :turns "t2" :status])))
+           (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid "t1"))))))
+
+;; Recursive project delete. Until now DELETE of a project removed the row and
+;; scattered its member sessions back to project-less, so there was no way at all
+;; to remove a project AND its conversations — the one endpoint that sounded
+;; right did the opposite of what a user asking to "remove the project" means.
+(defdescribe
+  recursive-project-delete-test
+  (let
+    [pid
+     (java.util.UUID/randomUUID)
+
+     a
+     (java.util.UUID/randomUUID)
+
+     b
+     (java.util.UUID/randomUUID)
+
+     exec
+     (fn [opts]
+       (let [log (atom [])]
+         (with-redefs
+           [lp/project-session-ids (fn [p]
+                                     (if (= pid p) [a b] []))
+            state/close-session! (fn [sid]
+                                   (swap! log conj [:session sid]))
+            lp/delete-project! (fn [p]
+                                 (swap! log conj [:project p]))]
+
+           {:result (state/delete-project! pid opts) :log @log})))]
+
+    (it "keeps the scatter contract by default: the row goes, not one conversation"
+        (let [{:keys [result log]} (exec nil)]
+          (expect (= [[:project pid]] log))
+          (expect (= 0 (:session_count result)))
+          (expect (= [] (:deleted_session_ids result)))))
+    (it "deletes every member session BEFORE the project row, and names the ids"
+        ;; Sessions first: an interrupted teardown must leave a project
+        ;; holding survivors, never orphaned sessions with a dead parent.
+        (let [{:keys [result log]} (exec {:is-recursive true})]
+          (expect (= [[:session a] [:session b] [:project pid]] log))
+          (expect (= [(str a) (str b)] (:deleted_session_ids result)))
+          (expect (= 2 (:session_count result)))
+          (expect (= (str pid) (:project_id result)))))))

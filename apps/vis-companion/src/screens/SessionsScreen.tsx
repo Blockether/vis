@@ -55,6 +55,7 @@ import {
   machineKey,
   machineLabel,
   newSessionTarget,
+  projectDelete,
   reconcileMachines,
   scopedConns,
   scopedMachines,
@@ -228,18 +229,17 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   const [namePrompt, setNamePrompt] = useState<{ clean: boolean } | null>(null);
   const [draftLabel, setDraftLabel] = useState('');
   const pollStartedAt = useRef<number | null>(null);
-  // Swipe-revealed row actions. One dialog serves both: renaming asks for the new
-  // title, deleting asks for consent — a destructive tap two pixels from a thumb
-  // rest position must never be one-way.
-  const [rowAction, setRowAction] = useState<{
-    mode: 'rename' | 'delete';
-    session: Session;
-    /** The machine that OWNS the row — never whichever one is active. */
-    conn: GatewayConn;
-  } | null>(null);
+  // Swipe-revealed row actions, plus the group header's project delete. One dialog
+  // serves all three: renaming asks for the new title, both deletes ask for consent
+  // — a destructive tap two pixels from a thumb rest position must never be one-way.
+  const [rowAction, setRowAction] = useState<RowAction | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Fan-out progress. Deleting a group that is not a project row is one request per
+  // session, and forty of them behind a motionless 'Deleting...' is indistinguishable
+  // from a hang.
+  const [actionProgress, setActionProgress] = useState<{ done: number; total: number } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const refreshAnchorRef = useRef<ListAnchor | null>(null);
   // The reading position is put back at most once per mount, and never after the
@@ -755,6 +755,17 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
     setActionError(null);
   }, []);
 
+  // The unit is the group ON THIS MACHINE, never "this project everywhere": the same
+  // repo checked out on two machines is two projects and two deletes.
+  const startProjectDelete = useCallback(
+    (project: string, sessions: Session[], conn: GatewayConn) => {
+      setRowAction({ mode: 'project', project, sessions, conn });
+      setActionError(null);
+      setActionProgress(null);
+    },
+    [],
+  );
+
   // Dismissable even mid-request. A delete is already on the wire and cannot be
   // taken back, but the SCREEN must always come back: a confirm dialog that
   // refuses to close until the gateway answers reads as a frozen app (and with
@@ -762,10 +773,18 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   function closeRowAction() {
     setRowAction(null);
     setActionError(null);
+    setActionProgress(null);
   }
 
   async function commitRowAction() {
     if (!rowAction) return;
+    const api = clientFor(rowAction.conn);
+    // The words that made a row dirty die with it: a draft message kept under a
+    // session id that no longer exists is unreachable forever.
+    const forgetDrafts = (ids: string[]) => {
+      for (const sid of ids) clearDraftMessage(draftMessageKey(api.base, sid));
+      if (ids.length > 0) void flushDraftMessages();
+    };
     const title = renameDraft.trim();
     if (rowAction.mode === 'rename' && !title) {
       setActionError('A session name cannot be empty.');
@@ -774,14 +793,38 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
     setActionBusy(true);
     setActionError(null);
     try {
-      const api = clientFor(rowAction.conn);
       if (rowAction.mode === 'rename') await api.renameSession(rowAction.session.id, title);
-      else {
+      else if (rowAction.mode === 'delete') {
         await api.deleteSession(rowAction.session.id);
-        // The words that made this row dirty die with it: a draft message kept
-        // under a session id that no longer exists is unreachable forever.
-        clearDraftMessage(draftMessageKey(api.base, rowAction.session.id));
-        void flushDraftMessages();
+        forgetDrafts([rowAction.session.id]);
+      } else {
+        const plan = projectDelete(rowAction.sessions);
+        // One recursive request when a project row owns the whole group: the gateway
+        // deletes the members it knows about, which is more than this list paints.
+        if (plan.kind === 'project') forgetDrafts(await api.deleteProject(plan.projectId));
+        else {
+          // No project row to hand the group to, so the fan-out IS the delete. It
+          // keeps going past a failure and says what survived, instead of stopping
+          // half way with nothing said.
+          const gone: string[] = [];
+          let failed = 0;
+          setActionProgress({ done: 0, total: plan.sessionIds.length });
+          for (const sid of plan.sessionIds) {
+            try {
+              await api.deleteSession(sid);
+              gone.push(sid);
+            } catch {
+              failed += 1;
+            }
+            setActionProgress({ done: gone.length + failed, total: plan.sessionIds.length });
+          }
+          forgetDrafts(gone);
+          if (failed > 0) {
+            setActionError(`${failed} of ${plan.sessionIds.length} sessions could not be deleted.`);
+            await load();
+            return;
+          }
+        }
       }
       setRowAction(null);
       await load();
@@ -789,8 +832,11 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
       setActionError((cause as Error).message);
     } finally {
       setActionBusy(false);
+      setActionProgress(null);
     }
   }
+
+  const rowCopy = rowAction ? rowActionCopy(rowAction, machineLabel(rowAction.conn)) : null;
 
   const pageSize = useSessionsPerPage();
 
@@ -1165,6 +1211,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                           onOpen={onOpen}
                           onRename={startRename}
                           onDelete={startDelete}
+                          onDeleteProject={startProjectDelete}
                           expanded={expanded.has(`${key}\u0000${project}`)}
                           forceExpand={forceExpand}
                           onToggle={toggleProject}
@@ -1185,7 +1232,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
         </footer>
       </div>
 
-      {rowAction && createPortal(
+      {rowAction && rowCopy && createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]"
           role="presentation"
@@ -1196,15 +1243,9 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
             role="presentation"
             onClick={(event) => event.stopPropagation()}
           >
-            <DialogFrame
-              title={rowAction.mode === 'rename' ? 'Rename session' : 'Delete session'}
-              onClose={closeRowAction}
-            >
+            <DialogFrame title={rowCopy.title} onClose={closeRowAction}>
               <div className="space-y-3 p-4">
-                <p className="truncate font-mono text-meta text-dialog-hint">
-                  {rowAction.session.title?.trim() || 'Untitled session'} ·{' '}
-                  {shortId(rowAction.session.id)}
-                </p>
+                <p className="truncate font-mono text-meta text-dialog-hint">{rowCopy.subject}</p>
                 {rowAction.mode === 'rename' ? (
                   <label className="block">
                     <span className="mb-1 block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
@@ -1222,9 +1263,14 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                     />
                   </label>
                 ) : (
-                  <p className="font-mono text-body text-white">
-                    Delete this session and its transcript from the gateway? This cannot be undone.
-                  </p>
+                  <p className="font-mono text-body text-white">{rowCopy.body}</p>
+                )}
+                {rowCopy.live > 0 && (
+                  <Banner kind="warn">
+                    {rowCopy.live === 1
+                      ? 'One of them is running right now and will be stopped.'
+                      : `${rowCopy.live} of them are running right now and will be stopped.`}
+                  </Banner>
                 )}
                 {actionError && <Banner kind="err">{actionError}</Banner>}
                 <div className="flex justify-end gap-2">
@@ -1232,14 +1278,16 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                     Cancel
                   </Button>
                   <Button
-                    variant={rowAction.mode === 'delete' ? 'danger' : 'solid'}
+                    variant={rowAction.mode === 'rename' ? 'solid' : 'danger'}
                     disabled={actionBusy}
                     onClick={() => void commitRowAction()}
                   >
                     {actionBusy
                       ? rowAction.mode === 'rename'
                         ? 'Saving...'
-                        : 'Deleting...'
+                        : actionProgress
+                          ? `Deleting ${actionProgress.done} of ${actionProgress.total}...`
+                          : 'Deleting...'
                       : rowAction.mode === 'rename'
                         ? 'Save'
                         : 'Delete'}
@@ -1420,6 +1468,46 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   );
 }
 
+/** Rename one row, delete one row, or delete a whole group on ONE machine. */
+type RowAction =
+  | { mode: 'rename'; session: Session; conn: GatewayConn }
+  | { mode: 'delete'; session: Session; conn: GatewayConn }
+  | { mode: 'project'; project: string; sessions: Session[]; conn: GatewayConn };
+
+/**
+ * What the confirm says.
+ *
+ * A group delete states the FULL blast radius: the count is every session in the
+ * group, including the ones `sessionIsListed` hides, and it names the machine —
+ * the same repo on two machines is two groups. It also never claims to delete a
+ * project when the group is only a shared label.
+ */
+function rowActionCopy(
+  action: RowAction,
+  machine: string,
+): { title: string; subject: string; body: string; live: number } {
+  if (action.mode !== 'project') {
+    return {
+      title: action.mode === 'rename' ? 'Rename session' : 'Delete session',
+      subject: `${action.session.title?.trim() || 'Untitled session'} · ${shortId(action.session.id)}`,
+      body: 'Delete this session and its transcript from the gateway? This cannot be undone.',
+      live: action.mode === 'delete' && sessionIsLive(action.session) ? 1 : 0,
+    };
+  }
+  const plan = projectDelete(action.sessions);
+  const count = plan.sessionIds.length;
+  const sessions = `${count} ${count === 1 ? 'session' : 'sessions'}`;
+  return {
+    title: plan.kind === 'project' ? 'Delete project' : 'Delete sessions',
+    subject: `${action.project} · ${machine}`,
+    body:
+      plan.kind === 'project'
+        ? `Delete this project and all ${sessions} in it, with every transcript, from ${machine}? This cannot be undone.`
+        : `Delete all ${sessions} in this group, with every transcript, from ${machine}? They share a workspace but no saved project, so nothing else is removed. This cannot be undone.`,
+    live: action.sessions.filter(sessionIsLive).length,
+  };
+}
+
 // Memoised: a 5.5s poll that changes nothing returns the SAME row objects
 // (`reconcileSessions`), so an unchanged group must not re-render its rows.
 const ProjectGroup = memo(function ProjectGroup({
@@ -1433,6 +1521,7 @@ const ProjectGroup = memo(function ProjectGroup({
   onOpen,
   onRename,
   onDelete,
+  onDeleteProject,
   expanded,
   forceExpand,
   onToggle,
@@ -1450,6 +1539,7 @@ const ProjectGroup = memo(function ProjectGroup({
   onOpen: Props['onOpen'];
   onRename: (session: Session, conn: GatewayConn) => void;
   onDelete: (session: Session, conn: GatewayConn) => void;
+  onDeleteProject: (project: string, sessions: Session[], conn: GatewayConn) => void;
   expanded: boolean;
   forceExpand: boolean;
   onToggle: (groupKey: string) => void;
@@ -1492,12 +1582,12 @@ const ProjectGroup = memo(function ProjectGroup({
 
   return (
     <section className="border-t border-dialog-edge first:border-t-0" aria-label={`${project} sessions`}>
-      <header className="bg-panel-2">
+      <header className="flex items-stretch bg-panel-2">
         <button
           type="button"
           onClick={() => onToggle(groupKey)}
           aria-expanded={isOpen}
-          className="flex min-h-11 w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:px-4"
+          className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:px-4"
         >
           <span className="flex min-w-0 items-center gap-2">
             <span className="shrink-0 font-mono text-ui text-dialog-hint" aria-hidden="true">
@@ -1523,6 +1613,18 @@ const ProjectGroup = memo(function ProjectGroup({
             )}
           </span>
         </button>
+        {/* Gone while a query is live: a group showing 3 of 40 matches must never
+            offer a control that deletes 40. */}
+        {!needle && (
+          <button
+            type="button"
+            onClick={() => onDeleteProject(project, sessions, conn)}
+            aria-label={`Delete ${project} with all ${sessions.length} of its sessions`}
+            className="flex min-h-11 shrink-0 items-center justify-center px-3 font-mono text-ui text-dialog-hint transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none motion-reduce:transition-none sm:px-4"
+          >
+            <span aria-hidden="true">✕</span>
+          </button>
+        )}
       </header>
       {rows.length > 0 && (
         <div className="border-t border-dialog-edge">

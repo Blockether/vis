@@ -1993,6 +1993,32 @@ export class GatewayClient {
   }
 
   /**
+   * Delete a project AND every session in it.
+   *
+   * Plain `DELETE /v1/projects/:pid` only drops the row and scatters its members
+   * to project-less, so the blast radius is explicit on the wire: `is_recursive`
+   * is the destructive one, and it answers with the ids it deleted so the caches
+   * can be pruned here instead of racing a re-read.
+   */
+  async deleteProject(pid: string): Promise<string[]> {
+    const res = await this.request<{ deleted_session_ids?: string[] }>(
+      "DELETE",
+      `/v1/projects/${encodeURIComponent(pid)}?is_recursive=true`,
+    );
+    const ids = res?.deleted_session_ids ?? [];
+    for (const sid of ids) this.forgetSession(sid);
+    const rows = this.cachedSessions();
+    if (rows) {
+      const gone = new Set(ids);
+      writeSnapshot(
+        this.snapshotKey("sessions"),
+        rows.filter((row) => !gone.has(row.id)),
+      );
+    }
+    return ids;
+  }
+
+  /**
    * Rename a session. The gateway echoes the updated meta row, which is written
    * back into BOTH snapshots so the list and the session header repaint from
    * cache with the new title instead of the stale one.

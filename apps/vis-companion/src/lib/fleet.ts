@@ -241,6 +241,33 @@ export function sessionIsListed(session: Session, hasDraftMessage: boolean): boo
 }
 
 /**
+ * What a group-header delete MEANS for the sessions under it.
+ *
+ * The list groups by LABEL, not by project id: a group is a real project row, a
+ * bare workspace root nothing ever named, or the `No project` bucket. Only the
+ * first can be deleted AS a project, and only when every row in it agrees on the
+ * id — a mixed group would claim to delete one project while quietly taking
+ * members of another with it. Everything else is a fan-out over sessions, and
+ * the copy must not promise a project it cannot deliver.
+ *
+ * The ids come from ALL of the group's sessions, never from the painted rows:
+ * `sessionIsListed` hides empty, draft-less sessions, and a delete that stops at
+ * what you can see leaves the invisible ones behind.
+ */
+export type ProjectDelete =
+  | { kind: 'project'; projectId: string; sessionIds: string[] }
+  | { kind: 'sessions'; sessionIds: string[] };
+
+export function projectDelete(sessions: Session[]): ProjectDelete {
+  const sessionIds = sessions.map((session) => session.id);
+  const ids = new Set(sessions.map((session) => session.project_id ?? ''));
+  const projectId = ids.size === 1 ? [...ids][0] : '';
+  return projectId
+    ? { kind: 'project', projectId, sessionIds }
+    : { kind: 'sessions', sessionIds };
+}
+
+/**
  * What the start menu's parked-drafts picker should read, and NOTHING about when.
  *
  * Drafts are repo-scoped and the gateway only lists them through a session living

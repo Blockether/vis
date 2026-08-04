@@ -563,7 +563,16 @@
 
 (defn update-project! [pid opts] (send-json! "PATCH" (str "/v1/projects/" (enc pid)) opts))
 
-(defn delete-project! [pid] (send-json! "DELETE" (str "/v1/projects/" (enc pid))))
+(defn delete-project!
+  "DELETE /v1/projects/:pid. Default: member sessions scatter back to
+   project-less. With `{:is-recursive? true}` every member session is deleted
+   too, and the response names the deleted ids."
+  ([pid] (delete-project! pid nil))
+  ([pid {:keys [is-recursive?]}]
+   (send-json! "DELETE"
+               (cond-> (str "/v1/projects/" (enc pid))
+                 is-recursive?
+                 (str "?is_recursive=true")))))
 
 (defn assign-project!
   "Assign a session to a project (nil clears / removes from project). Returns the soul."

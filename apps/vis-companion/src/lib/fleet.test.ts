@@ -10,6 +10,7 @@ import {
   machineKey,
   machineLabel,
   newSessionTarget,
+  projectDelete,
   reconcileMachines,
   scopedMachines,
   scopeError,
@@ -309,5 +310,45 @@ describe('draftsRead', () => {
     expect(draftsReadKey(draftsRead(machine(studio, null), null))).toBe('wait');
     expect(draftsRead(machine(studio, []), null)).toEqual({ kind: 'none' });
     expect(draftsRead(null, null)).toEqual({ kind: 'none' });
+  });
+});
+
+describe('projectDelete', () => {
+  it('deletes a real project recursively when every row agrees on the id', () => {
+    const rows = [
+      session('a', { project_id: 'p1' }),
+      session('b', { project_id: 'p1' }),
+    ];
+    expect(projectDelete(rows)).toEqual({
+      kind: 'project',
+      projectId: 'p1',
+      sessionIds: ['a', 'b'],
+    });
+  });
+
+  it('never claims a project for a label-only or mixed group', () => {
+    expect(projectDelete([session('a'), session('b')])).toEqual({
+      kind: 'sessions',
+      sessionIds: ['a', 'b'],
+    });
+    expect(
+      projectDelete([session('a', { project_id: 'p1' }), session('b')]),
+    ).toEqual({ kind: 'sessions', sessionIds: ['a', 'b'] });
+    expect(
+      projectDelete([
+        session('a', { project_id: 'p1' }),
+        session('b', { project_id: 'p2' }),
+      ]),
+    ).toEqual({ kind: 'sessions', sessionIds: ['a', 'b'] });
+    expect(projectDelete([])).toEqual({ kind: 'sessions', sessionIds: [] });
+  });
+
+  it('covers the hidden rows too, not just the ones the list paints', () => {
+    const rows = [
+      session('named', { project_id: 'p1' }),
+      { id: 'hidden', title: '', project_id: 'p1' } as Session,
+    ];
+    expect(rows.filter((row) => sessionIsListed(row, false))).toHaveLength(1);
+    expect(projectDelete(rows).sessionIds).toEqual(['named', 'hidden']);
   });
 });
