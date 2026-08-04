@@ -3,8 +3,8 @@
 #
 # It does three things and nothing else:
 #   1. run Vis on the selected runtime,
-#   2. show or persist that selection   (`vis-agent runtime`),
-#   3. update that same runtime         (`vis-agent update`).
+#   2. show that selection              (`vis-agent runtime`),
+#   3. update — and select — a runtime  (`vis-agent update`).
 #
 # Three runtimes, one word each:
 #   native  the released build, downloaded beside this wrapper; a native you
@@ -418,6 +418,7 @@ Usage: vis-agent runtime [show]
          jvm     source pinned to the newest release tag
          dev     a live checkout, tracking its branch
          auto    forget the choice: native if installed, else tagged source
+       This only switches. 'vis-agent update <runtime>' acquires it and selects it.
 EOF
 }
 
@@ -532,7 +533,6 @@ update_source() {
   mkdir -p "$vis_install_dir"
   printf '%s\n' "$ref" > "$managed_ref_file"
   say "source pinned at $ref ($managed_src)"
-  [[ "$(runtime_effective)" == jvm ]] || say "run it with 'vis-agent runtime use jvm'"
 }
 
 # ── update: the vis-agent command itself ─────────────────────────────────────
@@ -578,7 +578,7 @@ clone_dev_checkout() {
            "Check its permissions, or point VIS_DEV_CHECKOUT at a writable path."
   say "cloning $vis_repo_slug into $dev_checkout (dev follows main)"
   git clone --branch main "$vis_repo_url" "$dev_checkout" || exit 1
-  say "dev checkout ready at $dev_checkout on main; the dev runtime uses it on the next launch"
+  say "dev checkout ready at $dev_checkout on main"
 }
 
 update_dev() {
@@ -619,7 +619,7 @@ update_dev() {
     echo "    Then run 'vis-agent update --dev' again." >&2
     exit 1
   }
-  say "checkout updated; the dev runtime uses it on the next launch"
+  say "checkout updated ($dev_checkout)"
 }
 
 # ── update: native runtime ───────────────────────────────────────────────────
@@ -691,7 +691,6 @@ update_native() {
   rm -rf "$unpack" "$archive"
   trap - RETURN
   say "installed launcher + native runtime from $asset"
-  [[ "$(runtime_effective)" == native ]] || say "run it with 'vis-agent runtime use native'"
 }
 
 vis_update_usage() {
@@ -702,7 +701,8 @@ Usage: vis-agent update [native|jvm|dev] [--rebuild] [vX.Y.Z|<sha>]
          jvm           move the source Vis owns onto the newest release tag, or onto a ref you name
          dev           fast-forward your live checkout (git pull --ff-only)
          --rebuild     after a source update, build the native runtime from that source
-       Every runtime word also has a flag form: --native, --jvm, --dev.
+       Every runtime word also has a flag form: --native, --jvm, --dev, and naming
+       one also makes it the default — there is no second command to switch.
        The vis-agent command travels with its runtime: native replaces it from the
        release bundle, jvm from the source it just pinned, and dev mode always runs
        your checkout's own bin/vis-agent.
@@ -711,10 +711,10 @@ EOF
 
 # `update` updates the runtime that is in effect; a flag updates another one.
 vis_do_update() {
-  local target="" rebuild=0 want="" arg
+  local target="" rebuild=0 want="" want_named=0 arg
   for arg in "$@"; do
     case "$arg" in
-      --native|--jvm|--dev) want="${arg#--}" ;;
+      --native|--jvm|--dev) want="${arg#--}"; want_named=1 ;;
       # A bare runtime word is its flag: `update dev` is `update --dev`. Without
       # this, `update dev` fell through to the target case and tried to pin the
       # source Vis owns to a git ref called 'dev'. A runtime already named means
@@ -722,6 +722,7 @@ vis_do_update() {
       native|jvm|dev)
         if [[ -z "$want" ]]; then
           want="$arg"
+          want_named=1
         else
           [[ -z "$target" ]] || die "update: one target at a time, not '$target' and '$arg'"
           target="$arg"
@@ -746,6 +747,7 @@ vis_do_update() {
                                    "Pin source to a commit with: vis-agent update --jvm $target"
     [[ -z "$want" || "$want" == jvm ]] || die "update --$want: '$target' is a git ref; use 'vis-agent update --jvm $target'"
     want=jvm
+    want_named=1
   fi
   [[ -n "$want" ]] || want="$(runtime_effective)"
 
@@ -768,6 +770,15 @@ vis_do_update() {
       update_native "${target:-latest}"
       ;;
   esac
+
+  # Naming a runtime on `update` IS choosing it: one command acquires that
+  # runtime, updates it, and makes it the default — no second `runtime use`
+  # step. An update that names none touches only the runtime already in effect,
+  # so automatic stays automatic.
+  if (( want_named )) && [[ "$(read_state "$vis_runtime_file")" != "$want" ]]; then
+    write_runtime_file "$want"
+    say "runtime is now $want"
+  fi
   exit 0
 }
 

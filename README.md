@@ -73,15 +73,18 @@ Dev mode is the one runtime Vis fetches a checkout for: with nothing at that
 path, `vis-agent update` clones the repository there on `main`.
 
 ```bash
+vis-agent update native|jvm|dev             # acquire it, update it, select it
 vis-agent runtime show
-vis-agent runtime use native|jvm|dev|auto   # persisted default
+vis-agent runtime use native|jvm|dev|auto   # switch only (auto = forget the choice)
 vis-agent --native|--jvm|--dev help         # one launch only
 VIS_RUNTIME=dev vis-agent help              # one process only
 ```
 
 A one-launch flag beats `VIS_RUNTIME`, which beats the persisted default in
 `~/.vis/runtime`. `vis-agent update` updates whichever runtime is in effect —
-the newest release bundle, or the checkout Vis owns moved onto the newest tag.
+the newest release bundle, or the checkout Vis owns moved onto the newest tag —
+and naming a runtime (`vis-agent update dev`) updates that one *and* makes it
+the default, so switching never needs a second command.
 Only `update --dev` follows a moving branch, and any target that is not a
 `vX.Y.Z` release pins the owned source to that git ref. A selected runtime that
 is not installed is an error with the command that fixes it, never a silent

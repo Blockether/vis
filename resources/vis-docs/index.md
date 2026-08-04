@@ -135,8 +135,9 @@ otherwise: the installed native runtime, else JVM source pinned to the newest
 moving branch, and it has to be asked for.
 
 ```bash
+vis-agent update native|jvm|dev             # acquire it, update it, select it
 vis-agent runtime show
-vis-agent runtime use native|jvm|dev|auto   # persisted default (auto = follow releases)
+vis-agent runtime use native|jvm|dev|auto   # switch only (auto = follow releases)
 vis-agent --native|--jvm|--dev help         # one launch only
 VIS_RUNTIME=dev vis-agent help              # one process only
 ```

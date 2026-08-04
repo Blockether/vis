@@ -199,7 +199,8 @@ fi
 
 # ── 2. vis-agent acquires its own runtime ───────────────────────────────────
 # VIS_NO_DEV_CHECKOUT keeps a developer's ~/vis checkout from hijacking the
-# freshly installed wrapper: this run must install into $install_dir.
+# freshly installed wrapper: this run must install into $install_dir. Naming the
+# runtime on `update` also persists it, so there is nothing left to select.
 update=(update)
 if [[ "$runtime" == native ]]; then
   update+=(--native)
@@ -228,8 +229,6 @@ EOF
   fi
   exit 1
 fi
-
-VIS_HOME="$vis_home" "$install_dir/vis-agent" runtime use "$runtime" >/dev/null
 
 if [[ "$runtime" == native ]]; then
   cat <<EOF

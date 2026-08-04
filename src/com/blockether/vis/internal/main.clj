@@ -3853,9 +3853,9 @@
      (help-row "--dev" "Run your live checkout.")
      (help-row "VIS_RUNTIME=native|jvm|dev" "The same choice, for one process.")
      (help-row "vis-agent runtime show" "Name the runtime in effect and who chose it.")
-     (help-row "vis-agent runtime use NAME" "Persist native|jvm|dev|auto as the default.")
-     (help-row "vis-agent update [RUNTIME]" "Update vis-agent + its runtime; default: in effect.")
-     "" "CONFIGURATION" (help-row "~/.vis/config.yml" "Global settings: providers, models, tools.")
+     (help-row "vis-agent runtime use NAME" "Switch to native|jvm|dev|auto without updating.")
+     (help-row "vis-agent update [RUNTIME]" "Update vis-agent + that runtime, and select it.") ""
+     "CONFIGURATION" (help-row "~/.vis/config.yml" "Global settings: providers, models, tools.")
      (help-row "<project>/vis.yml" "Project settings; .vis/config.yml overrides it.")
      (help-row "vis-agent providers status" "Show provider auth and model catalogs.")
      (help-row "vis-agent doctor" "Diagnose config, extensions, stale state.") "" "EXAMPLES"

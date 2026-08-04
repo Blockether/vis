@@ -661,7 +661,28 @@
           (expect (= "" (moving-refs managed-src)))
           (expect (not= 0 (:exit (git! managed-src "checkout" "main"))))
           (expect (str/includes? (:output (run! ["runtime" "show"])) "Pinned at:    v0.1.10"))
-          (finally (delete-tree! root))))))
+          (finally (delete-tree! root)))))
+  ;; Naming a runtime on `update` IS choosing it: one command installs, updates
+  ;; and selects. An update that names nothing must leave the selection alone,
+  ;; so automatic stays automatic.
+  (it "persists the runtime an update names, and leaves automatic alone"
+      (let
+        [{:keys [root vis-home update!]}
+         (tagged-source-fixture)
+
+         runtime-file
+         (io/file vis-home "runtime")]
+
+        (try (io/delete-file runtime-file)
+             (let [{:keys [exit output]} (update! ["update"])]
+               (expect (= 0 exit) output)
+               (expect (not (str/includes? output "runtime is now")) output))
+             (expect (not (.exists runtime-file)))
+             (let [{:keys [exit output]} (update! ["update" "jvm"])]
+               (expect (= 0 exit) output)
+               (expect (str/includes? output "runtime is now jvm") output))
+             (expect (= "jvm" (str/trim (slurp runtime-file))))
+             (finally (delete-tree! root))))))
 
 (defn- dev-checkout-fixture
   "A sandboxed wrapper install plus a throwaway origin whose only branch is
@@ -762,6 +783,18 @@
                (expect (= 0 exit) output)
                (expect (str/includes? output "checkout updated") output))
              (expect (= "two" (slurp (io/file checkout "f"))))
+             (finally (delete-tree! root)))))
+  ;; Regression: `update dev` fetched the checkout and then left you on the old
+  ;; runtime — running Vis from it needed `vis-agent runtime use dev` as a second
+  ;; command. One command is enough.
+  (it "selects the runtime it just updated"
+      (let [{:keys [root vis-home run! dev-env]} (dev-checkout-fixture)]
+        (try (let [{:keys [exit output]} (run! ["update" "dev"] dev-env)]
+               (expect (= 0 exit) output)
+               (expect (str/includes? output "runtime is now dev") output))
+             (expect (= "dev" (str/trim (slurp (io/file vis-home "runtime")))))
+             (expect (str/includes? (:output (run! ["runtime" "show"] dev-env))
+                                    "Runtime:      dev"))
              (finally (delete-tree! root)))))
   (it "points a switch to dev at the command that fetches the checkout"
       (let [{:keys [root checkout run! dev-env]} (dev-checkout-fixture)]

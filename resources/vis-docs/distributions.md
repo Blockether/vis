@@ -4,8 +4,8 @@
 three things and nothing else.
 
 1. run Vis on the selected runtime,
-2. show or persist that selection — `vis-agent runtime`,
-3. update that same runtime — `vis-agent update`.
+2. show that selection — `vis-agent runtime`,
+3. update — and select — a runtime — `vis-agent update`.
 
 There is no second command to learn. The native image is a private sidecar
 called `vis-agent-native` that lives beside the wrapper; it is never installed
@@ -31,8 +31,9 @@ Running a checkout's own `bin/vis-agent` does run that checkout: invoking it
 ## Choosing a runtime
 
 ```bash
+vis-agent update native|jvm|dev             # acquire it, update it, select it
 vis-agent runtime show
-vis-agent runtime use native|jvm|dev|auto   # persisted default (auto = forget it)
+vis-agent runtime use native|jvm|dev|auto   # switch only (auto = forget the choice)
 vis-agent --native|--jvm|--dev help         # this launch only
 VIS_RUNTIME=dev vis-agent help              # this process only
 ```
@@ -42,7 +43,8 @@ Precedence, highest first:
 1. a one-launch flag: `--native`, `--jvm`, `--dev`;
 2. `VIS_RUNTIME=native|jvm|dev` — any other value warns and is ignored, and
    there is no `VIS_RUNTIME=auto`: unset the variable instead;
-3. `~/.vis/runtime`, written by `vis-agent runtime use`;
+3. `~/.vis/runtime`, written by `vis-agent update <runtime>` and by
+   `vis-agent runtime use`;
 4. automatic — follow the releases.
 
 `runtime show` names the winner and who chose it:
@@ -61,7 +63,8 @@ fixes it. The wrapper never silently substitutes another runtime.
 ## Updating
 
 `vis-agent update` updates the runtime that is in effect; a flag updates a
-different one.
+different one. Naming a runtime also makes it the default, so `vis-agent update
+dev` is the whole switch — there is no `runtime use` to follow it with.
 
 | Command | Updates |
 |---|---|
@@ -96,8 +99,8 @@ curl -fsSL https://github.com/Blockether/vis/releases/latest/download/install-vi
 `bin/install-vis-agent` takes `--runtime native|jvm` (default `native`),
 `--version vX.Y.Z|latest`, and `--install-dir PATH` (default `~/.local/bin`,
 added to your shell profile when PATH lacks it). It installs the wrapper and
-then hands off: `vis-agent update` acquires the runtime and `vis-agent runtime
-use` persists the choice. Runtime acquisition therefore always belongs to
+then hands off: `vis-agent update --native|--jvm` acquires that runtime and
+persists the choice in the same command. Runtime acquisition therefore always belongs to
 `vis-agent`, so wrapper and runtime cannot drift apart. `--runtime jvm`
 additionally requires Java 25+, the Clojure CLI, and git.
 
