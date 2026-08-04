@@ -297,6 +297,15 @@
   [^com.googlecode.lanterna.TextColor$RGB bg]
   (mix-color bg text-fg 0.1))
 
+(defn field-resting-bg
+  "Background for a form field the keyboard is NOT in: the field's own paper
+   pulled most of the way back toward the dialog body, so the field still reads
+   as a field while the focused one keeps the full surface. Derived like
+   `zebra-bg` instead of adding a palette token, so a theme this build has never
+   seen recedes correctly too."
+  []
+  (mix-color input-field-bg dialog-bg 0.6))
+
 (defn table-head-bg
   "Background for a table's HEADER row: `bg` driven MOST of the way to the
    theme's ink.

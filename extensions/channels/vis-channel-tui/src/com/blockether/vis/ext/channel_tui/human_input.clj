@@ -693,8 +693,17 @@
        value
        (get-in form [:values id])
 
+       ;; The keyboard is in this FIELD when the focused stop belongs to it — its
+       ;; own stop, or, for a choice field, any one of its option stops. The whole
+       ;; SECTION reads off this: its label takes the ink and its prose becomes
+       ;; readable, while every other field recedes. A form that paints all five
+       ;; at full strength has said nothing about which one is being filled.
+       is-active-field
+       (= id (:field-id (focused-stop form)))
+
        description
-       (description-rows (:description field) text-w)
+       (mapv #(assoc % :is-active-field is-active-field)
+             (description-rows (:description field) text-w))
 
        rows
        (cond (= :otp type) (let [slots (otp-slots field)]
@@ -702,7 +711,8 @@
                                :field-id id
                                :text (otp-text slots value)
                                :cursor (min (cursor-of form id) (max 0 (dec (long (:hi slots)))))
-                               :is-focused (= idx focus)}])
+                               :is-focused (= idx focus)
+                               :is-active-field (= idx focus)}])
              (contains? text-types type)
              (let
                [focused?
@@ -721,7 +731,11 @@
                                         :field-id id
                                         :text l
                                         :cursor (if (= i line) col 0)
+                                        ;; The FIELD is lit whole while the keyboard
+                                        ;; is in it; only the line being typed wears
+                                        ;; the cursor glyph and the terminal caret.
                                         :is-focused (and focused? (= i line))
+                                        :is-active-field focused?
                                         :placeholder (when (and (zero? i) (zero? (count shown)))
                                                        (:placeholder field))})
                                      (str/split shown #"\n" -1))))
@@ -730,6 +744,7 @@
                    :text shown
                    :cursor cursor
                    :is-focused focused?
+                   :is-active-field focused?
                    :placeholder (:placeholder field)}]))
              (= :range type) (let
                                [bounds
@@ -774,7 +789,9 @@
       (cond->
         (if (= :checkbox type)
           (into (vec rows) description)
-          (into (into [{:kind :label :text (label-text field)}] description) rows))
+          (into (into [{:kind :label :text (label-text field) :is-active-field is-active-field}]
+                      description)
+                rows))
         (get errors id)
         (conj {:kind :error :text (get errors id)})
 
@@ -986,8 +1003,13 @@
 (defn- paint-row!
   "Paint one plan row. Selectable rows go through the SHARED dialog painters
    (`dialogs/draw-checkbox-item!`, `dialogs/draw-radio-item!`,
-   `dialogs/draw-text-input-field!`) so this dialog cannot drift from the rest
-   of the TUI. Returns the terminal cursor position when the row owns it."
+   `dialogs/draw-field-row!`, `dialogs/draw-input-item!`) so this dialog cannot
+   drift from the rest of the TUI.
+
+   Every row of a field also paints its FOCUS: the section the keyboard is in
+   takes the ink — bold label, readable prose, an inked field — and the ones it
+   is not in dim to `dialog-hint`. Returns the terminal cursor position when the
+   row owns it."
   [g left row inner-w entry]
   (case (:kind entry)
     :blank
@@ -995,18 +1017,24 @@
         (p/fill-rect! g (inc (long left)) row inner-w 1)
         nil)
 
+    ;; The request's own prose has no field to belong to, so it stays dim; a
+    ;; field's description brightens with the field, and fades back with it.
     :description
-    (do (paint-italic! g left row inner-w t/dialog-hint (:text entry)) nil)
+    (do (paint-italic! g
+                       left
+                       row
+                       inner-w
+                       (if (:is-active-field entry) t/dialog-fg t/dialog-hint)
+                       (:text entry))
+        nil)
 
     :label
-    (do (p/set-colors! g t/dialog-fg t/dialog-bg)
+    (do (p/set-colors! g (if (:is-active-field entry) t/dialog-fg t/dialog-hint) t/dialog-bg)
         (p/fill-rect! g (inc (long left)) row inner-w 1)
-        (p/styled g
-                  [p/BOLD]
-                  (p/put-str! g
-                              (inc (long left))
-                              row
-                              (dialogs/ellipsize (str (:text entry)) (max 0 (- (long inner-w) 2)))))
+        (let [text (dialogs/ellipsize (str (:text entry)) (max 0 (- (long inner-w) 2)))]
+          (if (:is-active-field entry)
+            (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row text))
+            (p/put-str! g (inc (long left)) row text)))
         nil)
 
     :error
@@ -1043,18 +1071,23 @@
     :range
     (do (dialogs/draw-selectable-row! g left row inner-w (:is-focused entry) (:text entry)) nil)
 
-    ;; The boxes are a selectable row like any other; what is special is that the
-    ;; TERMINAL cursor is parked inside the active box, so the operator sees
-    ;; where the next digit lands instead of guessing.
+    ;; The digit boxes are an INPUT, so they ride the same field surface a typed
+    ;; row does; what is special is that the TERMINAL cursor is parked inside the
+    ;; active box, so the operator sees where the next digit lands instead of
+    ;; guessing.
     :otp
-    (do (dialogs/draw-selectable-row! g left row inner-w (:is-focused entry) (:text entry))
-        (when (:is-focused entry)
-          (p/cursor-pos (min (+ (long left) (long inner-w))
-                             (+ (long left)
-                                2
-                                (long p/SELECTION_WIDTH)
-                                (* (long otp-cell-w) (long (:cursor entry 0)))))
-                        row)))
+    (let
+      [text-left (dialogs/draw-field-row! g
+                                          left
+                                          row
+                                          inner-w
+                                          (:is-active-field entry)
+                                          (:is-focused entry)
+                                          (:text entry))]
+      (when (:is-focused entry)
+        (p/cursor-pos (min (+ (long left) (long inner-w))
+                           (+ (long text-left) 1 (* (long otp-cell-w) (long (:cursor entry 0)))))
+                      row)))
 
     ;; A `row` group's line: the width is divided between the cells HERE, so the
     ;; plan carries no geometry and every painter below — including another
@@ -1097,7 +1130,15 @@
        (clamp (long (or (:cursor entry) 0)) 0 (count text))
 
        pos
-       (dialogs/draw-text-input-field! g left row inner-w text cursor (:placeholder entry))]
+       (dialogs/draw-input-item! g
+                                 left
+                                 row
+                                 inner-w
+                                 (:is-active-field entry)
+                                 (:is-focused entry)
+                                 text
+                                 cursor
+                                 (:placeholder entry))]
 
       (when (:is-focused entry) pos))
 

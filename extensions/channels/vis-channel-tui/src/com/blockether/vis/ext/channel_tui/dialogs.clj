@@ -707,6 +707,108 @@
                         selected?
                         (str (if checked? p/STATUS_ON p/STATUS_OFF) " " label)))
 
+(def ^:private field-pad
+  "Columns of breathing room inside a form field's surface, one on each side —
+   the same inner padding the find bar's query field carries. A border cannot
+   give it, and text jammed against a coloured field edge reads as a bug."
+  1)
+
+(defn field-content-w
+  "Columns a form field's TEXT gets on an `inner-w`-wide dialog row: the cursor
+   gutter, the focus ring and the field's own padding come off the top. Public
+   because paint and cursor placement have to measure the very same field."
+  ^long [inner-w]
+  (max 1 (- (long inner-w) 2 (long p/SELECTION_WIDTH) 1 (* 2 (long field-pad)))))
+
+(defn draw-field-row!
+  "FORM-FIELD row — the typed twin of `draw-checkbox-item!` and `draw-radio-item!`:
+   the SAME cursor gutter, then the field's own SURFACE. A field is drawn as a
+   field — `input-field-bg`, padded a space each side, the very control
+   `components/find-bar!` paints its query box with — so an empty field is still
+   visibly a field and every input in the TUI is the same object.
+
+   Focus is the other half, and it is said three ways at once: the focused field
+   wears the accent ring `▎` down its left edge, keeps the full field surface, and
+   takes the ink (`box-fg`, bold). A field the keyboard is NOT in loses the ring,
+   recedes to `theme/field-resting-bg` and dims to `dialog-hint`. A form that
+   paints five fields at full strength has told the operator nothing about which
+   one takes the next keystroke.
+
+   `caret?` says this ROW carries the cursor glyph — one line of a focused
+   multiline field lights the whole field but marks only the line being typed.
+
+   `content` is the field's already-rendered text (`ada@example.com`,
+   `[1] [2] [ ]`). Returns the column its first cell landed on, so a caller that
+   owns the terminal cursor can place it."
+  [g left row inner-w focused? caret? content]
+  (let
+    [content-w
+     (field-content-w inner-w)
+
+     ;; ring cell, then the inner pad, then the text.
+     field-left
+     (+ (long left) 1 (long p/SELECTION_WIDTH))
+
+     text-left
+     (+ (long field-left) 1 (long field-pad))
+
+     shown
+     (ellipsize (str content) content-w)]
+
+    ;; The row is cleared on the dialog's own paper first: the cursor gutter and
+    ;; anything past the field's right edge belong to the body, not to the field.
+    (p/set-colors! g t/dialog-fg t/dialog-bg)
+    (p/fill-rect! g (inc (long left)) row inner-w 1)
+    (p/put-str! g (inc (long left)) row (p/selection-prefix (boolean caret?)))
+    (p/set-colors! g
+                   (if focused? t/box-fg t/dialog-hint)
+                   (if focused? t/input-field-bg (t/field-resting-bg)))
+    (p/fill-rect! g field-left row (+ content-w 1 (* 2 (long field-pad))) 1)
+    (if focused?
+      (p/styled g [p/BOLD] (p/put-str! g text-left row shown))
+      (p/put-str! g text-left row shown))
+    (when focused?
+      (p/set-colors! g t/header-active-tab-accent t/input-field-bg)
+      (p/put-str! g field-left row "▎"))
+    (p/set-colors! g t/dialog-fg t/dialog-bg)
+    text-left))
+
+(defn draw-input-item!
+  "A form's TYPED row: `draw-field-row!` plus what typing needs — the horizontal
+   scroll that keeps the cursor inside the field and the dim `placeholder` an
+   empty field shows. Returns the `TerminalPosition` the caller parks the
+   terminal cursor at."
+  [g left row inner-w focused? caret? text cursor placeholder]
+  (let
+    [content-w
+     (field-content-w inner-w)
+
+     text
+     (str text)
+
+     cursor
+     (max 0 (min (long cursor) (count text)))
+
+     h-off
+     (max 0 (- cursor (dec content-w)))
+
+     visible
+     (subs text h-off (min (count text) (+ h-off content-w)))
+
+     blank?
+     (zero? (count text))
+
+     text-left
+     (draw-field-row! g left row inner-w focused? caret? (if blank? "" visible))]
+
+    (when (and placeholder blank?)
+      ;; The hint rides the field's OWN surface — a resting field must not light
+      ;; up just because it is empty.
+      (p/set-colors! g t/dialog-hint (if focused? t/input-field-bg (t/field-resting-bg)))
+      (p/put-str! g text-left row (ellipsize (str placeholder) content-w))
+      (p/set-colors! g t/dialog-fg t/dialog-bg))
+    (p/cursor-pos (+ (long text-left) (- cursor h-off)) row)))
+
 (defn draw-text-input-field!
   "Borderless `› text` input row with an optional dim `placeholder`. Returns the
    `TerminalPosition` the caller should park the terminal cursor at."

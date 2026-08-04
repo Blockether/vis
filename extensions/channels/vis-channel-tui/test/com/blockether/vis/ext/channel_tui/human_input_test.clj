@@ -509,9 +509,9 @@
                     (painted-rows (assoc (hi/init-form (request)) :focus 2) "Prod"))]
         (expect (seq rows))
         (expect (not-any? #(str/includes? % "[") rows))))
-  (it "paints text fields with the shared borderless input row"
+  (it "paints text fields with the shared input row painter"
       (expect (some #{(canonical-row (fn [g]
-                                       (dialogs/draw-text-input-field! g 0 0 40 "" 0 "who")))}
+                                       (dialogs/draw-input-item! g 0 0 40 true true "" 0 "who")))}
                     (painted-rows (assoc (hi/init-form (request)) :focus 0) "who"))))
   (it "keeps navigation chords and ASCII button brackets off the screen"
       (let
@@ -553,6 +553,43 @@
                                   :fields [{:id "a" :type :checkbox :label "Yes"}]
                                   :is-cancellable true}))
         (expect (not (str/includes? (screen-text screen) "█"))))))
+
+(defn- painted-row-cells
+  "`{:text :cells}` for the FIRST painted row containing `needle`: the row's
+   characters plus one `{:char :fg :bg :is-bold}` map per column.
+
+   `painted-rows` compares characters, and an emphasis is not a character: the
+   focused field and a resting one spell the same value with the same glyphs and
+   differ only in surface, ink and weight."
+  [form needle]
+  (let
+    [{:keys [screen g]}
+     (virtual-screen)
+
+     _
+     (hi/paint! g 80 30 form)
+
+     y
+     (first (keep (fn [y]
+                    (when (str/includes? (screen-row screen y) needle) y))
+                  (range 30)))]
+
+    (when y
+      {:text (screen-row screen y)
+       :cells (mapv (fn [x]
+                      (let [^TextCharacter tc (.getBackCharacter screen (int x) (int y))]
+                        {:char (.getCharacterString tc)
+                         :fg (.getForegroundColor tc)
+                         :bg (.getBackgroundColor tc)
+                         :is-bold (.contains (.getModifiers tc) SGR/BOLD)}))
+                    (range 80))})))
+
+(defn- cell-under
+  "The painted cell carrying the FIRST character of `needle` — the surface the
+   text was actually laid on."
+  [form needle]
+  (let [{:keys [text cells]} (painted-row-cells form needle)]
+    (nth cells (str/index-of text needle))))
 
 (defn- rule-row?
   "True when a painted row is one of the band's horizontal rules and NOTHING
@@ -803,7 +840,11 @@
          (row-index rows #(and (= :label (:kind %)) (= "Note" (:text %))))]
 
         (expect (some? i))
-        (expect (= {:kind :description :text "Free text"} (nth rows (inc i))))
+        ;; The row also carries `:is-active-field`, the FIELD's own focus, so its
+        ;; prose brightens and fades with the field it explains.
+        (expect (= {:kind :description :text "Free text"}
+                   (select-keys (nth rows (inc i)) [:kind :text])))
+        (expect (contains? (nth rows (inc i)) :is-active-field))
         (expect (= :input (:kind (nth rows (+ (long i) 2)))))
         (expect (= "note" (:field-id (nth rows (+ (long i) 2)))))))
   (it "leaves a field with no description with just its label and input"
@@ -1205,6 +1246,81 @@
   ([lo hi] (assoc (hi/init-form (otp-request lo hi)) :focus 1)))
 
 (defn- otp-row [form] (first (filter #(= :otp (:kind %)) (hi/form-rows form 60))))
+
+;; Regression: every field of a form was painted at FULL strength — each label in
+;; bold ink, each typed value as bare prose behind a `› ` prompt on the dialog's
+;; own paper — so a prompt asking for an email AND the one-time code sent to it
+;; said nothing about which of the two took the next keystroke, and neither of
+;; them looked like the input boxes the rest of the TUI paints.
+(defdescribe
+  focus-emphasis-test
+  "Focus is an EMPHASIS, not a list: the section the keyboard is in takes the ink
+   and the surface, the others recede — and a typed field is drawn as a field."
+  (it "seats a typed value on the shared input surface, never on dialog paper"
+      (let [cell (cell-under (assoc (hi/init-form (request)) :focus 0) "who")]
+        (expect (= t/input-field-bg (:bg cell)))
+        (expect (not= t/dialog-bg (:bg cell)))))
+  (it "lets the field the keyboard is NOT in recede to the resting surface"
+      (let [cell (cell-under (assoc (hi/init-form (request)) :focus 1) "who")]
+        (expect (= (t/field-resting-bg) (:bg cell)))))
+  (it "rings the focused field, and rings exactly one"
+      (let
+        [{:keys [screen g]}
+         (virtual-screen)
+
+         _
+         (hi/paint! g 80 30 (otp-form))
+
+         ringed
+         (filterv #(str/includes? % "▎") (map #(screen-row screen %) (range 30)))]
+
+        (expect (= 1 (count ringed)))
+        ;; The ring is on the CODE boxes, the field being filled, not on the
+        ;; address above them.
+        (expect (str/includes? (first ringed) "[ ]"))
+        (expect (= t/header-active-tab-accent (:fg (cell-under (otp-form) "▎"))))))
+  (it "bolds the label of the focused field and dims every other label"
+      (let
+        [form
+         (assoc (hi/init-form (request)) :focus 0)
+
+         mine
+         (cell-under form "User")
+
+         theirs
+         (cell-under form "Password")]
+
+        (expect (:is-bold mine))
+        (expect (= t/dialog-fg (:fg mine)))
+        (expect (not (:is-bold theirs)))
+        (expect (= t/dialog-hint (:fg theirs)))))
+  (it "makes the focused field's prose readable and leaves the rest as hints"
+      (let [note-focused (assoc (hi/init-form (request)) :focus 7)]
+        (expect (= t/dialog-fg (:fg (cell-under note-focused "Free text"))))
+        (expect (= t/dialog-hint
+                   (:fg (cell-under (assoc (hi/init-form (request)) :focus 0) "Free text"))))))
+  (it "paints the OTP boxes on the very same field surface a typed row uses"
+      (expect (= t/input-field-bg (:bg (cell-under (otp-form) "[ ]"))))
+      (expect (= (t/field-resting-bg) (:bg (cell-under (assoc (otp-form) :focus 0) "[ ]")))))
+  (it "parks the terminal cursor inside the box the next digit lands in"
+      (let
+        [{:keys [screen g]}
+         (virtual-screen)
+
+         ^TerminalPosition pos
+         (hi/paint! g 80 30 (feed (otp-form) [(ch \3) (ch \1)]))
+
+         row
+         (screen-row screen (.getRow pos))]
+
+        (expect (str/includes? row "[3] [1] [ ]"))
+        ;; Inside the THIRD box: its own bracket one column to the left.
+        (expect (= \[ (.charAt row (dec (.getColumn pos)))))
+        (expect (= \space (.charAt row (.getColumn pos))))))
+  (it "drops the `› ` prompt now that the field itself is visible"
+      (let [{:keys [screen g]} (virtual-screen)]
+        (hi/paint! g 80 30 (hi/init-form (otp-request)))
+        (expect (not (str/includes? (screen-text screen) "›"))))))
 
 (defdescribe
   otp-field-test
