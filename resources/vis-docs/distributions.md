@@ -53,7 +53,7 @@ Precedence, highest first:
 Runtime:      native (--native)          # or VIS_RUNTIME, ~/.vis/runtime, automatic
 Native:       ~/.vis/install/vis-agent-native
 Source:       ~/.vis/install/src
-Pinned at:    v0.1.22
+Pinned at:    49ccf1b155ec8fe18db7f48f00a30d1ac21be90d
 Dev checkout: ~/vis
 ```
 
@@ -70,7 +70,7 @@ dev` is the whole switch — there is no `runtime use` to follow it with.
 |---|---|
 | `vis-agent update` | whichever runtime is in effect |
 | `vis-agent update --native` | downloads the newest release bundle — wrapper and sidecar together |
-| `vis-agent update --jvm` | fetches tags and checks the owned checkout out at the newest `vX.Y.Z`, then refreshes the `vis-agent` command from that source |
+| `vis-agent update --jvm` | fetches the newest commit of the branch it follows (`VIS_BRANCH`, default `main`) and checks the owned checkout out there, then refreshes the `vis-agent` command from that source |
 | `vis-agent update --dev` | clones the dev checkout on `main` when that path holds none, otherwise `git fetch` + `git pull --ff-only` — the only update that follows a branch |
 | `vis-agent update vX.Y.Z` | that release instead of the newest: bundle for `native`, tag for `jvm` |
 | `vis-agent update <sha\|branch>` | any target that is not `vX.Y.Z` is a git ref, so it pins the owned checkout and implies `--jvm` |
@@ -93,23 +93,26 @@ diverged history, with the counts and the exact recovery command.
 
 ```bash
 curl -fsSL https://github.com/Blockether/vis/releases/latest/download/install-vis-agent | bash
-curl -fsSL https://github.com/Blockether/vis/releases/latest/download/install-vis-agent | bash -s -- --runtime jvm
 ```
 
-`bin/install-vis-agent` takes `--runtime native|jvm` (default `native`),
-`--version vX.Y.Z|latest`, and `--install-dir PATH` (default `~/.local/bin`,
-added to your shell profile when PATH lacks it). It installs the wrapper and
-then hands off: `vis-agent update --native|--jvm` acquires that runtime and
-persists the choice in the same command. Runtime acquisition therefore always belongs to
-`vis-agent`, so wrapper and runtime cannot drift apart. `--runtime jvm`
-additionally requires Java 25+, the Clojure CLI, and git.
+`bin/install-vis-agent` takes one option, `--install-dir PATH` (default
+`~/.local/bin`, added to your shell profile when PATH lacks it), and installs
+exactly one runtime: JVM source at the newest commit of the branch it follows
+(`VIS_BRANCH`, default `main`). It installs the wrapper and then hands off to
+`vis-agent update --jvm`, which acquires that runtime and persists the choice in
+the same command, so runtime acquisition always belongs to `vis-agent` and the
+two cannot drift apart. It requires Java 25+, the Clojure CLI, and git.
 
-`install-vis-agent` and the `vis-agent` wrapper are release assets, published on
-every `vX.Y.Z` release beside the platform bundles: `releases/latest/download`
-always serves the newest pair and `releases/download/vX.Y.Z` a pinned one, so the
-installer never fetches from a raw source host. Cloning the repository and
-running `bin/install-vis-agent` out of the checkout works too — it installs that
-checkout's own wrapper.
+Nothing that install *runs* is tagged: the source comes from the branch tip,
+because a published `vX.Y.Z` can be broken source and a fix lands on the branch
+first. The two scripts are the exception — `curl` fetches the installer, and the
+installer fetches the wrapper, from
+`github.com/$VIS_REPO_SLUG/releases/latest/download/`, because
+`raw.githubusercontent.com` is blocked on many corporate networks while
+`github.com` release downloads are not. That asset is only a bootstrap: `vis-agent
+update` immediately refreshes the wrapper from the source it pins. Cloning the
+repository and running `bin/install-vis-agent` out of the checkout works too — it
+installs that checkout's own wrapper.
 
 ## Everything Vis owns
 
@@ -118,7 +121,7 @@ checkout's own wrapper.
 | `~/.vis/runtime` | the persisted selection: `native`, `jvm`, or `dev`; absent means automatic |
 | `~/.vis/install/vis-agent-native` | the private native runtime |
 | `~/.vis/install/src` | the checkout Vis owns: one shallow, detached commit, no branches, no remote-tracking refs |
-| `~/.vis/install/ref` | the tag or commit that checkout sits at; `runtime show` marks it `DRIFTED` when `HEAD` no longer matches |
+| `~/.vis/install/ref` | the commit that checkout sits at — always a SHA, never a branch; `runtime show` marks it `DRIFTED` when `HEAD` no longer matches |
 | `$VIS_DEV_CHECKOUT` (default `~/vis`) | the live checkout `dev` runs; `vis-agent update --dev` clones it there on `main` when it is missing |
 
 That is the entire runtime state. Deleting `~/.vis/runtime` returns to
@@ -126,7 +129,7 @@ automatic; deleting `~/.vis/install` is a full reset.
 
 That checkout is a pin, not a clone. An update fetches exactly one ref one commit
 deep, checks it out detached, then deletes every branch and remote-tracking ref
-and narrows the remote's fetch refspec to tags, so there is no `main` inside it
+and narrows the remote's fetch refspec to the branch it follows, so there is no `main` inside it
 for a stray `git pull` to follow. An install made by an older, cloning `vis-agent`
 is repaired into that shape by the next update.
 
@@ -150,7 +153,7 @@ vis-agent-<os>-<arch>-community.tar.gz
 ├── vis-agent             # public Bash wrapper
 ├── vis-agent-native      # private GraalVM native-image runtime
 ├── vis-agent-resources/  # GraalPy/Truffle language resources
-└── install-vis-agent     # installer for the same bundle shape
+└── install-vis-agent     # installer for the source runtime
 ```
 
 All of it travels together — `vis-agent update --native` replaces the wrapper, the

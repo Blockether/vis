@@ -9,19 +9,18 @@
 # Three runtimes, one word each:
 #   native  the released build, downloaded beside this wrapper; a native you
 #           built yourself (target/vis) is used only when none is installed
-#   jvm     `clojure -M:vis` from source pinned to the newest vX.Y.Z tag
+#   jvm     `clojure -M:vis` from source pinned to main's newest commit
 #   dev     `clojure -M:vis` from a live checkout — the only moving runtime
 #
-# Vis follows releases by default; `dev` is opt-in. Everything Vis owns lives
+# Vis follows main by default; `dev` is opt-in. Everything Vis owns lives
 # under ~/.vis:
 #   runtime                    persisted selection (absent = automatic)
 #   install/vis-agent-native   the private native runtime
 #   install/src                the checkout Vis owns
-#   install/ref                the tag or commit that checkout is pinned to
+#   install/ref                the commit that checkout is pinned to
 #
-# Install with `bin/install-vis-agent` (`--runtime jvm` for the source runtime);
-# it installs this wrapper and then lets it fetch its own runtime, so wrapper and
-# runtime can never drift apart.
+# Install with `bin/install-vis-agent`: it installs this wrapper and then lets
+# it fetch its own runtime, so wrapper and runtime can never drift apart.
 
 set -euo pipefail
 
@@ -32,6 +31,10 @@ vis_install_dir="$vis_home/install"
 vis_runtime_file="$vis_home/runtime"
 vis_repo_slug="${VIS_REPO_SLUG:-Blockether/vis}"
 vis_repo_url="${VIS_REPO_URL:-https://github.com/$vis_repo_slug.git}"
+# The development branch the source runtime follows. Release tags are never
+# consulted: a release is a commit like any other, and this source tracks the
+# newest one.
+vis_branch="${VIS_BRANCH:-main}"
 managed_src="$vis_install_dir/src"
 managed_ref_file="$vis_install_dir/ref"
 
@@ -236,7 +239,7 @@ collect_user_extension_sdeps() {
 
 # ── Runtime discovery ────────────────────────────────────────────────────────
 # The source checkout each runtime runs: dev = the live checkout; jvm = the
-# checkout Vis owns and pins to a release tag. Running a checkout's own launcher
+# checkout Vis owns, pinned to main's newest commit. Running a checkout's own launcher
 # runs that checkout — that is what invoking it means.
 find_jvm_source() {
   if (( dev_mode )); then
@@ -268,8 +271,8 @@ find_native() {
   return 1
 }
 
-# Automatic means "follow the releases": the published native runtime when it is
-# installed, otherwise release-tagged source. A live checkout is never picked
+# Automatic means "follow the published runtime": the native runtime when it is
+# installed, otherwise source at main's newest commit. A live checkout is never picked
 # implicitly — that is dev mode, and it must be asked for.
 runtime_effective() {
   if [[ -n "$selected_runtime" ]]; then
@@ -367,7 +370,7 @@ vis_runtime() {
           ;;
         auto)
           forget_runtime_file
-          say "runtime is now automatic: native if installed, else source at the newest release tag"
+          say "runtime is now automatic: native if installed, else source at main's newest commit"
           ;;
         -h|--help) vis_runtime_usage; return 0 ;;
         *) vis_runtime_usage; return 2 ;;
@@ -415,9 +418,9 @@ vis_runtime_usage() {
 Usage: vis-agent runtime [show]
        vis-agent runtime use native|jvm|dev|auto
          native  the released build ('vis-agent update --native'), else your own target/vis
-         jvm     source pinned to the newest release tag
+         jvm     source pinned to main's newest commit
          dev     a live checkout, tracking its branch
-         auto    forget the choice: native if installed, else tagged source
+         auto    forget the choice: native if installed, else pinned source
        This only switches. 'vis-agent update <runtime>' acquires it and selects it.
 EOF
 }
@@ -462,35 +465,28 @@ build_native_runtime() {
 }
 
 # ── update: source runtime ───────────────────────────────────────────────────
-# Follow tagged commits: the checkout Vis owns is moved onto the newest release
-# tag, or onto an exact ref you name. A developer's own checkout is never moved
-# by this path — that is what `update --dev` is for.
+# Follow the development branch: the checkout Vis owns is moved onto the newest
+# commit of `$vis_branch`, or onto an exact ref you name. Release tags are not
+# consulted at all — a release is a commit like any other, and asking for the
+# newest tag is how an install lands on published-but-broken source. A
+# developer's own checkout is never moved by this path — that is `update --dev`.
 #
 # Pinned is meant literally. This source is built by hand — `git init` plus ONE
 # shallow ref — rather than cloned, and every branch and remote-tracking ref is
-# dropped afterwards. A clone left `main` behind: HEAD sat on the tag while
+# dropped afterwards. A clone left `main` behind: HEAD sat on the pin while
 # `git checkout main && git pull` walked the source Vis actually runs a hundred
-# commits past its pin, having downloaded the whole history to do it. What is
-# not there cannot be followed, and an install now downloads one commit instead
-# of every commit ever made.
+# commits past it, having downloaded the whole history to do it. What is not
+# there cannot be followed, and an install downloads one commit instead of every
+# commit ever made.
 
-# The newest published vX.Y.Z, from the remote's refs alone: no objects, no
-# history, no clone. git's own version sort, so v0.1.10 beats v0.1.9.
-newest_release_tag() {
-  git -C "$managed_src" ls-remote --refs --tags --sort=-v:refname origin 'v*' 2>/dev/null \
-    | awk -F/ 'NR == 1 { print $NF }'
-}
-
-# Fetch exactly one ref and nothing else. A tag (or branch) is advertised, so a
+# Fetch exactly one ref and nothing else. A branch (or tag) is advertised, so a
 # single shallow commit is enough; an exact SHA usually is not advertised, and
 # only that case pays for history.
 fetch_pinned_ref() {
   local ref="$1"
-  git -C "$managed_src" fetch --quiet --force --depth 1 origin \
-      "+refs/tags/$ref:refs/tags/$ref" 2>/dev/null && return 0
   git -C "$managed_src" fetch --quiet --force --depth 1 origin "$ref" 2>/dev/null && return 0
-  say "$ref is not an advertised tag — fetching history to find it"
-  git -C "$managed_src" fetch --force --prune --tags origin '+refs/heads/*:refs/remotes/origin/*'
+  say "$ref is not an advertised branch or tag — fetching history to find it"
+  git -C "$managed_src" fetch --force --prune origin '+refs/heads/*:refs/remotes/origin/*'
 }
 
 # Leave no branch to step off: with every local and remote-tracking branch gone
@@ -504,7 +500,7 @@ drop_moving_refs() {
 }
 
 update_source() {
-  local ref="${1:-}" target
+  local ref="${1:-}" target pinned
   require_cmd git "the source runtime"
   if [[ ! -d "$managed_src/.git" ]]; then
     say "creating $managed_src for $vis_repo_slug"
@@ -513,14 +509,13 @@ update_source() {
   fi
   git -C "$managed_src" remote add origin "$vis_repo_url" 2>/dev/null \
     || git -C "$managed_src" remote set-url origin "$vis_repo_url" || exit 1
-  # This source follows tags, never branches — so even a hand-run `git fetch`
-  # in there cannot bring `main` back.
-  git -C "$managed_src" config remote.origin.fetch '+refs/tags/*:refs/tags/*' || exit 1
+  # This source is a detached pin, never a branch — so even a hand-run `git fetch`
+  # in there brings back nothing to step onto.
+  git -C "$managed_src" config remote.origin.fetch \
+      "+refs/heads/$vis_branch:refs/remotes/origin/$vis_branch" || exit 1
   if [[ -z "$ref" ]]; then
-    say "asking $vis_repo_slug for its newest release tag"
-    ref="$(newest_release_tag)"
-    [[ -n "$ref" ]] || die "update: no release tag (vX.Y.Z) is published yet" \
-                          "Pin an exact commit instead: vis-agent update <sha>"
+    ref="$vis_branch"
+    say "asking $vis_repo_slug for the newest commit on $vis_branch"
   fi
   say "fetching $ref for $managed_src"
   fetch_pinned_ref "$ref" || exit 1
@@ -530,9 +525,12 @@ update_source() {
     || target=FETCH_HEAD
   git -C "$managed_src" checkout --force --detach "$target" || exit 1
   drop_moving_refs
+  # The pin recorded is the COMMIT, never the branch that pointed at it: a branch
+  # name in there is a moving pin, and no drift check can verify a moving pin.
+  pinned="$(git -C "$managed_src" rev-parse --verify HEAD)" || exit 1
   mkdir -p "$vis_install_dir"
-  printf '%s\n' "$ref" > "$managed_ref_file"
-  say "source pinned at $ref ($managed_src)"
+  printf '%s\n' "$pinned" > "$managed_ref_file"
+  say "source pinned at $pinned ($managed_src)"
 }
 
 # ── update: the vis-agent command itself ─────────────────────────────────────
@@ -698,7 +696,7 @@ vis_update_usage() {
 Usage: vis-agent update [native|jvm|dev] [--rebuild] [vX.Y.Z|<sha>]
          (no runtime)  update the runtime that is in effect
          native        download the published launcher + native runtime
-         jvm           move the source Vis owns onto the newest release tag, or onto a ref you name
+         jvm           move the source Vis owns onto main's newest commit, or onto a ref you name
          dev           fast-forward your live checkout (git pull --ff-only)
          --rebuild     after a source update, build the native runtime from that source
        Every runtime word also has a flag form: --native, --jvm, --dev, and naming
@@ -833,7 +831,7 @@ case "$runtime" in
             "or leave dev mode: vis-agent runtime use auto"
       fi
       die "the jvm runtime is selected ($runtime_origin), but no source is installed" \
-          "Install release-tagged source:  vis-agent update --jvm" \
+          "Install the source runtime:     vis-agent update --jvm" \
           "Or use the native runtime:      vis-agent update --native"
     fi
     # A source runtime is only as real as its toolchain. Say which tool is

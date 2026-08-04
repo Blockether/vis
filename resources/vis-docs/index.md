@@ -78,10 +78,11 @@ Native contracts have one source: tool descriptions own routing and semantics; J
 
 ## Install
 
-The public command is **`vis-agent`**. `install-vis-agent` is a release asset:
-every `vX.Y.Z` release publishes the installer and the `vis-agent` wrapper next
-to the platform bundles, so the URL below always serves the newest release's
-installer.
+The public command is **`vis-agent`**. The installer and the wrapper are served
+as GitHub release assets, because `raw.githubusercontent.com` is unreachable on
+many corporate networks. What they install is a different matter: no release tag
+is checked out, because a published tag can carry broken source and a fix lands
+on the branch first.
 
 Install the command first; it fetches its own runtime:
 
@@ -91,25 +92,24 @@ vis-agent help
 ```
 
 The installer puts `vis-agent` in `~/.local/bin`, adds that directory to your
-shell profile when PATH lacks it, and then runs `vis-agent update --native` so
-the wrapper downloads the private `vis-agent-native` sidecar beside itself and
-selects it. The native image is never installed as a standalone command.
+shell profile when PATH lacks it, and then runs `vis-agent update --jvm` so the
+wrapper checks the source it owns out at the newest commit and selects it. That
+runtime needs Java 25+, the Clojure CLI, and git.
 
 Afterwards every runtime action belongs to vis-agent:
 
 ```bash
 vis-agent runtime show      # configured default, effective runtime, paths
-vis-agent update            # command + runtime, updated together
-vis-agent update --native   # (re)download just the native runtime
+vis-agent update            # command + runtime, moved to the newest commit
 ```
 
 The installer only ever installs the wrapper; `vis-agent update` then acquires
-the runtime for that channel — the release sidecar, or source checked out at the
-newest release tag — so the wrapper and its runtime cannot drift apart.
+the runtime — source checked out at the newest commit — so the wrapper and its
+runtime cannot drift apart.
 
-Release CI publishes Linux x64 and arm64 native runtimes. Elsewhere, use the
-source runtime or build a sidecar locally with `vis-agent update --jvm
---rebuild` (GraalVM CE 25.1.3, ≥16 GB RAM).
+A native runtime still exists for Linux x64 and arm64 (`vis-agent update
+--native`), or is built locally with `vis-agent update --jvm --rebuild` (GraalVM
+CE 25.1.3, ≥16 GB RAM). The installer never downloads one.
 
 ### Clojars packages
 

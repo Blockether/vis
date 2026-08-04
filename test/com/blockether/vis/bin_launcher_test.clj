@@ -545,15 +545,16 @@
              (expect (str/includes? output "SELF-BUILT:") output))
            (finally (delete-tree! root))))))
 
-(defn- tagged-source-fixture
+(defn- branch-source-fixture
   "A sandboxed wrapper install plus a throwaway origin: v0.1.1, v0.1.9 and
-   v0.1.10 — newest by version, not by spelling — followed by untagged work the
-   pin must never follow. `update!` runs the wrapper against that origin rather
-   than GitHub; `run!` is the same wrapper without it."
+   v0.1.10 — published tags the source must IGNORE — followed by untagged work
+   on `main`, which is the commit an update has to land on. `update!` runs the
+   wrapper against that origin rather than GitHub; `run!` is the same wrapper
+   without it."
   []
   (let
     [root
-     (.toFile (Files/createTempDirectory "vis-agent-tag-test-" (make-array FileAttribute 0)))
+     (.toFile (Files/createTempDirectory "vis-agent-branch-test-" (make-array FileAttribute 0)))
 
      origin
      (doto (io/file root "origin") .mkdirs)
@@ -597,6 +598,7 @@
      :origin origin
      :vis-home vis-home
      :managed-src (io/file vis-home "install/src")
+     :head (str/trim (:output (git! origin "rev-parse" "HEAD")))
      :run! run!
      :update! (fn [args]
                 (run! args {"VIS_REPO_URL" (.getAbsolutePath origin)}))}))
@@ -608,16 +610,18 @@
   (str/trim (:output (git! src "for-each-ref" "--format=%(refname)" "refs/heads" "refs/remotes"))))
 
 (defdescribe
-  wrapper-tagged-source-update-test
+  wrapper-source-update-test
   (it
-    "pins the managed source to the newest release tag, or to a named ref"
-    (let [{:keys [root origin vis-home managed-src run! update!]} (tagged-source-fixture)]
+    "pins the managed source to the newest commit on main, or to a named ref"
+    (let [{:keys [root origin head vis-home managed-src run! update!]} (branch-source-fixture)]
       (try ;; Nothing is prepared on disk: the wrapper acquires the source itself.
         (let [{:keys [exit output]} (update! ["update"])]
           (expect (= 0 exit) output)
-          (expect (str/includes? output "source pinned at v0.1.10")))
-        (expect (= "v0.1.10" (str/trim (slurp (io/file vis-home "install/ref")))))
-        (expect (= "v0.1.10" (str/trim (:output (git! managed-src "describe" "--tags")))))
+          (expect (str/includes? output (str "source pinned at " head)) output))
+        ;; Tags are never consulted: v0.1.10 is published, and the update landed
+        ;; on the untagged commit after it.
+        (expect (= head (str/trim (slurp (io/file vis-home "install/ref")))))
+        (expect (= head (str/trim (:output (git! managed-src "rev-parse" "HEAD")))))
         ;; Pinned means pinned: no branch to step onto, no remote-tracking ref
         ;; to follow, and ONE commit of history instead of the whole repo.
         (expect (= "" (moving-refs managed-src)))
@@ -628,11 +632,11 @@
         ;; walk the source Vis runs a hundred commits past its pin.
         (expect (not= 0 (:exit (git! managed-src "checkout" "main"))))
         (let [{:keys [output]} (run! ["runtime" "show"])]
-          (expect (str/includes? output "Pinned at:    v0.1.10"))
+          (expect (str/includes? output (str "Pinned at:    " head)))
           (expect (str/includes? output "Runtime:      jvm")))
-        ;; A git ref that is not a release tag pins source, whatever is effective.
+        ;; An exact ref you name still pins source, whatever is effective.
         (let
-          [sha (str/trim (:output (git! origin "rev-parse" "HEAD")))
+          [sha (str/trim (:output (git! origin "rev-parse" "v0.1.9^{commit}")))
            {:keys [exit output]} (update! ["update" sha])]
 
           (expect (= 0 exit) output)
@@ -641,7 +645,7 @@
           (expect (= sha (str/trim (:output (git! managed-src "rev-parse" "HEAD")))))
           (expect (= "" (moving-refs managed-src))))
         ;; Source moved off its pin by hand is REPORTED, never quietly run.
-        (git! managed-src "checkout" "--force" "--detach" "v0.1.10")
+        (git! managed-src "checkout" "--force" "--detach" head)
         (expect (str/includes? (:output (run! ["runtime" "show"])) "DRIFTED"))
         ;; One runtime per update: naming two is a refusal, not a guess.
         (let [{:keys [exit output]} (run! ["update" "--native" "--dev"])]
@@ -649,18 +653,18 @@
           (expect (str/includes? output "name one runtime, not --native and --dev")))
         (finally (delete-tree! root)))))
   (it "repins source an older wrapper left cloned on a branch"
-      (let [{:keys [root origin managed-src run! update!]} (tagged-source-fixture)]
+      (let [{:keys [root origin head managed-src run! update!]} (branch-source-fixture)]
         (try ;; What a clone leaves behind: main, its remote-tracking twin, and the
              ;; whole history to fast-forward through.
           (git! root "clone" "-q" (.getAbsolutePath origin) (.getAbsolutePath managed-src))
           (expect (str/includes? (moving-refs managed-src) "refs/heads/main"))
           (let [{:keys [exit output]} (update! ["update"])]
             (expect (= 0 exit) output)
-            (expect (str/includes? output "source pinned at v0.1.10")))
-          (expect (= "v0.1.10" (str/trim (:output (git! managed-src "describe" "--tags")))))
+            (expect (str/includes? output (str "source pinned at " head))))
+          (expect (= head (str/trim (:output (git! managed-src "rev-parse" "HEAD")))))
           (expect (= "" (moving-refs managed-src)))
           (expect (not= 0 (:exit (git! managed-src "checkout" "main"))))
-          (expect (str/includes? (:output (run! ["runtime" "show"])) "Pinned at:    v0.1.10"))
+          (expect (str/includes? (:output (run! ["runtime" "show"])) (str "Pinned at:    " head)))
           (finally (delete-tree! root)))))
   ;; Naming a runtime on `update` IS choosing it: one command installs, updates
   ;; and selects. An update that names nothing must leave the selection alone,
@@ -668,7 +672,7 @@
   (it "persists the runtime an update names, and leaves automatic alone"
       (let
         [{:keys [root vis-home update!]}
-         (tagged-source-fixture)
+         (branch-source-fixture)
 
          runtime-file
          (io/file vis-home "runtime")]
@@ -682,6 +686,137 @@
                (expect (= 0 exit) output)
                (expect (str/includes? output "runtime is now jvm") output))
              (expect (= "jvm" (str/trim (slurp runtime-file))))
+             (finally (delete-tree! root))))))
+
+(defn- installer-fixture
+  "The real `bin/install-vis-agent` against a throwaway origin whose tip commit
+   is untagged, with stub `java`/`clojure`/`curl` on PATH. Nothing here reaches
+   GitHub: the runtime comes from that origin, and the wrapper either from this
+   checkout (`install!`) or from the stub curl, which records the URL it was
+   asked for and answers with this checkout's wrapper (`install-detached!`)."
+  []
+  (let
+    [root
+     (.toFile (Files/createTempDirectory "vis-agent-installer-test-" (make-array FileAttribute 0)))
+
+     origin
+     (doto (io/file root "origin") .mkdirs)
+
+     install-dir
+     (io/file root "bin")
+
+     home
+     (doto (io/file root "home") .mkdirs)
+
+     vis-home
+     (doto (io/file home ".vis") .mkdirs)
+
+     tools
+     (doto (io/file root "tools") .mkdirs)
+
+     curl-log
+     (io/file root "curl-args")
+
+     detached-installer
+     (io/file root "install-vis-agent")
+
+     env
+     {"VIS_INSTALL_DIR" (.getAbsolutePath install-dir) "VIS_REPO_URL" (.getAbsolutePath origin)}
+
+     run!
+     (wrapper-runner {:launcher (io/file "bin/install-vis-agent")
+                      :cwd root
+                      :home home
+                      :vis-home vis-home
+                      :tools tools})
+
+     run-detached!
+     (wrapper-runner
+       {:launcher detached-installer :cwd root :home home :vis-home vis-home :tools tools})]
+
+    (write-executable!
+      (io/file tools "java")
+      "#!/usr/bin/env bash\nprintf 'openjdk version \"25.0.2\" 2026-01-20\\n' >&2\n")
+    (write-executable! (io/file tools "clojure") "#!/usr/bin/env bash\nprintf 'JVM:%s\\n' \"$*\"\n")
+    (write-executable!
+      (io/file tools "curl")
+      (str
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> "
+        (pr-str (.getAbsolutePath curl-log))
+        "\n"
+        "out=\"\"\n"
+        "while [[ $# -gt 0 ]]; do case \"$1\" in -o) out=\"$2\"; shift 2 ;; *) shift ;; esac; done\n"
+        "[[ -z \"$out\" ]] || cp "
+        (pr-str (.getAbsolutePath (io/file "bin/vis-agent")))
+        " \"$out\"\n"))
+    ;; A copy outside any checkout: no sibling `vis-agent`, no `../deps.edn`, so
+    ;; the installer must download the command instead of copying it.
+    (Files/copy (.toPath (io/file "bin/install-vis-agent"))
+                (.toPath ^java.io.File detached-installer)
+                (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+    (.setExecutable ^java.io.File detached-installer true)
+    (git! origin "init" "-q" "-b" "main" ".")
+    (spit (io/file origin "deps.edn") "{}")
+    (spit (io/file origin "f") "released")
+    (git! origin "add" "-A")
+    (git! origin "commit" "-qm" "released")
+    (git! origin "tag" "v9.9.9")
+    (spit (io/file origin "f") "unreleased")
+    (git! origin "add" "-A")
+    (git! origin "commit" "-qm" "unreleased")
+    {:root root
+     :vis-home vis-home
+     :install-dir install-dir
+     :curl-log curl-log
+     :head (str/trim (:output (git! origin "rev-parse" "HEAD")))
+     :install! (fn [args]
+                 (run! args env))
+     :install-detached! (fn [args]
+                          (run-detached! args env))}))
+
+(defdescribe
+  installer-test
+  ;; The installer used to default to the native runtime and pin the source one
+  ;; to the newest release tag. It installs exactly one runtime now — JVM source
+  ;; at the newest commit — because a published tag can be broken source.
+  (it "installs the JVM source runtime at the newest commit, and no native one"
+      (let [{:keys [root vis-home install-dir head install!]} (installer-fixture)]
+        (try (let [{:keys [exit output]} (install! [])]
+               (expect (= 0 exit) output)
+               (expect (str/includes? output "source pinned at") output)
+               ;; No bundle is resolved, downloaded or unpacked.
+               (expect (not (str/includes? output "vis-agent-native")) output))
+             (expect (.canExecute (io/file install-dir "vis-agent")))
+             (expect (.isFile (io/file vis-home "install/src/deps.edn")))
+             (expect (not (.exists (io/file install-dir "vis-agent-native"))))
+             (expect (= "jvm" (str/trim (slurp (io/file vis-home "runtime")))))
+             ;; v9.9.9 is published and is NOT what was installed.
+             (expect (= head (str/trim (slurp (io/file vis-home "install/ref")))))
+             (finally (delete-tree! root)))))
+  (it "has no runtime left to choose"
+      (let [{:keys [root install!]} (installer-fixture)]
+        (try (let [{:keys [exit output]} (install! ["--runtime" "native"])]
+               (expect (= 2 exit) output)
+               (expect (str/includes? output "unknown argument: --runtime") output))
+             (finally (delete-tree! root)))))
+  ;; Regression: the one-liner and the wrapper download were moved to
+  ;; raw.githubusercontent.com, which corporate networks block, so the
+  ;; documented install could not even fetch the command there.
+  (it "downloads the command from the latest release asset, never raw.githubusercontent.com"
+      (let [{:keys [root vis-home install-dir head curl-log install-detached!]} (installer-fixture)]
+        (try (let [{:keys [exit output]} (install-detached! [])]
+               (expect (= 0 exit) output)
+               (expect (str/includes? output "source pinned at") output))
+             (let [asked (slurp curl-log)]
+               (expect (str/includes?
+                         asked
+                         "https://github.com/Blockether/vis/releases/latest/download/vis-agent")
+                       asked)
+               (expect (not (str/includes? asked "raw.githubusercontent.com")) asked))
+             (expect (.canExecute (io/file install-dir "vis-agent")))
+             ;; The asset only bootstraps: the runtime is still the branch tip.
+             (expect (= head (str/trim (slurp (io/file vis-home "install/ref")))))
              (finally (delete-tree! root))))))
 
 (defn- dev-checkout-fixture

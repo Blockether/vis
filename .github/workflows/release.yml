@@ -119,10 +119,14 @@ jobs:
             echo "**Full Changelog**: https://github.com/Blockether/vis/compare/${PREV_TAG}...${CURRENT_TAG}"
           } > /tmp/release_body.md
 
-      # The installer and the wrapper ship as RELEASE ASSETS, so the documented
-      # one-liner is `releases/latest/download/install-vis-agent` and never a
-      # raw.githubusercontent.com path. native-release.yml attaches the platform
-      # bundles to this same release.
+      # The documented one-liner is a RELEASE ASSET
+      # (releases/latest/download/install-vis-agent), because
+      # raw.githubusercontent.com is blocked on many corporate networks while
+      # github.com release downloads are not — so these two scripts must stay
+      # attached to every release. They only bootstrap: what they install is
+      # never a tag, it is the branch tip, since a published release can carry
+      # broken source. native-release.yml attaches the platform bundles to this
+      # same release.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:

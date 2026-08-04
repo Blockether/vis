@@ -27,17 +27,14 @@ curl -fsSL https://github.com/Blockether/vis/releases/latest/download/install-vi
 vis-agent help
 ```
 
-`install-vis-agent` is a release asset: every `vX.Y.Z` release publishes the installer and the `vis-agent` wrapper alongside the platform bundles, so that URL always serves the installer of the newest release.
+The installer and the `vis-agent` command are downloaded as release assets — `raw.githubusercontent.com` is blocked on many corporate networks, `github.com` is not. What they install is not tagged: `vis-agent` checks the source out at the newest commit of `main`, because a published tag can carry broken source and the fix lands on the branch first.
 
-That installs the `vis-agent` command into `~/.local/bin` (adding it to your PATH when needed). `vis-agent` then downloads its own private `vis-agent-native` runtime beside itself — the native image is never a separate command you install. From then on vis-agent owns both:
+That installs the `vis-agent` command into `~/.local/bin` (adding it to your PATH when needed). `vis-agent` then checks out the source it owns into `~/.vis/install/src` and runs it with `clojure -M:vis`, so the install needs Java 25+, the Clojure CLI, and git. From then on vis-agent owns both:
 
 ```bash
 vis-agent runtime show      # what is installed and selected
-vis-agent update            # update the command and its runtime together
-vis-agent update --native   # (re)download just the native runtime
+vis-agent update            # move the command and its runtime to the newest commit
 ```
-
-Native runtimes are published for Linux x64 and arm64.
 
 **Clojure library:**
 
