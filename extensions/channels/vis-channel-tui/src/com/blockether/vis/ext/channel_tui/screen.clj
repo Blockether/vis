@@ -1031,6 +1031,19 @@
                 {:out [] :prev nil :id -1}
                 ranges)))
 
+(defn- bubble-content-top
+  "Absolute screen row of a visible message's FIRST content line.
+
+   `render/draw-chat-bubble!` paints one role/timestamp row above the wrapped
+   content - plus one padding row for user messages - so EVERY geometry that
+   maps a projected line index onto a screen row has to skip the same chrome.
+   Selection ranges and the per-disclosure copy targets both derive their rows
+   from here: when only one of them carried the offset the two disagreed by a
+   row, and a click on the last row of an expanded disclosure missed its block
+   and fell through to the whole-bubble copy."
+  ^long [message ^long text-top ^long top]
+  (+ text-top top 1 (if (= :user (:role message)) 1 0)))
+
 (defn- bubble-selectable-ranges
   "Return absolute screen-cell ranges for visible transcript message content.
 
@@ -1072,14 +1085,8 @@
            :let [message
                  (or projected {})
 
-                 sep-pad
-                 0
-
-                 top-pad
-                 (if (= :user (:role message)) 1 0)
-
                  content-top
-                 (+ top-limit (long top) sep-pad 1 top-pad)]
+                 (bubble-content-top message top-limit top)]
            [idx line]
            (map-indexed vector (projected-content-lines message content-w))
 
@@ -1393,11 +1400,8 @@
            :let [line-meta
                  (:line-meta projected)
 
-                 sep-pad
-                 0
-
-                 bubble-top
-                 (+ top-limit (long top) sep-pad)]
+                 content-top
+                 (bubble-content-top projected top-limit top)]
            :when (sequential? line-meta)
            i
            (range (count line-meta))
@@ -1406,7 +1410,7 @@
                  (nth line-meta i nil)
 
                  abs-row
-                 (+ bubble-top (long i))]
+                 (+ content-top (long i))]
            :when (and (map? m)
                       (= :copy-block-body (:kind m))
                       (not (str/blank? (str (:text m))))

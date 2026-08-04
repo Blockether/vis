@@ -10,15 +10,18 @@
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
+            [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
             [com.blockether.vis.ext.channel-tui.screen :as screen]
             [com.blockether.vis.ext.channel-tui.selection :as selection]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
+            [com.blockether.vis.ext.channel-tui.terminals :as term]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe it expect]])
   (:import [com.googlecode.lanterna TerminalPosition]
+           [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.input MouseAction MouseActionType]
            [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]))
 
@@ -72,6 +75,10 @@
 (def ^:private spinner-tick-ms (deref #'screen/spinner-tick-ms))
 
 (def ^:private bubble-selectable-ranges (deref #'screen/bubble-selectable-ranges))
+
+(def ^:private disclosure-copy-regions (deref #'screen/disclosure-copy-regions))
+
+(def ^:private bubble-copy-hit (deref #'screen/bubble-copy-hit))
 
 (def ^:private selected-transcript-text (deref #'screen/selected-transcript-text))
 
@@ -1609,3 +1616,96 @@
                (swap! state/app-db dissoc :session-model-pref)
                (expect (= :anthropic-coding-plan (active-provider-id))))
              (finally (reset! state/app-db old-db))))))
+
+(defn- painted-bubble-grid
+  "Paint ONE chat bubble into a virtual terminal at `start-row` and return every
+   screen row as text. The click geometry under test must agree with what this
+   real paint puts on screen, not with a second copy of the layout arithmetic."
+  [message ^long start-row]
+  (let
+    [vt
+     (term/virtual-screen)
+
+     ^TerminalScreen scr
+     (:screen vt)]
+
+    (render/draw-chat-bubble! (.newTextGraphics scr)
+                              message
+                              start-row
+                              render/MESSAGE_MARGIN_LEFT
+                              (- 80 (long render/MESSAGE_SIDE_PAD))
+                              {:viewport-top 0 :viewport-h 0})
+    (.refresh scr)
+    (term/grid (:terminal vt))))
+
+;; Regression, reported bug: with a live turn on screen, clicking an UNCOLLAPSED
+;; disclosure to copy just that block copied the WHOLE assistant bubble instead.
+;; `disclosure-copy-regions` mapped content line `i` to `text-top + top + i`,
+;; but `render/draw-chat-bubble!` paints it one row lower - under the
+;; role/timestamp row. Every per-block target therefore sat one row too high:
+;; the summary row was claimed by the block below it and the block's LAST body
+;; row was claimed by nobody, so a click there fell through to the whole-bubble
+;; copy region. Short streaming blocks are mostly "last row", which is why a
+;; live turn made it constant.
+(defdescribe
+  disclosure-copy-region-geometry-test
+  (it
+    "expanded-disclosure copy targets sit on the rows the painter draws"
+    (let
+      [text-top
+       3
+
+       top
+       2
+
+       node-id
+       "thinking:i1:reasoning"
+
+       block
+       {:kind :copy-block-body :node-id node-id :text "why one\nwhy two"}
+
+       message
+       {:role :assistant
+        :prewrapped-lines ["▾ REASONING" "why one" "why two"]
+        :line-meta [nil block block]}
+
+       grid
+       (painted-bubble-grid message (+ text-top top))
+
+       row-of
+       (fn [needle]
+         (first (keep-indexed (fn [i line]
+                                (when (str/includes? line needle) i))
+                              grid)))
+
+       summary-row
+       (row-of "REASONING")
+
+       first-body-row
+       (row-of "why one")
+
+       last-body-row
+       (row-of "why two")
+
+       regions
+       (disclosure-copy-regions {:visible [{:idx 0 :top top :height 6 :projected message}]}
+                                text-top
+                                12
+                                80)
+
+       hit-at
+       (fn [row]
+         (:node-id (bubble-copy-hit {:row row :col (inc (long render/MESSAGE_MARGIN_LEFT))}
+                                    regions)))]
+
+      ;; The painter really does reserve chrome above the content, so the
+      ;; naive `text-top + top + i` row is the wrong one.
+      (expect (= [(+ text-top top 1) (+ text-top top 2) (+ text-top top 3)]
+                 [summary-row first-body-row last-body-row]))
+      ;; One copy target per PAINTED body row - no more, no less.
+      (expect (= [first-body-row last-body-row] (mapv :row regions)))
+      ;; Both body rows copy their own block, including the last one, which
+      ;; used to miss and copy the entire bubble.
+      (expect (= [node-id node-id] [(hit-at first-body-row) (hit-at last-body-row)]))
+      ;; And the fix did not slide the targets down onto the summary row.
+      (expect (nil? (hit-at summary-row))))))
