@@ -25,16 +25,25 @@
             [com.blockether.vis.internal.toggles :as toggles]
             [lazytest.core :refer [defdescribe describe it expect throws?]]))
 
-(defn- captured-ask-code-opts
-  [opts]
+(defn- captured-svar-ask-code-opts
+  "Opts a global-router helper hands to `svar/ask-code!`, with no network call."
+  [invoke!]
   (let [seen (atom nil)]
     (with-redefs-fn {#'lp/get-router (fn []
                                        ::router)
                      #'svar/ask-code! (fn [router opts]
                                         (reset! seen {:router router :opts opts})
                                         {:blocks [] :raw ""})}
-      #(lp/ask-code! opts))
+      invoke!)
     @seen))
+
+(defn- captured-ask-code-opts
+  [opts]
+  (captured-svar-ask-code-opts #(lp/ask-code! opts)))
+
+(defn- captured-llm-text-opts
+  [opts]
+  (captured-svar-ask-code-opts #(lp/llm-text! opts)))
 
 (def ^:private provider-error-explanation perr/provider-error-explanation)
 
@@ -6113,3 +6122,47 @@
       (let [[tc] (#'lp/normalize-tool-calls [{:id "d" :name "doc" :input {:name "struct_patch"}}])]
         (expect (= "doc({\"name\": \"struct_patch\"})"
                    (#'lp/tool-call->python-source real-call-shapes tc)))))))
+
+;; GitHub Copilot bills a request as a FULL premium interaction unless the
+;; caller marks it `X-Initiator: agent` (a MISSING header means `user`), and
+;; svar infers that header from message roles. Vis' background one-shots build a
+;; fresh system+user pair, which reads exactly like a human prompt, so every
+;; extension helper call used to be billed as a premium user interaction.
+(defdescribe
+  copilot-agent-initiator-defaults-test
+  (it "marks one-shot ask-code! helper calls as agent initiated"
+      (expect (= "agent"
+                 (get-in (captured-ask-code-opts {:messages [{:role "user" :content "hi"}]})
+                         [:opts :llm-headers "X-Initiator"]))))
+  (it "marks llm-text! helper calls as agent initiated"
+      (expect (= "agent"
+                 (get-in (captured-llm-text-opts {:prompt "hi"})
+                         [:opts :llm-headers "X-Initiator"]))))
+  (it "still lets a caller pin the initiator explicitly"
+      (expect (= "user"
+                 (get-in (captured-ask-code-opts {:messages []
+                                                  :llm-headers {"X-Initiator" "user"}})
+                         [:opts :llm-headers "X-Initiator"])))))
+
+;; The deep-reasoning cap exists because Copilot bills by interaction class, but
+;; it only recognised the individual and business plans: on
+;; `:github-copilot-enterprise` (and the bare `:github-copilot` id) a trivial
+;; prompt still went out at :deep and burned multiple premium interactions.
+(defdescribe
+  copilot-claude-reasoning-cap-test
+  (it "caps deep reasoning on Copilot Claude for EVERY Copilot plan"
+      (doseq [provider [:github-copilot :github-copilot-individual :github-copilot-business
+                        :github-copilot-enterprise]]
+        (expect (= :balanced
+                   (#'lp/copilot-claude-safe-reasoning-level {:provider provider
+                                                             :name "claude-opus-5"}
+                                                            "please refactor the loop"
+                                                            :deep
+                                                            {})))))
+  (it "leaves non-Copilot providers at the requested level"
+      (expect (= :deep
+                 (#'lp/copilot-claude-safe-reasoning-level {:provider :anthropic-coding-plan
+                                                           :name "claude-opus-5"}
+                                                          "please refactor the loop"
+                                                          :deep
+                                                          {})))))

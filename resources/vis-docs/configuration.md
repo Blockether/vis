@@ -227,6 +227,33 @@ provider and model, the emitted wire fragment, and fallback status. The same
 object appears in the final `--full-trace-json-stream` result frame. It is
 run evidence only and is not added to the session database schema.
 
+### GitHub Copilot premium requests
+
+Copilot bills per *premium request*, and the price of a call is decided by one
+header: `X-Initiator: user` is a full premium request, `agent` is the reduced
+agentic rate, and a **missing** header is billed as `user`. The same task can
+therefore cost a multiple of itself depending on which calls claim to be human.
+
+Vis marks exactly one call per turn as human. The first iteration of your
+request goes out as `X-Initiator: user`; every autonomous continuation inside
+that turn — each tool-call round trip — goes out as `agent`. A fifty-iteration
+turn is one premium request plus forty-nine agentic ones, not fifty premium
+ones.
+
+Everything Vis starts for itself is `agent` outright: LLM session titling, and
+the one-shot model calls extensions make (`ask-code!`, `llm-text!`). You never
+pay a premium request for a call you did not send.
+
+This applies to every Copilot tier (`github-copilot`, `-individual`,
+`-business`, `-enterprise`) and needs no configuration. A per-provider
+`llm_headers` entry still wins if you set one — which also means writing
+`X-Initiator: user` there bills every iteration at the premium rate.
+
+One more Copilot-specific guard, for the same reason: Claude models on Copilot
+never receive `:deep` reasoning implicitly (it is capped to `:balanced`, since
+deep reasoning can burn several premium interactions on one prompt), and a
+casual message — `hi`, `thanks` — is sent with no reasoning parameter at all.
+
 ## System prompt
 
 Append project house rules to the core prompt, or replace it outright:

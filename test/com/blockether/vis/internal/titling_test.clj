@@ -341,3 +341,33 @@
                                                "pin the titling route to one endpoint")
               (expect (= {:provider :rbi_genai :model "gpt-5.4-mini"} (:routing @seen)))
               (expect (= "Pinned Title Route" @title*))))))))
+
+;; Auto-titling is COSMETIC, but it is an `ask!` like any other: with a Copilot
+;; plan in AUTO_TITLE_PROVIDER_ORDER and no `X-Initiator`, svar inferred `user`
+;; from the fresh system+user title prompt and GitHub billed one FULL premium
+;; interaction per session title.
+(defdescribe auto-title-agent-initiator-test
+             (it "marks the auto-title call as agent initiated so Copilot never bills it as premium"
+                 (let
+                   [sid
+                    (fresh-sid)
+
+                    title*
+                    (atom "")
+
+                    seen
+                    (atom nil)]
+
+                   (with-redefs
+                     [titling/set-title-with-broadcast!
+                      (fn [_ _ a t]
+                        (reset! a t))
+
+                      svar/ask!
+                      (fn [_ opts]
+                        (reset! seen opts)
+                        {:result {:title "Fleet Scope Chips"}})]
+
+                     @(maybe-auto-title! (env* sid title*) "please redesign the fleet scope chips")
+                     (expect (= "agent" (get-in @seen [:llm-headers "X-Initiator"])))
+                     (expect (= "Fleet Scope Chips" @title*))))))

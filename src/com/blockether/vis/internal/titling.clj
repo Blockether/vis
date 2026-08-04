@@ -394,6 +394,11 @@
                                     {:messages (auto-title-prompt previous-title user-request)
                                      :spec auto-title-spec
                                      :reasoning :off
+                                     ;; Cosmetic title, never a premium
+                                     ;; interaction: the Copilot plans in
+                                     ;; AUTO_TITLE_PROVIDER_ORDER bill an
+                                     ;; unmarked request as user initiated.
+                                     :llm-headers rt/AGENT_INITIATOR_HEADERS
                                      :routing (auto-title-routing (titling-config))
                                      :ttft-timeout-ms AUTO_TITLE_TTFT_MS
                                      :idle-timeout-ms AUTO_TITLE_IDLE_MS

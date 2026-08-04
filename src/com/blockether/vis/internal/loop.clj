@@ -606,9 +606,18 @@
 
 (defn normalize-reasoning-level [v] (svar/normalize-reasoning-level v))
 
+(defn- copilot-provider?
+  [provider-id]
+  (contains? #{:github-copilot :github-copilot-individual :github-copilot-business
+               :github-copilot-enterprise}
+             provider-id))
+
 (defn- github-copilot-claude-model?
+  ;; Every Copilot plan bills Claude the same way, so the premium-interaction
+  ;; policy below must recognise all of them - naming only the individual and
+  ;; business ids let Copilot Enterprise send :deep reasoning uncapped.
   [resolved-model]
-  (and (contains? #{:github-copilot-individual :github-copilot-business} (:provider resolved-model))
+  (and (copilot-provider? (:provider resolved-model))
        (boolean (re-find #"(?i)claude" (str (:name resolved-model))))))
 
 (def ^:private casual-request-pattern
@@ -638,11 +647,6 @@
         (and (= :deep reasoning-level) (not allow-copilot-claude-deep?)) :balanced
         :else reasoning-level))
 
-(defn- copilot-provider?
-  [provider-id]
-  (contains? #{:github-copilot :github-copilot-individual :github-copilot-business
-               :github-copilot-enterprise}
-             provider-id))
 
 (defn- copilot-llm-headers
   [resolved-model initiator]
@@ -7324,7 +7328,8 @@
    single string. `ask!` (JSON-spec) is gone; every Vis caller uses
    `ask-code!`."
   [opts]
-  (svar/ask-code! (get-router) (rt/with-default-ask-code-idle-timeout opts)))
+  (svar/ask-code! (get-router)
+                  (rt/with-agent-initiator (rt/with-default-ask-code-idle-timeout opts))))
 
 (defn llm-text!
   "Fast helper LLM call for extensions.
@@ -7337,7 +7342,12 @@
    :prompt."
   [{:keys [messages system prompt reasoning temperature routing] :as opts}]
   (let
-    [messages
+    [opts
+     ;; Helper traffic is agent activity, not a human prompt: Copilot bills an
+     ;; unmarked request as a full premium interaction.
+     (rt/with-agent-initiator opts)
+
+     messages
      (or messages
          (cond-> []
            (seq system)
