@@ -262,3 +262,64 @@
                        (expect (= [] (get wide "findings")))
                        (expect (= "E501" (get-in narrow ["findings" 0 "type"]))))
                      (finally (cleanup root))))))
+
+;; ── targets that hold no Python ─────────────────────────────────────────────
+
+;; Regression: an EXISTING target with no Python in it — a README, a docs
+;; directory, a tree whose sources are all `.txt` — expanded to zero files and
+;; came back `files 0 … clean` (lint) / `changed 0` (format): byte-identical to
+;; the answer a clean project gives. A model that aimed `lint_code` at the wrong
+;; directory was told its code was fine, with nothing read at all. Only a
+;; NON-EXISTENT path was ever an error, though both docstrings promised that "a
+;; target that resolves to nothing is an ERROR, not a silent `clean`".
+(defdescribe empty-target-test
+             "a named target that holds no Python is an error, not a clean report."
+             (it "lint errors on a named file that is not Python"
+                 (let [root (tmp-dir)]
+                   (try (spit! root "README.md" "# hi\n")
+                        (let [r (pyruff/py-lint-fn (env root) {"path" "README.md"})]
+                          (expect (false? (:success? r)))
+                          (expect (re-find #"no Python" (get-in r [:error :message])))
+                          (expect (re-find #"README\.md" (get-in r [:error :message]))))
+                        (finally (cleanup root)))))
+             (it "lint errors on a directory that holds no Python"
+                 (let [root (tmp-dir)]
+                   (try (spit! root "docs/guide.md" "# hi\n")
+                        (let [r (pyruff/py-lint-fn (env root) {"paths" ["docs"]})]
+                          (expect (false? (:success? r)))
+                          (expect (re-find #"docs" (get-in r [:error :message]))))
+                        (finally (cleanup root)))))
+             (it "names only the empty targets, not the ones that carried Python"
+                 (let [root (tmp-dir)]
+                   (try (spit! root "src/a.py" "x = 1\n")
+                        (spit! root "docs/guide.md" "# hi\n")
+                        (let
+                          [r (pyruff/py-lint-fn (env root) {"paths" ["src" "docs"]})
+                           m (get-in r [:error :message])]
+
+                          (expect (false? (:success? r)))
+                          (expect (re-find #"docs" m))
+                          (expect (nil? (re-find #"src" m))))
+                        (finally (cleanup root)))))
+             (it "format errors on the same target instead of reporting 0 changed"
+                 (let [root (tmp-dir)]
+                   (try (spit! root "README.md" "# hi\n")
+                        (let [r (pyruff/py-format-fn (env root) {"path" "README.md"})]
+                          (expect (false? (:success? r)))
+                          (expect (re-find #"no Python" (get-in r [:error :message]))))
+                        (finally (cleanup root)))))
+             (it "still lints a target that does carry Python"
+                 (let [root (tmp-dir)]
+                   (try (spit! root "src/a.py" "x = 1\n")
+                        (let [r (:result (pyruff/py-lint-fn (env root) {"paths" ["src"]}))]
+                          (expect (= 1 (get r "files")))
+                          (expect (= [] (get r "findings"))))
+                        (finally (cleanup root)))))
+             (it "leaves a whole-project run over a Python-less tree CLEAN, not an error"
+                 (let [root (tmp-dir)]
+                   (try (spit! root "README.md" "# hi\n")
+                        (let [r (:result (pyruff/py-lint-fn (env root) {}))]
+                          (expect (contract/valid? :lint-fn r))
+                          (expect (= 0 (get r "files")))
+                          (expect (= [] (get r "findings"))))
+                        (finally (cleanup root))))))
