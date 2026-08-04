@@ -190,7 +190,11 @@ export interface ProviderAuth extends ProviderFleet {
   finishPkce: () => Promise<void>;
   finishApiKey: () => Promise<void>;
   cancelFlow: () => Promise<void>;
-  /** Presets this machine can still add; `null` until the picker asks. */
+  /**
+   * Presets this machine can still add. `null` means nobody has asked the
+   * gateway yet; an empty array is the daemon's answer that there is nothing
+   * left to configure, and the picker must not exist at all.
+   */
   presets: ProviderPreset[] | null;
   loadPresets: () => Promise<void>;
   addProvider: (preset: ProviderPreset, baseUrl?: string) => Promise<void>;
@@ -749,6 +753,10 @@ export function presetHint(preset: ProviderPreset): string {
  * sign-in uses. A local runtime is the one preset that asks a question first —
  * LM Studio and Ollama listen wherever that machine put them, so the address is
  * editable before the add, and resolved THERE, not on this device.
+ *
+ * A machine with every provider already configured has no picker and no button:
+ * the panel asks the gateway BEFORE it paints, and renders nothing until the
+ * answer is a non-empty list.
  */
 export function AddProviderPanel({
   auth,
@@ -757,11 +765,20 @@ export function AddProviderPanel({
   auth: ProviderAuth;
   className?: string;
 }) {
-  const { presets, loadPresets } = auth;
+  const { presets, loadPresets, pending } = auth;
   const [isPicking, setIsPicking] = useState(false);
   const [chosen, setChosen] = useState<ProviderPreset | null>(null);
   const [baseUrl, setBaseUrl] = useState('');
-  const isLoading = auth.pending === 'presets';
+
+  // Only the daemon knows what is still addable, so ask on mount — and again
+  // whenever a removal puts a preset back in play (`presets` drops to `null`).
+  // A failed probe answers `[]`, which is why this can never loop.
+  useEffect(() => {
+    if (presets === null && pending !== 'presets') void loadPresets();
+  }, [presets, pending, loadPresets]);
+
+  // Unasked, or every provider this machine knows is already configured.
+  if (presets === null || presets.length === 0) return null;
 
   if (!isPicking) {
     return (
@@ -770,7 +787,6 @@ export function AddProviderPanel({
         onClick={() => {
           setIsPicking(true);
           setChosen(null);
-          void loadPresets();
         }}
       >
         Add provider
@@ -831,17 +847,7 @@ export function AddProviderPanel({
     <div className={`space-y-2 border border-accent/50 bg-panel-2 p-3 ${className}`}>
       <p className="font-mono text-body font-bold text-white">Add a provider to this machine</p>
 
-      {isLoading && presets === null && (
-        <p className="py-2 font-mono text-meta text-dialog-hint">Asking the gateway…</p>
-      )}
-
-      {presets?.length === 0 && (
-        <p className="py-2 font-mono text-meta text-dialog-hint">
-          Every provider this machine knows is already configured.
-        </p>
-      )}
-
-      {presets?.map((preset) => {
+      {presets.map((preset) => {
         const busy = auth.pending === `add:${preset.id}`;
         return (
           <button
