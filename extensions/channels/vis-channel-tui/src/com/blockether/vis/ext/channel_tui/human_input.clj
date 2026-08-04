@@ -776,18 +776,36 @@
         (conj {:kind :blank})))))
 
 (defn action-bar
-  "The request's own buttons as ONE row: `[ Submit ]  [ Cancel ]`.
+  "The request's own buttons as ONE row: `[ Submit ] Enter   [ Cancel ] Esc`.
+
+   Each cap carries the chord that presses it, so the band names an action
+   EXACTLY ONCE. The hint bar a row below deliberately says nothing about submit
+   or cancel ([[hint]]): it used to reprint these very labels as
+   `Enter submit · Esc cancel`, two rows of chrome for one meaning.
+
+   `:key` is the chord that fires the button FROM WHERE FOCUS IS. Enter submits
+   from a field or from a focused cap, but inside a multiline field Enter opens a
+   newline and `^S` is the only thing that ends the pause — so the cap says `^S`
+   while that field has focus.
 
    PINNED by the painter under the scrolling body instead of trailing it, so a
    form taller than the band can never push the two controls that END the pause
    off the screen — the same reason the companion pins them in its footer."
-  [{:keys [stops focus]}]
+  [{:keys [stops focus] :as form}]
   (let
-    [buttons (into []
-                   (keep-indexed (fn [i {:keys [kind action label]}]
-                                   (when (= :action kind)
-                                     {:action action :label label :is-focused (= i (or focus 0))})))
-                   stops)]
+    [submit-key
+     (if (multiline-focus? form) "^S" "Enter")
+
+     buttons
+     (into []
+           (keep-indexed (fn [i {:keys [kind action label]}]
+                           (when (= :action kind)
+                             {:action action
+                              :label label
+                              :key (if (= :cancel action) "Esc" submit-key)
+                              :is-focused (= i (or focus 0))})))
+           stops)]
+
     (when (seq buttons) {:kind :action :buttons buttons})))
 
 (defn form-rows
@@ -848,21 +866,20 @@
 
 (defn hint
   "Hint-bar pairs for `form` — the chord list changes with the focused field.
-   Spelled the canonical dialog way: `↑/↓` chords and lowercase actions."
+   Spelled the canonical dialog way: `↑/↓` chords and lowercase actions.
+
+   NAVIGATION AND TYPING ONLY. Submit and cancel are NOT here: [[action-bar]]
+   paints those two controls one row above with their own chords on the caps, so
+   a hint pair for either would print the same verb twice, a row apart. The one
+   Enter that belongs here is the multiline NEWLINE — that is a typing chord, and
+   it is also why the submit cap switches to `^S`."
   [form]
   (let
     [stop
      (focused-stop form)
 
-     multi?
-     (multiline-focus? form)
-
      otp?
-     (= :otp (:type (field-by-id form (:field-id stop))))
-
-     action
-     (fn [label fallback]
-       (str/lower-case (or (not-empty (str label)) fallback)))]
+     (= :otp (:type (field-by-id form (:field-id stop))))]
 
     (cond-> [["↑/↓" "move"]]
       (contains? #{:checkbox :select-option :multi-option} (:kind stop))
@@ -874,17 +891,8 @@
       (= :range (:kind stop))
       (conj ["←/→" "adjust"])
 
-      multi?
-      (conj ["Enter" "newline"])
-
-      true
-      (conj [(if multi? "^S" "Enter")
-             (if (= :action (:kind stop))
-               "press"
-               (action (get-in form [:request :submit-label]) "submit"))])
-
-      (get-in form [:request :is-cancellable] true)
-      (conj ["Esc" (action (get-in form [:request :cancel-label]) "cancel")]))))
+      (multiline-focus? form)
+      (conj ["Enter" "newline"]))))
 
 ;; =============================================================================
 ;; Painting
@@ -912,8 +920,13 @@
 
 
 (defn- paint-actions!
-  "The PINNED action bar: every button the request offers on ONE row, the
-   focused one bold behind the shared cursor glyph.
+  "The PINNED action bar: every button the request offers on ONE row, the focused
+   one bold behind the shared cursor glyph, each cap followed by the DIM chord
+   that presses it — `[ Submit ] Enter   [ Cancel ] Esc`.
+
+   The chord rides the cap instead of the hint bar because the hint bar sits one
+   row below: spelled in both places, the band printed `submit` and `cancel`
+   twice over.
 
    Pinned rather than scrolled with the fields, because the two controls that
    END the pause are exactly the ones a long form must never push out of view."
@@ -930,18 +943,28 @@
 
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc left) row inner-w 1)
-    (reduce (fn [^long col {:keys [label is-focused]}]
+    (reduce (fn [^long col {:keys [label is-focused] chord :key}]
               (let
-                [text
+                [cap
                  (str (p/selection-prefix is-focused) "[ " label " ]")
 
+                 chord
+                 (if (str/blank? (str chord)) "" (str " " chord))
+
+                 cap-w
+                 (long (p/display-width cap))
+
                  w
-                 (long (p/display-width text))]
+                 (+ cap-w (long (p/display-width chord)))]
 
                 (when (<= (+ col w) right)
+                  (p/set-colors! g t/dialog-fg t/dialog-bg)
                   (if is-focused
-                    (p/styled g [p/BOLD] (p/put-str! g col row text))
-                    (p/put-str! g col row text)))
+                    (p/styled g [p/BOLD] (p/put-str! g col row cap))
+                    (p/put-str! g col row cap))
+                  (when (seq chord)
+                    (p/set-colors! g t/dialog-hint t/dialog-bg)
+                    (p/put-str! g (+ col cap-w) row chord)))
                 (+ col w 1)))
             (inc left)
             buttons)

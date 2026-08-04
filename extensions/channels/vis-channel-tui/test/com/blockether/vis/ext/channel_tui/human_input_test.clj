@@ -249,18 +249,19 @@
       (expect (= \q
                  (:char (hi/key->event (KeyStroke. (Character/valueOf \q) false false false)))))))
 
+;; The hint bar is NAVIGATION AND TYPING ONLY: the pinned action bar prints the
+;; submit/cancel caps with their own chords one row above it, so a hint pair for
+;; either action is the same sentence printed twice.
 (defdescribe hint-test
-             (it "offers Enter as submit outside a multiline field"
+             (it "keeps submit and cancel out of the hint bar"
                  (let [pairs (hi/hint (hi/init-form (request)))]
-                   (expect (some #{["Enter" "submit"]} pairs))
-                   (expect (some #{["Esc" "cancel"]} pairs))))
-             (it "swaps Enter for a newline chord inside a multiline field"
+                   (expect (some #{["↑/↓" "move"]} pairs))
+                   (expect (not-any? #{"submit" "cancel" "press"} (map second pairs)))
+                   (expect (not-any? #{"Esc" "^S"} (map first pairs)))))
+             (it "offers Enter as a newline chord inside a multiline field"
                  (let [pairs (hi/hint (assoc (hi/init-form (request)) :focus 7))]
                    (expect (some #{["Enter" "newline"]} pairs))
-                   (expect (some #{["^S" "submit"]} pairs))))
-             (it "drops the cancel chord when the request forbids cancelling"
-                 (let [pairs (hi/hint (hi/init-form (assoc (request) :is-cancellable false)))]
-                   (expect (not-any? #(= "Esc" (first %)) pairs)))))
+                   (expect (not-any? #{"submit"} (map second pairs))))))
 
 (defdescribe paint-test
              (it "paints the title, the description and every field label"
@@ -482,8 +483,10 @@
          (screen-text screen)]
 
         (expect (str/includes? text "↑/↓ move"))
-        (expect (str/includes? text "Enter submit"))
-        (expect (str/includes? text "Esc cancel"))))
+        ;; The two actions are spelled ONCE, on the pinned caps — the hint bar
+        ;; must not print them a second time one row lower.
+        (expect (not (str/includes? text "Enter submit")))
+        (expect (not (str/includes? text "Esc cancel")))))
   (it "puts a scrollbar thumb in the gutter once the form outgrows the box"
       ;; The band grows UPWARD over the transcript, so on a roomy terminal this
       ;; form fits whole; it is a SHORT terminal that squeezes it into a window.
@@ -518,7 +521,7 @@
         (hi/paint! g 80 30 (hi/init-form (request)))
         ;; `rows - 3` is the prompt box's own closing rule; the hint bar lands
         ;; there and the rule right above it is the band's foot.
-        (expect (str/includes? (screen-row screen 27) "Esc cancel"))
+        (expect (str/includes? (screen-row screen 27) "↑/↓ move"))
         (expect (rule-row? (screen-row screen 26)))))
   (it "never swallows the session's bottom chrome"
       (let [{:keys [screen g]} (virtual-screen)]
@@ -568,6 +571,31 @@
         (expect (rule-row? (screen-row screen foot-rule-y)))
         (expect (str/includes? bar "[ Submit ]"))
         (expect (str/includes? bar "[ Cancel ]"))))
+  ;; Regression: the band said the same two things twice — the pinned
+  ;; `[ Submit ]` / `[ Cancel ]` row and, one row under it, a hint bar reading
+  ;; `Enter submit · Esc cancel`. Two rows of chrome, one meaning.
+  (it "states each action once — the chord rides the cap, never the hint bar"
+      (let
+        [{:keys [screen g]}
+         (virtual-screen)
+
+         _
+         (hi/paint! g 80 30 (hi/init-form (request)))
+
+         hint-y
+         (long (:hint-row (hi/band-region 80 30 1)))
+
+         bar
+         (screen-row screen (- hint-y 2))
+
+         hints
+         (str/lower-case (screen-row screen hint-y))]
+
+        (expect (str/includes? bar "[ Submit ] Enter"))
+        (expect (str/includes? bar "[ Cancel ] Esc"))
+        (expect (str/includes? hints "move"))
+        (expect (not (str/includes? hints "submit")))
+        (expect (not (str/includes? hints "cancel")))))
   (it "marks exactly the focused button and keeps the buttons out of the body"
       (let
         [form
@@ -957,10 +985,19 @@
         (expect (= ["Ship it" "Hold"] (mapv :label (:buttons (hi/action-bar custom)))))
         (expect (= ["Submit"] (mapv :label (:buttons (hi/action-bar locked)))))
         (expect (= 3 (count (:stops locked))))))
-  (it "says press, not submit, while a button has focus"
-      (let [form (hi/init-form (slider-request))]
-        (expect (some #{["Enter" "press"]} (hi/hint (assoc form :focus 2))))
-        (expect (some #{["Enter" "submit"]} (hi/hint form))))))
+  (it "prints on each cap the chord that fires it"
+      (let
+        [form
+         (hi/init-form (slider-request))
+
+         multiline
+         (assoc (hi/init-form (request)) :focus 7)]
+
+        (expect (= ["Enter" "Esc"] (mapv :key (:buttons (hi/action-bar form)))))
+        (expect (= ["Enter" "Esc"] (mapv :key (:buttons (hi/action-bar (assoc form :focus 2))))))
+        ;; Inside a multiline field Enter opens a newline, so the cap has to name
+        ;; the chord that actually ends the pause.
+        (expect (= ["^S" "Esc"] (mapv :key (:buttons (hi/action-bar multiline))))))))
 
 ;; The band is bottom-anchored over exactly the rows the composer occupies, and
 ;; the prompt — not the composer — owns the keyboard while it is up (issue #108).
