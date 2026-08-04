@@ -1925,14 +1925,30 @@
    Always draws the full chrome so the input remains visible behind F1/F2
    overlays (matching the Lanterna modal behaviour where the last frame
    persists underneath the dialog). When `overlay-locked?` the cursor is
-   hidden so the overlay owns the interactive surface."
+   hidden so the overlay owns the interactive surface.
+
+   The ONE exception is a human-input transient: its band is bottom-anchored
+   over exactly these rows and IT owns the keyboard, so a prompt box painted
+   underneath would either peek out above a short band or read as a second,
+   focusable surface. The box is blanked instead of drawn — see
+   `human-input/paint!`."
   [^TerminalScreen screen g db
    {:keys [input input-top text-rows cols now-ms echo-row footer-row slash-suggestions
            slash-command-index]}]
-  (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols nil)]
+  (let [human-input? (some? (:human-input db))
+        [cx cy] (if human-input?
+                  (do (p/set-colors! g t/text-fg t/terminal-bg)
+                      (p/fill-rect! g
+                                    0
+                                    (long input-top)
+                                    (long cols)
+                                    (+ (long text-rows) 2 (* 2 (long render/input-pad-y))))
+                      [0 0])
+                  (render/draw-input-box! g input input-top text-rows cols nil))]
     (footer/draw-echo-area! g db echo-row cols now-ms)
     (footer/draw-footer! g db footer-row cols now-ms)
-    (render/draw-slash-command-suggestions! g slash-suggestions input-top cols slash-command-index)
+    (when-not human-input?
+      (render/draw-slash-command-suggestions! g slash-suggestions input-top cols slash-command-index))
     (if (or (overlay-locked? db) (scroll/scrolled-up? (:scroll db)))
       (.setCursorPosition screen nil)
       (.setCursorPosition screen (TerminalPosition. cx cy)))))

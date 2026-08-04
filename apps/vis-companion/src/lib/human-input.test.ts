@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import type { SseEvent } from './types';
 import {
   applyHumanInputEvent,
+  clampHumanInputRange,
+  humanInputRange,
   humanInputRequestFromWire,
   humanInputRequestsFromWire,
   initialHumanInputValues,
@@ -55,6 +57,7 @@ describe('humanInputRequestFromWire', () => {
       'key:password',
       'ok:checkbox',
       'tags:multiselect',
+      'risk:range',
     ]);
     // name keys the answer, label is what the dialog shows, description is the
     // italic line under it.
@@ -125,6 +128,7 @@ describe('initialHumanInputValues', () => {
       env: 'prod',
       key: '',
       ok: true,
+      risk: 2.5,
       tags: [],
     });
   });
@@ -216,5 +220,53 @@ describe('applyHumanInputEvent', () => {
     expect(applyHumanInputEvent(pending, closed(''))).toBe(pending);
     expect(applyHumanInputEvent(pending, requested({ id: 'bad' }))).toBe(pending);
     expect(applyHumanInputEvent(pending, { type: 'turn.started' } as SseEvent)).toBe(pending);
+  });
+});
+
+describe('range fields', () => {
+  const slider = (extra: Record<string, unknown> = {}) => {
+    const request = humanInputRequestFromWire({
+      id: 'r',
+      title: 'T',
+      fields: [{ id: 'risk', type: 'range', ...extra }],
+    });
+    if (!request) throw new Error('a range request must parse');
+    return request.fields[0]!;
+  };
+
+  it('carries the bounds the engine sent', () => {
+    const risk = parsed().fields.find((field) => field.type === 'range');
+    expect(humanInputRange(risk!)).toEqual({ min: 0, max: 10, step: 0.5 });
+  });
+
+  it('falls back to 0-100 by 1 when the engine sends no bounds', () => {
+    expect(humanInputRange(slider())).toEqual({ min: 0, max: 100, step: 1 });
+  });
+
+  it('snaps to the step and never leaves the track', () => {
+    const risk = slider({ min: 0, max: 10, step: 0.5 });
+    expect(clampHumanInputRange(risk, 2.7)).toBe(2.5);
+    expect(clampHumanInputRange(risk, -4)).toBe(0);
+    expect(clampHumanInputRange(risk, 99)).toBe(10);
+    // 0.1 * 27 is 2.7000000000000006 in binary floating point: a slider that
+    // submits that instead of 2.7 makes the answer unreadable in the log.
+    expect(clampHumanInputRange(slider({ min: 0, max: 3, step: 0.1 }), 2.7)).toBe(2.7);
+  });
+
+  it('starts on the minimum, not on an empty string', () => {
+    const request = humanInputRequestFromWire({
+      id: 'r',
+      title: 'T',
+      fields: [{ id: 'risk', type: 'range', min: 5, max: 9 }],
+    });
+    expect(request && initialHumanInputValues(request)).toEqual({ risk: 5 });
+  });
+
+  it('is answered by any number, including the zero at the far left', () => {
+    const risk = slider({ min: 0, max: 10, is_required: true });
+    // 0 is falsy: a blank-check written as `!value` would refuse the answer at
+    // the far left of the track forever.
+    expect(isHumanInputBlank(risk, 0)).toBe(false);
+    expect(isHumanInputBlank(risk, undefined)).toBe(true);
   });
 });

@@ -319,9 +319,16 @@ that label. `id` and `help` are the legacy spellings of `name` and `description`
 and still work.
 
 Field `type` is one of `plaintext`, `password`, `multiline`, `select`,
-`multiselect`, `checkbox`. A field may also carry `placeholder`, `default`,
-`is_required`, `max_length`, and — for the two `select` types — `options`
-(strings, or `{"value": ..., "label": ...}` maps).
+`multiselect`, `checkbox`, `range`. A field may also carry `placeholder`,
+`default`, `is_required`, `max_length`, and — for the two `select` types —
+`options` (strings, or `{"value": ..., "label": ...}` maps).
+
+A `range` is a bounded number: `min` (default 0), `max` (default 100) and `step`
+(default 1). It answers with a number, not a string — a `long` when all three
+bounds are whole, otherwise a `double` — and the engine clamps nothing: a value
+outside `[min, max]` is refused like any other bad answer. The TUI draws it as a
+slider you nudge with `←`/`→` (`Home`/`End` for the bounds); the app draws a real
+slider.
 
 The DIALOG itself takes the same optional `description`: prose under the title
 that says what the whole ask is about, before the operator reads a single field.

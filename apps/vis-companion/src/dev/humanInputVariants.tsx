@@ -159,6 +159,26 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
     cancel_label: 'Cancel',
     is_cancellable: true,
   },
+  slider: {
+    id: 'req-slider',
+    title: 'How much of the error budget may this rollout spend?',
+    description: 'The rollout stops on its own once the budget is gone.',
+    source: 'rollout.py',
+    fields: [
+      field('risk', 'range', 'Error budget', {
+        description: 'Percent of the monthly budget this rollout may burn',
+        min: 0,
+        max: 10,
+        step: 0.5,
+        default: 2.5,
+      }),
+      field('halt', 'checkbox', 'Halt on the first regression', { default: true }),
+      field('token', 'password', 'Deploy token', { is_required: true }),
+    ],
+    submit_label: 'Roll out',
+    cancel_label: 'Hold',
+    is_cancellable: true,
+  },
 };
 
 /** The parked run behind the sheet: the last thing the agent said before it stopped. */

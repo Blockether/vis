@@ -35,7 +35,8 @@
    "multiline" :multiline
    "select" :select
    "multiselect" :multiselect
-   "checkbox" :checkbox})
+   "checkbox" :checkbox
+   "range" :range})
 
 (def ^:private text-types #{:plaintext :password :multiline})
 
@@ -149,7 +150,7 @@
   "Every key a field spec may carry, in its canonical snake_case spelling.
    `id` and `help` are the legacy names of `name` and `description`."
   #{"name" "id" "type" "label" "description" "help" "is_required" "placeholder" "options"
-    "max_length" "default"})
+    "max_length" "default" "min" "max" "step"})
 
 (def ^:private option-keys "Every key one `:options` entry may carry." #{"value" "label"})
 
@@ -245,6 +246,40 @@
       (when-not (pos? n) (invalid-field! field-id ":max-length must be positive"))
       n)))
 
+(defn- normalize-number
+  [field-id label value fallback]
+  (cond (nil? value) fallback
+        (number? value) value
+        :else (let [s (str/trim (str value))]
+                (or (parse-long s)
+                    (parse-double s)
+                    (invalid-field! field-id (str label " must be a number"))))))
+
+(def ^:private range-defaults
+  "A `:range` with no bounds is a percentage — the one scale every operator
+   already reads without being told what the numbers mean."
+  {:min 0 :max 100 :step 1})
+
+(defn- normalize-range
+  "The three numbers a slider needs. `:step` is the increment a surface nudges
+   by, NOT a validation rule: the engine only refuses a value outside the
+   bounds, so a client that types an exact number is never argued with."
+  [field-id field]
+  (let
+    [lo
+     (normalize-number field-id ":min" (pick field "min" :min) (:min range-defaults))
+
+     hi
+     (normalize-number field-id ":max" (pick field "max" :max) (:max range-defaults))
+
+     step
+     (normalize-number field-id ":step" (pick field "step" :step) (:step range-defaults))]
+
+    (when-not (< (double lo) (double hi))
+      (invalid-field! field-id ":max must be greater than :min"))
+    (when-not (pos? (double step)) (invalid-field! field-id ":step must be positive"))
+    {:min lo :max hi :step step}))
+
 (declare coerce-value)
 
 (defn normalize-field
@@ -307,6 +342,9 @@
 
        (contains? choice-types field-type)
        (assoc :options (normalize-options field-id field-type (pick field "options" :options)))
+
+       (= :range field-type)
+       (merge (normalize-range field-id field))
 
        (normalize-max-length field-id (pick field "max_length" :max-length))
        (assoc :max-length (normalize-max-length field-id (pick field "max_length" :max-length))))
@@ -500,6 +538,32 @@
     ;; accepted `false` from anything that posted JSON.
     (if (and (= :ok status) is-required (not result)) [:error "must be checked"] [status result])))
 
+(defn- coerce-range
+  [{lo :min hi :max st :step} value]
+  (let
+    [lo
+     (if (number? lo) lo (:min range-defaults))
+
+     hi
+     (if (number? hi) hi (:max range-defaults))
+
+     n
+     (cond (nil? value) lo
+           (number? value) value
+           (coll? value) ::invalid
+           :else (let [s (str/trim (str value))]
+                   (or (parse-long s) (parse-double s) ::invalid)))]
+
+    (cond (= ::invalid n) [:error "must be a number"]
+          (or (< (double n) (double lo)) (> (double n) (double hi)))
+          [:error (str "must be between " lo " and " hi)]
+          ;; The SPEC decides the answer's type, not the keystroke that produced it:
+          ;; an all-integer slider always hands the extension a long, so `0`, `"0"`
+          ;; and `0.0` cannot reach it as three different things.
+          (every? integer? [lo hi (if (number? st) st (:step range-defaults))])
+          [:ok (long (Math/round (double n)))]
+          :else [:ok (double n)])))
+
 (defn coerce-value
   "Coerce and validate one raw `value` against normalized `field`. Returns
    `[:ok coerced]` or `[:error message]`."
@@ -508,6 +572,7 @@
         (= :select type) (coerce-select field value)
         (= :multiselect type) (coerce-multiselect field value)
         (= :checkbox type) (coerce-checkbox field value)
+        (= :range type) (coerce-range field value)
         :else [:error "unknown field type"]))
 
 (defn coerce-values

@@ -26,6 +26,7 @@ export const HUMAN_INPUT_FIELD_TYPES = [
   'select',
   'multiselect',
   'checkbox',
+  'range',
 ] as const;
 
 export type HumanInputFieldType = (typeof HUMAN_INPUT_FIELD_TYPES)[number];
@@ -47,6 +48,10 @@ export interface HumanInputField {
   placeholder?: string;
   options?: HumanInputOption[];
   max_length?: number;
+  /** `range` only — the engine defaults these to 0, 100 and 1. */
+  min?: number;
+  max?: number;
+  step?: number;
   default?: unknown;
 }
 
@@ -64,7 +69,7 @@ export interface HumanInputRequest {
 }
 
 /** What one field submits. The engine coerces and validates it again. */
-export type HumanInputValue = string | string[] | boolean;
+export type HumanInputValue = string | string[] | boolean | number;
 
 export type HumanInputValues = Record<string, HumanInputValue>;
 
@@ -106,6 +111,11 @@ function optionFromWire(raw: unknown): HumanInputOption | null {
   return { value, label: text(row.label) || value };
 }
 
+/** One finite number off the wire — a `range` bound, or nothing. */
+function bound(raw: unknown): number | undefined {
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+}
+
 function fieldFromWire(raw: unknown): HumanInputField | null {
   const row = record(raw);
   if (!row) return null;
@@ -128,6 +138,9 @@ function fieldFromWire(raw: unknown): HumanInputField | null {
     ...(placeholder ? { placeholder } : {}),
     ...(options ? { options } : {}),
     ...(maxLength ? { max_length: maxLength } : {}),
+    ...(bound(row.min) === undefined ? {} : { min: bound(row.min) }),
+    ...(bound(row.max) === undefined ? {} : { max: bound(row.max) }),
+    ...(bound(row.step) === undefined ? {} : { step: bound(row.step) }),
     ...(row.default === undefined ? {} : { default: row.default }),
   };
 }
@@ -173,6 +186,26 @@ export function humanInputRequestsFromWire(raw: unknown): HumanInputRequest[] {
     .filter((request): request is HumanInputRequest => request !== null);
 }
 
+/** A `range` field's bounds, with the engine's own defaults filled in. */
+export function humanInputRange(field: HumanInputField): { min: number; max: number; step: number } {
+  const min = Number.isFinite(field.min) ? (field.min as number) : 0;
+  const max = Number.isFinite(field.max) && (field.max as number) > min ? (field.max as number) : Math.max(min + 1, 100);
+  const step = Number.isFinite(field.step) && (field.step as number) > 0 ? (field.step as number) : 1;
+  return { min, max, step };
+}
+
+/** Snap a slider value onto the field's step and clamp it into its bounds. */
+export function clampHumanInputRange(field: HumanInputField, value: number): number {
+  const { min, max, step } = humanInputRange(field);
+  if (!Number.isFinite(value)) return min;
+  const snapped = min + Math.round((value - min) / step) * step;
+  const bounded = Math.min(max, Math.max(min, snapped));
+  // Float steps accumulate error (0.1 + 0.2); round to the step's own precision
+  // so the label reads 0.3 and not 0.30000000000000004.
+  const decimals = (String(step).split('.')[1] ?? '').length;
+  return decimals > 0 ? Number(bounded.toFixed(decimals)) : bounded;
+}
+
 function defaultValue(field: HumanInputField): HumanInputValue {
   const fallback = field.default;
   switch (field.type) {
@@ -180,6 +213,8 @@ function defaultValue(field: HumanInputField): HumanInputValue {
       return fallback === true;
     case 'multiselect':
       return Array.isArray(fallback) ? fallback.filter((item): item is string => typeof item === 'string') : [];
+    case 'range':
+      return clampHumanInputRange(field, typeof fallback === 'number' ? fallback : Number(fallback));
     default:
       return typeof fallback === 'string' ? fallback : '';
   }
@@ -202,6 +237,9 @@ export function initialHumanInputValues(request: HumanInputRequest): HumanInputV
 export function isHumanInputBlank(field: HumanInputField, value: HumanInputValue | undefined): boolean {
   if (!field.is_required) return false;
   if (field.type === 'checkbox') return value !== true;
+  // A slider always sits somewhere on its track, so `is_required` on a range can
+  // only catch a value that never arrived.
+  if (field.type === 'range') return typeof value !== 'number' || !Number.isFinite(value);
   if (Array.isArray(value)) return value.length === 0;
   return typeof value !== 'string' || value.trim() === '';
 }

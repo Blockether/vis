@@ -686,3 +686,45 @@
                    (expect (= {:is-submitted false :reason "undeliverable" :request-id rid} answer))
                    (expect (nil? (hi/pending-request rid)))
                    (expect (signal? signals :error ::hi/request-undeliverable rid)))))
+
+(defdescribe
+  range-field-test
+  (it "defaults its bounds to 0..100 by 1"
+      (let [[field] (normalized-fields {:id "pct" :type "range"})]
+        (expect (= :range (:type field)))
+        (expect (= 0 (:min field)))
+        (expect (= 100 (:max field)))
+        (expect (= 1 (:step field)))))
+  (it "keeps the bounds it was given"
+      (let [[field] (normalized-fields {:id "pct" :type "range" :min 10 :max 20 :step 0.5})]
+        (expect (= 10 (:min field)))
+        (expect (= 20 (:max field)))
+        (expect (= 0.5 (:step field)))))
+  (it "refuses bounds that describe no range at all"
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(normalized-fields {:id "pct" :type "range" :min 5 :max 5})))
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(normalized-fields {:id "pct" :type "range" :min 5 :max 1})))
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(normalized-fields {:id "pct" :type "range" :step 0})))
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(normalized-fields {:id "pct" :type "range" :min "low"}))))
+  (it "answers with a number, not a string"
+      (let [fields (normalized-fields {:id "pct" :type "range" :min 0 :max 100})]
+        (expect (= 42 (get-in (hi/coerce-values fields {"pct" 42}) [:values "pct"])))
+        (expect (= 42 (get-in (hi/coerce-values fields {"pct" "42"}) [:values "pct"])))))
+  (it "stays a double when the bounds are fractional"
+      (let [fields (normalized-fields {:id "pct" :type "range" :min 0 :max 1 :step 0.25})]
+        (expect (= 0.25 (get-in (hi/coerce-values fields {"pct" 0.25}) [:values "pct"])))))
+  (it "falls back to min when nothing was answered"
+      (let [fields (normalized-fields {:id "pct" :type "range" :min 7 :max 9})]
+        (expect (= 7 (get-in (hi/coerce-values fields {}) [:values "pct"])))))
+  (it "honours a default"
+      (let [fields (normalized-fields {:id "pct" :type "range" :min 0 :max 100 :default 30})]
+        (expect (= 30 (get-in (hi/coerce-values fields {}) [:values "pct"])))))
+  (it
+    "refuses a value outside the bounds, and one that is not a number"
+    (let [fields (normalized-fields {:id "pct" :type "range" :min 0 :max 10})]
+      (expect (= {"pct" "must be between 0 and 10"} (:errors (hi/coerce-values fields {"pct" 11}))))
+      (expect (= {"pct" "must be between 0 and 10"} (:errors (hi/coerce-values fields {"pct" -1}))))
+      (expect (= {"pct" "must be a number"} (:errors (hi/coerce-values fields {"pct" "loud"})))))))

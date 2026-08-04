@@ -313,7 +313,15 @@
              :options [{:value "prod"} {:value "stg" :label "Staging"}]}
             {:name "key" :type "password" :is-required true :max-length 40}
             {:id "ok" :type "checkbox" :label "Confirm" :default true}
-            {:id "tags" :type "multiselect" :options ["a" "b"] :default []}]})
+            {:id "tags" :type "multiselect" :options ["a" "b"] :default []}
+            {:id "risk"
+             :type "range"
+             :label "Risk budget"
+             :description "How much of the error budget this may spend"
+             :min 0
+             :max 10
+             :step 0.5
+             :default 2.5}]})
 
 (defn- fixture-file
   "`apps/vis-companion/src/lib/human-input.fixture.json`, found from the working

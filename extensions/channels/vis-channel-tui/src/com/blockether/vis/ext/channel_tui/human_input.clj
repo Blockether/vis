@@ -32,6 +32,64 @@
   "Field types whose stops are individual options."
   #{:select :multiselect})
 
+(def ^:private range-defaults
+  "Bounds a `:range` field falls back to — the engine's own defaults, so a
+   hand-made request view renders the same slider a normalized one does."
+  {:min 0 :max 100 :step 1})
+
+(defn- range-bounds
+  "`{:lo :hi :st}` for a `:range` field. Named away from `min`/`max` on purpose:
+   destructuring those would shadow the two core fns this file rounds with."
+  [field]
+  (let
+    [num (fn [k]
+           (let [v (get field k)]
+             (if (number? v) v (get range-defaults k))))]
+    {:lo (num :min) :hi (num :max) :st (num :step)}))
+
+(defn- range-integral? [{:keys [lo hi st]}] (every? integer? [lo hi st]))
+
+(defn- range-snap
+  "`v` pulled inside the bounds and given the type the field submits — a long
+   for an all-integer slider, so ↑/↓ can never produce `42.0000001`."
+  [{:keys [lo hi] :as bounds} v]
+  (let [v (max (double lo) (min (double hi) (double v)))]
+    (if (range-integral? bounds) (long (Math/round v)) v)))
+
+(def ^:private range-track-w
+  "Cells the slider track gets. Fixed, so the knob does not jump between two
+   fields whose bounds differ and the number beside it stays where the eye is."
+  20)
+
+(defn- range-text
+  "`━━━━●─────────  42  (0–100)` — track, knob, the value, and the bounds. A bar
+   alone never says WHAT is about to be submitted, and a number alone never says
+   how much room is left."
+  [{:keys [lo hi]} v]
+  (let
+    [span
+     (- (double hi) (double lo))
+
+     frac
+     (if (pos? span) (/ (- (double v) (double lo)) span) 0.0)
+
+     w
+     (long range-track-w)
+
+     knob
+     (max 0 (min (dec w) (long (Math/round (* frac (dec w))))))]
+
+    (str (apply str (repeat knob \━))
+         "●"
+         (apply str (repeat (- (dec w) knob) \─))
+         "  "
+         v
+         "  ("
+         lo
+         "–"
+         hi
+         ")")))
+
 (def ^:private mask-char "Password fields never render their plaintext." \u2022)
 
 ;; =============================================================================
@@ -50,23 +108,42 @@
                                     (some? default) [default]
                                     :else [])
         (= :select type) (if (some? default) default (:value (first (field-options field))))
+        (= :range type) (let [{:keys [lo] :as bounds} (range-bounds field)]
+                          (range-snap bounds (if (number? default) default lo)))
         :else nil))
+
+(defn- field-stops
+  [{:keys [id type] :as field}]
+  (cond (contains? text-types type) [{:kind :text :field-id id}]
+        (= :checkbox type) [{:kind :checkbox :field-id id}]
+        (= :range type) [{:kind :range :field-id id}]
+        (contains? choice-types type)
+        (mapv (fn [{:keys [value]}]
+                {:kind (if (= :multiselect type) :multi-option :select-option)
+                 :field-id id
+                 :value value})
+              (field-options field))
+        :else []))
+
+(defn action-stops
+  "The request's own confirm/cancel buttons, as focus stops of their own.
+
+   A transient that can only be accepted by a chord is a transient nobody
+   accepts: these are the LAST stops, so ↓ walks off the final field straight
+   onto `[ Submit ]` and Enter presses it. Cancel only exists when the request
+   allows it — an uncancellable ask must not offer a button that does nothing."
+  [request]
+  (let
+    [labelled (fn [k fallback]
+                (or (not-empty (str/trim (str (get request k)))) fallback))]
+    (cond-> [{:kind :action :action :submit :label (labelled :submit-label "Submit")}]
+      (get request :is-cancellable true)
+      (conj {:kind :action :action :cancel :label (labelled :cancel-label "Cancel")}))))
 
 (defn stops
   "Flat vector of focus stops for `request` — the linear order ↑/↓/Tab walks."
   [request]
-  (into []
-        (mapcat (fn [{:keys [id type] :as field}]
-                  (cond (contains? text-types type) [{:kind :text :field-id id}]
-                        (= :checkbox type) [{:kind :checkbox :field-id id}]
-                        (contains? choice-types type)
-                        (mapv (fn [{:keys [value]}]
-                                {:kind (if (= :multiselect type) :multi-option :select-option)
-                                 :field-id id
-                                 :value value})
-                              (field-options field))
-                        :else [])))
-        (:fields request)))
+  (into (into [] (mapcat field-stops) (:fields request)) (action-stops request)))
 
 (defn init-form
   "Build the form model for a request VIEW. Text cursors start at end-of-text
@@ -183,6 +260,24 @@
       [:cursors field-id]
       (clamp (+ (cursor-of form field-id) (long delta)) 0 (count text)))))
 
+(defn- nudge-range
+  "Move a slider one `:step` — the ←/→ the operator expects on a track, clamped
+   to the bounds instead of wrapping, because a volume knob that jumps from max
+   to min is a bug in every UI that ever shipped one."
+  [form field-id ^long delta]
+  (let
+    [bounds
+     (range-bounds (field-by-id form field-id))
+
+     current
+     (let [v (get-in form [:values field-id])]
+       (if (number? v) v (:lo bounds)))]
+
+    (-> form
+        (assoc-in [:values field-id]
+                  (range-snap bounds (+ (double current) (* delta (double (:st bounds))))))
+        (update :errors dissoc field-id))))
+
 ;; =============================================================================
 ;; Toggling
 ;; =============================================================================
@@ -266,12 +361,33 @@
      text-stop?
      (= :text (:kind stop))
 
+     range-stop?
+     (= :range (:kind stop))
+
+     button
+     (when (= :action (:kind stop)) (:action stop))
+
      field-id
      (:field-id stop)
 
      stay
      (fn [f]
-       {:form f :action nil})]
+       {:form f :action nil})
+
+     ;; ←/→ mean three different things depending on what the cursor is on, and
+     ;; all three are the web habit: move the caret in text, slide a track, and
+     ;; nothing at all on a row that has no horizontal axis.
+     horizontal
+     (fn [delta]
+       (stay (cond text-stop? (move-cursor form field-id delta)
+                   range-stop? (nudge-range form field-id delta)
+                   :else form)))
+
+     press
+     (fn []
+       (if (and (= :cancel button) (not (get-in form [:request :is-cancellable] true)))
+         (stay form)
+         {:form form :action (or button :submit)}))]
 
     (case kind
       :cancel
@@ -285,8 +401,10 @@
             ;; Enter on an option/checkbox both picks it AND is the
             ;; natural "I'm done" key — toggling first would make a
             ;; single-option form impossible to accept, so options
-            ;; toggle with Space and Enter always submits.
-            :else {:form form :action :submit})
+            ;; toggle with Space and Enter always submits. On a BUTTON
+            ;; it presses that button, which is the only way `[ Cancel ]`
+            ;; is reachable without knowing Esc.
+            :else (press))
 
       :next
       (stay (move-focus form 1))
@@ -295,18 +413,21 @@
       (stay (move-focus form -1))
 
       :left
-      (stay (if text-stop? (move-cursor form field-id -1) form))
+      (horizontal -1)
 
       :right
-      (stay (if text-stop? (move-cursor form field-id 1) form))
+      (horizontal 1)
 
       :home
-      (stay (if text-stop? (assoc-in form [:cursors field-id] 0) form))
+      (stay (cond text-stop? (assoc-in form [:cursors field-id] 0)
+                  range-stop? (nudge-range form field-id Long/MIN_VALUE)
+                  :else form))
 
       :end
-      (stay (if text-stop?
-              (assoc-in form [:cursors field-id] (count (str (get-in form [:values field-id]))))
-              form))
+      (stay (cond text-stop?
+                  (assoc-in form [:cursors field-id] (count (str (get-in form [:values field-id]))))
+                  range-stop? (nudge-range form field-id Long/MAX_VALUE)
+                  :else form))
 
       :backspace
       (stay (if text-stop? (delete-back form field-id) form))
@@ -317,8 +438,9 @@
       :char
       (cond (nil? stop) (stay form)
             text-stop? (stay (insert-text form field-id (str char)))
-            (= \space char) (stay (toggle-stop form stop))
-            :else (stay form))
+            (not= \space char) (stay form)
+            button (press)
+            :else (stay (toggle-stop form stop)))
 
       (stay form))))
 
@@ -446,6 +568,21 @@
                  :cursor cursor
                  :is-focused focused?
                  :placeholder (:placeholder field)}]))
+           (= :range type) (let
+                             [idx
+                              (stop-index #(= id (:field-id %)))
+
+                              bounds
+                              (range-bounds field)
+
+                              v
+                              (range-snap bounds (if (number? value) value (:lo bounds)))]
+
+                             [{:kind :range
+                               :field-id id
+                               :value v
+                               :text (range-text bounds v)
+                               :is-focused (= idx focus)}])
            (= :checkbox type) (let [idx (stop-index #(= id (:field-id %)))]
                                 [{:kind :checkbox
                                   :field-id id
@@ -481,8 +618,26 @@
       true
       (conj {:kind :blank}))))
 
+(defn action-bar
+  "The request's own buttons as ONE row: `[ Submit ]  [ Cancel ]`.
+
+   PINNED by the painter under the scrolling body instead of trailing it, so a
+   form taller than the band can never push the two controls that END the pause
+   off the screen — the same reason the companion pins them in its footer."
+  [{:keys [stops focus]}]
+  (let
+    [buttons (into []
+                   (keep-indexed (fn [i {:keys [kind action label]}]
+                                   (when (= :action kind)
+                                     {:action action :label label :is-focused (= i (or focus 0))})))
+                   stops)]
+    (when (seq buttons) {:kind :action :buttons buttons})))
+
 (defn form-rows
   "PURE paint plan: the ordered rows the dialog body draws for `form`.
+
+   Fields only — the confirm/cancel buttons live in [[action-bar]], pinned below
+   this body, so they are never scrolled away.
 
    `text-w` is the column budget prose gets — the request's description and
    every field's wrap to it. Omit it (or pass nil) for the unwrapped plan."
@@ -540,11 +695,17 @@
       (contains? #{:checkbox :select-option :multi-option} (:kind stop))
       (conj ["Space" "toggle"])
 
+      (= :range (:kind stop))
+      (conj ["←/→" "adjust"])
+
       multi?
       (conj ["Enter" "newline"])
 
       true
-      (conj [(if multi? "^S" "Enter") (action (get-in form [:request :submit-label]) "submit")])
+      (conj [(if multi? "^S" "Enter")
+             (if (= :action (:kind stop))
+               "press"
+               (action (get-in form [:request :submit-label]) "submit"))])
 
       (get-in form [:request :is-cancellable] true)
       (conj ["Esc" (action (get-in form [:request :cancel-label]) "cancel")]))))
@@ -573,6 +734,42 @@
                         row
                         (dialogs/ellipsize (str text) (max 0 (- (long inner-w) 2))))))
 
+
+(defn- paint-actions!
+  "The PINNED action bar: every button the request offers on ONE row, the
+   focused one bold behind the shared cursor glyph.
+
+   Pinned rather than scrolled with the fields, because the two controls that
+   END the pause are exactly the ones a long form must never push out of view."
+  [g left row inner-w buttons]
+  (let
+    [left
+     (long left)
+
+     inner-w
+     (long inner-w)
+
+     right
+     (+ left inner-w -1)]
+
+    (p/set-colors! g t/dialog-fg t/dialog-bg)
+    (p/fill-rect! g (inc left) row inner-w 1)
+    (reduce (fn [^long col {:keys [label is-focused]}]
+              (let
+                [text
+                 (str (p/selection-prefix is-focused) "[ " label " ]")
+
+                 w
+                 (long (p/display-width text))]
+
+                (when (<= (+ col w) right)
+                  (if is-focused
+                    (p/styled g [p/BOLD] (p/put-str! g col row text))
+                    (p/put-str! g col row text)))
+                (+ col w 1)))
+            (inc left)
+            buttons)
+    nil))
 
 
 (defn- paint-row!
@@ -623,6 +820,12 @@
                                   (:is-checked entry)
                                   (:text entry))
         nil)
+
+    :range
+    (do (dialogs/draw-selectable-row! g left row inner-w (:is-focused entry) (:text entry)) nil)
+
+    :action
+    (do (paint-actions! g left row inner-w (:buttons entry)) nil)
 
     :input
     (let
@@ -702,9 +905,12 @@
    A magit-style TRANSIENT, not a modal. The band is bottom-anchored on the
    session's bottom chrome — it takes over the prompt's rows and grows UPWARD
    over the transcript, never past `content-top` — and reads `───` / bold title /
-   `───` / the form / `───` / hint bar, the same chrome every other transient in
-   the TUI wears. The rule directly above the hint bar is the host's closing
-   rule, so the footer below the band is never swallowed.
+   `───` / the fields / the action bar / `───` / hint bar, the same chrome every
+   other transient in the TUI wears. The rule directly above the hint bar is the
+   host's closing rule, so the footer below the band is never swallowed.
+
+   The action bar is PINNED: only the fields scroll under it, so `[ Submit ]`
+   and `[ Cancel ]` stay on screen for a form of any length.
 
    TWO passes over the plan, because a scrollbar costs a column: the first plan
    sizes the band, and an overflowing one re-wraps one column narrower."
@@ -728,19 +934,25 @@
       bar
       (hint form)
 
+      actions
+      (action-bar form)
+
       draft
       ;; Sizing pass: how many rows the form wants decides where the band's
-      ;; top rule lands.
+      ;; top rule lands. The pinned action bar asks for one row of its own.
       (form-rows form (prose-width inner-w))
 
       {:keys [sep-row title-row title-rule-row body-top foot-rule-row foot-row visible top-limit]}
-      (tr/band-geometry region (count draft))
+      (tr/band-geometry region (+ (count draft) (if actions 1 0)))
 
       visible
       (long visible)
 
+      body-visible
+      (max 0 (- visible (if actions 1 0)))
+
       is-overflowing
-      (> (count draft) visible)
+      (> (count draft) body-visible)
 
       row-w
       (if is-overflowing (dec inner-w) inner-w)
@@ -754,10 +966,14 @@
       (count plan)
 
       start
-      (window-start plan visible)
+      (long (if (= :action (:kind (focused-stop form)))
+              ;; Focus is on a pinned button: the fields stay where the operator
+              ;; left them — at the end — instead of snapping back to row 0.
+              (max 0 (- total body-visible))
+              (window-start plan body-visible)))
 
       shown
-      (subvec (vec plan) (min start total) (min total (+ start visible)))]
+      (subvec (vec plan) (min start total) (min total (+ start body-visible)))]
 
      (doseq [row (range (max 0 (long sep-row)) (inc (long foot-row)))]
        (clear-band-row! g cols row))
@@ -778,16 +994,17 @@
                          (or (paint-row! g left (+ (long body-top) (long i)) row-w entry) acc))
                        nil
                        (map-indexed vector shown))]
-       (doseq [i (range (count shown) visible)]
+       (doseq [i (range (count shown) body-visible)]
          (paint-row! g left (+ (long body-top) (long i)) row-w {:kind :blank}))
        (when is-overflowing
          (scrollbar/draw! g
                           {:col (+ left inner-w)
                            :top body-top
-                           :track-h visible
+                           :track-h body-visible
                            :total-h total
-                           :inner-h visible
+                           :inner-h body-visible
                            :scroll start}))
+       (when actions (paint-row! g left (+ (long body-top) (long body-visible)) inner-w actions))
        (dialogs/draw-hint-bar! g left foot-row inner-w bar)
        (p/clear-styles! g)
        cursor))))

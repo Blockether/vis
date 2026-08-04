@@ -8,6 +8,8 @@ import {
   initialHumanInputValues,
   isHumanInputAnswerable,
   isHumanInputEvent,
+  clampHumanInputRange,
+  humanInputRange,
   toggleHumanInputOption,
   type HumanInputField,
   type HumanInputRequest,
@@ -404,6 +406,32 @@ function HumanInputFieldRow({
             );
           })}
         </div>
+      </FieldShell>
+    );
+  }
+
+  if (field.type === 'range') {
+    const { min, max, step } = humanInputRange(field);
+    const current = typeof value === 'number' ? value : min;
+    return (
+      <FieldShell field={field} {...(error ? { error } : {})}>
+        <div className="flex items-center gap-3">
+          <input
+            type="range"
+            disabled={disabled}
+            min={min}
+            max={max}
+            step={step}
+            value={current}
+            aria-label={field.label}
+            className="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-edge accent-accent disabled:cursor-not-allowed"
+            onChange={(event) => onChange(field.id, clampHumanInputRange(field, event.target.valueAsNumber))}
+          />
+          <span className="shrink-0 font-mono text-meta tabular-nums text-white sm:text-ui">{current}</span>
+        </div>
+        <p className="font-mono text-chip text-dialog-hint">
+          {min} – {max}
+        </p>
       </FieldShell>
     );
   }

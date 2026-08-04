@@ -57,6 +57,18 @@
         }
       ],
       "default": []
+    },
+    {
+      "min": 0,
+      "label": "Risk budget",
+      "max": 10,
+      "id": "risk",
+      "is_required": false,
+      "name": "risk",
+      "type": "range",
+      "default": 2.5,
+      "description": "How much of the error budget this may spend",
+      "step": 0.5
     }
   ],
   "session_id": "sid-1",

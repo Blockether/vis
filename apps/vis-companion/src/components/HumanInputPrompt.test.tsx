@@ -88,4 +88,26 @@ describe('human input sheet', () => {
     expect(html).toContain('The engine refused this answer.');
     expect(element(html, 'overflow-y-auto')).toContain('Must look like OPS-1234.');
   });
+
+  it('gives a range field a real slider, its bounds, and a readable value', () => {
+    const html = markup('slider');
+    const slider = /<input[^>]*type="range"[^>]*>/.exec(html)?.[0] ?? '';
+    expect(slider).toContain('min="0"');
+    expect(slider).toContain('max="10"');
+    expect(slider).toContain('step="0.5"');
+    expect(slider).toContain('value="2.5"');
+    // A slider with no number beside it is a guess, not an answer.
+    expect(html).toContain('2.5');
+    expect(html).toContain('Error budget');
+  });
+
+  it('masks a password and shows a checkbox as a pressed toggle', () => {
+    const html = markup('slider');
+    expect(html).toContain('type="password"');
+    // The checkbox is a TUI-style `[x]` toggle, so the state has to reach
+    // assistive tech through aria-pressed rather than a checked input.
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain('[x]');
+    expect(html).toContain('Halt on the first regression');
+  });
 });

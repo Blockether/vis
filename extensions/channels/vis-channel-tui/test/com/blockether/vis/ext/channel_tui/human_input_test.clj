@@ -107,7 +107,8 @@
                   {:kind :select-option :field-id "env" :value "prod"}
                   {:kind :multi-option :field-id "tags" :value "a"}
                   {:kind :multi-option :field-id "tags" :value "b"} {:kind :checkbox :field-id "ok"}
-                  {:kind :text :field-id "note"}]
+                  {:kind :text :field-id "note"} {:kind :action :action :submit :label "Submit"}
+                  {:kind :action :action :cancel :label "Cancel"}]
                  (hi/stops (request))))))
 
 (defdescribe
@@ -151,7 +152,7 @@
              (it "Tab/arrow keys walk the stops and wrap around"
                  (let [form (hi/init-form (request))]
                    (expect (= 1 (:focus (feed form [{:kind :next}]))))
-                   (expect (= 7 (:focus (feed form [{:kind :prev}]))))))
+                   (expect (= 9 (:focus (feed form [{:kind :prev}]))))))
              (it "Space picks exactly one option in a select"
                  (let
                    [form (feed (hi/init-form (request))
@@ -483,55 +484,99 @@
   [s]
   (and (str/includes? s "───") (every? #{\space \─} s)))
 
-(defdescribe band-test
-             ;; The human-input prompt is a magit-style TRANSIENT inside the session, not a
-             ;; full-screen modal: it takes over the prompt's rows, grows upward over the
-             ;; transcript, and leaves the session's own footer breathing underneath.
-             (it "closes with the host's rule directly above its hint bar"
-                 (let [{:keys [screen g]} (virtual-screen)]
-                   (hi/paint! g 80 30 (hi/init-form (request)))
-                   ;; `rows - 3` is the prompt box's own closing rule; the hint bar lands
-                   ;; there and the rule right above it is the band's foot.
-                   (expect (str/includes? (screen-row screen 27) "Esc cancel"))
-                   (expect (rule-row? (screen-row screen 26)))))
-             (it "never swallows the session's bottom chrome"
-                 (let [{:keys [screen g]} (virtual-screen)]
-                   (hi/paint! g 80 30 (hi/init-form (request)))
-                   (expect (= "" (screen-row screen 28)))
-                   (expect (= "" (screen-row screen 29)))))
-             (it "stops at the top of the transcript instead of covering the header"
-                 (let [{:keys [screen g]} (virtual-screen)]
-                   (hi/paint! g 80 30 (assoc (hi/init-form (request)) :focus 7) 12)
-                   (expect (every? #(= "" (screen-row screen %)) (range 12)))
-                   (expect (str/includes? (screen-text screen) "Deploy"))))
-             (it "frames its title between two rules, the way every transient does"
-                 (let
-                   [{:keys [screen g]}
-                    (virtual-screen)
+(defdescribe
+  band-test
+  ;; The human-input prompt is a magit-style TRANSIENT inside the session, not a
+  ;; full-screen modal: it takes over the prompt's rows, grows upward over the
+  ;; transcript, and leaves the session's own footer breathing underneath.
+  (it "closes with the host's rule directly above its hint bar"
+      (let [{:keys [screen g]} (virtual-screen)]
+        (hi/paint! g 80 30 (hi/init-form (request)))
+        ;; `rows - 3` is the prompt box's own closing rule; the hint bar lands
+        ;; there and the rule right above it is the band's foot.
+        (expect (str/includes? (screen-row screen 27) "Esc cancel"))
+        (expect (rule-row? (screen-row screen 26)))))
+  (it "never swallows the session's bottom chrome"
+      (let [{:keys [screen g]} (virtual-screen)]
+        (hi/paint! g 80 30 (hi/init-form (request)))
+        (expect (= "" (screen-row screen 28)))
+        (expect (= "" (screen-row screen 29)))))
+  (it "stops at the top of the transcript instead of covering the header"
+      (let [{:keys [screen g]} (virtual-screen)]
+        (hi/paint! g 80 30 (assoc (hi/init-form (request)) :focus 7) 12)
+        (expect (every? #(= "" (screen-row screen %)) (range 12)))
+        (expect (str/includes? (screen-text screen) "Deploy"))))
+  (it "frames its title between two rules, the way every transient does"
+      (let
+        [{:keys [screen g]}
+         (virtual-screen)
 
-                    _
-                    (hi/paint! g 80 30 (hi/init-form (request)))
+         _
+         (hi/paint! g
+                    80
+                    30
+                    (hi/init-form (assoc (request)
+                                    :fields [{:id "user" :type :plaintext :label "User"}])))
 
-                    title-y
-                    (first (filter #(str/includes? (screen-row screen %) "Deploy") (range 30)))]
+         title-y
+         (first (filter #(str/includes? (screen-row screen %) "Deploy") (range 30)))]
 
-                   (expect (some? title-y))
-                   (expect (rule-row? (screen-row screen (dec title-y))))
-                   (expect (rule-row? (screen-row screen (inc title-y))))))
-             (it "draws no side rails at all"
-                 (let [{:keys [screen g]} (virtual-screen)]
-                   (hi/paint! g 80 30 (hi/init-form (request)))
-                   (let [text (screen-text screen)]
-                     (expect (not (str/includes? text "│")))
-                     (expect (not (str/includes? text "├")))
-                     (expect (not (str/includes? text "┤"))))))
-             (it "anchors the band on the prompt's closing rule at any height"
-                 ;; PURE: whatever the editor grew to, the band's hint row is `rows - 3`.
-                 (expect (= 27 (:hint-row (hi/band-region 80 30 1))))
-                 (expect (= 37 (:hint-row (hi/band-region 80 40 1))))
-                 ;; ...unless the transcript's top would be crossed, which wins.
-                 (expect (= 1 (:left (hi/band-region 80 30 1))))
-                 (expect (= 12 (:min-row (hi/band-region 80 30 12))))))
+        (expect (some? title-y))
+        (expect (rule-row? (screen-row screen (dec title-y))))
+        (expect (rule-row? (screen-row screen (inc title-y))))))
+  ;; Regression, issue #108: a form taller than the band scrolled its own
+  ;; `[ Submit ]` / `[ Cancel ]` out of sight, so the only visible way to end
+  ;; the pause was to guess a key.
+  (it "pins the action bar above the closing rule, however tall the form"
+      (let
+        [{:keys [screen g]}
+         (virtual-screen)
+
+         _
+         (hi/paint! g 80 30 (hi/init-form (request)))
+
+         foot-rule-y
+         (dec (long (:hint-row (hi/band-region 80 30 1))))
+
+         bar
+         (screen-row screen (dec foot-rule-y))]
+
+        (expect (rule-row? (screen-row screen foot-rule-y)))
+        (expect (str/includes? bar "[ Submit ]"))
+        (expect (str/includes? bar "[ Cancel ]"))))
+  (it "marks exactly the focused button and keeps the buttons out of the body"
+      (let
+        [form
+         (hi/init-form (request))
+
+         submit-idx
+         (- (count (:stops form)) 2)]
+
+        (expect (not-any? #(= :action (:kind %)) (hi/form-rows form)))
+        (expect (= [:submit :cancel] (mapv :action (:buttons (hi/action-bar form)))))
+        (expect (= [true false]
+                   (mapv :is-focused (:buttons (hi/action-bar (assoc form :focus submit-idx))))))
+        (expect (= [false true]
+                   (mapv :is-focused
+                         (:buttons (hi/action-bar (assoc form :focus (inc submit-idx)))))))
+        (expect (= [:submit]
+                   (mapv :action
+                         (:buttons (hi/action-bar (hi/init-form (assoc (request)
+                                                                  :is-cancellable false)))))))))
+  (it "draws no side rails at all"
+      (let [{:keys [screen g]} (virtual-screen)]
+        (hi/paint! g 80 30 (hi/init-form (request)))
+        (let [text (screen-text screen)]
+          (expect (not (str/includes? text "│")))
+          (expect (not (str/includes? text "├")))
+          (expect (not (str/includes? text "┤"))))))
+  (it "anchors the band on the prompt's closing rule at any height"
+      ;; PURE: whatever the editor grew to, the band's hint row is `rows - 3`.
+      (expect (= 27 (:hint-row (hi/band-region 80 30 1))))
+      (expect (= 37 (:hint-row (hi/band-region 80 40 1))))
+      ;; ...unless the transcript's top would be crossed, which wins.
+      (expect (= 1 (:left (hi/band-region 80 30 1))))
+      (expect (= 12 (:min-row (hi/band-region 80 30 12))))))
 
 (defn- row-index
   "Index of the first plan row matching `pred`."
@@ -814,3 +859,139 @@
                    failure)))]
 
         (expect (= [] failures)))))
+
+;; =============================================================================
+;; Sliders and the request's own buttons (issue #108)
+;; =============================================================================
+
+(defn- slider-request
+  "A text field so ↑/↓ has somewhere to come from, then a slider."
+  [& {:as slider}]
+  (assoc (request)
+    :fields [{:id "who" :type :plaintext :label "Who"}
+             (merge {:id "pct" :type :range :label "Canary %" :min 0 :max 100 :step 5 :default 25}
+                    slider)]))
+
+(defdescribe
+  range-field-test
+  (it "starts on its declared default and submits a number, not a string"
+      (let [form (hi/init-form (slider-request))]
+        (expect (= 25 (get-in form [:values "pct"])))
+        (expect (= 25 (get (hi/submit-values form) "pct")))))
+  (it "←/→ moves one step and the bounds hold"
+      (let [form (assoc (hi/init-form (slider-request)) :focus 1)]
+        (expect (= 30 (get-in (feed form [{:kind :right}]) [:values "pct"])))
+        (expect (= 15 (get-in (feed form [{:kind :left} {:kind :left}]) [:values "pct"])))
+        (expect (= 100 (get-in (feed form (repeat 40 {:kind :right})) [:values "pct"])))
+        (expect (= 0 (get-in (feed form (repeat 40 {:kind :left})) [:values "pct"])))))
+  (it "Home and End jump to the bounds themselves"
+      (let [form (assoc (hi/init-form (slider-request)) :focus 1)]
+        (expect (= 0 (get-in (feed form [{:kind :home}]) [:values "pct"])))
+        (expect (= 100 (get-in (feed form [{:kind :end}]) [:values "pct"])))))
+  (it "snaps to a whole number only when the bounds are whole"
+      (let
+        [decimal (assoc (hi/init-form (slider-request :min 0 :max 1 :step 0.25 :default 0.5))
+                   :focus 1)]
+        (expect (= 0.75 (get-in (feed decimal [{:kind :right}]) [:values "pct"])))))
+  (it "draws a track, the value and the bounds, so the number is never a mystery"
+      (let [texts (map #(str (:text %)) (hi/form-rows (hi/init-form (slider-request))))]
+        (expect (some #(str/includes? % "●") texts))
+        (expect (some #(str/includes? % "25") texts))
+        (expect (some #(str/includes? % "(0–100)") texts))))
+  (it "offers ←/→ in the hint bar while the slider has focus"
+      (let [form (assoc (hi/init-form (slider-request)) :focus 1)]
+        (expect (some #{["←/→" "adjust"]} (hi/hint form))))))
+
+;; Regression, issue #108: the request's confirm/cancel labels were painted
+;; nowhere and only a bare Enter ended the pause — the operator had to know the
+;; chord, and a form with a custom "Ship it" label never showed it at all.
+(defdescribe
+  action-button-test
+  (it "walks onto the buttons after the last field and wraps back to the first"
+      (let [form (hi/init-form (slider-request))]
+        (expect (= 4 (count (:stops form))))
+        (expect (= [:action :action] (mapv :kind (subvec (:stops form) 2))))
+        (expect (= 2 (:focus (feed form [{:kind :next} {:kind :next}]))))
+        (expect (= 0 (:focus (feed form (repeat 4 {:kind :next})))))
+        (expect (= 3 (:focus (feed form [{:kind :prev}]))))))
+  (it "Enter and Space press the focused button"
+      (let [form (hi/init-form (slider-request))]
+        (expect (= :submit (:action (hi/handle-event (assoc form :focus 2) {:kind :enter}))))
+        (expect (= :submit (:action (hi/handle-event (assoc form :focus 2) (ch \space)))))
+        (expect (= :cancel (:action (hi/handle-event (assoc form :focus 3) {:kind :enter}))))
+        (expect (= :cancel (:action (hi/handle-event (assoc form :focus 3) (ch \space)))))))
+  (it "wears the request's own labels and drops Cancel when the request forbids it"
+      (let
+        [custom
+         (hi/init-form (assoc (slider-request)
+                         :submit-label "Ship it"
+                         :cancel-label "Hold"))
+
+         locked
+         (hi/init-form (assoc (slider-request) :is-cancellable false))]
+
+        (expect (= ["Ship it" "Hold"] (mapv :label (:buttons (hi/action-bar custom)))))
+        (expect (= ["Submit"] (mapv :label (:buttons (hi/action-bar locked)))))
+        (expect (= 3 (count (:stops locked))))))
+  (it "says press, not submit, while a button has focus"
+      (let [form (hi/init-form (slider-request))]
+        (expect (some #{["Enter" "press"]} (hi/hint (assoc form :focus 2))))
+        (expect (some #{["Enter" "submit"]} (hi/hint form))))))
+
+;; The band is bottom-anchored over exactly the rows the composer occupies, and
+;; the prompt — not the composer — owns the keyboard while it is up (issue #108).
+
+(defn- bottom-chrome
+  "Paint ONLY the bottom chrome the way the full painter does — composer box,
+   echo area, footer — and hand back the screen for inspection."
+  [db]
+  (let [{:keys [screen g]} (virtual-screen)]
+    (#'screen/draw-bottom-chrome!
+     screen
+     g
+     db
+     {:input {:lines ["hello draft"] :crow 0 :ccol 11}
+      :input-top 24
+      :text-rows 1
+      :cols 80
+      :now-ms 0
+      :echo-row 23
+      :footer-row 28
+      :slash-suggestions nil
+      :slash-command-index 0})
+    screen))
+
+(defn- idle-db
+  "The smallest app-db the bottom chrome reads."
+  []
+  {:input {:lines ["hello draft"] :crow 0 :ccol 11} :scroll {} :messages []})
+
+(defdescribe
+  composer-test
+  (it "draws the composer and owns the cursor while nothing is asking"
+      (let [screen (bottom-chrome (idle-db))]
+        (expect (rule-row? (screen-row screen 24)))
+        (expect (str/includes? (screen-row screen 25) "hello draft"))
+        (expect (rule-row? (screen-row screen 26)))
+        (expect (some? (.getCursorPosition screen)))))
+  (it "blanks the composer while a human-input transient is up"
+      (let
+        [screen (bottom-chrome (assoc (idle-db)
+                                 :human-input (hi/init-form
+                                                {:id "r"
+                                                 :title "Tiny"
+                                                 :fields [{:id "a" :type :checkbox :label "Yes"}]
+                                                 :is-cancellable true})))]
+        (expect (= "" (screen-row screen 24)))
+        (expect (= "" (screen-row screen 25)))
+        (expect (= "" (screen-row screen 26)))
+        (expect (nil? (.getCursorPosition screen)))))
+  (it "keeps the footer alive under the transient"
+      (let
+        [screen (bottom-chrome (assoc (idle-db)
+                                 :human-input (hi/init-form
+                                                {:id "r"
+                                                 :title "Tiny"
+                                                 :fields [{:id "a" :type :checkbox :label "Yes"}]
+                                                 :is-cancellable true})))]
+        (expect (not= "" (screen-row screen 28))))))

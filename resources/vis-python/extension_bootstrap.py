@@ -282,9 +282,10 @@ def ask(title, fields, **options):
     #
     # Field keys: name (keys the answer in `values`), label (shown above the
     # input), description (the italic line under that label), type, default,
-    # is_required, placeholder, options, max_length.
+    # is_required, placeholder, options, max_length, and min/max/step for a
+    # 'range' field (defaults 0/100/1 — it answers with a NUMBER).
     # Field types: plaintext, password, multiline, select, multiselect,
-    # checkbox. Dialog options: description (prose under the title explaining
+    # checkbox, range. Dialog options: description (prose under the title explaining
     # what the whole ask is about — it wraps), submit_label, cancel_label,
     # is_cancellable, timeout_ms (default 5 min, capped at 1 hour).
     # A cancelled, timed-out or unanswered request returns a falsey Answer
