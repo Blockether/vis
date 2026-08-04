@@ -62,7 +62,7 @@
    (loop [i 0]
      (let [v (thunk)]
        (cond (pred v) v
-             (>= i tries) (throw (ex-info "poll exhausted" {:last v}))
+             (>= i (long tries)) (throw (ex-info "poll exhausted" {:last v}))
              :else (do (Thread/sleep 100) (recur (inc i))))))))
 
 (defdescribe shell-env-injection-test
@@ -449,6 +449,29 @@
                      (expect (= 0 (get r "dropped")))
                      (expect (contains? r "exit"))
                      (expect (nil? (get r "exit"))))
+                   (finally (resources/stop-all! sid))))))))
+  ;; Regression, issue #shell-timings: `uptime_ms` was computed as `now -
+  ;; started-at` even for a process that had ALREADY exited, so a job that ran for
+  ;; three seconds reported "uptime: 10.1m" as soon as the reader came back to it
+  ;; later — the one timing on the card was the age of the read, not of the job.
+  (it "freezes uptime_ms at the moment the process exited"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid (str "shell-uptime-frozen-" (System/nanoTime))
+               env {:session-id sid}]
+
+              (try (shell-bg* env "quick" "echo done")
+                   (poll #(:result (shell-logs* env "quick")) #(= "exited" (get % "status")))
+                   (let
+                     [first-read (:result (shell-logs* env "quick"))
+                      _ (Thread/sleep 500)
+                      later-read (:result (shell-logs* env "quick"))]
+
+                     (expect (= "exited" (get later-read "status")))
+                     ;; A lifetime is a fact about the PROCESS, not about when it is read.
+                     (expect (= (get first-read "uptime_ms") (get later-read "uptime_ms"))))
                    (finally (resources/stop-all! sid))))))))
   (it "honors the bg op's cwd and reports it on every stage of that shell"
       (with-shell-on (fn []
@@ -979,6 +1002,50 @@
         (expect (str/includes? (:body bg) "**COMMAND**"))
         (expect (str/includes? (:summary logs) "◷ `srv` running · 1 lines · 1.5s"))
         (expect (str/includes? (:body logs) "**LOGS**"))))
+  ;; Regression, issue #shell-timings: a `wait` that burned its whole budget
+  ;; rendered exactly like a `logs` peek — "◷ `rel` running · 2 lines / 10 total ·
+  ;; 10.1m" — never saying it timed out, and its only timing was the PROCESS
+  ;; uptime rather than how long the wait itself had blocked.
+  (it
+    "says a wait timed out and reports the wait's OWN duration, not the uptime"
+    (let
+      [timed-out
+       (render-shell-logs-result {"stage" "wait"
+                                  "id" "rel"
+                                  "status" "running"
+                                  "lines" ["21:33:37 in_progress"]
+                                  "line_count" 10
+                                  "uptime_ms" 606000
+                                  "duration_ms" 600031
+                                  "timed_out" true
+                                  "timeout_secs" 600
+                                  "until" "DONE "
+                                  "is_matched" false})
+
+       matched
+       (render-shell-logs-result {"stage" "wait"
+                                  "id" "deep"
+                                  "status" "running"
+                                  "lines" ["DEPTHDONE"]
+                                  "line_count" 14
+                                  "uptime_ms" 8400
+                                  "duration_ms" 4900
+                                  "timed_out" false
+                                  "timeout_secs" 300
+                                  "until" "DEPTHDONE"
+                                  "is_matched" true
+                                  "matched" "DEPTHDONE"})]
+
+      (expect (str/includes? (:summary timed-out) "⏱ `rel` timed out after 600s"))
+      (expect (str/includes? (:summary timed-out) "· waited 10.0m"))
+      (expect (str/includes? (:body timed-out) "timeout: 600s"))
+      (expect (str/includes? (:body timed-out) "waited: 10.0m"))
+      ;; The process clock stays readable — it just is not this call's timing.
+      (expect (str/includes? (:body timed-out) "uptime: 10.1m"))
+      ;; A wait a condition ended says how long IT took, not the job's age.
+      (expect (str/includes? (:summary matched) "◷ `deep` running · matched"))
+      (expect (str/includes? (:summary matched) "· waited 4.9s"))
+      (expect (not (str/includes? (:summary matched) "8.4s")))))
   (it "shows the KEYSTROKES a send typed, naming every control character"
       (let
         [typed

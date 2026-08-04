@@ -928,14 +928,15 @@
 
 (defn- start-pump!
   "Daemon thread: drain the process's merged output into the ring buffer,
-   then record the exit code and flip the registered resource to :exited.
+   then record WHEN it ended and its exit code, and flip the registered resource
+   to :exited.
    The resource stays listed (logs + exit readable) until resource_stop.
 
    `stopped?` is the cooperative-shutdown flag the stop-fn or an exited-entry
    replacement sets before retiring this generation. Final bridge/registry work
    is serialized with same-id start/stop and guarded by process identity, so an
    old pump can never update or unlink its successor. Returns the started Thread."
-  ^Thread [session id p buffer exit-atom stopped? bridge-atom]
+  ^Thread [session id p buffer exit-atom exited-at stopped? bridge-atom]
   (doto
     (Thread.
       (fn []
@@ -957,6 +958,10 @@
                                      (recur)))))))
              (catch Throwable _ nil))
         (let [code (try ((:wait p)) (catch Throwable _ nil))]
+          ;; Stamp the ENDING before publishing the code: `uptime_ms` is read off
+          ;; these two atoms, and a reader that saw `exit` already set with no end
+          ;; stamp would fall back to the clock and report the age of the READ.
+          (compare-and-set! exited-at nil (now-ms))
           (reset! exit-atom code)
           ;; Avoid contending with a manual stop in the normal case: it sets the
           ;; flag before closing the reader and then joins this thread.
@@ -1008,7 +1013,19 @@
                    "started" true
                    "status" (if (some? exit) "exited" "running")
                    "exit" exit
-                   "uptime_ms" (- (now-ms) (long (or (:started-at entry) (now-ms))))
+                   ;; LIFETIME, not the age of this read: it stops at the ending an
+                   ;; earlier stage stamped, so a job that ran 3s never reports the ten
+                   ;; minutes that passed before someone came back to read its logs.
+                   "uptime_ms" (let
+                                 [t0
+                                  (long (or (:started-at entry) (now-ms)))
+
+                                  t1
+                                  (long (or (some-> (:exited-at entry)
+                                                    deref)
+                                            (now-ms)))]
+
+                                 (max 0 (- t1 t0)))
                    "attach" (when bridge (str "vis-agent extension shell attach " id))
                    "socket" (:path bridge)})))
 
@@ -1063,6 +1080,12 @@
        exit-atom
        (atom nil)
 
+       ;; Stamped ONCE, by whichever stage first observes the child is gone: an
+       ;; uptime is a lifetime, so it must stop growing the moment the process ends
+       ;; instead of measuring how long ago it was started.
+       exited-at
+       (atom nil)
+
        stopped?
        (atom false)
 
@@ -1073,7 +1096,7 @@
        (now-ms)
 
        pump
-       (start-pump! session id p buffer exit-atom stopped? bridge-atom)
+       (start-pump! session id p buffer exit-atom exited-at stopped? bridge-atom)
 
        ;; Passthrough bridge: expose this PTY over a per-shell AF_UNIX socket
        ;; so a HUMAN can `vis-agent extension shell attach <id>` into the live terminal
@@ -1097,6 +1120,7 @@
         {:proc p
          :buffer buffer
          :exit exit-atom
+         :exited-at exited-at
          :pump pump
          :stopped? stopped?
          :send (:send p)
@@ -1415,6 +1439,8 @@
                                   ;; The pump normally records this after draining the PTY. If
                                   ;; this waiter wins the reap race, publish the same code and
                                   ;; briefly let the pump consume the final bytes.
+                                  (when-let [ended (:exited-at entry)]
+                                    (compare-and-set! ended nil (now-ms)))
                                   (when (some? code) (compare-and-set! (:exit entry) nil code))
                                   (when-let [^Thread pump (:pump entry)]
                                     (let [remaining (- deadline (now-ms))]
@@ -2186,7 +2212,8 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
     {:summary summary :body (when (seq body) body)}))
 
 (defn- render-shell-logs-result
-  "shell op `logs` → compact process/log status plus a terminal transcript body."
+  "shell ops `logs` and `wait` → compact process/log status plus a terminal
+   transcript body."
   [r]
   (let
     [lines
@@ -2204,18 +2231,32 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
      status
      (or (get r "status") "?")
 
-     duration
+     uptime
      (duration-label (get r "uptime_ms"))
+
+     ;; `wait` only: how long THIS call blocked. The process clock is a DIFFERENT
+     ;; one — a wait that came back in 5s on a job that has been up for an hour
+     ;; used to print the hour, which is the timing of nothing that just happened.
+     waited
+     (duration-label (get r "duration_ms"))
 
      exited?
      (= "exited" status)
 
+     ;; A wait that ran out its budget FAILED to see its condition. Unsaid, the card
+     ;; is indistinguishable from a `logs` peek at a healthy job and the reader
+     ;; cannot tell that ten minutes were spent waiting for something.
+     timed-out?
+     (true? (get r "timed_out"))
+
      summary
-     (str (if exited? "■" "◷")
+     (str (cond timed-out? "⏱"
+                exited? "■"
+                :else "◷")
           " `"
           (get r "id")
           "` "
-          status
+          (if timed-out? (str "timed out after " (get r "timeout_secs") "s") status)
           (when-let [exit (get r "exit")]
             (str " · exit " exit))
           ;; A `wait` that a predicate ended is NOT a timeout and NOT an exit — say so.
@@ -2229,12 +2270,15 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
           ;; something actually fell out of the ring buffer.
           (let [d (get r "dropped")]
             (when (and d (pos? (long d))) (str " · " d " dropped")))
-          (when duration (str " · " duration)))
+          ;; THIS call's own timing when it has one, the process clock otherwise.
+          (if waited (str " · waited " waited) (when uptime (str " · " uptime))))
 
      details
      (kv-lines [["id" (get r "id")] ["status" status] ["exit" (get r "exit")]
                 ["shown" (str (count lines) " lines")] ["total" (get r "line_count")]
-                ["dropped" (get r "dropped")] ["uptime" duration] ["pid" (get r "pid")]
+                ["dropped" (get r "dropped")] ["uptime" uptime] ["pid" (get r "pid")]
+                ;; `wait` only: how long it blocked, and the budget it hit.
+                ["waited" waited] ["timeout" (when timed-out? (str (get r "timeout_secs") "s"))]
                 ;; `wait` only: the predicate it was given and the line that satisfied it,
                 ;; escape-stripped so a colored readiness banner reads as text.
                 ["until" (get r "until")]
