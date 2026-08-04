@@ -77,6 +77,11 @@ export interface HumanInputRequest {
   submit_label: string;
   cancel_label: string;
   is_cancellable: boolean;
+  /**
+   * The engine's deadline for this ask, in milliseconds. ABSENT means there is
+   * none: the engine sends `0` for a request that waits indefinitely, so the app
+   * never tells the operator a form is about to expire when it is not.
+   */
   timeout_ms?: number;
 }
 
@@ -197,6 +202,9 @@ export function humanInputRequestFromWire(raw: unknown): HumanInputRequest | nul
   const description = optionalText(row.description);
   const source = optionalText(row.source);
   const sessionId = optionalText(row.session_id);
+  // `0` is the engine's INDEFINITE wait, not a deadline that already passed:
+  // drop it so nothing downstream counts down to zero on a form that is
+  // simply parked until the operator answers it.
   const timeoutMs = typeof row.timeout_ms === 'number' && row.timeout_ms > 0 ? row.timeout_ms : undefined;
   return {
     id,

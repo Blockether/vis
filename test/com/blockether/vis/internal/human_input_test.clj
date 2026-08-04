@@ -170,13 +170,30 @@
       ;; a collision past this by mixing the two spellings.
       (expect (throws? clojure.lang.ExceptionInfo
                        #(hi/normalize-request {:title "t" :fields [{:name "a"} {:id "a"}]}))))
-  (it "clamps and validates the timeout"
-      (expect (= hi/max-timeout-ms
-                 (:timeout-ms (hi/normalize-request {:title "t"
-                                                     :fields [{:id "a"}]
-                                                     :timeout-ms (* 10 hi/max-timeout-ms)}))))
+  (it "keeps 0 as the indefinite wait, never clamps it, and refuses a negative"
+      ;; `0` is the one way an extension says WAIT FOR THE HUMAN, so it has to
+      ;; survive normalization untouched instead of being read as a missing key.
+      (expect (= hi/no-timeout-ms
+                 (:timeout-ms (hi/normalize-request
+                                {:title "t" :fields [{:id "a"}] :timeout-ms 0}))))
+      (expect (true? (hi/indefinite-timeout? (:timeout-ms (hi/normalize-request {:title "t"
+                                                                                 :fields [{:id "a"}]
+                                                                                 :timeout-ms 0})))))
+      (expect (false? (hi/indefinite-timeout? hi/default-timeout-ms)))
+      ;; Nothing is CLAMPED: a caller who states a day-long wait means it, and
+      ;; quietly shortening it would only lie about when the answer arrives.
+      (expect (= (* 24 60 60 1000)
+                 (:timeout-ms (hi/normalize-request
+                                {:title "t" :fields [{:id "a"}] :timeout-ms (* 24 60 60 1000)}))))
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(hi/normalize-request {:title "t" :fields [{:id "a"}] :timeout-ms 0}))))
+                       #(hi/normalize-request {:title "t" :fields [{:id "a"}] :timeout-ms -1})))
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(hi/normalize-request {:title "t" :fields [{:id "a"}] :timeout-ms "soon"})))
+      ;; A Python extension says the same thing over the strings boundary, where a
+      ;; 0 is easy to mistake for a missing key and default back to five minutes.
+      (expect (= hi/no-timeout-ms
+                 (:timeout-ms (hi/normalize-request
+                                {"title" "t" "fields" [{"name" "a"}] "timeout_ms" 0})))))
   (it "accepts a single channel id or a collection"
       (expect (= [:app]
                  (:channel-ids (hi/normalize-request
@@ -526,6 +543,22 @@
         (try (expect (= {:is-submitted false :reason "timeout" :request-id request-id}
                         (deref future 5000 ::blocked)))
              (expect (nil? (hi/pending-request request-id)))
+             (finally (detach!)))))
+  (it "waits indefinitely when the timeout is 0, and still hears a late answer"
+      ;; The twin of the test above: 120ms is a deadline, 0 is none. An
+      ;; extension that must not guess an answer parks until the operator is
+      ;; back at the keyboard, so nothing may settle this request on its own.
+      (let
+        [{:keys [future request-id detach!]}
+         (start-request! {:title "Deploy" :timeout-ms 0 :fields [{:id "env"}]})]
+        (try (expect (= ::blocked (deref future 400 ::blocked))
+                     "an indefinite request never gives up on the human")
+             (expect (some? (hi/pending-request request-id)) "the dialog is still on every surface")
+             (expect (= {:is-accepted true} (hi/submit! request-id {"env" "prod"})))
+             (let [result (deref future 5000 ::blocked)]
+               (expect (true? (:is-submitted result)))
+               (expect (= "submitted" (:reason result)))
+               (expect (= "prod" (get-in result [:values "env"]))))
              (finally (detach!)))))
   (it "rejects a submit or cancel for an unknown request"
       (expect (= {:is-accepted false :reason "unknown"} (hi/submit! "no-such-id" {})))

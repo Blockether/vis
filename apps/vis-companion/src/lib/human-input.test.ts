@@ -128,6 +128,27 @@ describe('humanInputRequestFromWire', () => {
     expect(legacy?.fields[0]?.description).toBe('legacy help line');
   });
 
+  it('carries a deadline, and reads 0 as no deadline at all', () => {
+    const deadline = humanInputRequestFromWire({
+      id: 'r',
+      title: 'T',
+      fields: [{ id: 'a' }],
+      timeout_ms: 120_000,
+    });
+    expect(deadline?.timeout_ms).toBe(120_000);
+
+    // The engine's indefinite wait. Keeping the 0 would read as a deadline that
+    // already passed on a form that is simply parked until the operator answers.
+    const forever = humanInputRequestFromWire({
+      id: 'r',
+      title: 'T',
+      fields: [{ id: 'a' }],
+      timeout_ms: 0,
+    });
+    expect(forever?.timeout_ms).toBeUndefined();
+    expect('timeout_ms' in (forever ?? {})).toBe(false);
+  });
+
   it('refuses a frame it could not render as an answerable form', () => {
     expect(humanInputRequestFromWire(null)).toBeNull();
     expect(humanInputRequestFromWire({ title: 'T', fields: [{ id: 'a' }] })).toBeNull();

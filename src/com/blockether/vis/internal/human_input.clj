@@ -5,9 +5,16 @@
    An extension calls [[request!]] with a title and a vector of typed fields.
    The call BLOCKS the calling thread, publishes a `:human-input/request`
    channel event so the mounted channel can draw a dialog, and returns once a
-   channel calls [[submit!]] / [[cancel!]] or the request times out. Every
-   request carries a finite `:timeout-ms` — a headless or wedged channel can
-   never pin an extension thread forever.
+   channel calls [[submit!]] / [[cancel!]], or the request runs out of time.
+
+   A request either carries a DEADLINE (`:timeout-ms`, five minutes by default)
+   or waits INDEFINITELY (`:timeout-ms` 0) — an extension that must not guess an
+   answer says so and parks until the human is back at the keyboard, while one
+   that can carry on alone names the wait it is willing to bill and gets a
+   `timeout` answer when nobody came. Even an indefinite request cannot park a
+   thread nobody can release: a request that reaches no mounted channel is
+   answered `undeliverable` at once, and interrupting the surrounding turn
+   cancels it.
 
    Field types are a CLOSED set (see [[field-types]]): extension-supplied type
    names are looked up, never `keyword`-minted. Coercion and validation live in
@@ -50,13 +57,25 @@
 (def ^:private secret-types #{:password})
 
 (def default-timeout-ms
-  "Requests wait five minutes unless the caller asks for something else."
+  "How long a request waits when its spec says nothing: five minutes — long
+   enough for a human who is reading, short enough that a dialog nobody noticed
+   does not park an extension all afternoon. A caller who wants another budget
+   names its own `:timeout-ms`, or [[no-timeout-ms]] to wait as long as it takes."
   300000)
 
-(def max-timeout-ms
-  "Upper bound on `:timeout-ms`. One hour — long enough for a human who stepped
-   away, short enough that a forgotten dialog cannot pin a thread for a day."
-  3600000)
+(def no-timeout-ms
+  "The `:timeout-ms` that means NO deadline at all: [[request!]] parks until a
+   human answers, a surface cancels, or the surrounding turn is interrupted.
+
+   Nothing infers it. A spec asks for it explicitly with `timeout_ms` 0, so a
+   spec that merely FORGOT the key still expires at [[default-timeout-ms]]
+   instead of silently pinning the run on an operator who walked away."
+  0)
+
+(defn indefinite-timeout?
+  "True when `timeout-ms` is [[no-timeout-ms]]: the request waits indefinitely."
+  [timeout-ms]
+  (zero? (long (or timeout-ms no-timeout-ms))))
 
 (def ^:private secret-handle-prefix "vis-secret:")
 
@@ -599,6 +618,13 @@
     ids))
 
 (defn- normalize-timeout
+  "The request's deadline in milliseconds, or [[no-timeout-ms]] when it waits
+   indefinitely.
+
+   A missing key means [[default-timeout-ms]]; `0` is the one way to ask for no
+   deadline; a negative number is refused. Nothing is CLAMPED — a caller who
+   wants to wait all day says 0 and means it, so quietly shortening a stated
+   budget would only lie about when the answer arrives."
   [request]
   (let
     [raw
@@ -608,10 +634,12 @@
      (if (nil? raw)
        default-timeout-ms
        (or (if (number? raw) (long raw) (parse-long (str raw)))
-           (invalid-request! ":timeout-ms must be a number")))]
+           (invalid-request!
+             ":timeout-ms must be a number of milliseconds, or 0 to wait indefinitely")))]
 
-    (when-not (pos? ms) (invalid-request! ":timeout-ms must be positive"))
-    (min (long ms) max-timeout-ms)))
+    (when (neg? (long ms))
+      (invalid-request! ":timeout-ms must not be negative — 0 waits indefinitely"))
+    (long ms)))
 
 (defn normalize-request
   "Validate a human-input request spec and return its internal form. Throws
@@ -1054,6 +1082,14 @@
    error naming the request — parking the caller for the full timeout would
    report a run nobody was ever shown as if a human had ignored it.
 
+   `:timeout-ms` is the wait this call is willing to bill: [[default-timeout-ms]]
+   when the spec says nothing, or [[no-timeout-ms]] (0) to wait INDEFINITELY. A
+   finite wait that runs out settles the request itself — the dialog closes on
+   every surface and the answer reads `timeout`, so the extension resumes with one
+   clear fixed outcome instead of a half-open form nobody can answer. An
+   indefinite wait never gives up on the human: only an answer, a cancel or an
+   interrupt releases it.
+
    `:password` values in `:values` are opaque handles — see [[reveal-secret]]."
   [request]
   (let
@@ -1091,20 +1127,33 @@
           ;; `settle!` delivered, unless a racing submit! got there first.
           @(:promise entry))
       (let
-        [result
+        [timeout-ms
+         (:timeout-ms entry)
+
+         result
          ;; Waiting on a human is NOT wall-clock work an enclosing timeout may
          ;; bill: park every enclosing wall (Python eval watchdog, native-tool
          ;; wall) for as long as the operator takes. Without this the surrounding
          ;; wall kills the thread at `Timeout (120s)` with the dialog still up.
          (rt/park-blocking-wall (fn []
-                                  (try (deref (:promise entry) (:timeout-ms entry) ::timeout)
+                                  (try (if (indefinite-timeout? timeout-ms)
+                                         ;; No deadline at all: only an answer, a cancel or an
+                                         ;; interrupt gets this thread back.
+                                         @(:promise entry)
+                                         (deref (:promise entry) timeout-ms ::timeout))
                                        (catch Throwable t
                                          ;; Interrupt/cancel of the surrounding turn: release the entry
                                          ;; and close the dialog, never leave a zombie pending request.
                                          (force-cancel! request-id "interrupted")
                                          (throw t)))))]
+
         (if (identical? ::timeout result)
-          (do (settle! request-id {:is-submitted false :reason "timeout" :request-id request-id})
+          (do (tel/log! {:level :warn
+                         :id ::request-timed-out
+                         :data {:request-id request-id :title (:title entry) :timeout-ms timeout-ms}
+                         :msg
+                         "Human-input request timed out — nobody answered, resuming without one"})
+              (settle! request-id {:is-submitted false :reason "timeout" :request-id request-id})
               ;; `settle!` delivered, or a submit! that won the race already did.
               @(:promise entry))
           result)))))

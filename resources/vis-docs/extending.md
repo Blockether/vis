@@ -438,7 +438,17 @@ The DIALOG itself takes the same optional `description`: prose under the title
 that says what the whole ask is about, before the operator reads a single field.
 It wraps onto as many lines as it needs, so a sentence is safe there. The other
 request options are `submit_label`, `cancel_label`, `is_cancellable`, and
-`timeout_ms` (default 5 minutes, capped at 1 hour).
+`timeout_ms`.
+
+**A dialog either has a deadline or it has none.** `timeout_ms` is the wait an
+extension is willing to bill: 5 minutes when the spec says nothing, any number of
+milliseconds it names, or `0` to wait **indefinitely**, until the human answers
+or cancels, however long that takes. Nothing is capped and nothing is guessed: an
+extension that must not proceed without a human says `0` and parks, and one that
+can carry on alone names its wait and gets a falsey `Answer` whose `reason` is
+`timeout` the moment it runs out. Either way the dialog leaves every surface at
+the same instant the extension resumes, so a form nobody can answer is never left
+on screen.
 
 `is_required` is enforced, not decorated: every dialog marks the field
 **REQUIRED** next to its label, and a blank one is refused on confirmation — by

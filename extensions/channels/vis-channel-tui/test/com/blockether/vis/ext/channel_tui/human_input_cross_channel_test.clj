@@ -300,6 +300,42 @@
           (is (empty? (gw/pending sid)))
           (is (nil? (gw/request-of sid rid))))))))
 
+;; The twin of the test above: `:timeout-ms 0` is the extension that must NOT
+;; guess. No clock may take this dialog off either surface.
+(deftest an-indefinite-request-parks-on-both-surfaces-test
+  (with-surfaces!
+    (fn [seen]
+      (let
+        [sid
+         (str (random-uuid))
+
+         rid
+         (str "forever-" (random-uuid))
+
+         answer
+         (future (engine/request! {:id rid
+                                   :session-id sid
+                                   :title "Deploy?"
+                                   :timeout-ms 0
+                                   :fields [{:id "user" :type "plaintext" :label "User"}]}))]
+
+        (try (is (await-true #(tui-open? rid)))
+             (is (await-true #(seq (gw/pending sid))))
+             (testing "long past the deadline a defaulted ask would have had, nobody gave up"
+               (Thread/sleep 700)
+               (is (= ::timeout (deref answer 1 ::timeout)))
+               (is (tui-open? rid))
+               (is (some? (gw/request-of sid rid)))
+               (is (empty? (events-of seen "human_input.close" rid))))
+             (testing "and the operator who finally shows up is still heard, from the terminal"
+               (press! (stroke \o) (stroke \k) (KeyStroke. KeyType/Enter))
+               (let [result (deref answer 3000 ::timeout)]
+                 (is (= "submitted" (:reason result)))
+                 (is (= "ok" (get-in result [:values "user"]))))
+               (is (await-true #(nil? (:human-input @state/app-db))))
+               (is (await-true #(empty? (gw/pending sid)))))
+             (finally (engine/cancel! rid "cleanup")))))))
+
 (deftest both-surfaces-answering-at-once-settles-the-run-once-test
   (with-surfaces!
     (fn [seen]

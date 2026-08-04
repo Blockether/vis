@@ -307,11 +307,20 @@ def ask(title, fields, **options):
     # Field types: plaintext, password, multiline, select, multiselect,
     # checkbox, range, otp, group. Dialog options: description (prose under the title explaining
     # what the whole ask is about — it wraps), submit_label, cancel_label,
-    # is_cancellable, timeout_ms (default 5 min, capped at 1 hour).
+    # is_cancellable, timeout_ms.
+    #
+    # A dialog either has a DEADLINE or it has none. `timeout_ms` is the wait in
+    # milliseconds: 5 minutes when the key is absent, and 0 to wait
+    # INDEFINITELY, for as long as the human takes. Nothing is capped, so a
+    # stated wait is the wait you get.
     # A cancelled, timed-out or unanswered request returns a falsey Answer
-    # whose `reason` says which — it never raises. `reason == 'undeliverable'`
-    # means no surface was mounted to show the dialog: the host logged an error
-    # and gave up at once instead of parking you until the timeout.
+    # whose `reason` says which — it never raises. `reason == 'timeout'` is the
+    # deadline running out: the dialog closes on every surface and you resume
+    # with one clear fixed outcome instead of a half-open form nobody can
+    # answer, which is exactly what `timeout_ms=0` refuses to do.
+    # `reason == 'undeliverable'` means no surface was mounted to show the
+    # dialog: the host logged an error and gave up at once instead of parking
+    # you — even an indefinite ask cannot wait on a human who was never asked.
     import inspect
     import json
     if not isinstance(fields, (list, tuple)) or not fields:
