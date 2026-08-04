@@ -105,3 +105,8 @@ channels-*.csv
 # local talk deck — source pptx + generated HTML presentation (never committed)
 own_your_harness.pptx
 /presentation/
+
+# Cloudflare Wrangler local dev state (KV/D1/DO simulators, cached account info).
+# Glob is leading-slash-free so it also covers apps/vis-companion-relay/.wrangler/;
+# the tracked wrangler.jsonc config is unaffected.
+.wrangler/
