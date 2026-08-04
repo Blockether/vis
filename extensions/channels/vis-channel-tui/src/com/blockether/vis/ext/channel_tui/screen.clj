@@ -4736,7 +4736,18 @@
                               (when-not (:dialog-open? @state/app-db)
                                 (with-dialog-lock
                                   #(if (vis/first-run?)
-                                     (provider/show-welcome! screen)
+                                     ;; First run gets NO provider UI of its own:
+                                     ;; Enter on the welcome screen opens Settings
+                                     ;; parked on `Providers` — the very dialog
+                                     ;; C-x o and the palette open. It persists what
+                                     ;; it saves and dispatches `:set-config`, so the
+                                     ;; freshest config is read back off app-db.
+                                     (provider/show-welcome!
+                                       screen
+                                       (fn []
+                                         (open-settings-modal! screen "Providers")
+                                         (let [c (or (:config @state/app-db) (vis/load-config))]
+                                           (when (seq (:providers c)) c))))
                                      (provider/show-provider-dialog! screen
                                                                      (:config @state/app-db))))))]
                (state/dispatch [:set-config c])

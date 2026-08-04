@@ -1473,12 +1473,20 @@
    "Local providers (Ollama / LM Studio) keep everything on-device."])
 
 (defn show-welcome!
-  "First-run welcome screen. The single primary action (Enter) drops straight
-   into the provider picker; `?` explains how the key is used; Esc quits.
+  "First-run welcome screen. The single primary action (Enter) opens the SAME
+   provider surface every other entry point uses — Settings parked on its
+   `Providers` section — through `open-settings!`, a 0-arg fn the caller
+   supplies because the settings dialog and its callbacks live there. `?`
+   explains how the key is used; Esc quits.
 
-   Returns `{:providers [cfg]}` once a provider is added, or nil if the user
-   quits without connecting one."
-  [^TerminalScreen screen]
+   First run must not have its own provider UI: a private picker here meant two
+   different ways to add a provider, and the one the user was told about (C-x o
+   → Settings → Providers) was not the one Enter opened.
+
+   Returns the config once `open-settings!` reports a provider was configured
+   (it has already persisted it), or nil if the user quits without connecting
+   one."
+  [^TerminalScreen screen open-settings!]
   (loop []
 
     (let
@@ -1548,23 +1556,12 @@
           (recur)
           (condp = (.getKeyType key)
             KeyType/Enter
-            (if-let [cfg (add-provider! screen #{})]
-              ;; PERSIST to ~/.vis/config.edn — same path the
-              ;; provider manager uses (see Esc branch above).
-              ;; Returning the config in-memory only made the
-              ;; first-run connect vanish on exit, so the next
-              ;; launch saw an empty config and re-showed the
-              ;; welcome screen. Preserve any other global keys.
-              ;; The DAEMON already persisted the credential (and
-              ;; the fleet row) during auth, so merge onto it —
-              ;; writing `cfg` alone would drop the key it owns.
-              (let
-                [saved (some #(when (= (:id cfg) (:id %)) %) (vis/configured-providers))
-                 persisted (assoc (or (vis/load-config-raw) {})
-                             "providers" [(persisted-provider-config (merge saved cfg))])]
-
-                (vis/save-config! persisted)
-                persisted)
+            ;; Settings is a full dialog of its own: erase this one on the way
+            ;; in and out so the two never frame each other. It PERSISTS what
+            ;; it saves (the provider manager writes ~/.vis/config.edn), so the
+            ;; config it reports back is already on disk — nothing to save here.
+            (if-let [cfg (dlg/open-nested! screen open-settings!)]
+              cfg
               (recur))
             KeyType/Escape nil
             KeyType/Character

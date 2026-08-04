@@ -1010,8 +1010,14 @@
                     (constantly [{:id :ollama :label "Ollama" :base-url "http://localhost:11434"}])]
                    (let
                      [captured (cap/capture! {:keys [:enter :enter :esc :esc :esc]
-                                              :paint! (fn [{:keys [screen]}]
-                                                        (provider/show-welcome! screen))})
+                                              :paint!
+                                              (fn [{:keys [screen]}]
+                                                ;; The wizard lives behind Settings › Providers →
+                                                ;; `a` now, so stand in for that opener: what this
+                                                ;; test measures is the STEP erasure inside it.
+                                                (provider/show-welcome!
+                                                  screen
+                                                  #(@#'provider/add-provider! screen #{})))})
                       frames (mapv #(cap/frame-text captured %) (range (count (:frames captured))))
                       picker (first (filter #(str/includes? % "Add Provider") frames))
                       base-url (first (filter #(str/includes? % "Base URL") frames))]
@@ -1024,6 +1030,57 @@
                      (expect (every? #(<= (count (re-seq #"✕" %)) 1) frames))
                      ;; ...and the welcome body is gone while the picker is up.
                      (expect (not (str/includes? picker "Your terminal, now agentic.")))))))
+
+;; ── Regression (user report, first run): "when we click add provider it should
+;; open the settings and providers, like typically". Enter on the welcome screen
+;; ran a PRIVATE add-provider picker, so first run had a provider UI of its own —
+;; not Settings parked on `Providers`, the one dialog C-x o and the palette open.
+;; ─────────────────────────────────────────────────────────────────────────────
+
+(defdescribe
+  welcome-opens-settings-providers-test
+  (it
+    "Enter hands off to the caller's Settings › Providers opener, never a picker of its own"
+    (let
+      [opened
+       (atom 0)
+
+       picked
+       (atom 0)
+
+       returned
+       (atom :unset)]
+
+      (with-redefs
+        [vis/provider-presets
+         (constantly [{:id :ollama :label "Ollama" :base-url "http://localhost:11434"}])
+
+         dlg/select-dialog!
+         (fn [& _]
+           (swap! picked inc)
+           nil)]
+
+        (let
+          [captured
+           (cap/capture! {:keys [:enter]
+                          :paint! (fn [{:keys [screen]}]
+                                    (reset! returned (provider/show-welcome!
+                                                       screen
+                                                       (fn []
+                                                         (swap! opened inc)
+                                                         {:providers [{:id :ollama}]}))))})
+
+           frames
+           (mapv #(cap/frame-text captured %) (range (count (:frames captured))))]
+
+          (expect (nil? (:error captured)))
+          ;; ONE hand-off to Settings, and the welcome screen returns
+          ;; the config that surface already persisted.
+          (expect (= 1 @opened))
+          (expect (= {:providers [{:id :ollama}]} @returned))
+          ;; ...and the welcome screen never opens a provider picker itself.
+          (expect (zero? @picked))
+          (expect (not-any? #(str/includes? % "Add Provider") frames)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Regression: success popups MUST stay silent.
