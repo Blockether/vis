@@ -1,6 +1,16 @@
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { Banner, Button, DialogFrame, Input, LiveTally, Spinner, UnreadBadge } from '../components/ui';
+import {
+  Banner,
+  Button,
+  DialogFrame,
+  Input,
+  LiveTally,
+  MachineBanner,
+  MachineGap,
+  Spinner,
+  UnreadBadge,
+} from '../components/ui';
 import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { GatewayConn, Session, SessionUsage, WorkspaceDraft } from '../lib/types';
@@ -958,18 +968,24 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
           </div>
         ) : (
           <div className="border-t border-dialog-edge">
-            {sections.map(({ machine, groups }) => {
+            {sections.map(({ machine, groups }, index) => {
               const key = machineKey(machine.conn);
               return (
                 <section key={key} aria-label={machines.length > 1 ? `${machineLabel(machine.conn)} projects` : undefined}>
                   {/* With one machine paired the fleet costs nothing — not the header,
                       not the strip, and not even a landmark a screen reader has to walk
                       past, which is why the section goes unnamed. */}
+                  {/* A machine boundary is not a project boundary, so it is not drawn
+                      with the same hairline: a band of the page's own colour, closed top
+                      and bottom by the strong rule, says one computer ENDED before any
+                      label is read. It is charged once per EXTRA machine — the first
+                      block starts flush, and a solo fleet never pays it. */}
+                  {showMachineHeaders && index > 0 && <MachineGap />}
                   {/* The machine header exists only while there is more than one
                       machine to tell apart, and disappears once the strip has scoped
                       to one — the chip already says where you are. */}
                   {showMachineHeaders && (
-                    <header className="flex items-center justify-between gap-3 border-b border-dialog-edge bg-panel px-3 py-1.5 sm:px-4">
+                    <MachineBanner>
                       <span className="flex min-w-0 items-center gap-2">
                         <span
                           className={`size-1.5 shrink-0 ${machine.error ? 'bg-dialog-hint' : 'bg-ok'}`}
@@ -1004,7 +1020,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                           </>
                         )}
                       </span>
-                    </header>
+                    </MachineBanner>
                   )}
                   {groups.length === 0
                     ? showMachineHeaders && (

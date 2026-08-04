@@ -239,3 +239,27 @@ export function UnreadBadge({ count }: { count: number }) {
     </span>
   );
 }
+
+/**
+ * The band that ENDS a machine. A project boundary is a hairline; a whole
+ * computer is not, so this is space — the page's own ink showing through the
+ * panel, closed top and bottom by the strong rule — read before any label.
+ * Render it only BETWEEN machines: the first block starts flush and a fleet of
+ * one never pays it.
+ */
+export function MachineGap() {
+  return <div className="h-3 border-y border-edge-strong bg-ink" aria-hidden="true" />;
+}
+
+/**
+ * A machine header is a banner, not a row: uppercase and tracked so it cannot
+ * be mistaken for one more project, and sticky so "which computer am I inside"
+ * survives scrolling a machine with hundreds of sessions.
+ */
+export function MachineBanner({ children }: { children: ReactNode }) {
+  return (
+    <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-edge-strong bg-panel px-3 py-2 font-bold uppercase tracking-[0.12em] sm:px-4">
+      {children}
+    </header>
+  );
+}

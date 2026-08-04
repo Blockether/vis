@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import { LiveTally, UnreadBadge } from './ui';
+import { LiveTally, MachineBanner, MachineGap, UnreadBadge } from './ui';
 
 // The live count wears the SAME filled block as the unread badge, in green:
 // `macbook \u25ae3\u25ae\u25ae4\u25ae` — one shape, two colours, running then
@@ -59,5 +59,48 @@ describe('UnreadBadge', () => {
 
   it('renders nothing when there is nothing new', () => {
     expect(renderToStaticMarkup(<UnreadBadge count={0} />)).toBe('');
+  });
+});
+
+// The sessions list used to close a whole computer with the SAME 1px
+// `border-dialog-edge` hairline that closes a project, so the second machine's
+// header read as a third project of the first one (see the `machine-shipped`
+// design proposal, kept as the before picture). The boundary is now space plus
+// a promoted name.
+describe('MachineGap', () => {
+  it('is a band of the page ink, not another hairline', () => {
+    const html = renderToStaticMarkup(<MachineGap />);
+
+    expect(html).toContain('h-3');
+    expect(html).toContain('bg-ink');
+    expect(html).toContain('border-edge-strong');
+    expect(html).not.toContain('border-dialog-edge');
+  });
+
+  it('is decoration, so a screen reader never stops on it', () => {
+    expect(renderToStaticMarkup(<MachineGap />)).toContain('aria-hidden="true"');
+  });
+});
+
+describe('MachineBanner', () => {
+  it('is set as a banner, not as one more row', () => {
+    const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
+
+    expect(html).toContain('<header');
+    expect(html).toContain('uppercase');
+    expect(html).toContain('tracking-[0.12em]');
+    expect(html).toContain('font-bold');
+    expect(html).toContain('border-edge-strong');
+    expect(html).not.toContain('border-dialog-edge');
+  });
+
+  // A machine can hold hundreds of sessions; scrolled past, the name is the
+  // only thing that answers "which computer is this row on".
+  it('sticks to the top of the scroller', () => {
+    const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
+
+    expect(html).toContain('sticky');
+    expect(html).toContain('top-0');
+    expect(html).toContain('studio-mbp');
   });
 });
