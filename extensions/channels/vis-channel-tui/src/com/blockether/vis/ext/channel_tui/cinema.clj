@@ -24,7 +24,7 @@
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.theme :as tui-theme]
             [com.blockether.vis.internal.theme :as theme])
-  (:import [com.googlecode.lanterna TerminalSize SGR TextColor]
+  (:import [com.googlecode.lanterna TerminalSize SGR TextCharacter TextColor TextColor$ANSI]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]
            [java.io File]
@@ -113,23 +113,48 @@
 
 (defn- rgb [^TextColor color] [(.getRed color) (.getGreen color) (.getBlue color)])
 
+(defn cell
+  "One Lanterna `TextCharacter` as a raster cell — `{:ch :fg :bg :bold}` holding the
+   colours a TERMINAL would really show.
+
+   Lanterna's `DEFAULT` colour means \"whatever the host terminal paints\", and
+   `.getRed` reports it as ANSI black — which is why an unpainted cell used to
+   rasterise as a pitch-black void instead of the app's paper. Here it resolves to
+   the theme's own ink/paper. A REVERSE cell is captured already swapped, since
+   nothing downstream carries the modifier."
+  [^TextCharacter tc]
+  (if tc
+    (let
+      [mods
+       (.getModifiers tc)
+
+       shown
+       (fn [^TextColor c fallback]
+         (rgb (if (or (nil? c) (= TextColor$ANSI/DEFAULT c)) fallback c)))
+
+       fg
+       (shown (.getForegroundColor tc) tui-theme/text-fg)
+
+       bg
+       (shown (.getBackgroundColor tc) tui-theme/terminal-bg)
+
+       reversed?
+       (.contains mods SGR/REVERSE)]
+
+      {:ch (or (.getCharacterString tc) " ")
+       :fg (if reversed? bg fg)
+       :bg (if reversed? fg bg)
+       :bold (boolean (.contains mods SGR/BOLD))})
+    {:ch " " :fg (rgb tui-theme/text-fg) :bg (rgb tui-theme/terminal-bg) :bold false}))
+
 (defn- capture-grid
-  "Snapshot the Lanterna back-buffer as a rows×cols vector of cell maps carrying
-   glyph + fg/bg RGB + SGR modifiers — the full-fidelity view."
+  "Snapshot the Lanterna back-buffer as a rows×cols vector of `cell` maps."
   [^TerminalScreen scr cols rows]
-  (vec (for [y (range rows)]
-         (vec (for [x (range cols)]
-                (let [tc (.getBackCharacter scr (int x) (int y))]
-                  (if tc
-                    (let [mods (.getModifiers tc)]
-                      {:ch (or (.getCharacterString tc) " ")
-                       :fg (rgb (.getForegroundColor tc))
-                       :bg (rgb (.getBackgroundColor tc))
-                       :bold (boolean (.contains mods SGR/BOLD))
-                       :italic (boolean (.contains mods SGR/ITALIC))
-                       :underline (boolean (.contains mods SGR/UNDERLINE))
-                       :reverse (boolean (.contains mods SGR/REVERSE))})
-                    {:ch " " :fg [0 0 0] :bg [0 0 0]})))))))
+  (mapv (fn [y]
+          (mapv (fn [x]
+                  (cell (.getBackCharacter scr (int x) (int y))))
+                (range cols)))
+        (range rows)))
 
 (defn session->frames
   "Replay `session-id` headless and return
@@ -569,38 +594,144 @@
           (recur (rest cells) (conj out {:x i :style style :text ch}))))
       out)))
 
+(def ^:private box-arms
+  "Box-drawing glyph → the `[left right up down]` arms it extends.
+
+   These cells are painted as BARS through the cell centre instead of as glyphs:
+   a font's `─` stops at its own advance, so a border shows hairline seams between
+   columns at some cell sizes. Bars meet in the middle of every cell, so they
+   cannot."
+  {"─" [1 1 0 0]
+   "━" [1 1 0 0]
+   "═" [1 1 0 0]
+   "╴" [1 0 0 0]
+   "╶" [0 1 0 0]
+   "│" [0 0 1 1]
+   "┃" [0 0 1 1]
+   "║" [0 0 1 1]
+   "┌" [0 1 0 1]
+   "┏" [0 1 0 1]
+   "╭" [0 1 0 1]
+   "╔" [0 1 0 1]
+   "┐" [1 0 0 1]
+   "┓" [1 0 0 1]
+   "╮" [1 0 0 1]
+   "╗" [1 0 0 1]
+   "└" [0 1 1 0]
+   "┗" [0 1 1 0]
+   "╰" [0 1 1 0]
+   "╚" [0 1 1 0]
+   "┘" [1 0 1 0]
+   "┛" [1 0 1 0]
+   "╯" [1 0 1 0]
+   "╝" [1 0 1 0]
+   "├" [0 1 1 1]
+   "┣" [0 1 1 1]
+   "╠" [0 1 1 1]
+   "┤" [1 0 1 1]
+   "┫" [1 0 1 1]
+   "╣" [1 0 1 1]
+   "┬" [1 1 0 1]
+   "┳" [1 1 0 1]
+   "╦" [1 1 0 1]
+   "┴" [1 1 1 0]
+   "┻" [1 1 1 0]
+   "╩" [1 1 1 0]
+   "┼" [1 1 1 1]
+   "╋" [1 1 1 1]
+   "╬" [1 1 1 1]})
+
+(defn- box-ops
+  "Bars for ONE box-drawing cell — each arm runs from the cell centre to the edge
+   it points at, so neighbouring cells overlap and the line is continuous. `[]`
+   for anything that is not a box glyph."
+  [c px py cell-w cell-h]
+  (if-let [[l r u d] (box-arms (:ch c))]
+    (let
+      [w (long cell-w)
+       h (long cell-h)
+       t (max 1 (long (Math/round (/ (double h) 12.0))))
+       x0 (long px)
+       y0 (long py)
+       cx (+ x0 (quot w 2))
+       cy (+ y0 (quot h 2))
+       fill (hex-color (:fg c))]
+
+      (cond-> []
+        (pos? (long l))
+        (conj {:op :rect :x x0 :y cy :w (+ (- cx x0) t) :h t :fill fill})
+
+        (pos? (long r))
+        (conj {:op :rect :x cx :y cy :w (- (+ x0 w) cx) :h t :fill fill})
+
+        (pos? (long u))
+        (conj {:op :rect :x cx :y y0 :w t :h (+ (- cy y0) t) :fill fill})
+
+        (pos? (long d))
+        (conj {:op :rect :x cx :y cy :w t :h (- (+ y0 h) cy) :fill fill})))
+    []))
+
 (defn- grid->ops
   "Vector drawing ops for one captured grid: background rectangles (runs of equal
-   bg merged) then the glyph runs."
+   bg merged), then box-drawing bars, then the glyph runs."
   [grid cw ch ascent size letter-spacing]
-  (into []
-        (mapcat (fn [[y row]]
-                  (let [py (* (long y) (long ch))]
-                    (concat (for
-                              [g (partition-by (comp :bg second) (map-indexed vector row))
-                               :let [x (ffirst g)]]
+  (into
+    []
+    (mapcat (fn [[y row]]
+              (let [py (* (long y) (long ch))]
+                (concat (for
+                          [g (partition-by (comp :bg second) (map-indexed vector row))
+                           :let [x (ffirst g)]]
 
-                              {:op :rect
-                               :x (* (long x) (long cw))
-                               :y py
-                               :w (* (count g) (long cw))
-                               :h ch
-                               :fill (hex-color (:bg (second (first g))))})
-                            (for
-                              [{:keys [x style text]} (text-runs row)
-                               :when (pos? (count (str/trim text)))
-                               :let [[fg bold] style]]
+                          {:op :rect
+                           :x (* (long x) (long cw))
+                           :y py
+                           :w (* (count g) (long cw))
+                           :h ch
+                           :fill (hex-color (:bg (second (first g))))})
+                        (mapcat (fn [[x c]]
+                                  (box-ops c (* (long x) (long cw)) py cw ch))
+                                (map-indexed vector row))
+                        (for
+                          [{:keys [x style text]}
+                           ;; box cells are already drawn as bars — blank them
+                           ;; out so their glyph cannot be painted on top
+                           (text-runs (mapv #(cond-> % (box-arms (:ch %)) (assoc :ch " ")) row))
+                           :when (pos? (count (str/trim text)))
+                           :let [[fg bold] style]]
 
-                              {:op :text
-                               :text text
-                               :x (* (long x) (long cw))
-                               :y (+ py (long ascent))
-                               :fill (hex-color fg)
-                               :size size
-                               :family mono-family
-                               :weight (if bold 700 400)
-                               :letter-spacing letter-spacing}))))
-                (map-indexed vector grid))))
+                          {:op :text
+                           :text text
+                           :x (* (long x) (long cw))
+                           :y (+ py (long ascent))
+                           :fill (hex-color fg)
+                           :size size
+                           :family mono-family
+                           :weight (if bold 700 400)
+                           :letter-spacing letter-spacing}))))
+            (map-indexed vector grid))))
+
+(defn grid->png!
+  "Rasterize ONE captured grid to `out` as a PNG and return the output File.
+
+   The whole \"look at the pixels\" path: a Lanterna back-buffer becomes an image
+   in process, through the SAME ops the MP4 emitter encodes, in the theme's own
+   colours."
+  ^File [grid out {:keys [font-size] :or {font-size 18}}]
+  (let
+    [{:keys [cw ch ascent letter-spacing]}
+     (cell-metrics font-size)
+
+     out-file
+     (io-file out)]
+
+    (with-open
+      [im (img/blank (* (long (reduce max 0 (map count grid))) (long cw))
+                     (* (count grid) (long ch))
+                     (hex-color (rgb tui-theme/terminal-bg)))]
+      (img/draw! im (grid->ops grid cw ch ascent font-size (double letter-spacing)))
+      (img/save! im out-file))
+    out-file))
 
 (defn- grid->picture
   "Render one captured grid into a jcodec RGB `Picture` — imaging does the glyph

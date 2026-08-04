@@ -9,12 +9,11 @@
    silently stopped painting, or whose frame geometry stopped being even (H.264
    refuses odd dimensions), still produces a plausible-looking File."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.ext.channel-tui.capture :as cap]
             [com.blockether.vis.ext.channel-tui.cinema :as cinema]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defn- cell
-  [ch fg bg]
-  {:ch (str ch) :fg fg :bg bg :bold false :italic false :underline false :reverse false})
+(defn- cell [ch fg bg] {:ch (str ch) :fg fg :bg bg :bold false})
 
 (defn- row
   "One captured row `cols` wide, `s` left-aligned into it."
@@ -104,3 +103,45 @@
                     (alength (bytes-of (mp4! "vis-cinema-blank-test.mp4" 24 false)))]
 
                    (expect (> inked (* 1.5 blank))))))
+
+(defn- png!
+  [nm grid]
+  (let [out (io/file (System/getProperty "java.io.tmpdir") nm)]
+    (.deleteOnExit out)
+    (str (cinema/grid->png! grid out {:font-size 16}))))
+
+(defdescribe
+  grid->png-test
+  "`grid->png!` is the \"look at the pixels\" path: ONE captured grid straight to a
+   PNG, through the same ops the screencast encodes."
+  (it
+    "paints an untouched grid on the theme's paper, never on a black void"
+    ;; Regression: Lanterna reports an unpainted cell's colour as DEFAULT, which
+    ;; reads back as ANSI black -- every screenshot of the app came out on black
+    ;; paper, a colour the app never shows.
+    (let
+      [paper
+       (:bg (cinema/cell nil))
+
+       painted
+       (set (apply concat
+              (cap/png-rows (png! "vis-cinema-paper.png" [(vec (repeat 8 (cinema/cell nil)))]))))]
+
+      (expect (not= [0 0 0] paper))
+      (expect (= #{paper} painted))))
+  (it "joins box-drawing cells into one unbroken rule, with no seam between columns"
+      ;; A font's `\u2500` stops at its own advance, so drawn as GLYPHS a border shows
+      ;; hairline gaps at the cell seams; drawn as bars through the cell centre it
+      ;; cannot. Every column of the middle raster row must therefore carry ink.
+      (let
+        [rows
+         (cap/png-rows
+           (png!
+             "vis-cinema-rule.png"
+             [(row "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500" 8 [0 0 0] [255 255 255])]))
+
+         middle
+         (nth rows (quot (count rows) 2))]
+
+        (expect (pos? (count middle)))
+        (expect (every? #(not= [255 255 255] %) middle)))))
