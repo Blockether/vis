@@ -50,9 +50,15 @@
     (is (false? (scroll/bottom-hidden? (scroll/parked 100) 100)))
     (is (false? (scroll/bottom-hidden? (scroll/parked 999) 100)))))
 
-;; ── Terminal result reveal ─────────────────────────────────────────────────
+;; ── Turn completion ────────────────────────────────────────────────────────
 
-(deftest terminal-result-reveal-preserves-the-current-tail-before-easing
+;; Regression (TUI "when a turn ends the content reflows, as if it scrolled"):
+;; completion used to re-pin FOLLOW to the OLD tail plus a `:reveal-from`
+;; marker, so `layout-offset` returned a concrete row and the next frames EASED
+;; down to the newly measured bottom — a multi-frame scroll after every turn —
+;; while a reader parked in history was dragged back to the live edge.
+
+(deftest settle-locks-follow-to-the-bottom-without-easing
   (let
     [old-max
      100
@@ -60,21 +66,22 @@
      new-max
      140
 
-     reveal
-     (scroll/reveal {:mode :follow :pos old-max} old-max)]
+     settled
+     (scroll/settle {:mode :follow :pos old-max})]
 
-    (testing "the first layout stays at the old tail rather than auto-bottoming"
-      (is (= old-max (scroll/layout-offset reveal old-max)))
-      (is (false? (scroll/animating? reveal old-max))))
-    (testing "once the new height is measured, normal FOLLOW easing takes over"
-      (is (= old-max (scroll/layout-offset reveal new-max)))
-      (is (true? (scroll/animating? reveal new-max)))
-      (let [stepped (scroll/ease reveal new-max)]
-        (is (nil? (:reveal-from stepped)))
-        (is (< old-max (:pos stepped) new-max))
-        (is (= (:pos stepped) (scroll/layout-offset stepped new-max)))))
-    (testing "a replacement that does not grow restores auto-bottom"
-      (is (nil? (scroll/layout-offset (scroll/settle-reveal reveal old-max) old-max))))))
+    (testing "FOLLOW lands on the exact auto-bottom lock, at any new height"
+      (is (= scroll/follow settled))
+      (is (nil? (scroll/layout-offset settled old-max)))
+      (is (nil? (scroll/layout-offset settled new-max)))
+      (is (false? (scroll/animating? settled new-max))))
+    (testing "and the next render frame leaves it there — nothing to animate"
+      (let [stepped (scroll/ease settled new-max)]
+        (is (nil? (scroll/layout-offset stepped new-max)))
+        (is (false? (scroll/animating? stepped new-max)))))
+    (testing "a reader parked above the bottom keeps their exact row"
+      (is (= (scroll/parked 40) (scroll/settle (scroll/parked 40))))
+      (is (= {:mode :at :offset 40 :pos 90} (scroll/settle {:mode :at :offset 40 :pos 90}))))
+    (testing "missing/legacy scroll settles to FOLLOW" (is (= scroll/follow (scroll/settle nil))))))
 
 ;; ── Wheel-momentum smoother ────────────────────────────────────────────────
 ;; The input-side debouncer that stops a slow trackpad's sign-flipping inertia

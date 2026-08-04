@@ -97,29 +97,20 @@
   (let [sc (norm sc)]
     (boolean (and (:pos sc) (not= (long (:pos sc)) (desired sc max-s))))))
 
-(defn reveal
-  "Begin a one-frame reveal of a terminal result from the current viewport.
+(defn settle
+  "Land a COMPLETED turn without animating.
 
-   A final result replaces the live placeholder atomically. Holding its old
-   position for that layout pass prevents auto-bottom from teleporting to the
-   new tail; after the new height is known, normal FOLLOW easing takes over."
-  [sc ^long max-s]
-  {:mode :follow :pos (displayed sc max-s) :reveal-from max-s})
+   A final result replaces the live placeholder atomically, so the transcript
+   changes height in one step. Easing across that step is what the reader sees
+   as the view reflowing — content scrolling by itself for several frames after
+   every turn. So a FOLLOW reader is re-pinned to the CLEAN auto-bottom lock:
+   no `:pos` ⇒ `layout-offset` nil ⇒ the tail is laid out flush against the
+   bottom, with nothing left to ease toward.
 
-(defn settle-reveal
-  "Clear a reveal marker when its first measured layout did not grow.
-
-   Without this, a zero-height replacement would unnecessarily turn FOLLOW's
-   exact auto-bottom lock into a concrete anchored offset."
-  [sc ^long max-s]
-  (let
-    [sc
-     (norm sc)
-
-     from
-     (:reveal-from sc)]
-
-    (if (and (some? from) (<= max-s (long from))) (dissoc sc :reveal-from) sc)))
+   A reader PARKED above the bottom is left exactly where they are reading."
+  [sc]
+  (let [sc (norm sc)]
+    (if (= :at (:mode sc)) sc follow)))
 
 (defn bottom-hidden?
   "True when the live bottom sits BELOW the current viewport — i.e. there is
@@ -149,8 +140,7 @@
 
    `nil` ⇒ auto-bottom (never anchored, always tracks the latest message
    — used when FOLLOW is settled at the bottom). A concrete row is
-   returned while parked, mid-ease, or during the single reveal layout pass
-   for a terminal result."
+   returned while parked or mid-ease."
   [sc ^long max-s]
   (let
     [sc
@@ -161,9 +151,9 @@
 
     (case (:mode sc)
       ;; Settled at (or below) the bottom ⇒ nil exact-bottom lock.
-      ;; Mid-ease (pos above the bottom), or a terminal reveal ⇒ concrete row.
+      ;; Mid-ease (pos above the bottom) ⇒ concrete row.
       :follow
-      (when (and pos (or (:reveal-from sc) (< (long pos) max-s))) (long pos))
+      (when (and pos (< (long pos) max-s)) (long pos))
 
       :at
       (displayed sc max-s)
@@ -186,13 +176,11 @@
    - Mid-ease ⇒ step `:pos` toward the target.
    - Settled while PARKED ⇒ drop `:pos` (clean snap; no further repaint).
    - Settled while FOLLOWING ⇒ KEEP `:pos` pinned at the bottom so the
-     next content growth eases FROM here instead of teleporting.
-   - A terminal-result `:reveal-from` marker is consumed only after its
-     held layout has measured the new bottom."
+     next content growth eases FROM here instead of teleporting."
   [sc ^long max-s]
   (let
     [sc
-     (dissoc (norm sc) :reveal-from)
+     (norm sc)
 
      d
      (desired sc max-s)

@@ -1014,28 +1014,35 @@
                {:scroll {:mode :at :offset 1840 :pos 1849}}
                [:reanchor-scroll 1399 -450])]
           (expect (= {:mode :at :offset 1390 :pos 1399} (:scroll r)))))
-    (it "message-received holds the painted row before easing a final result"
-        ;; Regression (/workspace list "teleports to the new tail"): a result
-        ;; lands atomically while an ease was in flight. Keep that painted row
-        ;; for the first layout, then let FOLLOW ease from it to the new tail.
+    (it "message-received settles the view instead of easing to the new tail"
+        ;; Regression (TUI "when a turn ends the content reflows, as if it
+        ;; scrolled"): the final result used to re-pin FOLLOW to the OLD tail
+        ;; plus a reveal marker, so the following frames eased down to the newly
+        ;; measured bottom — a few frames of self-scroll after every turn — and a
+        ;; reader parked in history was dragged along to the live edge.
         (let
           [message-received-fn (ev :message-received)
            pending-id "turn-1"
-           db {:active-tab-id :main
-               :session {:id "c1"}
-               :loading? true
-               :layout {:total-h 120 :inner-h 20}
-               :messages [{:role :user :text "/workspace list" :client-turn-id pending-id}
-                          {:role :assistant :pending? true :client-turn-id pending-id}]
-               :progress {:iterations []}
-               ;; An ease was in flight from the prior frame.
-               :scroll {:mode :follow :pos 80}}
-           {db' :db} (message-received-fn db
-                                          [:message-received :main
-                                           [:ast {} [:p {} [:span {} "a big table"]]]
-                                           {:client-turn-id pending-id}])]
+           landed (fn [sc]
+                    (:scroll (:db
+                               (message-received-fn
+                                 {:active-tab-id :main
+                                  :session {:id "c1"}
+                                  :loading? true
+                                  :layout {:total-h 120 :inner-h 20}
+                                  :messages
+                                  [{:role :user :text "/workspace list" :client-turn-id pending-id}
+                                   {:role :assistant :pending? true :client-turn-id pending-id}]
+                                  :progress {:iterations []}
+                                  :scroll sc}
+                                 [:message-received :main [:ast {} [:p {} [:span {} "a big table"]]]
+                                  {:client-turn-id pending-id}]))))]
 
-          (expect (= {:mode :follow :pos 80 :reveal-from 100} (:scroll db')))))
+          ;; an ease was in flight from the prior frame
+          (expect (= scroll/follow (landed {:mode :follow :pos 80})))
+          (expect (= scroll/follow (landed scroll/follow)))
+          ;; reading history: the result must not move the viewport at all
+          (expect (= (scroll/parked 30) (landed (scroll/parked 30))))))
     (it "send-message re-pins to a CLEAN FOLLOW"
         (let
           [send-message-fn (ev :send-message)

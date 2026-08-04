@@ -1472,17 +1472,11 @@
                                   :session-model-pref {:provider (str provider) :model (str model)})
                                 (dissoc w :session-model-pref))))))
 
-(reg-event-db
-  :set-layout
-  (fn [db [_ layout]]
-    ;; Pushed in by the render thread; intentionally does NOT bump
-    ;; render-version (see no-render-bump-events). A terminal-result
-    ;; reveal survives only if this first measured layout grew; otherwise
-    ;; restore FOLLOW's exact auto-bottom lock immediately.
-    (let [max-s (max 0 (- (long (or (:total-h layout) 0)) (long (or (:inner-h layout) 0))))]
-      (assoc db
-        :layout layout
-        :scroll (scroll/settle-reveal (:scroll db) max-s)))))
+(reg-event-db :set-layout
+              (fn [db [_ layout]]
+                ;; Pushed in by the render thread; intentionally does NOT bump
+                ;; render-version (see no-render-bump-events).
+                (assoc db :layout layout)))
 
 (defn- park-scroll-for-toggle
   "Pin the viewport before a disclosure toggle mutates message heights.
@@ -4903,15 +4897,11 @@
                     (cond->
                       (assoc workspace
                         ;; A final result replaces the live placeholder atomically.
-                        ;; Preserve the painted row for one layout pass, then ease
-                        ;; toward the newly measured tail instead of teleporting.
+                        ;; Settle the view ON that new height rather than easing
+                        ;; toward it, which ended every turn in a visible reflow.
                         :messages messages'
                         :utilization utilization
-                        :scroll (scroll/reveal
-                                  (:scroll workspace)
-                                  (max 0
-                                       (- (long (or (get-in workspace [:layout :total-h]) 0))
-                                          (long (or (get-in workspace [:layout :inner-h]) 0)))))
+                        :scroll (scroll/settle (:scroll workspace))
                         :loading? (or still-pending? awaiting-gateway-cancel?)
                         :cancelling? awaiting-gateway-cancel?
                         :cancelling-at-ms (when awaiting-gateway-cancel?
