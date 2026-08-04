@@ -166,25 +166,24 @@
 ;; Durable state (`vis.state`) — backed by the `extension_aggregate` table
 ;; (one row per key, kind "py-state", :global scope), NOT the filesystem.
 ;; State is owned by the extension NAME and survives `/reload` and restarts.
-;; The live session env (carrying :db-info) is threaded in through `*state-env*`
-;; when an adapter has it; otherwise `state-env` falls back to the process-wide
-;; shared DB connection (the same vis.db sessions use) — all :global scope
-;; needs. Values are the boundary view of Python data (plain EDN data).
+;; The live session env reaches this code as THE ONE context
+;; (`extension/*current-environment*`, installed by `extension/with-context`);
+;; a context without :db-info (outside a session, or a session whose env
+;; carries none) falls back to the process-wide shared DB connection (the same
+;; vis.db sessions use) — all :global scope needs. Values are the boundary view
+;; of Python data (plain EDN data).
 ;; =============================================================================
 
 (def ^:private state-kind "py-state")
 
-(def ^:private ^:dynamic *state-env*
-  "Live session env (carrying :db-info and session/turn ids) bound around a
-   call into an extension so `vis.state` reaches the extension-aggregate API
-   with the session's own DB. nil outside a call — then `state-env` falls
-   back to the process-wide shared connection. Also the seam tests use to
-   confine `vis.state` to an in-memory DB."
-  nil)
-
 (defn- state-env
+  "State handle for `vis.state`: the session's OWN env when the current context
+   carries a DB, else the process-wide shared connection. Tests confine
+   `vis.state` to an in-memory DB by binding `extension/*current-environment*`."
   []
-  (or *state-env* {:db-info (persistance/db-shared-connection! (config/resolve-db-spec))}))
+  (if (:db-info extension/*current-environment*)
+    extension/*current-environment*
+    {:db-info (persistance/db-shared-connection! (config/resolve-db-spec))}))
 
 (defn- state-get*
   [k]
@@ -326,34 +325,20 @@
                      str)})
 
 (defn- call-py-ext
-  "Invoke a Python callable with the extension identity bound (so `vis.state`
-   host callbacks own their aggregate rows) and the live session env threaded
-   through `*state-env*` (so state uses the session's own DB when available)
-   and through `extension/*current-environment*` (so `vis.shell` and `vis.ask`
-   run against the session that triggered the callback).
+  "Invoke a Python callable inside THE session context (`extension/with-context`):
+   the extension identity (so `vis.state` host callbacks own their aggregate
+   rows) plus the live session env, which is what `vis.shell`, `vis.ask` and
+   `vis.state` read.
 
-   Only an env that actually carries :db-info overrides the ambient
-   `*state-env*` — a db-less env (or nil) keeps it, so global state still
-   resolves through the shared connection / the test binding. The session env
-   follows the same rule on :session-id: symbol calls arrive with the ambient
-   binding already installed by `extension/invoke-symbol-wrapper` and pass nil
-   here, while hook adapters (activation, prompt, ctx, slash, op hooks) are
-   handed a real env — without this binding those callbacks ran session-less,
-   so `vis.shell` threw \"available only while handling a session\" and
+   Adapters handed a real env (activation, prompt, ctx, slash, op hooks) pass
+   it; adapters with none (symbol calls, render, provider callbacks) pass nil
+   and INHERIT the caller's session instead of running session-less — without
+   that, `vis.shell` threw \"available only while handling a session\" and
    `vis.ask` requests were dropped by the gateway bridge.
    Returns the `->clj` view of the result."
   [ext-name env ^Context ctx ^Value f args]
-  (binding
-    [extension/*current-extension*
-     (or extension/*current-extension* {:ext/name ext-name})
-
-     extension/*current-environment*
-     (if (:session-id env) env extension/*current-environment*)
-
-     *state-env*
-     (if (:db-info env) env *state-env*)]
-
-    (call-py ctx f args)))
+  (extension/with-context {:ext (or extension/*current-extension* {:ext/name ext-name}) :env env}
+                          (call-py ctx f args)))
 
 (defn- sctx->env
   "Minimal state env for a slash callback: the persistence handle and session

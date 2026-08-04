@@ -1,5 +1,7 @@
 (ns com.blockether.vis.internal.extension-test
   (:require [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.loop :as vis-loop]
+            [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -826,3 +828,83 @@
         (expect (< (long (#'extension/schema-grammar-cost terse))
                    (long (#'extension/schema-grammar-cost
                           (assoc-in terse [:properties "q"] {:type "string"}))))))))
+
+;; ── ONE context for the extension and the session (issue #104) ────────────────
+;;
+;; Regression, issue #104: each callback site installed its OWN SUBSET of the
+;; context. The turn hooks, the ctx contribution and the prompt/activation
+;; callbacks bound the extension identity but NOT the session env, so anything
+;; those callbacks raised — `vis.ask` above all — was session-less: the gateway
+;; bridge had no session to append the request to and no surface ever drew it.
+(defdescribe
+  one-extension-context-test
+  (it
+    "every extension callback site runs inside the session's own context"
+    (let
+      [seen
+       (atom [])
+
+       snap
+       (fn [site]
+         (swap! seen conj
+           {:site site
+            :session-id (:session-id extension/*current-environment*)
+            :root workspace/*workspace-root*
+            :ext (extension/current-extension-id)})
+         nil)
+
+       phase-hook
+       (fn [phase]
+         {:id (keyword "one-context" (name phase))
+          :phase phase
+          :fn (fn [_ctx]
+                (snap phase))})
+
+       ext
+       {:ext/name "one-context-probe"
+        :ext/hooks [(phase-hook :turn.answer/validate) (phase-hook :turn.iteration/start)]
+        :ext/ctx-fn (fn [_env]
+                      (snap :ext/ctx-fn)
+                      {})
+        :ext/prompt-fn (fn [_env]
+                         (snap :ext/prompt-fn))
+        :ext/activation-fn (fn [_env]
+                             (snap :ext/activation-fn)
+                             true)}
+
+       root
+       (workspace/normalize-root (System/getProperty "user.dir"))
+
+       env
+       {:session-id "sid-one-context" :workspace/root root :extensions (atom [ext])}]
+
+      (vis-loop/final-answer-gate-error env 1 [] "an answer" [ext])
+      (#'vis-loop/collect-iteration-start-hints env [ext] {:environment env})
+      (extension/ctx-contributions env [ext])
+      (prompt/active-extensions env)
+      (#'prompt/extensions-prompt-block env [ext])
+      (expect (= #{:turn.answer/validate :turn.iteration/start :ext/ctx-fn :ext/prompt-fn
+                   :ext/activation-fn}
+                 (set (map :site @seen))))
+      ;; ONE context: same session, same workspace, same identity, every site.
+      (expect (every? (fn [s]
+                        (= {:session-id "sid-one-context" :root root :ext "one-context-probe"}
+                           (dissoc s :site)))
+                      @seen))))
+  (it "a callback handed no environment of its own keeps the caller's session"
+      ;; Regression, issue #104: a caller with nothing to say about the session
+      ;; passes an EMPTY env — `(prompt-fn {})`. That used to REPLACE the live
+      ;; context with an empty map, so `vis.state` fell through to the
+      ;; process-wide DB and `vis.ask` raised a session-less request. An empty
+      ;; env is not a context: it inherits the ambient one, and only a real env
+      ;; replaces it.
+      (extension/with-context
+        {:env {:session-id "sid-ambient" :db-info ::probe-db}}
+        (expect (= "sid-ambient"
+                   (extension/with-context {:env {}}
+                                           (:session-id extension/*current-environment*))))
+        (expect (= ::probe-db
+                   (extension/with-context {:env nil} (:db-info extension/*current-environment*))))
+        (expect (= "sid-inner"
+                   (extension/with-context {:env {:session-id "sid-inner"}}
+                                           (:session-id extension/*current-environment*)))))))

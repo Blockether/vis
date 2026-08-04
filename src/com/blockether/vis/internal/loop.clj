@@ -1715,10 +1715,8 @@
      (some (fn [ext]
              (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
                      (when (= :turn.answer/validate phase)
-                       (binding
-                         [extension/*current-extension* ext
-                          extension/*current-symbol* nil]
-
+                       (extension/with-context
+                         {:ext ext :env environment}
                          (try (let [hit (hook-fn ctx)]
                                 (cond (s/valid? ::extension/answer-validation-reject hit)
                                       (answer-validation-rejection-message hook hit)
@@ -1838,17 +1836,12 @@
 (defn- collect-iteration-start-hints
   "Run active `:turn.iteration/start` hooks. Legacy hook-task output is ignored;
    this currently returns an empty vector after preserving hook validation/logging."
-  [_environment active-extensions ctx]
+  [environment active-extensions ctx]
   (vec (mapcat (fn [ext]
                  (keep (fn [{:keys [id phase lifetime] hook-fn :fn}]
                          (when (= :turn.iteration/start phase)
-                           (binding
-                             [extension/*current-extension*
-                              ext
-
-                              extension/*current-symbol*
-                              nil]
-
+                           (extension/with-context
+                             {:ext ext :env environment}
                              (try (iteration-start-hook-hit ext id lifetime (hook-fn ctx))
                                   (catch Throwable t (iteration-start-hook-error-hit ext id t))))))
                        (or (:ext/hooks ext) [])))
@@ -12640,6 +12633,19 @@
 (defn update-project! [project-id opts] (persistance/db-update-project! (db-info) project-id opts))
 
 (defn delete-project! [project-id] (persistance/db-delete-project! (db-info) project-id))
+
+(defn project-session-ids
+  "Ids of every session soul belonging to `project-id`, across channels.
+
+   This is MEMBERSHIP, not a client's visible list: an untitled or empty
+   conversation is a member too, and a caller that fans out over what it can see
+   would delete the visible rows and silently keep the rest."
+  [project-id]
+  (let [pid (str project-id)]
+    (->> (by-channel :all)
+         (filter (fn [s]
+                   (= pid (str (:project-id s)))))
+         (mapv :id))))
 
 (defn assign-project!
   "Assign the session soul to `project-id` (nil clears / removes from project)."

@@ -52,7 +52,7 @@
 
     (doseq [[fname src] sources]
       (write-ext! ext-dir fname src))
-    (binding [pyx/*state-env* {:db-info store}]
+    (binding [extension/*current-environment* {:db-info store}]
       (try
         (f (pyx/reload-python-extensions! {:dirs [(str ext-dir)]}) {:ext-dir ext-dir :store store})
         (finally (pyx/reload-python-extensions! {:dirs []}) (ps/db-dispose-connection! store))))))
@@ -606,7 +606,7 @@ vis.extension(
         (write-ext! project
                     "counter.py"
                     (str/replace counter-py "Counter fixture extension." "Project counter."))
-        (binding [pyx/*state-env* {:db-info store}]
+        (binding [extension/*current-environment* {:db-info store}]
           (try (let [result (pyx/reload-python-extensions! {:dirs [(str global) (str project)]})]
                  (expect (= 1 (:loaded result)))
                  (expect (= "Project counter." (:ext/description (registered "counter")))))
@@ -720,7 +720,7 @@ vis.extension(
                   "foo_test.py"
                   (str "def test_pass():\n    assert 1 + 1 == 2\n"
                        "def test_fail():\n    assert 2 + 2 == 5\n"))
-      (binding [pyx/*state-env* {:db-info store}]
+      (binding [extension/*current-environment* {:db-info store}]
         (try (let [res (runner/test-python-extensions! {:dirs [(str ext-dir)]})]
                (expect (= 2 (:files res)))
                (expect (= 2 (:passed res)))
@@ -753,7 +753,7 @@ vis.extension(
         (write-ext! ext-dir
                     "liar_test.py"
                     "def test_only_fail():\n    assert False, \"9 passed items were expected\"\n")
-        (binding [pyx/*state-env* {:db-info store}]
+        (binding [extension/*current-environment* {:db-info store}]
           (try (let [res (runner/test-python-extensions! {:dirs [(str ext-dir)]})]
                  (expect (= 1 (:files res)))
                  (expect (= 1 (:failed res)))
@@ -810,7 +810,7 @@ vis.extension(
                     "foo_test.py"
                     (str "def test_pass():\n    assert 1 + 1 == 2\n"
                          "def test_fail():\n    assert 2 + 2 == 5\n"))
-        (binding [pyx/*state-env* {:db-info store}]
+        (binding [extension/*current-environment* {:db-info store}]
           (try (let [{:keys [result report]} (#'runner/run-and-report {:dirs [(str ext-dir)]})]
                  (expect (= 1 (:files result)))
                  (expect (false? (:ok? result)))
@@ -838,7 +838,7 @@ vis.extension(
                     "foo_test.py"
                     (str "def test_alpha():\n    assert 1 + 1 == 2\n"
                          "def test_beta():\n    assert 2 + 2 == 5\n"))
-        (binding [pyx/*state-env* {:db-info store}]
+        (binding [extension/*current-environment* {:db-info store}]
           (try (let
                  [res (runner/test-python-extensions! {:dirs [(str ext-dir)]})
                   by-id (into {} (map (juxt :nodeid :outcome)) (:tests res))]
@@ -1414,12 +1414,22 @@ vis.extension(
 
 (defn- answer-pending!
   "Wait for a human-input request titled `title` to show up, then run `answer-fn`
-   on its id. Runs off-thread: `vis.ask` parks the calling thread."
+   on its id. Runs off-thread: `vis.ask` parks the calling thread.
+
+   Mounts a no-op listener on the default channels first: a request that reaches
+   no channel at all is refused as undeliverable, and a bare JVM has none — so
+   without this the seam under test would never open a dialog to answer."
   [title answer-fn]
-  (future (loop [n 0]
-            (if-let [req (first (filter #(= title (:title %)) (human-input/pending-requests)))]
-              (answer-fn (:id req))
-              (when (< n 400) (Thread/sleep 25) (recur (inc n)))))))
+  (doseq [chan [:tui :app]]
+    (channel-events/add-channel-event-listener! chan
+                                                ::answering
+                                                (fn [_])))
+  (future (try (loop [n 0]
+                 (if-let [req (first (filter #(= title (:title %)) (human-input/pending-requests)))]
+                   (answer-fn (:id req))
+                   (when (< n 400) (Thread/sleep 25) (recur (inc n)))))
+               (finally (doseq [chan [:tui :app]]
+                          (channel-events/remove-channel-event-listener! chan ::answering))))))
 
 (def ^:private asker-py
   "

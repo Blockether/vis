@@ -39,15 +39,9 @@
          (when-not (str/ends-with? body "\n") "\n"))))
 
 (defn- call-extension-callback
-  [ext f & args]
-  (binding
-    [extension/*current-extension*
-     ext
-
-     extension/*current-symbol*
-     nil]
-
-    (apply f args)))
+  "Run an extension's prompt/activation callback inside THE session context."
+  [ext f environment]
+  (extension/with-context {:ext ext :env environment} (f environment)))
 
 ;; =============================================================================
 ;; Initial messages

@@ -2478,25 +2478,38 @@
   (some-> *current-extension*
           :ext/name))
 
+(defmacro with-context
+  "Install THE extension context around `body` and evaluate it.
+
+   There is exactly ONE context, and it is the session `environment` map.
+   Everything else an extension callback can read ambiently is DERIVED from it
+   here — the extension identity (`*current-extension*`, `*current-symbol*`)
+   and the workspace view (`workspace/*workspace-root*`,
+   `workspace/*filesystem-roots*`) — so a callback can never see half a
+   session. EVERY extension callback site enters through this macro (symbol
+   calls, turn hooks, ctx / prompt / activation callbacks, Python adapters);
+   nothing else binds those vars. Sites that bound only a subset used to hand
+   `vis.ask` / `vis.shell` a session-less environment.
+
+   Opts `{:ext ext :symbol sym :env environment}`: a nil or EMPTY `:env`, and a
+   nil `:ext`, INHERIT the ambient one, so a nested callback stays in its
+   caller's session and a caller that hands a hook no environment at all cannot
+   silently drop the session out from under it. `:symbol` is never inherited —
+   only a symbol call has one."
+  [{:keys [ext env] sym :symbol} & body]
+  `(let [env# (or (not-empty ~env) *current-environment*)]
+     (binding
+       [*current-extension* (or ~ext *current-extension*)
+        *current-symbol* ~sym
+        *current-environment* env#
+        workspace/*workspace-root* (workspace/workspace-root env#)
+        workspace/*filesystem-roots* (workspace/env-filesystem-roots env#)]
+
+       ~@body)))
+
 (defn- call-extension-env-fn
   [ext f environment]
-  (binding
-    [*current-extension*
-     ext
-
-     *current-symbol*
-     nil
-
-     *current-environment*
-     environment
-
-     workspace/*workspace-root*
-     (workspace/workspace-root environment)
-
-     workspace/*filesystem-roots*
-     (workspace/env-filesystem-roots environment)]
-
-    (f environment)))
+  (with-context {:ext ext :env environment} (f environment)))
 
 (defn- active-extension?
   [environment ext]
@@ -2562,20 +2575,13 @@
   (reduce (fn [acc ext]
             (if-let [f (:ext/ctx-fn ext)]
               (let
-                [contribution
-                 (try (binding
-                        [*current-extension* ext
-                         *current-symbol* nil
-                         workspace/*workspace-root* (workspace/workspace-root environment)
-                         workspace/*filesystem-roots* (workspace/env-filesystem-roots environment)]
-
-                        (f environment))
-                      (catch Throwable t
-                        (tel/log! {:level :warn
-                                   :id ::ctx-contribution-error
-                                   :data {:ext (:ext/name ext) :error (ex-message t)}}
-                                  "Extension :ext/ctx-fn fn threw")
-                        nil))]
+                [contribution (try (with-context {:ext ext :env environment} (f environment))
+                                   (catch Throwable t
+                                     (tel/log! {:level :warn
+                                                :id ::ctx-contribution-error
+                                                :data {:ext (:ext/name ext) :error (ex-message t)}}
+                                               "Extension :ext/ctx-fn fn threw")
+                                     nil))]
                 (if (map? contribution)
                   (deep-merge acc contribution)
                   (do (when (some? contribution)
@@ -2818,16 +2824,8 @@
 
    Raw helper symbols (`:ext.symbol/raw? true`) bypass this function entirely."
   [ext sym-entry args env]
-  (binding
-    [*current-extension*
-     ext
-
-     *current-symbol*
-     (:ext.symbol/symbol sym-entry)
-
-     *current-environment*
-     env]
-
+  (with-context
+    {:ext ext :symbol (:ext.symbol/symbol sym-entry) :env env}
     (let
       [sym
        (:ext.symbol/symbol sym-entry)
@@ -2986,22 +2984,18 @@
                   [sym
                    (if (:ext.symbol/raw? sym-entry)
                      (fn [& args]
-                       (let [env (env-thunk)]
-                         (binding
-                           [workspace/*workspace-root* (workspace/workspace-root env)
-                            workspace/*filesystem-roots* (workspace/env-filesystem-roots env)]
-
-                           (apply (:ext.symbol/fn sym-entry) args))))
+                       (with-context {:ext ext :symbol sym :env (env-thunk)}
+                                     (apply (:ext.symbol/fn sym-entry) args)))
                      (fn [& args]
                        (let
                          [env (env-thunk)
                           w (get-log-writer)]
 
+                         ;; Only the IO redirect lives here — `invoke-symbol-wrapper`
+                         ;; installs the extension context itself.
                          (binding
                            [*out* w
-                            *err* w
-                            workspace/*workspace-root* (workspace/workspace-root env)
-                            workspace/*filesystem-roots* (workspace/env-filesystem-roots env)]
+                            *err* w]
 
                            (invoke-symbol-wrapper ext sym-entry (vec args) env)))))]
                   [sym (:ext.symbol/val sym-entry)]))))
