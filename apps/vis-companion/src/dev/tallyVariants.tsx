@@ -255,7 +255,7 @@ export function TallyBadgesVariant({ state }: { state: string }) {
 
 /**
  * C — THE STRIP IS THE TALLY. The chip keeps the shipped pair (a light green
- * `(3)`, a solid amber badge) and becomes the ONLY place the numbers appear:
+ * `[3]`, a solid amber badge) and becomes the ONLY place the numbers appear:
  * the header line and the machine headers go quiet while the strip is on
  * screen. With one machine paired there is no strip, so the header line takes
  * the counts back — the words appear exactly where nothing else can say them.

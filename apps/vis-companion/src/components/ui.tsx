@@ -192,15 +192,21 @@ export function Spinner({ className = '' }: { className?: string }) {
  * carries its own metrics and drops below the digits' optical centre, so the
  * green pair read as one smudged token hanging low in a chip whose every other
  * part is centred. There is no room for the word "live" beside a machine name,
- * so the count is PARENTHESISED instead: brackets in the host's own ink, the
- * number in green. It is nothing but text, so it sits on the label's baseline by
- * construction, and colour is what still says "live" — with the word itself kept
- * for anyone who cannot see the colour.
+ * so the count goes in SQUARE brackets instead: the brackets in the host's own
+ * ink, the number in green. It is nothing but text, so it sits on the label's
+ * baseline by construction, and colour is what still says "live" — with the word
+ * itself kept for anyone who cannot see the colour.
+ *
+ * Square rather than round, because the unread badge beside it is a FILLED
+ * rectangle: brackets make the two counts one shape in two weights — outlined
+ * box = running, filled box = waiting — instead of a round token sitting next to
+ * a block. In a monospaced strip both glyphs occupy one cell, so the chip is
+ * exactly as wide either way.
  */
 export function LiveTally({ count }: { count: number }) {
   return (
     <span className="whitespace-nowrap">
-      (<span className="font-bold text-ok">{count}</span>)
+      [<span className="font-bold text-ok">{count}</span>]
       <span className="sr-only"> live</span>
     </span>
   );
@@ -208,7 +214,7 @@ export function LiveTally({ count }: { count: number }) {
 
 /**
  * Unread is NOT a tally, it is a notification, so it must not join the live
- * count's parentheses: `macbook (4) 3` puts two bare numbers side by side and
+ * count's brackets: `macbook [4] 3` puts two bare numbers side by side and
  * nothing in the chip says which is which — the reader has to remember that
  * green means live and amber means new.
  *
