@@ -287,6 +287,113 @@ _rq.request = _echo
                        "and n == 2 and bytes(buf) == b'ab' and resp.drain_conn() is None "
                        "and resp.status == 204 and resp.status_code == 204"))))))
 
+;; Real code imports urllib3 by SUBMODULE (`from urllib3.util.retry import Retry`,
+;; `urllib3.response.HTTPResponse`, ...). A shim module has no loader of its own,
+;; so a submodule without its own sys.modules entry fails with
+;; "'urllib3' is not a package" even though plain `import urllib3` works.
+(defdescribe
+  urllib3-package-surface-test
+  (it "resolves every submodule real code imports from"
+      (with-python-context
+        (expect
+          (true-py? python-context
+                    (str
+                      "import sys\n" "from urllib3.util.retry import Retry\n"
+                      "from urllib3.util.timeout import Timeout\n"
+                      "from urllib3.util.url import parse_url, Url\n"
+                      "from urllib3.util.request import make_headers, SKIP_HEADER\n"
+                      "from urllib3.response import HTTPResponse, BaseHTTPResponse\n"
+                      "from urllib3.poolmanager import PoolManager, ProxyManager, proxy_from_url\n"
+                      "from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool\n"
+                      "from urllib3.fields import RequestField, guess_content_type\n"
+                      "from urllib3._collections import HTTPHeaderDict\n"
+                      "from urllib3.filepost import encode_multipart_formdata\n"
+                      "Retry is urllib3.util.Retry and Timeout is urllib3.Timeout "
+                      "and HTTPResponse is urllib3.HTTPResponse "
+                      "and issubclass(HTTPResponse, BaseHTTPResponse) "
+                      "and sys.modules['urllib3.util.retry'] is urllib3.util.retry "
+                      "and 'parse_url' in urllib3.__all__")))))
+  (it "carries the exception names real code catches"
+      (with-python-context
+        (expect (true-py?
+                  python-context
+                  (str "E = urllib3.exceptions\n" "issubclass(E.IncompleteRead, E.ProtocolError) "
+                       "and issubclass(E.URLSchemeUnknown, E.LocationValueError) "
+                       "and issubclass(E.ProxySchemeUnknown, E.URLSchemeUnknown) "
+                       "and issubclass(E.NameResolutionError, E.NewConnectionError) "
+                       "and issubclass(E.InsecureRequestWarning, E.SecurityWarning) "
+                       "and issubclass(E.EmptyPoolError, E.PoolError) "
+                       "and E.ConnectionError is E.ProtocolError "
+                       ;; message reads once, not twice through URLSchemeUnknown's prefix
+                       "and str(E.ProxySchemeUnknown('ftp')) == "
+                       "'Proxy URL had unsupported scheme ftp, should use http:// or https://'")))))
+  (it "parses a URL into the seven-part Url record"
+      (with-python-context
+        (expect (true-py?
+                  python-context
+                  (str "u = urllib3.util.parse_url('https://user:pw@Example.COM:8443/a/b?q=1#f')\n"
+                       "bare = urllib3.parse_url('google.com/mail')\n"
+                       "tuple(u) == ('https', 'user:pw', 'example.com', 8443, '/a/b', 'q=1', 'f') "
+                       "and u.request_uri == '/a/b?q=1' and u.netloc == 'example.com:8443' "
+                       "and u.url == 'https://user:pw@example.com:8443/a/b?q=1#f' "
+                       "and (bare.host, bare.scheme, bare.path) == ('google.com', None, '/mail') "
+                       "and tuple(urllib3.parse_url('')) == (None,) * 7")))))
+  (it "hands a Timeout to the transport as a connect/read pair"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str fake
+                                "r = urllib3.request('GET', 'http://svc/a', "
+                                "timeout=urllib3.Timeout(connect=1, read=5))\n"
+                                "t = urllib3.Timeout(total=7, read=3)\n"
+                                "r.json()['timeout'] == [1, 5] "
+                                "and (t.connect_timeout, t.read_timeout) == (7, 3) "
+                                "and urllib3.Timeout.from_float(2).as_requests() == (2, 2)"))))))
+  (it "builds auth and encoding headers with make_headers"
+      (with-python-context
+        (expect (true-py? python-context
+                          (str "h = urllib3.make_headers(basic_auth='a:b', accept_encoding=True, "
+                               "user_agent='vis', keep_alive=True, disable_cache=True)\n"
+                               "h == {'accept-encoding': 'gzip,deflate', 'user-agent': 'vis', "
+                               "'connection': 'keep-alive', 'authorization': 'Basic YTpi', "
+                               "'cache-control': 'no-cache'} "
+                               "and urllib3.util.SKIP_HEADER == '@@@SKIP_HEADER@@@'")))))
+  (it
+    "encodes a RequestField the same way as a plain field tuple"
+    (with-python-context
+      (expect
+        (true-py?
+          python-context
+          (str
+            "f = urllib3.fields.RequestField('f', b'hi', filename='n.txt')\n"
+            "f.make_multipart(content_type='text/plain')\n"
+            "a, _ct = urllib3.encode_multipart_formdata([f], 'B9')\n"
+            "b, _ct2 = urllib3.encode_multipart_formdata({'f': ('n.txt', b'hi', 'text/plain')}, 'B9')\n"
+            "a == b and f.name == 'f' and f.filename == 'n.txt' "
+            "and urllib3.fields.guess_content_type('x.txt') == 'text/plain'")))))
+  (it "builds typed pools from a URL"
+      (with-python-context
+        (expect (true-py?
+                  python-context
+                  (str
+                    "s = urllib3.connection_from_url('https://h:8443/x')\n"
+                    "p = urllib3.PoolManager(headers={'User-Agent': 'vis'})\n"
+                    "c = p.connection_from_url('http://h/x')\n"
+                    "type(s).__name__ == 'HTTPSConnectionPool' and (s.host, s.port) == ('h', 8443) "
+                    "and type(c).__name__ == 'HTTPConnectionPool' "
+                    "and c.request('GET', '/x').json()['headers'].get('User-Agent') == 'vis'")))))
+  (it "merges proxy headers and refuses a non-HTTP proxy scheme"
+      (with-python-context
+        (expect
+          (true-py?
+            python-context
+            (str "pm = urllib3.proxy_from_url('http://10.0.0.5:3128', proxy_headers={'X-P': '1'})\n"
+                 "h = pm.request('GET', 'http://svc/a', headers={'X-Q': '2'}).json()['headers']\n"
+                 "bad = 'none'\n"
+                 "try:\n" "    urllib3.ProxyManager('ftp://10.0.0.5')\n"
+                 "except urllib3.exceptions.ProxySchemeUnknown:\n" "    bad = 'refused'\n"
+                 "h.get('X-P') == '1' and h.get('X-Q') == '2' "
+                 "and pm.proxy.port == 3128 and bad == 'refused'"))))))
+
 ;; Regression, CI ubuntu-latest: the shim imported the stdlib `uuid` at install
 ;; time for one multipart boundary. `uuid` is platform-divergent AT IMPORT --
 ;; the darwin branch is a no-op while Linux pulls in `platform` -- so on the

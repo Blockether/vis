@@ -4,15 +4,25 @@
    shim (which rides the sandbox socket via stdlib urllib and honours the network
    guard). No pip, no native wheel, no host bridge.
 
-   The preamble publishes a `urllib3` module (plus `urllib3.exceptions`) into
-   `sys.modules` and staples it onto builtins. It exposes the surface agents
-   reach for: `PoolManager` / `HTTPConnectionPool` / `HTTPSConnectionPool` with
-   `.request(method, url, fields=, headers=, body=, json=)`, a top-level
+   The preamble publishes `urllib3` as a PACKAGE and staples it onto builtins:
+   every submodule real code imports has its own `sys.modules` entry --
+   `urllib3.exceptions`, `.response`, `.poolmanager`, `.connectionpool`,
+   `.fields`, `.filepost`, `._collections`, and `urllib3.util` with `.retry` /
+   `.timeout` / `.url` / `.request`.
+
+   It exposes the surface agents reach for: `PoolManager` / `ProxyManager` /
+   `HTTPConnectionPool` / `HTTPSConnectionPool` with `.request(method, url,
+   fields=, headers=, body=, json=)` and `connection_from_url`, a top-level
    `urllib3.request(...)` (urllib3 2.x), an `HTTPResponse` (`.status`, `.data`,
-   `.headers`, `.json()`, `.read()`, `.getheader()`), `HTTPHeaderDict`,
-   `disable_warnings()`, and the `urllib3.exceptions` tree (`HTTPError`,
-   `MaxRetryError`, `NewConnectionError`, `ReadTimeoutError`, `ProtocolError`,
-   `InsecureRequestWarning`). Real connection pooling / retries are no-ops."
+   `.headers`, `.json()`, `.read()`, `.stream()`, `.getheader()`),
+   `HTTPHeaderDict`, `Retry`, `Timeout` (turned into the transport's
+   connect/read pair), `parse_url` / `Url`, `make_headers`, `RequestField` +
+   `encode_multipart_formdata`, `disable_warnings()`, and the
+   `urllib3.exceptions` tree (`HTTPError`, `MaxRetryError`,
+   `NewConnectionError`, `ReadTimeoutError`, `ProtocolError`, `IncompleteRead`,
+   `ProxySchemeUnknown`, `InsecureRequestWarning`). Real connection pooling and
+   retry loops are no-ops, and a proxy URL is recorded rather than dialled: the
+   sandbox does its own egress."
   (:require [com.blockether.vis.core :as vis]))
 
 
@@ -20,7 +30,7 @@
   (vis/extension
     {:ext/name "foundation-shim-urllib3"
      :ext/description
-     "Sandbox `urllib3` subset (`PoolManager`, `urllib3.request`) wrapping the requests shim. No pip/wheel/host bridge."
+     "Sandbox `urllib3` package (`PoolManager`, `util`, `fields`, `response`) wrapping the requests shim. No pip/wheel/host bridge."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -30,7 +40,7 @@
      [{:shim/name "urllib3"
        :shim/imports ["urllib3"]
        :shim/description
-       "`urllib3` (`PoolManager`, `HTTPResponse`, `request`) over the requests shim. Retries, pooling, and low-level TLS options are best-effort no-ops."
+       "`urllib3` as a package: `PoolManager`/`ProxyManager`, `HTTPResponse`, `request`, `util` (`Retry`, `Timeout`, `parse_url`, `make_headers`), `fields`, `filepost`, `exceptions`. Retries, pooling, and low-level TLS options are best-effort no-ops."
        :shim/source "vis-shims/urllib3.py"}]}))
 
 (vis/register-extension! vis-extension)

@@ -83,8 +83,364 @@ def __vis_install_urllib3__():
         def __repr__(self):
             return "Retry(total=" + str(self.total) + ")"
 
-    class InsecureRequestWarning(Warning):
+    class HTTPWarning(Warning):
         pass
+
+    class SecurityWarning(HTTPWarning):
+        pass
+
+    class InsecureRequestWarning(SecurityWarning):
+        pass
+
+    class InsecurePlatformWarning(SecurityWarning):
+        pass
+
+    class NotOpenSSLWarning(SecurityWarning):
+        pass
+
+    class SystemTimeWarning(SecurityWarning):
+        pass
+
+    class DependencyWarning(HTTPWarning):
+        pass
+
+    class NameResolutionError(NewConnectionError):
+        pass
+
+    class ClosedPoolError(PoolError):
+        pass
+
+    class EmptyPoolError(PoolError):
+        pass
+
+    class FullPoolError(PoolError):
+        pass
+
+    class HostChangedError(RequestError):
+        pass
+
+    class InvalidHeader(HTTPError):
+        pass
+
+    class HeaderParsingError(HTTPError):
+        pass
+
+    class UnrewindableBodyError(HTTPError):
+        pass
+
+    class BodyNotHttplibCompatible(HTTPError):
+        pass
+
+    class IncompleteRead(ProtocolError):
+        def __init__(self, partial, expected):
+            self.partial = partial
+            self.expected = expected
+            super().__init__(
+                "IncompleteRead("
+                + str(partial)
+                + " bytes read, "
+                + str(expected)
+                + " more expected)"
+            )
+
+    class InvalidChunkLength(ProtocolError):
+        pass
+
+    class ResponseNotChunked(ProtocolError, ValueError):
+        pass
+
+    class URLSchemeUnknown(LocationValueError):
+        def __init__(self, scheme):
+            self.scheme = scheme
+            super().__init__("Not supported URL scheme " + str(scheme))
+
+    class ProxySchemeUnknown(AssertionError, URLSchemeUnknown):
+        def __init__(self, scheme):
+            self.scheme = scheme
+            # Skip URLSchemeUnknown's own prefix: the message would read twice.
+            AssertionError.__init__(
+                self,
+                "Proxy URL had no scheme, should start with http:// or https://"
+                if scheme is None
+                else "Proxy URL had unsupported scheme "
+                + str(scheme)
+                + ", should use http:// or https://",
+            )
+
+    class Timeout:
+        """urllib3.util.Timeout: a total, or a connect/read split.
+
+        The requests shim takes a `(connect, read)` tuple, so `as_requests()` is
+        the only conversion the transport needs.
+        """
+
+        DEFAULT_TIMEOUT = None
+
+        def __init__(self, total=None, connect=None, read=None):
+            self.total = total
+            self._connect = connect
+            self._read = read
+
+        @classmethod
+        def from_float(cls, timeout):
+            if isinstance(timeout, cls):
+                return timeout
+            return cls(read=timeout, connect=timeout)
+
+        def clone(self):
+            return Timeout(total=self.total, connect=self._connect, read=self._read)
+
+        @property
+        def connect_timeout(self):
+            return self.total if self._connect is None else self._connect
+
+        @property
+        def read_timeout(self):
+            return self.total if self._read is None else self._read
+
+        def as_requests(self):
+            c, r = self.connect_timeout, self.read_timeout
+            return None if c is None and r is None else (c, r)
+
+        def __repr__(self):
+            return (
+                "Timeout(connect="
+                + repr(self.connect_timeout)
+                + ", read="
+                + repr(self.read_timeout)
+                + ", total="
+                + repr(self.total)
+                + ")"
+            )
+
+    class Url:
+        """urllib3.util.Url: the seven parsed URL parts, in order."""
+
+        _fields = ("scheme", "auth", "host", "port", "path", "query", "fragment")
+
+        def __init__(
+            self,
+            scheme=None,
+            auth=None,
+            host=None,
+            port=None,
+            path=None,
+            query=None,
+            fragment=None,
+        ):
+            self.scheme = scheme
+            self.auth = auth
+            self.host = host
+            self.port = port
+            self.path = path
+            self.query = query
+            self.fragment = fragment
+
+        @property
+        def hostname(self):
+            return self.host
+
+        @property
+        def netloc(self):
+            if self.host is None:
+                return None
+            return self.host if self.port is None else self.host + ":" + str(self.port)
+
+        @property
+        def authority(self):
+            nl = self.netloc
+            return nl if not self.auth else self.auth + "@" + (nl or "")
+
+        @property
+        def request_uri(self):
+            uri = self.path or "/"
+            return uri if self.query is None else uri + "?" + self.query
+
+        @property
+        def url(self):
+            out = ""
+            if self.scheme is not None:
+                out += self.scheme + "://"
+            if self.auth is not None:
+                out += self.auth + "@"
+            if self.host is not None:
+                out += self.host
+            if self.port is not None:
+                out += ":" + str(self.port)
+            if self.path is not None:
+                out += self.path
+            if self.query is not None:
+                out += "?" + self.query
+            if self.fragment is not None:
+                out += "#" + self.fragment
+            return out
+
+        def __iter__(self):
+            return iter([getattr(self, f) for f in Url._fields])
+
+        def __eq__(self, other):
+            if isinstance(other, Url):
+                return tuple(self) == tuple(other)
+            if isinstance(other, tuple):
+                return tuple(self) == other
+            return NotImplemented
+
+        def __str__(self):
+            return self.url
+
+        def __repr__(self):
+            return "Url(" + repr(tuple(self)) + ")"
+
+    def parse_url(url):
+        """Parses `url` into a `Url`, like urllib3.util.parse_url."""
+        if not url:
+            return Url()
+        s = str(url)
+        try:
+            if "://" in s:
+                parts = _up.urlsplit(s)
+                scheme = parts.scheme.lower() or None
+            elif s[0] in "/?#":
+                parts = _up.urlsplit(s)
+                scheme = None
+            else:
+                # "host:8080/p" has no scheme; urlsplit needs the // to see a host.
+                parts = _up.urlsplit("//" + s)
+                scheme = None
+            host = parts.hostname
+            port = parts.port
+        except ValueError as exc:
+            raise LocationParseError(s) from exc
+        auth = None
+        if "@" in parts.netloc:
+            auth = parts.netloc.rsplit("@", 1)[0] or None
+        return Url(
+            scheme=scheme,
+            auth=auth,
+            host=host,
+            port=port,
+            path=parts.path or None,
+            query=parts.query or None,
+            fragment=parts.fragment or None,
+        )
+
+    SKIP_HEADER = "@@@SKIP_HEADER@@@"
+    SKIPPABLE_HEADERS = frozenset(["accept-encoding", "host", "user-agent"])
+
+    def make_headers(
+        keep_alive=None,
+        accept_encoding=None,
+        user_agent=None,
+        basic_auth=None,
+        proxy_basic_auth=None,
+        disable_cache=None,
+    ):
+        """Builds a request header dict, like urllib3.util.make_headers."""
+        import base64 as _b64
+
+        headers = {}
+        if accept_encoding:
+            if isinstance(accept_encoding, str):
+                pass
+            elif isinstance(accept_encoding, (list, tuple)):
+                accept_encoding = ",".join(accept_encoding)
+            else:
+                accept_encoding = "gzip,deflate"
+            headers["accept-encoding"] = accept_encoding
+        if user_agent:
+            headers["user-agent"] = user_agent
+        if keep_alive:
+            headers["connection"] = "keep-alive"
+        if basic_auth:
+            headers["authorization"] = "Basic " + _b64.b64encode(
+                basic_auth.encode("utf-8")
+            ).decode("utf-8")
+        if proxy_basic_auth:
+            headers["proxy-authorization"] = "Basic " + _b64.b64encode(
+                proxy_basic_auth.encode("utf-8")
+            ).decode("utf-8")
+        if disable_cache:
+            headers["cache-control"] = "no-cache"
+        return headers
+
+    def format_header_param(name, value):
+        v = str(value).replace("\\", "\\\\").replace('"', '\\"')
+        return str(name) + '="' + v + '"'
+
+    def guess_content_type(filename, default="application/octet-stream"):
+        if filename:
+            import mimetypes as _mt
+
+            return _mt.guess_type(filename)[0] or default
+        return default
+
+    class RequestField:
+        """urllib3.fields.RequestField: one multipart part and its headers."""
+
+        def __init__(self, name, data, filename=None, headers=None):
+            self._name = name
+            self._filename = filename
+            self.data = data
+            self.headers = dict(headers) if headers else {}
+
+        @classmethod
+        def from_tuples(cls, fieldname, value):
+            filename = None
+            content_type = None
+            if isinstance(value, (list, tuple)):
+                if len(value) == 2:
+                    filename, data = value
+                else:
+                    filename, data, content_type = value
+            else:
+                data = value
+            field = cls(fieldname, data, filename=filename)
+            field.make_multipart(content_type=content_type)
+            return field
+
+        @property
+        def name(self):
+            return self._name
+
+        @property
+        def filename(self):
+            return self._filename
+
+        def _render_parts(self, header_parts):
+            parts = (
+                header_parts.items() if hasattr(header_parts, "items") else header_parts
+            )
+            return "; ".join(
+                format_header_param(k, v) for k, v in parts if v is not None
+            )
+
+        def render_headers(self):
+            lines = []
+            ordered = ("Content-Disposition", "Content-Type", "Content-Location")
+            for k in ordered:
+                v = self.headers.get(k)
+                if v:
+                    lines.append(str(k) + ": " + str(v))
+            for k, v in self.headers.items():
+                if k not in ordered and v:
+                    lines.append(str(k) + ": " + str(v))
+            lines.append("\r\n")
+            return "\r\n".join(lines)
+
+        def make_multipart(
+            self, content_disposition=None, content_type=None, content_location=None
+        ):
+            parts = self._render_parts(
+                (("name", self._name), ("filename", self._filename))
+            )
+            self.headers["Content-Disposition"] = (
+                content_disposition or "form-data"
+            ) + "; ".join(["", parts])
+            self.headers["Content-Type"] = content_type
+            self.headers["Content-Location"] = content_location
+
+        def __repr__(self):
+            return "RequestField(" + repr(self._name) + ")"
 
     class HTTPHeaderDict:
         """Case-insensitive header mapping; repeated keys join with ", "."""
@@ -186,7 +542,10 @@ def __vis_install_urllib3__():
         def __repr__(self):
             return "HTTPHeaderDict(" + repr(self.items()) + ")"
 
-    class HTTPResponse:
+    class BaseHTTPResponse:
+        """urllib3.response.BaseHTTPResponse -- the response base class."""
+
+    class HTTPResponse(BaseHTTPResponse):
         version = 11
         retries = None
 
@@ -270,34 +629,30 @@ def __vis_install_urllib3__():
         def __repr__(self):
             return "<HTTPResponse status=" + str(self.status) + ">"
 
+    def choose_boundary():
+        """Random multipart boundary. No `uuid`: that import is not portable here."""
+        return _os.urandom(16).hex()
+
     def _pairs(fields):
         return list(fields.items() if hasattr(fields, "items") else fields)
+
+    def _field_objects(fields):
+        for field in _pairs(fields):
+            yield (
+                field
+                if isinstance(field, RequestField)
+                else (RequestField.from_tuples(*field))
+            )
 
     def encode_multipart_formdata(fields, boundary=None):
         """Encodes `fields` as multipart/form-data, like urllib3.filepost."""
         if boundary is None:
-            boundary = _os.urandom(16).hex()
+            boundary = choose_boundary()
         out = []
-        for k, v in _pairs(fields):
-            filename = None
-            content_type = None
-            if isinstance(v, (list, tuple)):
-                if len(v) == 2:
-                    filename, value = v
-                else:
-                    filename, value, content_type = v
-            else:
-                value = v
-            head = "--" + boundary + "\r\n"
-            head += 'Content-Disposition: form-data; name="' + str(k) + '"'
-            if filename is not None:
-                head += '; filename="' + str(filename) + '"'
-            head += "\r\n"
-            if content_type is not None:
-                head += "Content-Type: " + str(content_type) + "\r\n"
-            elif filename is not None:
-                head += "Content-Type: application/octet-stream\r\n"
-            out.append(head.encode("utf-8") + b"\r\n")
+        for field in _field_objects(fields):
+            out.append(("--" + boundary + "\r\n").encode("utf-8"))
+            out.append(field.render_headers().encode("utf-8"))
+            value = field.data
             if isinstance(value, str):
                 value = value.encode("utf-8")
             elif not isinstance(value, (bytes, bytearray)):
@@ -320,6 +675,8 @@ def __vis_install_urllib3__():
         **_ignored,
     ):
         rq = _req()
+        if isinstance(timeout, Timeout):
+            timeout = timeout.as_requests()
         m = str(method).upper()
         params = None
         data = None
@@ -392,6 +749,18 @@ def __vis_install_urllib3__():
         def clear(self):
             return None
 
+        def connection_from_host(
+            self, host, port=None, scheme="http", pool_kwargs=None
+        ):
+            cls = HTTPSConnectionPool if scheme == "https" else HTTPConnectionPool
+            return cls(host, port=port, headers=self._headers, **(pool_kwargs or {}))
+
+        def connection_from_url(self, url, pool_kwargs=None):
+            u = parse_url(url)
+            return self.connection_from_host(
+                u.host, port=u.port, scheme=u.scheme or "http", pool_kwargs=pool_kwargs
+            )
+
         def __enter__(self):
             return self
 
@@ -431,6 +800,38 @@ def __vis_install_urllib3__():
         def __init__(self, host, port=443, **kw):
             super().__init__(host, port=port, **kw)
 
+    class ProxyManager(PoolManager):
+        """Records the proxy and otherwise behaves like a PoolManager: the sandbox
+        already routes every request through its own egress proxy."""
+
+        def __init__(
+            self, proxy_url, num_pools=10, headers=None, proxy_headers=None, **_ignored
+        ):
+            super().__init__(num_pools=num_pools, headers=headers)
+            if isinstance(proxy_url, HTTPConnectionPool):
+                proxy_url = (
+                    proxy_url.scheme
+                    + "://"
+                    + str(proxy_url.host)
+                    + ":"
+                    + str(proxy_url.port)
+                )
+            self.proxy = parse_url(proxy_url)
+            self.proxy_headers = dict(proxy_headers or {})
+            if self.proxy.scheme not in ("http", "https"):
+                raise ProxySchemeUnknown(self.proxy.scheme)
+
+        def request(self, method, url, headers=None, **kw):
+            hdr = dict(self.proxy_headers)
+            hdr.update(headers or {})
+            return super().request(method, url, headers=hdr or None, **kw)
+
+    def proxy_from_url(url, **kw):
+        return ProxyManager(proxy_url=url, **kw)
+
+    def connection_from_url(url, **kw):
+        return PoolManager(**kw).connection_from_url(url)
+
     def _top_request(method, url, **kw):
         return PoolManager().request(method, url, **kw)
 
@@ -440,56 +841,151 @@ def __vis_install_urllib3__():
     def add_stderr_logger(level=None):
         return None
 
-    exc_mod = _types.ModuleType("urllib3.exceptions")
-    exc_mod.HTTPError = HTTPError
-    exc_mod.PoolError = PoolError
-    exc_mod.RequestError = RequestError
-    exc_mod.MaxRetryError = MaxRetryError
-    exc_mod.TimeoutError = TimeoutError
-    exc_mod.ConnectTimeoutError = ConnectTimeoutError
-    exc_mod.ReadTimeoutError = ReadTimeoutError
-    exc_mod.NewConnectionError = NewConnectionError
-    exc_mod.ProtocolError = ProtocolError
-    exc_mod.SSLError = SSLError
-    exc_mod.ProxyError = ProxyError
-    exc_mod.DecodeError = DecodeError
-    exc_mod.ResponseError = ResponseError
-    exc_mod.LocationValueError = LocationValueError
-    exc_mod.LocationParseError = LocationParseError
-    exc_mod.InsecureRequestWarning = InsecureRequestWarning
+    def _mk(name, parent, **attrs):
+        """Creates a submodule, registers it in sys.modules and hangs it off `parent`.
+
+        Every submodule real code imports (`urllib3.util.retry`, `urllib3.response`,
+        ...) must exist in sys.modules up front: these modules have no loader of
+        their own, so an unregistered name fails with "'urllib3' is not a package".
+        """
+        m = _types.ModuleType(name)
+        for k, v in attrs.items():
+            setattr(m, k, v)
+        _sys.modules[name] = m
+        setattr(parent, name.rsplit(".", 1)[-1], m)
+        return m
 
     mod = _types.ModuleType("urllib3")
     mod.__doc__ = (
         "vis sandbox urllib3-compat shim (thin wrapper over the requests shim)."
     )
-    mod.PoolManager = PoolManager
-    mod.HTTPConnectionPool = HTTPConnectionPool
-    mod.HTTPSConnectionPool = HTTPSConnectionPool
-    mod.HTTPResponse = HTTPResponse
-    mod.HTTPHeaderDict = HTTPHeaderDict
-    mod.request = _top_request
-    mod.disable_warnings = disable_warnings
-    mod.add_stderr_logger = add_stderr_logger
-    mod.exceptions = exc_mod
-    mod.HTTPError = HTTPError
-    mod.MaxRetryError = MaxRetryError
-    mod.Retry = Retry
-    mod.encode_multipart_formdata = encode_multipart_formdata
-    _filepost_mod = _types.ModuleType("urllib3.filepost")
-    _filepost_mod.encode_multipart_formdata = encode_multipart_formdata
-    mod.filepost = _filepost_mod
-    _sys.modules["urllib3.filepost"] = _filepost_mod
-    _util_mod = _types.ModuleType("urllib3.util")
-    _util_mod.Retry = Retry
-    _retry_mod = _types.ModuleType("urllib3.util.retry")
-    _retry_mod.Retry = Retry
-    _util_mod.retry = _retry_mod
-    mod.util = _util_mod
-    _sys.modules["urllib3.util"] = _util_mod
-    _sys.modules["urllib3.util.retry"] = _retry_mod
+    mod.__path__ = []
     mod.__version__ = "2.2.0-vis"
     _sys.modules["urllib3"] = mod
-    _sys.modules["urllib3.exceptions"] = exc_mod
+
+    _mk(
+        "urllib3.exceptions",
+        mod,
+        HTTPError=HTTPError,
+        HTTPWarning=HTTPWarning,
+        PoolError=PoolError,
+        RequestError=RequestError,
+        MaxRetryError=MaxRetryError,
+        TimeoutError=TimeoutError,
+        ConnectTimeoutError=ConnectTimeoutError,
+        ReadTimeoutError=ReadTimeoutError,
+        NewConnectionError=NewConnectionError,
+        NameResolutionError=NameResolutionError,
+        ProtocolError=ProtocolError,
+        ConnectionError=ProtocolError,
+        SSLError=SSLError,
+        ProxyError=ProxyError,
+        DecodeError=DecodeError,
+        ResponseError=ResponseError,
+        LocationValueError=LocationValueError,
+        LocationParseError=LocationParseError,
+        URLSchemeUnknown=URLSchemeUnknown,
+        ProxySchemeUnknown=ProxySchemeUnknown,
+        ClosedPoolError=ClosedPoolError,
+        EmptyPoolError=EmptyPoolError,
+        FullPoolError=FullPoolError,
+        HostChangedError=HostChangedError,
+        InvalidHeader=InvalidHeader,
+        HeaderParsingError=HeaderParsingError,
+        IncompleteRead=IncompleteRead,
+        InvalidChunkLength=InvalidChunkLength,
+        ResponseNotChunked=ResponseNotChunked,
+        UnrewindableBodyError=UnrewindableBodyError,
+        BodyNotHttplibCompatible=BodyNotHttplibCompatible,
+        SecurityWarning=SecurityWarning,
+        InsecureRequestWarning=InsecureRequestWarning,
+        InsecurePlatformWarning=InsecurePlatformWarning,
+        NotOpenSSLWarning=NotOpenSSLWarning,
+        SystemTimeWarning=SystemTimeWarning,
+        DependencyWarning=DependencyWarning,
+    )
+    _mk(
+        "urllib3.filepost",
+        mod,
+        encode_multipart_formdata=encode_multipart_formdata,
+        choose_boundary=choose_boundary,
+    )
+    _mk(
+        "urllib3.fields",
+        mod,
+        RequestField=RequestField,
+        guess_content_type=guess_content_type,
+        format_header_param=format_header_param,
+    )
+    _mk("urllib3._collections", mod, HTTPHeaderDict=HTTPHeaderDict)
+    _mk(
+        "urllib3.response",
+        mod,
+        HTTPResponse=HTTPResponse,
+        BaseHTTPResponse=BaseHTTPResponse,
+    )
+    _mk(
+        "urllib3.poolmanager",
+        mod,
+        PoolManager=PoolManager,
+        ProxyManager=ProxyManager,
+        proxy_from_url=proxy_from_url,
+    )
+    _mk(
+        "urllib3.connectionpool",
+        mod,
+        HTTPConnectionPool=HTTPConnectionPool,
+        HTTPSConnectionPool=HTTPSConnectionPool,
+        connection_from_url=connection_from_url,
+    )
+    _util_mod = _mk(
+        "urllib3.util",
+        mod,
+        Retry=Retry,
+        Timeout=Timeout,
+        Url=Url,
+        parse_url=parse_url,
+        make_headers=make_headers,
+        SKIP_HEADER=SKIP_HEADER,
+        SKIPPABLE_HEADERS=SKIPPABLE_HEADERS,
+    )
+    _util_mod.__path__ = []
+    _mk("urllib3.util.retry", _util_mod, Retry=Retry)
+    _mk("urllib3.util.timeout", _util_mod, Timeout=Timeout)
+    _mk("urllib3.util.url", _util_mod, Url=Url, parse_url=parse_url)
+    _mk(
+        "urllib3.util.request",
+        _util_mod,
+        make_headers=make_headers,
+        SKIP_HEADER=SKIP_HEADER,
+        SKIPPABLE_HEADERS=SKIPPABLE_HEADERS,
+    )
+
+    _exports = (
+        ("HTTPConnectionPool", HTTPConnectionPool),
+        ("HTTPSConnectionPool", HTTPSConnectionPool),
+        ("PoolManager", PoolManager),
+        ("ProxyManager", ProxyManager),
+        ("HTTPResponse", HTTPResponse),
+        ("BaseHTTPResponse", BaseHTTPResponse),
+        ("HTTPHeaderDict", HTTPHeaderDict),
+        ("HTTPError", HTTPError),
+        ("MaxRetryError", MaxRetryError),
+        ("Retry", Retry),
+        ("Timeout", Timeout),
+        ("Url", Url),
+        ("parse_url", parse_url),
+        ("make_headers", make_headers),
+        ("connection_from_url", connection_from_url),
+        ("proxy_from_url", proxy_from_url),
+        ("encode_multipart_formdata", encode_multipart_formdata),
+        ("request", _top_request),
+        ("disable_warnings", disable_warnings),
+        ("add_stderr_logger", add_stderr_logger),
+    )
+    for _n, _o in _exports:
+        setattr(mod, _n, _o)
+    mod.__all__ = [_n for _n, _o in _exports]
     try:
         _bi.urllib3 = mod
     except Exception:
