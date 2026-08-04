@@ -6,13 +6,15 @@ on:
   pull_request:
     branches: [main]
 
-# A push to main must be verified, so a run on main is never cancelled: with a
-# rapid series of merges the next push would supersede the previous commit's run
-# before it finished, and main can go a whole afternoon untested (four runs in a
-# row were cancelled that way). Runs on main queue behind each other instead;
-# a PR branch still supersedes its own earlier run, which is what nobody misses.
+# Every commit that lands on main is verified on its own, so a push gets a group
+# of its own: sharing one group per ref meant a rapid series of merges cancelled
+# each other -- an in-progress run was killed by the next push, and even with
+# cancellation off a PENDING run is always dropped when a newer one queues, so
+# main could go a whole afternoon with no completed run at all (six in a row).
+# A pull request keeps the per-ref group: there, superseding your own last push
+# is exactly what you want.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
