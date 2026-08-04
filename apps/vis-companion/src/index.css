@@ -147,12 +147,18 @@
      dark #fde68a). Amber text uses accent-ink; amber fills use accent. */
   --color-accent-ink: var(--warning);
   --color-ok: var(--ok);
-  /* Ink for a FILLED green block (the live badge). --ok is a mid green on paper
-     (#16a34a) and a bright green on ink (#4ade80), so the readable side is dark
-     in BOTH palettes: pale ink on the light-theme green measures 2.9:1 and
-     fails. --primary-fg is that dark ink (light #261e00 = 5.0:1, dark #0f1117 =
-     9.5:1) and every gateway theme ships it, because the amber badge beside the
-     green one needs exactly the same thing. */
+  /* Green INK and a green FILL are not the same green — the same split the amber
+     tokens above make. --ok is an ink: a mid green on paper (#16a34a) and a
+     bright green on ink (#4ade80), sized to be read as 12px text and as a 6px
+     dot. Poured into a badge it becomes a slab twice as dark as the amber block
+     beside it (L 0.27 vs 0.61) and carries its digit at only 5.0:1. --color-ok-
+     surface is that same hue lightened to the amber badge's weight, which
+     desaturates it in the process: light #8bca96, dark #a3edb5, both taking the
+     shared dark badge ink at 8.6:1 and 13.7:1. Green text keeps --color-ok. */
+  --color-ok-surface: color-mix(in oklab, var(--ok) 58%, white);
+  /* Ink for a FILLED green block (the live badge): the SAME ink the amber badge
+     next to it uses, so the pair reads as one component in two colours. Every
+     gateway theme ships it (light #261e00, dark #0f1117). */
   --color-ok-foreground: var(--primary-fg);
   --color-warn: var(--warning);
   --color-warn-strong: var(--warning-border);

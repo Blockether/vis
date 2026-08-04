@@ -195,13 +195,20 @@ export function Spinner({ className = '' }: { className?: string }) {
  * by a glyph's metrics, which is why it sits centred where the earlier `\u25cf`
  * hung low and the bracketed `[3]` read lighter than the badge beside it.
  *
+ * The fill is `ok-surface`, NOT `ok`. `--ok` is the app's green INK — LIVE
+ * text, the 6px machine dot — and a badge poured from it is a slab twice as
+ * dark as the amber block beside it, reading as a louder green than anything
+ * else on the screen and carrying its digit at 5:1. `ok-surface` is the same
+ * hue at the amber badge's lightness, so the two blocks are peers and the digit
+ * clears 8.6:1 on paper, 13.7:1 on ink.
+ *
  * Colour is the whole signal, so the word is kept for anyone who cannot see it,
  * and a count of zero renders nothing at all: an empty green box is not news.
  */
 export function LiveTally({ count }: { count: number }) {
   if (count <= 0) return null;
   return (
-    <span className="inline-flex items-center bg-ok px-1 font-mono text-chip font-bold text-ok-foreground">
+    <span className="inline-flex items-center bg-ok-surface px-1 font-mono text-chip font-bold text-ok-foreground">
       {count}
       <span className="sr-only"> live</span>
     </span>

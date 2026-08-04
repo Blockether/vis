@@ -11,11 +11,20 @@ describe('LiveTally', () => {
   it('is a filled green block, not bracketed text or a glyph', () => {
     const html = renderToStaticMarkup(<LiveTally count={5} />);
 
-    expect(html).toContain('bg-ok');
+    expect(html).toContain('bg-ok-surface');
     expect(html).toContain('text-ok-foreground');
     expect(html).toContain('>5<');
     expect(html).not.toContain('[');
     expect(html).not.toContain('\u25cf');
+  });
+
+  // `--ok` is the app's green INK (LIVE text, the 6px machine dot). Poured into
+  // a badge it is a slab twice as dark as the amber block beside it and carries
+  // its digit at 5:1; the fill has to be the lightened `ok-surface` peer.
+  it('fills with the green surface, never with the green ink', () => {
+    const html = renderToStaticMarkup(<LiveTally count={5} />);
+
+    expect(html).not.toMatch(/bg-ok(?!-surface)/);
   });
 
   it('says what the number counts, for a reader that cannot see green', () => {
