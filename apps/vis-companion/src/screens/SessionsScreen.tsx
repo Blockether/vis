@@ -21,6 +21,16 @@ import { onWake } from '../lib/wake';
 import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
 import { assignMachineColors, machineColor } from '../lib/machine-colors';
 import { menuPosition } from '../lib/anchored-menu';
+import {
+  applyListScroll,
+  forgetListScroll,
+  markListScroll,
+  parkedListScroll,
+  rememberListScroll,
+  rowOffset,
+  topVisibleRow,
+  type ListAnchor,
+} from '../lib/list-scroll';
 import { PencilIcon, SwipeActions, TrashIcon } from '../components/SwipeActions';
 import { DEFAULT_SESSION_PAGE_SIZE, getSessionsPerPage, subscribeSessionsPerPage } from '../lib/storage';
 import { hostOf } from '../lib/endpoints';
@@ -228,7 +238,10 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const refreshAnchorRef = useRef<{ id: string; top: number } | null>(null);
+  const refreshAnchorRef = useRef<ListAnchor | null>(null);
+  // The reading position is put back at most once per mount, and never after the
+  // reader has taken the scroller over.
+  const restoredRef = useRef(false);
   const connsRef = useRef(conns);
   const machinesRef = useRef(machines);
   // Refs mirror the latest props for callbacks that must not re-subscribe on every
@@ -293,7 +306,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
         // Anchor EVERY reload: the 10s poll can reorder rows under a reading
         // thumb. The layout effect below no-ops at the top of the list, so the
         // first paint is unaffected.
-        refreshAnchorRef.current = visibleListAnchor(listRef.current);
+        refreshAnchorRef.current = topVisibleRow(listRef.current);
         patchMachine(key, (machine) => ({
           ...machine,
           sessions: reconcileSessions(machine.sessions, next),
@@ -375,10 +388,52 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
     const viewport = listRef.current;
     refreshAnchorRef.current = null;
     if (!anchor || !viewport || viewport.scrollTop <= 2) return;
-    const row = Array.from(viewport.querySelectorAll<HTMLElement>('[data-session-id]'))
-      .find((element) => element.dataset.sessionId === anchor.id);
-    if (row) viewport.scrollTop += row.getBoundingClientRect().top - anchor.top;
+    const offset = rowOffset(viewport, anchor.id);
+    if (offset !== null) viewport.scrollTop += offset - anchor.offset;
   }, [machines]);
+
+  // Coming back to the list means coming back to WHERE you were in it. Opening a
+  // session unmounts this screen, so the mark outlives it in a module (see
+  // `lib/list-scroll`) and is put back on the first paint that has the rows to
+  // put it back on: a cached fleet repaints instantly, a cold one lands a beat
+  // later, and either way the row that was under the top edge goes back under it
+  // even though the session just visited has jumped to the top of the list.
+  useLayoutEffect(() => {
+    if (restoredRef.current) return;
+    const mark = parkedListScroll();
+    if (!mark) {
+      restoredRef.current = true;
+      return;
+    }
+    const viewport = listRef.current;
+    if (!viewport) return;
+    // Once every machine in scope has answered, this IS the list: a mark that
+    // still does not fit points at rows that are gone, and retrying it on every
+    // later paint would fight the reader instead of serving them.
+    if (applyListScroll(viewport, mark, (id) => rowOffset(viewport, id)) || isFleetLoaded(machines, scope)) {
+      restoredRef.current = true;
+      forgetListScroll();
+    }
+  });
+
+  useLayoutEffect(() => {
+    const viewport = listRef.current;
+    if (!viewport) return;
+    // The reader scrolling is the reader deciding: stop trying to restore.
+    const abandon = () => {
+      restoredRef.current = true;
+      forgetListScroll();
+    };
+    viewport.addEventListener('wheel', abandon, { passive: true });
+    viewport.addEventListener('touchstart', abandon, { passive: true });
+    return () => {
+      viewport.removeEventListener('wheel', abandon);
+      viewport.removeEventListener('touchstart', abandon);
+      // A layout cleanup still runs against the live DOM, which is the last
+      // moment this scroller can be measured at all.
+      if (viewport.isConnected) rememberListScroll(markListScroll(viewport, topVisibleRow(viewport)));
+    };
+  }, []);
 
   // Transcript search runs server-side (matches user requests + LLM responses)
   // and unions its matching ids into the local title/project filter.
@@ -1937,14 +1992,6 @@ function NavigatorSkeleton() {
       </div>
     </div>
   );
-}
-
-function visibleListAnchor(viewport: HTMLDivElement | null): { id: string; top: number } | null {
-  if (!viewport || viewport.scrollTop <= 2) return null;
-  const viewportTop = viewport.getBoundingClientRect().top;
-  const row = Array.from(viewport.querySelectorAll<HTMLElement>('[data-session-id]'))
-    .find((element) => element.getBoundingClientRect().bottom > viewportTop);
-  return row?.dataset.sessionId ? { id: row.dataset.sessionId, top: row.getBoundingClientRect().top } : null;
 }
 
 function sessionViewFingerprint(session: Session): string {
