@@ -455,6 +455,39 @@
        (not (instance? MouseAction k))
        (= KeyType/Escape (.getKeyType ^KeyStroke k))))
 
+(defn ctrl-abort-key?
+  "True for C-g, Emacs `keyboard-quit` - the Ctrl half of `keymap/abort-keys`.
+
+   Terminals spell that byte two ways: `g` carrying the Ctrl modifier (lanterna's
+   `CtrlAndCharacterPattern`) or the raw BEL control character. Both count, so
+   the key never depends on how the terminal happened to decode it."
+  [k]
+  (boolean (and k
+                (instance? KeyStroke k)
+                (not (instance? MouseAction k))
+                (= KeyType/Character (.getKeyType ^KeyStroke k))
+                (when-let [c (.getCharacter ^KeyStroke k)]
+                  (or (= \u0007 (char c))
+                      (and (.isCtrlDown ^KeyStroke k)
+                           (= keymap/abort-key (Character/toLowerCase (char c)))))))))
+
+(defn abort-key?
+  "True for ANY key that means ABORT: C-g or its Esc mirror - `keymap/abort-keys`
+   made executable. Every surface that closes on Escape asks THIS, so C-g is
+   never a dead key inside a dialog, a form, a transient or a mode."
+  [k]
+  (boolean (or (bare-escape? k) (ctrl-abort-key? k))))
+
+(defn normalize-abort-key
+  "Rewrite C-g into the bare Escape keystroke; pass everything else (mouse events
+   included) through untouched.
+
+   ONE call at a key-consuming BOUNDARY - the modal read, the chat loop, the
+   human-input decoder - is all it takes for C-g to be Escape across that whole
+   surface, instead of every key loop growing its own C-g branch."
+  [k]
+  (if (ctrl-abort-key? k) (KeyStroke. KeyType/Escape) k))
+
 (defn drain-sgr-leak!
   "Swallow a literal SGR mouse tail that leaked past the decoder.
 
@@ -1560,6 +1593,10 @@
      (when (= KeyType/Character (.getKeyType key)) (.getCharacter key))]
 
     (cond
+      ;; C-g right after C-x is Emacs `keyboard-quit`: it aborts the PREFIX and
+      ;; does nothing else. Without this clause the Ctrl'd `g` fell through to the
+      ;; `C-x g` verb below and opened magit - the opposite of an abort.
+      (abort-key? key) {:action :continue :state state}
       ;; C-x p → command palette. A PLAIN `p` is the advertised trigger; a Ctrl'd
       ;; second key (C-x C-p) is also accepted for old muscle memory.
       (and c (= (Character/toLowerCase ^char c) keymap/prefix-palette-key)) {:action :show-palette

@@ -30,8 +30,20 @@
       (expect (dlg/modal-enter-key? (KeyStroke. (Character/valueOf \newline) false false false)))
       (expect (dlg/modal-enter-key? (KeyStroke. (Character/valueOf \return) false false false)))
       (expect (dlg/modal-escape-key? (KeyStroke. KeyType/Escape)))
-      (expect (dlg/modal-escape-key?
-                (KeyStroke. (Character/valueOf (char 27)) false false false)))))
+      (expect (dlg/modal-escape-key? (KeyStroke. (Character/valueOf (char 27)) false false false))))
+  (it "C-g is Escape for every modal, so keyboard-quit closes any dialog"
+      ;; Emacs `keyboard-quit`: lanterna delivers it as `g` + Ctrl, some
+      ;; terminals as the raw BEL byte. Both normalize to Escape, so the
+      ;; `KeyType/Escape` branch of every dialog key loop fires without the
+      ;; dialog knowing anything about C-g.
+      (expect (dlg/modal-escape-key? (KeyStroke. (Character/valueOf \g) true false false)))
+      (expect (dlg/modal-escape-key? (KeyStroke. (Character/valueOf (char 7)) false false false)))
+      (expect (= KeyType/Escape
+                 (.getKeyType ^KeyStroke
+                              (dlg/normalize-modal-key
+                                (KeyStroke. (Character/valueOf \g) true false false)))))
+      ;; A plain `g` stays a plain `g` - dialog filters type it.
+      (expect (not (dlg/modal-escape-key? (KeyStroke. (Character/valueOf \g) false false false))))))
 
 
 (defn- wheel-down [] (MouseAction. MouseActionType/SCROLL_DOWN 0 (TerminalPosition. 10 10)))

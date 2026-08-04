@@ -5728,7 +5728,16 @@
                   total-h (or total-h 0)
                   inner-h (or inner-h 0)
                   messages-top (or messages-top 0)
-                  {:keys [key wheel-delta drag-events]} (read-chat-input! screen pending-input-key)]
+                  {:keys [wheel-delta drag-events] :as chat-input}
+                  (read-chat-input! screen pending-input-key)
+
+                  ;; C-g is Emacs `keyboard-quit`, and it is Esc EVERYWHERE: rewriting it
+                  ;; ONCE here hands it to every mode this loop drives - the draft
+                  ;; dispatcher, the find bar, the human-input form, the C-x prefix.
+                  ;; AFTER `read-chat-input!` on purpose, so the post-dialog escape
+                  ;; swallow and the SGR-leak drain only ever see a REAL Esc.
+                  key
+                  (input/normalize-abort-key (:key chat-input))]
 
                  (cond
                    (:shutdown? db) nil

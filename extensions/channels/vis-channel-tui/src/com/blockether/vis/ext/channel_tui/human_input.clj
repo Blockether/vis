@@ -17,6 +17,7 @@
    the settings dialog walks its rows."
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
+            [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
@@ -376,7 +377,15 @@
    or nil when the keystroke means nothing to a form (mouse, unknown chords)."
   [^KeyStroke key]
   (when key
-    (let [kt (.getKeyType key)]
+    ;; C-g is Esc: Emacs `keyboard-quit` cancels the form, and the chat loop
+    ;; feeds this decoder RAW keystrokes, so the rewrite belongs here.
+    (let
+      [^KeyStroke key
+       (input/normalize-abort-key key)
+
+       kt
+       (.getKeyType key)]
+
       (condp = kt
         KeyType/Escape {:kind :cancel}
         KeyType/Enter (if (or (.isAltDown key) (.isCtrlDown key)) {:kind :submit} {:kind :enter})

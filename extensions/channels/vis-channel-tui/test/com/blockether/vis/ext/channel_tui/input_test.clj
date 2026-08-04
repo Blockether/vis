@@ -106,6 +106,46 @@
 
 (defn- alt-shift-special-key [^KeyType ktype] (KeyStroke. ktype false true true))
 
+;; C-g is Emacs `keyboard-quit` and it is the SAME key as Esc. It used to be
+;; honored ONLY by the chat draft dispatcher: inside a dialog, a transient, the
+;; find bar or the human-input form it did nothing, and after the C-x prefix it
+;; ran the `C-x g` magit verb instead of aborting the prefix.
+(defdescribe
+  abort-key-test
+  (it "recognizes both advertised abort keys, and only those"
+      (expect (input/abort-key? (special-key KeyType/Escape)))
+      (expect (input/abort-key? (ctrl-key (Character. \g))))
+      (expect (input/abort-key? (ctrl-key (Character. \G))))
+      ;; The raw BEL byte IS C-g: a terminal that hands the control character
+      ;; over without setting the Ctrl modifier must still abort.
+      (expect (input/abort-key? (char-key (Character. (char 0x07)))))
+      (expect (false? (input/abort-key? (char-key (Character. \g)))))
+      (expect (false? (input/abort-key? (ctrl-key (Character. \k)))))
+      (expect (false? (input/abort-key? (special-key KeyType/Enter))))
+      (expect (false? (input/abort-key? nil))))
+  (it "rewrites C-g into the bare Escape every surface already understands"
+      (expect (= KeyType/Escape
+                 (.getKeyType ^KeyStroke (input/normalize-abort-key (ctrl-key (Character. \g))))))
+      (expect (= KeyType/Escape
+                 (.getKeyType ^KeyStroke (input/normalize-abort-key (special-key KeyType/Escape)))))
+      (let [plain (char-key (Character. \g))]
+        (expect (identical? plain (input/normalize-abort-key plain))))
+      (expect (nil? (input/normalize-abort-key nil))))
+  (it "C-x C-g aborts the prefix instead of running the C-x g verb"
+      (let
+        [state
+         (-> (input/empty-input)
+             (input/paste-text "draft"))
+
+         armed
+         (:state (input/handle-key (ctrl-key (Character. \x)) state))]
+
+        ;; A PLAIN second key is still the verb: C-x g opens magit.
+        (expect (= :open-magit (:action (input/handle-key (char-key (Character. \g)) armed))))
+        ;; C-g cancels the prefix and leaves the draft untouched.
+        (expect (= {:action :continue :state state}
+                   (input/handle-key (ctrl-key (Character. \g)) armed))))))
+
 (defdescribe
   handle-key-test
   (it "Arrow Up/Down cycle input history"

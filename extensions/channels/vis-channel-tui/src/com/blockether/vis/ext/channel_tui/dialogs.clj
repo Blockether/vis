@@ -310,18 +310,24 @@
 
 (defn normalize-modal-key
   "Normalize raw terminal CR/LF/ESC character keystrokes to Lanterna
-   Enter/Escape key types. Some terminals surface modal Enter/Escape as
-   `KeyType/Character`; modal code should not need to special-case that."
+   Enter/Escape key types, and C-g to Escape. Some terminals surface modal
+   Enter/Escape as `KeyType/Character`; modal code should not need to
+   special-case that.
+
+   C-g (Emacs `keyboard-quit`) is rewritten here too, so EVERY dialog closes on
+   it through the `KeyType/Escape` branch it already has - one rewrite instead of
+   an abort clause per key loop."
   [key]
   (if (and key (not (instance? MouseAction key)) (= KeyType/Character (key-type key)))
-    (case (key-character key)
-      (\newline \return)
-      (KeyStroke. KeyType/Enter)
+    (cond (input/ctrl-abort-key? key) (KeyStroke. KeyType/Escape)
+          :else (case (key-character key)
+                  (\newline \return)
+                  (KeyStroke. KeyType/Enter)
 
-      \u001B
-      (KeyStroke. KeyType/Escape)
+                  \u001B
+                  (KeyStroke. KeyType/Escape)
 
-      key)
+                  key))
     key))
 
 (defn modal-enter-key?
