@@ -19,6 +19,7 @@ import {
   sessionIsEmpty,
   sessionIsListed,
   showsScopeStrip,
+  startAsk,
   type FleetMachine,
 } from './fleet';
 import type { GatewayConn, Session } from './types';
@@ -115,6 +116,42 @@ describe('newSessionTarget', () => {
   it('offers only reachable machines in the chooser', () => {
     const withDead = [...fleet, machine(vps, null, 'offline')];
     expect(creatableMachines(withDead).map((m) => m.conn)).toEqual([studio, tower]);
+  });
+});
+
+// Regression: with several machines paired, the "New session" caret asked WHICH
+// machine and treated the answer as the whole order — it created a trunk session
+// on that machine right there. The workspace question never came, so the parked
+// drafts were never listed and the user landed in the repo itself unasked.
+describe('startAsk', () => {
+  const fleet = [machine(studio, [session('a')]), machine(tower, [session('c')])];
+
+  it('asks which machine while the scope names none, offering the reachable ones', () => {
+    const ask = startAsk([...fleet, machine(vps, null, 'offline')], null, null);
+    expect(ask.on).toBeNull();
+    expect(ask.machine).toBeNull();
+    expect(ask.choices.map((m) => m.conn)).toEqual([studio, tower]);
+  });
+
+  it('takes the scoped or solo machine without asking', () => {
+    expect(startAsk(fleet, tower, null).on).toBe(tower);
+    expect(startAsk(fleet, tower, null).machine).toBe(fleet[1]);
+  });
+
+  it('makes the picked machine the one the workspace question is about', () => {
+    const ask = startAsk(fleet, null, tower);
+    expect(ask.on).toBe(tower);
+    expect(ask.machine).toBe(fleet[1]);
+  });
+
+  it('reads the parked drafts off the machine just picked, not "none"', () => {
+    expect(draftsRead(startAsk(fleet, null, null).machine, null)).toEqual({ kind: 'none' });
+    const ask = startAsk(fleet, null, tower);
+    expect(draftsRead(ask.machine, session('c'))).toEqual({ kind: 'read', conn: tower, sid: 'c' });
+  });
+
+  it('a machine unpaired under the open menu cannot answer for the session', () => {
+    expect(startAsk(fleet, null, vps).on).toBeNull();
   });
 });
 

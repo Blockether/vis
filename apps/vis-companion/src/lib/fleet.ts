@@ -120,6 +120,34 @@ export function creatableMachines(machines: FleetMachine[]): FleetMachine[] {
   return machines.filter((machine) => !machine.error);
 }
 
+/** What the "New session" menu is asking right now. */
+export interface StartAsk {
+  /** The machine the session will be created on; `null` while WHICH is unanswered. */
+  on: GatewayConn | null;
+  /** That machine's live row — the parked-drafts read hangs off it. */
+  machine: FleetMachine | null;
+  /** The machines offered while `on` is still null. */
+  choices: FleetMachine[];
+}
+
+/**
+ * The menu asks at most two questions, in this order: WHICH machine (only when
+ * the scope cannot name one), then which workspace. Picking a machine ANSWERS
+ * the first question — it must never be mistaken for the whole order, because
+ * the parked drafts of that machine are what the second question offers.
+ */
+export function startAsk(
+  machines: FleetMachine[],
+  scopeTarget: GatewayConn | null,
+  chosen: GatewayConn | null,
+): StartAsk {
+  const on = chosen ?? scopeTarget;
+  // A machine unpaired while its menu was open cannot answer for the session:
+  // ask again rather than aiming the create at a gateway that is no longer here.
+  const machine = on ? (machines.find((row) => machineKey(row.conn) === machineKey(on)) ?? null) : null;
+  return { on: machine ? on : null, machine, choices: creatableMachines(machines) };
+}
+
 /** Per-machine tallies for its chip and its section header. */
 export function machineCounts(
   machine: FleetMachine,

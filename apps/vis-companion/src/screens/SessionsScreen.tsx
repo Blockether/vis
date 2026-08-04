@@ -46,7 +46,6 @@ import {
 } from '../lib/draft-messages';
 import type { PendingAttachment } from '../lib/attachments';
 import {
-  creatableMachines,
   dirtyFirst,
   draftsRead,
   draftsReadKey,
@@ -64,6 +63,7 @@ import {
   sessionIsListed,
   sessionIsLive,
   showsScopeStrip,
+  startAsk,
   type FleetMachine,
 } from '../lib/fleet';
 
@@ -216,6 +216,9 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   // `/draft blank` and `/draft resume`. Portalled and viewport-anchored because the
   // header panel clips its overflow.
   const [startMenu, setStartMenu] = useState<{ top: number; left: number } | null>(null);
+  // The machine picked INSIDE that menu, when the fleet could not name one. It is
+  // the ANSWER to the menu's first question and lives exactly as long as the menu.
+  const [startOn, setStartOn] = useState<GatewayConn | null>(null);
   const startAnchorRef = useRef<HTMLButtonElement>(null);
   // null = never read for this menu opening; [] = read, nothing parked.
   const [drafts, setDrafts] = useState<WorkspaceDraft[] | null>(null);
@@ -596,10 +599,12 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
    */
   // Where a "New session" tap lands: the scoped machine, or the only machine
   // paired. `null` means the app must ASK before it can create anything.
-  const target = newSessionTarget(machines, scope);
-  const targetMachine = target
-    ? (machines.find((machine) => machineKey(machine.conn) === machineKey(target)) ?? null)
-    : null;
+  const scopeTarget = newSessionTarget(machines, scope);
+  // Several machines: the menu asks WHICH first, and that answer — not a session on
+  // trunk — is what the workspace question below is then asked about.
+  const ask = startAsk(machines, scopeTarget, startOn);
+  const target = ask.on;
+  const targetMachine = ask.machine;
   const draftProbe = useMemo(
     () => targetMachine?.sessions?.find((session) => projectPath(session)) ?? null,
     [targetMachine],
@@ -625,6 +630,9 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
 
   const closeStartMenu = useCallback((restoreFocus = false) => {
     setStartMenu(null);
+    // A dismissed menu keeps no answers: the next opening asks which machine again
+    // rather than aiming at one the user chose for a menu that is gone.
+    setStartOn(null);
     if (restoreFocus) startAnchorRef.current?.focus();
   }, []);
 
@@ -697,7 +705,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
       startIn.kind === 'fork' ? 'Forking...' : startIn.kind === 'resume' ? 'Entering...' : 'Creating...',
     );
     setCreateError(null);
-    setStartMenu(null);
+    closeStartMenu();
     try {
       const api = clientFor(on);
       const session = await api.createSession({});
@@ -934,9 +942,15 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                 pressEffect="none"
                 className="min-h-6 border-r-0 px-2 py-0.5 font-mono text-chip sm:min-h-6"
                 disabled={createBusy || machines.length === 0 || !!scopeMachine?.error}
-                aria-haspopup={target ? undefined : 'menu'}
-                aria-label={target && machines.length > 1 ? `New session on ${machineLabel(target)}` : 'New session'}
-                title={target && machines.length > 1 ? `New session on ${machineLabel(target)}` : undefined}
+                aria-haspopup={scopeTarget ? undefined : 'menu'}
+                aria-label={
+                  scopeTarget && machines.length > 1
+                    ? `New session on ${machineLabel(scopeTarget)}`
+                    : 'New session'
+                }
+                title={
+                  scopeTarget && machines.length > 1 ? `New session on ${machineLabel(scopeTarget)}` : undefined
+                }
                 onClick={() => void createSession()}
               >
                 {/* Same fixed-width stack as Refresh: "Creating..." is wider than
@@ -963,8 +977,12 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                 disabled={createBusy || machines.length === 0 || !!scopeMachine?.error}
                 aria-haspopup="menu"
                 aria-expanded={startMenu !== null}
-                aria-label={target ? 'Choose where the new session starts' : 'Choose which machine the new session runs on'}
-                title={target ? 'Start in a draft' : 'Choose a machine'}
+                aria-label={
+                  scopeTarget
+                    ? 'Choose where the new session starts'
+                    : 'Choose which machine the new session runs on'
+                }
+                title={scopeTarget ? 'Start in a draft' : 'Choose a machine'}
                 onClick={() => (startMenu ? closeStartMenu() : openStartMenu())}
               >
                 <span aria-hidden>▾</span>
@@ -1311,12 +1329,12 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                 <p className="border-b-2 border-warn-strong bg-accent px-3 py-2 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
                   Create the session on
                 </p>
-                {creatableMachines(machines).length === 0 ? (
+                {ask.choices.length === 0 ? (
                   <p className="px-3 py-3 font-mono text-meta text-dialog-hint">
                     No paired machine is answering right now.
                   </p>
                 ) : (
-                  creatableMachines(machines).map((machine) => {
+                  ask.choices.map((machine) => {
                     const tally = tallies.get(machineKey(machine.conn));
                     const count = tally?.sessions ?? 0;
                     return (
@@ -1325,7 +1343,14 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                         title={machineLabel(machine.conn)}
                         hint={`${count} ${count === 1 ? 'session' : 'sessions'} · ${hostOf(machine.conn.url)}`}
                         badge={tally?.live ? `${tally.live} live` : undefined}
-                        onSelect={() => void createSession({ kind: 'trunk' }, machine.conn)}
+                        onSelect={() => {
+                          // An ANSWER, never the whole order: the workspace question is
+                          // next, and the drafts it offers are parked on THIS machine, so
+                          // the empty read taken while no machine was chosen is dropped.
+                          setDrafts(null);
+                          setDraftsError(null);
+                          setStartOn(machine.conn);
+                        }}
                       />
                     );
                   })
