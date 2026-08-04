@@ -561,34 +561,71 @@
         (expect (nil? (:error out)))
         (expect (re-find #"RAISED True" (str (:stdout out)))))))
 
+(defn- attach-out
+  "Run ONE `vis_attach*` call in a fresh sandbox; the block result with `:row`
+   bound to its single recorded attachment."
+  [code]
+  (let [out (block (ctx-with-root (temp-root)) code)]
+    (assoc out :row (first (:attachments out)))))
+
 (defdescribe
-  attach-display-only-test
-  "`display_only=True` is the opt-out for the one cost multimodal history cannot
-   undo: an image is RE-UPLOADED in full on every later request. The flag stamps
-   the recorded row so the send-time gate keeps the bytes stored and displayed
-   but off the wire."
-  (it "stamps :is-display-only on the recorded attachment"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
-
-         out
-         (block pctx
-                (str "vis_attach_bytes(b'PNGDATA', 'chart.png', media_type='image/png', "
-                     "display_only=True)\n"))]
-
+  attach-audience-test
+  "`audience` is the ONE knob for WHO an artifact was attached FOR: \"both\" (the
+   default) is painted for the human AND sent to the model, \"user\" is stored and
+   painted but never becomes a wire image block (the opt-out for the one cost
+   multimodal history cannot undo: an image RE-UPLOADED in full on every later
+   request), \"model\" rides the request and is never painted. `in_answer=True`
+   holds the paint back for the answer's own gallery, so the human reviews one
+   collected set of figures where the conclusion is instead of scrolling the run."
+  (it "defaults to audience \"both\" and paints the inline image fence"
+      (let [out (attach-out "vis_attach_bytes(b'PNGDATA', 'chart.png', media_type='image/png')\n")]
         (expect (nil? (:error out)))
         (expect (= 1 (count (:attachments out))))
-        (expect (= "chart.png" (:filename (first (:attachments out)))))
-        (expect (true? (:is-display-only (first (:attachments out)))))))
-  (it "leaves an ordinary attachment unflagged, so replay behaviour is unchanged"
+        (expect (= "chart.png" (:filename (:row out))))
+        (expect (= "both" (:audience (:row out))))
+        (expect (nil? (:is-in-answer (:row out))))))
+  (it "stamps audience \"user\" so the send-time gate keeps the bytes off the wire"
       (let
-        [pctx
-         (ctx-with-root (temp-root))
-
-         out
-         (block pctx "vis_attach_bytes(b'PNGDATA', 'chart.png', media_type='image/png')\n")]
-
+        [out (attach-out (str "vis_attach_bytes(b'PNGDATA', 'chart.png', media_type='image/png', "
+                              "audience='user')\n"))]
+        (expect (nil? (:error out)))
+        (expect (= "user" (:audience (:row out))))))
+  (it "says NOTHING to the human for audience \"model\""
+      (let
+        [out (attach-out (str "vis_attach_bytes(b'PNGDATA', 'chart.png', media_type='image/png', "
+                              "audience='model', label='for my own eyes')\n"))]
         (expect (nil? (:error out)))
         (expect (= 1 (count (:attachments out))))
-        (expect (nil? (:is-display-only (first (:attachments out))))))))
+        (expect (= "model" (:audience (:row out))))
+        ;; Staying silent IS the feature: no fence, no caption line, nothing in
+        ;; the block naming an artifact the human was never meant to review.
+        (expect (not (re-find #"chart\.png" (str (:stdout out)))))))
+  (it "keeps an in_answer artifact out of the block and marks it for the gallery"
+      (let
+        [out (attach-out (str "vis_attach_bytes(b'PNGDATA', 'chart.png', media_type='image/png', "
+                              "in_answer=True, label='fleet, phone width')\n"))]
+        (expect (nil? (:error out)))
+        (expect (true? (:is-in-answer (:row out))))
+        (expect (= "fleet, phone width" (:label (:row out))))
+        (expect (= "both" (:audience (:row out))))
+        ;; One line naming it, never the fence: the answer paints it exactly once.
+        (expect (re-find #"\[Answer gallery: chart\.png\] fleet, phone width" (str (:stdout out))))
+        (expect (not (re-find #"vis-image" (str (:stdout out)))))))
+  (it "refuses an audience outside the closed vocabulary"
+      (let
+        [out (attach-out (str "try:\n"
+                              "    vis_attach_bytes(b'PNGDATA', 'c.png', media_type='image/png', "
+                              "audience='everyone')\n"
+                              "except ValueError as e:\n"
+                              "    print('RAISED', 'both' in str(e))\n"))]
+        (expect (empty? (:attachments out)))
+        (expect (re-find #"RAISED True" (str (:stdout out))))))
+  (it "refuses in_answer with audience \"model\": nothing would ever be shown"
+      (let
+        [out (attach-out (str "try:\n"
+                              "    vis_attach_bytes(b'PNGDATA', 'c.png', media_type='image/png', "
+                              "audience='model', in_answer=True)\n"
+                              "except ValueError as e:\n"
+                              "    print('RAISED', 'human-visible' in str(e))\n"))]
+        (expect (empty? (:attachments out)))
+        (expect (re-find #"RAISED True" (str (:stdout out)))))))

@@ -952,17 +952,24 @@
    artifact live, in history, and at the byte endpoint. THE one descriptor shape:
    the live `iteration.completed` frame and the persisted transcript ship it
    verbatim, so a remote client (iOS/Android/web) renders a produced image with
-   one code path instead of two."
+   one code path instead of two.
+
+   Model-only rows (audience `model`) are DROPPED: an artifact attached for the
+   model's own
+   eyes is never offered to the human, so the gallery a person scrolls stays the
+   one the agent meant them to review."
   [iteration-id rows]
   (into []
-        (map-indexed (fn [idx {:keys [tool-call-id kind media-type filename size]}]
-                       {:index idx
-                        :iteration_id (str iteration-id)
-                        :tool_call_id tool-call-id
-                        :kind (or kind "image")
-                        :media_type (str (or media-type "application/octet-stream"))
-                        :filename filename
-                        :size (long (or size 0))}))
+        (comp (remove attachments/hidden-from-user?)
+              (map-indexed (fn [idx {:keys [tool-call-id kind media-type filename size audience]}]
+                             {:index idx
+                              :iteration_id (str iteration-id)
+                              :tool_call_id tool-call-id
+                              :kind (or kind "image")
+                              :media_type (str (or media-type "application/octet-stream"))
+                              :filename filename
+                              :audience (attachments/normalize-audience audience)
+                              :size (long (or size 0))})))
         rows))
 
 (defn- live-attachment-descriptors

@@ -812,7 +812,7 @@
                                        :size (:size a)
                                        :position (:position a)
                                        :tool-call-id (:tool-call-id a)
-                                       :is-display-only (boolean (:is-display-only a))}
+                                       :audience (attachments/attachment-audience a)}
                                       (= :tool (:source a))
                                       (assoc :iteration-id (:iteration-id a))
 
@@ -1731,6 +1731,83 @@
                    (or (:ext/hooks ext) [])))
            (answer-validation-extensions environment active-extensions)))))
 
+(defn- answer-gallery-entry
+  "The one row an `in_answer` attachment contributes to the answer's gallery:
+   just enough to repaint the picture (a `vis-image` fence's body is summary /
+   host path / mime / `WxH` / size-label), never the base64 payload."
+  [a]
+  (select-keys a [:filename :label :media-type :size :display-path :display-width :display-height]))
+
+(defn- remember-answer-gallery!
+  "Collect this iteration's `in_answer` attachments onto the turn state, in the
+   order they were produced.
+
+   `vis_attach(..., in_answer=True)` is deliberately NOT painted where it was
+   produced: a human reviews figures WITH the conclusion instead of scrolling a
+   whole run for them. The gallery accumulates across the turn's iterations and
+   [[finalize-answer!]] splices it under the answer markdown — one place, however
+   many iterations produced it."
+  [environment attachments]
+  (when-let [turn-state-atom (:turn-state-atom environment)]
+    (when-let
+      [rows (not-empty
+              (into [] (comp (filter :is-in-answer) (map answer-gallery-entry)) attachments))]
+      (swap! turn-state-atom update :answer-gallery (fnil into []) rows)))
+  nil)
+
+(defn- answer-gallery-entry-markdown
+  "One gallery row as markdown. An image becomes the very `vis-image` fence every
+   channel already paints inline (summary / path / mime / `WxH` / size); anything
+   else — a CSV, a PDF — becomes a named bullet, because there is no picture to
+   show and a half-filled fence is worse than a line of prose."
+  [{:keys [filename label media-type size display-path display-width display-height]}]
+  (let
+    [name*
+     (or (not-empty (str filename)) "artifact")
+
+     caption
+     (not-empty (str/trim (str label)))
+
+     size-str
+     (attachments/size-label (long (or size 0)))]
+
+    (if (and (not (str/blank? (str display-path))) display-width display-height)
+      (str "````vis-image\n"
+           "[Image: "
+           name*
+           " "
+           display-width
+           "×"
+           display-height
+           ", "
+           size-str
+           "]"
+           (when caption (str " " caption))
+           "\n"
+           display-path
+           "\n"
+           media-type
+           "\n"
+           display-width
+           "x"
+           display-height
+           "\n"
+           size-str
+           "\n````")
+      (str "- " name* (when caption (str " — " caption))))))
+
+(defn- answer-gallery-markdown
+  "The turn's ANSWER GALLERY as markdown, or nil when nothing asked to be in the
+   answer. Fences are separated by a blank line so the markdown parser keeps them
+   as separate blocks and each one reserves its own image box."
+  [environment]
+  (when-let
+    [rows (some-> (:turn-state-atom environment)
+                  deref
+                  :answer-gallery
+                  not-empty)]
+    (not-empty (str/join "\n\n" (map answer-gallery-entry-markdown rows)))))
+
 (defn- finalize-answer!
   "Finalize the turn from a prose ANSWER reply (`s` = the markdown). Classifies
    the value, runs `ctx-loop/finalize-turn!` (the real turn/context finalization),
@@ -1768,7 +1845,25 @@
              deref
              str
              str/trim
-             not-empty)]
+             not-empty)
+
+     ;; The turn's `in_answer` figures, painted ONCE right here instead of N
+     ;; times down the run. `answer-text` itself (the model's own prose) is what
+     ;; the CONTEXT keeps; the gallery rides the stored/rendered answer only.
+     gallery-md
+     (answer-gallery-markdown environment)
+
+     shown-text
+     (cond (nil? gallery-md) answer-text
+           (str/blank? (str answer-text)) gallery-md
+           :else (str (str/trimr answer-text) "\n\n" gallery-md))
+
+     value
+     (cond (nil? gallery-md) value
+           (and (map? value) (string? (:answer value))) (assoc value :answer shown-text)
+           (and (map? value) (string? (:answer/text value))) (assoc value :answer/text shown-text)
+           (string? value) shown-text
+           :else value)]
 
     (ctx-loop/finalize-turn! {:ctx-atom (:ctx-atom environment) :turn-state-atom turn-state-atom}
                              {:answer answer-text
@@ -1777,8 +1872,8 @@
                               :session-title current-title})
     ;; :position nil — an answer reply has no python form to attach to.
     (swap! turn-state-atom assoc :answer {:value value :position nil})
-    (when-not (str/blank? (str answer-text))
-      (swap! turn-state-atom assoc :best-answer {:value value :answer-markdown answer-text}))
+    (when-not (str/blank? (str shown-text))
+      (swap! turn-state-atom assoc :best-answer {:value value :answer-markdown shown-text}))
     value))
 
 (defn- iteration-start-hook-hit
@@ -4646,10 +4741,10 @@
    otherwise kills the whole session for good. Judged on the way out, it costs
    that one figure and the session lives.
 
-   A row the producer marked DISPLAY-ONLY never even reaches the decoder: it
+   A row whose audience is the HUMAN alone never even reaches the decoder: it
    was recorded for the human, and its bytes are not this model's business."
   [attachment]
-  (when-not (attachments/display-only? attachment)
+  (when-not (attachments/hidden-from-model? attachment)
     (let [wired (attachments/wire-image attachment)]
       (when (:base64 wired) wired))))
 
@@ -7928,12 +8023,13 @@
      _
      (assert effective-model "Router must resolve a root model")
 
-     ;; Clear any sticky best-answer from a PRIOR turn (the atom lives on
-     ;; the per-session env) so this turn's cancel-fallback only ever
-     ;; surfaces an answer THIS turn actually produced.
+     ;; Clear any sticky best-answer — and any answer gallery `vis_attach`
+     ;; collected — from a PRIOR turn (the atom lives on the per-session env) so
+     ;; this turn's cancel-fallback and its answer only ever surface what THIS
+     ;; turn actually produced.
      _
      (some-> (:turn-state-atom environment)
-             (swap! assoc :best-answer nil))
+             (swap! assoc :best-answer nil :answer-gallery nil))
 
      has-reasoning?
      (and (nil? reasoning-effort) (reasoning-effort-configurable? resolved-model))
@@ -9077,6 +9173,10 @@
                                      (map #(assoc % :tool-call-id (:svar/tool-call-id b))
                                           (:attachments b))))
                            blocks)
+                     ;; An `in_answer` artifact is held back from the run and
+                     ;; painted once under the final answer (see
+                     ;; `remember-answer-gallery!`).
+                     _ (remember-answer-gallery! environment iteration-attachments)
                      reinspection-attachments (into [] (mapcat :reinspect-attachments) blocks)
                      iteration-id
                      (persistance/db-store-iteration!

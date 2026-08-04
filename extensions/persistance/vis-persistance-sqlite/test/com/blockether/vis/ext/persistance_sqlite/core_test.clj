@@ -675,7 +675,7 @@
        s1
        (vis/db-create-connection! dir)]
 
-      (try (expect (contains? (table-columns s1 "session_attachment") "is_display_only"))
+      (try (expect (contains? (table-columns s1 "session_attachment") "audience"))
            ;; Rewind this store to an OLDER shape of the same canonical V1: the
            ;; table exists, its Flyway history is intact, but it predates the
            ;; columns V1 has grown since. That is exactly what a `~/.vis` database
@@ -689,7 +689,7 @@
            (let [s2 (vis/db-create-connection! dir)]
              (try (let [cols (table-columns s2 "session_attachment")]
                     ;; Defaulted / nullable columns are added back from V1's own DDL.
-                    (expect (contains? cols "is_display_only"))
+                    (expect (contains? cols "audience"))
                     (expect (contains? cols "kind"))
                     (expect (contains? cols "tool_call_id"))
                     ;; NOT NULL without a DEFAULT is not addable in SQLite: left alone
@@ -3194,9 +3194,9 @@
         (expect (= {"type" "user-data" "snake_case" 1} (get-in restored [:content 1 :input])))))))
 
 (defdescribe
-  attachment-display-only-round-trip-test
+  attachment-audience-round-trip-test
   (it
-    "the display-only flag survives storage for BOTH turn and iteration attachments, and defaults to false"
+    "the audience survives storage for BOTH turn and iteration attachments, and defaults to \"both\""
     (let
       [s
        (h/store)
@@ -3221,7 +3221,7 @@
             :base64 b64
             :filename "secret.png"
             :size (alength png)
-            :is-display-only true}
+            :audience "user"}
            {:media-type "image/png" :base64 b64 :filename "public.png" :size (alength png)}]})
 
        user-atts
@@ -3232,30 +3232,36 @@
          s
          {:session-turn-id tid
           :status :done
-          :code "vis_attach_bytes(png, 'fig.png', display_only=True)"
+          :code "vis_attach_bytes(png, 'fig.png', audience='user')"
           :attachments
           [{:tool-call-id "call_A"
             :media-type "image/png"
             :base64 b64
             :filename "fig.png"
             :size (alength png)
-            :is-display-only true}
+            :audience "user"}
+           {:tool-call-id "call_A"
+            :media-type "image/png"
+            :base64 b64
+            :filename "probe.png"
+            :size (alength png)
+            :audience "model"}
            {:tool-call-id "call_A" :media-type "image/png" :base64 b64 :filename "sent.png"}]})
 
        tool-atts
        (vis/db-list-iteration-attachments s iid)]
 
-      ;; Flag round-trips as a boolean, per row, in both tables' worth of rows.
-      (expect (= {"secret.png" true "public.png" false}
-                 (into {} (map (juxt :filename :is-display-only)) user-atts)))
-      (expect (= {"fig.png" true "sent.png" false}
-                 (into {} (map (juxt :filename :is-display-only)) tool-atts)))
+      ;; Audience round-trips as its own string, per row, in both tables' rows.
+      (expect (= {"secret.png" "user" "public.png" "both"}
+                 (into {} (map (juxt :filename :audience)) user-atts)))
+      (expect (= {"fig.png" "user" "probe.png" "model" "sent.png" "both"}
+                 (into {} (map (juxt :filename :audience)) tool-atts)))
       ;; Bare-id read-back (the vis_reinspect_attachment path) sees it too.
-      (expect (true? (:is-display-only (vis/db-read-attachment
-                                         s
-                                         (:id (first (filter #(= "secret.png" (:filename %))
-                                                             user-atts)))))))
-      ;; Bytes are still stored: display-only withholds the wire block, not the data.
+      (expect (= "user"
+                 (:audience (vis/db-read-attachment
+                              s
+                              (:id (first (filter #(= "secret.png" (:filename %)) user-atts)))))))
+      ;; Bytes are still stored: an audience withholds a rail, not the data.
       (expect (every? #(= b64 (:base64 %)) (concat user-atts tool-atts))))))
 
 (defdescribe

@@ -804,19 +804,25 @@
         (expect (= ["a.png"] (mapv :path (:skipped out))))
         (expect (true? (:readable-blind? (first (:skipped out)))))
         (expect (re-find #"no vision" (str (:reason (first (:skipped out))))))))
-  (it "keeps a DISPLAY-ONLY image off the wire even on a vision target"
+  (it "keeps an audience \"user\" image off the wire even on a vision target"
       ;; The opt-out: bytes an image replay would re-upload on EVERY later
       ;; request stay stored and displayed, and the model is told they are
       ;; openable on disk instead.
       (let
-        [out
-         (attachments/wire-images
-           [{:base64 tiny-png-b64 :media-type "image/png" :path "secret.png" :is-display-only true}
-            {:base64 tiny-png-b64 :media-type "image/png" :path "ok.png"}])]
+        [out (attachments/wire-images
+               [{:base64 tiny-png-b64 :media-type "image/png" :path "secret.png" :audience "user"}
+                {:base64 tiny-png-b64 :media-type "image/png" :path "ok.png"}])]
         (expect (= ["ok.png"] (mapv :path (:attached out))))
         (expect (= ["secret.png"] (mapv :path (:skipped out))))
         (expect (true? (:readable-blind? (first (:skipped out)))))
-        (expect (re-find #"display-only" (str (:reason (first (:skipped out))))))))
+        (expect (re-find #"for the human only" (str (:reason (first (:skipped out))))))))
+  (it "sends an audience \"model\" image, which is the point of that audience"
+      (let
+        [out
+         (attachments/wire-images
+           [{:base64 tiny-png-b64 :media-type "image/png" :path "probe.png" :audience "model"}])]
+        (expect (= ["probe.png"] (mapv :path (:attached out))))
+        (expect (empty? (:skipped out)))))
   (it "is empty, not broken, with nothing to send"
       (expect (= {:attached [] :skipped []} (attachments/wire-images nil)))))
 

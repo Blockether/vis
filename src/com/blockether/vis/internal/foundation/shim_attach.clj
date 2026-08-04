@@ -22,6 +22,7 @@
    shim-matplotlib): its `:ext/sandbox-shims` entry autoloads `vis_attach` into
    every sandbox (main + every `sub_loop` fork)."
   (:require [com.blockether.imaging :as imaging]
+            [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [charred.api :as json]
@@ -84,17 +85,22 @@
             [(.getAbsolutePath f) w h]))))
     (catch Throwable _ nil)))
 
-(defn- display-only-flag?
-  "Tolerant reading of the shim's `display_only` argument: Python hands the
-   bridge a bool, but a stale or hand-rolled caller may send 0/1 or nil, and a
-   mis-read here would silently start (or stop) sending someone's screenshots."
+(defn- truthy-flag?
+  "Tolerant reading of a boolean argument crossing the shim bridge: Python hands
+   us a bool, but a hand-rolled caller may send 0/1, \"\" or nil, and a mis-read
+   here would silently start (or stop) showing someone's screenshots."
   [v]
   (boolean (and (some? v) (not (false? v)) (not= 0 v) (not= 0.0 v) (not= "" v))))
 
 (defn- record-attachment-call
   "Body of `__vis_record_attachment__`: validate the already-decided attachment
-   fields and append the map to the active per-block artifact sink."
-  [kind media-type b64 filename size display-only]
+   fields and append the map to the active per-block artifact sink.
+
+   The image probe runs ONCE: its `[path w h]` is returned to the shim (which
+   prints the inline `vis-image` fence) and, for an `in_answer` artifact the shim
+   deliberately does NOT print, stamped onto the row so the answer's own gallery
+   can paint it later without re-decoding the bytes."
+  [kind media-type b64 filename size audience in-answer label]
   (attach-envelope
     #(cond (str/blank? (str b64)) (throw (ex-info "vis_attach: empty payload (no bytes to persist)"
                                                   {}))
@@ -111,39 +117,55 @@
                                 "python_execution block so the produced artifact can be "
                                 "attached to that iteration")
                            {}))
-           :else (do (mpl-capture/record-attachment! (cond->
-                                                       {:kind (or (not-empty (str kind)) "file")
-                                                        :media-type (str media-type)
-                                                        :base64 (str b64)
-                                                        :size (long (or size 0))}
-                                                       (not (str/blank? (str filename)))
-                                                       (assoc :filename (str filename))
+           :else (let
+                   [info
+                    (image-display-info (str media-type) (str b64))
 
-                                                       (display-only-flag? display-only)
-                                                       (assoc :is-display-only true)))
-                     (image-display-info (str media-type) (str b64))))))
+                    answer?
+                    (truthy-flag? in-answer)]
+
+                   (mpl-capture/record-attachment!
+                     (cond->
+                       {:kind (or (not-empty (str kind)) "file")
+                        :media-type (str media-type)
+                        :base64 (str b64)
+                        :size (long (or size 0))
+                        :audience (attachments/normalize-audience audience)}
+                       (not (str/blank? (str filename)))
+                       (assoc :filename (str filename))
+
+                       (not (str/blank? (str label)))
+                       (assoc :label (str/trim (str label)))
+
+                       answer?
+                       (assoc :is-in-answer true)
+
+                       (and answer? info)
+                       (assoc :display-path
+                         (nth info 0) :display-width
+                         (nth info 1) :display-height
+                         (nth info 2))))
+                   info))))
 
 (defn- attach-bridge-bindings
   "Host callable the `vis_attach` shim delegates to. `__vis_record_attachment__`
    takes the already-decided attachment fields (kind / media-type / base64 /
-   filename / size / display-only) and appends the map to the active per-block
-   artifact sink via `mpl-capture/record-attachment!`. Returns [true nil] once
-   recorded, or [false message] when there is no active capture sink (called
-   outside a driven `python_execution` block) or a field is missing — surfaced
-   to the model as a `RuntimeError`, never silently dropped.
+   filename / size / audience / in-answer / label) and appends the map to the
+   active per-block artifact sink via `mpl-capture/record-attachment!`. Returns
+   [true display-info] once recorded, or [false message] when there is no active
+   capture sink (called outside a driven `python_execution` block) or a field is
+   missing — surfaced to the model as a `RuntimeError`, never silently dropped.
 
-   `display-only` marks an artifact the human should SEE while the model is
-   NOT re-billed for it: an image replays in full on every later request, so
-   `:is-display-only` keeps the bytes stored and rendered but off the wire
-   (`attachments/display-only?`). The 5-arg arity stays, so a shim body
-   embedded by an older build still records."
+   `audience` is WHO the artifact is for (`attachments/audiences`): `\"both\"`,
+   `\"user\"` (the human sees it, the bytes never reach the wire — an image
+   replays IN FULL on every later request, so a screenshot the model does not
+   need is re-billed forever) or `\"model\"` (the model gets it, the human's
+   transcript stays clean). `in-answer` defers the artifact to the gallery under
+   the final answer, which is where a human actually reviews figures."
   []
-  {"__vis_record_attachment__" (fn record-attachment
-                                 ([kind media-type b64 filename size]
-                                  (record-attachment-call kind media-type b64 filename size false))
-                                 ([kind media-type b64 filename size display-only]
-                                  (record-attachment-call kind media-type b64 filename size
-                                    display-only)))
+  {"__vis_record_attachment__"
+   (fn record-attachment [kind media-type b64 filename size audience in-answer label]
+     (record-attachment-call kind media-type b64 filename size audience in-answer label))
    "__vis_list_attachments__"
    (fn []
      (attach-envelope
@@ -183,7 +205,7 @@
   (vis/extension
     {:ext/name "foundation-shim-attach"
      :ext/description
-     "Sandbox `vis_attach(path)`/`vis_attach_bytes(data, filename)`: persists any artifact — image, CSV/TSV, JSON, PDF, wav — as a durable session attachment without stdout parsing. Survives restart; `image/*` replays to vision models across turns; a CSV/TSV becomes a live transcript table whose rows never reach the model."
+     "Sandbox `vis_attach(path)`/`vis_attach_bytes(data, filename)`: persists any artifact — image, CSV/TSV, JSON, PDF, wav — as a durable session attachment without stdout parsing. Survives restart; `image/*` replays to vision models across turns; a CSV/TSV becomes a live transcript table whose rows never reach the model. ONE OR TWO artifacts per turn: `audience` routes each one to `both`/`user`/`model` and `in_answer=True` collects the figures into a single gallery under the final answer."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -194,7 +216,7 @@
        :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_read_attachment"
                       "vis_reinspect_attachment"]
        :shim/description
-       "`vis_attach`/`vis_attach_bytes`: persist artifacts (images, CSV/TSV tables, JSON, PDF, audio) as durable DB-owned iteration attachments with sniffed media types. Vis-native; no upstream library."
+       "`vis_attach`/`vis_attach_bytes`: persist artifacts (images, CSV/TSV tables, JSON, PDF, audio) as durable DB-owned iteration attachments with sniffed media types. ATTACH ONE OR TWO ARTIFACTS PER TURN — compose many images into ONE sheet; `audience='both'|'user'|'model'` decides who sees it, `in_answer=True` paints it once in the FINAL ANSWER's gallery. Vis-native; no upstream library."
        :shim/bindings attach-bridge-bindings
        :shim/source "vis-shims/attach.py"}]}))
 

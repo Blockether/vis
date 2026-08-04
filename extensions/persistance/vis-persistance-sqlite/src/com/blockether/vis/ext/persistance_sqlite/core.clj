@@ -22,6 +22,7 @@
             [clojure.edn :as edn]
             [clojure.string :as str]
             [com.blockether.vis.ext.persistance-sqlite.migration :as migration]
+            [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.core :as vis]
             [honey.sql :as sql]
@@ -2539,7 +2540,7 @@
                                             "image")
                                   :media_type (str (:media-type att))
                                   :filename (:filename att)
-                                  :is_display_only (if (:is-display-only att) 1 0)
+                                  :audience (attachments/normalize-audience (:audience att))
                                   :created_at now}
                                  payload)]}))))
 
@@ -2625,9 +2626,10 @@
      :kind (:kind row)
      :media-type (:media_type row)
      :filename (:filename row)
-     ;; DISPLAY-ONLY: stored + rendered, never a wire image block. Read back as a
-     ;; real boolean so the send-time gate never has to reason about 0/1.
-     :is-display-only (= 1 (long (or (:is_display_only row) 0)))
+     ;; AUDIENCE: who the artifact was attached FOR. "user" is stored + rendered
+     ;; but never a wire image block; "model" is sent and never shown. Normalized
+     ;; on read so the send-time gate never sees a legacy or NULL value.
+     :audience (attachments/normalize-audience (:audience row))
      :storage-uri (:storage_uri row)
      :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
      :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}))
@@ -3082,7 +3084,7 @@
                                               "image")
                                     :media_type (str (:media-type att))
                                     :filename (:filename att)
-                                    :is_display_only (if (:is-display-only att) 1 0)
+                                    :audience (attachments/normalize-audience (:audience att))
                                     :created_at now}
                                    payload)]})))))
 

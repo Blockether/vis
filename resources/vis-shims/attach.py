@@ -171,8 +171,28 @@ def __vis_install_attach__():
         print(chr(10).join(lines))
         return True
 
+    def __vis_audience(audience, in_answer):
+        aud = str(audience if audience is not None else "both").strip().lower()
+        if aud not in ("both", "user", "model"):
+            raise ValueError(
+                "vis_attach: audience must be 'both', 'user' or 'model', got "
+                + repr(audience)
+            )
+        if in_answer and aud == "model":
+            raise ValueError(
+                "vis_attach: in_answer=True needs a human-visible audience "
+                "('both' or 'user'), not 'model'"
+            )
+        return aud
+
     def vis_attach_bytes(
-        data, filename, kind=None, media_type=None, display_only=False, label=None
+        data,
+        filename,
+        kind=None,
+        media_type=None,
+        label=None,
+        audience="both",
+        in_answer=False,
     ):
         if isinstance(data, str):
             data = data.encode("utf-8")
@@ -181,13 +201,23 @@ def __vis_install_attach__():
         mt = media_type or __vis_guess_media_type(name, data)
         knd = kind or __vis_kind_for(mt)
         cap = __vis_caption(label)
+        aud = __vis_audience(audience, in_answer)
         b64 = _b64.b64encode(data).decode("ascii")
         rec = globals().get("__vis_record_attachment__")
         if rec is None:
             raise RuntimeError("vis_attach: capture bridge not bound in this sandbox")
-        env = rec(knd, mt, b64, name, len(data), bool(display_only))
+        env = rec(knd, mt, b64, name, len(data), aud, bool(in_answer), cap)
         if not env[0]:
             raise RuntimeError("vis_attach: " + str(env[1]))
+        if aud == "model":
+            # audience='model': the bytes ride the next request and NOTHING is
+            # painted for the human. Staying silent here is the whole point.
+            return None
+        if in_answer:
+            # Painted exactly once, in the answer's gallery, so the human reads
+            # the figures where the conclusion is instead of scrolling the run.
+            print("[Answer gallery: " + name + "]" + ((" " + cap) if cap else ""))
+            return None
         disp = env[1] if len(env) > 1 else None
         if disp:
             __vis_emit_image_fence(disp, name, mt, len(data), cap)
@@ -200,7 +230,13 @@ def __vis_install_attach__():
         return None
 
     def vis_attach(
-        path, kind=None, media_type=None, filename=None, display_only=False, label=None
+        path,
+        kind=None,
+        media_type=None,
+        filename=None,
+        label=None,
+        audience="both",
+        in_answer=False,
     ):
         if hasattr(path, "savefig"):
             import io
@@ -220,8 +256,9 @@ def __vis_install_attach__():
                 filename or "figure.png",
                 kind=kind,
                 media_type=media_type,
-                display_only=display_only,
                 label=label,
+                audience=audience,
+                in_answer=in_answer,
             )
         with open(path, "rb") as f:
             data = f.read()
@@ -231,8 +268,9 @@ def __vis_install_attach__():
             name,
             kind=kind,
             media_type=media_type,
-            display_only=display_only,
             label=label,
+            audience=audience,
+            in_answer=in_answer,
         )
 
     def vis_attachments():
@@ -287,25 +325,37 @@ def __vis_install_attach__():
         }
 
     vis_attach.__doc__ = (
-        "Persist a produced file as a durable attachment. The sandbox-confined path "
-        "is read, its media type inferred, and its bytes stored across restarts; images "
-        "can replay to vision models. A CSV/TSV file attaches as a live TABLE: the "
-        "transcript paints it as a sortable, pageable grid, and its rows never enter the "
-        "model's context — vis_read_attachment(id) reads them back. kind, media_type, and "
-        "filename override inference. label is a one-line caption printed with the "
-        "artifact, so a series of shots says which shot is which. display_only=True stores "
-        "and displays the artifact but never sends the image to the model; its bytes remain "
-        "readable or available for one-request reinspection. Returns None: call directly, "
-        "do not print. Use vis_attachments() for metadata and vis_attach_bytes() for "
-        "in-memory bytes/str."
+        "Persist a produced file as a durable attachment. ATTACH ONE OR TWO "
+        "ARTIFACTS PER TURN: a human reviews a figure, not a filmstrip, so "
+        "COMPOSE many images into a SINGLE sheet (a matplotlib grid of subplots, "
+        "one montage PNG) and attach that instead of N separate shots. audience "
+        "routes it: 'both' (default) shows the human AND sends it to the model, "
+        "'user' shows the human only and never enters the model's context, "
+        "'model' sends it to the model only and paints nothing for the human. "
+        "in_answer=True holds it back for the gallery under the FINAL ANSWER, "
+        "painted exactly once where the human reads the conclusion - the only way "
+        "to put an image IN the answer. The sandbox-confined path is read, its "
+        "media type inferred, and its bytes stored across restarts; images can "
+        "replay to vision models. A CSV/TSV file attaches as a live TABLE: the "
+        "transcript paints it as a sortable, pageable grid, and its rows never "
+        "enter the model's context - vis_read_attachment(id) reads them back. "
+        "kind, media_type and filename override inference. label is a one-line "
+        "caption printed with the artifact, so a series of shots says which shot "
+        "is which. Returns None: call directly, do not print. Use "
+        "vis_attachments() for metadata and vis_attach_bytes() for in-memory "
+        "bytes/str."
     )
     vis_attach_bytes.__doc__ = (
-        "Persist bytes (or a UTF-8 str) as a durable attachment without a temporary "
-        "file; filename drives media-type inference. Name it *.csv/*.tsv and it attaches "
-        "as a live TABLE the transcript paints as a grid, with the rows kept out of the "
+        "Persist bytes (or a UTF-8 str) as a durable attachment without a "
+        "temporary file; filename drives media-type inference. ATTACH ONE OR TWO "
+        "ARTIFACTS PER TURN and COMPOSE many images into a single sheet rather "
+        "than attaching each one. audience is 'both' (human and model), 'user' "
+        "(human only, never in the model's context) or 'model' (model only, "
+        "nothing painted for the human); in_answer=True defers it to the gallery "
+        "under the final answer. Name it *.csv/*.tsv and it attaches as a live "
+        "TABLE the transcript paints as a grid, with the rows kept out of the "
         "model's context. label is a one-line caption printed with the artifact. "
-        "display_only=True stores and displays the artifact but never sends the image to "
-        "the model. Returns None: call directly, do not print. Use vis_attachments() for "
+        "Returns None: call directly, do not print. Use vis_attachments() for "
         "metadata."
     )
 
@@ -320,22 +370,34 @@ def __vis_install_attach__():
 
     docs = g.setdefault("__vis_docs__", {})
     docs["vis_attach"] = (
-        "vis_attach(path, kind=None, media_type=None, filename=None, display_only=False, "
-        "label=None): persist a produced file as a durable attachment across restarts; "
-        "images can replay to vision models, and a CSV/TSV attaches as a live TABLE the "
-        "transcript paints as a sortable, pageable grid whose rows stay OUT of the model's "
-        "context (vis_read_attachment(id) reads them back). label is a one-line caption "
-        "printed with the artifact — the caption row of the inline image or table. "
-        "display_only=True stores/displays but never sends the image to the model. Returns "
-        "None; call, do not print. Use vis_attachments() for metadata."
+        "vis_attach(path, kind=None, media_type=None, filename=None, label=None, "
+        "audience='both', in_answer=False): persist a produced file as a durable "
+        "attachment across restarts. ATTACH ONE OR TWO ARTIFACTS PER TURN - a "
+        "human cannot review a filmstrip: COMPOSE many images into ONE sheet (a "
+        "matplotlib subplot grid, a single montage PNG) and attach that, never N "
+        "separate shots. audience='both' shows the human and sends it to the "
+        "model; 'user' shows the human ONLY and never enters the model's context; "
+        "'model' sends it to the model ONLY and paints nothing for the human. "
+        "in_answer=True holds it back for the gallery under the FINAL ANSWER, "
+        "painted exactly once where the human reads the conclusion - prefer it "
+        "for the one or two figures that make your point. Images replay to vision "
+        "models; a CSV/TSV attaches as a live TABLE the transcript paints as a "
+        "sortable, pageable grid whose rows stay OUT of the model's context "
+        "(vis_read_attachment(id) reads them back). label is a one-line caption "
+        "printed with the artifact. Returns None; call, do not print. Use "
+        "vis_attachments() for metadata."
     )
     docs["vis_attach_bytes"] = (
-        "vis_attach_bytes(data, filename, kind=None, media_type=None, display_only=False, "
-        "label=None): persist bytes/str as a durable attachment; a *.csv/*.tsv filename "
-        "attaches as a live TABLE in the transcript with its rows out of context. label is "
-        "a one-line caption printed with the artifact. display_only=True stores/displays "
-        "but never sends the image to the model. Returns None; call, do not print. Use "
-        "vis_attachments() for metadata."
+        "vis_attach_bytes(data, filename, kind=None, media_type=None, label=None, "
+        "audience='both', in_answer=False): persist bytes/str as a durable "
+        "attachment. ATTACH ONE OR TWO ARTIFACTS PER TURN and COMPOSE many images "
+        "into ONE sheet instead of attaching each one. audience routes it to "
+        "'both', 'user' (human only, out of the model's context) or 'model' "
+        "(model only, nothing painted for the human); in_answer=True defers it to "
+        "the gallery under the FINAL ANSWER. A *.csv/*.tsv filename attaches as a "
+        "live TABLE in the transcript with its rows out of context. label is a "
+        "one-line caption printed with the artifact. Returns None; call, do not "
+        "print. Use vis_attachments() for metadata."
     )
     docs["vis_reinspect_attachment"] = (
         "vis_reinspect_attachment(id, detail='auto'): queue this session's persisted "

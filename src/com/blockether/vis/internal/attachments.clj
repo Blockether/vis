@@ -657,23 +657,56 @@
   "Why an image the user really attached is nevertheless not on the wire."
   "the active model has no vision — image not attached")
 
-(def ^:private display-only-reason
+(def ^:private user-only-reason
   "Why an image that decoded perfectly is nevertheless not on the wire."
-  "attached display-only — image kept on disk, not sent to the model")
+  "attached for the human only — image kept on disk, not sent to the model")
 
-(defn display-only?
-  "True when this attachment was recorded DISPLAY-ONLY: shown in the UI and
-   stored in the session DB, but deliberately never rendered as an image block.
+(def audiences
+  "The CLOSED vocabulary of an attachment's AUDIENCE — who the artifact is for:
+
+     * `\"both\"` (the default) paints it for the human AND sends the image to
+       the model.
+     * `\"user\"`  paints it for the human and keeps the bytes off the wire.
+     * `\"model\"` sends it to the model and paints nothing for the human.
+
+   One word, three routes; there is no fourth and no second copy of this table."
+  #{"both" "user" "model"})
+
+(defn normalize-audience
+  "Coerce whatever the shim bridge, a wire payload or a DB row carries into a
+   member of [[audiences]], defaulting to `\"both\"`. An unknown word falls back
+   to the PERMISSIVE default: a typo must not silently hide someone's figure."
+  [v]
+  (let [s (str/lower-case (str/trim (str v)))]
+    (if (contains? audiences s) s "both")))
+
+(defn attachment-audience
+  "This attachment's audience word, normalized — `\"both\"` when unstamped."
+  [attachment]
+  (normalize-audience (:audience attachment)))
+
+(defn hidden-from-model?
+  "True when this attachment is for the HUMAN only (`audience=\"user\"`): shown in
+   the UI and stored in the session DB, but deliberately never rendered as an
+   image block.
 
    The escape hatch for the one thing multimodal replay cannot undo — an image
    replays IN FULL on every later request, so a screenshot the model does not
-   actually need is re-billed forever. `vis_attach(..., display_only=True)`
-   stamps `:is-display-only`, and the send-time gate routes the row to
-   `:skipped` + `:readable-blind?` instead: the model is TOLD the file exists
-   and can open the bytes on demand (`vis_read_attachment`) or ask for it back
-   with `vis_reinspect_attachment`."
+   actually need is re-billed forever. `vis_attach(..., audience='user')` stamps
+   `:audience \"user\"`, and the send-time gate routes the row to `:skipped` +
+   `:readable-blind?` instead: the model is TOLD the file exists and can open the
+   bytes on demand (`vis_read_attachment`) or ask for it back with
+   `vis_reinspect_attachment`."
   [attachment]
-  (true? (:is-display-only attachment)))
+  (= "user" (attachment-audience attachment)))
+
+(defn hidden-from-user?
+  "True when this attachment is for the MODEL only (`audience=\"model\"`): the
+   bytes ride the request and the human's transcript stays clean. The twin of
+   [[hidden-from-model?]], and the reason a run can gather evidence for itself
+   without burying the human in thumbnails it never asked to review."
+  [attachment]
+  (= "model" (attachment-audience attachment)))
 
 (defn- media-candidate?
   "True when an attachment CLAIMS a still image or a clip and is therefore worth
@@ -930,7 +963,7 @@
    files are real and on disk, so the manifest can tell the model to open them
    with an imaging library instead of hunting for blocks that are not there.
 
-   A DISPLAY-ONLY row ([[display-only?]]) takes that same blind path even on a
+   A HUMAN-ONLY row ([[hidden-from-model?]]) takes that same blind path even on a
    vision model, and is checked FIRST: the caller asked for the bytes to stay
    off the wire, and that beats every capability question."
   ([images] (wire-images images {}))
@@ -939,11 +972,8 @@
      (fn [acc {:keys [path filename media-type] :as att}]
        (let [label (or (not-empty (str path)) (not-empty (str filename)) "image")]
          (cond
-           (display-only? att) (update
-                                 acc
-                                 :skipped
-                                 conj
-                                 {:path label :reason display-only-reason :readable-blind? true})
+           (hidden-from-model? att)
+           (update acc :skipped conj {:path label :reason user-only-reason :readable-blind? true})
            (not vision?)
            (update acc :skipped conj {:path label :reason no-vision-reason :readable-blind? true})
            :else

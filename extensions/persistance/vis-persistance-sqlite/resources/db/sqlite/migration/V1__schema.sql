@@ -639,11 +639,12 @@ CREATE INDEX idx_log_iteration
 -- Storage: inline `bytes` now, `storage_uri` reserved for externalization;
 -- exactly one is set.
 --
--- `is_display_only` marks a row that is stored and rendered for the human but
--- NEVER turned into a wire image block (the display-only gate in
--- com.blockether.vis.internal.attachments). The model is told the artifact
--- exists and can pull it deliberately with `vis_read_attachment` /
--- `vis_reinspect_attachment`. 0 = a normal, wire-visible attachment.
+-- `audience` says WHO the artifact was attached FOR (see the audience gate in
+-- com.blockether.vis.internal.attachments): 'both' is the default and reaches
+-- the human and the wire; 'user' is stored and rendered for the human but NEVER
+-- turned into a wire image block (the model is told it exists and can pull it
+-- deliberately with `vis_read_attachment` / `vis_reinspect_attachment`); 'model'
+-- is sent to the model and hidden from every human-facing gallery.
 -- =============================================================================
 CREATE TABLE session_attachment (
   id                        TEXT PRIMARY KEY NOT NULL,
@@ -661,8 +662,8 @@ CREATE TABLE session_attachment (
   media_type                TEXT NOT NULL,
   filename                  TEXT,
   size_bytes                INTEGER NOT NULL CHECK (size_bytes >= 0),
-  is_display_only           INTEGER NOT NULL DEFAULT 0
-                            CHECK (is_display_only IN (0, 1)),
+  audience                  TEXT NOT NULL DEFAULT 'both'
+                            CHECK (audience IN ('both', 'user', 'model')),
 
   bytes                     BLOB,
   storage_uri               TEXT,
