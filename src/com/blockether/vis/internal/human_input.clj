@@ -166,6 +166,15 @@
     (invalid-field! field-id why)
     field))
 
+(defn- checked-group
+  "`group` once it satisfies the declared contract for a LAYOUT node, not a
+   field's. A group answers nothing, so what it must have is different: children,
+   a direction they run in, and no key that describes a value."
+  [field-id group]
+  (if-let [why (hi-spec/group-error group)]
+    (invalid-field! field-id why)
+    group))
+
 (defn- checked-request
   [request]
   (if-let [why (hi-spec/request-error request)]
@@ -370,11 +379,19 @@
                              " — expected one of "
                              (str/join ", " (sort (keys hi-spec/group-directions))))))))
 
-(declare coerce-value normalize-group)
+(declare coerce-value normalize-node)
+
+(defn- group-node?
+  "True when this RAW spec node asks to be a layout group. Decided from the type
+   name alone, and decided FIRST: which keys are legal, whether a `:name` is
+   required and whether the node may hold children all follow from the answer."
+  [node]
+  (= hi-spec/group-type-name (str/lower-case (or (trimmed (pick node "type" :type)) ""))))
 
 (defn normalize-field
-  "Validate one field spec and return its internal form. Throws `ex-info` with
-   `:type :vis/human-input-invalid-field` on a bad spec.
+  "Validate one FIELD spec — a leaf holding exactly one answer — and return its
+   internal form. Throws `ex-info` with `:type :vis/human-input-invalid-field`
+   on a bad spec.
 
    Three names, three jobs, and every field ends up with all three:
 
@@ -385,41 +402,38 @@
      - `:description` is the prose under that label, rendered in italic by every
        dialog (`:help` is its legacy alias).
 
-   A `group` is the exception, and the only one: it holds no answer, so it needs
-   no name and gets no label unless the spec wants a heading. See
-   [[normalize-group]]."
+   A layout group is not a field and never arrives here: [[normalize-node]]
+   routes it to [[normalize-group]] before a single value key is parsed."
   [field]
   (when-not (map? field) (invalid-field! nil "field must be a map"))
-  ;; No key check yet: which keys are legal depends on whether this node holds
-  ;; an answer or only lays one out, and that is the `:type` below.
+  (when (group-node? field)
+    (invalid-field! (trimmed (pick field "name" :name "id" :id))
+                    (str "a group is not a field — it holds no answer, only the fields it"
+                         " arranges. Normalize a node of the tree with normalize-node.")))
   (let
     [field-id
      (trimmed (pick field "name" :name "id" :id))
-
-     type-name
-     (or (trimmed (pick field "type" :type)) "plaintext")
-
-     is-group
-     (= "group" (str/lower-case type-name))
 
      _
      ;; Layout keys are refused BEFORE the generic key check so the message can
      ;; say what the author actually meant: `fields` on a `plaintext` is a group
      ;; that forgot its `:type`, not a misspelling.
-     (when-not is-group
-       (when-let [k (first (sort (filter layout-keys (map snake-key (keys field)))))]
-         (invalid-field! field-id
-                         (str "key \""
-                              k
-                              "\" only exists on a group — a field that holds an answer has"
-                              " nothing to lay out. Put these fields inside"
-                              " {\"type\": \"group\", \"direction\": \"row\"} instead."))))
+     (when-let [k (first (sort (filter layout-keys (map snake-key (keys field)))))]
+       (invalid-field! field-id
+                       (str "key \""
+                            k
+                            "\" only exists on a group — a field that holds an answer has"
+                            " nothing to lay out. Put these fields inside"
+                            " {\"type\": \"group\", \"direction\": \"row\"} instead.")))
 
      _
-     (when-not is-group (check-keys! "field" field-keys field #(invalid-field! field-id %)))
+     (check-keys! "field" field-keys field #(invalid-field! field-id %))
 
      _
-     (when-not (or field-id is-group) (invalid-field! nil "field needs a non-blank :name"))
+     (when-not field-id (invalid-field! nil "field needs a non-blank :name"))
+
+     type-name
+     (or (trimmed (pick field "type" :type)) "plaintext")
 
      field-type
      (get hi-spec/field-types (str/lower-case type-name))
@@ -433,79 +447,76 @@
 
     (checked-field
       field-id
-      (if is-group
-        (normalize-group field-id field)
-        (let
-          [description
-           (trimmed (pick field "description" :description "help" :help))
+      (let
+        [description
+         (trimmed (pick field "description" :description "help" :help))
 
-           ;; An `:otp` derives its own lengths from the same two keys — how many
-           ;; boxes it draws IS its length — so it must not be length-checked twice.
+         ;; An `:otp` derives its own lengths from the same two keys — how many
+         ;; boxes it draws IS its length — so it must not be length-checked twice.
+         min-length
+         (when-not (= :otp field-type)
+           (normalize-length field-id ":min_length" (pick field "min_length" :min-length)))
+
+         max-length
+         (when-not (= :otp field-type)
+           (normalize-length field-id ":max_length" (pick field "max_length" :max-length)))
+
+         validate
+         (validation/normalize-validators (pick field "validate" :validate)
+                                          #(invalid-field! field-id %))
+
+         spec
+         (cond->
+           {:id field-id
+            ;; The same string under both keys: `:name` is the contract a spec
+            ;; writes, `:id` is what every surface has always keyed rows and errors
+            ;; by. One field identity, two spellings, no drift between them.
+            :name field-id
+            :type field-type
+            :label (or (trimmed (pick field "label" :label)) field-id)
+            ;; Optional unless the caller says otherwise — the same default every
+            ;; form API has, so a spec never blocks a human on a field the
+            ;; extension did not actually need.
+            :is-required
+            (normalize-bool field-id ":is-required" (pick field "is_required" :is-required) false)
+            :is-secret (contains? hi-spec/secret-types field-type)}
+           description
+           (assoc :description description)
+
+           (trimmed (pick field "placeholder" :placeholder))
+           (assoc :placeholder (trimmed (pick field "placeholder" :placeholder)))
+
+           (contains? hi-spec/choice-types field-type)
+           (assoc :options (normalize-options field-id field-type (pick field "options" :options)))
+
+           (= :range field-type)
+           (merge (normalize-range field-id field))
+
+           (= :otp field-type)
+           (merge (normalize-otp field-id field))
+
            min-length
-           (when-not (= :otp field-type)
-             (normalize-length field-id ":min_length" (pick field "min_length" :min-length)))
+           (assoc :min-length min-length)
 
            max-length
-           (when-not (= :otp field-type)
-             (normalize-length field-id ":max_length" (pick field "max_length" :max-length)))
+           (assoc :max-length max-length)
 
-           validate
-           (validation/normalize-validators (pick field "validate" :validate)
-                                            #(invalid-field! field-id %))
+           (seq validate)
+           (assoc :validate validate))
 
-           spec
-           (cond->
-             {:id field-id
-              ;; The same string under both keys: `:name` is the contract a spec
-              ;; writes, `:id` is what every surface has always keyed rows and errors
-              ;; by. One field identity, two spellings, no drift between them.
-              :name field-id
-              :type field-type
-              :label (or (trimmed (pick field "label" :label)) field-id)
-              ;; Optional unless the caller says otherwise — the same default every
-              ;; form API has, so a spec never blocks a human on a field the
-              ;; extension did not actually need.
-              :is-required
-              (normalize-bool field-id ":is-required" (pick field "is_required" :is-required) false)
-              :is-secret (contains? hi-spec/secret-types field-type)}
-             description
-             (assoc :description description)
+         raw-default
+         (pick field "default" :default)
 
-             (trimmed (pick field "placeholder" :placeholder))
-             (assoc :placeholder (trimmed (pick field "placeholder" :placeholder)))
+         [status default]
+         (coerce-value (assoc spec :is-required false) raw-default)]
 
-             (contains? hi-spec/choice-types field-type)
-             (assoc :options
-               (normalize-options field-id field-type (pick field "options" :options)))
-
-             (= :range field-type)
-             (merge (normalize-range field-id field))
-
-             (= :otp field-type)
-             (merge (normalize-otp field-id field))
-
-             min-length
-             (assoc :min-length min-length)
-
-             max-length
-             (assoc :max-length max-length)
-
-             (seq validate)
-             (assoc :validate validate))
-
-           raw-default
-           (pick field "default" :default)
-
-           [status default]
-           (coerce-value (assoc spec :is-required false) raw-default)]
-
-          (when (= :error status) (invalid-field! field-id (str "invalid :default — " default)))
-          (cond-> spec
-            (some? default)
-            (assoc :default default)))))))
+        (when (= :error status) (invalid-field! field-id (str "invalid :default — " default)))
+        (cond-> spec
+          (some? default)
+          (assoc :default default))))))
 
 (defn- normalize-group
-  "Validate a `group` — the layout node — and return its internal form.
+  "Validate a layout `group` and return its internal form.
 
    A group answers nothing: it has `:fields` of its own and a `:direction` they
    run in, and because a child may itself be a group, `row` and `column` compose
@@ -513,38 +524,41 @@
    the spec does not give one it is derived from the children, so a surface
    still has a stable key to draw rows under and no author has to invent an
    identifier for a box that only exists to hold two fields side by side."
-  [field-id field]
-  (check-keys! "group" group-keys field #(invalid-field! field-id %))
-  (let
-    [raw
-     (pick field "fields" :fields)
+  [group]
+  (let [field-id (trimmed (pick group "name" :name "id" :id))]
+    (check-keys! "group" group-keys group #(invalid-field! field-id %))
+    (let
+      [raw (pick group "fields" :fields)
+       _ (when-not (sequential? raw) (invalid-field! field-id "group needs a :fields sequence"))
+       children (mapv normalize-node raw)
+       _ (when (empty? children) (invalid-field! field-id "group needs at least one field"))
+       id (or field-id (str "group:" (str/join "+" (map :name children))))
+       description (trimmed (pick group "description" :description "help" :help))]
 
-     _
-     (when-not (sequential? raw) (invalid-field! field-id "group needs a :fields sequence"))
+      (checked-group id
+                     (cond->
+                       {:id id
+                        :name id
+                        :type hi-spec/group-type
+                        :direction (normalize-direction field-id
+                                                        (pick group "direction" :direction))
+                        :fields children}
+                       (trimmed (pick group "label" :label))
+                       (assoc :label (trimmed (pick group "label" :label)))
 
-     children
-     (mapv normalize-field raw)
+                       description
+                       (assoc :description description))))))
 
-     _
-     (when (empty? children) (invalid-field! field-id "group needs at least one field"))
+(defn normalize-node
+  "Validate one node of a request's field TREE and return its internal form.
 
-     id
-     (or field-id (str "group:" (str/join "+" (map :name children))))
-
-     description
-     (trimmed (pick field "description" :description "help" :help))]
-
-    (cond->
-      {:id id
-       :name id
-       :type :group
-       :direction (normalize-direction field-id (pick field "direction" :direction))
-       :fields children}
-      (trimmed (pick field "label" :label))
-      (assoc :label (trimmed (pick field "label" :label)))
-
-      description
-      (assoc :description description))))
+   This is the fork the whole shape hangs on, and it is taken ONCE, up here: a
+   `group` is control flow — it arranges the children below it and holds no
+   answer — and anything else is a field holding exactly one. Deciding it above
+   the two normalizers is why [[normalize-field]] never has to ask whether it is
+   really a layout node, and why no value path below carries a branch for one."
+  [node]
+  (if (group-node? node) (normalize-group node) (normalize-field node)))
 
 (defn- leaves!
   "Conjoin every ANSWERABLE field of `fields` onto TRANSIENT vector `acc`, depth
@@ -553,7 +567,7 @@
    replaces allocated a lazy seq and a fresh vector for every group it entered."
   [acc fields]
   (reduce (fn [acc {:keys [type] :as field}]
-            (if (= :group type) (leaves! acc (:fields field)) (conj! acc field)))
+            (if (= hi-spec/group-type type) (leaves! acc (:fields field)) (conj! acc field)))
           acc
           fields))
 
@@ -573,7 +587,9 @@
    it owns, on the same transient accumulator."
   [acc fields]
   (reduce (fn [acc {:keys [type] :as field}]
-            (if (= :group type) (nodes! (conj! acc field) (:fields field)) (conj! acc field)))
+            (if (= hi-spec/group-type type)
+              (nodes! (conj! acc field) (:fields field))
+              (conj! acc field)))
           acc
           fields))
 
@@ -587,7 +603,7 @@
   [f fields]
   (mapv (fn [{:keys [type] :as field}]
           (f (cond-> field
-               (= :group type)
+               (= hi-spec/group-type type)
                (update :fields #(map-fields f %)))))
         fields))
 
@@ -672,7 +688,7 @@
      (when-not (sequential? raw-fields) (invalid-request! ":fields must be a sequence"))
 
      fields
-     (mapv normalize-field raw-fields)
+     (mapv normalize-node raw-fields)
 
      _
      (when (empty? fields) (invalid-request! ":fields must not be empty"))

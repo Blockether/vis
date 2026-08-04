@@ -995,6 +995,23 @@
         (expect (= ["host" "port"] (mapv :id (:fields group))))
         (expect (= :multiline (:type note)))
         (expect (= ["host" "port" "note"] (mapv :id (hi/input-fields fields))))))
+  (it "is control flow, not a kind of field"
+      ;; A group answers nothing, so it has no place in the vocabulary of
+      ;; ANSWERS: with `:group` among the field types, every value path carried a
+      ;; branch for a node that can never take one and a field spec happily
+      ;; accepted layout.
+      (let [[group note] (:fields (grouped-request))]
+        (expect (not (contains? (set (vals hs/field-types)) hs/group-type)))
+        (expect (= hs/group-type (:type group)))
+        ;; Two contracts, one tree:
+        (expect (nil? (hs/group-error group)))
+        (expect (nil? (hs/field-error note)))
+        (expect (some? (hs/field-error group)))
+        (expect (some? (hs/group-error note)))
+        ;; and the fork is taken above both, before a value key is parsed.
+        (expect (str/includes? (refusal #(hi/normalize-field {"type" "group"
+                                                              "fields" [{"name" "a"}]}))
+                               "not a field"))))
   (it "stacks by default — a group without a :direction is a column"
       (let [[group] (normalized-fields {"type" "group" "fields" [{"name" "a"} {"name" "b"}]})]
         (expect (= :column (:direction group)))))
@@ -1101,32 +1118,40 @@
 ;; form no surface could paint is refused even when the engine itself built it.
 (defdescribe
   declared-contract-test
-  (it "every type a request can carry normalizes into the declared form"
+  (it
+    "every type a request can carry normalizes into the declared form"
+    (let
+      [request (hi/normalize-request
+                 {:title "Deploy"
+                  :description "everything at once"
+                  :source "test"
+                  :fields [{:id "name" :placeholder "who" :default "ada"}
+                           {:name "pw" :type "password"}
+                           {:name "notes" :type "multiline" :min-length 2 :max-length 40}
+                           {:name "env" :type "select" :options ["dev" "prod"] :default "prod"}
+                           {:name "tags"
+                            :type "multiselect"
+                            :options [{:value "a" :label "A"} {:value "b" :label "B"}]
+                            :default ["a"]} {:name "confirm" :type "checkbox" :default true}
+                           {:name "pct" :type "range" :min 0 :max 100 :step 5 :default 25}
+                           {:name "code" :type "otp"}
+                           {:name "grp"
+                            :type "group"
+                            :direction "row"
+                            :fields [{:name "a"} {:name "b" :type "checkbox"}]}]
+                  :timeout-ms 0})]
+      (expect (nil? (hs/request-error request)))
+      ;; The tree is checked as the two contracts it is: every leaf a field,
+      ;; the group that arranges them a group, and its children part of the
+      ;; same field contract — a nested field with no `:label` breaks the same
+      ;; painter.
       (let
-        [request (hi/normalize-request
-                   {:title "Deploy"
-                    :description "everything at once"
-                    :source "test"
-                    :fields [{:id "name" :placeholder "who" :default "ada"}
-                             {:name "pw" :type "password"}
-                             {:name "notes" :type "multiline" :min-length 2 :max-length 40}
-                             {:name "env" :type "select" :options ["dev" "prod"] :default "prod"}
-                             {:name "tags"
-                              :type "multiselect"
-                              :options [{:value "a" :label "A"} {:value "b" :label "B"}]
-                              :default ["a"]} {:name "confirm" :type "checkbox" :default true}
-                             {:name "pct" :type "range" :min 0 :max 100 :step 5 :default 25}
-                             {:name "code" :type "otp"}
-                             {:name "grp"
-                              :type "group"
-                              :direction "row"
-                              :fields [{:name "a"} {:name "b" :type "checkbox"}]}]
-                    :timeout-ms 0})]
-        (expect (nil? (hs/request-error request)))
-        (expect (every? #(nil? (hs/field-error %)) (:fields request)))
-        ;; A group is a field too, and its children are part of the same
-        ;; contract: a nested field with no `:label` breaks the same painter.
-        (expect (every? #(nil? (hs/field-error %)) (:fields (last (:fields request)))))))
+        [nodes (:fields request)
+         group (last nodes)]
+
+        (expect (every? #(nil? (hs/field-error %)) (butlast nodes)))
+        (expect (nil? (hs/group-error group)))
+        (expect (every? #(nil? (hs/field-error %)) (:fields group))))))
   (it "a request spelled the Python way lands in the very same form"
       (let
         [request (hi/normalize-request {"title" "Deploy"
@@ -1138,8 +1163,7 @@
       ;; Two copies of the type table drift, and the copy the normalizer reads
       ;; is the one that decides what a surface is asked to paint.
       (expect (nil? (ns-resolve 'com.blockether.vis.internal.human-input 'field-types)))
-      (expect (= #{:plaintext :password :multiline :select :multiselect :checkbox :range :otp
-                   :group}
+      (expect (= #{:plaintext :password :multiline :select :multiselect :checkbox :range :otp}
                  (set (vals hs/field-types))))
       (expect (str/includes? (refusal #(hi/normalize-field {:name "a" :type "slider"}))
                              "multiselect")))

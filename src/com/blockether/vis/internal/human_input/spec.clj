@@ -18,8 +18,9 @@
    once per request and once per answer, never per keystroke, so the guard sits
    where it costs nothing.
 
-   The functions here only EXPLAIN ([[field-error]], [[request-error]],
-   [[answer-error]] return nil or a one-line reason); the refusal itself stays
+   The functions here only EXPLAIN ([[field-error]], [[group-error]],
+   [[request-error]], [[answer-error]] return nil or a one-line reason); the
+   refusal itself stays
    in `human-input`, which owns the error envelope every surface already
    handles."
   (:require [clojure.spec.alpha :as s]
@@ -32,7 +33,10 @@
 (def field-types
   "Wire type name -> internal field type. A CLOSED set: an unknown name is
    refused with these listed, never minted into a keyword the surfaces cannot
-   paint."
+   paint.
+
+   Only a type that holds an ANSWER belongs here. A layout `group` does not —
+   see [[group-type]]."
   {"plaintext" :plaintext
    "password" :password
    "multiline" :multiline
@@ -40,10 +44,7 @@
    "multiselect" :multiselect
    "checkbox" :checkbox
    "range" :range
-   "otp" :otp
-   ;; The one type that holds no answer: a layout node whose children run down
-   ;; the dialog or across it. It nests, so a row of stacks is a row of groups.
-   "group" :group})
+   "otp" :otp})
 
 (def text-types "Field types whose answer is typed text." #{:plaintext :password :multiline})
 
@@ -54,6 +55,20 @@
 (def secret-types
   "Field types whose value must never reach a log, an event or a transcript."
   #{:password})
+
+(def group-type
+  "The type of a layout GROUP: the one node of a request's field tree that holds
+   no answer, and deliberately NOT a member of [[field-types]].
+
+   A group is the control flow ABOVE the fields, not a ninth kind of field. It
+   owns the children it arranges and the direction they run in, and nothing that
+   describes a value — no default, no options, no rules, no key in the answer
+   map. Listing it beside `:otp` said the opposite: every value path had to
+   carry a branch for a node that can never take one, and a field spec would
+   happily accept a group."
+  :group)
+
+(def group-type-name "How a wire spec asks for a [[group-type]] node." "group")
 
 (def group-directions
   "Wire direction name -> internal group direction."
@@ -167,7 +182,7 @@
           :else false)))
 
 ;; ---------------------------------------------------------------------------
-;; A field
+;; A field — the leaf that holds one answer
 ;; ---------------------------------------------------------------------------
 
 (s/def ::id non-blank-string?)
@@ -232,11 +247,6 @@
          ordered-lengths?
          otp-fits-boxes?))
 
-(def ^:private group-field
-  (s/and #(closed? group-keys %)
-         (s/keys :req-un [::id ::name ::type ::direction ::fields] :opt-un [::label ::description])
-         one-identity?))
-
 (defmulti ^:private field-form "The form one field type must take once normalized." :type)
 
 (defmethod field-form :plaintext [_] text-field)
@@ -247,11 +257,40 @@
 (defmethod field-form :checkbox [_] checkbox-field)
 (defmethod field-form :range [_] range-field)
 (defmethod field-form :otp [_] otp-field)
-(defmethod field-form :group [_] group-field)
 
 (s/def ::field (s/multi-spec field-form :type))
 
-(s/def ::fields (s/and (s/coll-of ::field :kind vector?) non-empty?))
+;; ---------------------------------------------------------------------------
+;; A group — the control flow above the fields
+;; ---------------------------------------------------------------------------
+;;
+;; A request carries a TREE of two kinds of node, not a list of nine kinds of
+;; field: a group arranges children, a field holds a value. [[::node]] is where
+;; that choice is made — once, on the way in — and the only place either
+;; contract meets the other.
+
+(defn- grouped?
+  "A group says so in its own `:type`. Every surface walks the tree by that key,
+   so a layout node that lost it is drawn as a field."
+  [{:keys [type]}]
+  (= group-type type))
+
+(s/def ::group
+  (s/and #(closed? group-keys %)
+         grouped?
+         (s/keys :req-un [::id ::name ::direction ::fields] :opt-un [::label ::description])
+         one-identity?))
+
+(defmulti ^:private node-form
+  "Which of the two contracts one node of the field tree answers to."
+  :type)
+
+(defmethod node-form group-type [_] ::group)
+(defmethod node-form :default [_] ::field)
+
+(s/def ::node (s/multi-spec node-form :type))
+
+(s/def ::fields (s/and (s/coll-of ::node :kind vector?) non-empty?))
 
 ;; ---------------------------------------------------------------------------
 ;; A request
@@ -405,11 +444,11 @@
 (defmethod answer-form :otp [field] (s/and (s/nilable string?) (partial coded-in-domain? field)))
 
 (defn- answerable
-  "Every field that holds an ANSWER. A `:group` is layout: it never appears in a
-   values map, its children answer in its place."
+  "Every field that holds an ANSWER. A group is control flow: it never appears in
+   a values map, its children answer in its place."
   [fields]
   (mapcat (fn [{:keys [type] :as field}]
-            (if (= :group type) (answerable (:fields field)) [field]))
+            (if (= group-type type) (answerable (:fields field)) [field]))
           fields))
 
 ;; ---------------------------------------------------------------------------
@@ -437,9 +476,17 @@
     (str/join "; " (map problem-str (take 2 problems)))))
 
 (defn field-error
-  "nil when `field` is a legal normalized field, else why it is not."
+  "nil when `field` is a legal normalized FIELD — a leaf holding one answer —
+   else why it is not. A layout group is not a field: see [[group-error]]."
   [field]
   (error ::field field))
+
+(defn group-error
+  "nil when `group` is a legal normalized layout group, else why it is not. The
+   children it arranges are checked as the nodes they are, so one call covers
+   the whole subtree."
+  [group]
+  (error ::group group))
 
 (defn request-error
   "nil when `request` is a legal normalized request, else why it is not."

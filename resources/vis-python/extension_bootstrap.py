@@ -299,13 +299,14 @@ def ask(title, fields, **options):
     #        'validate': lambda v: None if v.isdigit() else 'must be digits'},
     #       {'name': 'confirm', 'type': 'password', 'validate':
     #        lambda v, values: None if v == values['pw'] else 'must match Password'},
-    # A 'group' field answers nothing — it LAYS OUT: 'fields' (its children) and
+    # A 'group' is not a field at all — it LAYS OUT: 'fields' (its children) and
     # 'direction' ('column' stacks, the default; 'row' side by side). Groups
     # nest, need no name, and never appear in `values`, which stays flat.
     # Layout and value keys never mix: 'default'/'is_required'/'validate' on a
     # group, or 'fields'/'direction' on an answerable field, are both REFUSED.
     # Field types: plaintext, password, multiline, select, multiselect,
-    # checkbox, range, otp, group. Dialog options: description (prose under the title explaining
+    # checkbox, range, otp — 'group' is none of them, it is the node above them.
+    # Dialog options: description (prose under the title explaining
     # what the whole ask is about — it wraps), submit_label, cancel_label,
     # is_cancellable, timeout_ms.
     #
