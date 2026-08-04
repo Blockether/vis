@@ -119,14 +119,16 @@ jobs:
             echo "**Full Changelog**: https://github.com/Blockether/vis/compare/${PREV_TAG}...${CURRENT_TAG}"
           } > /tmp/release_body.md
 
-      # The documented one-liner is a RELEASE ASSET
-      # (releases/latest/download/install-vis-agent), because
+      # The documented one-liner is an asset of the ROLLING `installer` release
+      # (releases/download/installer/install-vis-agent, refreshed by
+      # installer-assets.yml on every commit that touches these scripts), because
       # raw.githubusercontent.com is blocked on many corporate networks while
-      # github.com release downloads are not — so these two scripts must stay
-      # attached to every release. They only bootstrap: what they install is
-      # never a tag, it is the branch tip, since a published release can carry
-      # broken source. native-release.yml attaches the platform bundles to this
-      # same release.
+      # github.com release downloads are not. Every version release keeps its own
+      # snapshot of the same two scripts, so releases/latest/download/... — the
+      # URL already in the wild — never stops working. They only bootstrap: what
+      # they install is never a tag, it is the branch tip, since a published
+      # release can carry broken source. native-release.yml attaches the platform
+      # bundles to this same release.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:

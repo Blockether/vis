@@ -1,0 +1,60 @@
+name: Installer assets
+
+# The documented one-liner
+# (github.com/OWNER/REPO/releases/download/installer/install-vis-agent) must be
+# as fresh as the branch it installs from, and it must stay on github.com:
+# raw.githubusercontent.com is blocked on many corporate networks.
+#
+# So `installer` is a ROLLING release, not a version. This workflow force-moves
+# that single tag to the commit that changed either script and re-uploads both
+# assets in place. No snapshot release is created per commit — there is exactly
+# one `installer` entry, forever, and it is a PRERELEASE, so `releases/latest`
+# still resolves to the newest `vX.Y.Z` (which keeps its own snapshot of the
+# same two scripts, from release.yml).
+#
+# The path filter is the point: content only changes when these files change, so
+# a commit that touches neither would only re-upload identical bytes.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - bin/install-vis-agent
+      - bin/vis-agent
+      - .github/workflows/installer-assets.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# One rolling tag, so one publisher at a time; a superseded run would upload
+# older scripts over newer ones.
+concurrency:
+  group: installer-assets
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Refresh the rolling installer release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Move the installer tag and refresh both assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git tag -f installer "$GITHUB_SHA"
+          git push -f origin refs/tags/installer
+          if gh release view installer >/dev/null 2>&1; then
+            gh release edit installer --target "$GITHUB_SHA" --prerelease --latest=false
+            gh release upload installer bin/install-vis-agent bin/vis-agent --clobber
+          else
+            gh release create installer bin/install-vis-agent bin/vis-agent \
+              --prerelease \
+              --latest=false \
+              --target "$GITHUB_SHA" \
+              --title 'Installer (main)' \
+              --notes 'Rolling bootstrap scripts, refreshed from every commit on `main` that changes them. Not a version: `releases/latest` is still the newest `vX.Y.Z`. The scripts only bootstrap — `vis-agent update` then checks the source out at the newest commit of `main` and refreshes the wrapper from it.'
+          fi

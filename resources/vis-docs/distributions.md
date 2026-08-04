@@ -92,7 +92,7 @@ diverged history, with the counts and the exact recovery command.
 ## Installing
 
 ```bash
-curl -fsSL https://github.com/Blockether/vis/releases/latest/download/install-vis-agent | bash
+curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash
 ```
 
 `bin/install-vis-agent` takes one option, `--install-dir PATH` (default
@@ -107,10 +107,16 @@ Nothing that install *runs* is tagged: the source comes from the branch tip,
 because a published `vX.Y.Z` can be broken source and a fix lands on the branch
 first. The two scripts are the exception — `curl` fetches the installer, and the
 installer fetches the wrapper, from
-`github.com/$VIS_REPO_SLUG/releases/latest/download/`, because
+`github.com/$VIS_REPO_SLUG/releases/download/installer/`, because
 `raw.githubusercontent.com` is blocked on many corporate networks while
-`github.com` release downloads are not. That asset is only a bootstrap: `vis-agent
-update` immediately refreshes the wrapper from the source it pins. Cloning the
+`github.com` release downloads are not. `installer` is a ROLLING release, not a
+version: `.github/workflows/installer-assets.yml` force-moves that one tag and
+re-uploads both scripts on every commit on `main` that changes them, so the
+published one-liner is always the branch's own installer and no per-commit
+snapshot release is ever created. It stays a prerelease, so `releases/latest`
+still means the newest `vX.Y.Z`, which keeps its own copy of both scripts. The
+asset is only a bootstrap: `vis-agent update` immediately refreshes the wrapper
+from the source it pins. Cloning the
 repository and running `bin/install-vis-agent` out of the checkout works too — it
 installs that checkout's own wrapper.
 

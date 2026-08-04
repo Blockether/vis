@@ -80,14 +80,16 @@ Native contracts have one source: tool descriptions own routing and semantics; J
 
 The public command is **`vis-agent`**. The installer and the wrapper are served
 as GitHub release assets, because `raw.githubusercontent.com` is unreachable on
-many corporate networks. What they install is a different matter: no release tag
-is checked out, because a published tag can carry broken source and a fix lands
-on the branch first.
+many corporate networks. They ride the rolling `installer` release, refreshed by
+every commit on `main` that touches them, so the one-liner is never older than
+the branch. What they install is a different matter: no release tag is checked
+out, because a published tag can carry broken source and a fix lands on the
+branch first.
 
 Install the command first; it fetches its own runtime:
 
 ```bash
-curl -fsSL https://github.com/Blockether/vis/releases/latest/download/install-vis-agent | bash
+curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash
 vis-agent help
 ```
 

@@ -802,8 +802,10 @@
              (finally (delete-tree! root)))))
   ;; Regression: the one-liner and the wrapper download were moved to
   ;; raw.githubusercontent.com, which corporate networks block, so the
-  ;; documented install could not even fetch the command there.
-  (it "downloads the command from the latest release asset, never raw.githubusercontent.com"
+  ;; documented install could not even fetch the command there. They live on
+  ;; the rolling `installer` release now — a release asset that is refreshed by
+  ;; every commit on main, so it is as fresh as raw.githubusercontent.com was.
+  (it "downloads the command from the rolling installer release, never raw.githubusercontent.com"
       (let [{:keys [root vis-home install-dir head curl-log install-detached!]} (installer-fixture)]
         (try (let [{:keys [exit output]} (install-detached! [])]
                (expect (= 0 exit) output)
@@ -811,7 +813,7 @@
              (let [asked (slurp curl-log)]
                (expect (str/includes?
                          asked
-                         "https://github.com/Blockether/vis/releases/latest/download/vis-agent")
+                         "https://github.com/Blockether/vis/releases/download/installer/vis-agent")
                        asked)
                (expect (not (str/includes? asked "raw.githubusercontent.com")) asked))
              (expect (.canExecute (io/file install-dir "vis-agent")))

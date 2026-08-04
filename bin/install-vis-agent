@@ -11,11 +11,13 @@
 # where fixes land first.
 #
 # The two SCRIPTS are a different question: they are downloaded as GitHub
-# RELEASE ASSETS (github.com/OWNER/REPO/releases/latest/download/...), never
+# RELEASE ASSETS (github.com/OWNER/REPO/releases/download/installer/...), never
 # from raw.githubusercontent.com — that host is blocked on many corporate
-# networks while github.com and its release downloads are not. Step 2 refreshes
-# the wrapper from the source it just pinned, so a stale asset never survives
-# an install.
+# networks while github.com and its release downloads are not. `installer` is a
+# ROLLING release: every commit on main that touches these two scripts re-uploads
+# them, so the assets are never older than the branch. Step 2 refreshes the
+# wrapper from the source it just pinned, so a stale asset never survives an
+# install.
 #
 # Runtime acquisition therefore always belongs to vis-agent itself, so the
 # command and its runtime can never drift apart.
@@ -107,9 +109,11 @@ if [[ -d "$install_dir/vis-agent" ]]; then
 fi
 
 # ── 1. install the vis-agent command ────────────────────────────────────────
-# The wrapper is downloaded as a release asset (raw.githubusercontent.com is
+# The wrapper is downloaded from the rolling `installer` release, which every
+# commit on main that touches it refreshes (raw.githubusercontent.com is
 # unreachable from many corporate networks). It is only a bootstrap: step 2
 # refreshes it from the source it pins, so the two can only ever end up the same
+# file.
 # file. Run from a checkout and the wrapper next to this script is used
 # directly; the sibling deps.edn proves it is a real checkout rather than an
 # unrelated file in the current directory.
@@ -121,10 +125,10 @@ if [[ -n "$here" && -f "$here/vis-agent" && -f "$here/../deps.edn" ]]; then
 else
   wrapper="$(mktemp "${TMPDIR:-/tmp}/vis-agent.XXXXXX")"
   trap 'rm -f "$wrapper"' EXIT
-  echo "vis-agent install: downloading the vis-agent command ($repo_slug, latest release)"
-  if ! curl -fsSL "https://github.com/$repo_slug/releases/latest/download/vis-agent" \
+  echo "vis-agent install: downloading the vis-agent command ($repo_slug, installer assets)"
+  if ! curl -fsSL "https://github.com/$repo_slug/releases/download/installer/vis-agent" \
          -o "$wrapper" 2>/dev/null || ! head -1 "$wrapper" | grep -q '^#!'; then
-    echo "vis-agent install: could not download the vis-agent command from the latest release of $repo_slug" >&2
+    echo "vis-agent install: could not download the vis-agent command from $repo_slug (releases/download/installer/vis-agent)" >&2
     exit 1
   fi
 fi
