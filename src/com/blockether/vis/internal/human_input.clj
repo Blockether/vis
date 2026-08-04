@@ -16,8 +16,15 @@
    answered `undeliverable` at once, and interrupting the surrounding turn
    cancels it.
 
-   Field types are a CLOSED set (see [[field-types]]): extension-supplied type
-   names are looked up, never `keyword`-minted. Coercion and validation live in
+   This namespace PARSES: it takes either spelling of every key, looks an
+   extension-supplied type name up in a CLOSED vocabulary
+   ([[com.blockether.vis.internal.human-input.spec/field-types]]) instead of
+   `keyword`-minting it, and names the key an author has to fix when it cannot.
+   What it produces is DECLARED by `clojure.spec` in
+   `com.blockether.vis.internal.human-input.spec`: every normalized field, every
+   normalized request and every answer handed back to a blocked extension is
+   checked against that contract, so an engine bug surfaces here instead of as a
+   half-built dialog three namespaces away. Coercion and validation live in
    one place, so the value an extension receives already matches the declared
    type: a `:checkbox` yields a boolean, a `:multiselect` a vector of declared
    option values, a `:select` one declared option value.
@@ -30,31 +37,12 @@
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as channel-events]
+            [com.blockether.vis.internal.human-input.spec :as hi-spec]
             [com.blockether.vis.internal.human-input.validation :as validation]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [taoensso.telemere :as tel]))
 
 (set! *warn-on-reflection* true)
-
-(def field-types
-  "Wire type name -> internal field-type keyword. Closed set."
-  {"plaintext" :plaintext
-   "password" :password
-   "multiline" :multiline
-   "select" :select
-   "multiselect" :multiselect
-   "checkbox" :checkbox
-   "range" :range
-   "otp" :otp
-   ;; The one type that holds no answer: a layout node whose children run down
-   ;; the dialog or across it. It nests, so a row of stacks is a row of groups.
-   "group" :group})
-
-(def ^:private text-types #{:plaintext :password :multiline})
-
-(def ^:private choice-types #{:select :multiselect})
-
-(def ^:private secret-types #{:password})
 
 (def default-timeout-ms
   "How long a request waits when its spec says nothing: five minutes — long
@@ -169,6 +157,35 @@
   [message]
   (throw (ex-info (str "Invalid human-input request: " message)
                   {:type :vis/human-input-invalid-request :reason message})))
+
+(defn- invalid-answer!
+  [request-id message]
+  (throw (ex-info (str "Invalid human-input answer for " request-id ": " message)
+                  {:type :vis/human-input-invalid-answer :request-id request-id :reason message})))
+
+(defn- checked-field
+  "`field` once it satisfies the declared contract, else a refusal naming it. The
+   parsing below refuses bad INPUT key by key; this refuses a normalized form no
+   surface could paint, whoever built it."
+  [field-id field]
+  (if-let [why (hi-spec/field-error field)]
+    (invalid-field! field-id why)
+    field))
+
+(defn- checked-request
+  [request]
+  (if-let [why (hi-spec/request-error request)]
+    (invalid-request! why)
+    request))
+
+(defn- checked-answer
+  "The answer a blocked extension is about to receive. A caller reads
+   `:is-submitted`, `:reason` and `:values` without asking whether they are
+   there, so an answer missing one never leaves the engine."
+  [request-id answer]
+  (if-let [why (hi-spec/answer-error answer)]
+    (invalid-answer! request-id why)
+    answer))
 
 (def ^:private field-keys
   "Every key a VALUE field spec may carry, in its canonical snake_case spelling.
@@ -323,11 +340,6 @@
     (when-not (pos? (double step)) (invalid-field! field-id ":step must be positive"))
     {:min lo :max hi :step step}))
 
-(def ^:private otp-defaults
-  "Six digits is what a one-time code IS on almost every service that sends one,
-   and twelve is where a row of boxes stops fitting a narrow terminal band."
-  {:length 6 :ceiling 12})
-
 (defn- normalize-otp
   "How many digits the boxes hold. `:min_length` defaults to `:max_length`, so a
    plain `otp` field is the fixed six-digit code everybody means; giving both
@@ -337,32 +349,27 @@
   (let
     [hi
      (or (normalize-length field-id ":max_length" (pick field "max_length" :max-length))
-         (long (:length otp-defaults)))
+         (long (:length hi-spec/otp-defaults)))
 
      lo
      (or (normalize-length field-id ":min_length" (pick field "min_length" :min-length)) hi)]
 
     (when (> (long lo) (long hi))
       (invalid-field! field-id ":max_length must be at least :min_length"))
-    (when (> (long hi) (long (:ceiling otp-defaults)))
-      (invalid-field! field-id
-                      (str ":max_length must be at most " (:ceiling otp-defaults) " digits")))
+    (when (> (long hi) (long (:ceiling hi-spec/otp-defaults)))
+      (invalid-field!
+        field-id
+        (str ":max_length must be at most " (:ceiling hi-spec/otp-defaults) " digits")))
     {:min-length lo :max-length hi}))
-
-(def ^:private group-directions
-  "Wire direction name -> internal keyword. A group IS a flexbox line: `column`
-   stacks its children (what a form has always done, so it is the default) and
-   `row` lays them out side by side across the dialog's width."
-  {"column" :column "row" :row})
 
 (defn- normalize-direction
   [field-id value]
   (let [name' (str/lower-case (or (trimmed value) "column"))]
-    (or (get group-directions name')
+    (or (get hi-spec/group-directions name')
         (invalid-field! field-id
                         (str "unknown :direction " (pr-str name')
-                             " — expected one of " (str/join ", "
-                                                             (sort (keys group-directions))))))))
+                             " — expected one of "
+                             (str/join ", " (sort (keys hi-spec/group-directions))))))))
 
 (declare coerce-value normalize-group)
 
@@ -416,83 +423,87 @@
      (when-not (or field-id is-group) (invalid-field! nil "field needs a non-blank :name"))
 
      field-type
-     (get field-types (str/lower-case type-name))
+     (get hi-spec/field-types (str/lower-case type-name))
 
      _
      (when-not field-type
        (invalid-field! field-id
                        (str "unknown type " (pr-str type-name)
-                            " — expected one of " (str/join ", " (sort (keys field-types))))))]
+                            " — expected one of " (str/join ", "
+                                                            (sort (keys hi-spec/field-types))))))]
 
-    (if is-group
-      (normalize-group field-id field)
-      (let
-        [description
-         (trimmed (pick field "description" :description "help" :help))
+    (checked-field
+      field-id
+      (if is-group
+        (normalize-group field-id field)
+        (let
+          [description
+           (trimmed (pick field "description" :description "help" :help))
 
-         ;; An `:otp` derives its own lengths from the same two keys — how many
-         ;; boxes it draws IS its length — so it must not be length-checked twice.
-         min-length
-         (when-not (= :otp field-type)
-           (normalize-length field-id ":min_length" (pick field "min_length" :min-length)))
-
-         max-length
-         (when-not (= :otp field-type)
-           (normalize-length field-id ":max_length" (pick field "max_length" :max-length)))
-
-         validate
-         (validation/normalize-validators (pick field "validate" :validate)
-                                          #(invalid-field! field-id %))
-
-         spec
-         (cond->
-           {:id field-id
-            ;; The same string under both keys: `:name` is the contract a spec
-            ;; writes, `:id` is what every surface has always keyed rows and errors
-            ;; by. One field identity, two spellings, no drift between them.
-            :name field-id
-            :type field-type
-            :label (or (trimmed (pick field "label" :label)) field-id)
-            ;; Optional unless the caller says otherwise — the same default every
-            ;; form API has, so a spec never blocks a human on a field the
-            ;; extension did not actually need.
-            :is-required
-            (normalize-bool field-id ":is-required" (pick field "is_required" :is-required) false)
-            :is-secret (contains? secret-types field-type)}
-           description
-           (assoc :description description)
-
-           (trimmed (pick field "placeholder" :placeholder))
-           (assoc :placeholder (trimmed (pick field "placeholder" :placeholder)))
-
-           (contains? choice-types field-type)
-           (assoc :options (normalize-options field-id field-type (pick field "options" :options)))
-
-           (= :range field-type)
-           (merge (normalize-range field-id field))
-
-           (= :otp field-type)
-           (merge (normalize-otp field-id field))
-
+           ;; An `:otp` derives its own lengths from the same two keys — how many
+           ;; boxes it draws IS its length — so it must not be length-checked twice.
            min-length
-           (assoc :min-length min-length)
+           (when-not (= :otp field-type)
+             (normalize-length field-id ":min_length" (pick field "min_length" :min-length)))
 
            max-length
-           (assoc :max-length max-length)
+           (when-not (= :otp field-type)
+             (normalize-length field-id ":max_length" (pick field "max_length" :max-length)))
 
-           (seq validate)
-           (assoc :validate validate))
+           validate
+           (validation/normalize-validators (pick field "validate" :validate)
+                                            #(invalid-field! field-id %))
 
-         raw-default
-         (pick field "default" :default)
+           spec
+           (cond->
+             {:id field-id
+              ;; The same string under both keys: `:name` is the contract a spec
+              ;; writes, `:id` is what every surface has always keyed rows and errors
+              ;; by. One field identity, two spellings, no drift between them.
+              :name field-id
+              :type field-type
+              :label (or (trimmed (pick field "label" :label)) field-id)
+              ;; Optional unless the caller says otherwise — the same default every
+              ;; form API has, so a spec never blocks a human on a field the
+              ;; extension did not actually need.
+              :is-required
+              (normalize-bool field-id ":is-required" (pick field "is_required" :is-required) false)
+              :is-secret (contains? hi-spec/secret-types field-type)}
+             description
+             (assoc :description description)
 
-         [status default]
-         (coerce-value (assoc spec :is-required false) raw-default)]
+             (trimmed (pick field "placeholder" :placeholder))
+             (assoc :placeholder (trimmed (pick field "placeholder" :placeholder)))
 
-        (when (= :error status) (invalid-field! field-id (str "invalid :default — " default)))
-        (cond-> spec
-          (some? default)
-          (assoc :default default))))))
+             (contains? hi-spec/choice-types field-type)
+             (assoc :options
+               (normalize-options field-id field-type (pick field "options" :options)))
+
+             (= :range field-type)
+             (merge (normalize-range field-id field))
+
+             (= :otp field-type)
+             (merge (normalize-otp field-id field))
+
+             min-length
+             (assoc :min-length min-length)
+
+             max-length
+             (assoc :max-length max-length)
+
+             (seq validate)
+             (assoc :validate validate))
+
+           raw-default
+           (pick field "default" :default)
+
+           [status default]
+           (coerce-value (assoc spec :is-required false) raw-default)]
+
+          (when (= :error status) (invalid-field! field-id (str "invalid :default — " default)))
+          (cond-> spec
+            (some? default)
+            (assoc :default default)))))))
 
 (defn- normalize-group
   "Validate a `group` — the layout node — and return its internal form.
@@ -674,24 +685,25 @@
      session-id
      (or (trimmed (pick request "session_id" :session-id)) (ambient-session-id))]
 
-    (cond->
-      {:id (or (trimmed (pick request "id" :id)) (str (random-uuid)))
-       :title title
-       :fields fields
-       :submit-label (or (trimmed (pick request "submit_label" :submit-label)) "Submit")
-       :cancel-label (or (trimmed (pick request "cancel_label" :cancel-label)) "Cancel")
-       :is-cancellable
-       (normalize-bool nil ":is-cancellable" (pick request "is_cancellable" :is-cancellable) true)
-       :timeout-ms (normalize-timeout request)
-       :channel-ids (normalize-channel-ids request)}
-      session-id
-      (assoc :session-id session-id)
+    (checked-request
+      (cond->
+        {:id (or (trimmed (pick request "id" :id)) (str (random-uuid)))
+         :title title
+         :fields fields
+         :submit-label (or (trimmed (pick request "submit_label" :submit-label)) "Submit")
+         :cancel-label (or (trimmed (pick request "cancel_label" :cancel-label)) "Cancel")
+         :is-cancellable
+         (normalize-bool nil ":is-cancellable" (pick request "is_cancellable" :is-cancellable) true)
+         :timeout-ms (normalize-timeout request)
+         :channel-ids (normalize-channel-ids request)}
+        session-id
+        (assoc :session-id session-id)
 
-      (trimmed (pick request "description" :description))
-      (assoc :description (trimmed (pick request "description" :description)))
+        (trimmed (pick request "description" :description))
+        (assoc :description (trimmed (pick request "description" :description)))
 
-      (trimmed (pick request "source" :source))
-      (assoc :source (trimmed (pick request "source" :source))))))
+        (trimmed (pick request "source" :source))
+        (assoc :source (trimmed (pick request "source" :source)))))))
 
 ;; =============================================================================
 ;; Value coercion — one implementation for defaults and submissions
@@ -805,10 +817,10 @@
   [{:keys [is-required min-length max-length]} value]
   (let
     [lo
-     (long (or min-length (:length otp-defaults)))
+     (long (or min-length (:length hi-spec/otp-defaults)))
 
      hi
-     (long (or max-length (:length otp-defaults)))
+     (long (or max-length (:length hi-spec/otp-defaults)))
 
      digits
      (cond (nil? value) ""
@@ -829,7 +841,7 @@
   "Coerce and validate one raw `value` against normalized `field`. Returns
    `[:ok coerced]` or `[:error message]`."
   [{:keys [type] :as field} value]
-  (cond (contains? text-types type) (coerce-text field value)
+  (cond (contains? hi-spec/text-types type) (coerce-text field value)
         (= :select type) (coerce-select field value)
         (= :multiselect type) (coerce-multiselect field value)
         (= :checkbox type) (coerce-checkbox field value)
@@ -991,6 +1003,9 @@
    the removed entry, or nil when the request already settled (a late submit
    racing a timeout, a double cancel)."
   [request-id result]
+  ;; The one funnel every answer passes through — submitted, cancelled, timed
+  ;; out, undeliverable — so the contract is checked once, here.
+  (checked-answer request-id result)
   (let [[old _] (swap-vals! pending dissoc request-id)]
     (when-let [entry (get old request-id)]
       (deliver (:promise entry) result)

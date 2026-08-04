@@ -1,0 +1,347 @@
+(ns com.blockether.vis.internal.human-input.spec
+  "The executable contract for typed human input: `clojure.spec` over the
+   NORMALIZED form of a request, plus the closed vocabulary that form is built
+   from.
+
+   Two layers, one contract. `com.blockether.vis.internal.human-input` PARSES —
+   an extension (or a Python object arriving as JSON) writes `is_required` or
+   `:is-required`, `\"otp\"` or `:otp`, and the normalizer turns whatever came in
+   into one internal shape, naming the key its author has to fix when it cannot.
+   This namespace DECLARES that shape: every map is CLOSED, `:name` and `:id`
+   are the same identity, a `:select` really carries options, an `:otp` really
+   fits its boxes, and a `:default` really is a value of the field's own type.
+
+   Both are needed. A parser that only refuses bad INPUT still lets a bug
+   INSIDE the engine hand a surface a field with no `:label`, or hand a blocked
+   extension an answer with no `:request-id` — and that failure then surfaces as
+   a broken dialog three namespaces away from its cause. The specs are checked
+   once per request and once per answer, never per keystroke, so the guard sits
+   where it costs nothing.
+
+   The functions here only EXPLAIN ([[field-error]], [[request-error]],
+   [[answer-error]] return nil or a one-line reason); the refusal itself stays
+   in `human-input`, which owns the error envelope every surface already
+   handles."
+  (:require [clojure.spec.alpha :as s]
+            [clojure.string :as str]))
+
+;; ---------------------------------------------------------------------------
+;; The closed vocabulary
+;; ---------------------------------------------------------------------------
+
+(def field-types
+  "Wire type name -> internal field type. A CLOSED set: an unknown name is
+   refused with these listed, never minted into a keyword the surfaces cannot
+   paint."
+  {"plaintext" :plaintext
+   "password" :password
+   "multiline" :multiline
+   "select" :select
+   "multiselect" :multiselect
+   "checkbox" :checkbox
+   "range" :range
+   "otp" :otp
+   ;; The one type that holds no answer: a layout node whose children run down
+   ;; the dialog or across it. It nests, so a row of stacks is a row of groups.
+   "group" :group})
+
+(def text-types "Field types whose answer is typed text." #{:plaintext :password :multiline})
+
+(def choice-types
+  "Field types answered by picking from `:options` — exclusive, then inclusive."
+  #{:select :multiselect})
+
+(def secret-types
+  "Field types whose value must never reach a log, an event or a transcript."
+  #{:password})
+
+(def group-directions
+  "Wire direction name -> internal group direction."
+  {"column" :column "row" :row})
+
+(def otp-defaults
+  "How many boxes a one-time code gets by default, and the most it may ask for:
+   past a dozen the boxes no longer fit a narrow dialog."
+  {:length 6 :ceiling 12})
+
+;; ---------------------------------------------------------------------------
+;; Predicates
+;; ---------------------------------------------------------------------------
+
+(defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
+
+(def ^:private value-keys
+  "Every key an answerable field may carry, whatever its type."
+  #{:id :name :type :label :description :placeholder :is-required :is-secret :default :validate})
+
+(def ^:private text-keys (into value-keys [:min-length :max-length]))
+(def ^:private choice-keys (conj value-keys :options))
+(def ^:private range-keys (into value-keys [:min :max :step]))
+(def ^:private group-keys #{:id :name :type :label :description :direction :fields})
+
+(def ^:private request-keys
+  #{:id :title :description :source :fields :submit-label :cancel-label :is-cancellable :timeout-ms
+    :channel-ids :session-id})
+
+(def ^:private answer-keys #{:is-submitted :reason :request-id :values})
+
+(defn- closed?
+  "True when `m` carries no key outside `allowed`. The internal form is closed
+   in both directions: a wire key that survived normalization is a normalizer
+   bug, not a harmless extra, and a surface reading the map has one shape to
+   paint."
+  [allowed m]
+  (and (map? m) (every? allowed (keys m))))
+
+(defn- one-identity?
+  "`:name` is `:id` under its legacy spelling. Two spellings of one identity
+   have to agree, or a value comes back keyed by the name the caller did not
+   use."
+  [{:keys [id name]}]
+  (= id name))
+
+(defn- secret-marked?
+  "`:is-secret` is derived from the type, never guessed per field: a password is
+   secret and nothing else is silently promoted or demoted."
+  [{:keys [type is-secret]}]
+  (= is-secret (contains? secret-types type)))
+
+(defn- ordered-lengths?
+  [{:keys [min-length max-length]}]
+  (or (nil? min-length) (nil? max-length) (<= (long min-length) (long max-length))))
+
+(defn- otp-fits-boxes? [{:keys [max-length]}] (<= (long max-length) (long (:ceiling otp-defaults))))
+
+(defn- ascending-bounds? [{:keys [min max]}] (< (double min) (double max)))
+
+(defn- positive-step?
+  [{:keys [min max step]}]
+  (and (pos? (double step)) (<= (double step) (- (double max) (double min)))))
+
+(defn- option-values [field] (set (map :value (:options field))))
+
+(defn- non-empty?
+  "A collection with something in it. Spelled out rather than left to
+   `:min-count`, whose expansion counts in boxed math."
+  [coll]
+  (boolean (seq coll)))
+
+(defn- all-distinct? [coll] (apply distinct? coll))
+
+(defn- default-in-domain?
+  "A `:default` is a value of the field's OWN type, already coerced. This is the
+   invariant a surface leans on when it paints a dialog before the human has
+   touched it: the slider's knob starts inside its track, the picker starts on
+   an option that exists, and a checkbox starts on a boolean rather than on the
+   string `\"false\"`."
+  [{:keys [type default] :as field}]
+  (let
+    [{lo :min hi :max :keys [min-length max-length]}
+     field
+
+     chosen
+     (option-values field)]
+
+    (cond (nil? default) true
+          (contains? text-types type) (string? default)
+          (= :select type) (contains? chosen default)
+          (= :multiselect type)
+          (and (vector? default) (every? chosen default) (= (count default) (count (set default))))
+          (= :checkbox type) (boolean? default)
+          (= :range type) (and (number? default) (<= (double lo) (double default) (double hi)))
+          (= :otp type) (and (string? default)
+                             (some? (re-matches #"\d+" default))
+                             (<= (long min-length) (count default) (long max-length)))
+          :else false)))
+
+;; ---------------------------------------------------------------------------
+;; A field
+;; ---------------------------------------------------------------------------
+
+(s/def ::id non-blank-string?)
+(s/def ::name non-blank-string?)
+(s/def ::type (set (vals field-types)))
+(s/def ::label non-blank-string?)
+(s/def ::description non-blank-string?)
+(s/def ::placeholder non-blank-string?)
+(s/def ::is-required boolean?)
+(s/def ::is-secret boolean?)
+(s/def ::default some?)
+(s/def ::validate (s/and (s/coll-of ifn? :kind vector?) non-empty?))
+(s/def ::min-length pos-int?)
+(s/def ::max-length pos-int?)
+(s/def ::min number?)
+(s/def ::max number?)
+(s/def ::step number?)
+(s/def ::direction (set (vals group-directions)))
+(s/def ::value non-blank-string?)
+
+(s/def ::option (s/and #(closed? #{:value :label} %) (s/keys :req-un [::value ::label])))
+
+(s/def ::options
+  (s/and (s/coll-of ::option :kind vector?)
+         non-empty?
+         ;; Two options sharing a value make one of them unpickable: whichever
+         ;; the human chose, the answer names the first.
+         #(apply distinct? (map :value %))))
+
+(s/def ::value-field
+  (s/and (s/keys :req-un [::id ::name ::type ::label ::is-required ::is-secret]
+                 :opt-un [::description ::placeholder ::default ::validate])
+         one-identity?
+         secret-marked?
+         default-in-domain?))
+
+(def ^:private text-field
+  (s/and #(closed? text-keys %)
+         ::value-field
+         (s/keys :opt-un [::min-length ::max-length])
+         ordered-lengths?))
+
+(def ^:private choice-field
+  (s/and #(closed? choice-keys %)
+         ::value-field
+         (s/keys :req-un [::options])))
+
+(def ^:private checkbox-field (s/and #(closed? value-keys %) ::value-field))
+
+(def ^:private range-field
+  (s/and #(closed? range-keys %)
+         ::value-field
+         (s/keys :req-un [::min ::max ::step])
+         ascending-bounds?
+         positive-step?))
+
+(def ^:private otp-field
+  (s/and #(closed? text-keys %)
+         ::value-field
+         ;; A code's width is not optional: the boxes are painted from it.
+         (s/keys :req-un [::min-length ::max-length])
+         ordered-lengths?
+         otp-fits-boxes?))
+
+(def ^:private group-field
+  (s/and #(closed? group-keys %)
+         (s/keys :req-un [::id ::name ::type ::direction ::fields] :opt-un [::label ::description])
+         one-identity?))
+
+(defmulti ^:private field-form "The form one field type must take once normalized." :type)
+
+(defmethod field-form :plaintext [_] text-field)
+(defmethod field-form :password [_] text-field)
+(defmethod field-form :multiline [_] text-field)
+(defmethod field-form :select [_] choice-field)
+(defmethod field-form :multiselect [_] choice-field)
+(defmethod field-form :checkbox [_] checkbox-field)
+(defmethod field-form :range [_] range-field)
+(defmethod field-form :otp [_] otp-field)
+(defmethod field-form :group [_] group-field)
+
+(s/def ::field (s/multi-spec field-form :type))
+
+(s/def ::fields (s/and (s/coll-of ::field :kind vector?) non-empty?))
+
+;; ---------------------------------------------------------------------------
+;; A request
+;; ---------------------------------------------------------------------------
+
+(s/def ::title non-blank-string?)
+(s/def ::source non-blank-string?)
+(s/def ::session-id non-blank-string?)
+(s/def ::submit-label non-blank-string?)
+(s/def ::cancel-label non-blank-string?)
+(s/def ::is-cancellable boolean?)
+(s/def ::timeout-ms nat-int?)
+
+(s/def ::channel-ids
+  ;; One id twice would open the same dialog twice and answer it once.
+  (s/and (s/coll-of keyword? :kind vector?)
+         non-empty?
+         all-distinct?))
+
+(defn- field-names
+  [fields]
+  (mapcat (fn [field]
+            (cons (:name field) (field-names (:fields field))))
+          fields))
+
+(defn- distinct-names?
+  "Names are the keys of the answer map, across groups too: a collision loses a
+   value silently."
+  [{:keys [fields]}]
+  (let [names (field-names fields)]
+    (= (count names) (count (set names)))))
+
+(s/def ::request
+  (s/and #(closed? request-keys %)
+         (s/keys :req-un [::id ::title ::fields ::submit-label ::cancel-label ::is-cancellable
+                          ::timeout-ms ::channel-ids]
+                 :opt-un [::description ::source ::session-id])
+         distinct-names?))
+
+;; ---------------------------------------------------------------------------
+;; An answer
+;; ---------------------------------------------------------------------------
+
+(s/def ::is-submitted boolean?)
+(s/def ::reason non-blank-string?)
+(s/def ::request-id non-blank-string?)
+
+(s/def ::answer-value
+  (s/nilable (s/or :text string?
+                   :flag boolean?
+                   :number number?
+                   :choices (s/coll-of string? :kind vector?))))
+
+(s/def ::values (s/map-of non-blank-string? ::answer-value))
+
+(defn- values-iff-submitted?
+  "`:values` is the proof the human answered. A cancelled or timed-out request
+   carries none, so a caller cannot read a half-filled form as a submission."
+  [{:keys [is-submitted values]}]
+  (if is-submitted (map? values) (nil? values)))
+
+(s/def ::answer
+  (s/and #(closed? answer-keys %)
+         (s/keys :req-un [::is-submitted ::reason ::request-id] :opt-un [::values])
+         values-iff-submitted?))
+
+;; ---------------------------------------------------------------------------
+;; Explaining a violation
+;; ---------------------------------------------------------------------------
+
+(defn- brief
+  [x]
+  (let [text (pr-str x)]
+    (if (> (count text) 88) (str (subs text 0 88) "…") text)))
+
+(defn- problem-str
+  [{:keys [in val pred]}]
+  (str (when (seq in) (str (str/join " -> " (map brief in)) ": "))
+       (brief val)
+       " fails "
+       (brief pred)))
+
+(defn- error
+  "nil when `x` satisfies `spec`, else a one-line reason naming the first
+   couple of problems — short enough to ride in an error message a human reads
+   in a dialog."
+  [spec x]
+  (when-let [problems (::s/problems (s/explain-data spec x))]
+    (str/join "; " (map problem-str (take 2 problems)))))
+
+(defn field-error
+  "nil when `field` is a legal normalized field, else why it is not."
+  [field]
+  (error ::field field))
+
+(defn request-error
+  "nil when `request` is a legal normalized request, else why it is not."
+  [request]
+  (error ::request request))
+
+(defn answer-error
+  "nil when `answer` is a legal answer to hand a blocked extension, else why it
+   is not."
+  [answer]
+  (error ::answer answer))

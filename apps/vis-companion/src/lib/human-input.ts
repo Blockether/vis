@@ -22,7 +22,7 @@ import type { SseEvent } from './types';
 export const HUMAN_INPUT_REQUEST_EVENT = 'human_input.request';
 export const HUMAN_INPUT_CLOSE_EVENT = 'human_input.close';
 
-/** The closed field set the engine accepts (`human-input/field-types`). */
+/** The closed field set the engine accepts (`human-input.spec/field-types`). */
 export const HUMAN_INPUT_FIELD_TYPES = [
   'plaintext',
   'password',

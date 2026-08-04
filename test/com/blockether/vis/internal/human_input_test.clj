@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as ce]
             [com.blockether.vis.internal.human-input :as hi]
+            [com.blockether.vis.internal.human-input.spec :as hs]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [lazytest.core :refer [defdescribe expect it throws?]]
             [taoensso.telemere :as tel]))
@@ -1086,3 +1087,113 @@
         (expect (= "Target" (:label group)))
         (expect (not (contains? (first (:fields group)) :validate)))
         (expect (not (contains? (first (:fields group)) :is-secret))))))
+
+(defn- refusal-type
+  "The `:type` of the `ex-info` a refusal carries, or nil when `thunk` wrongly
+   went through."
+  [thunk]
+  (try (thunk) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+
+;; The declared contract. `human-input` PARSES — either spelling of every key,
+;; a type name looked up in a closed vocabulary — and `human-input.spec`
+;; DECLARES what parsing has to produce. These tests hold the two together: the
+;; vocabulary has one home, real normalized output satisfies the spec, and a
+;; form no surface could paint is refused even when the engine itself built it.
+(defdescribe
+  declared-contract-test
+  (it "every type a request can carry normalizes into the declared form"
+      (let
+        [request (hi/normalize-request
+                   {:title "Deploy"
+                    :description "everything at once"
+                    :source "test"
+                    :fields [{:id "name" :placeholder "who" :default "ada"}
+                             {:name "pw" :type "password"}
+                             {:name "notes" :type "multiline" :min-length 2 :max-length 40}
+                             {:name "env" :type "select" :options ["dev" "prod"] :default "prod"}
+                             {:name "tags"
+                              :type "multiselect"
+                              :options [{:value "a" :label "A"} {:value "b" :label "B"}]
+                              :default ["a"]} {:name "confirm" :type "checkbox" :default true}
+                             {:name "pct" :type "range" :min 0 :max 100 :step 5 :default 25}
+                             {:name "code" :type "otp"}
+                             {:name "grp"
+                              :type "group"
+                              :direction "row"
+                              :fields [{:name "a"} {:name "b" :type "checkbox"}]}]
+                    :timeout-ms 0})]
+        (expect (nil? (hs/request-error request)))
+        (expect (every? #(nil? (hs/field-error %)) (:fields request)))
+        ;; A group is a field too, and its children are part of the same
+        ;; contract: a nested field with no `:label` breaks the same painter.
+        (expect (every? #(nil? (hs/field-error %)) (:fields (last (:fields request)))))))
+  (it "a request spelled the Python way lands in the very same form"
+      (let
+        [request (hi/normalize-request {"title" "Deploy"
+                                        "fields"
+                                        [{"name" "env" "type" "select" "options" ["dev" "prod"]}]
+                                        "timeout_ms" 1000})]
+        (expect (nil? (hs/request-error request)))))
+  (it "the closed vocabulary has ONE home"
+      ;; Two copies of the type table drift, and the copy the normalizer reads
+      ;; is the one that decides what a surface is asked to paint.
+      (expect (nil? (ns-resolve 'com.blockether.vis.internal.human-input 'field-types)))
+      (expect (= #{:plaintext :password :multiline :select :multiselect :checkbox :range :otp
+                   :group}
+                 (set (vals hs/field-types))))
+      (expect (str/includes? (refusal #(hi/normalize-field {:name "a" :type "slider"}))
+                             "multiselect")))
+  (it "refuses a field the engine itself mis-built"
+      ;; Nothing an extension writes reaches these: they are what a bug in the
+      ;; normalizer would hand a dialog — a picker with no options, one identity
+      ;; whose two spellings disagree, a password no longer marked secret, a
+      ;; slider whose knob starts outside its own track.
+      (let
+        [legal {:id "env"
+                :name "env"
+                :type :select
+                :label "Env"
+                :is-required false
+                :is-secret false
+                :options [{:value "dev" :label "dev"}]}]
+        (expect (nil? (hs/field-error legal)))
+        (expect (str/includes? (refusal #(#'hi/checked-field "env" (dissoc legal :options)))
+                               "options"))
+        (expect (= :vis/human-input-invalid-field
+                   (refusal-type #(#'hi/checked-field "env" (assoc legal :name "environment")))))
+        (expect (some? (hs/field-error (assoc legal :is-secret true))))
+        (expect (some? (hs/field-error (-> legal
+                                           (assoc :type :range
+                                                  :min 0
+                                                  :max 10
+                                                  :step 1)
+                                           (dissoc :options)
+                                           (assoc :default 50)))))
+        ;; Closed in both directions: a wire key that survived normalization is
+        ;; a bug, not a harmless extra.
+        (expect (some? (hs/field-error (assoc legal "is_required" false))))))
+  (it "refuses a request whose chrome went missing"
+      (let [request (hi/normalize-request {:title "t" :fields [{:id "a"}]})]
+        (expect (nil? (hs/request-error request)))
+        (expect (str/includes? (refusal #(#'hi/checked-request (dissoc request :submit-label)))
+                               "submit-label"))
+        (expect (= :vis/human-input-invalid-request
+                   (refusal-type #(#'hi/checked-request (assoc request :channel-ids [])))))))
+  (it "checks every answer on its way out, whatever settled it"
+      ;; `settle!` is the one funnel — submitted, cancelled, timed out,
+      ;; undeliverable — so an answer missing `:request-id`, or claiming a
+      ;; submission it has no `:values` for, never reaches the parked thread.
+      (expect (= :vis/human-input-invalid-answer
+                 (refusal-type #(#'hi/checked-answer
+                                  "r1"
+                                  {:is-submitted true :reason "submitted" :request-id "r1"}))))
+      (expect (= :vis/human-input-invalid-answer
+                 (refusal-type
+                   #(#'hi/checked-answer "r1" {:is-submitted false :reason "cancelled"}))))
+      (let
+        [answer (hi/request! {:title "unmounted"
+                              :fields [{:id "a"}]
+                              :channel-ids [(fresh-channel)]
+                              :timeout-ms 1000})]
+        (expect (= "undeliverable" (:reason answer)))
+        (expect (nil? (hs/answer-error answer))))))

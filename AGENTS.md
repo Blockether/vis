@@ -69,6 +69,13 @@ Read only the section relevant to the change. Keep this file for durable, repo-w
 - Use `wire/->wire` and `wire/json-str`, never hand-encoded keyword keys.
 - Encoding is total: non-string keys, NaN, and infinities must be rendered by `wire/->wire`/`persistance/->json` before transport. A transport throw after `append-event!` poisons SSE and `/poll` replay for that session.
 
+## Human input (HITL) contract
+
+- Two layers, one contract, no schema library beyond `clojure.spec.alpha`. `internal/human_input.clj` PARSES (either spelling of every key, a type name looked up in a CLOSED vocabulary, a coerced value per type); `internal/human_input/spec.clj` DECLARES the NORMALIZED form and is where the vocabulary lives — `field-types`, `text-types`, `choice-types`, `secret-types`, `group-directions`, `otp-defaults`. Never keep a second copy of that table beside the parser.
+- The spec is checked at three seams and nowhere else: `checked-field` per normalized field, `checked-request` on the assembled request, `checked-answer` inside `settle!` — the ONE funnel every answer (submitted, cancelled, timed out, undeliverable) passes through. Once per request, never per keystroke.
+- The spec ns only EXPLAINS (`field-error`/`request-error`/`answer-error` → nil or a one-line reason); `human-input` owns the throw, so `:vis/human-input-invalid-field|-invalid-request|-invalid-answer` envelopes stay in one place. Views are NOT specced: `request->view` strips `:is-secret` and `:validate`.
+- Every map is CLOSED, `:id` and `:name` are one identity that must agree, `:is-secret` is derived from the type, and a `:default` is already a coerced value of the field's own type — a `:range` knob inside its track, a `:select` on an option that exists. Measured quirks worth keeping: a text field always ends up with `:default ""`, a multiselect with `[]`, a checkbox with `false`, a range with `:min`.
+
 ## Feature toggles
 
 Use snake_case string IDs. Hydrate from merged config so `/reload` respects project overrides; test registry, coercion, and wire round-trips.
