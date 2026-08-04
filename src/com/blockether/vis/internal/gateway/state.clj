@@ -1994,7 +1994,9 @@
   (let [meaningful? (or (not (contains? chunk :delta)) (seq (:delta chunk)) (:done? chunk))]
     (cond-> (assoc state :phase (:phase chunk))
       meaningful?
-      (assoc :last-ms now))))
+      (assoc :last-ms
+        now :produced?
+        true))))
 
 
 (defonce ^:private turn-terminal-claims
@@ -2079,23 +2081,44 @@
    turn nobody is running and its queued backlog never drains."
   30000)
 
+(def ^:private SILENT_CANCEL_TERMINAL_GRACE_MS
+  "Grace for a cancelled turn whose engine never produced ONE chunk.
+
+   A user stop lands empty content either way, so a turn that never streamed has
+   nothing for its worker to flush and no open block to close. All the full grace
+   buys such a turn is half a minute of \"Vis is cancelling\" on screen after the
+   user already pressed stop — the observed wedge: a turn that sat 3m47s without
+   a single iteration, then took the whole 30s backstop to settle. The terminal
+   claim still guarantees exactly one landing if the worker thaws mid-grace."
+  2000)
+
+(defn- cancel-terminal-grace-ms
+  "How long THIS cancelled turn's worker may keep its own terminal: the full
+   [[CANCEL_TERMINAL_GRACE_MS]] once it has produced output, the much shorter
+   [[SILENT_CANCEL_TERMINAL_GRACE_MS]] while it has produced none."
+  ^long [stall]
+  (if (:produced? (some-> stall
+                          deref))
+    (long CANCEL_TERMINAL_GRACE_MS)
+    (long SILENT_CANCEL_TERMINAL_GRACE_MS)))
+
 (defn- start-cancel-terminal-backstop!
   "Daemon backstop for ONE cancelled turn: if `tid` is still the session's current
-   turn and nobody has landed its terminal `CANCEL_TERMINAL_GRACE_MS` after the
-   cancel, land `turn.cancelled` here and drain the queue.
+   turn and nobody has landed its terminal `grace-ms` after the cancel, land
+   `turn.cancelled` here and drain the queue.
 
    This is the last line of defence for a wedged worker: the stall watchdog only
    fires `cancel!`, and a thread parked in uninterruptible native code (or any
    post-engine cleanup) ignores it forever."
-  [sid tid cancel-token land!]
+  [sid tid cancel-token grace-ms land!]
   (doto (Thread. ^Runnable
                  (fn []
-                   (try (Thread/sleep (long CANCEL_TERMINAL_GRACE_MS))
+                   (try (Thread/sleep (long grace-ms))
                         (when (= tid (:current-turn (get @registry sid)))
                           (tel/log!
                             :warn
                             ["gateway: cancelled turn never landed a terminal — backstopping" tid
-                             (str CANCEL_TERMINAL_GRACE_MS "ms after cancel")])
+                             (str grace-ms "ms after cancel")])
                           (land! sid tid cancel-token))
                         (catch InterruptedException _ nil)
                         (catch Throwable _ nil)))
@@ -2670,7 +2693,11 @@
             ;; gets there. `cancel!` only fires a token; a worker parked in
             ;; uninterruptible code (native GIL, stuck cleanup) ignores it and the
             ;; session stays pinned to a turn nobody runs, with its backlog held.
-            (start-cancel-terminal-backstop! sid tid cancel-token cancel-waiting-turn!))))
+            (start-cancel-terminal-backstop! sid
+                                             tid
+                                             cancel-token
+                                             (cancel-terminal-grace-ms stall)
+                                             cancel-waiting-turn!))))
       fut)
     (catch Throwable t
       (tel/log! :error ["gateway: turn launch failed" tid (ex-message t)])
@@ -3662,33 +3689,6 @@
         :not-queued
         {:error :not-queued :status status}))))
 
-(defn- persist-cancel-stamp!
-  "Durably mark `sid`'s in-flight ENGINE turn row `:cancelled` the moment a
-   user cancel fires. The engine's own unwind persists the full cancel record
-   when it survives — but the documented quit-during-cancel path (second
-   Ctrl+C fires the token and exits immediately) can kill the JVM first,
-   leaving the row `:running`; startup reconciliation would otherwise leave a
-   phantom running turn. Stamping BEFORE
-   the token fires makes the cancel durable even when nothing else ever gets
-   to run. The engine's later terminal write (same row) simply overwrites
-   this with the full record. Best-effort: cancellation must never block on
-   persistence, so every failure is logged and swallowed."
-  [sid]
-  (try (let [db (lp/db-info)]
-         (doseq
-           [{:keys [id status iteration-count duration-ms]} (persistance/db-list-session-turns db
-                                                                                               sid)
-            :when (= :running status)]
-
-           (persistance/db-update-session-turn! db
-                                                id
-                                                {:status :cancelled
-                                                 :prior-outcome :cancelled
-                                                 :iteration-count iteration-count
-                                                 :duration-ms duration-ms})))
-       (catch Throwable t
-         (tel/log! :warn ["gateway: cancel stamp persist failed" (str sid) (ex-message t)]))))
-
 (defn cancel-turn!
   "Fire the cancellation token of a running turn. Returns
    `{:status \"cancelling\"}` or `{:error ...}`.
@@ -3709,12 +3709,8 @@
                ;; them: "stop that, run THIS") from the pre-cancel backlog
                ;; (dropped) — see `drop-cancelled-backlog!`.
                (swap! registry assoc-in [sid :turns tid :cancelling_at] (System/currentTimeMillis))
-               ;; Interrupt live work before touching persistence. The durable stamp may
-               ;; scan/update the session DB and must never postpone cancellation itself.
-               ;; It still completes before this endpoint ACKs; only the ordering changes.
                (some-> (:cancel-token turn)
                        (cancellation/cancel! source))
-               (persist-cancel-stamp! sid)
                {:status "cancelling"})))))
 
 (defn cancel-current-turn!

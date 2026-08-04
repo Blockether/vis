@@ -1148,35 +1148,6 @@
              (expect (= "ornith" (get (state/get-turn sid "q1") "model")))
              (finally (swap! registry dissoc sid))))))
 
-(defdescribe cancel-interrupt-order-test
-             (it "interrupts live work before waiting on the durable cancel stamp"
-                 (let
-                   [sid
-                    (str "cancel-order-" (java.util.UUID/randomUUID))
-
-                    tid
-                    "running"
-
-                    registry
-                    @#'state/registry
-
-                    order
-                    (atom [])]
-
-                   (try (swap! registry assoc
-                          sid
-                          {:current-turn tid
-                           :turns {tid {:turn_id tid :status "running" :cancel-token :token}}})
-                        (with-redefs-fn {#'cancellation/cancel! (fn [token source]
-                                                                  (swap! order conj
-                                                                    [:cancel token source]))
-                                         #'state/persist-cancel-stamp!
-                                         (fn [persisted-sid]
-                                           (swap! order conj [:persist persisted-sid]))}
-                          #(expect (= {:status "cancelling"} (state/cancel-turn! sid tid))))
-                        (expect (= [[:cancel :token :client-cancel-turn] [:persist sid]] @order))
-                        (finally (swap! registry dissoc sid))))))
-
 (defdescribe turn-terminal-claim-per-run-test
              ;; A stalled turn is put back on the queue under its ORIGINAL id, so ONE tid
              ;; can run more than once. The terminal claim used to be a permanent
@@ -2748,15 +2719,13 @@
            (atom false)]
 
           (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
-               ;; await INSIDE with-redefs: the daemon thread reads the lowered
-               ;; grace before with-redefs reverts it (alter-var-root is global).
-               (with-redefs [state/CANCEL_TERMINAL_GRACE_MS 150]
-                 (backstop sid
-                           tid
-                           token
-                           (fn [& _]
-                             (reset! landed true)))
-                 (expect (true? (await-flag landed 4000))))
+               (backstop sid
+                         tid
+                         token
+                         150
+                         (fn [& _]
+                           (reset! landed true)))
+               (expect (true? (await-flag landed 4000)))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     (it "stays silent once the turn is no longer the session's current turn"
         (let
@@ -2772,14 +2741,28 @@
           (try
             ;; the worker DID land its terminal and the session moved on
             (swap! registry assoc sid {:next-seq 0 :current-turn "other"})
-            (with-redefs [state/CANCEL_TERMINAL_GRACE_MS 150]
-              (backstop sid
-                        "t1"
-                        token
-                        (fn [& _]
-                          (reset! landed true)))
-              (expect (false? (await-flag landed 1200))))
+            (backstop sid
+                      "t1" token
+                      150 (fn [& _]
+                            (reset! landed true)))
+            (expect (false? (await-flag landed 1200)))
             (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))))
+
+;; Regression: a cancelled turn whose engine had never produced a single chunk
+;; still got the full 30s worker grace, so "Vis is cancelling" stayed on screen
+;; for half a minute after the user pressed stop — observed on a turn that sat
+;; 3m47s with 0 iterations and then took the whole backstop to settle.
+(defdescribe
+  cancel-terminal-grace-test
+  "How long a cancelled worker keeps its own terminal depends on whether it ever
+   produced output: a silent turn has nothing to flush and no block to close."
+  (let [grace @#'state/cancel-terminal-grace-ms]
+    (it "gives a silent turn the short grace and a streaming one the full grace"
+        (expect (= (long @#'state/SILENT_CANCEL_TERMINAL_GRACE_MS) (grace nil)))
+        (expect (= (long @#'state/SILENT_CANCEL_TERMINAL_GRACE_MS)
+                   (grace (atom {:phase :provider}))))
+        (expect (= (long @#'state/CANCEL_TERMINAL_GRACE_MS)
+                   (grace (atom {:phase :provider :produced? true})))))))
 
 (defdescribe
   append-event-stamp-test
@@ -2926,44 +2909,85 @@
                (expect (contains? ids "gateway-own"))))
            (finally (reset! registry saved))))))
 
-(defdescribe cancel-source-test
-             ;; A cancelled turn surfaces everywhere as a bare interrupt, and the daemon
-             ;; used to record NOTHING about its origin: a stall force-cancel, the
-             ;; shutdown sweep and a user stop were indistinguishable in a post mortem.
-             ;; Each entry point now stamps itself on the turn's cancellation token.
-             (it
-               "stamps the origin of every cancel entry point on the token"
-               (let
-                 [sid
-                  (str "cancel-source-" (java.util.UUID/randomUUID))
+(defdescribe
+  cancel-source-test
+  ;; A cancelled turn surfaces everywhere as a bare interrupt, and the daemon
+  ;; used to record NOTHING about its origin: a stall force-cancel, the
+  ;; shutdown sweep and a user stop were indistinguishable in a post mortem.
+  ;; Each entry point now stamps itself on the turn's cancellation token.
+  (it "stamps the origin of every cancel entry point on the token"
+      (let
+        [sid
+         (str "cancel-source-" (java.util.UUID/randomUUID))
 
-                  token-a
-                  (cancellation/cancellation-token)
+         token-a
+         (cancellation/cancellation-token)
 
-                  token-b
-                  (cancellation/cancellation-token)
+         token-b
+         (cancellation/cancellation-token)
 
-                  token-c
-                  (cancellation/cancellation-token)
+         token-c
+         (cancellation/cancellation-token)
 
-                  registry
-                  (atom {sid {:current-turn "b"
-                              :turns {"a" {:turn_id "a" :status "running" :cancel-token token-a}
-                                      "b" {:turn_id "b" :status "running" :cancel-token token-b}
-                                      "c"
-                                      {:turn_id "c" :status "running" :cancel-token token-c}}}})]
+         registry
+         (atom {sid {:current-turn "b"
+                     :turns {"a" {:turn_id "a" :status "running" :cancel-token token-a}
+                             "b" {:turn_id "b" :status "running" :cancel-token token-b}
+                             "c" {:turn_id "c" :status "running" :cancel-token token-c}}}})]
 
-                 (with-redefs-fn {#'state/registry registry
-                                  #'state/persist-cancel-stamp! (fn [_]
-                                                                  nil)}
-                   (fn []
-                     (expect (= {:status "cancelling"} (state/cancel-turn! sid "a")))
-                     (expect (= :client-cancel-turn (cancellation/cancel-reason token-a)))
-                     (expect (= "b" (:turn_id (state/cancel-current-turn! sid))))
-                     (expect (= :client-cancel-current (cancellation/cancel-reason token-b)))
-                     (expect (= 3 (state/cancel-all-running!)))
-                     (expect (= :gateway-shutdown (cancellation/cancel-reason token-c)))
-                     ;; The shutdown sweep does not relabel the two already-attributed
-                     ;; cancels.
-                     (expect (= :client-cancel-turn (cancellation/cancel-reason token-a)))
-                     (expect (= :client-cancel-current (cancellation/cancel-reason token-b))))))))
+        (with-redefs-fn {#'state/registry registry}
+          (fn []
+            (expect (= {:status "cancelling"} (state/cancel-turn! sid "a")))
+            (expect (= :client-cancel-turn (cancellation/cancel-reason token-a)))
+            (expect (= "b" (:turn_id (state/cancel-current-turn! sid))))
+            (expect (= :client-cancel-current (cancellation/cancel-reason token-b)))
+            (expect (= 3 (state/cancel-all-running!)))
+            (expect (= :gateway-shutdown (cancellation/cancel-reason token-c)))
+            ;; The shutdown sweep does not relabel the two already-attributed
+            ;; cancels.
+            (expect (= :client-cancel-turn (cancellation/cancel-reason token-a)))
+            (expect (= :client-cancel-current (cancellation/cancel-reason token-b))))))))
+
+;; Regression: pressing Stop wrote a SETTLED durable turn row for the turn that
+;; was still live on the wire — status :cancelled (persisted as "interrupted"),
+;; 0 iterations, empty content — so every client that refetched the transcript
+;; painted a finished "Cancelled by user." row NEXT TO the live bubble that was
+;; still cancelling: the same request rendered twice, and a spinner outliving its
+;; own answer. The sweep was not even scoped to the cancelled turn — it stamped
+;; EVERY :running row of the session.
+(defdescribe
+  cancel-persists-no-turn-row-test
+  "A user cancel touches NO durable turn row. The wire terminal is the only thing
+   that settles a turn; a process killed mid-cancel is repaired at startup by
+   `loop/db-sweep-orphaned-running-turns!`, which owns exactly that case."
+  (it "writes nothing durable while the cancelled turn is still live"
+      (let
+        [sid
+         (str "cancel-persist-" (java.util.UUID/randomUUID))
+
+         registry
+         @#'state/registry
+
+         writes
+         (atom [])
+
+         token
+         (cancellation/cancellation-token)]
+
+        (try (swap! registry assoc
+               sid
+               {:current-turn "t1"
+                :turns {"t1" {:turn_id "t1" :status "running" :cancel-token token}
+                        "t2" {:turn_id "t2" :status "running"}}})
+             (with-redefs-fn {(resolve 'com.blockether.vis.internal.loop/db-info) (constantly
+                                                                                    {:fake-db true})
+                              #'persistance/db-list-session-turns
+                              (fn [_ _]
+                                [{:id "row-1" :status :running :iteration-count 0 :duration-ms 0}
+                                 {:id "row-2" :status :running :iteration-count 7 :duration-ms 42}])
+                              #'persistance/db-update-session-turn! (fn [_ id patch]
+                                                                      (swap! writes conj [id patch])
+                                                                      nil)}
+               #(expect (= {:status "cancelling"} (state/cancel-turn! sid "t1"))))
+             (expect (= [] @writes))
+             (finally (swap! registry dissoc sid))))))
