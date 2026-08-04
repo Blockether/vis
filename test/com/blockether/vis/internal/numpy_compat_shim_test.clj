@@ -347,3 +347,51 @@
               "from numpy.ma import masked_array, getmaskarray, getdata, isMaskedArray\n"
               "a = masked_array([1,2], mask=[False,True])\n"
               "[a.filled(9).tolist(), getmaskarray(a).tolist(), getdata(a).tolist(), isMaskedArray(a)]")))))))
+
+;; Regression, report 49f413b1 (the dark-theme logo session): working on an
+;; (h,w,3) image, `arr[mask]` with an (h,w) mask returned one channel per pixel
+;; instead of whole pixels (`.tolist()` then raised "'int' object is not
+;; iterable"), `np.roll(a, 1, 0)` raised "roll() takes 2 positional arguments"
+;; and `np.broadcast_to` did not exist at all.
+(defdescribe
+  numpy-image-indexing-regression-test
+  (it "a mask over the leading axes selects whole sub-arrays, not single values"
+      (with-python-context
+        ;; The Clojure bridge narrows whole floats to integers, so the float64
+        ;; dtype is asserted inside Python and the values compare as integers.
+        (expect (= [[[0 1 2] [9 10 11]] [[[0 0 0] [3 4 5]] [[6 7 8] [0 0 0]]]
+                    [[[1 2 3] [3 4 5]] [[6 7 8] [1 2 3]]] [4 5 6] "float64"]
+                   (ev python-context
+                       (str "import numpy as np\n" "a = np.arange(12).reshape(2,2,3)\n"
+                            "m = np.array([[True,False],[False,True]])\n"
+                            "b = a.astype('float64'); b[m] = 0.0\n"
+                            "c = a.astype('float64'); c[m] = np.array([1.0,2.0,3.0])\n"
+                            "f = np.array([[1,2,3],[4,5,6]])\n"
+                            "[a[m].tolist(), b.tolist(), c.tolist(), f[f > 3].tolist(), "
+                            "str(c.dtype)]"))))))
+  (it "a mask that does not match the leading axes is an IndexError"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "import numpy as np\n"
+                                "try:\n"
+                                "    np.arange(12).reshape(2,2,3)[np.array([True,False,True])]\n"
+                                "    ok = False\n" "except IndexError:\n"
+                                "    ok = True\n" "ok"))))))
+  (it "roll takes an axis (and a tuple of axes), flat roll unchanged"
+      (with-python-context
+        (expect (= [[[4 5 6] [1 2 3]] [[2 3 1] [5 6 4]] [[6 4 5] [3 1 2]] [[6 1 2] [3 4 5]]]
+                   (ev python-context
+                       (str "import numpy as np\n" "a = np.array([[1,2,3],[4,5,6]])\n"
+                            "[np.roll(a,1,0).tolist(), np.roll(a,-1,1).tolist(), "
+                            "np.roll(a,(1,1),(0,1)).tolist(), np.roll(a,1).tolist()]"))))))
+  (it "broadcast_to stretches size-1 axes and rejects impossible shapes"
+      (with-python-context
+        (expect (= [[[1 2 3] [1 2 3]] [[1 1 1] [2 2 2]] [[5 5] [5 5]] true]
+                   (ev python-context
+                       (str "import numpy as np\n"
+                            "try:\n" "    np.broadcast_to(np.array([1.0,2.0,3.0]), (3,2))\n"
+                            "    raised = False\n" "except ValueError:\n"
+                            "    raised = True\n"
+                            "[np.broadcast_to(np.array([1.0,2.0,3.0]), (2,3)).tolist(), "
+                            "np.broadcast_to(np.array([[1],[2]]), (2,3)).tolist(), "
+                            "np.broadcast_to(5, (2,2)).tolist(), raised]")))))))

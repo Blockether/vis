@@ -740,8 +740,24 @@ def __vis_install_numpy__():
     # ---- indexing --------------------------------------------------------------
     def _getitem(arr, key):
         if isinstance(key, ndarray) and key._dtype == _BOOL:
-            out = [arr._d[i] for i, m in enumerate(key._d) if m]
-            return _mk(out, (len(out),), arr._dtype)
+            # A boolean mask indexes the LEADING axes it covers; the axes it does
+            # not cover survive, so an (h,w) mask over an (h,w,3) image selects
+            # whole pixels and yields (n,3), not a flat list of red channels.
+            if tuple(key._shape) != tuple(arr._shape[: key.ndim]):
+                raise IndexError(
+                    "boolean index did not match indexed array; shape is "
+                    + str(tuple(arr._shape))
+                    + " but corresponding boolean shape is "
+                    + str(tuple(key._shape))
+                )
+            rest = tuple(arr._shape[key.ndim :])
+            block = _prod(rest)
+            out = []
+            for i, m in enumerate(key._d):
+                if m:
+                    out.extend(arr._d[i * block : (i + 1) * block])
+            n = len(out) // block if block else 0
+            return _mk(out, (n,) + rest, arr._dtype)
         if isinstance(key, ndarray):
             out = [arr[int(i)] for i in key._d]
             if out and isinstance(out[0], ndarray):
@@ -818,15 +834,28 @@ def __vis_install_numpy__():
 
     def _setitem(arr, key, value):
         if isinstance(key, ndarray) and key._dtype == _BOOL:
+            # Same leading-axes rule as `_getitem`: a mask covering fewer axes
+            # than the array assigns whole sub-arrays, so `img[mask] = 0` blanks
+            # every channel of the selected pixels.
+            if tuple(key._shape) != tuple(arr._shape[: key.ndim]):
+                raise IndexError(
+                    "boolean index did not match indexed array; shape is "
+                    + str(tuple(arr._shape))
+                    + " but corresponding boolean shape is "
+                    + str(tuple(key._shape))
+                )
+            block = _prod(tuple(arr._shape[key.ndim :]))
             vals = value._d if isinstance(value, ndarray) else None
             j = 0
             for i, m in enumerate(key._d):
-                if m:
+                if not m:
+                    continue
+                for off in range(i * block, (i + 1) * block):
                     if vals is not None:
-                        arr._d[i] = _cast(vals[j % len(vals)], arr._dtype)
+                        arr._d[off] = _cast(vals[j % len(vals)], arr._dtype)
                         j = j + 1
                     else:
-                        arr._d[i] = _cast(value, arr._dtype)
+                        arr._d[off] = _cast(value, arr._dtype)
             return
         if not isinstance(key, tuple):
             key = (key,)
@@ -1475,6 +1504,28 @@ def __vis_install_numpy__():
         nshape.insert(axis, 1)
         return _mk(list(A._d), tuple(nshape), A._dtype)
 
+    def broadcast_to(a, shape):
+        A = _asarray(a)
+        shp = _shape_of(shape)
+        if _broadcast_shapes(A._shape, shp) != shp:
+            raise ValueError(
+                "cannot broadcast a shape "
+                + str(tuple(A._shape))
+                + " array to shape "
+                + str(shp)
+            )
+        if tuple(A._shape) == shp:
+            return A.copy()
+        pad = len(shp) - A.ndim
+        st = _strides(A._shape)
+        out = []
+        import itertools as _it
+
+        for combo in _it.product(*[range(s) for s in shp]):
+            src = [0 if A._shape[i] == 1 else combo[pad + i] for i in range(A.ndim)]
+            out.append(A._d[_ravel(src, st)])
+        return _mk(out, shp, A._dtype)
+
     def repeat(a, repeats, axis=None):
         A = _asarray(a)
         if axis is None:
@@ -1558,15 +1609,45 @@ def __vis_install_numpy__():
             d = [d[i + 1] - d[i] for i in range(len(d) - 1)]
         return _mk(d, (len(d),), A._dtype)
 
-    def roll(a, shift):
-        A = _asarray(a)
-        d = list(A._d)
-        n = len(d)
+    def _roll_axis(A, shift, axis):
+        axis = _normalize_axis(axis, A.ndim)
+        n = A._shape[axis]
         if n == 0:
-            return _mk(d, A._shape, A._dtype)
+            return A
         s = shift % n
-        out = (d[-s:] + d[:-s]) if s else d
+        if s == 0:
+            return A
+        inner = _prod(A._shape[axis + 1 :])
+        outer = _prod(A._shape[:axis])
+        d = A._d
+        out = list(d)
+        span = n * inner
+        for o in range(outer):
+            base = o * span
+            for k in range(n):
+                sof = base + k * inner
+                dof = base + ((k + s) % n) * inner
+                out[dof : dof + inner] = d[sof : sof + inner]
         return _mk(out, A._shape, A._dtype)
+
+    def roll(a, shift, axis=None):
+        A = _asarray(a)
+        if axis is None:
+            d = list(A._d)
+            n = len(d)
+            if n == 0:
+                return _mk(d, A._shape, A._dtype)
+            s = shift % n
+            out = (d[-s:] + d[:-s]) if s else d
+            return _mk(out, A._shape, A._dtype)
+        axes = list(axis) if isinstance(axis, (list, tuple)) else [axis]
+        shifts = (
+            list(shift) if isinstance(shift, (list, tuple)) else [shift] * len(axes)
+        )
+        rolled = _mk(list(A._d), A._shape, A._dtype)
+        for ax, sh in zip(axes, shifts):
+            rolled = _roll_axis(rolled, sh, ax)
+        return rolled
 
     def _nonan(a):
         return [x for x in _asarray(a)._d if not (isinstance(x, float) and x != x)]
@@ -1996,6 +2077,7 @@ def __vis_install_numpy__():
         "meshgrid": meshgrid,
         "diff": diff,
         "roll": roll,
+        "broadcast_to": broadcast_to,
         "nansum": nansum,
         "nanmean": nanmean,
         "nanmax": nanmax,

@@ -152,6 +152,38 @@ def __vis_install_pil__():
         TRANSPOSE = 5
         TRANSVERSE = 6
 
+    # -- quantize / dither / palette constants --------------------------------
+    # Pillow stapes every enum member onto the module too, so `Image.MEDIANCUT`
+    # and `Image.Quantize.MEDIANCUT` are the same value.
+    class Quantize:
+        MEDIANCUT = 0
+        MAXCOVERAGE = 1
+        FASTOCTREE = 2
+        LIBIMAGEQUANT = 3
+
+    MEDIANCUT = 0
+    MAXCOVERAGE = 1
+    FASTOCTREE = 2
+    LIBIMAGEQUANT = 3
+
+    class Dither:
+        NONE = 0
+        ORDERED = 1
+        RASTERIZE = 2
+        FLOYDSTEINBERG = 3
+
+    NONE = 0
+    ORDERED = 1
+    RASTERIZE = 2
+    FLOYDSTEINBERG = 3
+
+    class Palette:
+        WEB = 0
+        ADAPTIVE = 1
+
+    WEB = 0
+    ADAPTIVE = 1
+
     # -- geometric-transform method constants -------------------------------
     AFFINE = 0
     EXTENT = 1
@@ -1236,6 +1268,19 @@ def __vis_install_pil__():
     Image_mod.TRANSPOSE = TRANSPOSE
     Image_mod.TRANSVERSE = TRANSVERSE
     Image_mod.Transpose = Transpose
+    Image_mod.Quantize = Quantize
+    Image_mod.MEDIANCUT = MEDIANCUT
+    Image_mod.MAXCOVERAGE = MAXCOVERAGE
+    Image_mod.FASTOCTREE = FASTOCTREE
+    Image_mod.LIBIMAGEQUANT = LIBIMAGEQUANT
+    Image_mod.Dither = Dither
+    Image_mod.NONE = NONE
+    Image_mod.ORDERED = ORDERED
+    Image_mod.RASTERIZE = RASTERIZE
+    Image_mod.FLOYDSTEINBERG = FLOYDSTEINBERG
+    Image_mod.Palette = Palette
+    Image_mod.WEB = WEB
+    Image_mod.ADAPTIVE = ADAPTIVE
     Image_mod.__version__ = "10.0-vis-imaging"
 
     def _fontname(font):

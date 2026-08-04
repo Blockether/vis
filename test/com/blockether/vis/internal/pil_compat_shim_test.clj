@@ -725,3 +725,29 @@
                                 "d = ImageDraw.Draw(im)\n"
                                 "d.text((2,2), 'vis', fill=(255,255,255))\n"
                                 "d.textlength('vis') > 0 and im.getbbox() is not None")))))))
+
+;; Regression, report 49f413b1 (the dark-theme logo session): quantizing the
+;; logo with Pillow's own spelling `im.quantize(colors=8, method=Image.MEDIANCUT)`
+;; died with "module 'PIL.Image' has no attribute 'MEDIANCUT'" -- the shim never
+;; published the Quantize/Dither/Palette constants Pillow staples onto the module.
+(defdescribe
+  pil-quantize-constant-regression-test
+  (it "publishes the Quantize/Dither/Palette constants on the module and the enums"
+      (with-python-context
+        (expect (= [0 1 2 3 0 3 0 1 true]
+                   (ev python-context
+                       (str "from PIL import Image\n"
+                            "[Image.MEDIANCUT, Image.MAXCOVERAGE, Image.FASTOCTREE, "
+                            "Image.LIBIMAGEQUANT, Image.NONE, Image.FLOYDSTEINBERG, "
+                            "Image.WEB, Image.ADAPTIVE, "
+                            "Image.Quantize.MEDIANCUT == Image.MEDIANCUT "
+                            "and Image.Dither.FLOYDSTEINBERG == Image.FLOYDSTEINBERG "
+                            "and Image.Palette.ADAPTIVE == Image.ADAPTIVE]"))))))
+  (it "quantize accepts method=Image.MEDIANCUT and returns a palette image"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "from PIL import Image\n"
+                                "im = Image.new('RGB',(8,8),(200,30,40))\n"
+                                "q = im.quantize(colors=8, method=Image.MEDIANCUT, "
+                                "dither=Image.Dither.NONE)\n"
+                                "q.mode == 'P' and len(q.getpalette()) >= 3")))))))
