@@ -597,28 +597,58 @@
           ;; still cost ~1.4 ms (~3 s here) because the canvas round-trips through the
           ;; renderer per call. Queued as ONE batch, the whole run is a few milliseconds.
           (expect (< ms 1000) (str "2000 draws took " (long ms) " ms")))))
-  (it "reading a drawn canvas does not pay a reflective store per pixel"
-      (with-python-context
-        (let
-          [t0
-           (System/nanoTime)
+  (it
+    "reading a drawn canvas does not pay a reflective store per pixel"
+    (with-python-context
+      (let
+        [cycles
+         (fn [w h]
+           (str "from PIL import Image, ImageDraw\n"
+                "im = Image.new('RGB',(" w
+                "," h
+                "),(0,0,0))\n" "d = ImageDraw.Draw(im)\n"
+                "for i in range(20):\n" "    d.rectangle([i,i,i+4,i+4], fill=(255,0,0))\n"
+                "    im.getpixel((i+1,i+1))\n" "list(im.getpixel((1,1)))"))
 
-           painted
-           (ev python-context
-               (str "from PIL import Image, ImageDraw\n"
-                    "im = Image.new('RGB',(800,600),(0,0,0))\n" "d = ImageDraw.Draw(im)\n"
-                    "for i in range(20):\n" "    d.rectangle([i,i,i+4,i+4], fill=(255,0,0))\n"
-                    "    im.getpixel((i+1,i+1))\n" "list(im.getpixel((1,1)))"))
+         timed
+         (fn [w h]
+           (let
+             [t0
+              (System/nanoTime)
 
-           ms
-           (/ (- (System/nanoTime) t0) 1e6)]
+              painted
+              (ev python-context (cycles w h))]
 
-          (expect (= [255 0 0] painted))
-          ;; Every read flushes the queue, so the 480k-pixel canvas is converted both
-          ;; ways per cycle. `aset-byte` is `java.lang.reflect.Array/setByte`: four
-          ;; reflective stores per pixel cost ~65 ms a flush, ~1.4 s for these cycles.
-          ;; The inlined array store does the same conversion in ~1.2 ms.
-          (expect (< ms 800) (str "20 draw/read cycles took " (long ms) " ms"))))))
+             [(/ (- (System/nanoTime) t0) 1e6) painted]))
+
+         ;; Warm both sizes first: the very first eval pays GraalPy parse and JIT,
+         ;; which on a cold CI runner dwarfs everything measured after it.
+         _
+         (timed 40 30)
+
+         _
+         (timed 800 600)
+
+         [small _]
+         (timed 40 30)
+
+         [big painted]
+         (timed 800 600)]
+
+        (expect (= [255 0 0] painted))
+        ;; Every read flushes the queue, so the canvas is converted both ways per
+        ;; cycle. `aset-byte` is `java.lang.reflect.Array/setByte`: four reflective
+        ;; stores per pixel cost ~65 ms a flush on this 480k-pixel canvas -- ~1.4 s
+        ;; for these cycles -- while the 1.2k-pixel canvas paid almost nothing, a
+        ;; ratio near 100x. The inlined array store keeps the big canvas within a
+        ;; small multiple of the small one. This was a wall-clock budget once, and
+        ;; a loaded CI runner failed it at 2350 ms with nothing actually wrong.
+        (expect (< big (* 30 small))
+                (str "20 draw/read cycles took "
+                     (long big)
+                     " ms on a 800x600 canvas but "
+                     (long small)
+                     " ms on a 40x30 one"))))))
 
 (defdescribe
   pil-font-family-test
