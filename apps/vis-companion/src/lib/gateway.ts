@@ -14,6 +14,7 @@ import type {
   QueuedAttachment,
   QueuedTurn,
   ProviderLimits,
+  ProviderPreset,
   ProviderStatus,
   RouterProvider,
   GatewayAttachment,
@@ -1064,6 +1065,57 @@ export class GatewayClient {
     // callers check `signal.aborted` after awaiting instead.
     void signal;
     return inflight;
+  }
+
+  // ── Fleet membership ────────────────────────────────────────────
+  //
+  // Adding a provider is a DAEMON operation: config and credentials live on the
+  // machine that talks to the model, so the phone names a preset and the
+  // gateway writes it. No key ever travels on these two calls.
+
+  /**
+   * Provider presets this machine can still add. The daemon answers with what
+   * is NOT configured yet, so the picker can never offer a duplicate.
+   */
+  async providerPresets(signal?: AbortSignal): Promise<ProviderPreset[]> {
+    const response = await this.request<{ presets?: ProviderPreset[] }>(
+      "GET",
+      "/v1/provider-presets",
+      undefined,
+      signal,
+    );
+    return response.presets ?? [];
+  }
+
+  /**
+   * Put a preset into this machine's fleet. `baseUrl` only means anything for a
+   * LOCAL preset, whose address the user owns. The answer IS the new fleet, so
+   * the caller repaints from it instead of racing a second read.
+   */
+  async addProvider(
+    providerId: string,
+    baseUrl?: string,
+  ): Promise<RouterProvider[]> {
+    const response = await this.request<{ providers: RouterProvider[] }>(
+      "POST",
+      "/v1/providers",
+      { id: providerId, base_url: baseUrl },
+    );
+    this.invalidateRouter();
+    return response.providers;
+  }
+
+  /**
+   * Drop a provider AND its stored credential, and answer with the fleet that
+   * remains.
+   */
+  async removeProvider(providerId: string): Promise<RouterProvider[]> {
+    const response = await this.request<{ providers: RouterProvider[] }>(
+      "DELETE",
+      `/v1/providers/${encodeURIComponent(providerId)}`,
+    );
+    this.invalidateRouter();
+    return response.providers;
   }
 
   async setDefaultModel(provider: string, model: string): Promise<void> {

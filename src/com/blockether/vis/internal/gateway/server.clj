@@ -1115,9 +1115,14 @@
                                 name)
      :fallback-model (:model fallback)}))
 
-(defn- router-handler
-  "GET /v1/router — the whole provider catalog and both explicit tags."
-  [_]
+(defn- router-fleet-json
+  "The whole provider catalog with both explicit tags.
+
+   Every fleet MUTATION answers with this exact payload, so a client that just
+   added or removed a provider repaints from the response it already holds —
+   no second read, and no window where the phone shows a fleet the daemon no
+   longer has."
+  []
   (let
     [fleet
      (providers/picker-fleet)
@@ -1128,7 +1133,12 @@
      fallback
      (providers/fallback-selection fleet primary)]
 
-    (json-response {:providers (mapv #(router-provider-entry % primary fallback) fleet)})))
+    {:providers (mapv #(router-provider-entry % primary fallback) fleet)}))
+
+(defn- router-handler
+  "GET /v1/router — the whole provider catalog and both explicit tags."
+  [_]
+  (json-response (router-fleet-json)))
 
 (defn- router-default-handler
   "PATCH /v1/router — tag one provider/model pair.
@@ -1165,6 +1175,106 @@
                      (json-response (router-selection-json))
                      (catch clojure.lang.ExceptionInfo e
                        (error-response 400 :invalid-request (ex-message e)))))))
+
+(defn- provider-preset-json
+  "One 'Add Provider' row: what the preset IS, and what adding it will ask for.
+
+   `auth_kind` tells the client which second step follows the add — `oauth`
+   (start a flow), `api-key` (collect a key), `none` (a local runtime needs
+   neither) — and `is_local` marks the presets whose `base_url` the user OWNS,
+   since LM Studio and Ollama listen wherever that machine put them."
+  [preset]
+  (let [pid (:id preset)]
+    (cond->
+      {:id (name pid)
+       :label (or (:label preset) (config/display-label pid))
+       :auth-kind (name (providers/auth-kind pid))
+       :is-local (contains? providers/local-no-auth-provider-ids pid)
+       :models (mapv :name (providers/default-model-configs preset))}
+      (:base-url preset)
+      (assoc :base-url (:base-url preset))
+
+      (:api-style preset)
+      (assoc :api-style (name (:api-style preset))))))
+
+(defn- provider-presets-handler
+  "GET /v1/provider-presets — every provider this machine knows how to add and
+   does NOT carry yet. This is the 'Add Provider' picker, headless: without it a
+   client can only ever operate the providers that are already configured."
+  [_]
+  (json-response {:presets (mapv provider-preset-json (providers/available-presets))}))
+
+(defn- add-provider-handler
+  "POST /v1/providers {id, base_url?} — put a preset into THIS machine's fleet.
+
+   The daemon owns config: a client names a preset and, for a LOCAL provider,
+   where it listens; the models come from the preset. No credential is accepted
+   here — a fresh provider starts signed out and finishes through
+   `/v1/providers/:id/auth/*`, which is the ONE path that writes a key, on the
+   machine that owns it."
+  [request]
+  (let
+    [body
+     (try (body-json request) (catch Throwable _ nil))
+
+     raw-id
+     (some-> (get body "id")
+             str
+             str/trim
+             not-empty)
+
+     provider-id
+     (some-> raw-id
+             keyword)
+
+     preset
+     (some-> provider-id
+             config/provider-template)
+
+     base-url
+     (some-> (get body "base_url")
+             str
+             str/trim
+             (str/replace #"/+$" "")
+             not-empty)
+
+     configured
+     (into #{} (map :id) (providers/configured-providers))]
+
+    (cond
+      (nil? provider-id) (error-response 400 :invalid-request "id must be a non-blank provider id")
+      (nil? preset) (error-response 404 :unknown-provider (str "no such provider preset: " raw-id))
+      (contains? configured provider-id)
+      (error-response 409 :provider-exists (str raw-id " is already configured"))
+      :else (let
+              [preset
+               (cond-> preset
+                 base-url
+                 (assoc :base-url base-url))
+
+               models
+               (providers/default-model-configs preset)]
+
+              (providers/add-config-provider! (providers/provider-config-with-models preset models)
+                                              :gateway)
+              (json-response (router-fleet-json))))))
+
+(defn- remove-provider-handler
+  "DELETE /v1/providers/:provider-id — drop it from the fleet and run its
+   registered logout, so removing a provider never leaves a credential behind.
+   Idempotent: removing what is not there answers `is_removed` false, never an
+   error."
+  [request]
+  (let
+    [provider-id
+     (some-> (get-in request [:path-params :provider-id])
+             keyword)
+
+     is-removed
+     (boolean (some-> provider-id
+                      (providers/remove-provider! :gateway)))]
+
+    (json-response (assoc (router-fleet-json) :is-removed is-removed))))
 
 (defn- toggle-json
   "One settings row as JSON — the wire twin of the server-side
@@ -2942,7 +3052,9 @@
         ["/mcp/servers/:name/auth/logout" {:post mcp-auth-logout-handler}]
         ["/settings/:id" {:get get-setting-handler}]
         ["/theme" {:get get-theme-handler :post set-theme-handler}]
-        ["/slashes" {:get slashes-handler}]
+        ["/slashes" {:get slashes-handler}] ["/providers" {:post add-provider-handler}]
+        ["/provider-presets" {:get provider-presets-handler}]
+        ["/providers/:provider-id" {:delete remove-provider-handler}]
         ["/providers/:provider-id/status" {:get provider-status-handler}]
         ["/providers/:provider-id/limits" {:get provider-limits-handler}]
         ["/providers/:provider-id/models" {:get provider-models-handler}]

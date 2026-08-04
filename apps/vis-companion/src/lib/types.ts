@@ -299,6 +299,27 @@ export interface RouterProvider {
   limits?: ProviderLimits;
 }
 
+/**
+ * One row of the "Add provider" picker: a provider this machine knows how to
+ * configure and does NOT carry yet (`GET /v1/provider-presets`).
+ *
+ * `auth_kind` is the second step the client owes the user right after the add —
+ * `oauth` starts a flow, `api-key` collects a key, `none` is a local runtime
+ * that needs no credential at all — and `is_local` marks the presets whose
+ * `base_url` the USER owns, because LM Studio and Ollama listen wherever that
+ * machine put them.
+ */
+export interface ProviderPreset {
+  id: string;
+  label: string;
+  auth_kind: "oauth" | "api-key" | "none" | "command";
+  is_local: boolean;
+  base_url?: string;
+  api_style?: string;
+  /** The catalog the provider ships with; added verbatim. */
+  models: string[];
+}
+
 export interface ModelPref {
   provider?: string;
   model?: string;

@@ -68,6 +68,8 @@ import { onWake } from "../lib/wake";
 import {
   ProviderFlowPanel,
   ProviderSignOutButton,
+  ProviderRemoveButton,
+  AddProviderPanel,
   defaultFirstProviders,
   isProviderAuthed,
   preferredModelFirst,
@@ -1571,12 +1573,21 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                         className="flex-1"
                       />
                     )}
+                    <ProviderRemoveButton
+                      auth={auth}
+                      provider={provider}
+                      className="flex-1"
+                    />
                   </div>
                 </div>
               )}
             </div>
           );
         })}
+
+        {providers !== null && (
+          <AddProviderPanel auth={auth} className="w-full" />
+        )}
       </div>
     </SettingsPanel>
   );

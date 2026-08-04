@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
-import type { AuthFlow, ProviderLimitRow, RouterProvider } from '../lib/types';
+import type { AuthFlow, ProviderLimitRow, ProviderPreset, RouterProvider } from '../lib/types';
 import { Button, Input } from './ui';
 
 /** How long to keep polling a device flow before giving up on our side. */
@@ -190,6 +190,11 @@ export interface ProviderAuth extends ProviderFleet {
   finishPkce: () => Promise<void>;
   finishApiKey: () => Promise<void>;
   cancelFlow: () => Promise<void>;
+  /** Presets this machine can still add; `null` until the picker asks. */
+  presets: ProviderPreset[] | null;
+  loadPresets: () => Promise<void>;
+  addProvider: (preset: ProviderPreset, baseUrl?: string) => Promise<void>;
+  removeProvider: (provider: RouterProvider) => Promise<void>;
 }
 
 /**
@@ -268,6 +273,7 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
   const [flow, setFlow] = useState<AuthFlow | null>(null);
   const [redirectUrl, setRedirectUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
+  const [presets, setPresets] = useState<ProviderPreset[] | null>(null);
   const pollRef = useRef<number | null>(null);
 
   const stopPolling = useCallback(() => {
@@ -467,6 +473,81 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
     }
   }, [client, flow, stopPolling]);
 
+  /**
+   * What this machine can still add. Read on demand: the daemon answers with
+   * the presets it does NOT already carry,
+   * so the picker can never offer a duplicate.
+   */
+  const loadPresets = useCallback(async () => {
+    setPending('presets');
+    setErr(null);
+    try {
+      setPresets(await client.providerPresets());
+    } catch (e) {
+      setErr((e as Error).message);
+      setPresets([]);
+    } finally {
+      setPending(null);
+    }
+  }, [client, setErr, setPending]);
+
+  /**
+   * Put a preset into THIS machine's fleet and walk straight into its sign-in.
+   *
+   * The daemon owns config, so the phone only names the preset (and, for a
+   * local runtime, where it listens) and repaints from the fleet the gateway
+   * answers with. A provider without a credential is useless, so the OAuth /
+   * API-key flow starts in the same tap; a local runtime is done the moment it
+   * exists.
+   */
+  const addProvider = useCallback(
+    async (preset: ProviderPreset, baseUrl?: string) => {
+      setPending(`add:${preset.id}`);
+      setErr(null);
+      setNote(null);
+      try {
+        const rows = await client.addProvider(preset.id, baseUrl);
+        setProviders(() => rows);
+        setPresets((current) => current?.filter((row) => row.id !== preset.id) ?? null);
+        setNote(`Added ${preset.label}.`);
+        const added = rows.find((row) => row.id === preset.id);
+        if (added && preset.auth_kind !== 'none') {
+          await signIn(added);
+          return;
+        }
+      } catch (e) {
+        setErr((e as Error).message);
+      } finally {
+        setPending(null);
+      }
+    },
+    [client, setErr, setNote, setPending, setProviders, signIn],
+  );
+
+  /**
+   * Remove a provider from this machine. The daemon drops the config entry AND
+   * runs the provider's logout, so nothing is left behind; the preset becomes
+   * addable again, which is why the picker is dropped rather than patched.
+   */
+  const removeProvider = useCallback(
+    async (provider: RouterProvider) => {
+      setPending(`remove:${provider.id}`);
+      setErr(null);
+      setNote(null);
+      try {
+        const rows = await client.removeProvider(provider.id);
+        setProviders(() => rows);
+        setPresets(null);
+        setNote(`Removed ${provider.label}.`);
+      } catch (e) {
+        setErr((e as Error).message);
+      } finally {
+        setPending(null);
+      }
+    },
+    [client, setErr, setNote, setPending, setProviders],
+  );
+
   return {
     ...fleet,
     flow,
@@ -480,6 +561,10 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
     finishPkce,
     finishApiKey,
     cancelFlow,
+    presets,
+    loadPresets,
+    addProvider,
+    removeProvider,
   };
 }
 
@@ -641,6 +726,207 @@ export function ProviderSignOutButton({
         disabled={busy}
         onClick={() => setIsConfirming(false)}
       >
+        Cancel
+      </Button>
+    </span>
+  );
+}
+
+/** What adding this preset will ask for next, in the user's words. */
+export function presetHint(preset: ProviderPreset): string {
+  if (preset.is_local) return `Local runtime · ${preset.base_url ?? 'address on that machine'}`;
+  if (preset.auth_kind === 'oauth') return 'Sign in with your account';
+  if (preset.auth_kind === 'command') return 'Credential minted on that machine';
+  return 'Needs an API key';
+}
+
+/**
+ * Add a provider TO THE GATEWAY'S MACHINE.
+ *
+ * A provider is not a client setting: the daemon writes it into its own config
+ * next to its own credentials, so this picker only offers what that machine
+ * reported as missing, and the add is finished by the very same flow panel a
+ * sign-in uses. A local runtime is the one preset that asks a question first —
+ * LM Studio and Ollama listen wherever that machine put them, so the address is
+ * editable before the add, and resolved THERE, not on this device.
+ */
+export function AddProviderPanel({
+  auth,
+  className = '',
+}: {
+  auth: ProviderAuth;
+  className?: string;
+}) {
+  const { presets, loadPresets } = auth;
+  const [isPicking, setIsPicking] = useState(false);
+  const [chosen, setChosen] = useState<ProviderPreset | null>(null);
+  const [baseUrl, setBaseUrl] = useState('');
+  const isLoading = auth.pending === 'presets';
+
+  if (!isPicking) {
+    return (
+      <Button
+        className={className}
+        onClick={() => {
+          setIsPicking(true);
+          setChosen(null);
+          void loadPresets();
+        }}
+      >
+        Add provider
+      </Button>
+    );
+  }
+
+  if (chosen) {
+    const busy = auth.pending === `add:${chosen.id}`;
+    return (
+      <div className={`space-y-3 border border-accent/50 bg-panel-2 p-3 ${className}`}>
+        <p className="font-mono text-body font-bold text-white">Add {chosen.label}</p>
+        <div className="space-y-2">
+          <label
+            className="block font-mono text-meta uppercase tracking-[0.1em] text-dialog-hint"
+            htmlFor="add-provider-base-url"
+          >
+            Where it listens on that machine
+          </label>
+          <Input
+            id="add-provider-base-url"
+            value={baseUrl}
+            inputMode="url"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder={chosen.base_url ?? 'http://localhost:1234/v1'}
+            onChange={(event) => setBaseUrl(event.target.value)}
+          />
+          <p className="break-words font-mono text-chip text-dialog-hint">
+            Resolved by the gateway, not by this device. Leave it blank for {chosen.base_url ?? 'the default'}.
+          </p>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Button
+            className="flex-1"
+            disabled={busy}
+            onClick={() => {
+              void (async () => {
+                await auth.addProvider(chosen, baseUrl.trim() || undefined);
+                setIsPicking(false);
+                setChosen(null);
+                setBaseUrl('');
+              })();
+            }}
+          >
+            {busy ? 'Adding…' : `Add ${chosen.label}`}
+          </Button>
+          <Button variant="ghost" className="flex-1" disabled={busy} onClick={() => setChosen(null)}>
+            Back
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`space-y-2 border border-accent/50 bg-panel-2 p-3 ${className}`}>
+      <p className="font-mono text-body font-bold text-white">Add a provider to this machine</p>
+
+      {isLoading && presets === null && (
+        <p className="py-2 font-mono text-meta text-dialog-hint">Asking the gateway…</p>
+      )}
+
+      {presets?.length === 0 && (
+        <p className="py-2 font-mono text-meta text-dialog-hint">
+          Every provider this machine knows is already configured.
+        </p>
+      )}
+
+      {presets?.map((preset) => {
+        const busy = auth.pending === `add:${preset.id}`;
+        return (
+          <button
+            key={preset.id}
+            type="button"
+            disabled={busy}
+            className="flex min-h-12 w-full items-center gap-2 border border-dialog-edge bg-panel px-3 py-2 text-left transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none disabled:opacity-50"
+            onClick={() => {
+              if (preset.is_local) {
+                setBaseUrl('');
+                setChosen(preset);
+                return;
+              }
+              void (async () => {
+                await auth.addProvider(preset);
+                setIsPicking(false);
+              })();
+            }}
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-mono text-ui font-bold text-white">{preset.label}</span>
+              <span className="block truncate font-mono text-meta text-dialog-hint">
+                {busy ? 'Adding…' : presetHint(preset)}
+              </span>
+            </span>
+            <span className="shrink-0 font-mono text-meta text-dialog-hint" aria-hidden="true">
+              {preset.is_local ? '▸' : '+'}
+            </span>
+          </button>
+        );
+      })}
+
+      <Button
+        variant="ghost"
+        className="w-full"
+        onClick={() => {
+          setIsPicking(false);
+          setChosen(null);
+        }}
+      >
+        Cancel
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Remove, two-step. Unlike sign-out this also deletes the provider from the
+ * machine's config — every client of that gateway loses it — so the first press
+ * only arms the confirmation.
+ */
+export function ProviderRemoveButton({
+  auth,
+  provider,
+  className = '',
+}: {
+  auth: ProviderAuth;
+  provider: RouterProvider;
+  className?: string;
+}) {
+  const [isConfirming, setIsConfirming] = useState(false);
+  const busy = auth.pending === `remove:${provider.id}`;
+
+  if (!isConfirming) {
+    return (
+      <Button variant="ghost" className={className} disabled={busy} onClick={() => setIsConfirming(true)}>
+        {busy ? 'Removing…' : 'Remove'}
+      </Button>
+    );
+  }
+
+  return (
+    <span className={`flex min-w-0 gap-2 ${className}`}>
+      <Button
+        variant="danger"
+        className="min-w-0 flex-1"
+        disabled={busy}
+        onClick={() => {
+          setIsConfirming(false);
+          void auth.removeProvider(provider);
+        }}
+      >
+        {busy ? 'Removing…' : 'Yes, remove'}
+      </Button>
+      <Button variant="ghost" className="min-w-0 flex-1" disabled={busy} onClick={() => setIsConfirming(false)}>
         Cancel
       </Button>
     </span>

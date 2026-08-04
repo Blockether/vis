@@ -1456,3 +1456,123 @@
       (is (nil? (culprit {"main" ["java.base/java.lang.Shutdown.runHooks(Shutdown.java:130)"
                                   "clojure.main$main.invoke(main.clj:1)"]})))
       (is (nil? (culprit {}))))))
+
+;;; ── Fleet membership over the wire ──────────────────────────────────────────
+;; Adding a provider used to be TUI-only: the gateway exposed operations on
+;; providers that were already configured and nothing that could create one, so
+;; the companion could never grow a fleet.
+
+(defn- json-body [m] {:body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str m) "UTF-8"))})
+
+(defn- with-stub-fleet!
+  "Router payload stubs so a mutation handler can echo the fleet back."
+  [fleet f]
+  (with-redefs-fn {#'providers/picker-fleet (constantly fleet)
+                   #'providers/default-selection (constantly nil)
+                   #'providers/fallback-selection (constantly nil)
+                   #'providers/provider-status (constantly {:is-authenticated false})
+                   #'providers/provider-limits-safe (constantly nil)}
+    f))
+
+(deftest provider-presets-handler-lists-what-can-still-be-added
+  (with-redefs-fn {#'providers/available-presets (constantly [{:id :lmstudio
+                                                               :label "LM Studio"
+                                                               :base-url "http://localhost:1234/v1"
+                                                               :api-style :openai
+                                                               :default-models ["local-model"]}
+                                                              {:id :anthropic-coding-plan
+                                                               :label "Anthropic"
+                                                               :default-models
+                                                               ["claude-sonnet-5"]}])}
+    (fn []
+      (let
+        [presets
+         (get (wire/parse-json (:body ((rv 'provider-presets-handler) {}))) "presets")
+
+         [local oauth]
+         presets]
+
+        (is (= ["lmstudio" "anthropic-coding-plan"] (mapv #(get % "id") presets)))
+        (is (= "LM Studio" (get local "label")))
+        (is (= "http://localhost:1234/v1" (get local "base_url")))
+        (is (= "openai" (get local "api_style")))
+        (is (= ["local-model"] (get local "models")))
+        ;; a local runtime needs no credential and OWNS its base url
+        (is (= "none" (get local "auth_kind")))
+        (is (true? (get local "is_local")))
+        (is (= "oauth" (get oauth "auth_kind")))
+        (is (false? (get oauth "is_local")))))))
+
+(deftest add-provider-handler-writes-the-preset-into-the-fleet
+  (let
+    [added
+     (atom nil)
+
+     post!
+     (fn [m]
+       ((rv 'add-provider-handler) (json-body m)))]
+
+    (with-redefs-fn {#'config/provider-template (fn [pid]
+                                                  (when (= :lmstudio pid)
+                                                    {:id :lmstudio
+                                                     :label "LM Studio"
+                                                     :base-url "http://localhost:1234/v1"
+                                                     :api-style :openai
+                                                     :default-models ["local-model"]}))
+                     #'providers/configured-providers (constantly [{:id :zai-coding-plan}])
+                     #'providers/add-config-provider! (fn [cfg source]
+                                                        (reset! added [cfg source]))}
+      (fn []
+        (with-stub-fleet!
+          [{:id :lmstudio :models [{:name "local-model"}]}]
+          (fn []
+            (testing "a local provider takes the base url the caller owns, trailing slash and all"
+              (let [resp (post! {:id "lmstudio" :base_url "http://10.0.0.5:1234/v1/"})]
+                (is (= 200 (:status resp)))
+                (is (= [{:id :lmstudio
+                         :models [{:name "local-model"}]
+                         :base-url "http://10.0.0.5:1234/v1"
+                         :api-style :openai} :gateway]
+                       @added))
+                ;; the answer IS the new fleet — the caller repaints from it
+                (is (= ["lmstudio"]
+                       (mapv #(get % "id") (get (wire/parse-json (:body resp)) "providers"))))))
+            (testing "no base url keeps the preset default"
+              (reset! added nil)
+              (is (= 200 (:status (post! {:id "lmstudio"}))))
+              (is (= "http://localhost:1234/v1" (:base-url (first @added)))))
+            (testing "an unknown preset is a 404 and writes nothing"
+              (reset! added nil)
+              (let [resp (post! {:id "not-a-provider"})]
+                (is (= 404 (:status resp)))
+                (is (= "unknown-provider" (get-in (wire/parse-json (:body resp)) ["error" "type"])))
+                (is (nil? @added))))
+            (testing "a blank id is a 400" (is (= 400 (:status (post! {:id "   "})))))
+            (testing "an already-configured provider is a 409, never a duplicate row"
+              (reset! added nil)
+              (with-redefs-fn {#'providers/configured-providers (constantly [{:id :lmstudio}])}
+                (fn []
+                  (is (= 409 (:status (post! {:id "lmstudio"}))))
+                  (is (nil? @added)))))))))))
+
+(deftest remove-provider-handler-drops-the-provider-and-echoes-the-fleet
+  (let [removed (atom nil)]
+    (with-redefs-fn {#'providers/remove-provider! (fn [pid source]
+                                                    (reset! removed [pid source])
+                                                    (= :lmstudio pid))}
+      (fn []
+        (with-stub-fleet!
+          [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}]
+          (fn []
+            (let
+              [resp ((rv 'remove-provider-handler) {:path-params {:provider-id "lmstudio"}})
+               payload (wire/parse-json (:body resp))]
+
+              (is (= 200 (:status resp)))
+              (is (= [:lmstudio :gateway] @removed))
+              (is (true? (get payload "is_removed")))
+              (is (= ["zai-coding-plan"] (mapv #(get % "id") (get payload "providers")))))
+            (testing "removing what is not configured is not an error"
+              (let [resp ((rv 'remove-provider-handler) {:path-params {:provider-id "ghost"}})]
+                (is (= 200 (:status resp)))
+                (is (false? (get (wire/parse-json (:body resp)) "is_removed")))))))))))
