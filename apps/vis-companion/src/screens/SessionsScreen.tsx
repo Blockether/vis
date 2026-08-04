@@ -1190,13 +1190,16 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
           <div
             role="menu"
             aria-label={target ? 'Start the new session in' : 'Create the new session on'}
-            className="absolute inset-x-0 bottom-0 max-h-[70vh] touch-pan-y overflow-y-auto overscroll-contain border-t border-dialog-edge bg-panel pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-auto sm:bottom-auto sm:left-[var(--menu-left)] sm:top-[var(--menu-top)] sm:w-80 sm:border sm:pb-0 sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
+            className="absolute inset-x-0 bottom-0 max-h-[70vh] touch-pan-y overflow-y-auto overscroll-contain border-t-2 border-accent bg-panel pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-auto sm:bottom-auto sm:left-[var(--menu-left)] sm:top-[var(--menu-top)] sm:w-80 sm:border sm:border-dialog-edge sm:pb-0 sm:shadow-[8px_8px_0_var(--line2)]"
             style={{ '--menu-top': `${startMenu.top}px`, '--menu-left': `${startMenu.left}px` } as CSSProperties}
             onClick={(event) => event.stopPropagation()}
           >
             {target ? (
               <>
-                <p className="border-b border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+                {/* The one question you cannot skip wears the Blockether yellow, at
+                    the TOP, filled — and the menu spends that colour exactly once:
+                    the drop shadow underneath went neutral for it. */}
+                <p className="border-b-2 border-warn-strong bg-accent px-3 py-2 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
                   Start the session in
                   {machines.length > 1 ? ` · ${machineLabel(target)}` : ''}
                 </p>
@@ -1250,7 +1253,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                  question comes AFTER this one — a workspace only exists on a
                  machine — so this menu asks the one question that has to be first. */
               <>
-                <p className="border-b border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+                <p className="border-b-2 border-warn-strong bg-accent px-3 py-2 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
                   Create the session on
                 </p>
                 {creatableMachines(machines).length === 0 ? (
