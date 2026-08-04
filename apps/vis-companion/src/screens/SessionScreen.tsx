@@ -3096,9 +3096,9 @@ export function SessionScreen({
       return;
     }
 
-    // The native sheet takes the software keyboard down with it and, on cancel,
-    // nothing puts it back: the composer never lost DOM focus, so the webview sees
-    // no focus change. Hold it across the sheet for whoever was mid-sentence.
+    // Take the keyboard down HERE, before the sheet: the composer keeps DOM focus
+    // across a native sheet, so on cancel nothing puts the keyboard back, and on
+    // delivery iOS raises it again itself. Blur first, refocus once it settles.
     const restoreKeyboard = holdKeyboardAcrossSheet(composerRef.current);
     try {
       const result = await pickMediaAttachments({
