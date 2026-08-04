@@ -300,30 +300,40 @@
                       {:type :vis/openai-codex-missing-account-id})))
     {:token token :api-url CODEX_BASE_URL :llm-headers {"chatgpt-account-id" acct}}))
 
-(def ^:private refresh-and-persist!
+(def ^:private file-refresher
   "Single-flight refresh for the rotating Codex refresh_token (see
    `internal.oauth/make-file-refresher`): serialized per credential file,
    reuses a just-persisted token instead of racing another exchange into
-   HTTP 400. Returns the provider-token map."
-  (oauth/make-file-refresher
-    {:load load-auth-file
-     :lock-path (str (auth-file) ".lock")
-     :saved-at :saved-at
-     :refresh-token :refresh-token
-     :exchange! refresh-access-token!
-     :persist! (fn [fresh]
-                 (save-auth-file! fresh)
-                 (tel/log! {:level :info
-                            :id ::codex-token-refreshed
-                            :data {:account-id (:account-id fresh)}
-                            :msg "OpenAI Codex token refreshed"})
-                 fresh)
-     :->token token-map
-     :no-token!
-     #(throw
-        (ex-info
-          "No OpenAI Codex refresh token on file. Run `vis-agent providers auth openai-codex` to re-authenticate."
-          {:type :vis/openai-codex-not-authenticated}))}))
+   HTTP 400. Returns the provider-token map.
+
+   A `delay`, not a value: `:lock-path` is derived from the user's home,
+   and native-image runs namespace init at BUILD time - a top-level value
+   would bake the build machine's lock path into the shipped binary."
+  (delay
+    (oauth/make-file-refresher
+      {:load load-auth-file
+       :lock-path (str (auth-file) ".lock")
+       :saved-at :saved-at
+       :refresh-token :refresh-token
+       :exchange! refresh-access-token!
+       :persist! (fn [fresh]
+                   (save-auth-file! fresh)
+                   (tel/log! {:level :info
+                              :id ::codex-token-refreshed
+                              :data {:account-id (:account-id fresh)}
+                              :msg "OpenAI Codex token refreshed"})
+                   fresh)
+       :->token token-map
+       :no-token!
+       #(throw
+          (ex-info
+            "No OpenAI Codex refresh token on file. Run `vis-agent providers auth openai-codex` to re-authenticate."
+            {:type :vis/openai-codex-not-authenticated}))})))
+
+(defn ^:private refresh-and-persist!
+  "Run the single-flight refresher, building it on first call."
+  ([] (@file-refresher))
+  ([rejected-token] (@file-refresher rejected-token)))
 
 (defn get-openai-codex-token!
   "Return a fresh Codex access token in the provider-token shape used by

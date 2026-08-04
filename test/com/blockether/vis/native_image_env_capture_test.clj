@@ -102,8 +102,13 @@
 
    `os.*` is exempt: native-image never cross-compiles, so the build platform IS
    the run platform. So is `org.graalvm.nativeimage.imagecode` — reading it AT
-   BUILD TIME is exactly how a namespace detects that it is being built."
-  #"\(System/getenv|\(System/console|\(System/getProperty(?!\s+\"(os\.|org\.graalvm\.nativeimage\.imagecode))")
+   BUILD TIME is exactly how a namespace detects that it is being built.
+
+   The second alternative catches the indirect form: our own runtime-path
+   helpers. `(def refresher (make-refresher {:lock-path (str (auth-file) \".lock\")}))`
+   reads no property itself, yet it froze the builder's lock path into the
+   binary just the same."
+  #"\(System/getenv|\(System/console|\(System/getProperty(?!\s+\"(os\.|org\.graalvm\.nativeimage\.imagecode))|\((?:[a-zA-Z0-9.*+!_'?<>=-]+/)?(?:config-dir|state-path|db-path|default-db-spec|log-path|auth-file|state-dir|registry-file)[\s)]")
 
 (defn- source-roots
   []
@@ -142,30 +147,43 @@
 ;; builder's `~/.vis/vis.log` ("no such file or directory" on the user's box), looked
 ;; for provider auth JSON and `state.yml` there, and printed the CLI with no color at
 ;; all because `System/console` is nil during a native-image build.
-(defdescribe native-image-environment-capture-test
-             (it "no shipped namespace freezes the environment into a top-level def"
-                 (let [found (offenders)]
-                   (expect (empty? found)
-                           (str "Top-level def/defonce reading the environment at namespace load. "
-                                "native-image folds these on the BUILD machine — use a function "
-                                "(paths) or a `delay` (tunables):\n"
-                                (str/join "\n"
-                                          (for [{:keys [file line form]} found]
-                                            (str "  " file ":" line "  " form)))))))
-             (it "the scanner itself sees an eager read and forgives a deferred one"
-                 (let
-                   [eager
-                    "(def home (System/getProperty \"user.home\"))"
+(defdescribe
+  native-image-environment-capture-test
+  (it "no shipped namespace freezes the environment into a top-level def"
+      (let [found (offenders)]
+        (expect (empty? found)
+                (str "Top-level def/defonce reading the environment at namespace load. "
+                     "native-image folds these on the BUILD machine — use a function "
+                     "(paths) or a `delay` (tunables):\n"
+                     (str/join "\n"
+                               (for [{:keys [file line form]} found]
+                                 (str "  " file ":" line "  " form)))))))
+  (it "the scanner itself sees an eager read and forgives a deferred one"
+      (let
+        [eager
+         "(def home (System/getProperty \"user.home\"))"
 
-                    lazy
-                    "(def home (delay (System/getProperty \"user.home\")))"]
+         lazy
+         "(def home (delay (System/getProperty \"user.home\")))"]
 
-                   (expect (re-find env-read (strip-lazy eager)))
-                   (expect (nil? (re-find env-read (strip-lazy lazy))))
-                   (expect (= 2
-                              (count (top-level-forms (str eager
-                                                           "\n;; (def x (System/getenv \"A\"))\n"
-                                                           lazy))))))))
+        (expect (re-find env-read (strip-lazy eager)))
+        (expect (nil? (re-find env-read (strip-lazy lazy))))
+        (expect
+          (= 2 (count (top-level-forms (str eager "\n;; (def x (System/getenv \"A\"))\n" lazy)))))))
+  (it "a top-level call to a runtime-path helper counts as a read"
+      (let
+        [eager
+         "(def refresher (make-refresher {:lock-path (str (auth-file) \".lock\")}))"
+
+         lazy
+         "(def refresher (delay (make-refresher {:lock-path (str (auth-file) \".lock\")})))"
+
+         qualified
+         "(def db (config/default-db-spec))"]
+
+        (expect (re-find env-read (strip-lazy eager)))
+        (expect (re-find env-read (strip-lazy qualified)))
+        (expect (nil? (re-find env-read (strip-lazy lazy)))))))
 
 (defn- with-home
   [home f]

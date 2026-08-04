@@ -236,25 +236,35 @@
        :source :auth-file
        :expires-at-ms (:expires-at-ms auth)})))
 
-(def ^:private refresh-and-persist!
+(def ^:private file-refresher
   "Single-flight refresh for the rotating Anthropic refresh_token (see
    `internal.oauth/make-file-refresher`): serialized per credential file,
    reuses a just-persisted token instead of racing another exchange into
-   HTTP 400. Returns `{:token <access-token>}`."
-  (oauth/make-file-refresher
-    {:load load-auth-file
-     :lock-path (str (auth-file) ".lock")
-     :saved-at :saved-at-ms
-     :refresh-token :refresh-token
-     :exchange! refresh-access-token!
-     :persist! save-auth-file!
-     :->token (fn [auth]
-                {:token (:access-token auth)})
-     :no-token!
-     #(throw
-        (ex-info
-          "No Anthropic refresh token on file. Run `vis-agent providers auth anthropic-coding-plan` to re-authenticate."
-          {:type :vis/anthropic-not-authenticated}))}))
+   HTTP 400. Returns `{:token <access-token>}`.
+
+   A `delay`, not a value: `:lock-path` is derived from the user's home,
+   and native-image runs namespace init at BUILD time - a top-level value
+   would bake the build machine's lock path into the shipped binary."
+  (delay
+    (oauth/make-file-refresher
+      {:load load-auth-file
+       :lock-path (str (auth-file) ".lock")
+       :saved-at :saved-at-ms
+       :refresh-token :refresh-token
+       :exchange! refresh-access-token!
+       :persist! save-auth-file!
+       :->token (fn [auth]
+                  {:token (:access-token auth)})
+       :no-token!
+       #(throw
+          (ex-info
+            "No Anthropic refresh token on file. Run `vis-agent providers auth anthropic-coding-plan` to re-authenticate."
+            {:type :vis/anthropic-not-authenticated}))})))
+
+(defn ^:private refresh-and-persist!
+  "Run the single-flight refresher, building it on first call."
+  ([] (@file-refresher))
+  ([rejected-token] (@file-refresher rejected-token)))
 
 (defn get-anthropic-token!
   "Return a fresh Anthropic Claude subscription access token for Vis runtime."
