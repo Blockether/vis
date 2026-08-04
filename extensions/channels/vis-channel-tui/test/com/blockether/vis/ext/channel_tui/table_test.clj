@@ -9,6 +9,7 @@
    real Lanterna virtual terminal and reads its back-buffer."
   (:require [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
+            [com.blockether.vis.ext.channel-tui.cinema :as cinema]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.table :as table]
@@ -252,6 +253,101 @@
                    (expect (some? bottom))
                    (expect (>= (count bottom) 60))
                    (expect (= (count bottom) (apply max (map count texts)))))))
+
+;;; ── the card reads as a SHEET, not as a code dump ────────────────────────────
+
+(defn- card-roles
+  "The part each painted line of the card plays, `nil` for the chip's own pad and
+   blank rows."
+  [body]
+  (mapv :table-line (:line-meta (table-render body))))
+
+(defn- paint-card
+  "Paint one fence into a REAL Lanterna virtual terminal the way the transcript
+   paints it, then call `f` with the plain text of every terminal row and a
+   `(cell col row)` reader over the back buffer — colours included, since the
+   whole point of the card's chrome is what a human SEES."
+  [body f]
+  (let
+    [vt
+     (term/virtual-screen)
+
+     ^TerminalScreen screen
+     (:screen vt)
+
+     cols
+     (.getColumns (.getTerminalSize screen))
+
+     msg
+     (virtual/project-message {:role :assistant
+                               :session-id "s1"
+                               :session-turn-id "t1"
+                               :text (str "````vis-table\n" body "\n````\n")}
+                              (- (long cols) 4)
+                              {}
+                              {:session-id "s1"})]
+
+    (try (render/draw-chat-bubble! (.newTextGraphics screen) msg 1 2 (- (long cols) 4))
+         (.refresh screen)
+         (f (term/grid (:terminal vt))
+            (fn [col row]
+              (cinema/cell (.getBackCharacter screen (int col) (int row)))))
+         (finally (.stopScreen screen)))))
+
+(defdescribe
+  vis-table-card-chrome-test
+  (it "tags every line of the card with the part it plays"
+      (let [roles (vec (remove nil? (card-roles (fence 12))))]
+        (expect (= :title (first roles)))
+        (expect (= [:border :head :border] (subvec roles 1 4)))
+        ;; ten preview rows, striped in turn - the zebra IS the row separator
+        (expect (= (take 10 (cycle [:row :row-alt])) (subvec roles 4 14)))
+        (expect (= [:border :hint] (subvec roles 14)))))
+  (it
+    "paints two backgrounds down the data rows, and a banded bold header"
+    (paint-card
+      (fence 12)
+      (fn [rows cell]
+        (let
+          [row-of
+           (fn [needle]
+             (first (keep-indexed (fn [i r]
+                                    (when (str/includes? r needle) i))
+                                  rows)))
+
+           y0
+           (row-of "row0")
+
+           y1
+           (row-of "row1")
+
+           yh
+           (row-of "name")
+
+           text-col
+           (fn [y needle]
+             (str/index-of (nth rows y) needle))
+
+           c0
+           (cell (text-col y0 "row0") y0)
+
+           c1
+           (cell (text-col y1 "row1") y1)
+
+           ch
+           (cell (text-col yh "name") yh)]
+
+          (expect (some? y0))
+          (expect (some? y1))
+          ;; consecutive rows do NOT share a background: that is the stripe
+          (expect (not= (:bg c0) (:bg c1)))
+          ;; and the header sits on the same tinted band as the stripe
+          (expect (= (:bg c1) (:bg ch)))
+          ;; header bold, body not - the column names read as labels
+          (expect (:bold ch))
+          (expect (not (:bold c0)))
+          ;; chrome is muted: the borders are not painted in the cell ink
+          (expect (not= (:fg (cell (str/index-of (nth rows y0) "│") y0)) (:fg c0))))))))
 
 ;;; ── the table dialog ─────────────────────────────────────────────────────────
 

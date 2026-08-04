@@ -274,6 +274,24 @@
 
     (if (>= ink-gap surface-gap) dialog-fg dialog-bg)))
 
+(defn- mix-channel
+  "One colour channel `a` moved `t` of the way toward `b`."
+  ^long [^long a ^long b ^double t]
+  (Math/round (+ (* (- 1.0 t) (double a)) (* t (double b)))))
+
+(defn zebra-bg
+  "Background for the ALTERNATING row of a striped table: the row's own
+   background `bg` mixed a tenth of the way toward the theme's ink.
+
+   Derived instead of a palette token, so the stripe darkens on a light theme and
+   lightens on a dark one, and a theme this build has never seen - a user's own,
+   or one an extension registers at runtime - gets a legible zebra without one
+   more colour to keep in sync across every palette."
+  [^com.googlecode.lanterna.TextColor$RGB bg]
+  (TextColor$RGB. (int (mix-channel (.getRed bg) (.getRed ^TextColor$RGB text-fg) 0.1))
+                  (int (mix-channel (.getGreen bg) (.getGreen ^TextColor$RGB text-fg) 0.1))
+                  (int (mix-channel (.getBlue bg) (.getBlue ^TextColor$RGB text-fg) 0.1))))
+
 ;; Widths
 (def dialog-width-ratio (width :dialog-width-ratio))
 

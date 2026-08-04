@@ -2738,6 +2738,48 @@
                                          :collapsed? (:collapsed? meta)}))
 
                         nil))
+                    ;; ── `vis-table` card ── a sheet, not a source listing
+                    ;;
+                    ;; The card stays ONE code chip (one background, one pair of
+                    ;; pads), but painted as code it was a wall of ink: caption,
+                    ;; chrome and every cell in the same weight and colour, and
+                    ;; nothing at all telling row 4 from row 5. Each entry knows
+                    ;; its role from `tag-table-grid-lines`; here that role earns
+                    ;; real table chrome - muted borders, a bold header over a
+                    ;; tinted band, a zebra stripe under every other data row and
+                    ;; a dimmed `… N more rows` footer.
+                    (and (:table-line meta) (str/starts-with? line md-code-marker))
+                    (let
+                      [kind (:table-line meta)
+                       stripped (subs line 1)
+                       tx (+ (long x) (long code-block-h-pad))
+                       rbg
+                       (if (#{:head :row-alt} kind) (t/zebra-bg t/code-block-bg) t/code-block-bg)]
+
+                      (p/clear-styles! g)
+                      (p/set-colors! g t/code-border-fg t/code-block-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      ;; The stripe is the ROW, not the card: it runs exactly as
+                      ;; wide as the grid, so the chip's pads stay quiet.
+                      (when-not (identical? rbg t/code-block-bg)
+                        (p/set-colors! g t/code-border-fg rbg)
+                        (p/fill-rect! g tx y (p/display-width stripped) 1))
+                      (case kind
+                        :title
+                        (do (p/set-colors! g t/code-block-fg rbg)
+                            (p/styled g [p/BOLD] (p/put-str! g tx y stripped)))
+
+                        (:border :hint)
+                        (do (p/set-colors! g t/code-border-fg rbg) (p/put-str! g tx y stripped))
+
+                        (paint-table-data-line! g
+                                                tx
+                                                y
+                                                stripped
+                                                t/code-block-fg
+                                                t/code-border-fg
+                                                rbg
+                                                (when (= :head kind) [p/BOLD]))))
                     (str/starts-with? line md-code-marker)
                     (let
                       [nested-code? (and in-answer? (:list-nested-code? meta))
@@ -6412,6 +6454,46 @@
    selects over ALL of it."
   10)
 
+(def ^:private table-grid-rule-chars
+  "Openers of a boxed grid's pure RULE lines - the rows that carry no cell text."
+  #{\┌ \├ \└ \┬ \┴ \┼ \─ \┐ \┤ \┘})
+
+(defn- tag-table-grid-lines
+  "Tag each entry of a `vis-table` card with the role its line plays, in
+   `:meta :table-line`: `:title` for the headline, `:border` for the rules,
+   `:head` for the column names, `:row`/`:row-alt` alternating down the data rows
+   - the zebra that separates one row from the next without spending a rule line
+   on each - and `:hint` for the `… N more rows` footer.
+
+   The role is read off the line itself rather than counted as an index into
+   `csv-grid-lines`, because the chip's own pad and blank rows sit between them
+   and a role read from the text cannot drift when the card gains a row."
+  [entries]
+  (first
+    (reduce (fn [[acc data-rows] {:keys [line] :as entry}]
+              (let
+                [ch
+                 (first (str/triml (if (seq line) (subs line 1) "")))
+
+                 n
+                 (long data-rows)
+
+                 kind
+                 (cond (nil? ch) nil
+                       (contains? table-grid-rule-chars ch) :border
+                       (= \│ ch) (cond (zero? n) :head
+                                       (odd? n) :row
+                                       :else :row-alt)
+                       (zero? n) :title
+                       :else :hint)]
+
+                [(conj acc
+                       (cond-> entry
+                         kind
+                         (assoc-in [:meta :table-line] kind))) (if (= \│ ch) (inc n) n)]))
+            [[] 0]
+            entries)))
+
 (defn- table-disclosure-entries
   "Render one `vis-table` block as a single card: the `[Table: …]` headline, a
    bordered preview of the first rows — numeric columns right-aligned, over-wide
@@ -6462,7 +6544,8 @@
      {:name name :csv csv :cols cols :rows rows :title (or (not-empty name) summary)}]
 
     (mapv #(assoc-in % [:meta :table] tbl)
-          (layout/ast->entries [:ast {} [:code {} (str/join "\n" lines)]] content-w {}))))
+          (tag-table-grid-lines
+            (layout/ast->entries [:ast {} [:code {} (str/join "\n" lines)]] content-w {})))))
 
 (defn- paste-aware-ast->entries
   "`layout/ast->entries`, but each top-level `vis-paste` code block becomes
