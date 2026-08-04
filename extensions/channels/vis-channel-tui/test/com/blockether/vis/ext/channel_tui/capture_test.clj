@@ -79,14 +79,22 @@
                                                          (throw (ex-info "boom" {})))})]
         (expect (= 1 (count frames)))
         (expect (str/includes? (str error) "boom"))))
-  (it "always yields a frame, even from a paint that never flushed"
+  ;; Regression: `capture!` grabbed the VIRTUAL TERMINAL, but a `:paint!` that
+  ;; never called `screen.refresh` leaves its drawing in the SCREEN's back buffer
+  ;; -- so the promised fallback frame came back completely blank and `shot!`
+  ;; wrote an empty sheet of paper. Four different OTP dialog states photographed
+  ;; to byte-identical white PNGs before anybody noticed, because this test only
+  ;; counted the frame instead of looking at it.
+  (it "always yields a frame CARRYING the paint, even when it never flushed"
       (let
         [{:keys [frames]} (cap/capture! {:cols 6
                                          :rows 2
-                                         :paint! (fn [_]
+                                         :paint! (fn [{:keys [^TextGraphics g]}]
+                                                   (.putString g 0 0 "hi")
                                                    :no-refresh)})]
         (expect (= 1 (count frames)))
-        (expect (= 2 (count (first frames))))))
+        (expect (= 2 (count (first frames))))
+        (expect (str/includes? (cap/frame-text (first frames)) "hi"))))
   (it "hands back the PATH of ONE real PNG of the paint"
       (let
         [png

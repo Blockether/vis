@@ -88,9 +88,9 @@
    `{:cols :rows :frames [frame …] :ret v :error t}`.
 
    ONE frame per terminal flush (i.e. per `screen.refresh`), so a dialog's every
-   repaint is inspectable — and ALWAYS at least one: a paint that never flushed
-   still gets its final buffer grabbed, so nothing downstream has to cope with an
-   empty capture.
+   repaint is inspectable — and ALWAYS at least one CARRYING THE DRAWING: a paint
+   that never flushed is flushed here, because a `TextGraphics` write lands in the
+   screen's back buffer and the terminal would otherwise hand back blank paper.
 
    `:paint!` is called with `{:terminal :screen :g}`; its value comes back as
    `:ret`. A throw is caught, reported as `:error`, and the half-painted frames
@@ -109,7 +109,7 @@
      terminal
      (DefaultVirtualTerminal. (TerminalSize. (int cols) (int rows)))
 
-     screen
+     ^TerminalScreen screen
      (doto (TerminalScreen. terminal) (.startScreen))
 
      frames
@@ -132,6 +132,11 @@
        (try (paint! {:terminal terminal :screen screen :g (.newTextGraphics screen)})
             (catch Throwable t (reset! error t) nil))]
 
+      ;; A paint that never refreshed has left its drawing in the SCREEN's back
+      ;; buffer, where the terminal cannot see it -- so flush it here. Without
+      ;; this the guaranteed frame is blank paper and every state photographs to
+      ;; the same empty picture.
+      (when (empty? @frames) (try (.refresh screen) (catch Throwable _ nil)))
       {:cols cols
        :rows rows
        :frames (if (seq @frames) @frames [(grab terminal cols rows)])
