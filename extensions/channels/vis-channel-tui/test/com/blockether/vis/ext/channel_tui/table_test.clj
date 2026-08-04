@@ -7,8 +7,10 @@
    Everything except the paint is a pure function of immutable data, so the
    viewer's behaviour is pinned WITHOUT a terminal; the one paint test drives a
    real Lanterna virtual terminal and reads its back-buffer."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
+            [com.blockether.vis.ext.channel-tui.capture :as cap]
             [com.blockether.vis.ext.channel-tui.cinema :as cinema]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.render :as render]
@@ -300,6 +302,27 @@
   [[r g b]]
   (/ (+ (* 0.2126 (double r)) (* 0.7152 (double g)) (* 0.0722 (double b))) 255.0))
 
+(defn- row-ink
+  "Rasterize ONE captured row and count its GLYPH pixels — the picture's own
+   measure of how heavy that line of type is, through the same ops the screencast
+   encodes.
+
+   \"Not the paper\" is too blunt for a row that carries a coloured band: the whole
+   band would count as ink. The raster's top row sits ABOVE every glyph, so the
+   colours in it are exactly this line's backgrounds (and its vertical bars, which
+   run the full cell height) — everything else on the line is type."
+  [nm cells]
+  (let
+    [raster
+     (cap/png-rows (str (cinema/grid->png! [cells]
+                                           (io/file (System/getProperty "java.io.tmpdir") nm)
+                                           {:font-size 16})))
+
+     paper
+     (set (first raster))]
+
+    (count (remove paper (apply concat raster)))))
+
 (defdescribe
   vis-table-card-chrome-test
   (it "tags every line of the card with the part it plays"
@@ -407,7 +430,43 @@
           ;; and the header band is fenced in exactly the same way
           (let [yh (row-of "name")]
             (expect (= card-bg (:bg (cell left yh))))
-            (expect (not= card-bg (:bg (cell (inc (long left)) yh))))))))))
+            (expect (not= card-bg (:bg (cell (inc (long left)) yh)))))))))
+  ;; Regression: the header was bold in the terminal and NOT in the picture. The
+  ;; rasterizer asked the embedded mono face for weight 700, that face carries a
+  ;; single weight, and every shot of the card came back with a header nobody
+  ;; would call bold.
+  (it "carries that bold into the PICTURE of the card, not only into the buffer"
+      (paint-card (fence 12)
+                  (fn [rows cell]
+                    (let
+                      [row-of
+                       (fn [needle]
+                         (first (keep-indexed (fn [i r]
+                                                (when (str/includes? r needle) i))
+                                              rows)))
+
+                       cells
+                       (fn [y]
+                         (mapv #(cell % y) (range (count (nth rows y)))))
+
+                       unbolded
+                       (fn [cs]
+                         (mapv #(assoc % :bold false) cs))
+
+                       head
+                       (cells (row-of "name"))
+
+                       body
+                       (cells (row-of "row0"))]
+
+                      (expect (some :bold head))
+                      ;; the same header, drawn without its flag, is visibly lighter
+                      (expect (> (row-ink "vis-table-head-bold.png" head)
+                                 (* 1.1 (row-ink "vis-table-head-plain.png" (unbolded head)))))
+                      ;; and a body row is unchanged by the flag it never carried, so the
+                      ;; difference above is the BOLD and not the rasterizer wandering
+                      (expect (= (row-ink "vis-table-body.png" body)
+                                 (row-ink "vis-table-body-plain.png" (unbolded body)))))))))
 
 ;;; ── the table dialog ─────────────────────────────────────────────────────────
 

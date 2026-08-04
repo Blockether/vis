@@ -13,13 +13,14 @@
             [com.blockether.vis.ext.channel-tui.cinema :as cinema]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defn- cell [ch fg bg] {:ch (str ch) :fg fg :bg bg :bold false})
+(defn- cell [ch fg bg bold] {:ch (str ch) :fg fg :bg bg :bold bold})
 
 (defn- row
   "One captured row `cols` wide, `s` left-aligned into it."
-  [^String s cols fg bg]
-  (vec (for [x (range cols)]
-         (cell (if (< x (count s)) (.charAt s x) \space) fg bg))))
+  ([^String s cols fg bg] (row s cols fg bg false))
+  ([^String s cols fg bg bold]
+   (vec (for [x (range cols)]
+          (cell (if (< (long x) (.length s)) (.charAt s (int x)) \space) fg bg bold)))))
 
 (defn- frames
   "`n` frames of a `cols`x2 grid. `text?` false paints blank cells only -- same
@@ -144,4 +145,26 @@
          (nth rows (quot (count rows) 2))]
 
         (expect (pos? (count middle)))
-        (expect (every? #(not= [255 255 255] %) middle)))))
+        (expect (every? #(not= [255 255 255] %) middle))))
+  (it "paints a BOLD run visibly heavier than the same text unstyled"
+      ;; The embedded mono face carries ONE weight, so a `:weight 700` op resolves
+      ;; to exactly the same outlines as `:weight 400`: the table card's bold
+      ;; header -- `:bold true` in the Lanterna back-buffer -- rasterized as plain
+      ;; text, and every screenshot taken of it lied about the app.
+      (let
+        [ink
+         (fn [nm bold]
+           (->> (cap/png-rows (png! nm [(row "Name Size" 12 [0 0 0] [255 255 255] bold)]))
+                (apply concat)
+                (filter (fn [[r g b]]
+                          (< (+ (long r) (long g) (long b)) 384)))
+                count))
+
+         plain
+         (ink "vis-cinema-plain.png" false)
+
+         heavy
+         (ink "vis-cinema-bold.png" true)]
+
+        (expect (pos? plain))
+        (expect (> heavy (* 1.1 plain))))))

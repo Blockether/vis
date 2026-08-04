@@ -677,39 +677,49 @@
   [grid cw ch ascent size letter-spacing]
   (into
     []
-    (mapcat (fn [[y row]]
-              (let [py (* (long y) (long ch))]
-                (concat (for
-                          [g (partition-by (comp :bg second) (map-indexed vector row))
-                           :let [x (ffirst g)]]
+    (mapcat
+      (fn [[y row]]
+        (let [py (* (long y) (long ch))]
+          (concat (for
+                    [g (partition-by (comp :bg second) (map-indexed vector row))
+                     :let [x (ffirst g)]]
 
-                          {:op :rect
-                           :x (* (long x) (long cw))
-                           :y py
-                           :w (* (count g) (long cw))
-                           :h ch
-                           :fill (hex-color (:bg (second (first g))))})
-                        (mapcat (fn [[x c]]
-                                  (box-ops c (* (long x) (long cw)) py cw ch))
-                                (map-indexed vector row))
-                        (for
-                          [{:keys [x style text]}
-                           ;; box cells are already drawn as bars — blank them
-                           ;; out so their glyph cannot be painted on top
-                           (text-runs (mapv #(cond-> % (box-arms (:ch %)) (assoc :ch " ")) row))
-                           :when (pos? (count (str/trim text)))
-                           :let [[fg bold] style]]
+                    {:op :rect
+                     :x (* (long x) (long cw))
+                     :y py
+                     :w (* (count g) (long cw))
+                     :h ch
+                     :fill (hex-color (:bg (second (first g))))})
+                  (mapcat (fn [[x c]]
+                            (box-ops c (* (long x) (long cw)) py cw ch))
+                          (map-indexed vector row))
+                  (for
+                    [{:keys [x style text]}
+                     ;; box cells are already drawn as bars — blank them
+                     ;; out so their glyph cannot be painted on top
+                     (text-runs (mapv #(cond-> % (box-arms (:ch %)) (assoc :ch " ")) row))
+                     :when (pos? (count (str/trim text)))
+                     :let [[fg bold] style]]
 
-                          {:op :text
-                           :text text
-                           :x (* (long x) (long cw))
-                           :y (+ py (long ascent))
-                           :fill (hex-color fg)
-                           :size size
-                           :family mono-family
-                           :weight (if bold 700 400)
-                           :letter-spacing letter-spacing}))))
-            (map-indexed vector grid))))
+                    (cond->
+                      {:op :text
+                       :text text
+                       :x (* (long x) (long cw))
+                       :y (+ py (long ascent))
+                       :fill (hex-color fg)
+                       :size size
+                       :family mono-family
+                       :letter-spacing letter-spacing}
+                      ;; The embedded mono face has a SINGLE weight, so
+                      ;; asking for `:weight 700` paints the same outlines
+                      ;; back. Stroke the glyph in its own colour instead --
+                      ;; synthetic bold, scaled with the type size so it
+                      ;; holds at every `:font-size`.
+                      bold
+                      (assoc :stroke
+                        (hex-color fg) :stroke-width
+                        (/ (double size) 24.0)))))))
+      (map-indexed vector grid))))
 
 (defn grid->png!
   "Rasterize ONE captured grid to `out` as a PNG and return the output File.
