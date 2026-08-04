@@ -2009,11 +2009,12 @@ class __VisNativeResults__:
         self.__vis_cache__[__vis_id__] = __vis_v__
         return __vis_v__
 
-    def __vis_coord__(self, __vis_k__):
-        # The transcript COORDINATE a result was printed under (`# t5/i1`), or None
-        # when this key is not one — a `toolu_…` id, an int, a form scope's own
-        # `t5/i1/f2` (which is the same iteration, so it normalizes to `t5/i1`).
-        # This is the handle the model actually has: the header above the result.
+    def __vis_coord_key__(self, __vis_k__):
+        # NORMALIZED transcript coordinate key, or None when this key is not one (a
+        # `toolu_…` id, an int). `T5/I1` → `t5/i1`; a `/fK` tail is KEPT — it is how
+        # ONE call of an iteration that ran several native tools is addressed
+        # (`t5/i1/f2`), which is the common case for `await gather(...)` and for one
+        # assistant message carrying several tool calls.
         if not isinstance(__vis_k__, str):
             return None
         __vis_p__ = __vis_k__.strip().lower().split("/")
@@ -2021,64 +2022,119 @@ class __VisNativeResults__:
             return None
         __vis_t__ = __vis_p__[0]
         __vis_i__ = __vis_p__[1]
-        if (
+        if not (
             __vis_t__[:1] == "t"
             and __vis_t__[1:].isdigit()
             and __vis_i__[:1] == "i"
             and __vis_i__[1:].isdigit()
         ):
-            return __vis_t__ + "/" + __vis_i__
-        return None
+            return None
+        __vis_c__ = __vis_t__ + "/" + __vis_i__
+        __vis_f__ = __vis_p__[2] if len(__vis_p__) > 2 else ""
+        if __vis_f__[:1] == "f" and __vis_f__[1:].isdigit():
+            return __vis_c__ + "/" + __vis_f__
+        return __vis_c__
 
-    def __vis_at_coord__(self, __vis_c__):
-        # Resolve ONE coordinate through the host: the labelled entries that
-        # iteration stored. Exactly one → that result (cached under the coordinate
-        # too, so a re-read costs nothing). Several → the iteration ran several
-        # native tools and only the caller knows which it meant, so NAME them
-        # instead of guessing.
+    def __vis_coord__(self, __vis_k__):
+        # The ITERATION coordinate a result was printed under (`# t5/i1`), tail
+        # dropped, or None when this key is not a coordinate. This is the handle the
+        # model actually has: the header above the result.
+        __vis_c__ = self.__vis_coord_key__(__vis_k__)
+        if __vis_c__ is None:
+            return None
+        return "/".join(__vis_c__.split("/")[:2])
+
+    def __vis_entries_at__(self, __vis_k__):
+        # The labelled entries the host stored under this coordinate, in the order
+        # that iteration ran them. Each is `(id, key, label)`: `key` addresses THAT
+        # call alone (`t5/i1/f2`), so an ambiguous read hands back keys that can be
+        # READ instead of 24-char ids nobody can retype.
         try:
-            __vis_hits__ = __vis_native_result_scope__(__vis_c__) or []
+            __vis_hits__ = __vis_native_result_scope__(__vis_k__) or []
         except Exception:
             __vis_hits__ = []
-        __vis_entries__ = []
+        __vis_out__ = []
         for __vis_e__ in __vis_hits__:
             try:
                 __vis_eid__ = __vis_e__.get("id")
+                __vis_key__ = __vis_e__.get("form") or __vis_k__
                 __vis_lab__ = " · ".join(
                     [
                         __vis_x__
                         for __vis_x__ in (
-                            __vis_eid__,
                             __vis_e__.get("tool"),
                             __vis_e__.get("gist"),
+                            __vis_eid__,
                         )
                         if __vis_x__
                     ]
                 )
             except Exception:
                 __vis_eid__ = None
+                __vis_key__ = __vis_k__
                 __vis_lab__ = ""
             if __vis_eid__:
-                __vis_entries__.append((__vis_eid__, __vis_lab__))
+                __vis_out__.append((__vis_eid__, __vis_key__, __vis_lab__))
+        return __vis_out__
+
+    def __vis_at_coord__(self, __vis_k__):
+        # Resolve ONE coordinate key through the host. Exactly one entry → that
+        # result (cached under the key too, so a re-read costs nothing). Several →
+        # the iteration ran several native tools and only the caller knows which it
+        # meant, so NAME them by the key that addresses each, and offer the whole
+        # iteration at once.
+        __vis_entries__ = self.__vis_entries_at__(__vis_k__)
         if len(__vis_entries__) == 1:
             __vis_v__ = self[__vis_entries__[0][0]]
-            self.__vis_cache__[__vis_c__] = __vis_v__
+            self.__vis_cache__[__vis_k__] = __vis_v__
             return __vis_v__
         if not __vis_entries__:
             raise KeyError(
                 "no native tool result at "
-                + repr(__vis_c__)
+                + repr(__vis_k__)
                 + " — that iteration stored no native tool result (a python_execution "
                 "call returns what it print()s, not a stored value). Use ntr.describe() "
                 "to see which coordinates this turn stored."
             )
         raise KeyError(
-            repr(__vis_c__)
+            repr(__vis_k__)
             + " ran "
             + str(len(__vis_entries__))
-            + " native tools — read one by id: "
-            + "; ".join([__vis_p2__[1] for __vis_p2__ in __vis_entries__])
+            + " native tools — read one: "
+            + "; ".join(
+                [
+                    'ntr["' + __vis_p2__[1] + '"] (' + __vis_p2__[2] + ")"
+                    for __vis_p2__ in __vis_entries__
+                ]
+            )
+            + ' — or all of them: ntr.at("'
+            + self.__vis_coord__(__vis_k__)
+            + '")'
         )
+
+    def at(self, __vis_k__):
+        # EVERY native result one transcript coordinate stored, in the order that
+        # iteration ran them: an iteration that called several tools (`await
+        # gather(...)`, one multi-tool message) is read WHOLE instead of one opaque
+        # id at a time. A `/fK` tail narrows it to that one call.
+        __vis_c__ = self.__vis_coord_key__(__vis_k__)
+        if __vis_c__ is None:
+            raise KeyError(
+                repr(__vis_k__)
+                + " is not a transcript coordinate — ntr.at() takes the header above a "
+                'result ("tN/iM").'
+            )
+        __vis_ids__ = [
+            __vis_p2__[0] for __vis_p2__ in self.__vis_entries_at__(__vis_c__)
+        ]
+        self.__vis_prime__(__vis_ids__)  # ONE batched fetch for the whole iteration
+        __vis_out__ = []
+        for __vis_i__ in __vis_ids__:
+            try:
+                __vis_out__.append(self[__vis_i__])
+            except KeyError:
+                pass
+        return __vis_out__
 
     def __vis_prime__(self, __vis_ids__):
         # Pre-populate from ONE batched host query. Only ids we have NOT already
@@ -2098,6 +2154,7 @@ class __VisNativeResults__:
         ]
         if not __vis_need__:
             return
+        __vis_batched__ = True
         try:
             __vis_hits__ = __vis_native_result_prime__(__vis_need__)
         except Exception:
@@ -2105,9 +2162,19 @@ class __VisNativeResults__:
         try:
             # A host value that is neither a map nor None (a deferred call proxy
             # settling to None) must never break a browse.
-            __vis_hits__ = __vis_hits__ or {}
+            if __vis_hits__ is None:
+                __vis_batched__ = False
+                __vis_hits__ = {}
+            else:
+                __vis_hits__ = __vis_hits__ or {}
         except Exception:
+            __vis_batched__ = False
             __vis_hits__ = {}
+        # No batched channel AT ALL (the callback is unbound, or it raised) is not
+        # proof of absence — those ids stay fetchable one at a time. Only an ANSWER
+        # that omits an id proves that id is gone.
+        if not __vis_batched__:
+            return
         for __vis_id__ in __vis_need__:
             if __vis_id__ in __vis_hits__ and __vis_hits__[__vis_id__] is not None:
                 self.__vis_store__(__vis_id__, __vis_hits__[__vis_id__])
@@ -2118,9 +2185,12 @@ class __VisNativeResults__:
         if __vis_id__ in self.__vis_cache__:
             return self.__vis_cache__[__vis_id__]
         # The transcript heads every result with its coordinate and only foots it
-        # with the id, so `ntr["t5/i1"]` is a first-class read.
-        __vis_c__ = self.__vis_coord__(__vis_id__)
+        # with the id, so `ntr["t5/i1"]` is a first-class read — and `ntr["t5/i1/f2"]`
+        # picks one call of an iteration that ran several.
+        __vis_c__ = self.__vis_coord_key__(__vis_id__)
         if __vis_c__ is not None:
+            if __vis_c__ in self.__vis_cache__:
+                return self.__vis_cache__[__vis_c__]
             return self.__vis_at_coord__(__vis_c__)
         if __vis_id__ not in self.__vis_missing__:
             # Lazy single-id fetch (dynamic key the pre-scan couldn't see).
@@ -2262,9 +2332,9 @@ class __VisNativeResults__:
             return "result"
 
     def describe(self, limit=20, ids=None):
-        # ['toolu_01Tc… · t7/i3 · grep · session_fold, 6 file names', …] — the
-        # coordinate is what the transcript shows above the result, so a listed id
-        # can also be read back as ntr["t7/i3"].
+        # ['toolu_01Tc… · t7/i3/f2 · grep · session_fold, 6 file names', …] — that
+        # coordinate is what the transcript shows above the result, and the `/fK` tail
+        # names THIS call of it, so a listed id also reads back as ntr["t7/i3/f2"].
         __vis_idx__ = self.__vis_index__()
         __vis_lbl__ = {}
         if __vis_idx__ is not None:
@@ -2275,7 +2345,7 @@ class __VisNativeResults__:
                             [
                                 __vis_x__
                                 for __vis_x__ in (
-                                    __vis_e__.get("scope"),
+                                    __vis_e__.get("form") or __vis_e__.get("scope"),
                                     __vis_e__.get("tool"),
                                     __vis_e__.get("gist"),
                                 )
@@ -2323,8 +2393,10 @@ class __VisNativeResults__:
         return (
             "<ntr: "
             + str(__vis_n__)
-            + " stored native results · ntr[tool_id] fetches one "
-            "with no re-run · ntr.describe() lists the latest turn with what each holds>"
+            + ' stored native results · ntr[tool_id] or ntr["tN/iM"] fetches one with no '
+            're-run (ntr["tN/iM/fK"] picks one call of an iteration that ran several, '
+            'ntr.at("tN/iM") takes them all) · ntr.describe() lists the latest turn with '
+            "what each holds>"
         )
 
 

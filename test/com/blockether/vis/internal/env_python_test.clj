@@ -698,6 +698,7 @@
                          "_c['toolu_A'] = {'op': 'grep'}\n"
                          "print(repr(ntr))\n"))]
           (expect (str/includes? out "stored native results"))
+          (expect (str/includes? out "ntr.at("))
           (expect (str/includes? out "ntr.describe()"))))))
 
 ;; Regression: every tool result in the transcript is HEADED with its coordinate
@@ -744,7 +745,10 @@
     (it "a form scope and the verbose alias resolve the same iteration"
         (let
           [own (context-with (fn [scope]
-                               (when (= "t5/i1" scope) [{"id" "toolu_A" "tool" "cat"}])))]
+                               ;; the host widens a `/fK` tail nobody stored back to
+                               ;; the whole iteration, so a stray tail never dead-ends
+                               (when (contains? #{"t5/i1" "t5/i1/f2"} scope)
+                                 [{"id" "toolu_A" "tool" "cat"}])))]
           (ep/set-python-binding! own
                                   (symbol "__vis_native_result_fetch__")
                                   (fn [id]
@@ -767,6 +771,38 @@
           (expect (str/includes? out "grep"))
           (expect (str/includes? out "toolu_B"))
           (expect (str/includes? out "cat"))))
+    ;; Regression: naming those calls by `toolu_…` id was the whole problem — the
+    ;; ambiguous coordinate has to hand back keys that can be READ, and a way to
+    ;; take every result the iteration stored.
+    (it "several native calls in one iteration are addressed by their form key"
+        (let
+          [entries
+           [{"id" "toolu_A" "tool" "grep" "gist" "26 hits" "form" "t5/i1/f1"}
+            {"id" "toolu_B" "tool" "cat" "form" "t5/i1/f2"}]
+
+           own
+           (context-with (fn [scope]
+                           ;; the host narrows a form key to ONE entry
+                           (cond (= "t5/i1" scope) entries
+                                 (= "t5/i1/f2" scope) [(second entries)]
+                                 :else [])))]
+
+          (ep/set-python-binding! own
+                                  (symbol "__vis_native_result_fetch__")
+                                  (fn [id]
+                                    (get {"toolu_A" {"op" "grep"} "toolu_B" {"op" "cat"}} id)))
+          ;; the ambiguous coordinate names READABLE keys, not just ids
+          (let
+            [out (run own
+                      (str "try:\n" "    ntr['t5/i1']\n"
+                           "except KeyError as e:\n" "    print(str(e))\n"))]
+            (expect (str/includes? out "t5/i1/f1"))
+            (expect (str/includes? out "t5/i1/f2"))
+            (expect (str/includes? out "ntr.at(")))
+          (expect (str/includes? (run own "print(ntr['t5/i1/f2']['op'])\n") "cat"))
+          ;; …and every result of that iteration at once, in the order it ran
+          (expect (str/includes? (run own "print([r['op'] for r in ntr.at('t5/i1')])\n")
+                                 "['grep', 'cat']"))))
     (it "a coordinate that stored nothing says so, and points at describe()"
         (let
           [own

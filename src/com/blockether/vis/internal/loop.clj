@@ -11543,19 +11543,32 @@
                     (:scope e)
                     (assoc "scope" (str (:scope e)))
 
+                    ;; `form` is the key that addresses THIS call ALONE
+                    ;; (`tN/iM/fK`), which is what an iteration that ran several
+                    ;; native tools needs: one readable key per result.
+                    (:form e)
+                    (assoc "form" (str (:form e)))
+
                     (:gist e)
                     (assoc "gist" (str (:gist e)))))
                 (persistance/db-native-result-index-for-latest-turn db-info session-id)))
         ;; `scope` resolves ONE transcript coordinate (`tN/iM`, the header the model
         ;; actually reads above a result) to the labelled entries that iteration stored,
         ;; across the whole branch. Several native calls in one iteration resolve to
-        ;; several entries; the sandbox names them instead of guessing.
+        ;; several entries, each carrying the `form` key (`tN/iM/fK`) that addresses it
+        ;; alone; a coordinate WITH that tail narrows to that one call.
         (symbol "__vis_native_result_scope__")
         (fn native-result-scope [scope]
           (mapv (fn [e]
                   (cond-> {"id" (str (:id e))}
                     (:tool e)
                     (assoc "tool" (str (:tool e)))
+
+                    (:scope e)
+                    (assoc "scope" (str (:scope e)))
+
+                    (:form e)
+                    (assoc "form" (str (:form e)))
 
                     (:gist e)
                     (assoc "gist" (str (:gist e)))))

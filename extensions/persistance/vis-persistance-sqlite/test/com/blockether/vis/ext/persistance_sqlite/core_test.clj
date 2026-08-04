@@ -2691,6 +2691,48 @@
         (expect (= [] (persistance/db-native-result-index-for-scope s cid "t9/i9")))
         (expect (= [] (persistance/db-native-result-index-for-scope s cid "toolu_A")))
         (expect (= [] (persistance/db-native-result-index-for-scope s cid nil)))))
+    ;; Regression: an iteration that called SEVERAL native tools (one `gather`, one
+    ;; multi-tool assistant message) resolved to several entries and dead-ended —
+    ;; the reader was told to "read one by id", which is exactly the 24-char id the
+    ;; coordinate exists to avoid. Every entry now NAMES the key that addresses it.
+    (it
+      "a form key addresses ONE call of a multi-call iteration"
+      (let
+        [s (h/store)
+         cid (h/store-session! s {:channel :cli})
+         tid1 (vis/db-store-session-turn! s {:parent-session-id cid :user-request "t1"})
+         _ (h/store-iteration! s
+                               {:session-turn-id tid1
+                                :status :done
+                                :idx 0
+                                :code "gather"
+                                ;; real forms carry their own `/fK`
+                                :forms [(form "t1/i1/f1" "toolu_A" "grep" {:op "grep"})
+                                        (form "t1/i1/f2" "toolu_B" "cat" {:op "cat"})]})
+         tid2 (vis/db-store-session-turn! s {:parent-session-id cid :user-request "t2"})
+         _ (h/store-iteration! s
+                               {:session-turn-id tid2
+                                :status :done
+                                :idx 0
+                                :code "gather"
+                                ;; iteration-scoped forms: the key is positional
+                                :forms [(form "t2/i1" "toolu_C" "ls" {:op "ls"})
+                                        (form "t2/i1" "toolu_D" "cat" nil) ; print-only: not a result
+                                        (form "t2/i1" "toolu_E" "cat" {:op "cat"})]})
+         at (fn [scope]
+              (mapv (juxt :id :form) (persistance/db-native-result-index-for-scope s cid scope)))]
+
+        ;; every entry names the key that addresses it
+        (expect (= [["toolu_A" "t1/i1/f1"] ["toolu_B" "t1/i1/f2"]] (at "t1/i1")))
+        ;; the form key picks exactly one
+        (expect (= [["toolu_B" "t1/i1/f2"]] (at "t1/i1/f2")))
+        (expect (= [["toolu_A" "t1/i1/f1"]] (at "t1/i1/f1")))
+        ;; a form key nobody stored never dead-ends: the whole iteration is named
+        (expect (= [["toolu_A" "t1/i1/f1"] ["toolu_B" "t1/i1/f2"]] (at "t1/i1/f9")))
+        ;; forms stored at ITERATION scope are numbered by result position, so the
+        ;; skipped print-only form never shifts a key
+        (expect (= [["toolu_C" "t2/i1/f1"] ["toolu_E" "t2/i1/f2"]] (at "t2/i1")))
+        (expect (= [["toolu_E" "t2/i1/f2"]] (at "t2/i1/f2")))))
     (it "unknown / nil session is a safe empty index"
         (let [s (h/store)]
           (expect (= [] (persistance/db-native-result-index-for-scope s nil "t1/i1")))
