@@ -13,7 +13,7 @@
  * phone and in their terminal must read the same explanation.
  */
 
-import type { GatewayProtocol } from './types';
+import type { GatewayHealth, GatewayProtocol } from './types';
 
 /** Wire protocol number THIS app build speaks. Bump on a breaking wire change. */
 export const APP_PROTOCOL = 2;
@@ -147,4 +147,17 @@ export function compatOf(block?: GatewayProtocol | null): Compat {
     summary: `Gateway and app both speak protocol ${gatewayProtocol}.`,
     remedy: [],
   };
+}
+
+/**
+ * Judge a gateway from its `GET /healthz` answer — the ONLY entry point the app
+ * should use, because a health call can resolve without a body at all: a 304,
+ * or a 200 whose body never arrived (a daemon restarting behind a tunnel, a
+ * proxy that truncated it). Silence is a CONNECTION problem, not an old
+ * gateway, so it yields NO verdict (`null`) and the connect screens report it.
+ * A gateway that really answered and named no protocol is still unsupported.
+ */
+export function compatFromHealth(health?: GatewayHealth | null): Compat | null {
+  if (!health) return null;
+  return compatOf(health.protocol);
 }

@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import pkg from './package.json' with { type: 'json' };
 
 // Deliberately NOT an extension of `vite.config.ts`: the app config exists to
 // build a browser bundle (React Compiler babel pass, Tailwind, Prism
@@ -13,4 +14,7 @@ export default defineConfig({
     // are importable, and those are exactly the ones worth pinning down.
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/**/*.test.mjs'],
   },
+  // `compat.ts` reads the release string the app build injects; the tests need
+  // the SAME source of truth, not a hand-written stand-in.
+  define: { __VIS_APP_VERSION__: JSON.stringify(pkg.version) },
 });

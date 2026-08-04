@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 import type { GatewayConn } from "./lib/types";
-import { type Compat, compatOf } from "./lib/compat";
+import { type Compat, compatFromHealth } from "./lib/compat";
 import { GatewayClient, ROUTER_TTL_MS } from "./lib/gateway";
 import {
   getPrimaryConnection,
@@ -567,7 +567,7 @@ export function App() {
     void client
       .health(ctrl.signal)
       .then((h) => {
-        if (!cancelled) setCompat(compatOf(h?.protocol));
+        if (!cancelled) setCompat(compatFromHealth(h));
       })
       .catch(() => {
         if (!cancelled) setCompat(null);
