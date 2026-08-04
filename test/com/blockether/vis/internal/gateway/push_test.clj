@@ -25,7 +25,7 @@
   "Wait only until async push dispatch reaches `n`, rather than sleeping a fixed interval."
   [sent n]
   (loop [attempts 100]
-    (cond (>= (count @sent) n) true
+    (cond (>= (count @sent) (long n)) true
           (zero? attempts) false
           :else (do (Thread/sleep 10) (recur (dec attempts))))))
 
@@ -66,18 +66,25 @@
     (.getPublic kp)))
 
 (defn- jose->der
-  "Raw 64-byte `r||s` back into the DER the JCA verifier expects."
+  "Raw 64-byte `r||s` back into the DER the JCA verifier expects.
+
+   Each half is an UNSIGNED big-endian integer, and DER carries an INTEGER
+   MINIMALLY: a leading zero byte only when the high bit is set, never a run of
+   them. `BigInteger/toByteArray` IS that encoding. Padding the first byte by
+   hand instead left the leading zeros a 32-byte JOSE half carries whenever its
+   component is short, the JCA's strict DER parser threw `Invalid encoding for
+   signature`, and the test went red on roughly one signature in a hundred."
   [^bytes raw]
   (let
-    [pad
+    [der-int
      (fn [^bytes b]
-       (if (neg? (aget b 0)) (byte-array (cons (byte 0) (seq b))) b))
+       (.toByteArray (BigInteger. 1 b)))
 
      r
-     (pad (Arrays/copyOfRange raw 0 32))
+     (der-int (Arrays/copyOfRange raw 0 32))
 
      s
-     (pad (Arrays/copyOfRange raw 32 64))]
+     (der-int (Arrays/copyOfRange raw 32 64))]
 
     (byte-array
       (concat [0x30 (+ 4 (count r) (count s)) 0x02 (count r)] (seq r) [0x02 (count s)] (seq s)))))

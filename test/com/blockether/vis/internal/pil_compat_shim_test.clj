@@ -645,15 +645,21 @@
                (aset-byte b (+ o 3) (unchecked-byte (bit-and (bit-shift-right p 24) 0xff)))))
            b))
 
-       ;; Warm both paths, then time three conversions of each.
+       ;; Warm both paths well past the JIT's OSR threshold, then take each
+       ;; path's BEST of five conversions. A three-shot stopwatch over two warm-up
+       ;; rounds is what made this red on CI: the shipped loop was still
+       ;; interpreted when the clock started (48 ms per conversion on the runner
+       ;; against 1 ms here), so the margin read 2.7x with nothing wrong. The
+       ;; minimum is the round where the machine was not busy somewhere else.
        ms
        (fn [f]
-         (dotimes [_ 2]
+         (dotimes [_ 10]
            (f))
-         (let [t0 (System/nanoTime)]
-           (dotimes [_ 3]
-             (f))
-           (/ (- (System/nanoTime) t0) 1e6)))
+         (reduce min
+                 (repeatedly 5
+                             #(let [t0 (System/nanoTime)]
+                                (f)
+                                (/ (- (System/nanoTime) t0) 1e6)))))
 
        fast
        (ms inlined)

@@ -1702,12 +1702,18 @@
 ;; is magit chrome — the buffer it is about stays painted above it.
 (defn- settings-provider-band-frames
   "Drive Settings (parked on Providers) → Enter on the provider row, off a fixed
-   config so the capture never touches the machine's own providers or gateway."
+   config so the capture never touches the machine's own providers or gateway.
+
+   The fixture provider id is deliberately one NO provider extension registers:
+   `display-label` hands a registered preset its own branding, so a preset id
+   renders as `OpenAI Codex (ChatGPT OAuth)` in a run that loaded that extension
+   and verbatim in one that did not — the whole aggregate suite versus this
+   namespace alone."
   [^long cols ^long rows]
   (with-redefs
     [vis/load-config
      (constantly
-       {:providers [{:id :openai-codex}] :default-provider "openai-codex" :default-model "gpt-5"})
+       {:providers [{:id :acme-llm}] :default-provider "acme-llm" :default-model "acme-1"})
 
      vis/authenticated-preset-providers
      (constantly [])
@@ -1739,7 +1745,7 @@
                     (settings-provider-band-frames 100 30)
 
                     band
-                    (first (filter #(str/includes? % "openai-codex — actions") frames))]
+                    (first (filter #(str/includes? % "acme-llm — actions") frames))]
 
                    (expect (some? band))
                    ;; The band is there …
@@ -1761,5 +1767,5 @@
                     (last frames)]
 
                    (expect (str/includes? final "── Providers"))
-                   (expect (str/includes? final "openai-codex"))
+                   (expect (str/includes? final "acme-llm"))
                    (expect (not (str/includes? final "— actions"))))))
