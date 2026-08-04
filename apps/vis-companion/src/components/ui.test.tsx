@@ -111,6 +111,15 @@ describe('MachineBanner', () => {
     expect(html).toContain('top-0');
     expect(html).toContain('studio-mbp');
   });
+
+  // Regression: on iOS the sticky band is composited over WKWebView's overlay
+  // scrollbar, so the thumb disappeared behind every machine header.
+  it('leaves the overlay scrollbar visible on phones', () => {
+    const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
+
+    expect(html).toContain('mr-2');
+    expect(html).toContain('sm:mr-0');
+  });
 });
 
 // A machine's hue is what separates two computers before a single word is read:
