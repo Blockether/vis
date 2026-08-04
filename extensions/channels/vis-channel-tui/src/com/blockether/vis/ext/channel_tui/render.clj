@@ -2753,8 +2753,23 @@
                       [kind (:table-line meta)
                        stripped (subs line 1)
                        tx (+ (long x) (long code-block-h-pad))
+                       head? (= :head kind)
                        banded? (contains? #{:head :row-alt} kind)
-                       rbg (if banded? (t/zebra-bg t/code-block-bg) t/code-block-bg)
+                       ;; The header is NOT one more zebra stripe. It is the
+                       ;; sheet's label row, so it takes the band all the way to
+                       ;; the theme's ink and flips its own text to the far side:
+                       ;; dark strip / light letters on a light theme, the exact
+                       ;; inverse on a dark one. Both come from the card's own
+                       ;; background, so no palette token to keep in sync.
+                       rbg (cond head? (t/table-head-bg t/code-block-bg)
+                                 banded? (t/zebra-bg t/code-block-bg)
+                                 :else t/code-block-bg)
+                       head-ink (t/contrast-ink rbg)
+                       ;; Column dividers inside the header sit half-way between
+                       ;; the band and its ink - still chrome, still legible on
+                       ;; the strip instead of vanishing into it.
+                       cell-fg (if head? head-ink t/code-block-fg)
+                       rule-fg (if head? (t/mix-color rbg head-ink 0.55) t/code-border-fg)
                        w (long (p/display-width stripped))]
 
                       (p/clear-styles! g)
@@ -2768,7 +2783,7 @@
                       ;; row. Fill BETWEEN the frame, then redraw its two edge
                       ;; columns on the card's own background.
                       (when banded?
-                        (p/set-colors! g t/code-border-fg rbg)
+                        (p/set-colors! g rule-fg rbg)
                         (p/fill-rect! g (inc tx) y (max 0 (- w 2)) 1))
                       (case kind
                         :title
@@ -2782,10 +2797,10 @@
                                                 tx
                                                 y
                                                 stripped
-                                                t/code-block-fg
-                                                t/code-border-fg
+                                                cell-fg
+                                                rule-fg
                                                 rbg
-                                                (when (= :head kind) [p/BOLD])))
+                                                (when head? [p/BOLD])))
                       (when banded?
                         (p/clear-styles! g)
                         (p/set-colors! g t/code-border-fg t/code-block-bg)

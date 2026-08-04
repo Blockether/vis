@@ -279,6 +279,13 @@
   ^long [^long a ^long b ^double t]
   (Math/round (+ (* (- 1.0 t) (double a)) (* t (double b)))))
 
+(defn mix-color
+  "Colour `a` moved `t` (0.0-1.0) of the way toward colour `b`."
+  ^com.googlecode.lanterna.TextColor$RGB [^TextColor$RGB a ^TextColor$RGB b ^double t]
+  (TextColor$RGB. (int (mix-channel (.getRed a) (.getRed b) t))
+                  (int (mix-channel (.getGreen a) (.getGreen b) t))
+                  (int (mix-channel (.getBlue a) (.getBlue b) t))))
+
 (defn zebra-bg
   "Background for the ALTERNATING row of a striped table: the row's own
    background `bg` mixed a tenth of the way toward the theme's ink.
@@ -288,9 +295,18 @@
    or one an extension registers at runtime - gets a legible zebra without one
    more colour to keep in sync across every palette."
   [^com.googlecode.lanterna.TextColor$RGB bg]
-  (TextColor$RGB. (int (mix-channel (.getRed bg) (.getRed ^TextColor$RGB text-fg) 0.1))
-                  (int (mix-channel (.getGreen bg) (.getGreen ^TextColor$RGB text-fg) 0.1))
-                  (int (mix-channel (.getBlue bg) (.getBlue ^TextColor$RGB text-fg) 0.1))))
+  (mix-color bg text-fg 0.1))
+
+(defn table-head-bg
+  "Background for a table's HEADER row: `bg` driven MOST of the way to the
+   theme's ink.
+
+   The header is not one more zebra stripe - it is the sheet's label row, so it
+   gets a solid strip and (with `contrast-ink`) inverted text on top: dark band /
+   light letters on a light theme, the exact inverse on a dark one. Same
+   derivation as `zebra-bg`, so an unseen theme needs no new token."
+  [^com.googlecode.lanterna.TextColor$RGB bg]
+  (mix-color bg text-fg 0.82))
 
 ;; Widths
 (def dialog-width-ratio (width :dialog-width-ratio))
