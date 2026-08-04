@@ -4,6 +4,7 @@
    GraalPy contexts (on the shared engine), no model in the loop."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.channel-events :as channel-events]
             [com.blockether.vis.internal.egress-proxy :as egress]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as extension]
@@ -1501,6 +1502,43 @@ vis.extension(name='asker', description='asker', alias='a',
                       "forgotten" true}
                      result))
           (expect (empty? (human-input/pending-requests)))))))
+  ;; Regression, issue #104: `vis.ask` raised from an extension SYMBOL was
+  ;; reported to reach nobody — no dialog on any channel and not one
+  ;; `human_input.request` in the gateway journal — on the theory that a symbol
+  ;; invoked from a `python_execution` block has no ambient session binding, so
+  ;; the request had to name its session through an undocumented `session_id=`
+  ;; kwarg. Called the way the sandbox actually binds it (`wrap-extension` over
+  ;; the live session env) the ask names its session with no kwarg at all, on
+  ;; BOTH channels — and the session id is the only thing the gateway bridge
+  ;; needs to turn the request into a session event.
+  (it
+    "an extension symbol's vis.ask names its session on every channel it reaches"
+    (with-loaded
+      {"asker.py" asker-py}
+      (fn [_ {:keys [store]}]
+        (let
+          [seen
+           (atom [])
+
+           ask-key
+           (get (extension/wrap-extension (registered "asker")
+                                          {:session-id "sid-104" :db-info store})
+                'ask_key)]
+
+          (channel-events/add-channel-event-listener! :tui ::issue-104 #(swap! seen conj [:tui %]))
+          (channel-events/add-channel-event-listener! :app ::issue-104 #(swap! seen conj [:app %]))
+          (try (let
+                 [answered (answer-pending!
+                             "Deploy"
+                             #(human-input/submit! % {"env" "prod" "token" "hunter2"}))]
+                 (ask-key)
+                 (expect (= {:is-accepted true} (deref answered 10000 ::never))))
+               (let [opened (filterv #(= :human-input/request (:op (second %))) @seen)]
+                 (expect (= [:tui :app] (mapv first opened)))
+                 (expect (= ["sid-104" "sid-104"]
+                            (mapv #(get-in (second %) [:request :session-id]) opened))))
+               (finally (channel-events/remove-channel-event-listener! :tui ::issue-104)
+                        (channel-events/remove-channel-event-listener! :app ::issue-104)))))))
   (it "a cancelled request returns a falsey answer instead of raising"
       (with-loaded {"asker.py" asker-py}
                    (fn [_ _]
