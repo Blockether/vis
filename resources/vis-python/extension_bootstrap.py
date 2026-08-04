@@ -291,8 +291,11 @@ def ask(title, fields, **options):
     # 'integer', 'number') or a map with exactly one of type/pattern/min_length/
     # max_length/min/max/matches (another field's name) plus an optional
     # 'message'. Blank answers are is_required's job, never a rule's.
+    # A 'group' field answers nothing — it LAYS OUT: 'fields' (its children) and
+    # 'direction' ('column' stacks, the default; 'row' side by side). Groups
+    # nest, need no name, and never appear in `values`, which stays flat.
     # Field types: plaintext, password, multiline, select, multiselect,
-    # checkbox, range, otp. Dialog options: description (prose under the title explaining
+    # checkbox, range, otp, group. Dialog options: description (prose under the title explaining
     # what the whole ask is about — it wraps), submit_label, cancel_label,
     # is_cancellable, timeout_ms (default 5 min, capped at 1 hour).
     # A cancelled, timed-out or unanswered request returns a falsey Answer

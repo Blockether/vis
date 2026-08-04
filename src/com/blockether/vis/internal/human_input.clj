@@ -38,7 +38,10 @@
    "multiselect" :multiselect
    "checkbox" :checkbox
    "range" :range
-   "otp" :otp})
+   "otp" :otp
+   ;; The one type that holds no answer: a layout node whose children run down
+   ;; the dialog or across it. It nests, so a row of stacks is a row of groups.
+   "group" :group})
 
 (def ^:private text-types #{:plaintext :password :multiline})
 
@@ -152,7 +155,13 @@
   "Every key a field spec may carry, in its canonical snake_case spelling.
    `id` and `help` are the legacy names of `name` and `description`."
   #{"name" "id" "type" "label" "description" "help" "is_required" "placeholder" "options"
-    "min_length" "max_length" "default" "min" "max" "step" "validate"})
+    "min_length" "max_length" "default" "min" "max" "step" "validate" "fields" "direction"})
+
+(def ^:private group-keys
+  "Every key a `group` may carry. A layout node has no answer, so every key that
+   describes ONE value — a default, a placeholder, options, rules — is refused
+   here instead of being silently ignored on a node that can never use it."
+  #{"name" "id" "type" "label" "description" "help" "fields" "direction"})
 
 (def ^:private option-keys "Every key one `:options` entry may carry." #{"value" "label"})
 
@@ -311,7 +320,22 @@
                       (str ":max_length must be at most " (:ceiling otp-defaults) " digits")))
     {:min-length lo :max-length hi}))
 
-(declare coerce-value)
+(def ^:private group-directions
+  "Wire direction name -> internal keyword. A group IS a flexbox line: `column`
+   stacks its children (what a form has always done, so it is the default) and
+   `row` lays them out side by side across the dialog's width."
+  {"column" :column "row" :row})
+
+(defn- normalize-direction
+  [field-id value]
+  (let [name' (str/lower-case (or (trimmed value) "column"))]
+    (or (get group-directions name')
+        (invalid-field! field-id
+                        (str "unknown :direction " (pr-str name')
+                             " — expected one of " (str/join ", "
+                                                             (sort (keys group-directions))))))))
+
+(declare coerce-value normalize-group)
 
 (defn normalize-field
   "Validate one field spec and return its internal form. Throws `ex-info` with
@@ -324,7 +348,11 @@
      - `:label` is how the field is SHOWN. Never blank: a field without one
        shows its `:name`, so no surface ever draws a bare, unlabelled input.
      - `:description` is the prose under that label, rendered in italic by every
-       dialog (`:help` is its legacy alias)."
+       dialog (`:help` is its legacy alias).
+
+   A `group` is the exception, and the only one: it holds no answer, so it needs
+   no name and gets no label unless the spec wants a heading. See
+   [[normalize-group]]."
   [field]
   (when-not (map? field) (invalid-field! nil "field must be a map"))
   (check-keys! "field" field-keys field #(invalid-field! nil %))
@@ -332,11 +360,14 @@
     [field-id
      (trimmed (pick field "name" :name "id" :id))
 
-     _
-     (when-not field-id (invalid-field! nil "field needs a non-blank :name"))
-
      type-name
      (or (trimmed (pick field "type" :type)) "plaintext")
+
+     is-group
+     (= "group" (str/lower-case type-name))
+
+     _
+     (when-not (or field-id is-group) (invalid-field! nil "field needs a non-blank :name"))
 
      field-type
      (get field-types (str/lower-case type-name))
@@ -345,73 +376,146 @@
      (when-not field-type
        (invalid-field! field-id
                        (str "unknown type " (pr-str type-name)
-                            " — expected one of " (str/join ", " (sort (keys field-types))))))
+                            " — expected one of " (str/join ", " (sort (keys field-types))))))]
+
+    (if is-group
+      (normalize-group field-id field)
+      (let
+        [description
+         (trimmed (pick field "description" :description "help" :help))
+
+         ;; An `:otp` derives its own lengths from the same two keys — how many
+         ;; boxes it draws IS its length — so it must not be length-checked twice.
+         min-length
+         (when-not (= :otp field-type)
+           (normalize-length field-id ":min_length" (pick field "min_length" :min-length)))
+
+         max-length
+         (when-not (= :otp field-type)
+           (normalize-length field-id ":max_length" (pick field "max_length" :max-length)))
+
+         validate
+         (validation/normalize-rules (pick field "validate" :validate) #(invalid-field! field-id %))
+
+         spec
+         (cond->
+           {:id field-id
+            ;; The same string under both keys: `:name` is the contract a spec
+            ;; writes, `:id` is what every surface has always keyed rows and errors
+            ;; by. One field identity, two spellings, no drift between them.
+            :name field-id
+            :type field-type
+            :label (or (trimmed (pick field "label" :label)) field-id)
+            ;; Optional unless the caller says otherwise — the same default every
+            ;; form API has, so a spec never blocks a human on a field the
+            ;; extension did not actually need.
+            :is-required
+            (normalize-bool field-id ":is-required" (pick field "is_required" :is-required) false)
+            :is-secret (contains? secret-types field-type)}
+           description
+           (assoc :description description)
+
+           (trimmed (pick field "placeholder" :placeholder))
+           (assoc :placeholder (trimmed (pick field "placeholder" :placeholder)))
+
+           (contains? choice-types field-type)
+           (assoc :options (normalize-options field-id field-type (pick field "options" :options)))
+
+           (= :range field-type)
+           (merge (normalize-range field-id field))
+
+           (= :otp field-type)
+           (merge (normalize-otp field-id field))
+
+           min-length
+           (assoc :min-length min-length)
+
+           max-length
+           (assoc :max-length max-length)
+
+           (seq validate)
+           (assoc :validate validate))
+
+         raw-default
+         (pick field "default" :default)
+
+         [status default]
+         (coerce-value (assoc spec :is-required false) raw-default)]
+
+        (when (= :error status) (invalid-field! field-id (str "invalid :default — " default)))
+        (cond-> spec
+          (some? default)
+          (assoc :default default))))))
+
+(defn- normalize-group
+  "Validate a `group` — the layout node — and return its internal form.
+
+   A group answers nothing: it has `:fields` of its own and a `:direction` they
+   run in, and because a child may itself be a group, `row` and `column` compose
+   into any arrangement without a single new key. Its `:name` is optional; when
+   the spec does not give one it is derived from the children, so a surface
+   still has a stable key to draw rows under and no author has to invent an
+   identifier for a box that only exists to hold two fields side by side."
+  [field-id field]
+  (check-keys! "group" group-keys field #(invalid-field! field-id %))
+  (let
+    [raw
+     (pick field "fields" :fields)
+
+     _
+     (when-not (sequential? raw) (invalid-field! field-id "group needs a :fields sequence"))
+
+     children
+     (mapv normalize-field raw)
+
+     _
+     (when (empty? children) (invalid-field! field-id "group needs at least one field"))
+
+     id
+     (or field-id (str "group:" (str/join "+" (map :name children))))
 
      description
-     (trimmed (pick field "description" :description "help" :help))
+     (trimmed (pick field "description" :description "help" :help))]
 
-     ;; An `:otp` derives its own lengths from the same two keys — how many
-     ;; boxes it draws IS its length — so it must not be length-checked twice.
-     min-length
-     (when-not (= :otp field-type)
-       (normalize-length field-id ":min_length" (pick field "min_length" :min-length)))
+    (cond->
+      {:id id
+       :name id
+       :type :group
+       :direction (normalize-direction field-id (pick field "direction" :direction))
+       :fields children}
+      (trimmed (pick field "label" :label))
+      (assoc :label (trimmed (pick field "label" :label)))
 
-     max-length
-     (when-not (= :otp field-type)
-       (normalize-length field-id ":max_length" (pick field "max_length" :max-length)))
+      description
+      (assoc :description description))))
 
-     validate
-     (validation/normalize-rules (pick field "validate" :validate) #(invalid-field! field-id %))
+(defn input-fields
+  "Every ANSWERABLE field in `fields`, depth-first in the order a surface draws
+   them. A group carries no value, so it is walked through and never returned:
+   this is the sequence that keys `:values`, and the reason a layout change can
+   never change an extension's answer map."
+  [fields]
+  (into []
+        (mapcat (fn [{:keys [type] :as field}]
+                  (if (= :group type) (input-fields (:fields field)) [field])))
+        fields))
 
-     spec
-     (cond->
-       {:id field-id
-        ;; The same string under both keys: `:name` is the contract a spec
-        ;; writes, `:id` is what every surface has always keyed rows and errors
-        ;; by. One field identity, two spellings, no drift between them.
-        :name field-id
-        :type field-type
-        :label (or (trimmed (pick field "label" :label)) field-id)
-        ;; Optional unless the caller says otherwise — the same default every
-        ;; form API has, so a spec never blocks a human on a field the
-        ;; extension did not actually need.
-        :is-required
-        (normalize-bool field-id ":is-required" (pick field "is_required" :is-required) false)
-        :is-secret (contains? secret-types field-type)}
-       description
-       (assoc :description description)
+(defn- all-fields
+  "Every node in the tree, groups included — what name uniqueness is checked on."
+  [fields]
+  (into []
+        (mapcat (fn [{:keys [type] :as field}]
+                  (if (= :group type) (into [field] (all-fields (:fields field))) [field])))
+        fields))
 
-       (trimmed (pick field "placeholder" :placeholder))
-       (assoc :placeholder (trimmed (pick field "placeholder" :placeholder)))
-
-       (contains? choice-types field-type)
-       (assoc :options (normalize-options field-id field-type (pick field "options" :options)))
-
-       (= :range field-type)
-       (merge (normalize-range field-id field))
-
-       (= :otp field-type)
-       (merge (normalize-otp field-id field))
-
-       min-length
-       (assoc :min-length min-length)
-
-       max-length
-       (assoc :max-length max-length)
-
-       (seq validate)
-       (assoc :validate validate))
-
-     raw-default
-     (pick field "default" :default)
-
-     [status default]
-     (coerce-value (assoc spec :is-required false) raw-default)]
-
-    (when (= :error status) (invalid-field! field-id (str "invalid :default — " default)))
-    (cond-> spec
-      (some? default)
-      (assoc :default default))))
+(defn- map-fields
+  "Rewrite every node of the tree with `f`, children before their group."
+  [f fields]
+  (mapv (fn [{:keys [type] :as field}]
+          (f (cond-> field
+               (= :group type)
+               (update :fields #(map-fields f %)))))
+        fields))
 
 (defn- ambient-session-id
   "Session id of the extension environment currently executing, or nil.
@@ -491,19 +595,21 @@
      (when (empty? fields) (invalid-request! ":fields must not be empty"))
 
      _
-     (when-not (apply distinct? (map :name fields))
+     (when-not (apply distinct? (map :name (all-fields fields)))
        (invalid-request! "field names must be distinct"))
 
      ;; `:matches` names a SIBLING, so it can only be resolved once every field
      ;; in the request is known — a confirmation field is normally declared
      ;; before the password it confirms is even parsed.
      fields
-     (mapv (fn [{:keys [id validate] :as field}]
-             (if (seq validate)
-               (assoc field
-                 :validate (validation/resolve-matches validate fields #(invalid-field! id %)))
-               field))
-           fields)
+     (let [answerable (input-fields fields)]
+       (map-fields (fn [{:keys [id validate] :as field}]
+                     (if (seq validate)
+                       (assoc field
+                         :validate
+                         (validation/resolve-matches validate answerable #(invalid-field! id %)))
+                       field))
+                   fields))
 
      session-id
      (or (trimmed (pick request "session_id" :session-id)) (ambient-session-id))]
@@ -713,11 +819,20 @@
    `fields`. Returns `{:is-accepted true :values …}` or
    `{:is-accepted false :errors {id message}}`.
 
+   `fields` may be the request's TREE: layout groups hold no answer, so they are
+   flattened away here and a group can never change what an extension reads.
+
    Pure — no vault, no state, no side effect of any kind. That is the point: a
    surface calls this on EVERY keystroke to decide what to underline, and only
    a real submission goes through [[coerce-values]]."
   [fields values]
-  (let [{:keys [values errors]} (check-all fields (coerce-all fields values))]
+  (let
+    [fields
+     (input-fields fields)
+
+     {:keys [values errors]}
+     (check-all fields (coerce-all fields values))]
+
     (if (seq errors) {:is-accepted false :errors errors} {:is-accepted true :values values})))
 
 (defn coerce-values
@@ -733,7 +848,7 @@
                   (let [value (get acc id)]
                     (if (and is-secret (some? value)) (assoc acc id (stash-secret! value)) acc)))
                 (:values result)
-                fields)))))
+                (input-fields fields))))))
 
 ;; =============================================================================
 ;; Channel projection
@@ -743,16 +858,20 @@
   "The channel/wire-facing projection of a pending request: the spec a dialog
    needs, and nothing a channel must not see (no promise, no submitted values,
    and no validator FUNCTION — a fn cannot cross the wire, so a surface gets the
-   declarative rules and the engine still enforces every one of them)."
+   declarative rules and the engine still enforces every one of them).
+
+   The field TREE is projected as a tree: a group crosses the wire with its own
+   `:direction` and `:fields`, so both surfaces lay the form out from the same
+   data instead of each inventing a layout."
   [request]
   (-> request
       (dissoc :promise :channel-ids)
-      (assoc :fields (mapv (fn [field]
-                             (let [rules (validation/wire-rules (:validate field))]
-                               (cond-> (dissoc field :is-secret :validate)
-                                 (seq rules)
-                                 (assoc :validate rules))))
-                           (:fields request)))))
+      (assoc :fields (map-fields (fn [field]
+                                   (let [rules (validation/wire-rules (:validate field))]
+                                     (cond-> (dissoc field :is-secret :validate)
+                                       (seq rules)
+                                       (assoc :validate rules))))
+                                 (:fields request)))))
 
 (defn- publish!
   "Publish `event` on every channel in `channel-ids` and return how many
@@ -890,7 +1009,7 @@
     (tel/log! {:level :debug
                :id ::request-opened
                :data {:request-id request-id
-                      :fields (mapv :id (:fields entry))
+                      :fields (mapv :id (input-fields (:fields entry)))
                       :timeout-ms (:timeout-ms entry)}
                :msg "Human-input request opened"})
     (if (zero? (long (publish! (:channel-ids entry)

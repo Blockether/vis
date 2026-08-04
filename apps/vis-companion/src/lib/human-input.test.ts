@@ -15,6 +15,7 @@ import {
   humanInputFormStart,
   humanInputFormSubmit,
   humanInputOtp,
+  humanInputInputFields,
   humanInputOtpDigits,
   initialHumanInputValues,
   isHumanInputAnswerable,
@@ -70,6 +71,21 @@ describe('humanInputRequestFromWire', () => {
       'risk:range',
       'code:otp',
       'notify:plaintext',
+      'group:host+group:port+tls:group',
+    ]);
+    // A group is a BRANCH: it answers nothing, and the leaves under it are the
+    // fields the form actually submits.
+    expect(humanInputInputFields(request.fields).map((field) => field.id)).toEqual([
+      'env',
+      'key',
+      'ok',
+      'tags',
+      'risk',
+      'code',
+      'notify',
+      'host',
+      'port',
+      'tls',
     ]);
     // name keys the answer, label is what the dialog shows, description is the
     // italic line under it.
@@ -144,6 +160,9 @@ describe('initialHumanInputValues', () => {
       code: '',
       notify: '',
       tags: [],
+      host: '',
+      port: '',
+      tls: false,
     });
   });
 
@@ -183,7 +202,11 @@ describe('required fields', () => {
     const values = initialHumanInputValues(request);
     expect(isHumanInputAnswerable(request, values)).toBe(false);
     expect(isHumanInputAnswerable(request, { ...values, key: 'secret' })).toBe(false);
-    expect(isHumanInputAnswerable(request, { ...values, key: 'secret', code: '1234' })).toBe(true);
+    expect(isHumanInputAnswerable(request, { ...values, key: 'secret', code: '1234' })).toBe(false);
+    // `host` lives inside a layout group — grouping must not hide a required field.
+    expect(
+      isHumanInputAnswerable(request, { ...values, key: 'secret', code: '1234', host: 'db1' }),
+    ).toBe(true);
   });
 
   it('treats blank space and an empty choice as unanswered', () => {

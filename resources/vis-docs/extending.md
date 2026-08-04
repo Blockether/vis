@@ -319,9 +319,9 @@ that label. `id` and `help` are the legacy spellings of `name` and `description`
 and still work.
 
 Field `type` is one of `plaintext`, `password`, `multiline`, `select`,
-`multiselect`, `checkbox`, `range`, `otp`. A field may also carry `placeholder`,
-`default`, `is_required`, `min_length`, `max_length`, `validate`, and — for the
-two `select` types — `options` (strings, or `{"value": ..., "label": ...}` maps).
+`multiselect`, `checkbox`, `range`, `otp`, `group`. A field may also carry
+`placeholder`, `default`, `is_required`, `min_length`, `max_length`, `validate`,
+and — for the two `select` types — `options` (strings, or `{"value": ..., "label": ...}` maps).
 
 A `range` is a bounded number: `min` (default 0), `max` (default 100) and `step`
 (default 1). It answers with a number, not a string — a `long` when all three
@@ -335,6 +335,39 @@ An `otp` is a one-time code, entered as one box per digit. `min_length` and
 fixed length). Only digits get in — typing a letter does nothing, and pasting
 `123 456` fills the boxes instead of dropping six characters into one. The answer
 is the digit string.
+
+### Laying fields out: `group`
+
+A `group` answers nothing — it is a layout node, one flexbox line. It carries
+`fields` (its children) and `direction`: `column` stacks them (the default, and
+what a form has always done) and `row` lays them side by side. A child may be a
+group again, so the two directions compose into any arrangement:
+
+```python
+vis.ask("Where should the pool connect?", [
+    {"type": "group", "label": "Server", "direction": "row", "fields": [
+        {"name": "host", "label": "Host", "is_required": True},
+        {"name": "port", "label": "Port", "validate": "digits"},
+    ]},
+    {"type": "group", "direction": "column", "fields": [
+        {"type": "group", "direction": "row", "fields": [
+            {"name": "size", "label": "Pool size"},
+            {"name": "idle", "label": "Idle (s)"},
+        ]},
+        {"name": "tls", "label": "Require TLS", "type": "checkbox"},
+    ]},
+])
+```
+
+A group needs no `name` (it gets one derived from its children) and shows a
+heading only when you give it a `label`; `description` works as everywhere else.
+It may hold nothing that describes a value — no `default`, `placeholder`,
+`options`, `is_required` or `validate` — those are refused on a node that could
+never use them. `answer.values` stays **flat**: the leaves key the answer, the
+grouping never appears in it. The TUI splits its width across a `row` (each
+column keeps its own label, error and cursor, `←`/`→` still move within a field
+and `↑`/`↓` between them); the app renders a `fieldset` with the same row or
+column flex.
 
 ### Validating a field
 

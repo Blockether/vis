@@ -332,7 +332,16 @@
             {:id "notify"
              :type "plaintext"
              :label "Notify"
-             :validate [:email {:max-length 60 :message "keep it short"}]}]})
+             :validate [:email {:max-length 60 :message "keep it short"}]}
+            {:type "group"
+             :direction "row"
+             :label "Server"
+             :description "Where the pool dials out"
+             :fields [{:name "host" :label "Host" :is-required true}
+                      {:type "group"
+                       :direction "column"
+                       :fields [{:name "port" :label "Port" :validate [:digits]}
+                                {:name "tls" :type "checkbox" :label "TLS"}]}]}]})
 
 (defn- fixture-file
   "`apps/vis-companion/src/lib/human-input.fixture.json`, found from the working

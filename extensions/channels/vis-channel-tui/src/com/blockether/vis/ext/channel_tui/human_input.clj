@@ -179,19 +179,26 @@
 (defn stops
   "Flat vector of focus stops for `request` — the linear order ↑/↓/Tab walks."
   [request]
-  (into (into [] (mapcat field-stops) (:fields request)) (action-stops request)))
+  (into (into [] (mapcat field-stops) (engine/input-fields (:fields request)))
+        (action-stops request)))
 
 (defn init-form
   "Build the form model for a request VIEW. Text cursors start at end-of-text
    and focus starts on the first stop."
   [request]
-  (let [values (into {} (map (juxt :id default-value)) (:fields request))]
+  (let
+    [answerable
+     (engine/input-fields (:fields request))
+
+     values
+     (into {} (map (juxt :id default-value)) answerable)]
+
     {:request request
      :values values
      :cursors (into {}
                     (keep (fn [{:keys [id type]}]
                             (when (contains? text-types type) [id (count (str (get values id)))])))
-                    (:fields request))
+                    answerable)
      :stops (stops request)
      :focus 0
      ;; Pristine: nothing has been touched, nothing has been submitted, so
@@ -209,7 +216,7 @@
 
 (defn- field-by-id
   [form field-id]
-  (first (filter #(= field-id (:id %)) (get-in form [:request :fields]))))
+  (first (filter #(= field-id (:id %)) (engine/input-fields (get-in form [:request :fields])))))
 
 (defn focused-stop
   "The stop under the cursor, or nil for a form with no stops."
@@ -616,114 +623,162 @@
               {:kind :description :text line})
             (if (pos? width) (render/wrap-text text width) [text])))))
 
+(declare field-rows)
+
+(def ^:private column-gutter
+  "Columns between two fields sitting side by side — enough that a focused row's
+   selection marker never touches the field to its left."
+  2)
+
+(defn- zip-columns
+  "Zip one row-plan per COLUMN into one plan row per LINE: cell `i` of line `n`
+   is column `i`'s `n`-th row, or nothing when that column already ran out. The
+   painter divides the row's width by the number of cells, so a `row` group is
+   laid out at paint time and the plan stays pure."
+  [cells]
+  (let [height (long (reduce max 0 (map count cells)))]
+    (mapv (fn [i]
+            (let [entries (mapv #(nth % i nil) cells)]
+              {:kind :columns
+               :cells entries
+               ;; A composite row is a LABEL row when its columns start with
+               ;; their labels, so scrolling still lands on the words that say
+               ;; which fields are being edited.
+               :is-label (boolean (some #(= :label (:kind %)) entries))
+               :is-focused (boolean (some :is-focused entries))}))
+          (range height))))
+
+(defn- group-rows
+  "Rows for a layout group: its optional heading, then its children — stacked
+   when the group is a `:column`, side by side when it is a `:row`. A child may
+   itself be a group, so the two directions compose without another rule."
+  [form errors focus text-w {:keys [direction fields] :as group}]
+  (let
+    [heading
+     (into (if (:label group) [{:kind :label :text (:label group)}] [])
+           (description-rows (:description group) text-w))
+
+     n
+     (max 1 (count fields))
+
+     body
+     (if (= :row direction)
+       (let [cell-w (when text-w (max 4 (- (quot (+ (long text-w) 2) n) 2 (long column-gutter))))]
+         (zip-columns (mapv #(vec (field-rows form errors focus cell-w %)) fields)))
+       (into [] (mapcat #(field-rows form errors focus text-w %)) fields))]
+
+    (into (vec heading) body)))
+
 (defn- field-rows
   [form errors focus text-w {:keys [id type] :as field}]
-  (let
-    [stop-index
-     (fn [pred]
-       (first (keep-indexed (fn [i s]
-                              (when (pred s) i))
-                            (:stops form))))
+  (if (= :group type)
+    (group-rows form errors focus text-w field)
+    (let
+      [stop-index
+       (fn [pred]
+         (first (keep-indexed (fn [i s]
+                                (when (pred s) i))
+                              (:stops form))))
 
-     value
-     (get-in form [:values id])
+       value
+       (get-in form [:values id])
 
-     description
-     (description-rows (:description field) text-w)
+       description
+       (description-rows (:description field) text-w)
 
-     rows
-     (cond (= :otp type) (let
-                           [idx
-                            (stop-index #(= id (:field-id %)))
-
-                            slots
-                            (otp-slots field)]
-
-                           [{:kind :otp
-                             :field-id id
-                             :text (otp-text slots value)
-                             :cursor (min (cursor-of form id) (max 0 (dec (long (:hi slots)))))
-                             :is-focused (= idx focus)}])
-           (contains? text-types type)
-           (let
-             [idx
-              (stop-index #(= id (:field-id %)))
-
-              focused?
-              (= idx focus)
-
-              shown
-              (display-text field value)
-
-              cursor
-              (cursor-of form id)]
-
-             (if (= :multiline type)
-               (let [[line col] (cursor-line-col shown cursor)]
-                 (vec (map-indexed (fn [i l]
-                                     {:kind :input
-                                      :field-id id
-                                      :text l
-                                      :cursor (if (= i line) col 0)
-                                      :is-focused (and focused? (= i line))
-                                      :placeholder (when (and (zero? i) (zero? (count shown)))
-                                                     (:placeholder field))})
-                                   (str/split shown #"\n" -1))))
-               [{:kind :input
-                 :field-id id
-                 :text shown
-                 :cursor cursor
-                 :is-focused focused?
-                 :placeholder (:placeholder field)}]))
-           (= :range type) (let
+       rows
+       (cond (= :otp type) (let
                              [idx
                               (stop-index #(= id (:field-id %)))
 
-                              bounds
-                              (range-bounds field)
+                              slots
+                              (otp-slots field)]
 
-                              v
-                              (range-snap bounds (if (number? value) value (:lo bounds)))]
-
-                             [{:kind :range
+                             [{:kind :otp
                                :field-id id
-                               :value v
-                               :text (range-text bounds v)
+                               :text (otp-text slots value)
+                               :cursor (min (cursor-of form id) (max 0 (dec (long (:hi slots)))))
                                :is-focused (= idx focus)}])
-           (= :checkbox type) (let [idx (stop-index #(= id (:field-id %)))]
-                                [{:kind :checkbox
-                                  :field-id id
-                                  :text (label-text field)
-                                  :is-checked (boolean value)
-                                  :is-focused (= idx focus)}])
-           (contains? choice-types type)
-           (let [chosen (if (= :multiselect type) (set value) #{value})]
-             (mapv (fn [{:keys [value label]}]
-                     (let [idx (stop-index #(and (= id (:field-id %)) (= value (:value %))))]
-                       {:kind :option
-                        :field-id id
-                        :text (or label (str value))
-                        :is-checked (contains? chosen value)
-                        :is-focused (= idx focus)}))
-                   (field-options field)))
-           :else [])]
+             (contains? text-types type)
+             (let
+               [idx
+                (stop-index #(= id (:field-id %)))
 
-    ;; Label, then description, then the input: the italic prose explains the
-    ;; field you are about to fill, so it has to be readable BEFORE it, not
-    ;; discovered underneath it.
-    ;;
-    ;; A checkbox row already carries its own label — a separate bold label row
-    ;; above it would say the same word twice, which no other dialog does — so
-    ;; there its description follows the box instead.
-    (cond->
-      (if (= :checkbox type)
-        (into (vec rows) description)
-        (into (into [{:kind :label :text (label-text field)}] description) rows))
-      (get errors id)
-      (conj {:kind :error :text (get errors id)})
+                focused?
+                (= idx focus)
 
-      true
-      (conj {:kind :blank}))))
+                shown
+                (display-text field value)
+
+                cursor
+                (cursor-of form id)]
+
+               (if (= :multiline type)
+                 (let [[line col] (cursor-line-col shown cursor)]
+                   (vec (map-indexed (fn [i l]
+                                       {:kind :input
+                                        :field-id id
+                                        :text l
+                                        :cursor (if (= i line) col 0)
+                                        :is-focused (and focused? (= i line))
+                                        :placeholder (when (and (zero? i) (zero? (count shown)))
+                                                       (:placeholder field))})
+                                     (str/split shown #"\n" -1))))
+                 [{:kind :input
+                   :field-id id
+                   :text shown
+                   :cursor cursor
+                   :is-focused focused?
+                   :placeholder (:placeholder field)}]))
+             (= :range type) (let
+                               [idx
+                                (stop-index #(= id (:field-id %)))
+
+                                bounds
+                                (range-bounds field)
+
+                                v
+                                (range-snap bounds (if (number? value) value (:lo bounds)))]
+
+                               [{:kind :range
+                                 :field-id id
+                                 :value v
+                                 :text (range-text bounds v)
+                                 :is-focused (= idx focus)}])
+             (= :checkbox type) (let [idx (stop-index #(= id (:field-id %)))]
+                                  [{:kind :checkbox
+                                    :field-id id
+                                    :text (label-text field)
+                                    :is-checked (boolean value)
+                                    :is-focused (= idx focus)}])
+             (contains? choice-types type)
+             (let [chosen (if (= :multiselect type) (set value) #{value})]
+               (mapv (fn [{:keys [value label]}]
+                       (let [idx (stop-index #(and (= id (:field-id %)) (= value (:value %))))]
+                         {:kind :option
+                          :field-id id
+                          :text (or label (str value))
+                          :is-checked (contains? chosen value)
+                          :is-focused (= idx focus)}))
+                     (field-options field)))
+             :else [])]
+
+      ;; Label, then description, then the input: the italic prose explains the
+      ;; field you are about to fill, so it has to be readable BEFORE it, not
+      ;; discovered underneath it.
+      ;;
+      ;; A checkbox row already carries its own label — a separate bold label row
+      ;; above it would say the same word twice, which no other dialog does — so
+      ;; there its description follows the box instead.
+      (cond->
+        (if (= :checkbox type)
+          (into (vec rows) description)
+          (into (into [{:kind :label :text (label-text field)}] description) rows))
+        (get errors id)
+        (conj {:kind :error :text (get errors id)})
+
+        true
+        (conj {:kind :blank})))))
 
 (defn action-bar
   "The request's own buttons as ONE row: `[ Submit ]  [ Cancel ]`.
@@ -781,7 +836,13 @@
        (long (focused-row rows))
 
        label-idx
-       (long (or (first (filter #(= :label (:kind (nth rows %))) (range focus-idx -1 -1))) 0))
+       (long (or (first (filter #(let
+                                   [r
+                                    (nth rows %)]
+
+                                   (or (= :label (:kind r)) (:is-label r)))
+                                (range focus-idx -1 -1)))
+                 0))
 
        start
        (long (dialogs/visible-window-start focus-idx 0 visible (count rows)))]
@@ -954,6 +1015,35 @@
                                 (long p/SELECTION_WIDTH)
                                 (* (long otp-cell-w) (long (:cursor entry 0)))))
                         row)))
+
+    ;; A `row` group's line: the width is divided between the cells HERE, so the
+    ;; plan carries no geometry and every painter below — including another
+    ;; `:columns` row from a nested group — just paints into a narrower row.
+    :columns
+    (let
+      [cells
+       (:cells entry)
+
+       n
+       (max 1 (count cells))
+
+       cell-w
+       (max 1 (quot (long inner-w) n))]
+
+      (reduce (fn [pos [i cell]]
+                (let
+                  [taken
+                   (* (long i) cell-w)
+
+                   width
+                   (if (= i (dec n)) (- (long inner-w) taken) cell-w)
+
+                   here
+                   (paint-row! g (+ (long left) taken) row (max 1 width) (or cell {:kind :blank}))]
+
+                  (or pos here)))
+              nil
+              (map-indexed vector cells)))
 
     :action
     (do (paint-actions! g left row inner-w (:buttons entry)) nil)

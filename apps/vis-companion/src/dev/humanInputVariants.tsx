@@ -38,6 +38,16 @@ function field(
   return { id, name: id, type, label, is_required: false, ...extra };
 }
 
+/** A layout group: it answers nothing itself, it just arranges what it owns. */
+function group(
+  id: string,
+  direction: 'row' | 'column',
+  fields: HumanInputField[],
+  extra: Partial<HumanInputField> = {},
+): HumanInputField {
+  return { id, name: id, type: 'group', label: '', is_required: false, direction, fields, ...extra };
+}
+
 /**
  * One request per photographed state. The gallery reads the state names off
  * THIS map, so a state can never be declared without a request behind it —
@@ -203,6 +213,52 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
     cancel_label: 'Cancel',
     is_cancellable: true,
   },
+  grouped: {
+    id: 'req-grouped',
+    title: 'Where should the pool connect?',
+    description: 'Fields that belong together sit together.',
+    source: 'db-migrate.py',
+    fields: [
+      group(
+        'group:host+port',
+        'row',
+        [
+          field('host', 'plaintext', 'Host', { is_required: true, placeholder: 'db.internal' }),
+          field('port', 'plaintext', 'Port', {
+            placeholder: '5432',
+            validate: [{ kind: 'type', type: 'digits', message: 'must be digits only' }],
+          }),
+        ],
+        { label: 'Server', description: 'Where the pool dials out.' },
+      ),
+      group(
+        'group:user+pass',
+        'row',
+        [
+          field('user', 'plaintext', 'User', { is_required: true }),
+          field('pass', 'password', 'Password', { is_required: true }),
+        ],
+        { label: 'Sign in' },
+      ),
+      // A column INSIDE the form and a row inside it: the two directions nest.
+      group(
+        'group:pool',
+        'column',
+        [
+          group('group:size+tls', 'row', [
+            field('size', 'plaintext', 'Pool size', { placeholder: '8' }),
+            field('idle', 'plaintext', 'Idle (s)', { placeholder: '30' }),
+          ]),
+          field('tls', 'checkbox', 'Require TLS', { default: true }),
+        ],
+        { label: 'Pool' },
+      ),
+      field('notes', 'multiline', 'Notes'),
+    ],
+    submit_label: 'Connect',
+    cancel_label: 'Hold',
+    is_cancellable: true,
+  },
 };
 
 /**
@@ -212,6 +268,7 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
  */
 const HUMAN_INPUT_SEEDS: Record<string, Record<string, string>> = {
   otp: { code: '408', notify: 'ops@' },
+  grouped: { host: 'db.internal', port: '54a3', user: 'deploy' },
 };
 
 /** The parked run behind the sheet: the last thing the agent said before it stopped. */
@@ -274,6 +331,7 @@ export function HumanInputSheetVariant({ state }: { state: string }) {
           {...(state === 'otp'
             ? { touched: ['code', 'notify'], isSubmitAttempted: true }
             : {})}
+          {...(state === 'grouped' ? { touched: ['port', 'pass'] } : {})}
           onChange={(id, value) => setValues((prev) => ({ ...prev, [id]: value }))}
           onSubmit={noop}
           onCancel={noop}

@@ -98,6 +98,53 @@
           "message": "keep it short"
         }
       ]
+    },
+    {
+      "id": "group:host+group:port+tls",
+      "name": "group:host+group:port+tls",
+      "type": "group",
+      "direction": "row",
+      "fields": [
+        {
+          "id": "host",
+          "name": "host",
+          "type": "plaintext",
+          "label": "Host",
+          "is_required": true
+        },
+        {
+          "id": "group:port+tls",
+          "name": "group:port+tls",
+          "type": "group",
+          "direction": "column",
+          "fields": [
+            {
+              "id": "port",
+              "name": "port",
+              "type": "plaintext",
+              "label": "Port",
+              "is_required": false,
+              "validate": [
+                {
+                  "kind": "type",
+                  "type": "digits",
+                  "message": "must be digits only"
+                }
+              ]
+            },
+            {
+              "id": "tls",
+              "name": "tls",
+              "type": "checkbox",
+              "label": "TLS",
+              "is_required": false,
+              "default": false
+            }
+          ]
+        }
+      ],
+      "label": "Server",
+      "description": "Where the pool dials out"
     }
   ],
   "session_id": "sid-1",

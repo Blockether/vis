@@ -28,6 +28,7 @@ export const HUMAN_INPUT_FIELD_TYPES = [
   'checkbox',
   'range',
   'otp',
+  'group',
 ] as const;
 
 export type HumanInputFieldType = (typeof HUMAN_INPUT_FIELD_TYPES)[number];
@@ -74,6 +75,10 @@ export interface HumanInputField {
   max?: number;
   step?: number;
   default?: unknown;
+  /** `group` only — how its children are laid out. */
+  direction?: 'row' | 'column';
+  /** `group` only — the fields it owns, which may be groups themselves. */
+  fields?: HumanInputField[];
 }
 
 export interface HumanInputRequest {
@@ -164,6 +169,26 @@ function fieldFromWire(raw: unknown): HumanInputField | null {
   const id = text(row.name) || text(row.id);
   if (id === '') return null;
   const type = fieldType(row.type);
+  // A LAYOUT GROUP answers nothing itself: it owns fields, and an empty one is
+  // not a form control but a hole, so it never reaches the screen.
+  if (type === 'group') {
+    const children = (Array.isArray(row.fields) ? row.fields : [])
+      .map(fieldFromWire)
+      .filter((field): field is HumanInputField => field !== null);
+    if (!children.length) return null;
+    return {
+      id,
+      name: id,
+      type,
+      label: text(row.label),
+      is_required: false,
+      direction: row.direction === 'row' ? 'row' : 'column',
+      fields: children,
+      ...(optionalText(row.description) ?? optionalText(row.help)
+        ? { description: optionalText(row.description) ?? optionalText(row.help) }
+        : {}),
+    };
+  }
   const options = Array.isArray(row.options)
     ? row.options.map(optionFromWire).filter((option): option is HumanInputOption => option !== null)
     : undefined;
@@ -393,13 +418,24 @@ export function humanInputFieldError(
   return undefined;
 }
 
+/**
+ * Every field that ANSWERS something, depth first, in reading order. A layout
+ * group is a branch of the tree and holds no value of its own, so everything
+ * that reads or writes values walks the leaves and never the nodes.
+ */
+export function humanInputInputFields(fields: readonly HumanInputField[]): HumanInputField[] {
+  return fields.flatMap((field) =>
+    field.type === 'group' ? humanInputInputFields(field.fields ?? []) : [field],
+  );
+}
+
 /** Every field that has something wrong with it, keyed by field id. */
 export function humanInputErrors(
   request: HumanInputRequest,
   values: HumanInputValues,
 ): Record<string, string> {
   return Object.fromEntries(
-    request.fields
+    humanInputInputFields(request.fields)
       .map((field) => [field.id, humanInputFieldError(field, values[field.id], values)] as const)
       .filter((entry): entry is readonly [string, string] => entry[1] !== undefined),
   );
@@ -519,7 +555,9 @@ export function initialHumanInputValues(request: HumanInputRequest): HumanInputV
   // plain string to the engine, but assigning it on an object literal hits the
   // prototype setter and silently drops the field — the form could never be
   // answered from the app while the TUI happily edits it.
-  return Object.fromEntries(request.fields.map((field) => [field.id, defaultValue(field)]));
+  return Object.fromEntries(
+    humanInputInputFields(request.fields).map((field) => [field.id, defaultValue(field)]),
+  );
 }
 
 /** A required field the operator has not answered yet. */

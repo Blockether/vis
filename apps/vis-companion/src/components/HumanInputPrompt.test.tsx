@@ -169,4 +169,30 @@ describe('human input sheet', () => {
       'must be an email address',
     );
   });
+
+  // Grouping is LAYOUT, not an answer: a group holds no value, it only says which
+  // fields stand side by side. One field per line made a host and its port read
+  // as two unrelated questions.
+  it('lays a group out as a row or a column, and nests the two directions', () => {
+    const html = markup('grouped');
+    const server = element(html, 'data-group-id="group:host+port"');
+    expect(server).toContain('data-direction="row"');
+    expect(server).toContain('flex-row');
+    expect(server).toContain('placeholder="db.internal"');
+    expect(server).toContain('placeholder="5432"');
+    // The legend names the group; what it does not own stays outside it.
+    expect(html).toContain('Server');
+    expect(server).not.toContain('Notes');
+
+    // A column INSIDE the form, holding a row: the two directions nest.
+    const pool = element(html, 'data-group-id="group:pool"');
+    expect(pool).toContain('flex-col');
+    const inner = element(pool, 'data-group-id="group:size+tls"');
+    expect(inner).toContain('data-direction="row"');
+    expect(inner).toContain('placeholder="8"');
+    expect(inner).toContain('placeholder="30"');
+    // The checkbox is the column's second child, not part of that row.
+    expect(inner).not.toContain('Require TLS');
+    expect(pool).toContain('Require TLS');
+  });
 });

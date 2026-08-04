@@ -321,8 +321,8 @@ export function HumanInputSheet({
               <HumanInputFieldRow
                 key={`${request.id}:${field.id}`}
                 field={field}
-                value={values[field.id]}
-                error={errors[field.id]}
+                values={values}
+                errors={errors}
                 {...(onBlur ? { onBlur } : {})}
                 disabled={busy}
                 onChange={onChange}
@@ -368,24 +368,69 @@ function FieldShell({
  */
 function HumanInputFieldRow({
   field,
-  value,
-  error,
+  values,
+  errors,
   disabled,
   onChange,
   onBlur,
   onSubmit,
 }: {
   field: HumanInputField;
-  value: HumanInputValues[string] | undefined;
-  error?: string;
+  values: HumanInputValues;
+  errors: Record<string, string>;
   disabled: boolean;
   onChange: (id: string, value: HumanInputValues[string]) => void;
   onBlur?: (id: string) => void;
   onSubmit: () => void;
 }) {
+  const value = values[field.id];
+  const error = errors[field.id];
   const chosen = Array.isArray(value) ? value : [];
   const options = field.options ?? [];
   const leave = () => onBlur?.(field.id);
+
+  // A LAYOUT GROUP renders no control of its own: it is a flex container that
+  // owns fields, and a child may be a group again, so `row` and `column` nest
+  // without a third rule. `fieldset`/`legend` is the group a screen reader
+  // already understands.
+  if (field.type === 'group') {
+    const isRow = field.direction === 'row';
+    return (
+      <fieldset className="m-0 space-y-1 border-0 p-0">
+        {field.label && (
+          <legend className="mb-1 block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+            {field.label}
+          </legend>
+        )}
+        {field.description && (
+          <p className="font-mono text-chip italic text-dialog-hint">{field.description}</p>
+        )}
+        <div
+          data-group-id={field.id}
+          data-direction={isRow ? 'row' : 'column'}
+          className={
+            isRow
+              ? 'flex flex-row flex-wrap items-start gap-3'
+              : 'flex flex-col gap-3'
+          }
+        >
+          {(field.fields ?? []).map((child) => (
+            <div key={child.id} className={isRow ? 'min-w-[7.5rem] flex-1' : ''}>
+              <HumanInputFieldRow
+                field={child}
+                values={values}
+                errors={errors}
+                {...(onBlur ? { onBlur } : {})}
+                disabled={disabled}
+                onChange={onChange}
+                onSubmit={onSubmit}
+              />
+            </div>
+          ))}
+        </div>
+      </fieldset>
+    );
+  }
 
   if (field.type === 'checkbox') {
     const on = value === true;

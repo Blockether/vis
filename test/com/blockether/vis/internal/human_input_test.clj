@@ -951,3 +951,114 @@
         (expect (hi/secret-handle? (get-in (hi/coerce-values (:fields request) good-sign-in)
                                            [:values "pw"])))
         (expect (pos? (long (hi/forget-secrets!)))))))
+
+(defn- grouped-request
+  "One row holding two fields, beside a plain stacked field — the smallest form
+   that can tell a layout tree from a flat list."
+  [& {:as overrides}]
+  (hi/normalize-request (merge {"title" "Deploy"
+                                "fields" [{"type" "group"
+                                           "direction" "row"
+                                           "fields"
+                                           [{"name" "host" "label" "Host" "is_required" true}
+                                            {"name" "port" "label" "Port" "validate" "integer"}]}
+                                          {"name" "note" "type" "multiline" "label" "Note"}]}
+                               overrides)))
+
+(defdescribe
+  group-layout-test
+  "A `group` is layout only: it holds fields and the direction they run in, it
+   holds no answer, and it nests — which is the whole composability claim."
+  (it "keeps the tree on the request and flattens it for the answer"
+      (let
+        [{:keys [fields]}
+         (grouped-request)
+
+         [group note]
+         fields]
+
+        (expect (= :group (:type group)))
+        (expect (= :row (:direction group)))
+        (expect (= ["host" "port"] (mapv :id (:fields group))))
+        (expect (= :multiline (:type note)))
+        (expect (= ["host" "port" "note"] (mapv :id (hi/input-fields fields))))))
+  (it "stacks by default — a group without a :direction is a column"
+      (let [[group] (normalized-fields {"type" "group" "fields" [{"name" "a"} {"name" "b"}]})]
+        (expect (= :column (:direction group)))))
+  (it "nests, so a row of stacks needs no new key"
+      (let
+        [[outer] (normalized-fields {"type" "group"
+                                     "direction" "row"
+                                     "fields" [{"type" "group" "fields" [{"name" "a"} {"name" "b"}]}
+                                               {"name" "c"}]})]
+        (expect (= :row (:direction outer)))
+        (expect (= :column (:direction (first (:fields outer)))))
+        (expect (= ["a" "b" "c"] (mapv :id (hi/input-fields [outer]))))))
+  (it "names itself from its children when the spec does not name it"
+      (let
+        [[outer] (normalized-fields {"type" "group"
+                                     "fields" [{"type" "group" "fields" [{"name" "a"}]}]})]
+        (expect (= "group:group:a" (:id outer)))
+        (expect (= "group:a" (:id (first (:fields outer)))))
+        (expect (= (:id outer) (:name outer))))
+      (let [[outer] (normalized-fields {"name" "when" "type" "group" "fields" [{"name" "a"}]})]
+        (expect (= "when" (:id outer)))))
+  (it "refuses a direction that is not a flexbox direction"
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(normalized-fields
+                          {"type" "group" "direction" "diagonal" "fields" [{"name" "a"}]}))))
+  (it "refuses a group with nothing in it"
+      (expect (throws? clojure.lang.ExceptionInfo #(normalized-fields {"type" "group"})))
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(normalized-fields {"type" "group" "fields" []}))))
+  (it "refuses a key that only an answerable field could use"
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(normalized-fields
+                          {"type" "group" "is_required" true "fields" [{"name" "a"}]})))
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(normalized-fields
+                          {"type" "group" "default" "x" "fields" [{"name" "a"}]}))))
+  (it "still refuses two fields with the same name across different groups"
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(normalized-fields {"type" "group" "fields" [{"name" "a"}]}
+                                           {"type" "group" "fields" [{"name" "a"}]}))))
+  (it "validates and answers the nested fields as if the tree were flat"
+      (let [request (grouped-request)]
+        (expect (= {"host" "is required" "port" "must be a whole number"}
+                   (errors request {"port" "8o8o"})))
+        (expect (= {"host" "vis.example.com" "port" "8080" "note" nil}
+                   (:values (hi/coerce-values (:fields request)
+                                              {"host" "vis.example.com" "port" "8080"}))))))
+  (it "resolves a :matches rule across group boundaries"
+      (let
+        [request (hi/normalize-request
+                   {"title" "Sign in"
+                    "fields" [{"type" "group"
+                               "direction" "row"
+                               "fields" [{"name" "pw" "type" "password" "label" "Password"}]}
+                              {"name" "pw2" "type" "password" "validate" {"matches" "pw"}}]})]
+        (expect (= {} (errors request {"pw" "hunter42" "pw2" "hunter42"})))
+        (expect (= {"pw2" "must match Password"} (errors request {"pw" "hunter42" "pw2" "nope"})))))
+  (it "projects the tree onto the wire, direction and all, and never a fn"
+      (let
+        [view
+         (hi/request->view (hi/normalize-request {"title" "Deploy"
+                                                  "fields" [{"type" "group"
+                                                             "direction" "row"
+                                                             "label" "Target"
+                                                             "fields" [{"name" "host"
+                                                                        :validate [(fn [_]
+                                                                                     true)
+                                                                                   "slug"]}]}]}))
+
+         [group]
+         (:fields view)]
+
+        (expect (= :group (:type group)))
+        (expect (= :row (:direction group)))
+        (expect (= "Target" (:label group)))
+        (expect (= [{:kind :type
+                     :type "slug"
+                     :message "must be a slug — lowercase words joined by dashes"}]
+                   (:validate (first (:fields group)))))
+        (expect (not (contains? (first (:fields group)) :is-secret))))))

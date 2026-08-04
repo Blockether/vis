@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { HUMAN_INPUT_REQUESTS, HUMAN_INPUT_STATES } from './humanInputVariants';
-import { initialHumanInputValues, isHumanInputAnswerable } from '../lib/human-input';
+import {
+  humanInputInputFields,
+  initialHumanInputValues,
+  isHumanInputAnswerable,
+} from '../lib/human-input';
 
 /**
  * The gallery is production code and its fixtures are the only thing standing
@@ -40,7 +44,8 @@ describe('human-input design fixtures', () => {
     for (const state of HUMAN_INPUT_STATES) {
       const request = HUMAN_INPUT_REQUESTS[state];
       const values = initialHumanInputValues(request);
-      for (const field of request.fields) {
+      // The LEAVES answer; a layout group holds no value of its own.
+      for (const field of humanInputInputFields(request.fields)) {
         expect(Object.hasOwn(values, field.id), `${state}:${field.id}`).toBe(true);
       }
     }

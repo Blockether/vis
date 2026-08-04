@@ -13,7 +13,7 @@
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.internal.human-input :as engine]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [com.googlecode.lanterna SGR TerminalSize TextCharacter]
+  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize TextCharacter]
            [com.googlecode.lanterna.input KeyStroke KeyType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
@@ -1139,3 +1139,121 @@
         (expect (= "must be an email address"
                    (get (hi/visible-errors (feed form [(ch \a)])) "email")))
         (expect (= {} (hi/visible-errors (feed form (map ch "a@b.co"))))))))
+
+;; =============================================================================
+;; Layout groups
+;; =============================================================================
+
+(defn- grouped-request
+  "A request whose first field is a LAYOUT GROUP, built by the engine so these
+   tests pin the real wire contract and not a hand-written guess at it."
+  [group]
+  (engine/request->view (engine/normalize-request
+                          {"title" "Connect" "fields" [group {"name" "notes" "label" "Notes"}]})))
+
+(defn- server-group
+  "Two fields that belong together, laid out in `direction`."
+  [direction]
+  {"type" "group"
+   "direction" direction
+   "label" "Server"
+   "fields" [{"name" "host" "label" "Host" "is_required" true "placeholder" "db.internal"}
+             {"name" "port" "label" "Port" "placeholder" "5432"}]})
+
+(defn- ink
+  "Every non-blank painted row of `form`, framing stripped."
+  [form]
+  (into [] (remove str/blank?) (painted-rows form "")))
+
+(defn- caret
+  "Where `paint!` parks the terminal caret: `[x y]`."
+  [form]
+  (let
+    [{:keys [g]}
+     (virtual-screen)
+
+     pos
+     (hi/paint! g 80 30 form)]
+
+    [(.getColumn ^TerminalPosition pos) (.getRow ^TerminalPosition pos)]))
+
+(defdescribe
+  group-layout-test
+  (it "lays a `row` group side by side: two labels on one line, two inputs on the next"
+      (let [rows (ink (hi/init-form (grouped-request (server-group "row"))))]
+        (expect (some #(and (str/includes? % "Host") (str/includes? % "Port")) rows))
+        (expect (some #(and (str/includes? % "db.internal") (str/includes? % "5432")) rows))
+        ;; Grouping is layout only — the field below the group is untouched.
+        (expect (some #(= "Notes" %) rows))))
+  (it "stacks a `column` group instead, one field per line"
+      (let [rows (ink (hi/init-form (grouped-request (server-group "column"))))]
+        (expect (nil? (some #(and (str/includes? % "Host") (str/includes? % "Port")) rows)))
+        (expect (some #(str/includes? % "Host") rows))
+        (expect (some #(str/includes? % "Port") rows))))
+  (it "gives the group its own heading, above the fields it owns"
+      (let
+        [rows (ink (hi/init-form (grouped-request (assoc (server-group "row")
+                                                    "description" "Where to connect"))))]
+        (expect (< (long (row-index rows #(= "Server" %)))
+                   (long (row-index rows #(str/includes? % "Where to connect")))
+                   (long (row-index rows #(str/includes? % "Host")))))))
+  (it "keeps every LEAF a stop of its own, in reading order — a group is not one"
+      (let [form (hi/init-form (grouped-request (server-group "row")))]
+        (expect (= ["host" "port" "notes"] (into [] (keep :field-id) (:stops form))))
+        (expect (= {"host" "" "port" "" "notes" ""} (:values form)))))
+  (it "composes: a `column` group nested inside a `row` group is one of its columns"
+      ;; Two directions and no third rule — the tree does the rest.
+      (let
+        [rows (ink (hi/init-form (grouped-request {"type" "group"
+                                                   "direction" "row"
+                                                   "fields" [{"type" "group"
+                                                              "direction" "column"
+                                                              "label" "Left"
+                                                              "fields" [{"name" "a" "label" "A"}
+                                                                        {"name" "b" "label" "B"}]}
+                                                             {"name" "c" "label" "C"}]})))]
+        ;; The nested column's heading shares its line with the neighbour column,
+        ;; and B — the second row of that column — is BELOW A, not beside it.
+        (expect (some #(and (str/includes? % "Left") (str/includes? % "C")) rows))
+        (expect (< (long (row-index rows #(str/includes? % "A")))
+                   (long (row-index rows #(str/includes? % "B")))))))
+  (it "moves the caret ACROSS a shared row, not down it"
+      (let
+        [form
+         (hi/init-form (grouped-request (server-group "row")))
+
+         [x0 y0]
+         (caret (assoc form :focus 0))
+
+         [x1 y1]
+         (caret (assoc form :focus 1))
+
+         [_ y2]
+         (caret (assoc form :focus 2))]
+
+        (expect (= y0 y1))
+        (expect (< (long x0) (long x1)))
+        (expect (< (long y1) (long y2)))))
+  (it "types into the focused column only"
+      (let
+        [form (feed (assoc (hi/init-form (grouped-request (server-group "row"))) :focus 1)
+                    (map ch "5433"))]
+        (expect (= {"host" "" "port" "5433" "notes" ""} (:values form)))
+        (expect (some #(str/includes? % "5433") (ink form)))))
+  (it "prints a grouped field's error inside its own column"
+      (let
+        [form (assoc (hi/init-form (grouped-request (server-group "row")))
+                :is-submit-attempted true)]
+        (expect (= {"host" "is required"} (hi/live-errors form)))
+        (expect (some #(str/includes? % "is required") (ink form)))))
+  (it "answers with one flat map of leaves, whatever the layout"
+      (let
+        [view
+         (grouped-request (server-group "row"))
+
+         form
+         (feed (hi/init-form view) (map ch "db1"))]
+
+        (expect (= {"host" "db1" "port" "" "notes" ""}
+                   (:values (:form (hi/handle-event form {:kind :submit})))))
+        (expect (= {} (hi/live-errors (assoc form :is-submit-attempted true)))))))
