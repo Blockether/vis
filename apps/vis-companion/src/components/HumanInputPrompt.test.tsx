@@ -63,19 +63,21 @@ describe('human input sheet', () => {
     expect(cancellable).toContain('Not now');
   });
 
-  it('refuses a pristine form by NAMING what is missing, not by dying quietly', () => {
+  it('never invents a verdict: pristine says nothing, and submit still fires', () => {
     // A disabled button with no reason next to it is the worst answer to "why
-    // can I not send this": the sheet stays pressable and says why instead.
+    // can I not send this" — and the app cannot even know: the validators are
+    // functions in the extension. So the sheet stays pressable and stays quiet
+    // until the engine refuses something.
     const off = (html: string) => /<button[^>]*\sdisabled=""/.test(html);
     const buttons = 'flex gap-2 sm:justify-end';
     const pristine = markup('minimal');
     expect(off(element(pristine, buttons))).toBe(false);
     expect(pristine).not.toContain('is required');
-    // Pressed once, every error is earned and every error shows.
-    expect(markup('minimal', { isSubmitAttempted: true })).toContain('is required');
-    // Touching that one field is enough on its own.
-    expect(markup('minimal', { touched: ['branch'] })).toContain('is required');
-    expect(markup('minimal', {}, { branch: 'fix/108' })).not.toContain('is required');
+    // The engine's refusal needs no touch, and it does not deaden the button:
+    // the operator fixes the field and confirms again.
+    const refused = markup('minimal', { errors: { branch: 'is required' } });
+    expect(refused).toContain('is required');
+    expect(off(element(refused, buttons))).toBe(false);
   });
 
   it('says that the run is blocked, and how many more are behind it', () => {
@@ -91,7 +93,7 @@ describe('human input sheet', () => {
   it('shows the engine’s refusal next to the field it refused', () => {
     const html = markup('rejected', {
       error: 'The engine refused this answer.',
-      fieldErrors: { ticket: 'Must look like OPS-1234.' },
+      errors: { ticket: 'Must look like OPS-1234.' },
     });
     expect(html).toContain('The engine refused this answer.');
     expect(element(html, 'overflow-y-auto')).toContain('Must look like OPS-1234.');
@@ -151,23 +153,24 @@ describe('human input sheet', () => {
     expect(html).toContain('6 digits');
   });
 
-  // Formik's lesson, and the reason `touched` exists at all: a form that shouts
-  // before anyone has typed is noise, and one that stays quiet after a bad
-  // answer is a trap. The sheet must do neither.
-  it('names a broken field only once that field has been touched', () => {
+  // Formik's lesson, both halves of it: a form that shouts before anyone has
+  // typed is noise, and one that stays quiet after a refusal is a trap. Since
+  // every validator lives in the extension that asked the question, the ONLY
+  // thing that can speak here is a confirmation the engine turned down — and it
+  // speaks for every field it named, touched or not.
+  it('names a broken field only once a confirmation came back refused', () => {
     const values = { ...otpValues, code: '408', notify: 'ops@' };
     const pristine = markup('otp', {}, values);
     expect(pristine).not.toContain('must be an email address');
     expect(pristine).not.toContain('must be 6 digits');
 
-    const touched = markup('otp', { touched: ['code', 'notify'] }, values);
-    expect(touched).toContain('must be 6 digits');
-    expect(touched).toContain('must be an email address');
-
-    // A refused submit reveals every field at once, touched or not.
-    expect(markup('otp', { isSubmitAttempted: true }, values)).toContain(
-      'must be an email address',
+    const refused = markup(
+      'otp',
+      { errors: { code: 'must be 6 digits', notify: 'must be an email address' } },
+      values,
     );
+    expect(refused).toContain('must be 6 digits');
+    expect(refused).toContain('must be an email address');
   });
 
   // Grouping is LAYOUT, not an answer: a group holds no value, it only says which

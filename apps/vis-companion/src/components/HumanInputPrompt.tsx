@@ -6,11 +6,9 @@ import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
   applyHumanInputEvent,
   clampHumanInputRange,
-  humanInputFormBlur,
   humanInputFormChange,
-  humanInputFormErrors,
+  humanInputFormRefused,
   humanInputFormStart,
-  humanInputFormSubmit,
   humanInputOtp,
   humanInputOtpDigits,
   humanInputRange,
@@ -50,7 +48,6 @@ export function HumanInputPrompt({
 }) {
   const [pending, setPending] = useState<HumanInputRequest[]>([]);
   const [form, setForm] = useState<HumanInputForm>(() => humanInputFormStart(null));
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -91,25 +88,16 @@ export function HumanInputPrompt({
   // inheriting the answer typed into the first.
   useEffect(() => {
     setForm(humanInputFormStart(request));
-    setFieldErrors({});
     setError(null);
     setBusy(false);
   }, [request]);
 
   const setValue = useCallback((id: string, value: HumanInputValues[string]) => {
+    // Any touch of a field also DROPS the engine's complaint about it: that
+    // message judged the previous answer, and the next confirmation will judge
+    // this one. The rule lives in `humanInputFormChange`, so the sheet cannot
+    // forget it and the TUI band does the same thing on a keystroke.
     setForm((current) => humanInputFormChange(current, id, value));
-    setFieldErrors((current) => {
-      if (!(id in current)) return current;
-      const next = { ...current };
-      delete next[id];
-      return next;
-    });
-  }, []);
-
-  // Leaving a field is the other half of "pristine": the answer is unchanged,
-  // but the operator has now seen it, so its error may speak.
-  const blur = useCallback((id: string) => {
-    setForm((current) => humanInputFormBlur(current, id));
   }, []);
 
   const drop = useCallback((id: string) => {
@@ -118,15 +106,14 @@ export function HumanInputPrompt({
 
   const submit = useCallback(() => {
     if (!request || busy) return;
-    // Pressing submit on an answer the engine would refuse REVEALS why instead of
-    // sending it: every error becomes visible at once and nothing leaves here.
-    const attempt = humanInputFormSubmit(form, request);
-    setForm(attempt.form);
-    if (!attempt.isReady) return;
+    // The answer ALWAYS leaves. Validators are FUNCTIONS living in the
+    // extension that asked the question, so this form cannot know whether the
+    // answer is good — only a confirmation can, and a button that silently
+    // refuses to fire teaches the operator nothing.
     setBusy(true);
     setError(null);
     client
-      .submitHumanInput(sid, request.id, attempt.form.values)
+      .submitHumanInput(sid, request.id, form.values)
       .then((outcome) => {
         if (outcome?.is_accepted) {
           // The close event drops it too; doing it here as well keeps the
@@ -134,7 +121,7 @@ export function HumanInputPrompt({
           drop(request.id);
           return;
         }
-        setFieldErrors(outcome?.errors ?? {});
+        setForm((current) => humanInputFormRefused(current, outcome?.errors ?? {}));
         setError('The daemon rejected this answer.');
         setBusy(false);
       })
@@ -193,10 +180,7 @@ export function HumanInputPrompt({
     <HumanInputSheet
       request={request}
       values={form.values}
-      touched={form.touched}
-      isSubmitAttempted={form.isSubmitAttempted}
-      onBlur={blur}
-      fieldErrors={fieldErrors}
+      errors={form.errors}
       error={error}
       busy={busy}
       waiting={pending.length - 1}
@@ -211,44 +195,34 @@ export function HumanInputPrompt({
 
 /**
  * The pause itself, with no gateway behind it: a request, the answers typed so
- * far, and three callbacks. The container above owns the socket, this owns the
- * pixels — which is why the design gallery can photograph the SHIPPED sheet
- * instead of a look-alike that drifts away from it.
+ * far, whatever the engine last refused, and three callbacks. The container
+ * above owns the socket, this owns the pixels — which is why the design gallery
+ * can photograph the SHIPPED sheet instead of a look-alike that drifts from it.
  */
 export function HumanInputSheet({
   request,
   values,
-  fieldErrors = {},
+  errors = {},
   error = null,
   busy = false,
   waiting = 0,
   bodyRef,
-  touched = [],
-  isSubmitAttempted = false,
-  onBlur,
   onChange,
   onSubmit,
   onCancel,
 }: {
   request: HumanInputRequest;
   values: HumanInputValues;
-  fieldErrors?: Record<string, string>;
+  /** Field id -> message, straight from the engine's refusal. Never the app's. */
+  errors?: Record<string, string>;
   error?: string | null;
   busy?: boolean;
   waiting?: number;
   bodyRef?: React.RefObject<HTMLDivElement | null>;
-  touched?: readonly string[];
-  isSubmitAttempted?: boolean;
-  onBlur?: (id: string) => void;
   onChange: (id: string, value: HumanInputValues[string]) => void;
   onSubmit: () => void;
   onCancel: () => void;
 }) {
-  // The whole pristine/touched question, answered in one line: a field speaks
-  // once it has been touched or once submit was pressed, and the engine's own
-  // refusal is laid over the top of that.
-  const errors = humanInputFormErrors({ values, touched, isSubmitAttempted }, request, fieldErrors);
-
   // A phone answers with its thumb, so the sheet sits on the BOTTOM edge and
   // only becomes a centred card once there is a mouse-sized window.
   return (
@@ -323,7 +297,6 @@ export function HumanInputSheet({
                 field={field}
                 values={values}
                 errors={errors}
-                {...(onBlur ? { onBlur } : {})}
                 disabled={busy}
                 onChange={onChange}
                 onSubmit={onSubmit}
@@ -372,7 +345,6 @@ function HumanInputFieldRow({
   errors,
   disabled,
   onChange,
-  onBlur,
   onSubmit,
 }: {
   field: HumanInputField;
@@ -380,14 +352,12 @@ function HumanInputFieldRow({
   errors: Record<string, string>;
   disabled: boolean;
   onChange: (id: string, value: HumanInputValues[string]) => void;
-  onBlur?: (id: string) => void;
   onSubmit: () => void;
 }) {
   const value = values[field.id];
   const error = errors[field.id];
   const chosen = Array.isArray(value) ? value : [];
   const options = field.options ?? [];
-  const leave = () => onBlur?.(field.id);
 
   // A LAYOUT GROUP renders no control of its own: it is a flex container that
   // owns fields, and a child may be a group again, so `row` and `column` nest
@@ -420,7 +390,6 @@ function HumanInputFieldRow({
                 field={child}
                 values={values}
                 errors={errors}
-                {...(onBlur ? { onBlur } : {})}
                 disabled={disabled}
                 onChange={onChange}
                 onSubmit={onSubmit}
@@ -442,7 +411,6 @@ function HumanInputFieldRow({
           aria-pressed={on}
           className="flex w-full items-center gap-2 border border-edge bg-input px-2.5 py-1 text-left font-mono text-meta text-white transition-colors hover:border-accent focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted sm:text-ui"
           onClick={() => onChange(field.id, !on)}
-          onBlur={leave}
         >
           <span aria-hidden="true">{on ? '[x]' : '[ ]'}</span>
           <span className="truncate">{field.label}</span>
@@ -475,7 +443,6 @@ function HumanInputFieldRow({
                       : option.value,
                   )
                 }
-                onBlur={leave}
               >
                 <span aria-hidden="true">{isMulti ? (on ? '[x]' : '[ ]') : on ? '●' : '○'}</span>
                 <span className="truncate">{option.label}</span>
@@ -503,7 +470,6 @@ function HumanInputFieldRow({
             aria-label={field.label}
             className="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-edge accent-accent disabled:cursor-not-allowed"
             onChange={(event) => onChange(field.id, clampHumanInputRange(field, event.target.valueAsNumber))}
-            onBlur={leave}
           />
           <span className="shrink-0 font-mono text-meta tabular-nums text-white sm:text-ui">{current}</span>
         </div>
@@ -525,7 +491,6 @@ function HumanInputFieldRow({
           disabled={disabled}
           onChange={onChange}
           onSubmit={onSubmit}
-          {...(onBlur ? { onBlur } : {})}
         />
       </FieldShell>
     );
@@ -542,7 +507,6 @@ function HumanInputFieldRow({
           {...(field.placeholder ? { placeholder: field.placeholder } : {})}
           className="w-full resize-y border border-edge bg-input px-2.5 py-1 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted sm:text-ui"
           onChange={(event) => onChange(field.id, event.target.value)}
-          onBlur={leave}
         />
       </FieldShell>
     );
@@ -557,7 +521,6 @@ function HumanInputFieldRow({
         {...(field.max_length ? { maxLength: field.max_length } : {})}
         {...(field.placeholder ? { placeholder: field.placeholder } : {})}
         onChange={(event) => onChange(field.id, event.target.value)}
-        onBlur={leave}
         // A one-line field has nothing to do with a bare Enter, so it answers
         // the question — the reflex every login form in the world has taught.
         onKeyDown={(event) => {
@@ -582,14 +545,12 @@ function OtpBoxes({
   value,
   disabled,
   onChange,
-  onBlur,
   onSubmit,
 }: {
   field: HumanInputField;
   value: string;
   disabled: boolean;
   onChange: (id: string, value: HumanInputValues[string]) => void;
-  onBlur?: (id: string) => void;
   onSubmit: () => void;
 }) {
   const { min, max } = humanInputOtp(field);
@@ -666,7 +627,6 @@ function OtpBoxes({
             }}
             onKeyDown={(event) => keyDown(index, event)}
             onFocus={(event) => event.target.select()}
-            onBlur={() => onBlur?.(field.id)}
           />
         ))}
       </div>

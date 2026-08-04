@@ -7,19 +7,13 @@ import {
   humanInputRange,
   humanInputRequestFromWire,
   humanInputRequestsFromWire,
-  humanInputErrors,
-  humanInputFieldError,
-  humanInputFormBlur,
   humanInputFormChange,
-  humanInputFormErrors,
+  humanInputFormRefused,
   humanInputFormStart,
-  humanInputFormSubmit,
   humanInputOtp,
   humanInputInputFields,
   humanInputOtpDigits,
   initialHumanInputValues,
-  isHumanInputAnswerable,
-  isHumanInputBlank,
   isHumanInputEvent,
   toggleHumanInputOption,
   type HumanInputField,
@@ -186,37 +180,27 @@ describe('initialHumanInputValues', () => {
     }) as HumanInputRequest;
     const values = initialHumanInputValues(request);
     // `values[id] = …` on an object literal hits the prototype setter: the
-    // field silently vanishes, the submit button never enables and the POST
-    // omits the value the engine is waiting for.
+    // field silently vanishes and the POST omits the value the engine is
+    // waiting for.
     expect(Object.prototype.hasOwnProperty.call(values, '__proto__')).toBe(true);
-    expect(isHumanInputAnswerable(request, values)).toBe(false);
-    const answered = { ...values, ['__proto__']: 'typed' };
-    expect(isHumanInputAnswerable(request, answered)).toBe(true);
-    expect(JSON.parse(JSON.stringify(answered))['__proto__']).toBe('typed');
+    const answered = humanInputFormChange(humanInputFormStart(request), '__proto__', 'typed');
+    expect(answered.values['__proto__']).toBe('typed');
+    expect(JSON.parse(JSON.stringify(answered.values))['__proto__']).toBe('typed');
   });
 });
 
 describe('required fields', () => {
-  it('blocks submit until every required field is answered', () => {
-    const request = parsed();
-    const values = initialHumanInputValues(request);
-    expect(isHumanInputAnswerable(request, values)).toBe(false);
-    expect(isHumanInputAnswerable(request, { ...values, key: 'secret' })).toBe(false);
-    expect(isHumanInputAnswerable(request, { ...values, key: 'secret', code: '1234' })).toBe(false);
-    // `host` lives inside a layout group — grouping must not hide a required field.
-    expect(
-      isHumanInputAnswerable(request, { ...values, key: 'secret', code: '1234', host: 'db1' }),
-    ).toBe(true);
-  });
-
-  it('treats blank space and an empty choice as unanswered', () => {
-    const [, key] = parsed().fields;
-    if (!key) throw new Error('fixture must have a password field');
-    expect(isHumanInputBlank(key, '   ')).toBe(true);
-    expect(isHumanInputBlank(key, 'k')).toBe(false);
-    expect(isHumanInputBlank({ ...key, type: 'checkbox' }, false)).toBe(true);
-    expect(isHumanInputBlank({ ...key, type: 'multiselect' }, [])).toBe(true);
-    expect(isHumanInputBlank({ ...key, is_required: false }, '')).toBe(false);
+  it('carries is_required through a layout group without judging anything', () => {
+    // This used to gate the app's own submit button. The app no longer decides
+    // whether an answer is good: `is_required` is a MARK next to the label, and
+    // only the engine turns it into a refusal — with its own words.
+    const required = humanInputInputFields(parsed().fields)
+      .filter((field) => field.is_required)
+      .map((field) => field.id);
+    // `host` lives inside a layout group — grouping must not hide the mark.
+    expect(required).toContain('host');
+    expect(required).toContain('key');
+    expect(required).toContain('code');
   });
 });
 
@@ -300,12 +284,15 @@ describe('range fields', () => {
     expect(request && initialHumanInputValues(request)).toEqual({ risk: 5 });
   });
 
-  it('is answered by any number, including the zero at the far left', () => {
-    const risk = slider({ min: 0, max: 10, is_required: true });
-    // 0 is falsy: a blank-check written as `!value` would refuse the answer at
-    // the far left of the track forever.
-    expect(isHumanInputBlank(risk, 0)).toBe(false);
-    expect(isHumanInputBlank(risk, undefined)).toBe(true);
+  it('opens on the zero at the far left of the track', () => {
+    const request = humanInputRequestFromWire({
+      id: 'r',
+      title: 'T',
+      fields: [{ id: 'risk', type: 'range', min: 0, max: 10, default: 0 }],
+    }) as HumanInputRequest;
+    // 0 is falsy: a default read as `fallback || min` moves the slider off the
+    // answer the extension asked for, forever.
+    expect(initialHumanInputValues(request)).toEqual({ risk: 0 });
   });
 });
 
@@ -337,87 +324,25 @@ describe('otp fields', () => {
     expect(humanInputOtpDigits(field, 'nope')).toBe('');
   });
 
-  it('is unfinished until every box is full, in the engine’s words', () => {
-    const { request, field } = only({ type: 'otp', is_required: true });
-    expect(humanInputFieldError(field, '', {})).toBe('is required');
-    expect(humanInputFieldError(field, '1234', {})).toBe('must be 6 digits');
-    expect(humanInputFieldError(field, '12x456', {})).toBe('must be digits only');
-    expect(humanInputFieldError(field, '123456', {})).toBeUndefined();
-    expect(isHumanInputAnswerable(request, { f: '123456' })).toBe(true);
-  });
-
-  it('says at least / at most when the engine allows a span', () => {
-    const { field } = only({ type: 'otp', min_length: 4, max_length: 8 });
-    expect(humanInputFieldError(field, '123', {})).toBe('must be at least 4 digits');
-    expect(humanInputFieldError(field, '123456789', {})).toBe('must be at most 8 digits');
-    expect(humanInputFieldError(field, '12345', {})).toBeUndefined();
-  });
 });
 
-describe('validation rules', () => {
-  it('checks the named shapes the engine checks, and prints ITS message', () => {
+describe('validation', () => {
+  it('parses no validator off the wire, because none is ever sent', () => {
+    // `request->view` dissocs `:validate` before encoding: a validator is a
+    // FUNCTION in the extension that asked the question, and a function cannot
+    // be JSON. The app has nothing to run, so it has nothing to guess either.
+    expect(JSON.stringify(fixture)).not.toContain('validate');
+    const notify = parsed().fields.find((row) => row.id === 'notify') as HumanInputField;
+    expect(notify).toBeDefined();
+    expect('validate' in notify).toBe(false);
+  });
+
+  it('drops a rule an older daemon still puts on a field', () => {
     const { field } = only({
       type: 'plaintext',
       validate: [{ kind: 'type', type: 'email', message: 'must be an email address' }],
     });
-    expect(humanInputFieldError(field, 'nope', {})).toBe('must be an email address');
-    expect(humanInputFieldError(field, 'ops@example.com', {})).toBeUndefined();
-    // A rule NEVER fires on a blank optional field — that is `is_required`'s job.
-    expect(humanInputFieldError(field, '', {})).toBeUndefined();
-  });
-
-  it('runs a pattern, a length and a bound', () => {
-    const pattern = only({
-      type: 'plaintext',
-      validate: [{ kind: 'pattern', pattern: '^OPS-\\d+$', message: 'must look like OPS-1234' }],
-    }).field;
-    expect(humanInputFieldError(pattern, 'nope', {})).toBe('must look like OPS-1234');
-    expect(humanInputFieldError(pattern, 'OPS-7', {})).toBeUndefined();
-
-    const length = only({
-      type: 'plaintext',
-      validate: [{ kind: 'length', min: 3, message: 'must be at least 3 characters' }],
-    }).field;
-    expect(humanInputFieldError(length, 'ab', {})).toBe('must be at least 3 characters');
-    expect(humanInputFieldError(length, 'abc', {})).toBeUndefined();
-
-    const bounds = only({
-      type: 'plaintext',
-      validate: [{ kind: 'bounds', max: 9, message: 'must be at most 9' }],
-    }).field;
-    expect(humanInputFieldError(bounds, '12', {})).toBe('must be at most 9');
-    expect(humanInputFieldError(bounds, 'seven', {})).toBe('must be a number');
-    expect(humanInputFieldError(bounds, '9', {})).toBeUndefined();
-  });
-
-  it('compares one field with another', () => {
-    const { field } = only({
-      type: 'password',
-      validate: [{ kind: 'matches', field: 'pass', message: 'must match Password' }],
-    });
-    expect(humanInputFieldError(field, 'b', { pass: 'a' })).toBe('must match Password');
-    expect(humanInputFieldError(field, 'a', { pass: 'a' })).toBeUndefined();
-  });
-
-  it('lets a rule the app has never heard of through to the engine', () => {
-    // A newer daemon talking to an older app must not have its answer refused
-    // here for a shape this build cannot even evaluate.
-    const { field } = only({
-      type: 'plaintext',
-      validate: [{ kind: 'type', type: 'iban', message: 'must be an IBAN' }],
-    });
-    expect(humanInputFieldError(field, 'whatever', {})).toBeUndefined();
-  });
-
-  it('reads the rules the engine put on the wire', () => {
-    const notify = parsed().fields.find((row) => row.id === 'notify') as HumanInputField;
-    expect(notify.validate).toEqual([
-      { kind: 'type', type: 'email', message: 'must be an email address' },
-      { kind: 'length', max: 60, message: 'keep it short' },
-    ]);
-    expect(humanInputErrors(parsed(), { notify: 'nope' })).toMatchObject({
-      notify: 'must be an email address',
-    });
+    expect('validate' in field).toBe(false);
   });
 });
 
@@ -432,56 +357,44 @@ describe('the form state machine', () => {
       ],
     }) as HumanInputRequest;
 
-  it('starts pristine and silent, however wrong it already is', () => {
-    const form = humanInputFormStart(request());
-    expect(form).toEqual({ values: { who: '', code: '' }, touched: [], isSubmitAttempted: false });
-    // Shouting "is required" at a form nobody has touched is the oldest form
-    // bug there is.
-    expect(humanInputFormErrors(form, request())).toEqual({});
+  it('starts pristine: the request’s defaults, and nothing to apologise for', () => {
+    expect(humanInputFormStart(request())).toEqual({ values: { who: '', code: '' }, errors: {} });
   });
 
-  it('speaks up about a field the operator has been in', () => {
-    const start = humanInputFormStart(request());
-    expect(humanInputFormErrors(humanInputFormBlur(start, 'who'), request())).toEqual({
+  it('never invents an error of its own, however wrong the answer is', () => {
+    // A required field left blank and an OTP with two digits in it. The form has
+    // no opinion at all: the validators are functions in the extension, so the
+    // only verdict that exists is the one a confirmation brings back.
+    const half = humanInputFormChange(humanInputFormStart(request()), 'code', '12');
+    expect(half.errors).toEqual({});
+  });
+
+  it('reddens exactly the fields a refused confirmation named', () => {
+    const refused = humanInputFormRefused(humanInputFormStart(request()), { who: 'is required' });
+    expect(refused.errors).toEqual({ who: 'is required' });
+    // The engine's verdict needs no touch first, and the answers are untouched.
+    expect(refused.values).toEqual({ who: '', code: '' });
+  });
+
+  it('drops a field’s error on the first touch, and only that field’s', () => {
+    const refused = humanInputFormRefused(humanInputFormStart(request()), {
       who: 'is required',
+      code: 'must be 6 digits',
     });
-    const typed = humanInputFormChange(start, 'code', '12');
-    expect(typed.touched).toEqual(['code']);
-    expect(humanInputFormErrors(typed, request())).toEqual({ code: 'must be 6 digits' });
-    // …and stays quiet about the one it has not.
-    expect(humanInputFormErrors(typed, request())['who']).toBeUndefined();
-  });
-
-  it('reveals everything at once when submit is pressed, and sends nothing', () => {
-    const attempt = humanInputFormSubmit(humanInputFormStart(request()), request());
-    expect(attempt.isReady).toBe(false);
-    expect(attempt.errors).toEqual({ who: 'is required' });
-    expect(attempt.form.isSubmitAttempted).toBe(true);
-    expect(humanInputFormErrors(attempt.form, request())).toEqual({ who: 'is required' });
-  });
-
-  it('lets a complete answer through untouched', () => {
-    const answered = humanInputFormChange(humanInputFormStart(request()), 'who', 'ops');
-    const attempt = humanInputFormSubmit(answered, request());
-    expect(attempt.isReady).toBe(true);
-    expect(attempt.form).toBe(answered);
-    expect(attempt.form.values).toEqual({ who: 'ops', code: '' });
-  });
-
-  it('shows the engine’s own refusal whether or not the field was touched', () => {
-    const form = humanInputFormStart(request());
-    expect(humanInputFormErrors(form, request(), { who: 'The daemon says no.' })).toEqual({
-      who: 'The daemon says no.',
+    const typed = humanInputFormChange(refused, 'who', 'o');
+    expect(typed.errors).toEqual({ code: 'must be 6 digits' });
+    expect(typed.values.who).toBe('o');
+    // Editing on: still nothing re-validates until the next confirmation.
+    expect(humanInputFormChange(typed, 'who', 'op').errors).toEqual({
+      code: 'must be 6 digits',
     });
   });
 
-  it('touches a field once, however many times it is edited', () => {
-    const twice = humanInputFormChange(
-      humanInputFormChange(humanInputFormStart(request()), 'who', 'o'),
-      'who',
-      'op',
-    );
-    expect(twice.touched).toEqual(['who']);
-    expect(humanInputFormBlur(twice, 'who').touched).toEqual(['who']);
+  it('replaces the last refusal with the next one, and clears it when accepted', () => {
+    const first = humanInputFormRefused(humanInputFormStart(request()), { who: 'is required' });
+    expect(humanInputFormRefused(first, { code: 'must be 6 digits' }).errors).toEqual({
+      code: 'must be 6 digits',
+    });
+    expect(humanInputFormRefused(first, {}).errors).toEqual({});
   });
 });

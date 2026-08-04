@@ -1467,9 +1467,25 @@ def ask_camel_case():
         return {'raised': True, 'message': str(e)}
     return {'raised': False, 'message': ''}
 
+def ask_validated():
+    'Ask with Python validators.'
+    def an_email(text):
+        if '@' not in text:
+            return 'must be an email address'
+
+    answer = vis.ask(
+        'Sign up',
+        [{'name': 'email', 'label': 'Email', 'validate': an_email},
+         {'name': 'again', 'label': 'Repeat it',
+          'validate': lambda text, values:
+              None if text == values['email'] else 'the two do not match'}],
+        timeout_ms=20000,
+    )
+    return {'ok': bool(answer), 'email': answer['email']}
+
 vis.extension(name='asker', description='asker', alias='a',
               symbols=[vis.symbol(ask_key), vis.symbol(ask_cancelled),
-                       vis.symbol(ask_camel_case)])
+                       vis.symbol(ask_camel_case), vis.symbol(ask_validated)])
 ")
 
 (defdescribe
@@ -1511,6 +1527,44 @@ vis.extension(name='asker', description='asker', alias='a',
                       "token" "hunter2"
                       "forgotten" true}
                      result))
+          (expect (empty? (human-input/pending-requests)))))))
+  (it
+    "runs a Python validator on confirmation only, refusing with its own message"
+    (with-loaded
+      {"asker.py" asker-py}
+      (fn [_ _]
+        (let
+          [ask-validated
+           (symbol-fn (registered "asker") 'ask_validated)
+
+           drawn
+           (atom nil)
+
+           refused
+           (atom nil)
+
+           answered
+           (answer-pending! "Sign up"
+                            (fn [id]
+                              (reset! drawn (human-input/pending-request id))
+                              ;; Both fields agree, so only the one-argument
+                              ;; validator refuses this answer.
+                              (reset! refused (human-input/submit! id
+                                                                   {"email" "nope" "again" "nope"}))
+                              (human-input/submit! id {"email" "a@b.c" "again" "a@b.c"})))
+
+           result
+           (:result (ask-validated))]
+
+          ;; The validator is a Python callable, invoked by the engine from the
+          ;; submitting thread while `vis.ask` parks the extension's own thread
+          ;; inside the host call — GraalPy releases the GIL for it.
+          (expect (= {:is-accepted false :errors {"email" "must be an email address"}} @refused))
+          ;; A refusal keeps the request open, so the next confirmation answers it.
+          (expect (= {:is-accepted true} @answered))
+          ;; And the function itself never reaches a channel.
+          (expect (every? #(not (contains? % :validate)) (:fields @drawn)))
+          (expect (= {"ok" true "email" "a@b.c"} result))
           (expect (empty? (human-input/pending-requests)))))))
   ;; Regression, issue #104: `vis.ask` raised from an extension SYMBOL was
   ;; reported to reach nobody — no dialog on any channel and not one

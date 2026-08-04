@@ -780,15 +780,20 @@
   [& {:as overrides}]
   (hi/normalize-request
     (merge {"title" "Sign in"
-            "fields"
-            [{"name" "email" "is_required" true "validate" "email"}
-             {"name" "pw"
-              "type" "password"
-              "label" "Password"
-              "is_required" true
-              "validate" [{"min_length" 8 "message" "at least 8 characters"}
-                          {"pattern" "[0-9]" "message" "needs a digit"}]}
-             {"name" "pw2" "type" "password" "is_required" true "validate" {"matches" "pw"}}]}
+            "fields" [{"name" "email"
+                       "is_required" true
+                       "validate" #(when-not (re-find #"@" (str %)) "must be an email address")}
+                      {"name" "pw"
+                       "type" "password"
+                       "label" "Password"
+                       "is_required" true
+                       "validate" [#(when (< (count (str %)) 8) "at least 8 characters")
+                                   #(when-not (re-find #"[0-9]" (str %)) "needs a digit")]}
+                      {"name" "pw2"
+                       "type" "password"
+                       "is_required" true
+                       "validate" (fn [value values]
+                                    (when-not (= value (get values "pw")) "must match Password"))}]}
            overrides)))
 
 (defn- errors
@@ -800,6 +805,8 @@
 
 (defdescribe
   validation-test
+  "A validator is a FUNCTION the engine runs when the form is CONFIRMED: it
+   answers nil/true for a good value, or the message the field should show."
   (it "accepts the form it was written for"
       (let [answer (hi/validate-values (:fields (sign-in-request)) good-sign-in)]
         (expect (:is-accepted answer))
@@ -809,99 +816,37 @@
                   "pw" "at least 8 characters"
                   "pw2" "must match Password"}
                  (errors (sign-in-request) {"email" "ada" "pw" "short1" "pw2" "other"}))))
-  (it "gives the first rule that has something to say"
+  (it "gives the first validator that has something to say"
       (expect (= {"pw" "needs a digit"}
                  (errors (sign-in-request)
                          (assoc good-sign-in
                            "pw" "hunterrr"
                            "pw2" "hunterrr")))))
-  (it "names the field a :matches rule points at by its LABEL"
-      (expect (= [{:kind :matches :field "pw" :message "must match Password"}]
-                 (:validate (nth (:fields (sign-in-request)) 2))))
-      (expect (= {"pw2" "no, the other one"}
-                 (errors (sign-in-request "fields"
-                                          [{"name" "pw" "type" "password"}
-                                           {"name" "pw2"
-                                            "type" "password"
-                                            "validate" {"matches" "pw"
-                                                        "message" "no, the other one"}}])
-                         {"pw" "a" "pw2" "b"}))))
-  (it "refuses a :matches rule that names no field of the request"
-      (expect (throws? clojure.lang.ExceptionInfo
-                       #(hi/normalize-request
-                          {"title" "t" "fields" [{"name" "a" "validate" {"matches" "ghost"}}]}))))
+  (it "hands a two-argument validator every other value, so a field can compare itself"
+      ;; The confirmation field nobody notices is broken: it needs its SIBLING,
+      ;; which is exactly what the second argument is for.
+      (expect (= {} (errors (sign-in-request) good-sign-in)))
+      (expect (= {"pw2" "must match Password"}
+                 (errors (sign-in-request) (assoc good-sign-in "pw2" "hunter43")))))
   (it "checks the shape of an answer, never whether there IS one"
-      ;; A rule and `:is-required` answer two different questions: an optional
-      ;; email that was left blank is fine, a required one is refused as missing.
+      ;; A validator and `:is-required` answer two different questions: an
+      ;; optional email left blank is fine, a required one is refused as missing.
       (let
         [optional (hi/normalize-request {"title" "t"
-                                         "fields" [{"name" "email" "validate" "email"}]})]
+                                         "fields" [{"name" "email"
+                                                    "validate" #(when-not (re-find #"@" (str %))
+                                                                  "must be an email address")}]})]
         (expect (= {} (errors optional {"email" ""})))
         (expect (= {} (errors optional {})))
         (expect (= {"email" "must be an email address"} (errors optional {"email" "nope"})))))
-  (it "knows the everyday formats so a spec does not have to spell them out"
-      (let
-        [request (hi/normalize-request {"title" "t"
-                                        "fields" [{"name" "site" "validate" "url"}
-                                                  {"name" "pin" "validate" "digits"}
-                                                  {"name" "age" "validate" "integer"}
-                                                  {"name" "slug" "validate" "slug"}]})]
-        (expect (= {}
-                   (errors
-                     request
-                     {"site" "https://example.com" "pin" "0042" "age" "-7" "slug" "hello-world"})))
-        (expect (= {"site" "must be a URL"
-                    "pin" "must be digits only"
-                    "age" "must be a whole number"
-                    "slug" "must be a slug — lowercase words joined by dashes"}
-                   (errors
-                     request
-                     {"site" "example dot com" "pin" "12a" "age" "7.5" "slug" "Hello World"})))))
-  (it "takes a pattern as a constraint the answer must satisfy somewhere"
-      (let
-        [request (hi/normalize-request
-                   {"title" "t"
-                    "fields"
-                    [{"name" "ticket"
-                      "validate" {"pattern" "^VIS-[0-9]+$" "message" "must be a VIS ticket"}}
-                     {"name" "shout" "validate" {"pattern" "!" "message" "needs a bang"}}]})]
-        (expect (= {} (errors request {"ticket" "VIS-108" "shout" "hey!"})))
-        (expect (= {"ticket" "must be a VIS ticket" "shout" "needs a bang"}
-                   (errors request {"ticket" "vis 108" "shout" "hey"})))))
-  (it "takes a bare #\"…\" literal and hands the surface its source, not the object"
-      (let
-        [request (hi/normalize-request {"title" "t"
-                                        "fields" [{"name" "pin" "validate" #"^[0-9]{3}$"}]})]
-        (expect
-          (= [{:kind :pattern :pattern "^[0-9]{3}$" :message "must match the expected format"}]
-             (-> request
-                 :fields
-                 first
-                 :validate)))
-        (expect (= {} (errors request {"pin" "123"})))
-        (expect (= {"pin" "must match the expected format"} (errors request {"pin" "12"})))
-        (expect (string? (-> (hi/request->view request)
-                             :fields
-                             first
-                             :validate
-                             first
-                             :pattern)))))
-  (it "bounds a number and lengths a string"
-      (let
-        [request (hi/normalize-request {"title" "t"
-                                        "fields" [{"name" "port"
-                                                   "validate" [{"min" 1024} {"max" 65535}]}
-                                                  {"name" "nick" "validate" {"max_length" 4}}]})]
-        (expect (= {} (errors request {"port" "8080" "nick" "ada"})))
-        (expect (= {"port" "must be at least 1024" "nick" "must be at most 4 characters"}
-                   (errors request {"port" "80" "nick" "adalovelace"})))
-        (expect (= {"port" "must be a number"} (errors request {"port" "eighty"})))))
-  (it "runs a Clojure function and takes its word for it"
+  (it "takes a validator's word for it, whatever shape that word arrives in"
       (let
         [request (hi/normalize-request {"title" "t"
                                         "fields" [{"name" "team"
                                                    :validate #(when-not (= "ops" %)
                                                                 "must be an ops team")}
+                                                  {"name" "quiet" :validate (constantly nil)}
+                                                  {"name" "sure" :validate (constantly true)}
                                                   {"name" "flag" :validate (constantly false)}
                                                   {"name" "boom"
                                                    :validate (fn [_]
@@ -910,32 +855,63 @@
         (expect (= {"team" "must be an ops team"
                     "flag" "is not valid"
                     "boom" "could not be validated: nope"}
-                   (errors request {"team" "sre" "flag" "x" "boom" "x"})))))
-  (it "refuses a rule that checks two things, or nothing it knows"
+                   (errors request {"team" "sre" "quiet" "x" "sure" "x" "flag" "x" "boom" "x"})))))
+  (it "runs each validator exactly once per confirmation"
+      ;; Validation is CODE: an extension's function may be slow and may talk to
+      ;; something, so it is never run speculatively while the human types. One
+      ;; confirmation, one call per field with a value.
+      (let
+        [calls
+         (atom 0)
+
+         request
+         (hi/normalize-request {"title" "t"
+                                "fields" [{"name" "a"
+                                           :validate (fn [_]
+                                                       (swap! calls inc)
+                                                       nil)}
+                                          {"name" "b"
+                                           :validate (fn [_]
+                                                       (swap! calls inc)
+                                                       "no")}]})]
+
+        (expect (= {"b" "no"} (errors request {"a" "x" "b" "y"})))
+        (expect (= 2 @calls))
+        (expect (= {"b" "no"} (errors request {"a" "x" "b" "y"})))
+        (expect (= 4 @calls))))
+  (it "refuses a validator that is not a function, or one it could never call"
+      ;; Rules as DATA are gone: a rule map, a type name and a bare regex are all
+      ;; refused where they used to be honoured, so a spec written against the
+      ;; old DSL fails loudly instead of quietly checking nothing.
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(hi/normalize-field {"name" "a" "validate" {"type" "email"}})))
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(hi/normalize-field {"name" "a" "validate" "email"})))
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(hi/normalize-field {"name" "a" "validate" #"^[0-9]+$"})))
       (expect (throws? clojure.lang.ExceptionInfo
                        #(hi/normalize-field {"name" "a"
-                                             "validate" {"pattern" "x" "type" "email"}})))
+                                             "validate" (fn []
+                                                          nil)})))
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(hi/normalize-field {"name" "a" "validate" "postcode"})))
-      (expect (throws? clojure.lang.ExceptionInfo
-                       #(hi/normalize-field {"name" "a" "validate" {"message" "hi"}}))))
-  (it "sends a surface the declarative rules and keeps the functions home"
-      ;; A fn cannot cross the wire, so it is dropped from the view — and still
-      ;; enforced by the engine, which is the only place a submission lands.
+                       #(hi/normalize-field {"name" "a"
+                                             "validate" (fn [_ _ _]
+                                                          nil)}))))
+  (it "never lets a validator near the wire"
+      ;; A function cannot be serialized and a surface has no business owning a
+      ;; rule: the view carries the field, never the check.
       (let
         [request
-         (hi/normalize-request
-           {"title" "t" "fields" [{"name" "a" "validate" [{"type" "email"} (constantly "no")]}]})
+         (hi/normalize-request {"title" "t" "fields" [{"name" "a" "validate" (constantly "no")}]})
 
          view-field
          (first (:fields (hi/request->view request)))]
 
-        (expect (= [{:kind :type :type "email" :message "must be an email address"}]
-                   (:validate view-field)))
+        (expect (not (contains? view-field :validate)))
         (expect (= {"a" "no"} (errors request {"a" "ada@example.com"})))))
   (it "never mints a vault handle just to answer whether a form is valid"
-      ;; The TUI calls `validate-values` on every keystroke; if that stashed
-      ;; secrets, typing a password would fill the vault one character at a time.
+      ;; `validate-values` is pure: only a real submission fills the vault, so a
+      ;; refused confirmation never leaves a password behind it.
       (let
         [request
          (sign-in-request)
@@ -961,7 +937,10 @@
                                            "direction" "row"
                                            "fields"
                                            [{"name" "host" "label" "Host" "is_required" true}
-                                            {"name" "port" "label" "Port" "validate" "integer"}]}
+                                            {"name" "port"
+                                             "label" "Port"
+                                             "validate" #(when-not (re-matches #"[0-9]+" (str %))
+                                                           "must be a whole number")}]}
                                           {"name" "note" "type" "multiline" "label" "Note"}]}
                                overrides)))
 
@@ -1041,17 +1020,21 @@
         (expect (= {"host" "vis.example.com" "port" "8080" "note" nil}
                    (:values (hi/coerce-values (:fields request)
                                               {"host" "vis.example.com" "port" "8080"}))))))
-  (it "resolves a :matches rule across group boundaries"
+  (it "reaches a sibling in another group, because `values` is flat"
       (let
         [request (hi/normalize-request
                    {"title" "Sign in"
                     "fields" [{"type" "group"
                                "direction" "row"
                                "fields" [{"name" "pw" "type" "password" "label" "Password"}]}
-                              {"name" "pw2" "type" "password" "validate" {"matches" "pw"}}]})]
+                              {"name" "pw2"
+                               "type" "password"
+                               "validate" (fn [value values]
+                                            (when-not (= value (get values "pw"))
+                                              "must match Password"))}]})]
         (expect (= {} (errors request {"pw" "hunter42" "pw2" "hunter42"})))
         (expect (= {"pw2" "must match Password"} (errors request {"pw" "hunter42" "pw2" "nope"})))))
-  (it "projects the tree onto the wire, direction and all, and never a fn"
+  (it "projects the tree onto the wire, direction and all, and never a validator"
       (let
         [view
          (hi/request->view (hi/normalize-request {"title" "Deploy"
@@ -1060,8 +1043,7 @@
                                                              "label" "Target"
                                                              "fields" [{"name" "host"
                                                                         :validate [(fn [_]
-                                                                                     true)
-                                                                                   "slug"]}]}]}))
+                                                                                     true)]}]}]}))
 
          [group]
          (:fields view)]
@@ -1069,8 +1051,5 @@
         (expect (= :group (:type group)))
         (expect (= :row (:direction group)))
         (expect (= "Target" (:label group)))
-        (expect (= [{:kind :type
-                     :type "slug"
-                     :message "must be a slug — lowercase words joined by dashes"}]
-                   (:validate (first (:fields group)))))
+        (expect (not (contains? (first (:fields group)) :validate)))
         (expect (not (contains? (first (:fields group)) :is-secret))))))

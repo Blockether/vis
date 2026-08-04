@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { HUMAN_INPUT_REQUESTS, HUMAN_INPUT_STATES } from './humanInputVariants';
-import {
-  humanInputInputFields,
-  initialHumanInputValues,
-  isHumanInputAnswerable,
-} from '../lib/human-input';
+import { humanInputInputFields, initialHumanInputValues } from '../lib/human-input';
 
 /**
  * The gallery is production code and its fixtures are the only thing standing
@@ -51,11 +47,13 @@ describe('human-input design fixtures', () => {
     }
   });
 
-  it('leaves the minimal state unanswerable until it is answered', () => {
-    // A shot of a dialog whose submit is already enabled hides the disabled
-    // state, which is the one a one-field pause spends most of its life in.
+  it('opens the minimal state on an unanswered required field', () => {
+    // The photograph must show the state a one-field pause spends its life in:
+    // required, empty, and with nothing red on it. Nothing here can redden it —
+    // the app runs no validators, so only a refused confirmation ever does.
     const request = HUMAN_INPUT_REQUESTS.minimal;
-    expect(isHumanInputAnswerable(request, initialHumanInputValues(request))).toBe(false);
-    expect(isHumanInputAnswerable(request, { branch: 'fix/108' })).toBe(true);
+    const [branch] = humanInputInputFields(request.fields);
+    expect(branch?.is_required).toBe(true);
+    expect(initialHumanInputValues(request)[branch!.id]).toBe('');
   });
 });

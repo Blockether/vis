@@ -11,6 +11,10 @@
  * starting values, and the reduction of those two events into the list of open
  * requests. The dialog itself only renders what happens here, so the rules are
  * testable without a DOM.
+ *
+ * There is NO validation in here. A field's validators are FUNCTIONS in the
+ * extension that asked the question — they never cross the wire — so the only
+ * verdict that exists is the one a REFUSED confirmation brings back.
  */
 
 import type { SseEvent } from './types';
@@ -38,23 +42,6 @@ export interface HumanInputOption {
   label: string;
 }
 
-/**
- * One declarative rule off the wire (`human-input.validation`). The engine is
- * the authority — it re-runs every rule on submit, and the FUNCTION rules a
- * Clojure spec may add never leave it — but running the declarative ones here
- * is the only way the form can say what is wrong before the round trip.
- */
-export interface HumanInputRule {
-  kind: 'type' | 'pattern' | 'length' | 'bounds' | 'matches';
-  /** Already resolved engine-side, so a surface only ever prints it. */
-  message: string;
-  type?: string;
-  pattern?: string;
-  field?: string;
-  min?: number;
-  max?: number;
-}
-
 export interface HumanInputField {
   /** How the answer is keyed. `name` is the contract; `id` is its alias. */
   id: string;
@@ -69,7 +56,6 @@ export interface HumanInputField {
   /** Text length bounds; on an `otp` field, how many boxes there are. */
   min_length?: number;
   max_length?: number;
-  validate?: HumanInputRule[];
   /** `range` only — the engine defaults these to 0, 100 and 1. */
   min?: number;
   max?: number;
@@ -142,27 +128,6 @@ function bound(raw: unknown): number | undefined {
   return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
 }
 
-const RULE_KINDS = ['type', 'pattern', 'length', 'bounds', 'matches'] as const;
-
-function ruleFromWire(raw: unknown): HumanInputRule | null {
-  const row = record(raw);
-  if (!row) return null;
-  const kind = RULE_KINDS.find((known) => known === row.kind);
-  const message = text(row.message);
-  // A rule with no kind or no message could only ever fail silently; the engine
-  // still runs its own copy, so dropping it here loses nothing but noise.
-  if (!kind || message === '') return null;
-  return {
-    kind,
-    message,
-    ...(optionalText(row.type) ? { type: text(row.type) } : {}),
-    ...(optionalText(row.pattern) ? { pattern: text(row.pattern) } : {}),
-    ...(optionalText(row.field) ? { field: text(row.field) } : {}),
-    ...(bound(row.min) === undefined ? {} : { min: bound(row.min) }),
-    ...(bound(row.max) === undefined ? {} : { max: bound(row.max) }),
-  };
-}
-
 function fieldFromWire(raw: unknown): HumanInputField | null {
   const row = record(raw);
   if (!row) return null;
@@ -196,9 +161,6 @@ function fieldFromWire(raw: unknown): HumanInputField | null {
   const placeholder = optionalText(row.placeholder);
   const minLength = typeof row.min_length === 'number' && row.min_length > 0 ? row.min_length : undefined;
   const maxLength = typeof row.max_length === 'number' && row.max_length > 0 ? row.max_length : undefined;
-  const validate = Array.isArray(row.validate)
-    ? row.validate.map(ruleFromWire).filter((rule): rule is HumanInputRule => rule !== null)
-    : undefined;
   return {
     id,
     name: id,
@@ -210,7 +172,6 @@ function fieldFromWire(raw: unknown): HumanInputField | null {
     ...(options ? { options } : {}),
     ...(minLength ? { min_length: minLength } : {}),
     ...(maxLength ? { max_length: maxLength } : {}),
-    ...(validate && validate.length > 0 ? { validate } : {}),
     ...(bound(row.min) === undefined ? {} : { min: bound(row.min) }),
     ...(bound(row.max) === undefined ? {} : { max: bound(row.max) }),
     ...(bound(row.step) === undefined ? {} : { step: bound(row.step) }),
@@ -295,129 +256,6 @@ export function humanInputOtpDigits(field: HumanInputField, raw: string): string
   return raw.replace(/\D+/g, '').slice(0, humanInputOtp(field).max);
 }
 
-/** `String` of anything, trimmed — the engine's `text-of`. */
-function textOf(value: HumanInputValue | undefined): string {
-  return value === undefined || value === null ? '' : String(value).trim();
-}
-
-function isBlankValue(value: HumanInputValue | undefined): boolean {
-  if (value === undefined || value === null) return true;
-  if (typeof value === 'string') return value.trim() === '';
-  if (Array.isArray(value)) return value.length === 0;
-  return false;
-}
-
-function whole(re: RegExp): (value: HumanInputValue) => boolean {
-  const anchored = new RegExp(`^(?:${re.source})$`, re.flags);
-  return (value) => anchored.test(textOf(value));
-}
-
-/**
- * The engine's named `{"type": …}` shapes, mirrored so the form can refuse an
- * answer the engine would refuse. `human-input.validation/value-types` is the
- * original; both surfaces print the message the engine sent, never their own.
- */
-const VALUE_TYPES: Record<string, (value: HumanInputValue) => boolean> = {
-  email: whole(/[^@\s]+@[^@\s]+\.[^@\s]+/),
-  url: whole(/https?:\/\/\S+/i),
-  uuid: whole(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i),
-  digits: whole(/[0-9]+/),
-  alpha: whole(/[A-Za-z]+/),
-  alphanumeric: whole(/[A-Za-z0-9]+/),
-  slug: whole(/[a-z0-9]+(?:-[a-z0-9]+)*/),
-  integer: (value) =>
-    typeof value === 'number' ? Number.isInteger(value) : /^[+-]?\d+$/.test(textOf(value)),
-  number: (value) => (typeof value === 'number' ? true : numberOf(value) !== undefined),
-};
-
-function numberOf(value: HumanInputValue | undefined): number | undefined {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
-  const parsed = Number(textOf(value));
-  return textOf(value) !== '' && Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function checkRule(
-  rule: HumanInputRule,
-  value: HumanInputValue | undefined,
-  values: HumanInputValues,
-): string | undefined {
-  switch (rule.kind) {
-    case 'type': {
-      const shape = VALUE_TYPES[rule.type ?? ''];
-      // An unknown shape is a newer engine talking to an older app: let it
-      // through and let the engine be the one to refuse it.
-      return !shape || shape(value as HumanInputValue) ? undefined : rule.message;
-    }
-    case 'pattern': {
-      let re: RegExp;
-      try {
-        re = new RegExp(rule.pattern ?? '');
-      } catch {
-        return undefined;
-      }
-      return re.test(textOf(value)) ? undefined : rule.message;
-    }
-    case 'length': {
-      const n = textOf(value).length;
-      const short = rule.min !== undefined && n < rule.min;
-      const long = rule.max !== undefined && n > rule.max;
-      return short || long ? rule.message : undefined;
-    }
-    case 'bounds': {
-      const n = numberOf(value);
-      if (n === undefined) return 'must be a number';
-      const under = rule.min !== undefined && n < rule.min;
-      const over = rule.max !== undefined && n > rule.max;
-      return under || over ? rule.message : undefined;
-    }
-    case 'matches':
-      return textOf(value) === textOf(values[rule.field ?? '']) ? undefined : rule.message;
-  }
-}
-
-/** The built-in check every field of this type gets, before its own rules. */
-function checkShape(field: HumanInputField, value: HumanInputValue | undefined): string | undefined {
-  if (field.type === 'otp') {
-    const { min, max } = humanInputOtp(field);
-    const digits = textOf(value).replace(/[\s-]+/g, '');
-    if (!/^[0-9]+$/.test(digits)) return 'must be digits only';
-    if (min === max) return digits.length === max ? undefined : `must be ${max} digits`;
-    if (digits.length < min) return `must be at least ${min} digits`;
-    if (digits.length > max) return `must be at most ${max} digits`;
-    return undefined;
-  }
-  if (field.min_length !== undefined && typeof value === 'string') {
-    return value.trim().length < field.min_length
-      ? `must be at least ${field.min_length} characters`
-      : undefined;
-  }
-  return undefined;
-}
-
-/**
- * What is wrong with ONE answer, in the engine's own words, or `undefined`.
- *
- * The order is the engine's: emptiness first (that is `is_required`'s single
- * job), then the shape of the type, then the field's declared rules in the
- * order they were written. A rule NEVER fires on a blank value, so an optional
- * field the operator skipped stays silent.
- */
-export function humanInputFieldError(
-  field: HumanInputField,
-  value: HumanInputValue | undefined,
-  values: HumanInputValues,
-): string | undefined {
-  if (isHumanInputBlank(field, value)) return 'is required';
-  if (isBlankValue(value)) return undefined;
-  const shape = checkShape(field, value);
-  if (shape) return shape;
-  for (const rule of field.validate ?? []) {
-    const failed = checkRule(rule, value, values);
-    if (failed) return failed;
-  }
-  return undefined;
-}
-
 /**
  * Every field that ANSWERS something, depth first, in reading order. A layout
  * group is a branch of the tree and holds no value of its own, so everything
@@ -429,106 +267,53 @@ export function humanInputInputFields(fields: readonly HumanInputField[]): Human
   );
 }
 
-/** Every field that has something wrong with it, keyed by field id. */
-export function humanInputErrors(
-  request: HumanInputRequest,
-  values: HumanInputValues,
-): Record<string, string> {
-  return Object.fromEntries(
-    humanInputInputFields(request.fields)
-      .map((field) => [field.id, humanInputFieldError(field, values[field.id], values)] as const)
-      .filter((entry): entry is readonly [string, string] => entry[1] !== undefined),
-  );
-}
-
 /**
- * The errors the operator has EARNED the right to see: a field speaks up once
- * it has been left (`touched`), and the whole form speaks up once submit has
- * been attempted. Shouting "is required" at an untouched form is the oldest
- * form bug there is, so a pristine field stays quiet however wrong it is.
- */
-export function visibleHumanInputErrors(
-  errors: Record<string, string>,
-  touched: ReadonlySet<string>,
-  isSubmitAttempted: boolean,
-): Record<string, string> {
-  if (isSubmitAttempted) return errors;
-  return Object.fromEntries(Object.entries(errors).filter(([id]) => touched.has(id)));
-}
-
-/**
- * The form as a form library keeps it: the answers, which fields have been
- * TOUCHED (so an error may show), and whether submit has been pressed at least
- * once. Plain data with no React in it — the sheet renders it, the container
- * drives it, and the whole state machine is testable without a DOM.
+ * The form as the sheet keeps it: the answers, and the engine's last refusal.
+ *
+ * PRISTINE, and there is only one way to stop being it. A form starts with no
+ * errors because nothing has judged it yet — the validators are FUNCTIONS in the
+ * extension that asked the question, so the app could not run them if it wanted
+ * to. `humanInputFormRefused` is the ONLY writer of `errors`, and it is fed by a
+ * confirmation the engine turned down. Touching a field drops that field's
+ * message, so the operator is never corrected about an answer already changed,
+ * and the next confirmation asks the whole question again.
+ *
+ * The TUI band is the same state machine (`channel-tui.human-input`: `set-errors`
+ * on a refusal, a `dissoc` on every keystroke), which is why both surfaces show
+ * the operator the same words at the same moment.
  */
 export interface HumanInputForm {
   values: HumanInputValues;
-  touched: readonly string[];
-  isSubmitAttempted: boolean;
+  /** Field id -> message, in the ENGINE's own words. Never the app's. */
+  errors: Record<string, string>;
 }
 
-/** A pristine form: the request's own defaults, nothing touched, nothing shouted. */
+/** A pristine form: the request's own defaults, and nothing to complain about. */
 export function humanInputFormStart(request: HumanInputRequest | null): HumanInputForm {
-  return {
-    values: request ? initialHumanInputValues(request) : {},
-    touched: [],
-    isSubmitAttempted: false,
-  };
+  return { values: request ? initialHumanInputValues(request) : {}, errors: {} };
 }
 
-function withTouched(touched: readonly string[], id: string): readonly string[] {
-  return touched.includes(id) ? touched : [...touched, id];
-}
-
-/**
- * Answer one field. Editing a field counts as touching it, exactly as the TUI
- * band does, so a mistake is named while it is being corrected instead of
- * ambushing the operator at submit time.
- */
+/** Answer one field, which also clears whatever the engine said about it. */
 export function humanInputFormChange(
   form: HumanInputForm,
   id: string,
   value: HumanInputValue,
 ): HumanInputForm {
-  return { ...form, values: { ...form.values, [id]: value }, touched: withTouched(form.touched, id) };
-}
-
-/** Leaving a field is the other way to touch it — the classic blur-then-complain. */
-export function humanInputFormBlur(form: HumanInputForm, id: string): HumanInputForm {
-  return { ...form, touched: withTouched(form.touched, id) };
+  const errors = { ...form.errors };
+  delete errors[id];
+  return { ...form, values: { ...form.values, [id]: value }, errors };
 }
 
 /**
- * Press submit. Either the form is ready and the caller may send `values`, or
- * every error becomes visible at once and NOTHING is sent — a refusal the
- * operator can read is worth more than a button that is merely dead.
+ * The engine refused this answer: show exactly the fields it named, whether or
+ * not they were ever touched. The daemon has the last word — it ran the
+ * extension's own validators, once, on the answer that was actually submitted.
  */
-export function humanInputFormSubmit(
+export function humanInputFormRefused(
   form: HumanInputForm,
-  request: HumanInputRequest,
-): { form: HumanInputForm; errors: Record<string, string>; isReady: boolean } {
-  const errors = humanInputErrors(request, form.values);
-  const isReady = Object.keys(errors).length === 0;
-  return { form: isReady ? form : { ...form, isSubmitAttempted: true }, errors, isReady };
-}
-
-/**
- * What this form should SHOW right now: its own visible errors, with the
- * engine's refusals laid on top — the daemon has the last word, and its
- * verdict is shown whether or not the field was ever touched.
- */
-export function humanInputFormErrors(
-  form: HumanInputForm,
-  request: HumanInputRequest,
-  engineErrors: Record<string, string> = {},
-): Record<string, string> {
-  const visible = visibleHumanInputErrors(
-    humanInputErrors(request, form.values),
-    new Set(form.touched),
-    form.isSubmitAttempted,
-  );
-  return { ...visible, ...engineErrors };
+  errors: Record<string, string> = {},
+): HumanInputForm {
+  return { ...form, errors };
 }
 
 function defaultValue(field: HumanInputField): HumanInputValue {
@@ -558,22 +343,6 @@ export function initialHumanInputValues(request: HumanInputRequest): HumanInputV
   return Object.fromEntries(
     humanInputInputFields(request.fields).map((field) => [field.id, defaultValue(field)]),
   );
-}
-
-/** A required field the operator has not answered yet. */
-export function isHumanInputBlank(field: HumanInputField, value: HumanInputValue | undefined): boolean {
-  if (!field.is_required) return false;
-  if (field.type === 'checkbox') return value !== true;
-  // A slider always sits somewhere on its track, so `is_required` on a range can
-  // only catch a value that never arrived.
-  if (field.type === 'range') return typeof value !== 'number' || !Number.isFinite(value);
-  if (Array.isArray(value)) return value.length === 0;
-  return typeof value !== 'string' || value.trim() === '';
-}
-
-/** True when the form has no errors at all — what the engine checks on submit. */
-export function isHumanInputAnswerable(request: HumanInputRequest, values: HumanInputValues): boolean {
-  return Object.keys(humanInputErrors(request, values)).length === 0;
 }
 
 /** Toggle one option of a `multiselect`, preserving the request's option order. */

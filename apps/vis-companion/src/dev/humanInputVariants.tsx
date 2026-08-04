@@ -206,7 +206,6 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
       }),
       field('notify', 'plaintext', 'Notify on failure', {
         placeholder: 'you@example.com',
-        validate: [{ kind: 'type', type: 'email', message: 'must be an email address' }],
       }),
     ],
     submit_label: 'Sign',
@@ -226,7 +225,6 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
           field('host', 'plaintext', 'Host', { is_required: true, placeholder: 'db.internal' }),
           field('port', 'plaintext', 'Port', {
             placeholder: '5432',
-            validate: [{ kind: 'type', type: 'digits', message: 'must be digits only' }],
           }),
         ],
         { label: 'Server', description: 'Where the pool dials out.' },
@@ -262,9 +260,11 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
 };
 
 /**
- * A photograph of an empty form proves nothing about validation, so the `otp`
- * state is shot mid-answer: three of six digits, and an address that is not
- * one. Both fields are touched, which is the only way the errors are visible.
+ * A photograph of an empty form proves nothing about a refusal, so the `otp` and
+ * `grouped` states are shot AFTER one: three of six digits, an address that is
+ * not one, and the engine's own words under both. The app never writes those
+ * messages — the validators are functions in the extension that asked the
+ * question, and only a confirmation runs them.
  */
 const HUMAN_INPUT_SEEDS: Record<string, Record<string, string>> = {
   otp: { code: '408', notify: 'ops@' },
@@ -321,7 +321,7 @@ export function HumanInputSheetVariant({ state }: { state: string }) {
           {...(state === 'rejected'
             ? {
                 error: 'The engine refused this answer.',
-                fieldErrors: {
+                errors: {
                   ticket: 'Must look like OPS-1234.',
                   confirm: 'Required before a production deploy.',
                 },
@@ -329,9 +329,9 @@ export function HumanInputSheetVariant({ state }: { state: string }) {
             : {})}
           {...(state === 'long' ? { waiting: 2 } : {})}
           {...(state === 'otp'
-            ? { touched: ['code', 'notify'], isSubmitAttempted: true }
+            ? { errors: { code: 'must be 6 digits', notify: 'must be an email address' } }
             : {})}
-          {...(state === 'grouped' ? { touched: ['port', 'pass'] } : {})}
+          {...(state === 'grouped' ? { errors: { port: 'must be digits only' } } : {})}
           onChange={(id, value) => setValues((prev) => ({ ...prev, [id]: value }))}
           onSubmit={noop}
           onCancel={noop}

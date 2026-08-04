@@ -193,9 +193,9 @@
                     {:keys [action]}
                     (hi/handle-event form {:kind :enter})]
 
-                   ;; An empty REQUIRED field is caught right here — the form
-                   ;; refuses itself instead of asking the engine to say no.
-                   (expect (nil? (:action (hi/handle-event pristine {:kind :enter}))))
+                   ;; Even a pristine form with an empty REQUIRED field submits:
+                   ;; the band holds no rules, so refusing is the engine's job.
+                   (expect (= :submit (:action (hi/handle-event pristine {:kind :enter}))))
                    (expect (= :submit action))
                    (expect (= {"user" "a" "pass" "p" "env" "dev" "tags" [] "ok" false "note" ""}
                               (hi/submit-values form)))))
@@ -1011,7 +1011,7 @@
         (expect (not= "" (screen-row screen 28))))))
 
 ;; =============================================================================
-;; One-time codes and per-field validation
+;; One-time codes, and errors that arrive ONLY from a confirmation
 ;; =============================================================================
 
 (defn- otp-request
@@ -1023,7 +1023,7 @@
      (engine/normalize-request
        {"title" "Confirm the code"
         "fields"
-        [{"name" "email" "label" "Email" "is_required" true "validate" [{"type" "email"}]}
+        [{"name" "email" "label" "Email" "is_required" true}
          {"name" "code" "type" "otp" "label" "One-time code" "min_length" lo "max_length" hi}]}))))
 
 (defn- otp-form
@@ -1069,76 +1069,94 @@
       (expect (nil? (some #{["0–9" "fill"]} (hi/hint (hi/init-form (otp-request))))))))
 
 (defdescribe
-  field-validation-test
-  (it "a PRISTINE field never nags"
-      ;; The engine already has a complaint about the empty required email; a
-      ;; form that turns red before it has been filled in is the thing every
-      ;; form library exists to prevent.
+  confirm-then-clear-test
+  (it "a PRISTINE form shows nothing and still sends"
+      ;; Not one rule lives in the terminal: the view carries no validators, so
+      ;; an empty required field is confirmed and the ENGINE is what refuses it.
+      ;; A form that reddens before anybody confirmed anything is the thing
+      ;; every form library exists to prevent.
       (let [form (hi/init-form (otp-request))]
-        (expect (= {"email" "is required"} (hi/live-errors form)))
-        (expect (= {} (hi/visible-errors form)))
-        (expect (nil? (some #{:error} (map :kind (hi/form-rows form 60)))))))
-  (it "a field complains once it has been left"
-      (let [form (feed (hi/init-form (otp-request)) [(ch \n) (ch \o) {:kind :next}])]
-        (expect (contains? (:touched form) "email"))
-        (expect (= {"email" "must be an email address"} (hi/visible-errors form)))
-        (expect (some #{"must be an email address"} (map :text (hi/form-rows form 60))))))
-  (it "a refused submit reddens the whole form and lands on the first complaint"
-      (let
-        [{:keys [form action]} (hi/handle-event (feed (otp-form) (map ch "123")) {:kind :submit})]
-        (expect (nil? action))
-        (expect (true? (:is-submit-attempted form)))
-        ;; The cursor jumps back to the email, the earliest thing that is wrong.
-        (expect (= 0 (:focus form)))
-        (expect (= {"email" "is required" "code" "must be 6 digits"} (hi/visible-errors form)))))
-  (it "an answer that satisfies every rule submits"
-      (let
-        [form (feed (hi/init-form (otp-request))
-                    (concat (map ch "ops@example.com") [{:kind :next}] (map ch "123456")))]
-        (expect (= {} (hi/visible-errors form)))
+        (expect (= {} (:errors form)))
+        (expect (nil? (some #{:error} (map :kind (hi/form-rows form 60)))))
         (expect (= :submit (:action (hi/handle-event form {:kind :submit}))))))
-  (it "runs the rule the field declares, not a hard-coded list"
+  (it "typing never validates, however wrong the value is"
+      (let [form (feed (otp-form) (map ch "123"))]
+        (expect (= {} (:errors form)))
+        (expect (nil? (some #{:error} (map :kind (hi/form-rows form 60)))))
+        (expect (= :submit (:action (hi/handle-event form {:kind :submit}))))))
+  (it "the engine's refusal is the only thing that reddens a field"
       (let
-        [request
-         (engine/request->view (engine/normalize-request
-                                 {"title" "Ship"
-                                  "fields" [{"name" "tag"
-                                             "label" "Tag"
-                                             "validate" [{"pattern" "^v[0-9]+$"
-                                                          "message" "tags look like v12"}]}]}))
-
-         typed
-         #(feed (assoc (hi/init-form request) :is-submit-attempted true) (map ch %))]
-
-        (expect (= {"tag" "tags look like v12"} (hi/visible-errors (typed "nope"))))
-        (expect (= {} (hi/visible-errors (typed "v12"))))))
-  (it "a confirmation field is checked against the field it confirms"
-      (let
-        [request
-         (engine/request->view (engine/normalize-request
-                                 {"title" "Set a password"
-                                  "fields" [{"name" "pw" "type" "password" "label" "Password"}
-                                            {"name" "again"
-                                             "type" "password"
-                                             "label" "Repeat it"
-                                             "validate" [{"matches" "pw"}]}]}))
+        [errors
+         {"email" "is required" "code" "must be 6 digits"}
 
          form
-         (feed (assoc (hi/init-form request) :is-submit-attempted true)
-               (concat (map ch "hunter2") [{:kind :next}] (map ch "hunter")))]
+         (hi/set-errors (feed (otp-form) (map ch "123")) errors)]
 
-        (expect (= {"again" "must match Password"} (hi/visible-errors form)))
-        (expect (= {} (hi/visible-errors (feed form [(ch \2)]))))))
-  (it "editing a field drops the engine's own message for it"
+        (expect (= errors (:errors form)))
+        ;; The cursor jumps back to the email, the earliest thing that is wrong.
+        (expect (= 0 (:focus form)))
+        (expect (some #{"is required"} (map :text (hi/form-rows form 60))))))
+  (it "walking between fields neither clears a message nor invents one"
+      (let [form (hi/set-errors (hi/init-form (otp-request)) {"email" "that address bounced"})]
+        (expect (= {"email" "that address bounced"}
+                   (:errors (feed form [{:kind :next} {:kind :prev}]))))))
+  (it "the first keystroke clears THAT field's message and no other"
       (let
-        [form (-> (hi/init-form (otp-request))
-                  (hi/set-errors {"email" "that address bounced"}))]
-        (expect (= "that address bounced" (get (hi/visible-errors form) "email")))
-        ;; The stale verdict is gone the moment the value changes; what is left
-        ;; is the live rule's own opinion of what has been typed so far.
-        (expect (= "must be an email address"
-                   (get (hi/visible-errors (feed form [(ch \a)])) "email")))
-        (expect (= {} (hi/visible-errors (feed form (map ch "a@b.co"))))))))
+        [form
+         (hi/set-errors (hi/init-form (otp-request))
+                        {"email" "that address bounced" "code" "must be 6 digits"})
+
+         typed
+         (feed form [(ch \a)])]
+
+        (expect (= {"code" "must be 6 digits"} (:errors typed)))
+        (expect (nil? (some #{"that address bounced"} (map :text (hi/form-rows typed 60)))))
+        ;; Erasing is a touch as much as typing is.
+        (expect (= {"code" "must be 6 digits"} (:errors (feed typed [{:kind :backspace}]))))))
+  (it "toggling, picking and nudging are touches too"
+      (let
+        [request
+         (engine/request->view
+           (engine/normalize-request
+             {"title" "Ship"
+              "fields" [{"name" "ok" "type" "checkbox" "label" "Confirm"}
+                        {"name" "env" "type" "select" "label" "Env" "options" ["prod" "stg"]}
+                        {"name" "risk" "type" "range" "label" "Risk" "min" 0 "max" 10 "step" 1}]}))
+
+         errors
+         {"ok" "must be checked" "env" "is required" "risk" "too much"}
+
+         form
+         (hi/set-errors (hi/init-form request) errors)
+
+         stop-at
+         (fn [kind]
+           (first (keep-indexed (fn [i s]
+                                  (when (= kind (:kind s)) i))
+                                (:stops form))))
+
+         touch
+         (fn [kind events]
+           (:errors (feed (assoc form :focus (stop-at kind)) events)))]
+
+        (expect (= errors (:errors form)))
+        (expect (= (dissoc errors "ok") (touch :checkbox [(ch \space)])))
+        (expect (= (dissoc errors "env") (touch :select-option [(ch \space)])))
+        (expect (= (dissoc errors "risk") (touch :range [{:kind :right}])))))
+  (it "the next confirmation asks the engine all over again"
+      ;; The form never decides for itself that the value is fixed now: it drops
+      ;; the stale message and sends the whole answer back for a fresh verdict.
+      (let
+        [retyped
+         (feed (hi/set-errors (hi/init-form (otp-request)) {"email" "that address bounced"})
+               (map ch "ops@example.com"))
+
+         {:keys [form action]}
+         (hi/handle-event retyped {:kind :submit})]
+
+        (expect (= {} (:errors retyped)))
+        (expect (= :submit action))
+        (expect (= "ops@example.com" (get (hi/submit-values form) "email"))))))
 
 ;; =============================================================================
 ;; Layout groups
@@ -1242,9 +1260,9 @@
         (expect (some #(str/includes? % "5433") (ink form)))))
   (it "prints a grouped field's error inside its own column"
       (let
-        [form (assoc (hi/init-form (grouped-request (server-group "row")))
-                :is-submit-attempted true)]
-        (expect (= {"host" "is required"} (hi/live-errors form)))
+        [form (hi/set-errors (hi/init-form (grouped-request (server-group "row")))
+                             {"host" "is required"})]
+        (expect (= {"host" "is required"} (:errors form)))
         (expect (some #(str/includes? % "is required") (ink form)))))
   (it "answers with one flat map of leaves, whatever the layout"
       (let
@@ -1256,7 +1274,7 @@
 
         (expect (= {"host" "db1" "port" "" "notes" ""}
                    (:values (:form (hi/handle-event form {:kind :submit})))))
-        (expect (= {} (hi/live-errors (assoc form :is-submit-attempted true))))))
+        (expect (= :submit (:action (hi/handle-event form {:kind :submit}))))))
   (it "focuses ONE option when a row group puts two choice fields side by side"
       ;; Every row resolves its stop through the plan's index, so the second
       ;; column's options stay its own: the same ordinal must never light up in

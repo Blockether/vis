@@ -332,7 +332,8 @@
             {:id "notify"
              :type "plaintext"
              :label "Notify"
-             :validate [:email {:max-length 60 :message "keep it short"}]}
+             :validate (fn [value]
+                         (when (> (count value) 60) "keep it short"))}
             {:type "group"
              :direction "row"
              :label "Server"
@@ -340,7 +341,10 @@
              :fields [{:name "host" :label "Host" :is-required true}
                       {:type "group"
                        :direction "column"
-                       :fields [{:name "port" :label "Port" :validate [:digits]}
+                       :fields [{:name "port"
+                                 :label "Port"
+                                 :validate (fn [value]
+                                             (when-not (re-matches #"\d+" value) "digits only"))}
                                 {:name "tls" :type "checkbox" :label "TLS"}]}]}]})
 
 (defn- fixture-file

@@ -85,19 +85,7 @@
       "name": "notify",
       "type": "plaintext",
       "label": "Notify",
-      "is_required": false,
-      "validate": [
-        {
-          "kind": "type",
-          "type": "email",
-          "message": "must be an email address"
-        },
-        {
-          "kind": "length",
-          "max": 60,
-          "message": "keep it short"
-        }
-      ]
+      "is_required": false
     },
     {
       "id": "group:host+group:port+tls",
@@ -123,14 +111,7 @@
               "name": "port",
               "type": "plaintext",
               "label": "Port",
-              "is_required": false,
-              "validate": [
-                {
-                  "kind": "type",
-                  "type": "digits",
-                  "message": "must be digits only"
-                }
-              ]
+              "is_required": false
             },
             {
               "id": "tls",

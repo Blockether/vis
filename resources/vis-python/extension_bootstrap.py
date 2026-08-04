@@ -286,11 +286,19 @@ def ask(title, fields, **options):
     # min/max/step for a 'range' field (defaults 0/100/1 — it answers with a
     # NUMBER). An 'otp' is a one-time code in digit boxes: min_length/max_length
     # say how many (default 6, at most 12), digits only, paste fills the boxes.
-    # validate is a rule or list of rules checked after coercion: a type name
-    # ('email', 'url', 'uuid', 'digits', 'alpha', 'alphanumeric', 'slug',
-    # 'integer', 'number') or a map with exactly one of type/pattern/min_length/
-    # max_length/min/max/matches (another field's name) plus an optional
-    # 'message'. Blank answers are is_required's job, never a rule's.
+    # validate is a FUNCTION, or a list of them, run by the host when the human
+    # CONFIRMS the form — never while they type. Each one takes the coerced value
+    # (and, if it declares a second parameter, the dict of every value) and
+    # answers None/True when the value is fine or the error message as a string;
+    # False means 'is not valid' and a raise becomes 'could not be validated: …'.
+    # The first message wins, the field shows it, and it disappears the moment
+    # that field is touched again — the next confirmation checks it afresh.
+    # A blank value is never validated: that is is_required's only job.
+    #
+    #       {'name': 'port', 'label': 'Port',
+    #        'validate': lambda v: None if v.isdigit() else 'must be digits'},
+    #       {'name': 'confirm', 'type': 'password', 'validate':
+    #        lambda v, values: None if v == values['pw'] else 'must match Password'},
     # A 'group' field answers nothing — it LAYS OUT: 'fields' (its children) and
     # 'direction' ('column' stacks, the default; 'row' side by side). Groups
     # nest, need no name, and never appear in `values`, which stays flat.
@@ -304,18 +312,73 @@ def ask(title, fields, **options):
     # whose `reason` says which — it never raises. `reason == 'undeliverable'`
     # means no surface was mounted to show the dialog: the host logged an error
     # and gave up at once instead of parking you until the timeout.
+    import inspect
     import json
     if not isinstance(fields, (list, tuple)) or not fields:
         raise TypeError('ask needs a non-empty list of field specs')
-    specs = []
-    for f in fields:
+
+    # A validator is a FUNCTION, and a function is not JSON, so it never leaves
+    # this process: every field's `validate` callables are popped out of the spec
+    # and kept here by field name. The host is told only HOW MANY each field has
+    # and is handed `_run`, which it calls back on the thread the human submitted
+    # on. Groups nest, so this walks the tree.
+    validators = {}
+
+    def _spec(f):
         if not isinstance(f, dict):
             raise TypeError('each field spec is a dict of snake_case string keys')
-        specs.append(dict((str(k), v) for k, v in f.items()))
+        spec = dict((str(k), v) for k, v in f.items())
+        checks = spec.pop('validate', None)
+        if checks is not None:
+            if callable(checks):
+                checks = [checks]
+            if not isinstance(checks, (list, tuple)) or not checks or not all(
+                callable(c) for c in checks
+            ):
+                raise TypeError(
+                    'validate is a function, or a list of functions, taking the '
+                    'value (and optionally every value) and answering None or a '
+                    'message string'
+                )
+            name = str(spec.get('name') or spec.get('id') or '').strip()
+            if not name:
+                raise TypeError('a field with validate needs a name')
+            validators[name] = list(checks)
+        children = spec.get('fields')
+        if isinstance(children, (list, tuple)):
+            spec['fields'] = [_spec(c) for c in children]
+        return spec
+
+    specs = [_spec(f) for f in fields]
+
+    def _run(name, index, value_json, values_json):
+        # One validator, one value, one verdict. A raise is deliberately NOT
+        # caught: the host turns it into 'could not be validated: …' rather than
+        # accepting a value the extension refused to judge.
+        check = validators[str(name)][int(index)]
+        try:
+            wants_values = len(inspect.signature(check).parameters) >= 2
+        except (TypeError, ValueError):
+            wants_values = False
+        if wants_values:
+            verdict = check(json.loads(value_json), json.loads(values_json))
+        else:
+            verdict = check(json.loads(value_json))
+        if verdict is None or verdict is True:
+            return json.dumps(None)
+        if verdict is False:
+            return json.dumps(False)
+        return json.dumps(verdict if isinstance(verdict, str) else str(verdict))
+
     request = dict((str(k), v) for k, v in options.items())
     request['title'] = str(title)
     request['fields'] = specs
-    return Answer(json.loads(_host['request_input'](json.dumps(request))))
+    answer_json = _host['request_input'](
+        json.dumps(request),
+        json.dumps(dict((k, len(v)) for k, v in validators.items())),
+        _run,
+    )
+    return Answer(json.loads(answer_json))
 
 def reveal(handle):
     # Resolve an opaque `vis-secret:` handle to its plaintext, or None when the

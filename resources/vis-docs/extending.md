@@ -348,7 +348,8 @@ group again, so the two directions compose into any arrangement:
 vis.ask("Where should the pool connect?", [
     {"type": "group", "label": "Server", "direction": "row", "fields": [
         {"name": "host", "label": "Host", "is_required": True},
-        {"name": "port", "label": "Port", "validate": "digits"},
+        {"name": "port", "label": "Port",
+         "validate": lambda port: None if port.isdigit() else "digits only"},
     ]},
     {"type": "group", "direction": "column", "fields": [
         {"type": "group", "direction": "row", "fields": [
@@ -370,9 +371,10 @@ fields.
 
 Grouping is layout and nothing else. `answer.values` stays **flat** — the leaves
 key the answer, whatever the arrangement — errors come back keyed by the leaf,
-`is_required` and every rule run exactly as before, and a `{"matches": "…"}` rule
-names a field in any other group. Names stay unique across the whole tree, so two
-groups cannot both hold a `host`.
+`is_required` and every validator run exactly as before, and a two-argument
+validator is handed that same flat map, so a field can compare itself with a
+field in any other group. Names stay unique across the whole tree, so two groups
+cannot both hold a `host`.
 
 The group crosses the wire as a tree — `{"type": "group", "direction": "row",
 "fields": [...]}` — so both surfaces read one layout instead of inventing their
@@ -384,37 +386,53 @@ of overflowing.
 
 ### Validating a field
 
-`validate` is a rule or a list of rules run against the answer *after* it has
-been coerced, and every rule is data — the surfaces run the same rules while you
-type, so the dialog says what is wrong before it is sent:
+`validate` is a **function** — or a list of functions — that you write. There is
+no rule language: a validator takes the coerced answer and returns `None` (or
+`True`) to accept it, or the error message as a **string** to refuse it.
 
 ```python
+def a_slug(text):
+    if not re.fullmatch(r"[a-z][a-z0-9-]*", text):
+        return "lowercase, digits and dashes"
+    if len(text) > 32:
+        return "at most 32 characters"
+
 vis.ask("Sign up", [
-    {"name": "email", "label": "Email", "validate": "email"},
-    {"name": "slug", "label": "Project", "validate": [
-        {"pattern": "^[a-z][a-z0-9-]*$", "message": "lowercase, digits and dashes"},
-        {"max_length": 32},
-    ]},
+    {"name": "email", "label": "Email",
+     "validate": lambda text: None if "@" in text else "must be an email address"},
+    {"name": "slug", "label": "Project", "validate": a_slug},
     {"name": "pass", "label": "Password", "type": "password",
-     "validate": {"min_length": 12}},
+     "validate": lambda text: "at least 12 characters" if len(text) < 12 else None},
     {"name": "again", "label": "Repeat it", "type": "password",
-     "validate": {"matches": "pass"}},
+     "validate": lambda text, values:
+         None if text == values["pass"] else "the two do not match"},
 ])
 ```
 
-A rule is a **type name** (`email`, `url`, `uuid`, `digits`, `alpha`,
-`alphanumeric`, `slug`, `integer`, `number`) or a map holding exactly one of
-`type`, `pattern` (a regex, unanchored — write `^…$` yourself), `min_length`,
-`max_length`, `min`, `max` (numeric bounds), or `matches` (the `name` of another
-field that must hold the same text). Add `message` to any of them to replace the
-default wording; the first failing rule wins. A rule never fires on a blank
-answer — emptiness is `is_required`'s job, not a rule's.
+A validator takes **one** argument (the value) or **two** (the value and every
+answer in the form — flat, whatever the layout); that second argument is how one
+field compares itself with another, across groups included. Any other arity is
+refused when the request is built, not when someone finally types. `False`
+refuses with `is not valid`, anything else is refused with its own text, and a
+validator that raises refuses with `could not be validated: <the exception>` — a
+broken check never swallows an answer silently. A validator never fires on a
+blank answer: emptiness is `is_required`'s job.
 
-Clojure callers can also pass a **function** of the value: `nil`/`true` accepts,
-`false` refuses with `is not valid` (or your `message`), and a string IS the
-error message. Functions run in the engine only — a surface never sees them, so
-the dialog checks the data rules while you type and the function has the last
-word on submit.
+The functions stay where you wrote them. They run **in the engine**, calling back
+into your own extension, and they never cross the wire: `validate` is stripped
+from the field before any surface sees it, so a validator cannot be read,
+replayed or re-run by a client. (Clojure callers pass ordinary fns and get the
+same contract.)
+
+**Validation happens once, on confirmation.** Nothing is checked while you type:
+a pristine form says nothing, and pressing Enter — or *Submit* — always sends.
+The engine then runs `is_required` and every validator over the whole answer and
+either accepts it or answers with one message per broken field; only then does
+the dialog redden those fields and put the cursor on the first one. The next
+**touch** of a field — a keystroke, a backspace, a tick, a nudge — clears *that*
+field's error and only that one, and nothing is re-checked until you confirm
+again. The TUI and the app behave identically, because both are rendering the
+same engine decision.
 
 The DIALOG itself takes the same optional `description`: prose under the title
 that says what the whole ask is about, before the operator reads a single field.
@@ -423,9 +441,10 @@ request options are `submit_label`, `cancel_label`, `is_cancellable`, and
 `timeout_ms` (default 5 minutes, capped at 1 hour).
 
 `is_required` is enforced, not decorated: every dialog marks the field
-**REQUIRED** next to its label and will not submit while it is blank, and the
-engine rejects such an answer even when it arrives straight over HTTP. A required
-`checkbox` has to be ticked — `false` is not an answer to it.
+**REQUIRED** next to its label, and a blank one is refused on confirmation — by
+the engine, so an answer that arrives straight over HTTP is judged by exactly the
+same rule as one typed into a dialog. A required `checkbox` has to be ticked —
+`false` is not an answer to it.
 
 `vis.ask` never raises for a refusal: cancelling or timing out returns a falsey
 `Answer` whose `reason` says which (`cancelled`, `timeout`, or whatever reason

@@ -201,10 +201,8 @@
                     answerable)
      :stops (stops request)
      :focus 0
-     ;; Pristine: nothing has been touched, nothing has been submitted, so
-     ;; nothing is allowed to be red yet.
-     :touched #{}
-     :is-submit-attempted false
+     ;; PRISTINE: a form complains only after the engine REFUSED a confirmation,
+     ;; and the next touch of a field clears that field's message.
      :errors {}}))
 
 (defn request-id "The engine request id this form answers." [form] (get-in form [:request :id]))
@@ -225,20 +223,12 @@
 
 (defn- move-focus
   [{:keys [stops] :as form} delta]
-  (let
-    [n
-     (count stops)
-
-     left
-     (:field-id (focused-stop form))]
-
+  (let [n (count stops)]
     (if (zero? n)
       form
-      ;; Leaving a field is what BLURS it, and a blurred field has earned the
-      ;; right to complain — see [[visible-errors]].
-      (cond-> (assoc form :focus (mod (+ (long (:focus form 0)) (long delta)) n))
-        left
-        (update :touched (fnil conj #{}) left)))))
+      ;; Moving is not touching: walking off a field neither validates it nor
+      ;; clears what the engine already said about it.
+      (assoc form :focus (mod (+ (long (:focus form 0)) (long delta)) n)))))
 
 (defn- clamp ^long [^long v ^long lo ^long hi] (max lo (min hi v)))
 
@@ -409,33 +399,12 @@
         nil))))
 
 ;; =============================================================================
-;; Validation
+;; Errors
 ;; =============================================================================
 
-(defn live-errors
-  "Every complaint the ENGINE has about the values `form` holds right now, as
-   `{field-id message}`. Computed HERE — the same coercion and the same rules,
-   with no round trip — and PURE, so the painter may ask on every keystroke."
-  [form]
-  (let
-    [{:keys [is-accepted errors]} (engine/validate-values (get-in form [:request :fields])
-                                                          (:values form))]
-    (if is-accepted {} (or errors {}))))
-
-(defn visible-errors
-  "The complaints the operator is actually SHOWN — Formik's rule, for Formik's
-   reason: a PRISTINE field never nags. A field speaks up once it has been left
-   (touched, i.e. blurred) or once a submit has been attempted; a message the
-   engine itself sent back always shows."
-  [form]
-  (let
-    [shown? (fn [field-id]
-              (or (boolean (:is-submit-attempted form)) (contains? (:touched form) field-id)))]
-    (merge (into {} (filter (comp shown? key)) (live-errors form)) (:errors form))))
-
-(defn- refuse-submit
-  "A refused submission: every field may now complain, and the cursor lands on
-   the first one that does."
+(defn- focus-first-error
+  "Park the cursor on the first stop the engine complained about, so a refused
+   confirmation lands the operator on what needs fixing."
   [form errors]
   (let
     [bad
@@ -446,7 +415,7 @@
                             (when (contains? bad field-id) i))
                           (:stops form)))]
 
-    (cond-> (assoc form :is-submit-attempted true)
+    (cond-> form
       idx
       (assoc :focus idx))))
 
@@ -491,12 +460,11 @@
                    :else form)))
 
      submit
-     ;; The form refuses ITSELF before the engine is asked: every rule the view
-     ;; carries runs against the values as they stand, and a failure only turns
-     ;; the form red and parks the cursor on the first complaint.
+     ;; Confirmation is the ONLY moment anything is validated, and the ENGINE
+     ;; validates: the form never keeps a second copy of the rules to
+     ;; second-guess it with. A rejection comes back through [[set-errors]].
      (fn []
-       (let [errors (live-errors form)]
-         (if (seq errors) (stay (refuse-submit form errors)) {:form form :action :submit})))
+       {:form form :action :submit})
 
      press
      (fn []
@@ -560,11 +528,13 @@
       (stay form))))
 
 (defn set-errors
-  "Attach the engine's per-field rejection messages and move focus to the first
-   offending field so the operator lands on what needs fixing."
+  "The ONE way a form turns red: the engine's per-field verdict on a CONFIRMATION.
+   Focus lands on the first offending field, and the next touch of that field
+   clears its message (see [[put-text]], [[nudge-range]], [[toggle-stop]]) — so
+   the form is pristine again until the next confirmation."
   [form errors]
   (let [errors (or errors {})]
-    (assoc (refuse-submit form errors) :errors errors)))
+    (assoc (focus-first-error form errors) :errors errors)))
 
 ;; =============================================================================
 ;; Paint plan
@@ -829,7 +799,7 @@
       ;; ONE context per paint — including the stop index the whole tree shares,
       ;; so nested groups cost lookups, not rescans.
       ctx
-      {:form form :errors (visible-errors form) :focus (or focus 0) :index (stop-index stops)}]
+      {:form form :errors (:errors form) :focus (or focus 0) :index (stop-index stops)}]
 
      (into (vec head) (mapcat #(field-rows ctx text-w %)) (:fields request)))))
 

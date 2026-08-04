@@ -422,7 +422,8 @@
            (normalize-length field-id ":max_length" (pick field "max_length" :max-length)))
 
          validate
-         (validation/normalize-rules (pick field "validate" :validate) #(invalid-field! field-id %))
+         (validation/normalize-validators (pick field "validate" :validate)
+                                          #(invalid-field! field-id %))
 
          spec
          (cond->
@@ -642,19 +643,6 @@
      (when-not (apply distinct? (map :name (all-fields fields)))
        (invalid-request! "field names must be distinct"))
 
-     ;; `:matches` names a SIBLING, so it can only be resolved once every field
-     ;; in the request is known — a confirmation field is normally declared
-     ;; before the password it confirms is even parsed.
-     fields
-     (let [answerable (input-fields fields)]
-       (map-fields (fn [{:keys [id validate] :as field}]
-                     (if (seq validate)
-                       (assoc field
-                         :validate
-                         (validation/resolve-matches validate answerable #(invalid-field! id %)))
-                       field))
-                   fields))
-
      session-id
      (or (trimmed (pick request "session_id" :session-id)) (ambient-session-id))]
 
@@ -872,12 +860,12 @@
             (recur (inc i) (assoc! out id result) errs)))))))
 
 (defn- check-all
-  "Run each field's `:validate` rules over the COERCED values. A field the type
-   already rejected is left alone: one message per field, and the one that
+  "Run each field's `:validate` functions over the COERCED values. A field the
+   type already rejected is left alone: one message per field, and the one that
    explains the earliest problem.
 
    The map [[coerce-all]] just handed over is grown further as a transient
-   instead of being rebuilt rule by rule."
+   instead of being rebuilt validator by validator."
   [fields {:keys [values errors]}]
   {:values values
    :errors (persistent! (reduce (fn [acc {:keys [id validate]}]
@@ -891,16 +879,17 @@
                                 fields))})
 
 (defn validate-values
-  "Coerce and rule-check a raw `field id -> value` map against a request's
+  "Coerce and validate a raw `field id -> value` map against a request's
    `fields`. Returns `{:is-accepted true :values …}` or
    `{:is-accepted false :errors {id message}}`.
 
    `fields` may be the request's TREE: layout groups hold no answer, so they are
    flattened away here and a group can never change what an extension reads.
 
-   Pure — no vault, no state, no side effect of any kind. That is the point: a
-   surface calls this on EVERY keystroke to decide what to underline, and only
-   a real submission goes through [[coerce-values]]."
+   Pure — no vault, no state, no side effect of any kind — but not free: it runs
+   the extension's own validator FUNCTIONS. So it runs ONCE, when the human
+   confirms the form, never on a keystroke; only a real submission goes through
+   [[coerce-values]]."
   [fields values]
   (let
     [fields
@@ -934,8 +923,9 @@
 (defn request->view
   "The channel/wire-facing projection of a pending request: the spec a dialog
    needs, and nothing a channel must not see (no promise, no submitted values,
-   and no validator FUNCTION — a fn cannot cross the wire, so a surface gets the
-   declarative rules and the engine still enforces every one of them).
+   and no validator — validation is CODE the engine runs when the form is
+   confirmed, a function cannot cross the wire, and a surface's job is to render
+   the errors it is handed rather than to invent its own).
 
    The field TREE is projected as a tree: a group crosses the wire with its own
    `:direction` and `:fields`, so both surfaces lay the form out from the same
@@ -943,12 +933,7 @@
   [request]
   (-> request
       (dissoc :promise :channel-ids)
-      (assoc :fields (map-fields (fn [field]
-                                   (let [rules (validation/wire-rules (:validate field))]
-                                     (cond-> (dissoc field :is-secret :validate)
-                                       (seq rules)
-                                       (assoc :validate rules))))
-                                 (:fields request)))))
+      (assoc :fields (map-fields #(dissoc % :is-secret :validate) (:fields request)))))
 
 (defn- publish!
   "Publish `event` on every channel in `channel-ids` and return how many
@@ -1137,18 +1122,70 @@
    "request_id" (:request-id answer)
    "values" (or (:values answer) {})})
 
+(defn- attach-validators
+  "Put the extension's validator FUNCTIONS back onto the field tree a Python
+   extension just sent as JSON.
+
+   A callable is not JSON, so `vis.ask()` pops each field's `validate` functions
+   out of the spec, reports `{field name -> how many it declared}`, and hands the
+   host one `run` callable that dispatches on that name and index. The fields
+   come back carrying real functions and [[normalize-request]] never learns that
+   Python was involved. Groups nest, so this walks the tree, not a flat list."
+  [fields counts run]
+  (mapv (fn [field]
+          (let
+            [field-name
+             (trimmed (or (get field "name") (get field "id")))
+
+             declared
+             (get counts field-name)
+
+             children
+             (get field "fields")]
+
+            (cond-> field
+              (sequential? children)
+              (assoc "fields" (attach-validators children counts run))
+
+              (and (number? declared) (pos? (long declared)))
+              (assoc "validate"
+                (mapv (fn [index]
+                        (fn [value values]
+                          (run field-name index value values)))
+                      (range (long declared)))))))
+        fields))
+
 (defn request-json!
   "The strings-only seam a Python extension crosses: a JSON request object in, a
    JSON answer object out. Blocks exactly like [[request!]].
 
    Channel routing is host-side — a `channel_id`/`channel_ids` key is dropped
    rather than minting keywords from guest data, so a Python extension always
-   reaches the channels the host picked."
-  [request-json]
-  (let [request (json/read-json (str request-json) :key-fn identity)]
-    (when-not (map? request) (invalid-request! "request must be a JSON object"))
-    (-> request
-        (dissoc "channel_id" "channel_ids")
-        request!
-        answer->wire
-        json/write-json-str)))
+   reaches the channels the host picked.
+
+   Validation is CODE, so it does not travel as JSON either: `validators-json` is
+   `{field name -> how many validators that field declared}` and `run` is called
+   `(run field-name index value values)` to reach the extension's own function,
+   answering the verdict
+   [[com.blockether.vis.internal.human-input.validation/check]] understands
+   (nil/true, a message string, false, or a throw). Only a name, an index and the
+   value being judged ever cross."
+  ([request-json] (request-json! request-json nil nil))
+  ([request-json validators-json run]
+   (let
+     [request
+      (json/read-json (str request-json) :key-fn identity)
+
+      counts
+      (when (and run (not (str/blank? (str validators-json))))
+        (json/read-json (str validators-json) :key-fn identity))]
+
+     (when-not (map? request) (invalid-request! "request must be a JSON object"))
+     (-> request
+         (dissoc "channel_id" "channel_ids")
+         (cond->
+           (seq counts)
+           (update "fields" #(if (sequential? %) (attach-validators % counts run) %)))
+         request!
+         answer->wire
+         json/write-json-str))))

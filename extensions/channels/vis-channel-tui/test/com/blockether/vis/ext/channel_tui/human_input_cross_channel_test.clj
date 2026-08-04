@@ -14,7 +14,6 @@
   (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.screen :as screen]
-            [com.blockether.vis.ext.channel-tui.human-input :as tui-hi]
             [com.blockether.vis.internal.gateway.human-input :as gw]
             [com.blockether.vis.internal.gateway.state :as gw-state]
             [com.blockether.vis.internal.human-input :as engine]
@@ -185,16 +184,13 @@
                  (is (false? (:is-accepted app-outcome)))
                  (is (contains? (:errors app-outcome) "key"))
                  (is (some? (gw/request-of sid rid))))
-               (testing "the TUI's blank answer is rejected with the SAME message"
-                 ;; One validator lives in the engine, so neither surface can
-                 ;; drift into accepting what the other refuses. The TUI runs it
-                 ;; LOCALLY and never sends the blank answer at all, so the
-                 ;; parity to prove is between the app's rejection and the
-                 ;; message the band puts under the field.
+               (testing "the TUI's blank answer is refused by the SAME engine"
+                 ;; The band keeps no rules of its own: Enter SENDS, the engine
+                 ;; refuses, and the message printed under the field is the very
+                 ;; one the app got back.
                  (press! (KeyStroke. KeyType/Enter))
-                 (let [form (:human-input @state/app-db)]
-                   (is (true? (:is-submit-attempted form)))
-                   (is (= (:errors app-outcome) (tui-hi/visible-errors form))))
+                 (is (await-true #(seq (:errors (:human-input @state/app-db)))))
+                 (is (= (:errors app-outcome) (:errors (:human-input @state/app-db))))
                  (is (tui-open? rid))))
              (testing "an accepted answer still ends the pause everywhere"
                (press! (stroke \k) (KeyStroke. KeyType/Enter))
@@ -417,11 +413,12 @@
                  :type "plaintext"
                  :label "Notify"
                  :default "ops@example.com"
-                 :validate :email}])]
+                 :validate (fn [value]
+                             (when-not (re-find #"@" value) "must be an email address"))}])]
 
         (try (is (await-true #(tui-open? rid)))
              (is (await-true #(seq (events-of seen "human_input.request" rid))))
-             (testing "the rules reach the app as DATA, so it can refuse before it sends"
+             (testing "not one validator crosses the wire"
                (let
                  [fields
                   (get-in (second (first (events-of seen "human_input.request" rid)))
@@ -435,8 +432,10 @@
                  ;; four boxes, and four digits is the only answer that fits.
                  (is (= 4 (get-in by-id ["code" "min_length"])))
                  (is (= 4 (get-in by-id ["code" "max_length"])))
-                 (is (= [{"kind" "type" "type" "email" "message" "must be an email address"}]
-                        (get-in by-id ["notify" "validate"])))))
+                 ;; A validator is a FUNCTION that runs in the engine, once, on a
+                 ;; confirmation. There is nothing to serialize, so no surface
+                 ;; can hold a second copy of the rules and drift from it.
+                 (is (not (contains? (get by-id "notify") "validate")))))
              (testing "the app's bad answer is refused field by field"
                (let [outcome (gw/submit! rid {"code" "12ab" "notify" "nope"})]
                  (is (false? (:is-accepted outcome)))

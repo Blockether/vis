@@ -283,15 +283,43 @@
                                      'com.blockether.vis.internal.foundation.shell/jailed-shell)
                                     extension/*current-environment*
                                     opts)))))
-    (.putMember g
-                "__vis_host_request_input__"
-                ;; Typed human-input pause: one JSON request object in, one JSON
-                ;; answer object out. BLOCKS this extension call until the human
-                ;; answers, cancels, or the request times out.
-                (->executable (fn [request-json]
-                                ((requiring-resolve
-                                   'com.blockether.vis.internal.human-input/request-json!)
-                                  request-json))))
+    (.putMember
+      g
+      "__vis_host_request_input__"
+      ;; Typed human-input pause: one JSON request object in, one JSON
+      ;; answer object out. BLOCKS this extension call until the human
+      ;; answers, cancels, or the request times out.
+      ;;
+      ;; A validator is a FUNCTION, so it cannot be part of that JSON:
+      ;; `ask()` also hands over `{field name -> how many validators}`
+      ;; and one Python callable, kept here as the raw polyglot `Value`
+      ;; (never marshalled to Clojure data) and re-entered on the
+      ;; SUBMITTING thread when the human confirms. GraalPy releases the
+      ;; GIL while a host call blocks, which is what makes that legal.
+      ;; Only a field name, an index and the value being judged cross,
+      ;; as JSON, so the verdict path has no marshalling surprises.
+      (reify
+        ProxyExecutable
+          (execute [_ args]
+            (let
+              [request-json (env/->clj (aget args 0))
+               validators-json (when (> (alength args) 1) (env/->clj (aget args 1)))
+               ^Value runner (when (> (alength args) 2) (aget args 2))
+               run (when (some-> runner
+                                 .canExecute)
+                     (fn [field-name index value values]
+                       (let
+                         [verdict (env/->clj (.execute runner
+                                                       (object-array [(str field-name) (long index)
+                                                                      (json/write-json-str value)
+                                                                      (json/write-json-str
+                                                                        values)])))]
+                         (when (some? verdict) (json/read-json (str verdict) :key-fn identity)))))]
+
+              (env/->py ((requiring-resolve 'com.blockether.vis.internal.human-input/request-json!)
+                          request-json
+                          validators-json
+                          run))))))
     (.putMember g
                 "__vis_host_reveal_secret__"
                 (->executable (fn [handle]
