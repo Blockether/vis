@@ -294,60 +294,105 @@
               (cinema/cell (.getBackCharacter screen (int col) (int row)))))
          (finally (.stopScreen screen)))))
 
-(defdescribe
-  vis-table-card-chrome-test
-  (it "tags every line of the card with the part it plays"
-      (let [roles (vec (remove nil? (card-roles (fence 12))))]
-        (expect (= :title (first roles)))
-        (expect (= [:border :head :border] (subvec roles 1 4)))
-        ;; ten preview rows, striped in turn - the zebra IS the row separator
-        (expect (= (take 10 (cycle [:row :row-alt])) (subvec roles 4 14)))
-        (expect (= [:border :hint] (subvec roles 14)))))
-  (it
-    "paints two backgrounds down the data rows, and a banded bold header"
-    (paint-card
-      (fence 12)
-      (fn [rows cell]
-        (let
-          [row-of
-           (fn [needle]
-             (first (keep-indexed (fn [i r]
-                                    (when (str/includes? r needle) i))
-                                  rows)))
+(defdescribe vis-table-card-chrome-test
+             (it "tags every line of the card with the part it plays"
+                 (let [roles (vec (remove nil? (card-roles (fence 12))))]
+                   (expect (= :title (first roles)))
+                   (expect (= [:border :head :border] (subvec roles 1 4)))
+                   ;; ten preview rows, striped in turn - the zebra IS the row separator
+                   (expect (= (take 10 (cycle [:row :row-alt])) (subvec roles 4 14)))
+                   (expect (= [:border :hint] (subvec roles 14)))))
+             (it
+               "paints two backgrounds down the data rows, and a banded bold header"
+               (paint-card
+                 (fence 12)
+                 (fn [rows cell]
+                   (let
+                     [row-of
+                      (fn [needle]
+                        (first (keep-indexed (fn [i r]
+                                               (when (str/includes? r needle) i))
+                                             rows)))
 
-           y0
-           (row-of "row0")
+                      y0
+                      (row-of "row0")
 
-           y1
-           (row-of "row1")
+                      y1
+                      (row-of "row1")
 
-           yh
-           (row-of "name")
+                      yh
+                      (row-of "name")
 
-           text-col
-           (fn [y needle]
-             (str/index-of (nth rows y) needle))
+                      text-col
+                      (fn [y needle]
+                        (str/index-of (nth rows y) needle))
 
-           c0
-           (cell (text-col y0 "row0") y0)
+                      c0
+                      (cell (text-col y0 "row0") y0)
 
-           c1
-           (cell (text-col y1 "row1") y1)
+                      c1
+                      (cell (text-col y1 "row1") y1)
 
-           ch
-           (cell (text-col yh "name") yh)]
+                      ch
+                      (cell (text-col yh "name") yh)]
 
-          (expect (some? y0))
-          (expect (some? y1))
-          ;; consecutive rows do NOT share a background: that is the stripe
-          (expect (not= (:bg c0) (:bg c1)))
-          ;; and the header sits on the same tinted band as the stripe
-          (expect (= (:bg c1) (:bg ch)))
-          ;; header bold, body not - the column names read as labels
-          (expect (:bold ch))
-          (expect (not (:bold c0)))
-          ;; chrome is muted: the borders are not painted in the cell ink
-          (expect (not= (:fg (cell (str/index-of (nth rows y0) "│") y0)) (:fg c0))))))))
+                     (expect (some? y0))
+                     (expect (some? y1))
+                     ;; consecutive rows do NOT share a background: that is the stripe
+                     (expect (not= (:bg c0) (:bg c1)))
+                     ;; and the header sits on the same tinted band as the stripe
+                     (expect (= (:bg c1) (:bg ch)))
+                     ;; header bold, body not - the column names read as labels
+                     (expect (:bold ch))
+                     (expect (not (:bold c0)))
+                     ;; chrome is muted: the borders are not painted in the cell ink
+                     (expect (not= (:fg (cell (str/index-of (nth rows y0) "│") y0)) (:fg c0)))))))
+             ;; Regression: the band used to be filled across the WHOLE row, frame columns
+             ;; included. A terminal cell is tinted whole and `│` runs down the middle of
+             ;; its own cell, so every other row grew a half-cell tab of colour sticking
+             ;; out past the table's left and right edges.
+             (it
+               "keeps the band INSIDE the frame - the border columns stay on the card"
+               (paint-card
+                 (fence 12)
+                 (fn [rows cell]
+                   (let
+                     [row-of
+                      (fn [needle]
+                        (first (keep-indexed (fn [i r]
+                                               (when (str/includes? r needle) i))
+                                             rows)))
+
+                      ;; a striped row and its neighbour, which carries the card's own bg
+                      y1
+                      (row-of "row1")
+
+                      y0
+                      (row-of "row0")
+
+                      line
+                      (nth rows y1)
+
+                      left
+                      (str/index-of line "│")
+
+                      right
+                      (str/last-index-of line "│")
+
+                      card-bg
+                      (:bg (cell left y0))]
+
+                     (expect (< (long left) (long right)))
+                     ;; the frame's own columns are painted like the rest of the card…
+                     (expect (= card-bg (:bg (cell left y1))))
+                     (expect (= card-bg (:bg (cell right y1))))
+                     ;; …while everything between them carries the stripe
+                     (expect (not= card-bg (:bg (cell (inc (long left)) y1))))
+                     (expect (not= card-bg (:bg (cell (dec (long right)) y1))))
+                     ;; and the header band is fenced in exactly the same way
+                     (let [yh (row-of "name")]
+                       (expect (= card-bg (:bg (cell left yh))))
+                       (expect (not= card-bg (:bg (cell (inc (long left)) yh))))))))))
 
 ;;; ── the table dialog ─────────────────────────────────────────────────────────
 

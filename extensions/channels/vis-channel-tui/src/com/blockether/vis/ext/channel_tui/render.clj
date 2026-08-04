@@ -2753,17 +2753,23 @@
                       [kind (:table-line meta)
                        stripped (subs line 1)
                        tx (+ (long x) (long code-block-h-pad))
-                       rbg
-                       (if (#{:head :row-alt} kind) (t/zebra-bg t/code-block-bg) t/code-block-bg)]
+                       banded? (contains? #{:head :row-alt} kind)
+                       rbg (if banded? (t/zebra-bg t/code-block-bg) t/code-block-bg)
+                       w (long (p/display-width stripped))]
 
                       (p/clear-styles! g)
                       (p/set-colors! g t/code-border-fg t/code-block-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      ;; The stripe is the ROW, not the card: it runs exactly as
-                      ;; wide as the grid, so the chip's pads stay quiet.
-                      (when-not (identical? rbg t/code-block-bg)
+                      ;; The band is the row's INSIDE, not the whole row. A
+                      ;; terminal cell is tinted whole and the frame's `│` runs
+                      ;; down the MIDDLE of its own cell, so tinting the frame's
+                      ;; columns hangs half a cell of colour outside the table -
+                      ;; a little tab sticking out on both edges of every other
+                      ;; row. Fill BETWEEN the frame, then redraw its two edge
+                      ;; columns on the card's own background.
+                      (when banded?
                         (p/set-colors! g t/code-border-fg rbg)
-                        (p/fill-rect! g tx y (p/display-width stripped) 1))
+                        (p/fill-rect! g (inc tx) y (max 0 (- w 2)) 1))
                       (case kind
                         :title
                         (do (p/set-colors! g t/code-block-fg rbg)
@@ -2779,7 +2785,12 @@
                                                 t/code-block-fg
                                                 t/code-border-fg
                                                 rbg
-                                                (when (= :head kind) [p/BOLD]))))
+                                                (when (= :head kind) [p/BOLD])))
+                      (when banded?
+                        (p/clear-styles! g)
+                        (p/set-colors! g t/code-border-fg t/code-block-bg)
+                        (p/put-str! g tx y (subs stripped 0 1))
+                        (p/put-str! g (+ tx w -1) y (subs stripped (dec (count stripped))))))
                     (str/starts-with? line md-code-marker)
                     (let
                       [nested-code? (and in-answer? (:list-nested-code? meta))
