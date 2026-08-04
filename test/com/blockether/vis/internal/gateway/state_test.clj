@@ -3172,3 +3172,142 @@
                  (expect (true? (deref stopped 5000 false)))
                  (expect (true? (deref closed 5000 false))))))
            (finally (deliver release true) (swap! registry dissoc sid))))))
+
+;; ---------------------------------------------------------------------------
+;; Wedged session: `turn.started` with no terminal (issue #105)
+;; ---------------------------------------------------------------------------
+
+(defdescribe
+  turn-launch-throw-lands-terminal-test
+  ;; Regression, issue #105: `turn.started` was appended OUTSIDE the launch's
+  ;; try/catch and the stall watchdog was armed only AFTER it, so any throw in
+  ;; the announcement (or anywhere before the worker future existed) escaped
+  ;; into an HTTP handler or a Throwable-swallowing daemon thread. The turn was
+  ;; already PUBLIC and `:current-turn` already pointed at it, but nothing could
+  ;; ever finish it: no worker, no watchdog, no terminal. The session showed an
+  ;; empty assistant row forever, every later message queued behind it, and
+  ;; re-sending the request just piled another turn onto the same dead pin.
+  (it
+    "arms the watchdog first and fails the turn when the launch itself throws"
+    (let
+      [sid
+       (str "launch-throw-" (java.util.UUID/randomUUID))
+
+       tid
+       "wedged"
+
+       registry
+       @#'state/registry
+
+       token
+       (cancellation/cancellation-token)
+
+       armed
+       (atom [])
+
+       events
+       (atom [])]
+
+      (try (swap! registry assoc
+             sid
+             {:current-turn tid :turns {tid {:turn_id tid :status "running" :cancel-token token}}})
+           (with-redefs-fn {#'state/start-turn-stall-watchdog! (fn [_sid t _token _stall]
+                                                                 (swap! armed conj t)
+                                                                 nil)
+                            #'state/append-event! (fn [_sid type _payload & _opts]
+                                                    (swap! events conj type)
+                                                    (when (= type "turn.started")
+                                                      (throw (ex-info "wire fan-out blew up" {})))
+                                                    nil)
+                            #'state/finish-turn! (fn [_sid _tid _patch]
+                                                   nil)
+                            #'state/emit-context-updated! (fn [_sid]
+                                                            nil)
+                            #'state/after-turn-terminal! (fn [_sid _tid _opts]
+                                                           nil)}
+             (fn []
+               ;; the launch must never propagate: its callers swallow Throwables
+               (expect (nil? (#'state/launch-turn-worker! sid tid "hello" {:cancel-token token})))))
+           ;; armed BEFORE the turn was announced, so the orphan window is covered
+           (expect (= [tid] @armed))
+           ;; and the turn ends in a terminal instead of pinning the session
+           (expect (= ["turn.started" "turn.failed"] @events))
+           (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid tid))))))
+
+(defdescribe
+  cancel-turn-backstop-test
+  ;; Regression, issue #105: `cancel-turn!` only fired the cancellation token.
+  ;; A token reaches a turn ONLY through a hook the worker registered, so a turn
+  ;; whose launch never got that far — or whose worker is parked in
+  ;; uninterruptible native code — ignored the stop completely and kept
+  ;; `:current-turn` forever. Esc did nothing, the session could not be freed by
+  ;; hand, and the backlog never drained.
+  (it
+    "arms a terminal backstop so a stop always resolves the turn"
+    (let
+      [sid
+       (str "cancel-backstop-" (java.util.UUID/randomUUID))
+
+       tid
+       "stuck"
+
+       registry
+       @#'state/registry
+
+       token
+       (cancellation/cancellation-token)
+
+       armed
+       (atom nil)]
+
+      (try (swap! registry assoc
+             sid
+             {:current-turn tid :turns {tid {:turn_id tid :status "running" :cancel-token token}}})
+           (with-redefs-fn {#'state/start-cancel-terminal-backstop!
+                            (fn [s t tok grace-ms land!]
+                              (reset! armed
+                                {:sid s :tid t :token tok :grace-ms grace-ms :land land!})
+                              nil)}
+             (fn []
+               (expect (= {:status "cancelling"} (state/cancel-turn! sid tid :test-stop)))))
+           (expect (cancellation/cancelled? token))
+           (expect (= sid (:sid @armed)))
+           (expect (= tid (:tid @armed)))
+           (expect (identical? token (:token @armed)))
+           (expect (pos? (long (:grace-ms @armed))))
+           (expect (ifn? (:land @armed)))
+           (finally (swap! registry dissoc sid))))))
+
+(defdescribe
+  turn-restart-keeps-journal-test
+  ;; Regression, issue #105: EVERY `turn.started` published with
+  ;; `:truncate? true`, and a stalled or transiently failed turn is re-queued
+  ;; under its ORIGINAL id. The relaunch therefore wiped the journal that held
+  ;; the first run's terminal, so a client attaching afterwards replayed a turn
+  ;; that had started and never ended — the session read as permanently busy.
+  (it "truncates the mirrored journal on a turn's FIRST start only"
+      (let
+        [sid
+         (str "turn-restart-" (java.util.UUID/randomUUID))
+
+         tid
+         "relaunched"
+
+         registry
+         @#'state/registry
+
+         published
+         (atom [])]
+
+        (try (swap! registry assoc
+               sid
+               (assoc (#'state/fresh-entry sid) :turns {tid {:turn_id tid :status "running"}}))
+             (with-redefs-fn {#'bus/publish! (fn [_sid _event opts]
+                                               (swap! published conj (boolean (:truncate? opts))))}
+               (fn []
+                 (#'state/append-event! sid "turn.started" {:turn_id tid})
+                 (#'state/append-event! sid "turn.completed" {:turn_id tid})
+                 ;; the stall retry: same tid, second launch
+                 (#'state/append-event! sid "turn.started" {:turn_id tid})))
+             (expect (= [true false false] @published))
+             (finally (swap! registry dissoc sid))))))

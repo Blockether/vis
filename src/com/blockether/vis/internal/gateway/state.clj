@@ -275,6 +275,14 @@
      [captured
       (volatile! nil)
 
+      ;; One tid can start MORE THAN ONCE: a stalled or transiently failed turn is
+      ;; re-queued under its ORIGINAL id and relaunched. Truncating the journal on
+      ;; that SECOND `turn.started` deleted the first run's terminal along with it,
+      ;; so a client attaching after the retry could only ever read "started, still
+      ;; running" and had nothing to reconcile the retry against.
+      restart?
+      (volatile! false)
+
       ;; Canonicalize the payload ONCE, OUTSIDE the swap!. `wire/canonical` is a
       ;; FULL recursive walk of the payload, and tool results reach megabytes —
       ;; while a `swap!` body is re-run from scratch on EVERY CAS retry. There is
@@ -333,6 +341,9 @@
               "session_id" stamp-sid
               "type" stamp-type)]
 
+           (when (= type "turn.started")
+             (vreset! restart?
+                      (boolean (get-in entry [:turns (:turn_id payload) :event_start_seq]))))
            (vreset! captured event)
            (cond->
              (assoc entry
@@ -345,9 +356,12 @@
              (update :events #(trim-ring (conj (or % []) event)))))))
      (let [event @captured]
        (fan-out! sid event)
-       ;; Mirror to sibling processes. `turn.started` truncates the journal so
-       ;; a file only ever holds the current turn's live deltas.
-       (bus/publish! sid event {:store? store? :truncate? (= type "turn.started")})
+       ;; Mirror to sibling processes. The FIRST `turn.started` truncates the
+       ;; journal so a file only ever holds the current turn's live deltas; a
+       ;; RELAUNCH of the same turn must keep the previous run's terminal.
+       (bus/publish! sid
+                     event
+                     {:store? store? :truncate? (and (= type "turn.started") (not @restart?))})
        (run-event-taps! sid event)
        event))))
 
@@ -2675,35 +2689,22 @@
   [sid tid request
    {:keys [messages model reasoning-default cancel-token queued? extra-body turn-features workspace
            engine-opts attachments display-request]}]
-  (append-event! sid
-                 "turn.started"
-                 (cond->
-                   {:turn_id tid
-                    :request (or display-request request)
-                    :display_request display-request
-                    :started_at (or (get-in @registry [sid :turns tid :started_at])
-                                    (System/currentTimeMillis))}
-                   queued?
-                   (assoc :queued? true)
-
-                   (get-in @registry [sid :turns tid :idempotency_key])
-                   (assoc :idempotency_key (get-in @registry [sid :turns tid :idempotency_key]))
-
-                   (seq attachments)
-                   (assoc :attachments attachments)))
-  ;; From here on the turn is PUBLIC: `turn.started` is on the wire and
-  ;; `:current-turn` points at `tid`. A throw in this body therefore left a turn
-  ;; nobody runs and nobody ends — and every caller of this fn is either an HTTP
-  ;; handler or a daemon thread that swallows Throwables, so the failure was
-  ;; invisible and the session sat on a spinner that could not even be cancelled.
-  ;; Land a terminal instead of leaking an orphan.
+  ;; `turn.started` is the point of no return: from there on the turn is PUBLIC
+  ;; and `:current-turn` points at `tid`, while EVERYTHING that could finish it is
+  ;; still being wired up below. The announcement itself used to sit OUTSIDE this
+  ;; guard, so a throw in its fan-out — like any throw before the watchdog was
+  ;; armed — left a turn nobody runs and nobody ends. Every caller here is an HTTP
+  ;; handler or a daemon thread that swallows Throwables (the auto-resume timer
+  ;; that relaunches a re-queued turn is one), so the failure was invisible and
+  ;; the session sat on a spinner that could not even be cancelled. One try covers
+  ;; the WHOLE launch, and the watchdog is armed before the turn is announced.
   (try
     (let
       [stall
        (atom {:phase nil :last-ms (System/currentTimeMillis)})
 
-       ;; Armed BEFORE the worker exists, so it also covers the window in which
-       ;; the worker fails to come into existence at all.
+       ;; Armed BEFORE the turn is announced, so it also covers the window in
+       ;; which the announcement — or the worker — fails to come into existence.
        _
        (start-turn-stall-watchdog! sid tid cancel-token stall)
 
@@ -2732,6 +2733,25 @@
                                  tid
                                  request
                                  {:messages messages
+       _
+       (append-event! sid
+                      "turn.started"
+                      (cond->
+                        {:turn_id tid
+                         :request (or display-request request)
+                         :display_request display-request
+                         :started_at (or (get-in @registry [sid :turns tid :started_at])
+                                         (System/currentTimeMillis))}
+                        queued?
+                        (assoc :queued? true)
+
+                        (get-in @registry [sid :turns tid :idempotency_key])
+                        (assoc :idempotency_key
+                          (get-in @registry [sid :turns tid :idempotency_key]))
+
+                        (seq attachments)
+                        (assoc :attachments attachments)))
+
                                   :model model
                                   :reasoning-default reasoning-default
                                   :cancel-token cancel-token
@@ -3813,6 +3833,18 @@
    RejectedExecutionException surfaced as a bogus \"Provider unavailable\".
    Best-effort; returns the number of turns signalled."
   []
+               ;; A stop must ALWAYS resolve. Firing the token only unwinds a
+               ;; worker that EXISTS and registered its hook — a turn whose launch
+               ;; never got that far, or whose worker is parked in uninterruptible
+               ;; code, ignored the cancel completely and kept `:current-turn`
+               ;; forever, so Esc did nothing at all and every later message piled
+               ;; up behind a turn nobody was running. Claim-guarded: a no-op the
+               ;; instant a real terminal lands.
+               (start-cancel-terminal-backstop! sid
+                                                tid
+                                                (:cancel-token turn)
+                                                CANCEL_TERMINAL_GRACE_MS
+                                                cancel-waiting-turn!)
   (reduce (fn [n sess]
             (reduce (fn [n turn]
                       (if (and (= "running" (:status turn)) (:cancel-token turn))
