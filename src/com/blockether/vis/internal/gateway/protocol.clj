@@ -62,8 +62,9 @@
 
 (defn release-version
   "Human release version of this build: the `vis/VERSION` resource written at
-   build time (git describe), else \"dev\". Purely informational — never
-   compared; [[protocol-version]] is the contract."
+   build time from VIS_VERSION plus the build sha (`0.1.28+a1b2c3d`), else
+   \"dev\". Purely informational — never compared; [[protocol-version]] is the
+   contract."
   []
   (or (some-> (io/resource "vis/VERSION")
               slurp

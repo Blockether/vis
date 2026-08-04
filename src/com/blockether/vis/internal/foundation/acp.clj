@@ -64,8 +64,8 @@
 
 (def agent-info
   "ACP `Implementation` for the initialize response — what a client shows the
-   user and puts in bug reports. Version is the `vis/VERSION` build resource,
-   \"dev\" when running from source."
+   user and puts in bug reports. Version is the `vis/VERSION` build resource —
+   VIS_VERSION plus the build sha — and \"dev\" when running from source."
   {"name" "vis"
    "version" (or (some-> (io/resource "vis/VERSION")
                          slurp

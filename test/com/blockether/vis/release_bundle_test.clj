@@ -1,8 +1,10 @@
 (ns com.blockether.vis.release-bundle-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.gateway.protocol :as protocol]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [java.nio.file Files]
+  (:import [java.net URL URLClassLoader]
+           [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
 (defn- delete-tree!
@@ -247,23 +249,63 @@
                (expect (str/includes? logged (str "cp ctr123:/" entry " ")) logged)))
            (finally (delete-tree! mac))))))
 
+;; Regression: every container-built asset reported `vis-agent <git-sha>`, so a
+;; deployed gateway could not say which VIS_VERSION it was actually running.
 (defdescribe
-  native-build-sha-stamp-test
-  (it "lets a container build stamp a real sha instead of \"dev\""
+  version-stamp-test
+  (it "stamps VIS_VERSION, plus the build sha, into `vis/VERSION`"
       (let
         [dockerfile
          (slurp "Dockerfile")
 
          build-clj
-         (slurp "build.clj")]
+         (slurp "build.clj")
 
+         declared
+         (str/trim (slurp "VIS_VERSION"))]
+
+        (expect (re-matches #"\d+\.\d+\.\d+" declared) declared)
+        ;; VIS_VERSION is the single version source: the native build stamps
+        ;; build.clj's `version` (that file, or CI's env var) and appends the sha
+        ;; as semver build metadata rather than shipping the sha alone.
+        (expect (str/includes? build-clj
+                               "(spit vfile (cond-> version (not-empty sha) (str \"+\" sha)))")
+                build-clj)
         ;; `.dockerignore` drops `.git`, so build.clj's own `git rev-parse` finds
-        ;; no repo inside the image and every container-built asset reported
-        ;; `vis-agent dev`. The host's sha arrives as a build arg instead.
+        ;; no repo inside the image. The host's sha arrives as a build arg.
         (expect (str/includes? (slurp ".dockerignore") ".git"))
         (expect (str/includes? dockerfile "ARG VIS_BUILD_SHA") dockerfile)
-        (expect (str/includes? dockerfile "RUN VIS_BUILD_SHA=\"${VIS_BUILD_SHA}\"") dockerfile)
-        (expect (str/includes? build-clj "(System/getenv \"VIS_BUILD_SHA\")") build-clj))))
+        (expect (str/includes? build-clj "(System/getenv \"VIS_BUILD_SHA\")") build-clj)
+        ;; the native stage refuses to ship an image whose --version is not the
+        ;; declared VIS_VERSION
+        (expect (str/includes? dockerfile "grep -q \"$(tr -d '[:space:]' < VIS_VERSION)\"")
+                dockerfile)
+        ;; the JVM runtime image runs the source tree, where no build writes the
+        ;; resource, so it stamps the very same string itself
+        (expect (str/includes? dockerfile "tr -d '[:space:]' < /opt/vis/src/VIS_VERSION")
+                dockerfile)
+        (expect (str/includes? dockerfile "> /opt/vis/src/resources/vis/VERSION") dockerfile)))
+  (it "reports the stamped string verbatim from the classpath resource"
+      (let
+        [dir
+         (.toFile (Files/createTempDirectory "vis-version" (make-array FileAttribute 0)))
+
+         stamped
+         (str (str/trim (slurp "VIS_VERSION")) "+a1b2c3d")
+
+         thread
+         (Thread/currentThread)
+
+         prior
+         (.getContextClassLoader thread)]
+
+        (spit (doto (io/file dir "vis" "VERSION") io/make-parents) (str stamped "\n"))
+        (try (.setContextClassLoader
+               thread
+               (URLClassLoader. (into-array URL [(.toURL (.toURI ^java.io.File dir))]) prior))
+             ;; what `/healthz`, `/v1/capabilities` and the ACP handshake advertise
+             (expect (= stamped (protocol/release-version)))
+             (finally (.setContextClassLoader thread prior) (delete-tree! dir))))))
 
 (defdescribe
   release-native-engine-fallback-test

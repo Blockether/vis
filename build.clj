@@ -847,10 +847,13 @@
     (write-preload-namespaces! native-class-dir basis)
     ;; index Flyway migrations so they're discoverable without dir listing
     (write-migration-indexes! native-class-dir)
-    ;; `vis/VERSION` resource (git short sha) so `vis-agent --version` has a value.
-    ;; A container build has no repo to ask — `.dockerignore` drops `.git`, so the
-    ;; probe below finds nothing there and every Linux asset stamped itself "dev".
-    ;; `bin/release-native` passes the host's sha in as VIS_BUILD_SHA, and it wins.
+    ;; `vis/VERSION` resource: what `vis-agent --version` prints and the gateway
+    ;; advertises. VIS_VERSION is the single version source, so that is what
+    ;; ships, with the build sha as semver metadata (`0.1.28+a1b2c3d`) — an
+    ;; untagged image still has to be traceable. A container build has no repo to
+    ;; ask (`.dockerignore` drops `.git`), so the probe below finds nothing there
+    ;; and `bin/release-native` passes the host's sha in as VIS_BUILD_SHA, which
+    ;; wins.
     (let
       [sha
        (or (not-empty (str/trim (or (System/getenv "VIS_BUILD_SHA") "")))
@@ -862,7 +865,7 @@
        (io/file native-class-dir "vis" "VERSION")]
 
       (io/make-parents vfile)
-      (spit vfile (or (not-empty sha) "dev")))
+      (spit vfile (cond-> version (not-empty sha) (str "+" sha))))
     ;; no :ns-compile => compile EVERY ns found in :src-dirs (extensions included)
     (b/compile-clj {:basis basis :src-dirs srcs :class-dir native-class-dir})
     basis))

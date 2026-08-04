@@ -170,9 +170,10 @@ RUN check-graal-pins
 # /home/vis/.vis — matching the runtime user's HOME. Setting HOME alone does not
 # do it: the JDK derives user.home from getpwuid(), and the build runs as root.
 #
-# `vis/VERSION` — what `vis-agent --version` prints — is a git short sha, and
-# `.dockerignore` drops `.git`, so `build.clj`'s own probe finds no repo here and
-# stamped every container-built asset "dev". `bin/release-native` passes the
+# `vis/VERSION` — what `vis-agent --version` prints — is the repo-root
+# VIS_VERSION plus the build sha, and `.dockerignore` drops `.git`, so
+# `build.clj`'s own sha probe finds no repo here and stamped every
+# container-built asset with no sha at all. `bin/release-native` passes the
 # host's sha as VIS_BUILD_SHA; declared HERE so a new sha rebuilds only this
 # layer (`COPY . .` busts it anyway) and never the dependency cache above.
 ARG VIS_BUILD_SHA=""
@@ -182,6 +183,8 @@ RUN VIS_BUILD_SHA="${VIS_BUILD_SHA}" \
     && test -x target/vis \
     && test -d target/resources \
     && ./target/vis --version \
+    && { ./target/vis --version | grep -q "$(tr -d '[:space:]' < VIS_VERSION)" \
+         || { echo "native image does not report VIS_VERSION=$(tr -d '[:space:]' < VIS_VERSION)" >&2; exit 1; }; } \
     && { [ -z "${VIS_BUILD_SHA}" ] \
          || ./target/vis --version | grep -q "${VIS_BUILD_SHA}" \
          || { echo "native image reports no VIS_BUILD_SHA=${VIS_BUILD_SHA}" >&2; exit 1; }; }
@@ -468,17 +471,19 @@ COPY --chown=vis:vis . /opt/vis/src
 RUN ln -sf /opt/vis/src/bin/vis-agent /usr/local/bin/vis-agent
 
 # `vis/VERSION` — what `vis-agent --version` prints — is a classpath resource
-# the native build writes from a git short sha. `.dockerignore` drops `.git`,
-# so there is no repo to ask here: stamp it from the host's sha, which
-# `bin/release-native` and CI already pass in. Without one the runtime reports
-# "dev", exactly like any source checkout.
+# the native build writes from VIS_VERSION plus the build sha. This JVM image
+# runs the source tree, where nothing writes it, so stamp it here or the
+# runtime reports "dev". VIS_VERSION is the single version source; the sha
+# (`bin/release-native` and CI already pass one in) rides along as semver build
+# metadata, because `.dockerignore` drops `.git` and there is no repo to ask.
 ARG VIS_BUILD_SHA=""
 RUN set -eux; \
-    if [ -n "${VIS_BUILD_SHA}" ]; then \
-        install -d -o vis -g vis /opt/vis/src/resources/vis; \
-        printf '%s\n' "${VIS_BUILD_SHA}" > /opt/vis/src/resources/vis/VERSION; \
-        chown vis:vis /opt/vis/src/resources/vis/VERSION; \
-    fi
+    version="$(tr -d '[:space:]' < /opt/vis/src/VIS_VERSION)"; \
+    test -n "${version}"; \
+    if [ -n "${VIS_BUILD_SHA}" ]; then version="${version}+${VIS_BUILD_SHA}"; fi; \
+    install -d -o vis -g vis /opt/vis/src/resources/vis; \
+    printf '%s\n' "${version}" > /opt/vis/src/resources/vis/VERSION; \
+    chown vis:vis /opt/vis/src/resources/vis/VERSION
 
 USER vis
 WORKDIR /work
