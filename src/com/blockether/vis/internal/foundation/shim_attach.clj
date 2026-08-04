@@ -183,7 +183,7 @@
   (vis/extension
     {:ext/name "foundation-shim-attach"
      :ext/description
-     "Sandbox `vis_attach(path)`/`vis_attach_bytes(data, filename)`: persists any artifact as a durable session attachment without stdout parsing. Survives restart; `image/*` replays to vision models across turns."
+     "Sandbox `vis_attach(path)`/`vis_attach_bytes(data, filename)`: persists any artifact — image, CSV/TSV, JSON, PDF, wav — as a durable session attachment without stdout parsing. Survives restart; `image/*` replays to vision models across turns; a CSV/TSV becomes a live transcript table whose rows never reach the model."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -194,7 +194,7 @@
        :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_read_attachment"
                       "vis_reinspect_attachment"]
        :shim/description
-       "`vis_attach`/`vis_attach_bytes`: persist artifacts as durable DB-owned iteration attachments with sniffed media types. Vis-native; no upstream library."
+       "`vis_attach`/`vis_attach_bytes`: persist artifacts (images, CSV/TSV tables, JSON, PDF, audio) as durable DB-owned iteration attachments with sniffed media types. Vis-native; no upstream library."
        :shim/bindings attach-bridge-bindings
        :shim/source "vis-shims/attach.py"}]}))
 

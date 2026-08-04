@@ -4197,6 +4197,59 @@
       (not (str/blank? (str (:stdout result*)))) {:body (strutil/fenced (clip (:stdout result*)))}
       :else nil)))
 
+(defn- elide-table-fences
+  "Drop the ROWS out of every ````vis-table` fence in model-facing output.
+
+   A CSV/TSV `vis_attach` is DATA for the HUMAN: the fence rides the transcript
+   verbatim (see `tool-result-display`) and both surfaces paint it as a live
+   grid — sortable, pageable, openable as a full-screen sheet. The model needs
+   none of that. Sending the payload would re-upload the whole sheet on EVERY
+   later request, because tool results replay: one 500-row export then costs
+   more context than the rest of the turn, forever, and teaches nothing the
+   `[Table: …]` headline does not already say.
+
+   So the wire keeps the headline (name, rows × cols, size, caption) and loses
+   the rows; the bytes stay in the DB as a durable attachment, one
+   `vis_read_attachment` away. Everything outside a table fence — including a
+   `vis-image` fence, which carries only a path — passes through untouched."
+  [s]
+  (let
+    [text
+     (str s)
+
+     fence
+     "````"
+
+     marker
+     (str fence "vis-table")]
+
+    (if-not (str/includes? text marker)
+      text
+      (str/join "\n"
+                (loop
+                  [lines
+                   (str/split-lines text)
+
+                   out
+                   []]
+
+                  (if (empty? lines)
+                    out
+                    (let [[line & more] lines]
+                      (if (= (str/trim line) marker)
+                        (let
+                          [summary (str/trim (str (first more)))
+                           after (drop-while #(not= (str/trim %) fence) (rest more))]
+
+                          (recur (rest after)
+                                 (conj out
+                                       (str (if (str/blank? summary) "[Table]" summary)
+                                            " — rows are NOT in this context: the grid is rendered"
+                                            " in the transcript and the bytes are a stored"
+                                            " attachment (vis_attachments() lists it,"
+                                            " vis_read_attachment(id) opens it)."))))
+                        (recur more (conj out line))))))))))
+
 (defn- iteration-results-message
   "Render ONE prior tool-call iteration as the `tool_result` user message that
    answers its `tool_use`(s) — maki model: the content is what the program
@@ -4287,7 +4340,7 @@
        (cond (:summary? f) nil
              (:error f) (error->display (:error f))
              (some? (:result f)) (clip-wire (env/ctx->python-str (strip-echo-diffs (:result f))))
-             (not (str/blank? (str (:stdout f)))) (clip-wire (:stdout f))
+             (not (str/blank? (str (:stdout f)))) (clip-wire (elide-table-fences (:stdout f)))
              :else nil))
 
      ;; ctx structural delta (executable `ctx["a"]["b"] = …` / `del ctx[…]`),

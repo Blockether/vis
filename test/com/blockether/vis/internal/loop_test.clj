@@ -2884,6 +2884,64 @@
           (expect (= 1 (count entries)))))))
 
 (defdescribe
+  csv-attachment-wire-test
+  "A `vis_attach`ed CSV is DATA for the HUMAN. The ````vis-table` fence reaches
+   the TRANSCRIPT whole — the channel paints it as a live grid — while the model
+   wire keeps only the `[Table: …]` headline and a pointer back to the stored
+   attachment. Replayed rows are the most expensive thing a session can carry:
+   they are re-uploaded on every later request for the rest of the session."
+  (let
+    [irm
+     (var-get #'lp/iteration-results-message)
+
+     display
+     (var-get #'lp/tool-result-display)
+
+     fence
+     (str "````vis-table\n"
+          "[Table: fleet.csv 2 rows × 2 cols, 12 B] fleet counts\n"
+          "fleet.csv\n"
+          "text/csv\n"
+          "2x2\n"
+          "12 B\n"
+          "machine,sessions\n"
+          "studio,12\n"
+          "rack-01,120\n"
+          "````")
+
+     stdout
+     (str "before\n" fence "\nafter")
+
+     wire
+     (fn [out]
+       (str (:content (first (:content (irm {:tool-calls [{:id "P" :name "python_execution"}]
+                                             :forms-vec [{:scope "t1/i1/f1"
+                                                          :svar/tool-call-id "P"
+                                                          :stdout out}]}))))))]
+
+    (it "keeps the headline on the wire but not one data row"
+        (let [text (wire stdout)]
+          (expect (str/includes? text "[Table: fleet.csv 2 rows × 2 cols, 12 B] fleet counts"))
+          (expect (str/includes? text "vis_read_attachment"))
+          (expect (not (str/includes? text "rack-01")))
+          (expect (not (str/includes? text "machine,sessions")))
+          (expect (not (str/includes? text "````vis-table")))
+          ;; Text around the fence is untouched — only the payload goes.
+          (expect (str/includes? text "before"))
+          (expect (str/includes? text "after"))))
+
+    (it "leaves a vis-image fence alone: it carries a host path, not a payload"
+        (let [text (wire (str "````vis-image\n[Image: shot.png 2×2, 9 B]\n"
+                              "/tmp/shot.png\nimage/png\n2x2\n9 B\n````"))]
+          (expect (str/includes? text "````vis-image"))
+          (expect (str/includes? text "/tmp/shot.png"))))
+
+    (it "still hands the WHOLE grid to the transcript"
+        (let [body (str (:body (display {:stdout stdout} "python_execution" {})))]
+          (expect (str/includes? body "````vis-table"))
+          (expect (str/includes? body "rack-01,120"))))))
+
+(defdescribe
   repeated-actions-continue-test
   "Repeated actions are valid work. The loop continues until the model returns an answer."
   (it "does not checkpoint or force-finalize identical actions"

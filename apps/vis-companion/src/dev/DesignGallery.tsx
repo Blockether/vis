@@ -16,7 +16,6 @@ import { BUNDLED_DARK, BUNDLED_LIGHT } from '../lib/palettes';
 import { applyTheme } from '../lib/theme';
 import { ChipHeaderVariant, FleetStripVariant, MachineFirstVariant } from './variants';
 import { DataTableVariant } from './tableVariants';
-import { InspectGridVariant, RuledGridVariant } from './gridVariants';
 import { TallyBadgesVariant, TallyHeaderVariant, TallyStripVariant } from './tallyVariants';
 
 export interface DesignVariant {
@@ -57,25 +56,9 @@ export const DESIGN_VARIANTS: DesignVariant[] = [
     id: 'table',
     title: 'Table · vis-table viewer',
     blurb:
-      'An attached CSV is data: filter, click-to-sort, multi-select and Copy CSV, in the same fence the TUI paints as a grid.',
-    states: ['default', 'wide', 'tall', 'solo'],
+      'An attached CSV is DATA: content-width columns, a # gutter that owns selection, an amber head you can find, blue numbers, NULL that is not an empty string, and a cell inspector.',
+    states: ['default', 'sorted', 'rows', 'cell', 'blob', 'wide', 'tall', 'solo'],
     render: (state) => <DataTableVariant state={state} />,
-  },
-  {
-    id: 'grid-ruled',
-    title: 'Grid 1 · Ruled sheet',
-    blurb:
-      'Columns sized to content, a `#` gutter that owns selection, a head you can actually see, and a page that FILLS the box.',
-    states: ['default', 'sorted', 'wide', 'tall', 'solo'],
-    render: (state) => <RuledGridVariant state={state} />,
-  },
-  {
-    id: 'grid-inspect',
-    title: 'Grid 2 · Cell inspector',
-    blurb:
-      'The same sheet, plus the one thing every good SQL client has: press a cell and read the WHOLE value.',
-    states: ['cell', 'blob', 'rows'],
-    render: (state) => <InspectGridVariant state={state} />,
   },
   {
     id: 'tally-header',

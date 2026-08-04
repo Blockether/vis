@@ -109,10 +109,13 @@ def __vis_install_attach__():
 
     def __vis_emit_table_fence(name, mt, data, nbytes, label=None):
         # A `vis-table` fence: a CSV/TSV artifact is DATA, not a picture, so it
-        # rides the transcript as a real grid — 5 header lines (summary / name /
+        # rides the TRANSCRIPT as a real grid — 5 header lines (summary / name /
         # mime / COLSxROWS / size) then the payload as normalized CSV, which the
-        # TUI and the companion paint as a sortable, filterable, selectable
-        # table. Returns True when a fence was printed.
+        # TUI and the companion paint as a sortable, pageable, selectable table.
+        # Those rows are for the HUMAN only: the model wire keeps the `[Table: …]`
+        # headline and drops the payload (engine-side `elide-table-fences`), so a
+        # 500-row sheet is never re-billed on every later request.
+        # Returns True when a fence was printed.
         import csv as _csv
         import io as _io
 
@@ -286,19 +289,24 @@ def __vis_install_attach__():
     vis_attach.__doc__ = (
         "Persist a produced file as a durable attachment. The sandbox-confined path "
         "is read, its media type inferred, and its bytes stored across restarts; images "
-        "can replay to vision models. kind, media_type, and filename override inference. "
-        "label is a one-line caption printed with the artifact, so a series of shots says "
-        "which shot is which. display_only=True stores and displays the artifact but never "
-        "sends the image to the model; its bytes remain readable or available for "
-        "one-request reinspection. Returns None: call directly, do not print. Use "
-        "vis_attachments() for metadata and vis_attach_bytes() for in-memory bytes/str."
+        "can replay to vision models. A CSV/TSV file attaches as a live TABLE: the "
+        "transcript paints it as a sortable, pageable grid, and its rows never enter the "
+        "model's context — vis_read_attachment(id) reads them back. kind, media_type, and "
+        "filename override inference. label is a one-line caption printed with the "
+        "artifact, so a series of shots says which shot is which. display_only=True stores "
+        "and displays the artifact but never sends the image to the model; its bytes remain "
+        "readable or available for one-request reinspection. Returns None: call directly, "
+        "do not print. Use vis_attachments() for metadata and vis_attach_bytes() for "
+        "in-memory bytes/str."
     )
     vis_attach_bytes.__doc__ = (
         "Persist bytes (or a UTF-8 str) as a durable attachment without a temporary "
-        "file; filename drives media-type inference. label is a one-line caption printed "
-        "with the artifact. display_only=True stores and displays the artifact but never "
-        "sends the image to the model. Returns None: call directly, do not print. Use "
-        "vis_attachments() for metadata."
+        "file; filename drives media-type inference. Name it *.csv/*.tsv and it attaches "
+        "as a live TABLE the transcript paints as a grid, with the rows kept out of the "
+        "model's context. label is a one-line caption printed with the artifact. "
+        "display_only=True stores and displays the artifact but never sends the image to "
+        "the model. Returns None: call directly, do not print. Use vis_attachments() for "
+        "metadata."
     )
 
     g = globals()
@@ -314,16 +322,19 @@ def __vis_install_attach__():
     docs["vis_attach"] = (
         "vis_attach(path, kind=None, media_type=None, filename=None, display_only=False, "
         "label=None): persist a produced file as a durable attachment across restarts; "
-        "images can replay to vision models. label is a one-line caption printed with the "
-        "artifact — the caption row of the inline image. display_only=True stores/displays "
-        "but never sends the image to the model. Returns None; call, do not print. Use "
-        "vis_attachments() for metadata."
+        "images can replay to vision models, and a CSV/TSV attaches as a live TABLE the "
+        "transcript paints as a sortable, pageable grid whose rows stay OUT of the model's "
+        "context (vis_read_attachment(id) reads them back). label is a one-line caption "
+        "printed with the artifact — the caption row of the inline image or table. "
+        "display_only=True stores/displays but never sends the image to the model. Returns "
+        "None; call, do not print. Use vis_attachments() for metadata."
     )
     docs["vis_attach_bytes"] = (
         "vis_attach_bytes(data, filename, kind=None, media_type=None, display_only=False, "
-        "label=None): persist bytes/str as a durable attachment. label is a one-line "
-        "caption printed with the artifact. display_only=True stores/displays but never "
-        "sends the image to the model. Returns None; call, do not print. Use "
+        "label=None): persist bytes/str as a durable attachment; a *.csv/*.tsv filename "
+        "attaches as a live TABLE in the transcript with its rows out of context. label is "
+        "a one-line caption printed with the artifact. display_only=True stores/displays "
+        "but never sends the image to the model. Returns None; call, do not print. Use "
         "vis_attachments() for metadata."
     )
     docs["vis_reinspect_attachment"] = (

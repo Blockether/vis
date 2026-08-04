@@ -156,7 +156,8 @@ describe('DataTable', () => {
 
   it('paints a real table with a header row and one row per record', () => {
     expect((html.match(/<tr/g) ?? []).length).toBe(4);
-    expect((html.match(/<th\b[^>]*>/g) ?? []).length).toBe(3);
+    // Three data columns plus the `#` gutter.
+    expect((html.match(/<th\b[^>]*>/g) ?? []).length).toBe(4);
     expect(text(html)).toContain('ada');
     expect(text(html)).toContain('third');
   });
@@ -171,19 +172,61 @@ describe('DataTable', () => {
 
   it('rules every column but the first — the TUI grid\'s │, in CSS', () => {
     const heads = html.match(/<th\b[^>]*>/g) ?? [];
-    expect(heads[0]).not.toContain('border-l');
-    expect(heads[1]).toContain('border-l');
+    // heads[0] is the `#` gutter; heads[1] is the first data column.
+    expect(heads[1]).not.toContain('border-l');
     expect(heads[2]).toContain('border-l');
-    const cells = html.match(/<td\b[^>]*>/g) ?? [];
-    expect(cells[0]).not.toContain('border-l');
-    expect(cells[1]).toContain('border-l');
+    expect(heads[3]).toContain('border-l');
   });
 
-  it('right-aligns the numeric column only', () => {
+  it('paints a head that reads as one: amber ground, a 2 px rule, sticky', () => {
     const heads = html.match(/<th\b[^>]*>/g) ?? [];
-    expect(heads[0]).toContain('text-left');
-    expect(heads[1]).toContain('text-right');
-    expect(heads[2]).toContain('text-left');
+    expect(heads[0]).toContain('bg-warn-surface');
+    expect(heads[0]).toContain('border-b-2');
+    expect(heads[0]).toContain('sticky');
+    // The 8/255 tint the first version called a header is gone.
+    expect(html).not.toContain('bg-panel-2 px-2 py-1.5');
+  });
+
+  it('sits on the sheet ground, not on another grey code block', () => {
+    expect(html).toContain('bg-input');
+  });
+
+  it('gives every row a # gutter, and the gutter IS the selection control', () => {
+    expect(html).toContain('role="grid"');
+    expect(html).toContain('aria-label="Select every row on this page"');
+    expect(html).toContain('aria-label="Select row 1"');
+    expect(html).toContain('aria-label="Select row 3"');
+    expect(html).toContain('aria-selected="false"');
+  });
+
+  it('is ONE tab stop, not one per row', () => {
+    expect((html.match(/tabindex="0"/g) ?? []).length).toBe(1);
+  });
+
+  it('right-aligns the numeric column only, and types it in the number hue', () => {
+    const heads = html.match(/<th\b[^>]*>/g) ?? [];
+    expect(heads[1]).toContain('text-left');
+    expect(heads[2]).toContain('text-right');
+    expect(heads[3]).toContain('text-left');
+    expect(html).toContain('text-code-syntax-number');
+  });
+
+  it('shows a blank cell as NULL, not as an empty string', () => {
+    const gaps = renderToStaticMarkup(
+      <DataTable
+        body={[
+          '[Table: gaps.csv 1 rows × 2 cols, 12 B]',
+          'gaps.csv',
+          'text/csv',
+          '2x1',
+          '12 B',
+          'a,b',
+          '1,',
+        ].join('\n')}
+        compact
+      />,
+    );
+    expect(text(gaps)).toContain('NULL');
   });
 
   it('says so instead of painting an empty grid', () => {
