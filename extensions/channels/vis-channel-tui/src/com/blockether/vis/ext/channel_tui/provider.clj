@@ -1092,18 +1092,13 @@
    hint row, no second window. Nothing in this dialog is a flag, so the spec needs
    no option reader.
 
-   `:clear-above?` is the CALLER's call and rides in on `region`: a fixed-height
-   band leaves the host's content painted above it (magit), and only a host that
-   pages bands of different heights — the model picker — owns the rows from
-   `:min-row` down."
-  [^TerminalScreen screen g {:keys [left inner-w hint-row text-w min-row clear-above?]} title spec]
+   The band paints ITS OWN rows and nothing above them: whatever the caller has
+   on screen — the card, the settings list — stays visible behind it, exactly
+   like magit. A caller that pages bands of different heights clears the rows it
+   owns with `tr/clear-rows!` first."
+  [^TerminalScreen screen g {:keys [left inner-w hint-row text-w min-row]} title spec]
   (tr/run! (dlg/transient-host screen g)
-           {:left left
-            :inner-w inner-w
-            :hint-row hint-row
-            :text-w text-w
-            :min-row min-row
-            :clear-above? (boolean clear-above?)}
+           {:left left :inner-w inner-w :hint-row hint-row :text-w text-w :min-row min-row}
            (assoc spec :title title)))
 
 (defn- run-model-transient!
@@ -1122,15 +1117,16 @@
       [title
        (str (vis/display-label (:id provider)) " — models")
 
+       ;; Pages differ in height, and this popup reclaims the provider card's
+       ;; rows: the picker OWNS every row from `:min-row` down, so it erases that
+       ;; area itself before each page instead of asking the band to paint over
+       ;; rows that were never its own.
+       _
+       (tr/clear-rows! g geom (:min-row geom) (dec (long (:hint-row geom))))
+
        picked
-       (:action (run-transient! screen
-                                g
-                                ;; Pages differ in height: this popup owns every row from
-                                ;; `:min-row` down, so a shorter page cannot leave the
-                                ;; previous one's rows stranded above it.
-                                (assoc geom :clear-above? true)
-                                title
-                                (model-transient-spec entries page marks page-size)))]
+       (:action
+         (run-transient! screen g geom title (model-transient-spec entries page marks page-size)))]
 
       (cond (nil? picked) nil
             (= picked :show-all) (recur (build-model-list provider preferred true) 0)

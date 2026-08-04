@@ -2497,8 +2497,7 @@
               :inner-w inner-w
               :hint-row hint-row
               :text-w text-w
-              :min-row (+ content-top (count wrapped) (long body-gap))
-              :clear-above? true}
+              :min-row (+ content-top (count wrapped) (long body-gap))}
              (assoc spec
                :title (or (:title spec) title)
                :read-option (fn [{:keys [label prompt mask]} current]

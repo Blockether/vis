@@ -6,6 +6,7 @@
             [com.blockether.vis.ext.channel-tui.provider :as provider]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
+            [com.blockether.vis.ext.channel-tui.terminals :as term]
             [com.blockether.vis.internal.providers :as providers]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna TerminalSize]
@@ -1534,6 +1535,59 @@
         [spec (provider/provider-transient-spec
                 [{:id :default :label "Set as Default..." :key \d}])]
         (expect (= ["Routing"] (mapv :title (:groups spec)))))))
+
+;; ── The model picker owns the rows it pages over ─────────────────────────────
+;; A transient band wipes only the rows it paints, so the buffer above it stays
+;; visible (the provider card, the settings list). The model picker is the one
+;; host that repaints PAGES OF DIFFERENT HEIGHTS into the same rectangle, so it
+;; erases the area it owns with `tr/clear-rows!` before each page: without that,
+;; a short last page strands the previous page's models above its own title.
+(defdescribe
+  model-transient-paging-test
+  (it
+    "a shorter page leaves nothing of the previous page on screen"
+    (let
+      [terminal
+       (DefaultVirtualTerminal. (TerminalSize. 80 30))
+
+       screen
+       (doto (TerminalScreen. terminal) (.startScreen))
+
+       g
+       (.newTextGraphics screen)
+
+       entries
+       (into (mapv (fn [i]
+                     {:id (str "stale-model-" i) :label (str "stale-model-" i)})
+                   (range 1 5))
+             [{:id "final-model-a" :label "final-model-a"}
+              {:id "final-model-b" :label "final-model-b"}])
+
+       geom
+       {:left 3 :inner-w 74 :hint-row 27 :text-w 70 :min-row 6}
+
+       grid
+       (try (add-keys! terminal [\n KeyType/Escape])
+            (@#'provider/run-model-transient! screen g geom {:id :alpha} entries nil {} 4)
+            (term/grid terminal)
+            (finally (.stopScreen screen)))]
+
+      ;; Page 2 is on screen …
+      (expect (some #(str/includes? % "final-model-a") grid))
+      ;; … and page 1 is GONE: ONE title and three rules — the opening one,
+      ;; the one under the title and the one above the hint bar. Without the
+      ;; picker's own wipe the taller page left a second title and a fourth
+      ;; rule stranded above the band …
+      (expect (= 1 (count (filter #(str/includes? % "alpha — models") grid))))
+      (expect (= 3 (count (filter #(str/includes? % "────") grid))))
+      ;; … and its longest row bled THROUGH the shorter page's own header,
+      ;; which used to read `Models  2/2el-2`.
+      (expect (= "Models  2/2"
+                 (some #(when (str/includes? % "Models  ") (str/trim (str/replace % "│" "")))
+                       grid)))
+      (expect (not-any? #(str/includes? % "stale-model") grid))
+      ;; The picker still never paints above the row it was given.
+      (expect (every? str/blank? (take 6 grid))))))
 
 (defdescribe model-transient-spec-test
              (it "reserves the popup's own chrome and never outruns its single-key bindings"

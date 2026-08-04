@@ -303,48 +303,67 @@
   (it "Esc cancels the transient, armed flags and all"
       (expect (nil? (:ret (drive-transient! commit-transient-spec [\h :esc]))))))
 
-(defdescribe transient-paging-test
-             ;; The provider dialog runs the SAME transient for PAGES of models in
-             ;; one frame (`provider/run-transient!` passes `{:min-row … :clear-above?
-             ;; true}`), so a short page must wipe everything a taller one left above
-             ;; its title — without ever painting above `:min-row`.
-             (it "clear-above? wipes from :min-row down and keeps the frame intact"
-                 (let
-                   [grid
-                    (transient-grid! commit-transient-spec 3 74 27 {:min-row 6 :clear-above? true})
+(defdescribe
+  transient-paging-test
+  ;; The model picker runs the SAME transient for PAGES of models of DIFFERENT
+  ;; heights (`provider/run-model-transient!`). The band itself never reaches
+  ;; above its own separator — the paging HOST owns those rows and erases them
+  ;; with `tr/clear-rows!` before it runs the next page.
+  (it
+    "a short band leaves a taller page's rows for the host to clear"
+    (let
+      [stale!
+       (fn [g]
+         (doseq [y (range 6 26)]
+           (p/put-str! g 4 y "STALE PAGE ROW")))
 
-                    rule-y
-                    (first (keep-indexed (fn [i s]
-                                           (when (str/includes? s "────") i))
-                                         grid))]
+       kept
+       (transient-grid! commit-transient-spec 3 74 27 {:min-row 6} stale!)
 
-                   (expect (= \├ (nth (nth grid rule-y) 3)))
-                   (expect (= \┤ (nth (nth grid rule-y) 78)))
-                   (expect (str/blank? (subs (nth grid rule-y) 0 3)))
-                   (expect (str/blank? (subs (nth grid rule-y) 79)))
-                   ;; The hint bar lands ON the host's hint row, so the row below it — the
-                   ;; dialog's bottom border — is never swallowed.
-                   (expect (str/includes? (nth grid 27) "toggle flag"))
-                   (expect (str/blank? (nth grid 28)))
-                   ;; Nothing above `:min-row` is painted or wiped.
-                   (expect (>= rule-y 6))
-                   (expect (every? str/blank? (take 6 grid)))))
-             (it
-               "a transient taller than the host box stops at :min-row instead of climbing over it"
-               (let
-                 [tall
-                  {:groups (vec (for [gi (range 3)]
-                                  {:title (str "Group " gi)
-                                   :items (vec (for [i (range 5)]
-                                                 {:key (str (char (+ (int \a) (* gi 5) i)))
-                                                  :type :action
-                                                  :id (keyword (str "a" gi i))
-                                                  :label (str "Action " gi "-" i)}))}))}
+       cleared
+       (transient-grid! commit-transient-spec
+                        3
+                        74
+                        27
+                        {:min-row 6}
+                        (fn [g]
+                          (stale! g)
+                          (tr/clear-rows! g {:left 3 :inner-w 74} 6 26)))]
 
-                  grid
-                  (transient-grid! tall 3 74 27 {:min-row 6 :clear-above? true})]
+      ;; Left alone, the band covers only its own rows: the taller page above
+      ;; it is still on screen — which is exactly why magit chrome works.
+      (expect (some #(str/includes? % "STALE") kept))
+      ;; The host's own wipe is what makes a shorter page land on clean paper.
+      (expect (not-any? #(str/includes? % "STALE") cleared))
+      ;; …and it puts the frame's plain edge back in both border columns, on
+      ;; every row it blanked above the band's own opening rule.
+      (expect (every? (fn [y]
+                        (= [\│ \│] [(nth (nth cleared y) 3) (nth (nth cleared y) 78)]))
+                      (range 6
+                             (long (first (keep-indexed (fn [i s]
+                                                          (when (str/includes? s "────") i))
+                                                        cleared))))))
+      ;; Nothing above `:min-row` is touched either way.
+      (expect (every? str/blank? (take 6 cleared)))
+      ;; The hint bar still lands ON the host's hint row, so the dialog's
+      ;; bottom border below it is never swallowed.
+      (expect (str/includes? (nth cleared 27) "toggle flag"))
+      (expect (str/blank? (nth cleared 28)))))
+  (it "a transient taller than the host box stops at :min-row instead of climbing over it"
+      (let
+        [tall
+         {:groups (vec (for [gi (range 3)]
+                         {:title (str "Group " gi)
+                          :items (vec (for [i (range 5)]
+                                        {:key (str (char (+ (int \a) (* gi 5) i)))
+                                         :type :action
+                                         :id (keyword (str "a" gi i))
+                                         :label (str "Action " gi "-" i)}))}))}
 
-                 (expect (str/includes? (nth grid 6) "Commit"))
-                 ;; …and the title keeps its own rule even when the band is clamped.
-                 (expect (str/includes? (nth grid 7) "────"))
-                 (expect (every? str/blank? (take 6 grid))))))
+         grid
+         (transient-grid! tall 3 74 27 {:min-row 6})]
+
+        (expect (str/includes? (nth grid 6) "Commit"))
+        ;; …and the title keeps its own rule even when the band is clamped.
+        (expect (str/includes? (nth grid 7) "────"))
+        (expect (every? str/blank? (take 6 grid))))))

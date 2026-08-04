@@ -24,14 +24,15 @@
               fetches an OPTION's value; nil (Esc) leaves it unchanged.
 
      `region`  WHERE it sits — the host's rectangle:
-              `{:left :inner-w :hint-row :text-w :min-row :clear-above?}`.
+              `{:left :inner-w :hint-row :text-w :min-row}`.
               `:left`/`:inner-w` are the host frame's border column and inner
               width, `:hint-row` the row the host's hint bar owns (the popup
               REPLACES it), `:text-w` the text budget inside the padding.
               `:min-row` is the first row the popup may touch — a tall transient
               stops there instead of climbing over whatever the host keeps
-              visible — and `:clear-above?` also wipes from `:min-row` down, for
-              a host that repaints PAGES of different heights in one frame.
+              visible. A band wipes ITS OWN rows and nothing above them; a host
+              that pages bands of DIFFERENT heights erases the area it owns with
+              `clear-rows!` before it runs the next one.
 
      `host`   HOW to talk to the terminal — the ONLY impure dependency:
               `{:g          TextGraphics to paint into
@@ -165,7 +166,7 @@
 
    Everything is clamped to `:min-row`, so a tall transient — or a short
    terminal — stops at the host's content top instead of climbing over it."
-  [{:keys [hint-row min-row clear-above?]} spec]
+  [{:keys [hint-row min-row]} spec]
   (let
     [n
      (count (rows spec))
@@ -205,10 +206,11 @@
      :body-top body-top
      :foot-rule-row foot-rule-row
      :foot-row foot-row
-     ;; Paging hosts own every row from `:min-row` down (`:clear-above?`);
-     ;; everyone else leaves the buffer above the separator alone — those rows
-     ;; are exactly what magit keeps visible behind its transient.
-     :wipe-top (if clear-above? top-limit sep-row)
+     ;; The band wipes exactly the rows it paints — the buffer above its opening
+     ;; separator is what magit keeps visible behind a transient. A host that
+     ;; repaints bands of different heights owns those rows and clears them
+     ;; itself (`clear-rows!`); the component never reaches over them.
+     :wipe-top (max sep-row top-limit)
      ;; The closing rule is the floor: a page taller than the band it was given
      ;; loses its overflow rows rather than painting over the host's frame.
      :visible (min n (max 1 (- foot-rule-row body-top)))}))
@@ -289,6 +291,39 @@
         (p/put-str! g arg-x row argtxt)))
     (p/set-colors! g t/dialog-fg t/dialog-bg)))
 
+(defn clear-rows!
+  "Blank rows `from`..`to` (INCLUSIVE) inside the host's frame: dialog paper
+   across the inner columns and the frame's plain edge back in both border
+   columns.
+
+   Wiping only the band's INNER columns leaves whatever the host painted in the
+   two border columns: a status buffer's own section separator survived as stray
+   `├`/`┤` junctions beside the popup. Capping separators put their own junctions
+   back afterwards.
+
+   A transient erases exactly the rows it paints. A host that repaints BANDS OF
+   DIFFERENT HEIGHTS into one rectangle — the model picker paging a catalog —
+   owns the rows between its content and the band, and erases them with this
+   before running the next page."
+  [g {:keys [left inner-w]} from to]
+  (let
+    [left
+     (long left)
+
+     inner-w
+     (long inner-w)
+
+     right
+     (+ left inner-w 1)]
+
+    (dotimes [i (max 0 (inc (- (long to) (long from))))]
+      (let [row (+ (long from) i)]
+        (p/set-colors! g t/dialog-fg t/dialog-bg)
+        (p/fill-rect! g (inc left) row inner-w 1)
+        (p/set-colors! g t/dialog-border t/dialog-bg)
+        (p/set-char! g left row p/BOX_V)
+        (p/set-char! g right row p/BOX_V)))))
+
 (defn paint!
   "Paint ONE frame of `spec` at `state` into `region` on `host`. Pure geometry,
    one pass, no key handling — a host that owns its own event loop embeds a
@@ -314,18 +349,9 @@
      grid
      (columns spec)
 
-     ;; Wiping only the band's INNER columns leaves whatever the host painted in
-     ;; the two border columns: a status buffer's own section separator survived
-     ;; as stray `├`/`┤` junctions beside the popup. Repaint the frame's plain
-     ;; edge on every row the band owns; the capping separators put their own
-     ;; junctions back afterwards.
      clear-row!
      (fn [row]
-       (p/set-colors! g t/dialog-fg t/dialog-bg)
-       (p/fill-rect! g (inc left) row inner-w 1)
-       (p/set-colors! g t/dialog-border t/dialog-bg)
-       (p/set-char! g left row p/BOX_V)
-       (p/set-char! g right row p/BOX_V))]
+       (clear-rows! g region row row))]
 
     (dotimes [i (max 1 (- (long body-top) (long wipe-top)))]
       (clear-row! (+ (long wipe-top) i)))
