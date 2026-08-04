@@ -4416,34 +4416,47 @@
         (finally (lp/dispose-environment! env)
                  (.delete (java.io.File. ^String pa))
                  (.delete (java.io.File. ^String pc))))))
-  (it "actually overlaps calls on bounded platform workers (wall ≈ max, not sum)"
-      ;; Bind two SLOW fake observation tools via set-python-binding! so their
-      ;; host bodies (Thread/sleep) overlap. 3×400ms serial=1200ms; concurrent≈400.
-      ;; The per-call sleep is deliberately far above batch overhead so a loaded
-      ;; CI runner cannot push a genuinely concurrent batch over the threshold.
-      (let [env (lp/create-environment ::router {:db :memory})]
-        (try (let
-               [pc (:python-context env)
-                slow (fn [nm]
-                       (fn [& _args]
-                         (Thread/sleep 400)
-                         {"op" nm "v" nm}))]
+  (it
+    "actually overlaps calls on bounded platform workers (wall ≈ max, not sum)"
+    ;; Bind SLOW fake observation tools via set-python-binding! so their host bodies
+    ;; (Thread/sleep) overlap. A flat wall-clock budget cannot say "concurrent":
+    ;; a genuinely overlapped 3x400 ms batch measured 964 ms on a loaded macOS runner
+    ;; -- the batch's own fixed cost, not serialisation -- and went red against 900 ms.
+    ;; So calibrate on THIS machine: run the same machinery once to warm it, time a
+    ;; batch of ONE slow call, then require the batch of three to land within a single
+    ;; extra sleep of it. Overlapped, three cost about what one costs; serialised they
+    ;; cost two sleeps more, whatever the host's overhead happens to be.
+    (let [env (lp/create-environment ::router {:db :memory})]
+      (try (let
+             [pc (:python-context env)
+              slow (fn [nm]
+                     (fn [& _args]
+                       (Thread/sleep 400)
+                       {"op" nm "v" nm}))
+              one #(vector {:expr "slowcat({})" :svar/tool-call-id % :vis/tool-name "slowcat"})]
 
-               (env/set-python-binding! pc 'slowcat (slow "slowcat"))
-               (env/set-python-binding! pc 'slowrg (slow "slowrg"))
-               (let
-                 [entries [{:expr "slowcat({})" :svar/tool-call-id "a" :vis/tool-name "slowcat"}
-                           {:expr "slowcat({})" :svar/tool-call-id "b" :vis/tool-name "slowcat"}
-                           {:expr "slowrg({})" :svar/tool-call-id "c" :vis/tool-name "slowrg"}]
-                  t0 (System/currentTimeMillis)
-                  out (execute-observation-batch env entries)
-                  dt (- (System/currentTimeMillis) t0)]
+             (env/set-python-binding! pc 'slowcat (slow "slowcat"))
+             (env/set-python-binding! pc 'slowrg (slow "slowrg"))
+             (execute-observation-batch env (one "warm"))
+             (let
+               [entries [{:expr "slowcat({})" :svar/tool-call-id "a" :vis/tool-name "slowcat"}
+                         {:expr "slowcat({})" :svar/tool-call-id "b" :vis/tool-name "slowcat"}
+                         {:expr "slowrg({})" :svar/tool-call-id "c" :vis/tool-name "slowrg"}]
 
-                 (expect (= 3 (count out)))
-                 (expect (every? (comp nil? :error) out))
-                 ;; Concurrency proof: comfortably under the 1200ms serial floor.
-                 (expect (< dt 900) (str "observation batch wall-ms=" dt))))
-             (finally (lp/dispose-environment! env))))))
+                t1 (System/currentTimeMillis)
+                solo (do (execute-observation-batch env (one "solo"))
+                         (- (System/currentTimeMillis) t1))
+                t0 (System/currentTimeMillis)
+                out (execute-observation-batch env entries)
+                dt (- (System/currentTimeMillis) t0)]
+
+               (expect (= 3 (count out)))
+               (expect (every? (comp nil? :error) out))
+               ;; Concurrency proof: three overlapping calls cost about what one costs,
+               ;; two full sleeps short of the serial floor.
+               (expect (< dt (+ solo 400))
+                       (str "observation batch wall-ms=" dt " against a solo call at " solo " ms"))))
+           (finally (lp/dispose-environment! env))))))
 
 (defdescribe
   run-iteration-observation-batch-test
