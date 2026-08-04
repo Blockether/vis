@@ -1563,7 +1563,8 @@
           (expect (= :provider-add (:id (last rows))))
           ;; the row carries the provider itself, so Enter can open ITS menu
           (expect (= [:anthropic :openai :ollama] (mapv #(:id (:provider %)) providers)))
-          (expect (= "signed in · claude · default" (:description (first providers))))
+          ;; the router tag LEADS the line: `d`/`f` have no other mark on the row
+          (expect (= "default · signed in · claude" (:description (first providers))))
           (expect (= "not signed in · gpt" (:description (second providers))))
           ;; the dot is the gateway's verdict; a local provider needs no credential
           (expect (= [p/STATUS_ON p/STATUS_OFF p/MARK_VALUE] (mapv #(first (mark % {})) providers)))
@@ -1626,7 +1627,10 @@
       (try (with-redefs
              [vis/load-config
               (constantly {:providers [{:id :anthropic :models ["claude"]} {:id :ollama}]
-                           :default-provider "anthropic"})
+                           :default-provider "anthropic"
+                           :default-model "claude-sonnet-4"
+                           :fallback-provider "ollama"
+                           :fallback-model "llama3"})
 
               vis/authenticated-preset-providers
               (constantly [{:id :openai :models ["gpt"]} {:id :anthropic :models []}])
@@ -1642,7 +1646,12 @@
                (expect (= [:anthropic :ollama :openai] (mapv #(:id (:provider %)) providers)))
                ;; a local provider needs no credential, so the gateway is never asked
                (expect (= [:on :local :off] (mapv :auth providers)))
-               (expect (= [true false false] (mapv :default? providers)))))
+               ;; the router selection travels WITH the entry — Settings can only
+               ;; show what `d`/`f` did if the model comes back on the row
+               (expect (= [true false false] (mapv :default? providers)))
+               (expect (= ["claude-sonnet-4" nil nil] (mapv :default-model providers)))
+               (expect (= [false true false] (mapv :fallback? providers)))
+               (expect (= [nil "llama3" nil] (mapv :fallback-model providers)))))
            ;; a blown-up read is data, not a throw into the dialog loop
            (with-redefs
              [vis/load-config (fn []

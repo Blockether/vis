@@ -15,7 +15,7 @@
             [com.blockether.vis.ext.channel-tui.mcp-model :as mcp-model]
             [com.blockether.vis.internal.theme :as shared-theme]
             [taoensso.telemere :as tel])
-  (:import [com.googlecode.lanterna Symbols TerminalPosition]
+  (:import [com.googlecode.lanterna Symbols TerminalPosition TextCharacter]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [java.text SimpleDateFormat]
@@ -130,6 +130,60 @@
   (try (f)
        (finally (some-> screen
                         clear-screen!))))
+
+(defn frame-restorer
+  "Snapshot the screen's back buffer NOW and return `(fn [] …)` / `(fn [from to])`
+   that puts those rows back exactly as they look at this moment.
+
+   A magit band paints over the host's rows, and when a SHORTER band replaces a
+   taller one the rows between them belong to the HOST again. Blanking them
+   punched a hole in the settings list behind the popup — the whole point of a
+   band is that the buffer it is about stays readable. The host is not repainted
+   while a band flow runs, so restoring the snapshot is the only honest answer.
+
+   Returns nil when there is no screen: unit tests redefine every dialog away."
+  [^TerminalScreen screen]
+  (when screen
+    (let
+      [size
+       (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+
+       cols
+       (.getColumns size)
+
+       rows
+       (.getRows size)
+
+       snapshot
+       (mapv (fn [row]
+               (mapv (fn [col]
+                       (.getBackCharacter screen (int col) (int row)))
+                     (range cols)))
+             (range rows))]
+
+      (fn restore! ([] (restore! 0 (dec (long rows))))
+        ([from to]
+         (doseq [row (range (max 0 (long from)) (min (long rows) (inc (long to))))]
+           (dotimes [col cols]
+             (.setCharacter screen
+                            (int col)
+                            (int row)
+                            ^TextCharacter (get-in snapshot [row col])))))))))
+
+(defn with-frame-restored!
+  "Run `f` — typically a nested dialog or a full-screen prompt — and put THIS
+   frame back exactly as it was.
+
+   `open-nested!` erases the screen on the way OUT, which is right when the
+   caller repaints itself afterwards and catastrophic in the middle of a magit
+   band flow: the next band lands on blank paper and everything above it is
+   gone. Snapshotting the back buffer and writing it back costs one delta
+   refresh and keeps the host frame on screen across the detour."
+  [^TerminalScreen screen f]
+  ;; `screen` is nil in unit tests that redefine every dialog away.
+  (if-let [restore! (frame-restorer screen)]
+    (try (f) (finally (restore!) (.refresh screen Screen$RefreshType/DELTA)))
+    (f)))
 
 (defn ellipsize
   "Right-truncate `s` to `max-w` columns with a trailing `…`.
@@ -604,6 +658,22 @@
        (p/put-str! g (- (+ (long left) (long inner-w)) (p/display-width hint)) row hint)
        (p/set-colors! g t/dialog-fg t/dialog-bg)))))
 
+(defn draw-selectable-row!
+  "The ONE focusable-row painter: `p/selection-prefix`'s cursor glyph, the text,
+   bold while the cursor is on it.
+
+   `draw-checkbox-item!` and `draw-radio-item!` are this row with a status glyph
+   in front of the label, and any new focusable row — a slider, an action button
+   — joins them here instead of inventing a second way to look selected."
+  [g left row inner-w selected? text]
+  (let
+    [draw-text (ellipsize (str (p/selection-prefix selected?) text) (max 0 (- (long inner-w) 2)))]
+    (p/set-colors! g t/dialog-fg t/dialog-bg)
+    (p/fill-rect! g (inc (long left)) row inner-w 1)
+    (if selected?
+      (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row draw-text))
+      (p/put-str! g (inc (long left)) row draw-text))))
+
 (defn draw-checkbox-item!
   "MULTI-choice row — cursor glyph, a `[✓]`/`[ ]` box, then the label. The one
    checkbox row painter in the TUI: list dialogs and the human-input form both
@@ -615,21 +685,7 @@
   ;; alone is the selection cue. Anchored at `(inc left)` so the
   ;; marker sits right at the dialog's inner edge (see `draw-list-item!`).
   [g left row inner-w selected? checked? label]
-  (let
-    [mark
-     (if checked? "✓" " ")
-
-     prefix
-     (str (p/selection-prefix selected?) "[" mark "] ")
-
-     draw-text
-     (ellipsize (str prefix label) (max 0 (- (long inner-w) 2)))]
-
-    (p/set-colors! g t/dialog-fg t/dialog-bg)
-    (p/fill-rect! g (inc (long left)) row inner-w 1)
-    (if selected?
-      (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row draw-text))
-      (p/put-str! g (inc (long left)) row draw-text))))
+  (draw-selectable-row! g left row inner-w selected? (str "[" (if checked? "✓" " ") "] " label)))
 
 (defn draw-radio-item!
   "SINGLE-choice twin of `draw-checkbox-item!` — `• ● label` / `  ○ label`.
@@ -638,18 +694,12 @@
    same on/off glyph pair the settings rows and the footer already speak.
    Anchored at `(inc left)` like every other dialog row."
   [g left row inner-w selected? checked? label]
-  (let
-    [prefix
-     (str (p/selection-prefix selected?) (if checked? p/STATUS_ON p/STATUS_OFF) " ")
-
-     draw-text
-     (ellipsize (str prefix label) (max 0 (- (long inner-w) 2)))]
-
-    (p/set-colors! g t/dialog-fg t/dialog-bg)
-    (p/fill-rect! g (inc (long left)) row inner-w 1)
-    (if selected?
-      (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row draw-text))
-      (p/put-str! g (inc (long left)) row draw-text))))
+  (draw-selectable-row! g
+                        left
+                        row
+                        inner-w
+                        selected?
+                        (str (if checked? p/STATUS_ON p/STATUS_OFF) " " label)))
 
 (defn draw-text-input-field!
   "Borderless `› text` input row with an optional dim `placeholder`. Returns the
@@ -2337,6 +2387,23 @@
               KeyType/ArrowRight (do (swap! cursor #(min (count @text) (inc (long %)))) (recur))
               (recur))))))))
 
+(defn region-option-reader
+  "A `:read-option` for a transient EMBEDDED in someone else's frame.
+
+   `transient-dialog!` builds this for its own modal; a band painted into a host
+   region (Settings, the provider manager) needs the same minibuffer, on the
+   host's hint row, so an OPTION is typed without opening a second window."
+  [^TerminalScreen screen g {:keys [left inner-w hint-row text-w]}]
+  (fn [{:keys [label prompt mask]} current]
+    (magit-mini-read! screen
+                      g
+                      left
+                      inner-w
+                      hint-row
+                      text-w
+                      (or prompt (str label ":"))
+                      {:initial current :mask mask})))
+
 (defn- magit-mini-choose!
   "Inline single-key chooser painted over the magit hint-bar row. `choices` is a
    vec of {:key char :label str :id kw}; renders `<title>  [k] label …` and
@@ -3599,56 +3666,86 @@
   "Refresh the cached provider fleet from config + gateway. Never throws: a
    gateway that is down becomes an inline row instead of yet another modal. The
    auth probes fan out, because one serial round trip per provider would stall
-   the dialog for as long as the slowest provider takes."
+   the dialog for as long as the slowest provider takes.
+
+   Router selection is part of the fleet, not a separate lookup: each entry
+   carries whether it is the default or the fallback AND the model that choice
+   picked, so Settings can SHOW what `d`/`f` just did."
   []
-  (reset! provider-inventory (try (let
-                                    [config
-                                     (vis/load-config)
+  (reset! provider-inventory (try
+                               (let
+                                 [config
+                                  (vis/load-config)
 
-                                     fleet
-                                     (provider-fleet config)
+                                  fleet
+                                  (provider-fleet config)
 
-                                     default-id
-                                     (some-> (:default-provider config)
-                                             name)
+                                  default-id
+                                  (some-> (:default-provider config)
+                                          name)
 
-                                     states
-                                     (mapv (fn [provider]
-                                             (vis/worker-future "vis-tui-settings-provider-auth"
-                                                                #(provider-auth-state provider)))
-                                           fleet)]
+                                  fallback-id
+                                  (some-> (:fallback-provider config)
+                                          name)
 
-                                    {:status :ok
-                                     :providers (mapv (fn [provider state]
-                                                        {:provider provider
-                                                         :auth @state
-                                                         :default? (= default-id
-                                                                      (some-> (:id provider)
-                                                                              name))})
-                                                      fleet
-                                                      states)
-                                     :error nil})
-                                  (catch Exception e
-                                    {:status :error :providers [] :error (ex-message e)}))))
+                                  states
+                                  (mapv (fn [provider]
+                                          (vis/worker-future "vis-tui-settings-provider-auth"
+                                                             #(provider-auth-state provider)))
+                                        fleet)]
+
+                                 {:status :ok
+                                  :providers
+                                  (mapv (fn [provider state]
+                                          (let
+                                            [pid (some-> (:id provider)
+                                                         name)]
+                                            {:provider provider
+                                             :auth @state
+                                             :default? (= default-id pid)
+                                             :default-model (when (= default-id pid)
+                                                              (some-> (:default-model config)
+                                                                      name))
+                                             :fallback? (= fallback-id pid)
+                                             :fallback-model (when (= fallback-id pid)
+                                                               (some-> (:fallback-model config)
+                                                                       name))}))
+                                        fleet
+                                        states)
+                                  :error nil})
+                               (catch Exception e
+                                 {:status :error :providers [] :error (ex-message e)}))))
 
 (defn- provider-settings-status
-  "One provider row's description: the auth verdict first — it decides whether
-   the provider can serve a turn at all — then its model and default tag."
-  [{:keys [provider auth default?]}]
-  (str/join " · "
-            (remove str/blank?
-              [(case auth
-                 :on
-                 "signed in"
+  "One provider row's description: the ROUTER TAGS first, then the auth verdict,
+   then the provider's own model.
 
-                 :local
-                 "local, no sign-in"
+   A router tag names the model it selected (`default → sonnet`), because
+   \"default\" alone never told you which model `d` had just bound — and it leads
+   the line because a narrow pane truncates the TAIL, while auth already has a
+   glyph of its own on the row."
+  [{:keys [provider auth default? default-model fallback? fallback-model]}]
+  (let
+    [tag (fn [label model]
+           (if (str/blank? (str model))
+             label
+             (str label " " (char 0x2192) " " (vis/model-name model))))]
+    (str/join " · "
+              (remove str/blank?
+                [(when default? (tag "default" default-model))
+                 (when fallback? (tag "fallback" fallback-model))
+                 (case auth
+                   :on
+                   "signed in"
 
-                 "not signed in")
-               (str (some-> provider
-                            :models
-                            first
-                            vis/model-name)) (when default? "default")])))
+                   :local
+                   "local, no sign-in"
+
+                   "not signed in")
+                 (str (some-> provider
+                              :models
+                              first
+                              vis/model-name))]))))
 
 (defn- provider-settings-rows
   "The `Providers` settings section: one row per provider — auth state, model,
@@ -4123,7 +4220,10 @@
   (case (:type row)
     :action
     (when-let [f (get callbacks (:id row))]
-      (let [result (f @values)]
+      ;; An action gets the SAME frame handle a provider row gets, so it can
+      ;; paint its own transient band inside Settings instead of stacking a
+      ;; dialog on top of it.
+      (let [result (f {:values @values :g g :region region})]
         ;; Adding an entry changes what every row under it says; re-read that
         ;; inventory instead of trusting the cached one.
         (when (= :mcp-add (:id row)) (load-mcp-inventory!))
@@ -4831,12 +4931,13 @@
                                                               :hint-row hint-row
                                                               :text-w (max 1 (- (long inner-w) 2))
                                                               :min-row list-top
-                                                              ;; One memory per
+                                                              ;; One snapshot per
                                                               ;; activation: a
-                                                              ;; band erases the
-                                                              ;; band before it,
-                                                              ;; never the list.
-                                                              :band (atom nil)}
+                                                              ;; shorter band gives
+                                                              ;; the rows a taller
+                                                              ;; one covered back to
+                                                              ;; the list itself.
+                                                              :restore! (frame-restorer screen)}
                                                              values
                                                              callbacks
                                                              selected-row))

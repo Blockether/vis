@@ -24,15 +24,16 @@
               fetches an OPTION's value; nil (Esc) leaves it unchanged.
 
      `region`  WHERE it sits — the host's rectangle:
-              `{:left :inner-w :hint-row :text-w :min-row :band}`.
+              `{:left :inner-w :hint-row :text-w :min-row :restore!}`.
               `:left`/`:inner-w` are the host frame's border column and inner
               width, `:hint-row` the row the host's hint bar owns (the popup
               REPLACES it), `:text-w` the text budget inside the padding.
               `:min-row` is the first row the popup may touch — a tall transient
               stops there instead of climbing over whatever the host keeps
               visible. A band wipes ITS OWN rows and nothing above them; a host
-              that pages bands of DIFFERENT heights passes a `:band` atom, and
-              each band then also erases what the PREVIOUS one left above it.
+              that pages bands of DIFFERENT heights passes `:restore!`
+              (`(fn [from to])`, from `dialogs/frame-restorer`), and the rows a
+              taller band covered are given back to the HOST instead of blanked.
 
      `host`   HOW to talk to the terminal — the ONLY impure dependency:
               `{:g          TextGraphics to paint into
@@ -336,7 +337,7 @@
   "Paint ONE frame of `spec` at `state` into `region` on `host`. Pure geometry,
    one pass, no key handling — a host that owns its own event loop embeds a
    transient with this plus `toggle`; `run!` is the batteries-included loop."
-  [{:keys [g hint-bar!]} {:keys [left inner-w text-w band] :as region} spec state]
+  [{:keys [g hint-bar!]} {:keys [left inner-w text-w restore!] :as region} spec state]
   (let
     [{:keys [sep-row title-row title-rule-row body-top foot-rule-row foot-row wipe-top visible
              top-limit]}
@@ -359,22 +360,14 @@
 
      clear-row!
      (fn [row]
-       (clear-rows! g region row row))
+       (clear-rows! g region row row))]
 
-     ;; A band erases the rows it PAINTS, and above them ONLY what a PREVIOUS
-     ;; band through this same region left behind — the model picker paging a
-     ;; tall catalog into a short one. `:band` remembers that top; without it a
-     ;; band reaches over nothing at all, so the host's own content — the
-     ;; provider card, the settings list — stays visible behind the popup.
-     wipe-from
-     (max (long top-limit)
-          (min (long wipe-top)
-               (long (or (some-> band
-                                 deref)
-                         wipe-top))))]
-
-    (dotimes [i (max 1 (- (long body-top) (long wipe-from)))]
-      (clear-row! (+ (long wipe-from) i)))
+    ;; A taller band before this one covered rows this one does not. They belong
+    ;; to the HOST again: blanking them left a hole in the list behind the popup,
+    ;; so the host's snapshot is painted back onto them instead.
+    (when restore! (restore! top-limit (dec (long wipe-top))))
+    (dotimes [i (max 1 (- (long body-top) (long wipe-top)))]
+      (clear-row! (+ (long wipe-top) i)))
     (p/set-colors! g t/dialog-border t/dialog-bg)
     (when (>= (long sep-row) (max (long wipe-top) (long top-limit)))
       (p/draw-separator! g left right sep-row))
@@ -416,9 +409,7 @@
              value (when (= type :option) (get (:options state) id))]
 
             (draw-item! g left row inner-w grid it active? value)))))
-    (hint-bar! g left foot-row inner-w hint-pairs)
-    (some-> band
-            (reset! wipe-top))))
+    (hint-bar! g left foot-row inner-w hint-pairs)))
 
 ;;; ── Run ─────────────────────────────────────────────────────────────────────
 

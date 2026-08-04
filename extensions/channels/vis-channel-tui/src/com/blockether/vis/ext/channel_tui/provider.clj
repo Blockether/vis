@@ -70,17 +70,7 @@
       (conj items {:label "Show all models..." :id :show-all})
       items)))
 
-(defn- select-model!
-  "Show model selection dialog for provider setup. Returns a model id or nil."
-  [^TerminalScreen screen provider default-models]
-  (loop [show-all? false]
-    (let [models (build-model-list provider default-models show-all?)]
-      (when-let [choice (dlg/select-dialog! screen "Select Model" models)]
-        (if (= (:id choice) :show-all) (recur true) (:id choice))))))
 
-(defn- select-provider-model!
-  [^TerminalScreen screen provider]
-  (select-model! screen provider (vis/provider-default-model-names provider)))
 
 (def ^:private default-model-configs vis/provider-default-model-configs)
 
@@ -453,86 +443,7 @@
                                  "  vis-agent providers auth anthropic-coding-plan"])
        (boolean (gateway-pkce-login! screen :anthropic-coding-plan "Anthropic"))))))
 
-(declare gateway-api-key-login!)
 
-(defn- add-provider!
-  "Show add-provider flow. `existing-ids` is a set of already-configured :id keywords."
-  [^TerminalScreen screen existing-ids]
-  ;; Every step is a WIZARD STEP, not a stacked popup: the caller's own modal
-  ;; (welcome screen, provider manager) is still painted and each step draws a
-  ;; SMALLER box, so without `dlg/open-nested!` the previous box's border, ✕ and
-  ;; hint bar keep framing the current one — two popups at once. Both callers
-  ;; repaint on `recur`, so erasing on the way out is safe.
-  (let [available (vec (remove #(contains? existing-ids (:id %)) (vis/provider-presets)))]
-    (if (empty? available)
-      (do (dlg/open-nested!
-            screen
-            #(dlg/text-view-dialog! screen "Add Provider" ["All providers already configured."]))
-          nil)
-      (when-let
-        [preset (dlg/open-nested! screen #(dlg/select-dialog! screen "Add Provider" available))]
-        (let
-          [pid (:id preset)
-           local? (contains? #{:ollama :lmstudio} pid)
-           ;; Local providers (LM Studio / Ollama) run wherever the user
-           ;; hosts them, so let them override the default host:port.
-           ;; Blank input or Esc keeps the preset default.
-           base-url (if local?
-                      (or (some-> (dlg/open-nested! screen
-                                                    #(dlg/text-input-dialog!
-                                                       screen
-                                                       (str (:label preset) " Setup")
-                                                       "Base URL:"
-                                                       :initial
-                                                       (or (:base-url preset) "")))
-                                  str/trim
-                                  (str/replace #"/+$" "")
-                                  not-empty)
-                          (:base-url preset))
-                      (:base-url preset))
-           preset (assoc preset :base-url base-url)
-           has-key? (some? (:api-key preset))
-           ;; OAuth providers store credentials outside config.
-           oauth?
-           (or (github-copilot-provider? pid) (= :openai-codex pid) (= :anthropic-coding-plan pid))
-           ;; Local providers need no key
-           needs-key? (not (or has-key? oauth? local?))
-           api-key (dlg/open-nested!
-                     screen
-                     (fn []
-                       (cond has-key? (:api-key preset)
-                             (github-copilot-provider? pid)
-                             (when (gateway-device-login! screen pid (vis/display-label pid))
-                               :oauth-ready)
-                             (= pid :openai-codex) (when (codex-oauth-ready! screen) :oauth-ready)
-                             (= pid :anthropic-coding-plan) (when (anthropic-oauth-ready! screen)
-                                                              :oauth-ready)
-                             ;; Plain API-key providers go through the GATEWAY too: the
-                             ;; daemon mints the flow, persists the key in ITS config and
-                             ;; creates the fleet entry. The TUI never writes a credential.
-                             needs-key? (when (gateway-api-key-login! screen {:id pid}) :key-saved)
-                             :else nil)))
-           auth-ok? (cond has-key? true
-                          oauth? (some? api-key)
-                          needs-key? (some? api-key)
-                          :else true)]
-
-          (when auth-ok?
-            (if-let [oauth-models (when oauth? (not-empty (default-model-configs preset)))]
-              (provider-config-with-models preset oauth-models)
-              (when-let
-                [model (dlg/open-nested! screen
-                                         #(select-provider-model! screen
-                                                                  (cond->
-                                                                    {:id (:id preset)
-                                                                     :base-url base-url
-                                                                     :default-models
-                                                                     (:default-models preset)}
-                                                                    (string? api-key)
-                                                                    (assoc :api-key api-key))))]
-                (cond-> (provider-config-with-models preset [{:name model}])
-                  (and (string? api-key) (not oauth?))
-                  (assoc :api-key api-key))))))))))
 
 ;;; ── Reuse dialog infrastructure from dialogs.clj ───────────────────────────
 ;; dlg/dlg/draw-dialog-chrome!, dlg/dlg/dialog-layout, dlg/dlg/draw-hint-bar!,
@@ -1024,6 +935,52 @@
   [rows]
   (p/clamp (- (long rows) 7) 1 (count model-transient-keys)))
 
+(defn- paged-key-groups
+  "PURE: one PAGE of `items` (`{:id :label}`) as a magit group whose every row is
+   bound to a single letter, plus the `Commands` group that pages it.
+
+   Every picker in this dialog family — models, presets — is the same shape: too
+   many choices for one screen, each chosen with ONE keystroke, `n` / `p` between
+   pages. `:commands` are the caller's own extra commands, appended after paging."
+  [{:keys [title items page page-size commands]}]
+  (let
+    [page-size
+     (long
+       (p/clamp (long (or page-size (count model-transient-keys))) 1 (count model-transient-keys)))
+
+     items
+     (vec items)
+
+     pages
+     (max 1 (quot (+ (count items) (dec page-size)) page-size))
+
+     page
+     (long (p/clamp (long page) 0 (dec pages)))
+
+     from
+     (min (count items) (* page page-size))
+
+     window
+     (subvec items from (min (count items) (+ from page-size)))
+
+     commands
+     (-> (if (> pages 1)
+             [{:key "n" :type :action :id ::next-page :label "Next page"}
+              {:key "p" :type :action :id ::prev-page :label "Previous page"}]
+             [])
+         (into commands))]
+
+    {:groups (cond->
+               [{:title (if (> pages 1) (str title "  " (inc page) "/" pages) title)
+                 :items (into []
+                              (map-indexed (fn [i item]
+                                             (assoc item
+                                               :key (str (nth model-transient-keys i))
+                                               :type :action)))
+                              window)}]
+               (seq commands)
+               (conj {:title "Commands" :items commands}))}))
+
 (defn model-transient-spec
   "PURE: the magit transient spec for the model picker. `entries` are
    `build-model-list` rows, and each real model becomes a COMMAND bound to one
@@ -1035,57 +992,43 @@
   ([entries page marks] (model-transient-spec entries page marks (count model-transient-keys)))
   ([entries page marks page-size]
    (let
-     [page-size
-      (long (p/clamp (long page-size) 1 (count model-transient-keys)))
-
-      models
+     [models
       (into [] (remove #(= :show-all (:id %))) entries)
 
       show-all?
       (boolean (some #(= :show-all (:id %)) entries))
 
-      pages
-      (max 1 (quot (+ (count models) (dec page-size)) page-size))
+      labelled
+      (mapv (fn [model]
+              (let
+                [id
+                 (:id model)
 
-      page
-      (long (p/clamp (long page) 0 (dec pages)))
+                 role
+                 (cond (and (some? (:default marks)) (= id (:default marks))) "  (default)"
+                       (and (some? (:fallback marks)) (= id (:fallback marks))) "  (fallback)"
+                       :else "")]
 
-      from
-      (min (count models) (* page page-size))
+                {:id id :label (str (:label model) role)}))
+            models)]
 
-      window
-      (subvec models from (min (count models) (+ from page-size)))
+     (paged-key-groups {:title "Models"
+                        :items labelled
+                        :page page
+                        :page-size page-size
+                        :commands
+                        (when show-all?
+                          [{:key "*" :type :action :id :show-all :label "Show every model"}])}))))
 
-      item
-      (fn [i model]
-        (let
-          [id
-           (:id model)
+(defn- band-region
+  "The caller's rectangle with ONE frame snapshot for the whole band flow.
 
-           role
-           (cond (and (some? (:default marks)) (= id (:default marks))) "  (default)"
-                 (and (some? (:fallback marks)) (= id (:fallback marks))) "  (fallback)"
-                 :else "")]
-
-          {:key (str (nth model-transient-keys i))
-           :type :action
-           :id id
-           :label (str (:label model) role)}))
-
-      commands
-      (cond-> []
-        (> pages 1)
-        (conj {:key "n" :type :action :id ::next-page :label "Next page"}
-              {:key "p" :type :action :id ::prev-page :label "Previous page"})
-
-        show-all?
-        (conj {:key "*" :type :action :id :show-all :label "Show every model"}))]
-
-     {:groups (cond->
-                [{:title (if (> pages 1) (str "Models  " (inc page) "/" pages) "Models")
-                  :items (into [] (map-indexed item) window)}]
-                (seq commands)
-                (conj {:title "Commands" :items commands}))})))
+   Taken here, at the first band, the snapshot holds the host EXACTLY as the
+   user last saw it — the settings list, the provider cards — so every band
+   after it can hand back the rows a taller predecessor covered. A host that
+   already made one (Settings makes one per activation) keeps its own."
+  [^TerminalScreen screen region]
+  (update region :restore! #(or % (dlg/frame-restorer screen))))
 
 (defn- run-transient!
   "Embed ONE transient (`tr/run!`) INSIDE the caller's own frame: same box, same
@@ -1095,12 +1038,38 @@
    The band paints ITS OWN rows and nothing above them: whatever the caller has
    on screen — the card, the settings list — stays visible behind it, exactly
    like magit. A caller that pages bands of different heights hands the region a
-   `:band` atom, and each band then also erases the previous one's leftovers."
-  [^TerminalScreen screen g {:keys [left inner-w hint-row text-w min-row band]} title spec]
-  (tr/run!
-    (dlg/transient-host screen g)
-    {:left left :inner-w inner-w :hint-row hint-row :text-w text-w :min-row min-row :band band}
-    (assoc spec :title title)))
+   `:restore!` snapshot, and the rows a taller band covered are handed back to
+   the host instead of blanked."
+  [^TerminalScreen screen g {:keys [left inner-w hint-row text-w min-row restore!]} title spec]
+  (tr/run! (dlg/transient-host screen g)
+           {:left left
+            :inner-w inner-w
+            :hint-row hint-row
+            :text-w text-w
+            :min-row min-row
+            :restore! restore!}
+           (assoc spec :title title)))
+
+(defn- run-paged-transient!
+  "Run a `paged-key-groups` band until one of its items is chosen, paging in
+   place on `n` / `p`. `spec-of` builds the spec for a page number. Returns the
+   chosen id, or nil when the user backed out with Esc.
+
+   Pages differ in height, and a shorter page must leave nothing of the taller
+   one above it — and nothing of the HOST's own rows blanked either. The region's
+   `:restore!` snapshot (taken once, before the flow's first band painted) puts
+   the rows between the two band tops back the way the host drew them. Wiping
+   down from `:min-row` instead took the host's content with it: setting a
+   default or fallback model from Settings blanked the settings pane behind the
+   popup, frame and all."
+  [^TerminalScreen screen g geom title spec-of]
+  (let [geom (band-region screen geom)]
+    (loop [page 0]
+      (let [picked (:action (run-transient! screen g geom title (spec-of page)))]
+        (cond (nil? picked) nil
+              (= picked ::next-page) (recur (inc page))
+              (= picked ::prev-page) (recur (dec page))
+              :else picked)))))
 
 (defn- run-model-transient!
   "Magit transient model picker for `provider`: one keystroke per model, `n` / `p`
@@ -1108,31 +1077,20 @@
    chosen model id, or nil when the user backed out with Esc."
   [^TerminalScreen screen g geom provider entries preferred marks page-size]
   (let
-    ;; Pages differ in height, and a shorter page must leave nothing of the
-    ;; taller one above it — but that is ALL it may erase. The `:band` atom
-    ;; remembers where the last band started (the host's own atom when the
-    ;; picker is opened from one of the host's bands, ours otherwise). Wiping
-    ;; down from `:min-row` instead took the HOST's content with it: setting a
-    ;; default or fallback model from Settings blanked the settings pane behind
-    ;; the popup, frame and all.
-    [geom (update geom :band #(or % (atom nil)))]
-    (loop
-      [entries entries
-       page 0]
+    [geom
+     (band-region screen geom)
 
+     title
+     (str (vis/display-label (:id provider)) " — models")]
+
+    (loop [entries entries]
       (let
-        [title (str (vis/display-label (:id provider)) " — models")
-         picked (:action (run-transient! screen
-                                         g
-                                         geom
-                                         title
-                                         (model-transient-spec entries page marks page-size)))]
-
-        (cond (nil? picked) nil
-              (= picked :show-all) (recur (build-model-list provider preferred true) 0)
-              (= picked ::next-page) (recur entries (inc page))
-              (= picked ::prev-page) (recur entries (dec page))
-              :else picked)))))
+        [picked (run-paged-transient! screen
+                                      g
+                                      geom
+                                      title
+                                      #(model-transient-spec entries % marks page-size))]
+        (if (= picked :show-all) (recur (build-model-list provider preferred true)) picked)))))
 
 (defn api-key-transient-spec
   "PURE: the magit transient an API-key sign-in runs. `k` reads the key INLINE on
@@ -1351,7 +1309,10 @@
    changed and the caller should reload its inventory."
   [^TerminalScreen screen g region provider-id]
   (let
-    [config
+    [region
+     (band-region screen region)
+
+     config
      (or (vis/load-config) {:providers []})
 
      base
@@ -1426,6 +1387,152 @@
           (boolean (logout-provider! screen provider))
 
           false)))))
+
+;;; ── Add a provider — a BAND in the caller's frame, never a stacked wizard ──
+
+(defn preset-transient-spec
+  "PURE: the band that picks WHICH provider to add — one keystroke per preset,
+   `n` / `p` between pages. The same shape as the model picker, because it is the
+   same question asked about a different list."
+  ([presets page] (preset-transient-spec presets page (count model-transient-keys)))
+  ([presets page page-size]
+   (paged-key-groups {:title "Providers"
+                      :items (mapv (fn [preset]
+                                     {:id (:id preset)
+                                      :label (or (:label preset) (str (:id preset)))})
+                                   presets)
+                      :page page
+                      :page-size page-size})))
+
+(defn local-setup-transient-spec
+  "PURE: the band that confirms a LOCAL provider's endpoint before it is added.
+   `u` types the base URL on the hint row and `a` adds the provider with whatever
+   the line says — LM Studio and Ollama run wherever the user hosts them."
+  [label base-url]
+  {:groups [{:title (str label)
+             :items [{:key "u" :type :option :id :base-url :label "Base URL" :prompt "Base URL:"}]}
+            {:title "Commands"
+             :items [{:key "a"
+                      :type :action
+                      :id :add
+                      :label (str "Add with "
+                                  (or (not-empty (str base-url)) "the preset URL"))}]}]})
+
+(defn- band-page-size
+  "How many keyed rows one band may show inside `region` — the rows between the
+   first row it may touch and the host's hint bar."
+  [region]
+  (model-transient-page-size (max 1
+                                  (- (long (:hint-row region)) (long (or (:min-row region) 0)) 1))))
+
+(defn- read-local-base-url!
+  "Run the endpoint band. Returns the URL to use, or nil when the user backed out."
+  [^TerminalScreen screen g region preset]
+  (let
+    [{:keys [action options]}
+     (run-transient! screen
+                     g
+                     region
+                     (str (:label preset) " — setup")
+                     (assoc (local-setup-transient-spec (:label preset) (:base-url preset))
+                       :read-option (dlg/region-option-reader screen g region)))]
+    (when (= :add action)
+      (or (some-> (:base-url options)
+                  str
+                  str/trim
+                  (str/replace #"/+$" "")
+                  not-empty)
+          (:base-url preset)))))
+
+(defn- add-preset-provider!
+  "Finish adding `preset`: endpoint (local providers), sign-in, model — each step
+   a band in the SAME frame. Persists the provider and returns its config, or nil
+   when the user backed out anywhere along the way."
+  [^TerminalScreen screen g region preset]
+  (let
+    [pid
+     (:id preset)
+
+     local?
+     (contains? local-no-auth-provider-ids pid)
+
+     oauth?
+     (or (github-copilot-provider? pid) (= :openai-codex pid) (= :anthropic-coding-plan pid))
+
+     base-url
+     (if local? (read-local-base-url! screen g region preset) (:base-url preset))
+
+     preset
+     (assoc preset :base-url base-url)
+
+     ;; Sign-in is the one step that CANNOT be a band: OAuth needs a browser, a
+     ;; device code, a pasted redirect URL. It runs as its own dialog and the
+     ;; frame is put back exactly as it was, so the model band that follows lands
+     ;; on the settings list instead of on the blank paper `open-nested!` leaves.
+     auth-ok?
+     (and (or (not local?) (some? base-url))
+          (or local?
+              (some? (:api-key preset))
+              (some? (dlg/with-frame-restored! screen #(authenticate-provider! screen preset)))))
+
+     config
+     (when auth-ok?
+       (if-let [oauth-models (when oauth? (not-empty (default-model-configs preset)))]
+         (provider-config-with-models preset oauth-models)
+         (let [preferred (vis/provider-default-model-names preset)]
+           (when-let
+             [model (run-model-transient! screen
+                                          g
+                                          region
+                                          preset
+                                          (build-model-list preset preferred false)
+                                          preferred
+                                          {}
+                                          (band-page-size region))]
+             (cond-> (provider-config-with-models preset [{:name model}])
+               (and (string? (:api-key preset)) (not oauth?))
+               (assoc :api-key (:api-key preset)))))))]
+
+    (when config (save-provider-config! (conj (vec (vis/configured-providers)) config)) config)))
+
+(defn add-provider-transient!
+  "Add a provider as a BAND inside the caller's own frame: one keystroke picks the
+   preset, a second band confirms a local endpoint, sign-in runs, a third band
+   picks the model. No wizard, no stacked popups — the list behind it stays on
+   screen the whole way, which is the whole point of a transient.
+
+   Persists the provider and returns its config, or nil when nothing was added."
+  ([^TerminalScreen screen g region]
+   (add-provider-transient! screen g region (into #{} (map :id) (vis/configured-providers))))
+  ([^TerminalScreen screen g region existing-ids]
+   (let
+     [existing
+      (set existing-ids)
+
+      available
+      (vec (remove #(contains? existing (:id %)) (vis/provider-presets)))
+
+      region
+      (band-region screen region)]
+
+     (if (empty? available)
+       (do (run-transient! screen
+                           g
+                           region
+                           "Add provider"
+                           {:groups [{:title "Nothing to add"
+                                      :items [{:key "q"
+                                               :type :action
+                                               :id :done
+                                               :label "Every provider is already configured"}]}]})
+           nil)
+       (when-let
+         [pid (run-paged-transient! screen
+                                    g
+                                    region
+                                    "Add provider"
+                                    #(preset-transient-spec available % (band-page-size region)))]
+         (add-preset-provider! screen g region (first (filter #(= pid (:id %)) available))))))))
 
 (defn auth-provider-items
   "One row per auth-capable provider, labelled with its GATEWAY auth verdict.
@@ -1749,10 +1856,7 @@
            :inner-w inner-w
            :hint-row hint-row
            :text-w (max 0 (- inner-w 4))
-           :min-row (+ (long content-top) (long card-rows) (long card-gap))
-           ;; One memory for every band this dialog runs: a shorter band erases
-           ;; the taller one it replaces, and nothing else.
-           :band (atom nil)}]
+           :min-row (+ (long content-top) (long card-rows) (long card-gap))}]
 
          ;; Clear content area
          (p/set-bg! g t/dialog-bg)
@@ -2077,7 +2181,14 @@
                                                  ^com.googlecode.lanterna.input.KeyStroke key))]
                      (cond
                        ;; A - add provider
-                       (= c \a) (do (when-let [p (add-provider! screen (into #{} (map :id) @items))]
+                       ;; Adding is a BAND in this frame too — the preset, the
+                       ;; endpoint and the model are each one keystroke over the
+                       ;; card list, never a wizard stacked on top of it.
+                       (= c \a) (do (when-let
+                                      [p (add-provider-transient! screen
+                                                                  g
+                                                                  (assoc geom :min-row content-top)
+                                                                  (into #{} (map :id) @items))]
                                       (swap! items conj p)
                                       (refresh-provider-diagnostics! p statuses limits)
                                       (reset! selected (dec (count @items))))

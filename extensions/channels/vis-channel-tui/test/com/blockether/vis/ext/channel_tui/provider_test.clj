@@ -923,114 +923,62 @@
 
         (expect (= false (@#'provider/codex-oauth-ready! nil))))))
 
+;; ── Regression (user report): "right now the adding provider is a separate
+;; dialogue — it should not be like this, it should be a sealed transient, it
+;; doesn't really make sense to have it as a separate dialogue". `add-provider!`
+;; opened one NESTED DIALOG per step (the preset picker, then the Base URL
+;; prompt), and every nested dialog clears the frame it was opened from: the
+;; list the user was reading vanished behind the wizard. Adding a provider is
+;; now the same magit band as every other provider action.
+;; ─────────────────────────────────────────────────────────────────────────────
+
+(defdescribe preset-transient-spec-test
+             (it "binds one keystroke per preset and pages the rest"
+                 (let
+                   [presets
+                    (mapv (fn [i]
+                            {:id (keyword (str "p" i)) :label (str "Preset " i)})
+                          (range 5))
+
+                    page-0
+                    (provider/preset-transient-spec presets 0 2)
+
+                    page-1
+                    (provider/preset-transient-spec presets 1 2)
+
+                    picks
+                    (fn [spec]
+                      (mapv (juxt :key :id) (:items (first (:groups spec)))))]
+
+                   (expect (= [["a" :p0] ["b" :p1]] (picks page-0)))
+                   (expect (= [["a" :p2] ["b" :p3]] (picks page-1)))
+                   ;; …and magit's own paging keys, never bound to a preset.
+                   (expect (= ["n" "p"] (mapv :key (:items (second (:groups page-0))))))
+                   (expect (str/includes? (:title (first (:groups page-0))) "1/3"))))
+             (it "asks for no paging when every preset fits on one page"
+                 (let [spec (provider/preset-transient-spec [{:id :ollama :label "Ollama"}] 0 8)]
+                   (expect (= 1 (count (:groups spec))))
+                   (expect (= "Providers" (:title (first (:groups spec)))))
+                   (expect (= [["a" :ollama]]
+                              (mapv (juxt :key :id) (:items (first (:groups spec)))))))))
+
 (defdescribe
-  add-provider-test
-  (it "connects OpenAI Codex OAuth without forcing a single model selection"
-      (let [model-picker-called? (atom false)]
-        (with-redefs
-          [vis/provider-presets (constantly [{:id :openai-codex
-                                              :label "OpenAI Codex"
-                                              :default-models ["gpt-5.1" "gpt-5.2"]}])
-           provider/codex-oauth-ready! (constantly true)
-           dlg/select-dialog! (fn [_ title items]
-                                (case title
-                                  "Add Provider"
-                                  (first items)
+  local-setup-transient-spec-test
+  (it "reads a local endpoint inline and adds with it"
+      (let
+        [spec
+         (provider/local-setup-transient-spec "Ollama" "http://localhost:11434")
 
-                                  "Select Model"
-                                  (do (reset! model-picker-called? true) (first items))))]
+         [endpoint commands]
+         (:groups spec)]
 
-          (expect (= {:id :openai-codex :models [{:name "gpt-5.1"} {:name "gpt-5.2"}]}
-                     (@#'provider/add-provider! nil #{})))
-          (expect (= false @model-picker-called?)))))
-  (it
-    "adds a plain API-key provider THROUGH THE GATEWAY, never writing the key"
-    (let
-      [submitted
-       (atom [])
-
-       started
-       (atom [])]
-
-      (with-redefs
-        [vis/provider-presets
-         (constantly [{:id :zai-coding-plan
-                       :label "Z.AI Coding Plan"
-                       :base-url "https://api.z.ai"
-                       :default-models ["glm-5.2"]}])
-
-         vis/gateway-provider-auth-start!
-         (fn [pid]
-           (swap! started conj pid)
-           {"flow_id" "f-1" "kind" "api-key" "instructions" ["Paste your key"]})
-
-         vis/gateway-provider-auth-submit-key!
-         (fn [pid flow-id key]
-           (swap! submitted conj [pid flow-id key])
-           {"status" "ok"})
-
-         vis/gateway-provider-auth-cancel!
-         (fn [_ _]
-           (throw (ex-info "cancelled" {})))
-
-         vis/gateway-provider-model-options
-         (constantly {:models ["glm-5.2"] :hidden-count 0})
-
-         dlg/text-input-dialog!
-         (fn [& _]
-           "sk-typed-by-user")
-
-         dlg/transient-dialog!
-         (fn [& _]
-           {:action :submit :options {:api-key "sk-typed-by-user"}})
-
-         dlg/select-dialog!
-         (fn [_ _ items]
-           (first items))]
-
-        (let [cfg (@#'provider/add-provider! nil #{})]
-          ;; The gateway owns the credential: the daemon persisted it,
-          ;; so the config the TUI hands back carries NO key.
-          (expect (= [:zai-coding-plan] @started))
-          (expect (= [[:zai-coding-plan "f-1" "sk-typed-by-user"]] @submitted))
-          (expect (= :zai-coding-plan (:id cfg)))
-          (expect (= [{:name "glm-5.2"}] (:models cfg)))
-          (expect (nil? (:api-key cfg))))))))
-
-;; ── Regression (user report, first run): "I want to connect provider — WHY IS
-;; IT NOT OPENING THE SETTINGS? we should not duplicate the popups".
-;; Enter on the welcome screen painted the "Add Provider" picker straight on top
-;; of the welcome dialog, and the Base URL step on top of the picker: the outer
-;; box's border, ✕ and hint bar still framed the inner one, so the user saw two
-;; stacked popups instead of one wizard step. ───────────────────────────────────
-
-(defdescribe add-provider-wizard-step-test
-             (it "erases the parent dialog before each step, so only ONE popup is ever on screen"
-                 (with-redefs
-                   [vis/provider-presets
-                    (constantly [{:id :ollama :label "Ollama" :base-url "http://localhost:11434"}])]
-                   (let
-                     [captured (cap/capture! {:keys [:enter :enter :esc :esc :esc]
-                                              :paint!
-                                              (fn [{:keys [screen]}]
-                                                ;; The wizard lives behind Settings › Providers →
-                                                ;; `a` now, so stand in for that opener: what this
-                                                ;; test measures is the STEP erasure inside it.
-                                                (provider/show-welcome!
-                                                  screen
-                                                  #(@#'provider/add-provider! screen #{})))})
-                      frames (mapv #(cap/frame-text captured %) (range (count (:frames captured))))
-                      picker (first (filter #(str/includes? % "Add Provider") frames))
-                      base-url (first (filter #(str/includes? % "Base URL") frames))]
-
-                     (expect (nil? (:error captured)))
-                     (expect (some? picker))
-                     (expect (some? base-url))
-                     ;; Every ✕ is one dialog's close marker: two of them in a frame means
-                     ;; the parent's chrome survived underneath the nested step.
-                     (expect (every? #(<= (count (re-seq #"✕" %)) 1) frames))
-                     ;; ...and the welcome body is gone while the picker is up.
-                     (expect (not (str/includes? picker "Your terminal, now agentic.")))))))
+        (expect (= "Ollama" (:title endpoint)))
+        ;; `u` is an OPTION: the URL is typed on the host's own hint row, so no
+        ;; second popup ever opens for it.
+        (expect (= [{:key "u" :type :option :id :base-url :label "Base URL" :prompt "Base URL:"}]
+                   (:items endpoint)))
+        (expect (= :add (:id (first (:items commands)))))
+        (expect (str/includes? (:label (first (:items commands))) "http://localhost:11434")))))
 
 ;; ── Regression (user report, first run): "when we click add provider it should
 ;; open the settings and providers, like typically". Enter on the welcome screen
@@ -1714,8 +1662,11 @@
   ([^long cols ^long rows keystrokes]
    (with-redefs
      [vis/load-config
-      (constantly
-        {:providers [{:id :acme-llm}] :default-provider "acme-llm" :default-model "acme-1"})
+      (constantly {:providers [{:id :acme-llm}]
+                   :default-provider "acme-llm"
+                   :default-model "acme-1"
+                   :fallback-provider "acme-llm"
+                   :fallback-model "acme-2"})
 
       vis/authenticated-preset-providers
       (constantly [])
@@ -1742,6 +1693,8 @@
                                screen
                                {}
                                {:focus-section "Providers"
+                                :provider-add (fn [{:keys [g region]}]
+                                                (provider/add-provider-transient! screen g region))
                                 :provider-transient
                                 (fn [{:keys [g region provider-id]}]
                                   (provider/provider-transient! screen g region provider-id))}))})]
@@ -1837,3 +1790,93 @@
                  (let [band (settings-model-band 100 30)]
                    (expect (not (str/includes? band "— actions")))
                    (expect (not (str/includes? band "Set as Default..."))))))
+
+;; ── Regression (user report): "setting the default provider and model is not
+;; making anything — there should be some visualization". The Providers list
+;; built its rows from the config's PROVIDER entries alone, so the routing tags
+;; the daemon had just persisted (`:default-provider`/`:default-model` and the
+;; fallback pair) never reached the screen: picking a default looked like it did
+;; nothing at all. ───────────────────────────────────────────────────────────
+(defdescribe settings-router-tags-visible-test
+             (it "names the routed model on the provider's own row"
+                 (let [frame (first (settings-provider-band-frames 100 30 [:esc]))]
+                   (expect (str/includes? frame "default → acme-1"))
+                   (expect (str/includes? frame "fallback → acme-2")))))
+
+;; ── Regression (user report): "the adding provider is a separate dialogue …
+;; it should be a sealed transient". Every step of the old wizard was a NESTED
+;; DIALOG, and a nested dialog clears the screen on the way in and on the way
+;; out — the list the user was reading disappeared, and what came back was
+;; whichever popup painted last. Adding a provider is now bands in the caller's
+;; own frame, exactly like every other provider action. ──────────────────────
+(defn- settings-add-provider-frames
+  "Drive Settings → `Add provider…` → `keystrokes` off ONE fixed preset, and
+   capture the config that WOULD have been written instead of touching the
+   machine's own."
+  [keystrokes]
+  (let [saved (atom nil)]
+    (with-redefs-fn {#'vis/provider-presets
+                     (constantly [{:id :ollama :label "Ollama" :base-url "http://localhost:11434"}])
+                     #'provider/save-provider-config! (fn [configs]
+                                                        (reset! saved configs)
+                                                        true)}
+      (fn []
+        {:frames (settings-provider-band-frames 100 30 (into [:down :enter] keystrokes))
+         :saved @saved}))))
+
+(defdescribe
+  settings-add-provider-band-test
+  (it "runs preset, endpoint and model as BANDS inside the settings frame"
+      (let
+        [{:keys [frames saved]}
+         (settings-add-provider-frames [\a \a \a :esc])
+
+         frame-with
+         (fn [needle]
+           (first (filter #(str/includes? % needle) frames)))
+
+         picker
+         (frame-with "a Ollama")
+
+         setup
+         (frame-with "Ollama — setup")
+
+         models
+         (frame-with "ollama — models")]
+
+        (expect (some? picker))
+        (expect (str/includes? picker "Add provider"))
+        (expect (some? setup))
+        (expect (str/includes? setup "Add with http://localhost:11434"))
+        (expect (some? models))
+        ;; Three steps, ONE frame: the settings list is still behind each of
+        ;; them and there is never a second box's ✕ on screen.
+        (doseq [frame [picker setup models]]
+          (expect (str/includes? frame "Settings"))
+          (expect (str/includes? frame "Terminal UI"))
+          (expect (= 1 (count (re-seq #"✕" frame)))))
+        ;; …and the provider really is added, with the model just picked.
+        (expect (= {:id :ollama :models [{:name "acme-1"}] :base-url "http://localhost:11434"}
+                   (last saved)))))
+  (it "hands the rows a TALLER band covered back to the settings list"
+      ;; The endpoint band is taller than the model band that follows it, and
+      ;; blanking the rows between the two band tops punched a hole in the list
+      ;; behind the popup — the host is not repainted while a flow runs, so the
+      ;; band restores what it uncovers.
+      (let
+        [{:keys [frames]}
+         (settings-add-provider-frames [\a \a \a :esc])
+
+         rows
+         (str/split-lines (first (filter #(str/includes? % "ollama — models") frames)))
+
+         band-top
+         (long (first (keep-indexed #(when (str/includes? %2 "ollama — models") %1) rows)))
+
+         host-row
+         (nth rows (- band-top 2))]
+
+        ;; A settings row is SPLIT by the sidebar rail, so it carries a third
+        ;; `│`; an uncovered-and-blanked row carries only the frame's two.
+        (expect (re-find #"\w" host-row))
+        (expect (<= 3 (count (re-seq #"│" host-row)))))))
