@@ -6,6 +6,14 @@
   "title": "Deploy?",
   "fields": [
     {
+      "type": "heading",
+      "text": "Target"
+    },
+    {
+      "type": "paragraph",
+      "text": "Staging pages nobody."
+    },
+    {
       "description": "Where this deploy lands",
       "is_required": false,
       "default": "prod",

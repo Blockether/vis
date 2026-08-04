@@ -305,7 +305,11 @@ def ask(title, fields, **options):
     # Layout and value keys never mix: 'default'/'is_required'/'validate' on a
     # group, or 'fields'/'direction' on an answerable field, are both REFUSED.
     # Field types: plaintext, password, multiline, select, multiselect,
-    # checkbox, range, otp — 'group' is none of them, it is the node above them.
+    # checkbox, range, otp. Two node types answer nothing: 'group' is the node
+    # above them, and 'heading'/'paragraph' are pure DECORATION carrying only
+    # 'text' — a section title and the prose under it, so a long form reads like
+    # a page instead of a list. Decoration has no name and never lands in
+    # `values`; giving one a name, a default or a validate is REFUSED.
     # Dialog options: description (prose under the title explaining
     # what the whole ask is about — it wraps), submit_label, cancel_label,
     # is_cancellable, timeout_ms.

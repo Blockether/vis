@@ -305,7 +305,10 @@
    :title "Deploy?"
    :description "prod"
    :timeout-ms 300000
-   :fields [{:name "env"
+   ;; Two DECORATIONS lead the form: they answer nothing, so the app must render
+   ;; them and keep them out of its values map.
+   :fields [{:type "heading" :text "Target"} {:type "paragraph" :text "Staging pages nobody."}
+            {:name "env"
              :type "select"
              :label "Env"
              :description "Where this deploy lands"

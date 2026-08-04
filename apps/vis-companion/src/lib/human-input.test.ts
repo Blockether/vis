@@ -12,6 +12,7 @@ import {
   humanInputFormStart,
   humanInputOtp,
   humanInputInputFields,
+  humanInputIsDecoration,
   humanInputOtpDigits,
   initialHumanInputValues,
   isHumanInputEvent,
@@ -58,6 +59,9 @@ describe('humanInputRequestFromWire', () => {
     expect(request.submit_label).toBe('Submit');
     expect(request.is_cancellable).toBe(true);
     expect(request.fields.map((field) => `${field.name}:${field.type}`)).toEqual([
+      // Two decorations lead the form. They have no name because nothing keys ink.
+      ':heading',
+      ':paragraph',
       'env:select',
       'key:password',
       'ok:checkbox',
@@ -82,15 +86,17 @@ describe('humanInputRequestFromWire', () => {
       'tls',
     ]);
     // name keys the answer, label is what the dialog shows, description is the
-    // italic line under it.
-    expect(request.fields[0]?.name).toBe('env');
-    expect(request.fields[0]?.label).toBe('Env');
-    expect(request.fields[0]?.description).toBe('Where this deploy lands');
-    expect(request.fields[1]?.label).toBe('key');
-    expect(request.fields[1]?.description).toBeUndefined();
-    expect(request.fields[1]?.is_required).toBe(true);
-    expect(request.fields[1]?.max_length).toBe(40);
-    expect(request.fields[0]?.options).toEqual([
+    // italic line under it. Found by name, not by index: ink leads this form.
+    const env = request.fields.find((field) => field.id === 'env');
+    const key = request.fields.find((field) => field.id === 'key');
+    expect(env?.name).toBe('env');
+    expect(env?.label).toBe('Env');
+    expect(env?.description).toBe('Where this deploy lands');
+    expect(key?.label).toBe('key');
+    expect(key?.description).toBeUndefined();
+    expect(key?.is_required).toBe(true);
+    expect(key?.max_length).toBe(40);
+    expect(env?.options).toEqual([
       { value: 'prod', label: 'prod' },
       { value: 'stg', label: 'Staging' },
     ]);
@@ -225,10 +231,37 @@ describe('required fields', () => {
   });
 });
 
+describe('decorations', () => {
+  it('reads the ink the engine sent, and answers none of it', () => {
+    const request = parsed();
+    expect(
+      request.fields.filter(humanInputIsDecoration).map((node) => [node.type, node.text]),
+    ).toEqual([
+      ['heading', 'Target'],
+      ['paragraph', 'Staging pages nobody.'],
+    ]);
+    // Nothing keys a decoration, so it is not one of the fields an answer walks
+    // and it puts no entry in the values map.
+    expect(humanInputInputFields(request.fields).some(humanInputIsDecoration)).toBe(false);
+    expect(Object.keys(initialHumanInputValues(request))).not.toContain('');
+  });
+
+  it('drops ink with nothing to paint', () => {
+    const request = humanInputRequestFromWire({
+      ...(fixture as Record<string, unknown>),
+      fields: [
+        { type: 'heading', text: '   ' },
+        { name: 'a', type: 'plaintext' },
+      ],
+    });
+    expect(request?.fields.map((field) => field.type)).toEqual(['plaintext']);
+  });
+});
+
 describe('toggleHumanInputOption', () => {
   it('adds, removes, and keeps the request option order', () => {
     const request = parsed();
-    const tags = request.fields[3];
+    const tags = request.fields.find((field) => field.id === 'tags');
     if (!tags) throw new Error('fixture must have a multiselect field');
     expect(toggleHumanInputOption(tags, { tags: [] }, 'b')).toEqual(['b']);
     expect(toggleHumanInputOption(tags, { tags: ['b'] }, 'a')).toEqual(['a', 'b']);

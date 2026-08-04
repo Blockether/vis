@@ -319,10 +319,13 @@ that label. `id` and `help` are the legacy spellings of `name` and `description`
 and still work.
 
 Field `type` is one of `plaintext`, `password`, `multiline`, `select`,
-`multiselect`, `checkbox`, `range`, `otp`, `group`. A field may also carry
+`multiselect`, `checkbox`, `range`, `otp`. A field may also carry
 `placeholder`, `default`, `is_required`, `min_length`, `max_length`, `validate`,
 and — for the two `select` types — `options` (strings, or `{"value": ..., "label": ...}` maps).
-`fields` and `direction` belong to `group` alone (see below).
+
+Two node types are not fields at all, because nothing answers them: a `group`
+LAYS OUT the nodes under it (`fields`, `direction`) and a `heading` or
+`paragraph` is pure DECORATION carrying `text` alone. Both are described below.
 
 #### Toggles: exclusive `select`, inclusive `multiselect` and `checkbox`
 
@@ -420,6 +423,34 @@ label, required `*`, error line and cursor, `←`/`→` still move inside a
 field and `↑`/`↓` between them in reading order. The app renders a
 `fieldset`/`legend` with the same row or column flex, wrapping on a phone instead
 of overflowing.
+
+### Pure decoration: `heading` and `paragraph`
+
+A form is not only questions. A `heading` opens a section of a long form and a
+`paragraph` explains one. Both carry `text` and nothing else — no `name`, no
+`label`, no `default`, no `validate` — because nothing answers ink:
+
+```python
+vis.ask("Deploy", [
+    {"type": "heading", "text": "Target"},
+    {"type": "paragraph", "text": "Staging pages nobody. Production pages the on-call."},
+    {"name": "env", "type": "select", "label": "Env", "options": ["stg", "prod"]},
+    {"type": "heading", "text": "Credentials"},
+    {"name": "key", "type": "password", "label": "Deploy key", "is_required": True},
+])
+```
+
+A decoration has no identity, so it is never keyed, never focused and never in
+`answer.values`: `Tab` and `↑`/`↓` step straight over it, and two paragraphs
+saying the same words are two decorations rather than a name collision. Give one
+a `name`, a `default` or a `validate` and the request is **refused** — that spec
+meant to ask something. A decoration sits anywhere a field does, including inside
+a `group`, so a `row` of two paragraphs is a two-column note.
+
+The TUI paints a `heading` bold in the dialog's own ink and a `paragraph` in
+dimmed italics, both straight on the dialog paper: the pale input surface belongs
+to things you can type into, and decoration is not one of them. The app renders
+the same two as an `h3` and a `p`.
 
 ### Validating a field
 

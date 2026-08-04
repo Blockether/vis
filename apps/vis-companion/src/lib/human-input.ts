@@ -22,7 +22,7 @@ import type { SseEvent } from './types';
 export const HUMAN_INPUT_REQUEST_EVENT = 'human_input.request';
 export const HUMAN_INPUT_CLOSE_EVENT = 'human_input.close';
 
-/** The closed field set the engine accepts (`human-input.spec/field-types`). */
+/** The closed set of fields that can carry an ANSWER (`human-input.spec/field-types`). */
 export const HUMAN_INPUT_FIELD_TYPES = [
   'plaintext',
   'password',
@@ -32,10 +32,31 @@ export const HUMAN_INPUT_FIELD_TYPES = [
   'checkbox',
   'range',
   'otp',
-  'group',
 ] as const;
 
-export type HumanInputFieldType = (typeof HUMAN_INPUT_FIELD_TYPES)[number];
+/**
+ * Ink rather than a question (`human-input.spec/decor-types`). A `heading` opens
+ * a section of a long form and a `paragraph` explains one; neither is named,
+ * answered, or focusable.
+ */
+export const HUMAN_INPUT_DECOR_TYPES = ['heading', 'paragraph'] as const;
+
+/**
+ * Every node a request's tree can hold: the answerable fields, the layout
+ * `group` that arranges them, and the decorations that are only read.
+ */
+export const HUMAN_INPUT_NODE_TYPES = [
+  ...HUMAN_INPUT_FIELD_TYPES,
+  'group',
+  ...HUMAN_INPUT_DECOR_TYPES,
+] as const;
+
+export type HumanInputFieldType = (typeof HUMAN_INPUT_NODE_TYPES)[number];
+
+/** True when this node is pure decoration — read on the form, never answered. */
+export function humanInputIsDecoration(node: { type: HumanInputFieldType }): boolean {
+  return (HUMAN_INPUT_DECOR_TYPES as readonly string[]).includes(node.type);
+}
 
 export interface HumanInputOption {
   value: string;
@@ -65,6 +86,8 @@ export interface HumanInputField {
   direction?: 'row' | 'column';
   /** `group` only — the fields it owns, which may be groups themselves. */
   fields?: HumanInputField[];
+  /** A DECORATION only — the words it paints. It has no name and no label. */
+  text?: string;
 }
 
 export interface HumanInputRequest {
@@ -115,7 +138,7 @@ function optionalText(value: unknown): string | undefined {
 
 function fieldType(value: unknown): HumanInputFieldType {
   const name = text(value);
-  return (HUMAN_INPUT_FIELD_TYPES as readonly string[]).includes(name)
+  return (HUMAN_INPUT_NODE_TYPES as readonly string[]).includes(name)
     ? (name as HumanInputFieldType)
     : 'plaintext';
 }
@@ -136,9 +159,17 @@ function bound(raw: unknown): number | undefined {
 function fieldFromWire(raw: unknown): HumanInputField | null {
   const row = record(raw);
   if (!row) return null;
+  const type = fieldType(row.type);
+  // A DECORATION is parsed BEFORE identity: nobody answers a heading, so it has
+  // no name to key and nothing to check but the words it paints — and blank ink
+  // paints nothing, so it never reaches the screen.
+  if (humanInputIsDecoration({ type })) {
+    const words = optionalText(row.text);
+    if (!words) return null;
+    return { id: '', name: '', type, label: '', is_required: false, text: words };
+  }
   const id = text(row.name) || text(row.id);
   if (id === '') return null;
-  const type = fieldType(row.type);
   // A LAYOUT GROUP answers nothing itself: it owns fields, and an empty one is
   // not a form control but a hole, so it never reaches the screen.
   if (type === 'group') {
@@ -266,13 +297,15 @@ export function humanInputOtpDigits(field: HumanInputField, raw: string): string
 
 /**
  * Every field that ANSWERS something, depth first, in reading order. A layout
- * group is a branch of the tree and holds no value of its own, so everything
- * that reads or writes values walks the leaves and never the nodes.
+ * group is a branch of the tree and holds no value of its own, and a decoration
+ * holds none either, so everything that reads or writes values walks the leaves
+ * and never the nodes.
  */
 export function humanInputInputFields(fields: readonly HumanInputField[]): HumanInputField[] {
-  return fields.flatMap((field) =>
-    field.type === 'group' ? humanInputInputFields(field.fields ?? []) : [field],
-  );
+  return fields.flatMap((field) => {
+    if (field.type === 'group') return humanInputInputFields(field.fields ?? []);
+    return humanInputIsDecoration(field) ? [] : [field];
+  });
 }
 
 /**

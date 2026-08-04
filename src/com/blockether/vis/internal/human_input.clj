@@ -175,6 +175,16 @@
     (invalid-field! field-id why)
     group))
 
+(defn- checked-decor
+  "`decor` once it satisfies the declared contract for a DECORATION. It answers
+   nothing and arranges nothing, so the only thing it must have is the words it
+   paints — and it must carry nothing that would make a surface go looking for a
+   value it can never hold."
+  [decor]
+  (if-let [why (hi-spec/decor-error decor)]
+    (invalid-field! nil why)
+    decor))
+
 (defn- checked-request
   [request]
   (if-let [why (hi-spec/request-error request)]
@@ -216,6 +226,12 @@
    describes ONE value — a default, a placeholder, options, rules — is refused
    here instead of being silently ignored on a node that can never use it."
   #{"name" "id" "type" "label" "description" "help" "fields" "direction"})
+
+(def ^:private decor-keys
+  "Every key a decoration may carry. No name, no label, no children: nobody
+   answers a heading, so it has its own type and the words it paints and nothing
+   else to say."
+  #{"type" "text"})
 
 (def ^:private option-keys "Every key one `:options` entry may carry." #{"value" "label"})
 
@@ -388,6 +404,13 @@
   [node]
   (= hi-spec/group-type-name (str/lower-case (or (trimmed (pick node "type" :type)) ""))))
 
+(defn- decor-type
+  "The internal DECORATION type this RAW spec node asks for, or nil when it asks
+   for something answerable. Read from the type name alone and read FIRST, like
+   [[group-node?]]: a heading is ink on the form, so it never walks a value path."
+  [node]
+  (get hi-spec/decor-types (str/lower-case (or (trimmed (pick node "type" :type)) ""))))
+
 (defn normalize-field
   "Validate one FIELD spec — a leaf holding exactly one answer — and return its
    internal form. Throws `ex-info` with `:type :vis/human-input-invalid-field`
@@ -410,6 +433,13 @@
     (invalid-field! (trimmed (pick field "name" :name "id" :id))
                     (str "a group is not a field — it holds no answer, only the fields it"
                          " arranges. Normalize a node of the tree with normalize-node.")))
+  (when-let [decor (decor-type field)]
+    (invalid-field! (trimmed (pick field "name" :name "id" :id))
+                    (str "a "
+                         (name decor)
+                         " is a decoration, not a field — it holds no answer,"
+                         " only the words it paints. Normalize a node of the tree with"
+                         " normalize-node.")))
   (let
     [field-id
      (trimmed (pick field "name" :name "id" :id))
@@ -549,25 +579,51 @@
                        description
                        (assoc :description description))))))
 
+(defn- normalize-decor
+  "Validate a DECORATION — a heading or a paragraph — and return its internal
+   form. Throws `ex-info` with `:type :vis/human-input-invalid-field` on a bad
+   spec.
+
+   The whole node is two things: which decoration it is, and the words it
+   paints. It has no `:name`, which is the point — there is no identity, so it
+   is never keyed, never focused, never in an answer map, and two paragraphs
+   saying the same thing are two decorations rather than a name collision."
+  [decor]
+  (let [type (decor-type decor)]
+    (check-keys! (name type) decor-keys decor #(invalid-field! nil %))
+    (let [text (trimmed (pick decor "text" :text))]
+      (when-not text
+        (invalid-field! nil (str "a " (name type) " must carry :text — the words it paints")))
+      (checked-decor {:type type :text text}))))
+
 (defn normalize-node
   "Validate one node of a request's field TREE and return its internal form.
 
    This is the fork the whole shape hangs on, and it is taken ONCE, up here: a
    `group` is control flow — it arranges the children below it and holds no
-   answer — and anything else is a field holding exactly one. Deciding it above
-   the two normalizers is why [[normalize-field]] never has to ask whether it is
-   really a layout node, and why no value path below carries a branch for one."
+   answer — a `heading` or a `paragraph` is pure decoration that neither asks
+   nor arranges, and anything else is a field holding exactly one answer.
+   Deciding it above the three normalizers is why [[normalize-field]] never has
+   to ask whether it is really layout or ink, and why no value path below
+   carries a branch for a node that can never take one."
   [node]
-  (if (group-node? node) (normalize-group node) (normalize-field node)))
+  (when-not (map? node) (invalid-field! nil "field must be a map"))
+  (cond (group-node? node) (normalize-group node)
+        (decor-type node) (normalize-decor node)
+        :else (normalize-field node)))
 
 (defn- leaves!
   "Conjoin every ANSWERABLE field of `fields` onto TRANSIENT vector `acc`, depth
-   first. The accumulator is threaded through the recursion, so a tree of any
-   depth is flattened in one pass onto one array — where the `mapcat` shape this
-   replaces allocated a lazy seq and a fresh vector for every group it entered."
+   first. A group is walked through and a decoration is dropped — neither holds
+   a value, so neither can key `:values`. The accumulator is threaded through
+   the recursion, so a tree of any depth is flattened in one pass onto one array
+   — where the `mapcat` shape this replaces allocated a lazy seq and a fresh
+   vector for every group it entered."
   [acc fields]
   (reduce (fn [acc {:keys [type] :as field}]
-            (if (= hi-spec/group-type type) (leaves! acc (:fields field)) (conj! acc field)))
+            (cond (= hi-spec/group-type type) (leaves! acc (:fields field))
+                  (hi-spec/decoration? field) acc
+                  :else (conj! acc field)))
           acc
           fields))
 
@@ -694,8 +750,9 @@
      (when (empty? fields) (invalid-request! ":fields must not be empty"))
 
      _
-     (when-not (apply distinct? (map :name (all-fields fields)))
-       (invalid-request! "field names must be distinct"))
+     (let [names (into [] (keep :name) (all-fields fields))]
+       (when-not (or (empty? names) (apply distinct? names))
+         (invalid-request! "field names must be distinct")))
 
      session-id
      (or (trimmed (pick request "session_id" :session-id)) (ambient-session-id))]

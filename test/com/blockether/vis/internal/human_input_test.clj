@@ -1278,3 +1278,63 @@
       (expect (= :vis/human-input-invalid-answer
                  (refusal-type
                    #(#'hi/checked-answer "r1" fields (answered (assoc legal "env" "staging")))))))))
+
+;; A form is more than its questions: a `heading` names a section and a
+;; `paragraph` explains one. Neither can live in the vocabulary of ANSWERS and
+;; neither is layout — a decoration arranges nothing — so it is the third node
+;; contract, and the three refuse each other.
+(defdescribe
+  decoration-test
+  "A `heading` and a `paragraph` are pure DECORATION: ink on the form, with no
+   answer, no children and no identity."
+  (it "normalizes to just its type and the words it paints"
+      (let
+        [[head para field] (normalized-fields {"type" "heading" "text" "Connection"}
+                                              {"type" "paragraph" "text" "Where it runs."}
+                                              {"name" "host" "label" "Host"})]
+        (expect (= {:type :heading :text "Connection"} head))
+        (expect (= {:type :paragraph :text "Where it runs."} para))
+        (expect (= "host" (:name field)))))
+  (it "answers nothing, so it never keys the values map — not even inside a group"
+      (let
+        [fields (normalized-fields {"type" "heading" "text" "H"}
+                                   {"name" "host"}
+                                   {"type" "group"
+                                    "name" "g"
+                                    "fields" [{"type" "paragraph" "text" "P"}
+                                              {"name" "pw" "type" "password"}]})]
+        (expect (= ["host" "pw"] (mapv :name (hi/input-fields fields))))))
+  (it "is neither a field nor a group, and the three contracts refuse each other"
+      (let
+        [[head field group] (normalized-fields {"type" "heading" "text" "H"}
+                                               {"name" "host"}
+                                               {"type" "group" "name" "g" "fields" [{"name" "a"}]})]
+        ;; One home for the vocabulary, as with the field and group tables.
+        (expect (= #{:heading :paragraph} (set (vals hs/decor-types))))
+        (expect (not (contains? (set (vals hs/field-types)) :heading)))
+        (expect (nil? (ns-resolve 'com.blockether.vis.internal.human-input 'decor-types)))
+        (expect (nil? (hs/decor-error head)))
+        (expect (some? (hs/field-error head)))
+        (expect (some? (hs/group-error head)))
+        (expect (some? (hs/decor-error field)))
+        (expect (some? (hs/decor-error group)))))
+  (it "refuses a decoration that tries to ask something"
+      ;; A `:name` would make it keyed, a `:default` would make it answerable:
+      ;; both are a spec that meant to add a field.
+      (expect (str/includes? (refusal #(hi/normalize-node {"type" "heading" "text" "H" "name" "h"}))
+                             "name"))
+      (expect (str/includes? (refusal #(hi/normalize-node {"type" "paragraph"})) "text"))
+      ;; And it can never arrive on the FIELD path: the fork is taken once, above.
+      (expect (str/includes? (refusal #(hi/normalize-field {"type" "heading" "text" "H"}))
+                             "decoration")))
+  (it "leaves a decorated request satisfying the declared contract"
+      (let
+        [request (hi/normalize-request (spec {"type" "heading" "text" "H"}
+                                             {"type" "paragraph" "text" "P"}
+                                             {"name" "host"}))]
+        (expect (nil? (hs/request-error request)))
+        ;; Two headings reading the same words are two decorations, never a name
+        ;; collision: there is no identity to collide.
+        (expect (nil? (hs/request-error (hi/normalize-request (spec {"type" "heading" "text" "H"}
+                                                                    {"type" "heading" "text" "H"}
+                                                                    {"name" "host"}))))))))

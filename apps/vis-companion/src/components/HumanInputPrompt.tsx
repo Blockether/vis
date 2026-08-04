@@ -291,9 +291,11 @@ export function HumanInputSheet({
                 )}
               </div>
             )}
-            {request.fields.map((field) => (
+            {/* A DECORATION has no name, so position is the only identity a row
+                is guaranteed to have. */}
+            {request.fields.map((field, at) => (
               <HumanInputFieldRow
-                key={`${request.id}:${field.id}`}
+                key={`${request.id}:${at}:${field.id}`}
                 field={field}
                 values={values}
                 errors={errors}
@@ -368,6 +370,16 @@ function HumanInputFieldRow({
   const chosen = Array.isArray(value) ? value : [];
   const options = field.options ?? [];
 
+  // PURE DECORATION: a heading opens a section of a long form and a paragraph
+  // explains one. Neither is a control: nothing keys it, it holds no value and
+  // it can carry no error, so it renders as the words it was given and stops.
+  if (field.type === 'heading') {
+    return <h3 className="mt-1 font-mono text-ui font-semibold text-white">{field.text}</h3>;
+  }
+  if (field.type === 'paragraph') {
+    return <p className="font-mono text-meta italic text-dialog-hint">{field.text}</p>;
+  }
+
   // A LAYOUT GROUP renders no control of its own: it is a flex container that
   // owns fields, and a child may be a group again, so `row` and `column` nest
   // without a third rule. `fieldset`/`legend` is the group a screen reader
@@ -393,8 +405,8 @@ function HumanInputFieldRow({
               : 'flex flex-col gap-3'
           }
         >
-          {(field.fields ?? []).map((child) => (
-            <div key={child.id} className={isRow ? 'min-w-[7.5rem] flex-1' : ''}>
+          {(field.fields ?? []).map((child, at) => (
+            <div key={`${at}:${child.id}`} className={isRow ? 'min-w-[7.5rem] flex-1' : ''}>
               <HumanInputFieldRow
                 field={child}
                 values={values}

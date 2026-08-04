@@ -872,7 +872,7 @@
       (let [form (hi/init-form (request))]
         (expect (= t/footer-error-fg (:fg (cell-under form "*"))))
         (expect (not= t/footer-error-fg (:fg (cell-under form "User"))))))
-  (it "seats a checkbox's own `*` on the field surface the box sits on"
+  (it "re-inks a checkbox's own `*` on whatever paper its row already wears"
       (let
         [cell (cell-under (hi/init-form
                             {:id "r"
@@ -881,7 +881,9 @@
                              [{:id "ok" :type :checkbox :label "Confirm" :is-required true}]})
                           "*")]
         (expect (= t/footer-error-fg (:fg cell)))
-        (expect (= t/input-field-bg (:bg cell)))))
+        ;; A checkbox is a TOGGLE, so that paper is the dialog's own: the typed
+        ;; field's surface never gets under a row nobody types into.
+        (expect (= t/dialog-bg (:bg cell)))))
   (it "puts a field's description between its label and its input"
       (let
         [rows
@@ -1381,12 +1383,24 @@
         (doseq [needle ["Dev" "Prod" "Alpha" "Beta" "Confirm"]]
           (expect (seq (painted-rows form needle)))
           (expect (not-any? #(str/starts-with? % "•") (painted-rows form needle))))))
-  (it "seats an option and a checkbox on the very field surface a typed value uses"
+  ;; Regression: a checkbox, an option and a slider were painted on the TYPED
+  ;; field's own surface — `input-field-bg` when focused, `field-resting-bg` at
+  ;; rest — so most of a form read as a column of pale boxes to type into, when
+  ;; Space is the only thing any of them takes.
+  (it "keeps a TOGGLE off the typed field's surface — it is not an input"
       (let [form (assoc (hi/init-form (request)) :focus 2)]
-        (expect (= t/input-field-bg (:bg (cell-under form "Dev"))))
-        (expect (= (t/field-resting-bg) (:bg (cell-under form "Prod"))))
+        (doseq [needle ["Dev" "Prod" "Alpha" "Beta"]]
+          (expect (= t/dialog-bg (:bg (cell-under form needle)))))
+        (expect (= t/dialog-bg
+                   (:bg (cell-under (assoc (hi/init-form (request)) :focus 6) "Confirm"))))
+        ;; The field beside them that IS typed into keeps its surface.
         (expect (= t/input-field-bg
-                   (:bg (cell-under (assoc (hi/init-form (request)) :focus 6) "Confirm")))))))
+                   (:bg (cell-under (assoc (hi/init-form (request)) :focus 0) "who"))))))
+  (it "still says which toggle the keyboard is on: the ring and the bold ink"
+      (let [form (assoc (hi/init-form (request)) :focus 2)]
+        (expect (str/includes? (:text (painted-row-cells form "Dev")) "▎"))
+        (expect (:is-bold (cell-under form "Dev")))
+        (expect (not (:is-bold (cell-under form "Prod")))))))
 
 (defdescribe
   otp-field-test
@@ -1652,3 +1666,58 @@
 
         (expect (= ["dev" "prod" "free" "paid"] (into [] (keep :value) (:stops form))))
         (expect (= [["dev"] ["prod"] ["free"] ["paid"]] (mapv focused (range 4)))))))
+
+;; =============================================================================
+;; Decoration — the ink a form needs that answers nothing
+;; =============================================================================
+
+(defn- decorated-request
+  "A view built by the ENGINE itself: two decorations, a field, and a heading
+   INSIDE a group, so these tests pin the real contract."
+  []
+  (engine/request->view (engine/normalize-request
+                          {"title" "Deploy"
+                           "fields"
+                           [{"type" "heading" "text" "Connection"}
+                            {"type" "paragraph" "text" "Where the job runs and who it runs as."}
+                            {"name" "host" "label" "Host"}
+                            {"type" "group"
+                             "name" "creds"
+                             "fields" [{"type" "heading" "text" "Credentials"}
+                                       {"name" "pw" "type" "password" "label" "Password"}]}]})))
+
+(defdescribe
+  decoration-test
+  "A form is not only questions. A heading breaks a long one into sections and a
+   paragraph explains one; neither holds a value, neither can be focused, and
+   both are what make a form buildable out of more than inputs."
+  (it "plans a heading and a paragraph as their own rows, in the author's order"
+      (let [rows (hi/form-rows (hi/init-form (decorated-request)) 60)]
+        (expect (= [[:heading "Connection"] [:paragraph "Where the job runs and who it runs as."]]
+                   (mapv (juxt :kind :text) (take 2 rows))))
+        ;; ...and inside a group too, so a section title can sit in a column.
+        (expect (some #(= [:heading "Credentials"] ((juxt :kind :text) %)) rows))))
+  (it "never makes a decoration a focus stop, so ↑/↓ walks the answers only"
+      (expect (= ["host" "pw"] (into [] (keep :field-id) (hi/stops (decorated-request))))))
+  (it "keeps a decoration out of the answer map entirely"
+      (expect (= #{"host" "pw"} (set (keys (:values (hi/init-form (decorated-request))))))))
+  (it "paints a heading bold on the dialog's own paper, never as a field"
+      (let [cell (cell-under (hi/init-form (decorated-request)) "Connection")]
+        (expect (:is-bold cell))
+        (expect (= t/dialog-fg (:fg cell)))
+        (expect (= t/dialog-bg (:bg cell)))))
+  (it "paints a paragraph as the prose it is — dim, unbolded, on dialog paper"
+      (let [cell (cell-under (hi/init-form (decorated-request)) "Where")]
+        (expect (not (:is-bold cell)))
+        (expect (= t/dialog-hint (:fg cell)))
+        (expect (= t/dialog-bg (:bg cell)))))
+  (it "wraps a long paragraph instead of clipping it to a single `…` row"
+      (let
+        [rows (hi/form-rows (hi/init-form (engine/request->view
+                                            (engine/normalize-request
+                                              {"title" "T"
+                                               "fields" [{"type" "paragraph"
+                                                          "text" (str/join " " (repeat 30 "words"))}
+                                                         {"name" "a" "label" "A"}]})))
+                            40)]
+        (expect (< 1 (count (filterv #(= :paragraph (:kind %)) rows)))))))

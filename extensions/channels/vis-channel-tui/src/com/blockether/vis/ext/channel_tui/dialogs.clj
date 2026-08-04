@@ -716,24 +716,17 @@
   ^long [inner-w]
   (max 1 (- (long inner-w) 2 1 (* 2 (long field-pad)))))
 
-(defn draw-field-row!
-  "FORM-FIELD row — the ONE painter for every focusable row of a form, typed or
-   toggled. A field is drawn as a field: `input-field-bg`, padded a space each
-   side, the very control `components/find-bar!` paints its query box with — so an
-   empty field is still visibly a field and every input in the TUI is the same
-   object. It starts at the dialog's own inner edge, directly under its label.
+(defn- draw-row-surface!
+  "The shared geometry of EVERY focusable form row, typed or toggled. The
+   dialog's own paper is cleared first — anything past the row's right edge
+   belongs to the body — then `bg` paints the row's surface, the text lands one
+   pad in from the ring cell, and a focused row wears the accent ring `▎` and
+   takes the ink (`box-fg`, bold) while an unfocused one recedes to
+   `dialog-hint`. Returns the column the text started at.
 
-   Focus is the other half, and it is said three ways at once: the focused field
-   wears the accent ring `▎` down its left edge, keeps the full field surface, and
-   takes the ink (`box-fg`, bold). A field the keyboard is NOT in loses the ring,
-   recedes to `theme/field-resting-bg` and dims to `dialog-hint`. That contrast IS
-   the cursor in a form — there is no `•` gutter, because a marker in front of
-   every row says the same thing about all of them.
-
-   `content` is the field's already-rendered text (`ada@example.com`, `[1] [2] [ ]`,
-   `● Dev`). Returns the column its first cell landed on, so a caller that owns
-   the terminal cursor can place it."
-  [g left row inner-w focused? content]
+   Geometry is shared so a form's rows line up whatever they are; the SURFACE is
+   the caller's, because only a row you can type into is an input."
+  [g left row inner-w focused? bg content]
   (let
     [content-w
      (field-content-w inner-w)
@@ -748,22 +741,60 @@
      shown
      (ellipsize (str content) content-w)]
 
-    ;; The row is cleared on the dialog's own paper first: anything past the
-    ;; field's right edge belongs to the body, not to the field.
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc (long left)) row inner-w 1)
-    (p/set-colors! g
-                   (if focused? t/box-fg t/dialog-hint)
-                   (if focused? t/input-field-bg (t/field-resting-bg)))
+    (p/set-colors! g (if focused? t/box-fg t/dialog-hint) bg)
     (p/fill-rect! g field-left row (+ content-w 1 (* 2 (long field-pad))) 1)
     (if focused?
       (p/styled g [p/BOLD] (p/put-str! g text-left row shown))
       (p/put-str! g text-left row shown))
     (when focused?
-      (p/set-colors! g t/header-active-tab-accent t/input-field-bg)
+      (p/set-colors! g t/header-active-tab-accent bg)
       (p/put-str! g field-left row "▎"))
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     text-left))
+
+(defn draw-field-row!
+  "TYPED row — the painter for a form row text is entered into: a line, a
+   password, an OTP's boxes. An input is drawn as an INPUT: `input-field-bg`,
+   padded a space each side, the very control `components/find-bar!` paints its
+   query box with — so an empty field is still visibly a field and every place
+   the TUI takes typing is the same object. It starts at the dialog's own inner
+   edge, directly under its label.
+
+   Focus is the other half, and it is said three ways at once: the focused field
+   wears the accent ring `▎` down its left edge, keeps the full field surface, and
+   takes the ink (`box-fg`, bold). A field the keyboard is NOT in loses the ring,
+   recedes to `theme/field-resting-bg` and dims to `dialog-hint`. That contrast IS
+   the cursor in a form — there is no `•` gutter, because a marker in front of
+   every row says the same thing about all of them.
+
+   A TOGGLE is not typed into and does not wear this paper: see
+   [[draw-toggle-row!]].
+
+   `content` is the field's already-rendered text (`ada@example.com`,
+   `[1] [2] [ ]`). Returns the column its first cell landed on, so a caller that
+   owns the terminal cursor can place it."
+  [g left row inner-w focused? content]
+  (draw-row-surface! g
+                     left
+                     row
+                     inner-w
+                     focused?
+                     (if focused? t/input-field-bg (t/field-resting-bg))
+                     content))
+
+(defn draw-toggle-row!
+  "TOGGLED row — an option of a `:select`, a checkbox, a slider's track. Exactly
+   the geometry of [[draw-field-row!]], so a form's rows line up whatever they
+   are, but painted on the dialog's OWN paper: nothing is typed here, so there is
+   no input surface to fill. Paper that says \"type here\" under a row that cannot
+   take a character is a lie about what the keyboard will do.
+
+   Focus is then the accent ring `▎` and the bold ink alone, and the status glyph
+   ([[choice-mark]]) says what the toggle currently IS."
+  [g left row inner-w focused? content]
+  (draw-row-surface! g left row inner-w focused? t/dialog-bg content))
 
 (defn draw-input-item!
   "A form's TYPED row: `draw-field-row!` plus what typing needs — the horizontal

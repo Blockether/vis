@@ -74,6 +74,27 @@
   "Wire direction name -> internal group direction."
   {"column" :column "row" :row})
 
+(def decor-types
+  "Wire type name -> internal type of a DECORATION: a node that asks nothing and
+   arranges nothing, and is on the form purely to be READ.
+
+   A `heading` breaks a long form into sections and a `paragraph` explains one.
+   Neither is in [[field-types]] and neither is a [[group-type]]: a decoration
+   holds no answer — no default, no options, no rules, no key in the answer map,
+   no focus stop — and owns no children either. It has no `:name` at all, which
+   is the point: there is no identity, so two headings reading the same words are
+   two decorations rather than a name collision."
+  {"heading" :heading "paragraph" :paragraph})
+
+(def ^:private decor-node-types (set (vals decor-types)))
+
+(defn decoration?
+  "True when this normalized node is a [[decor-types]] decoration — ink on the
+   form rather than a question. Every surface asks this before it looks for a
+   value, and the answer contract never sees such a node at all."
+  [{:keys [type]}]
+  (contains? decor-node-types type))
+
 (def otp-defaults
   "How many boxes a one-time code gets by default, and the most it may ask for:
    past a dozen the boxes no longer fit a narrow dialog."
@@ -105,6 +126,11 @@
 (def ^:private choice-keys (conj value-keys :options))
 (def ^:private range-keys (into value-keys [:min :max :step]))
 (def ^:private group-keys #{:id :name :type :label :description :direction :fields})
+
+(def ^:private decor-keys
+  "Every key a decoration may carry: its own type and the words it paints. A node
+   nobody can answer has nothing else to say."
+  #{:type :text})
 
 (def ^:private request-keys
   #{:id :title :description :source :fields :submit-label :cancel-label :is-cancellable :timeout-ms
@@ -202,6 +228,7 @@
 (s/def ::step number?)
 (s/def ::direction (set (vals group-directions)))
 (s/def ::value non-blank-string?)
+(s/def ::text non-blank-string?)
 
 (s/def ::option (s/and #(closed? #{:value :label} %) (s/keys :req-un [::value ::label])))
 
@@ -264,10 +291,10 @@
 ;; A group — the control flow above the fields
 ;; ---------------------------------------------------------------------------
 ;;
-;; A request carries a TREE of two kinds of node, not a list of nine kinds of
-;; field: a group arranges children, a field holds a value. [[::node]] is where
-;; that choice is made — once, on the way in — and the only place either
-;; contract meets the other.
+;; A request carries a TREE of three kinds of node, not a list of ten kinds of
+;; field: a group ARRANGES children, a decoration is READ, a field HOLDS one
+;; value. [[::node]] is where that choice is made — once, on the way in — and the
+;; only place the three contracts meet.
 
 (defn- grouped?
   "A group says so in its own `:type`. Every surface walks the tree by that key,
@@ -281,12 +308,31 @@
          (s/keys :req-un [::id ::name ::direction ::fields] :opt-un [::label ::description])
          one-identity?))
 
+;; ---------------------------------------------------------------------------
+;; A decoration — ink that answers nothing
+;; ---------------------------------------------------------------------------
+
+(s/def ::decor
+  ;; No `:id` and no `:name`: a decoration is never keyed, so it carries its own
+  ;; type and the words it paints, and refusing everything else is what keeps a
+  ;; disabled-looking field out of the vocabulary of answers.
+  (s/and #(closed? decor-keys %)
+         decoration?
+         (s/keys :req-un [::text])))
+
+;; ---------------------------------------------------------------------------
+;; A node — the one place the three contracts meet
+;; ---------------------------------------------------------------------------
+
 (defmulti ^:private node-form
-  "Which of the two contracts one node of the field tree answers to."
+  "Which of the three contracts one node of the field tree answers to."
   :type)
 
 (defmethod node-form group-type [_] ::group)
-(defmethod node-form :default [_] ::field)
+
+;; The decoration vocabulary is [[decor-types]] and lives in ONE place, so the
+;; fallback asks it instead of listing `:heading` and `:paragraph` again here.
+(defmethod node-form :default [node] (if (decoration? node) ::decor ::field))
 
 (s/def ::node (s/multi-spec node-form :type))
 
@@ -312,8 +358,12 @@
 
 (defn- field-names
   [fields]
-  (mapcat (fn [field]
-            (cons (:name field) (field-names (:fields field))))
+  (mapcat (fn [node]
+            ;; A decoration has no `:name` — nothing keys it — so it contributes
+            ;; nothing to key uniqueness either.
+            (cond-> (field-names (:fields node))
+              (:name node)
+              (conj (:name node))))
           fields))
 
 (defn- distinct-names?
@@ -445,10 +495,13 @@
 
 (defn- answerable
   "Every field that holds an ANSWER. A group is control flow: it never appears in
-   a values map, its children answer in its place."
+   a values map, its children answer in its place. A decoration answers nothing
+   at all and has no children to answer for it."
   [fields]
-  (mapcat (fn [{:keys [type] :as field}]
-            (if (= group-type type) (answerable (:fields field)) [field]))
+  (mapcat (fn [{:keys [type] :as node}]
+            (cond (= group-type type) (answerable (:fields node))
+                  (decoration? node) []
+                  :else [node]))
           fields))
 
 ;; ---------------------------------------------------------------------------
@@ -477,7 +530,8 @@
 
 (defn field-error
   "nil when `field` is a legal normalized FIELD — a leaf holding one answer —
-   else why it is not. A layout group is not a field: see [[group-error]]."
+   else why it is not. A layout group is not a field ([[group-error]]) and
+   neither is a decoration ([[decor-error]])."
   [field]
   (error ::field field))
 
@@ -487,6 +541,13 @@
    the whole subtree."
   [group]
   (error ::group group))
+
+(defn decor-error
+  "nil when `decor` is a legal normalized decoration, else why it is not. The
+   three node contracts are checked apart, so each refuses the other two: a
+   heading carrying a `:default` is a spec that meant to ask something."
+  [decor]
+  (error ::decor decor))
 
 (defn request-error
   "nil when `request` is a legal normalized request, else why it is not."

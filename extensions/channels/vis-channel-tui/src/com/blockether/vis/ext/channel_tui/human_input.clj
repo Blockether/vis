@@ -24,7 +24,8 @@
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.transient :as tr]
-            [com.blockether.vis.internal.human-input :as engine])
+            [com.blockether.vis.internal.human-input :as engine]
+            [com.blockether.vis.internal.human-input.spec :as hi-spec])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
 (set! *warn-on-reflection* true)
@@ -607,6 +608,17 @@
               {:kind :description :text line})
             (if (pos? width) (render/wrap-text text width) [text])))))
 
+(defn- decor-rows
+  "Rows for a DECORATION — a heading or a paragraph. Neither holds a value and
+   neither is a focus stop: these are the section titles and the sentences that
+   make a long form readable, so they are planned as plain ink the keyboard walks
+   straight past. A paragraph wraps like any other prose in this dialog; a
+   heading is one line, ellipsized if the dialog is narrow."
+  [text-w {:keys [type text]}]
+  (if (= :heading type)
+    [{:kind :heading :text text}]
+    (mapv #(assoc % :kind :paragraph) (description-rows text text-w))))
+
 (declare field-rows)
 
 (def ^:private column-gutter
@@ -688,8 +700,10 @@
    [[stop-index]] — and `text-w` is the prose budget of the column this node
    lands in, which a `:row` group narrows for its children."
   [{:keys [form errors focus index] :as ctx} text-w {:keys [id type] :as field}]
-  (if (= :group type)
-    (group-rows ctx text-w field)
+  (cond
+    (= :group type) (group-rows ctx text-w field)
+    (hi-spec/decoration? field) (decor-rows text-w field)
+    :else
     (let
       [idx
        (get index id)
@@ -1072,9 +1086,30 @@
     :error
     (do (paint-plain! g left row inner-w t/footer-error-fg (:text entry)) nil)
 
-    ;; A checkbox, an option and a slider are answers being GIVEN, so they ride
-    ;; the same field surface a typed row does. Focus is the surface, the ring and
-    ;; the bold ink — never a marker in front of the row.
+    ;; A DECORATION answers nothing and is never focused, so it wears neither a
+    ;; field surface nor focus ink: a heading is the bold section title that
+    ;; breaks a long form into parts, a paragraph the prose that explains one.
+    ;; They read exactly the same whatever the keyboard is doing, which is what
+    ;; makes them safe to hang a form's structure on.
+    :heading
+    (do (p/set-colors! g t/dialog-fg t/dialog-bg)
+        (p/fill-rect! g (inc (long left)) row inner-w 1)
+        (p/styled g
+                  [p/BOLD]
+                  (p/put-str! g
+                              (inc (long left))
+                              row
+                              (dialogs/ellipsize (str (:text entry)) (max 0 (- (long inner-w) 2)))))
+        nil)
+
+    :paragraph
+    (do (paint-italic! g left row inner-w t/dialog-hint (:text entry)) nil)
+
+    ;; A checkbox, an option and a slider are TOGGLED, not typed: they keep a
+    ;; typed row's geometry so the form lines up, but they are painted on the
+    ;; dialog's own paper. A filled input surface under a row that cannot take a
+    ;; character promised typing where only Space toggles. Focus is the ring and
+    ;; the bold ink, and the ●/○ or [✓]/[ ] glyph says what the toggle IS.
     :checkbox
     (let
       [content
@@ -1084,15 +1119,15 @@
        (dialogs/ellipsize content (dialogs/field-content-w inner-w))
 
        text-left
-       (dialogs/draw-field-row! g left row inner-w (:is-focused entry) content)]
+       (dialogs/draw-toggle-row! g left row inner-w (:is-focused entry) content)]
 
-      ;; A checkbox carries its own label, so its `*` rides the field surface the
-      ;; box sits on — re-inked there, in the same red every other label uses.
+      ;; A checkbox carries its own label, so its `*` is re-inked on the paper the
+      ;; box sits on — the dialog's own, in the same red every other label uses.
       (when (and (:is-required entry) (str/ends-with? shown required-marker))
         (paint-required! g
                          (+ (long text-left) (- (count shown) (count required-marker)))
                          row
-                         (if (:is-focused entry) t/input-field-bg (t/field-resting-bg))))
+                         t/dialog-bg))
       nil)
 
     ;; One row shape, TWO toggle vocabularies. An exclusive `:select` option wears
@@ -1103,7 +1138,7 @@
     ;; already draws the two marks apart, so this is also what keeps the surfaces
     ;; speaking one vocabulary.
     :option
-    (do (dialogs/draw-field-row!
+    (do (dialogs/draw-toggle-row!
           g
           left
           row
@@ -1113,7 +1148,7 @@
         nil)
 
     :range
-    (do (dialogs/draw-field-row! g left row inner-w (:is-focused entry) (:text entry)) nil)
+    (do (dialogs/draw-toggle-row! g left row inner-w (:is-focused entry) (:text entry)) nil)
 
     ;; The digit boxes are an INPUT, so they ride the same field surface a typed
     ;; row does; what is special is that the TERMINAL cursor is parked inside the
