@@ -20,6 +20,7 @@ import { homeifyPath } from '../lib/path';
 import { onWake } from '../lib/wake';
 import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
 import { assignMachineColors, machineColor } from '../lib/machine-colors';
+import { menuPosition } from '../lib/anchored-menu';
 import { PencilIcon, SwipeActions, TrashIcon } from '../components/SwipeActions';
 import { DEFAULT_SESSION_PAGE_SIZE, getSessionsPerPage, subscribeSessionsPerPage } from '../lib/storage';
 import { hostOf } from '../lib/endpoints';
@@ -549,12 +550,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   const draftRepo = draftProbe ? projectLabel(draftProbe) : '';
 
   const openStartMenu = useCallback(() => {
-    const rect = startAnchorRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setStartMenu({
-      top: Math.round(rect.bottom + 6),
-      left: Math.round(Math.max(12, rect.right - START_MENU_WIDTH)),
-    });
+    setStartMenu(menuPosition(startAnchorRef.current?.getBoundingClientRect(), START_MENU_WIDTH));
   }, []);
 
   const closeStartMenu = useCallback((restoreFocus = false) => {
@@ -585,21 +581,24 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
     return () => controller.abort();
   }, [startMenu, drafts, draftProbe, targetMachine]);
 
-  // An anchored popover whose anchor moved is a lie, so a resize closes it. Escape
+  // An anchored popover whose anchor moved is a lie, so a resize RE-ANCHORS it to
+  // the live caret; only a caret that has left the document closes it. Closing on
+  // resize is what made the split control look dead on a phone: the on-screen
+  // keyboard hiding — one tap after the filter, in the very tap that opens this
+  // menu — fires `resize`, and the menu died on the frame it was born. Escape
   // closes it and hands focus back to the caret it came from.
   useEffect(() => {
     if (!startMenu) return;
-    const close = () => setStartMenu(null);
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') closeStartMenu(true);
     };
     window.addEventListener('keydown', onKey);
-    window.addEventListener('resize', close);
+    window.addEventListener('resize', openStartMenu);
     return () => {
       window.removeEventListener('keydown', onKey);
-      window.removeEventListener('resize', close);
+      window.removeEventListener('resize', openStartMenu);
     };
-  }, [startMenu, closeStartMenu]);
+  }, [startMenu, closeStartMenu, openStartMenu]);
 
   /**
    * Create the session, then put it where the user asked. The workspace move is a
