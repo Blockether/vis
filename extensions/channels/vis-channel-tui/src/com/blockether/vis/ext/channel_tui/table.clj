@@ -488,7 +488,9 @@
         head
         (or header (first rows))]
 
-       (-> [(boxed-border-line widths :top) (boxed-row-line widths head (repeat :left))
+       ;; The head follows the column's own alignment: a numeric label sits over
+       ;; its digits instead of drifting to the far left of a wide column.
+       (-> [(boxed-border-line widths :top) (boxed-row-line widths head aligns)
             (boxed-border-line widths :middle)]
            (into (map #(boxed-row-line widths % aligns) (rest rows)))
            (conj (boxed-border-line widths :bottom)))))))

@@ -119,6 +119,23 @@
                  (let [lines (table/csv-grid-lines grid 60 {:header ["N ▲" "Q" "T"]})]
                    (expect (str/includes? (nth lines 1) "N ▲"))
                    (expect (apply = (map count lines)))))
+             (it "a numeric column's label sits over its digits, not at the far left"
+                 (let
+                   [ws
+                    (table/csv-stretch-widths (table/csv-widths grid 60) 60)
+
+                    lines
+                    (table/csv-grid-lines grid 60 {:widths ws})
+
+                    ends
+                    (fn [line s]
+                      (+ (long (str/index-of line s)) (count s)))]
+
+                   ;; lines: top, header, rule, ada, yak, zed
+                   (expect (= (ends (nth lines 1) "qty") (ends (nth lines 5) "120")))
+                   ;; a text column is still left-aligned, head and cells alike
+                   (expect (= (str/index-of (nth lines 1) "note")
+                              (str/index-of (nth lines 5) "third")))))
              (it "is nil for an empty grid" (expect (nil? (table/csv-grid-lines [] 60)))))
 
 ;;; ── the inline `vis-table` fence ─────────────────────────────────────────────
@@ -195,7 +212,46 @@
                    (expect (not (str/includes? joined "row12")))
                    (expect (str/includes? joined "5 more rows"))))
              (it "a one-row overflow says row, not rows"
-                 (expect (str/includes? (rendered (fence 11)) "1 more row —"))))
+                 (expect (str/includes? (rendered (fence 11)) "1 more row —")))
+             (it "the headline titles the card: same chip as the grid, and clickable"
+                 (let
+                   [r
+                    (table-render (fence 3))
+
+                    texts
+                    (mapv plain (:lines r))
+
+                    idx-of
+                    (fn [pred]
+                      (first (keep-indexed (fn [i t]
+                                             (when (pred (str/trim t)) i))
+                                           texts)))
+
+                    caption
+                    (idx-of #(str/includes? % "[Table:"))
+
+                    top
+                    (idx-of #(str/starts-with? % "┌"))]
+
+                   ;; the grid starts on the very next row — one card, not a
+                   ;; caption paragraph with a code block loose underneath it
+                   (expect (= (inc (long caption)) (long top)))
+                   ;; and the headline opens the sheet like any grid row does
+                   (expect (some? (:table (nth (:line-meta r) caption))))))
+             (it "the grid FILLS the card instead of leaving dead fill on the right"
+                 (let
+                   [texts
+                    (mapv (comp str/trim plain) (:lines (table-render (fence 3))))
+
+                    bottom
+                    (first (filter #(str/starts-with? % "└") texts))]
+
+                   ;; natural widths would draw a ~25-column grid inside a card
+                   ;; three times that wide; stretched, the border is the widest
+                   ;; thing painted
+                   (expect (some? bottom))
+                   (expect (>= (count bottom) 60))
+                   (expect (= (count bottom) (apply max (map count texts)))))))
 
 ;;; ── the table dialog ─────────────────────────────────────────────────────────
 

@@ -6379,31 +6379,30 @@
     (vec (concat header body))))
 
 (defn- table-block-parts
-  "Parse a `vis-table` node body into `{:summary :name :mime :cols :rows
-   :size-label :csv}`. Missing fields come back nil."
+  "Parse a `vis-table` node body — the header lines `vis_attach` writes, then the
+   CSV payload — into `{:summary :name :cols :rows :csv}`. Missing fields come
+   back nil."
   [node]
   (let
     [lines
      (str/split (str (nth node 2 "")) #"\n" -1)
 
-     [summary name mime dims size-label]
+     [summary name _mime dims]
      lines
 
      [c r]
-     (when (seq dims) (str/split (str dims) #"x"))]
+     (when (seq dims) (str/split (str dims) #"x"))
+
+     num
+     #(some-> %
+              str/trim
+              not-empty
+              parse-long)]
 
     {:summary (str/trim (str summary))
      :name (str/trim (str name))
-     :mime (not-empty (str/trim (str mime)))
-     :cols (some-> c
-                   str/trim
-                   not-empty
-                   parse-long)
-     :rows (some-> r
-                   str/trim
-                   not-empty
-                   parse-long)
-     :size-label (not-empty (str/trim (str size-label)))
+     :cols (num c)
+     :rows (num r)
      :csv (str/join "\n" (drop 5 lines))}))
 
 (def ^:private table-preview-rows
@@ -6414,11 +6413,18 @@
   10)
 
 (defn- table-disclosure-entries
-  "Render one `vis-table` block as a real grid: the `[Table: …]` token as the
-   caption row, then a bordered preview of the first rows — numeric columns
-   right-aligned, over-wide cells ellipsized, the whole grid fitted to the
-   bubble. EVERY painted row carries the CSV in `:meta :table` so the paint loop
-   registers a click region opening the full table dialog."
+  "Render one `vis-table` block as a single card: the `[Table: …]` headline, a
+   bordered preview of the first rows — numeric columns right-aligned, over-wide
+   cells ellipsized — and the `… N more rows` hint.
+
+   Two things make it read as a sheet rather than as a code block that happens to
+   contain pipes. Column widths are STRETCHED, so the grid's borders meet the
+   card's own edges instead of leaving dead fill to the right; and headline, grid
+   and hint are ONE chip, so they share one background and one pair of pads.
+
+   Every entry carries the whole CSV in `:meta :table`: the paint loop turns each
+   painted row into a click region opening the full table dialog — the headline
+   included, which is the row a reader aims at."
   [node content-w _opts]
   (let
     [{:keys [summary name cols rows csv]}
@@ -6427,8 +6433,8 @@
      grid
      (table/parse-csv csv)
 
-     ;; Leave room for the code chip's own 2-column inset so a fitted grid line
-     ;; is never clipped at the right border.
+     ;; Leave room for the code chip's own 2-column inset on each side so a
+     ;; stretched grid line is never clipped at the right border.
      grid-w
      (max 12 (- (long content-w) 4))
 
@@ -6438,27 +6444,25 @@
      hidden
      (long (max 0 (- (count grid) (count shown))))
 
-     lines
-     (cond-> (vec (table/csv-grid-lines shown grid-w))
-       (pos? hidden)
-       (conj (str "… "
-                  hidden
-                  " more row"
-                  (when (not= 1 hidden) "s")
-                  " — click the table to page, sort and select")))
+     widths
+     (table/csv-stretch-widths (table/csv-widths shown grid-w) grid-w)
 
-     header
-     (vec (layout/ast->entries [:ast {} [:p {} summary]] content-w {}))
+     lines
+     (-> [summary]
+         (into (table/csv-grid-lines shown grid-w {:widths widths}))
+         (cond->
+           (pos? hidden)
+           (conj (str "… "
+                      hidden
+                      " more row"
+                      (when (not= 1 hidden) "s")
+                      " — click the table to page, sort and select"))))
 
      tbl
-     {:name name :csv csv :cols cols :rows rows :title (or (not-empty name) summary)}
+     {:name name :csv csv :cols cols :rows rows :title (or (not-empty name) summary)}]
 
-     body
-     (mapv (fn [entry]
-             (assoc-in entry [:meta :table] tbl))
-           (layout/ast->entries [:ast {} [:code {} (str/join "\n" lines)]] content-w {}))]
-
-    (vec (concat header body))))
+    (mapv #(assoc-in % [:meta :table] tbl)
+          (layout/ast->entries [:ast {} [:code {} (str/join "\n" lines)]] content-w {}))))
 
 (defn- paste-aware-ast->entries
   "`layout/ast->entries`, but each top-level `vis-paste` code block becomes
