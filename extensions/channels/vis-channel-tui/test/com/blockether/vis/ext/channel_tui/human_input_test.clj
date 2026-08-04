@@ -1256,4 +1256,26 @@
 
         (expect (= {"host" "db1" "port" "" "notes" ""}
                    (:values (:form (hi/handle-event form {:kind :submit})))))
-        (expect (= {} (hi/live-errors (assoc form :is-submit-attempted true)))))))
+        (expect (= {} (hi/live-errors (assoc form :is-submit-attempted true))))))
+  (it "focuses ONE option when a row group puts two choice fields side by side"
+      ;; Every row resolves its stop through the plan's index, so the second
+      ;; column's options stay its own: the same ordinal must never light up in
+      ;; both columns.
+      (let
+        [form
+         (hi/init-form (grouped-request
+                         {"type" "group"
+                          "direction" "row"
+                          "fields" [{"name" "env" "type" "select" "options" ["dev" "prod"]}
+                                    {"name" "tier" "type" "select" "options" ["free" "paid"]}]}))
+
+         focused
+         (fn [focus]
+           (into []
+                 (comp (mapcat #(if (= :columns (:kind %)) (:cells %) [%]))
+                       (filter :is-focused)
+                       (map :text))
+                 (hi/form-rows (assoc form :focus focus) 60)))]
+
+        (expect (= ["dev" "prod" "free" "paid"] (into [] (keep :value) (:stops form))))
+        (expect (= [["dev"] ["prod"] ["free"] ["paid"]] (mapv focused (range 4)))))))

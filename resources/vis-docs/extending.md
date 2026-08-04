@@ -322,6 +322,7 @@ Field `type` is one of `plaintext`, `password`, `multiline`, `select`,
 `multiselect`, `checkbox`, `range`, `otp`, `group`. A field may also carry
 `placeholder`, `default`, `is_required`, `min_length`, `max_length`, `validate`,
 and — for the two `select` types — `options` (strings, or `{"value": ..., "label": ...}` maps).
+`fields` and `direction` belong to `group` alone (see below).
 
 A `range` is a bounded number: `min` (default 0), `max` (default 100) and `step`
 (default 1). It answers with a number, not a string — a `long` when all three
@@ -359,15 +360,27 @@ vis.ask("Where should the pool connect?", [
 ])
 ```
 
-A group needs no `name` (it gets one derived from its children) and shows a
-heading only when you give it a `label`; `description` works as everywhere else.
-It may hold nothing that describes a value — no `default`, `placeholder`,
-`options`, `is_required` or `validate` — those are refused on a node that could
-never use them. `answer.values` stays **flat**: the leaves key the answer, the
-grouping never appears in it. The TUI splits its width across a `row` (each
-column keeps its own label, error and cursor, `←`/`→` still move within a field
-and `↑`/`↓` between them); the app renders a `fieldset` with the same row or
-column flex.
+A group needs no `name` (it derives one from its children) and shows a heading
+only when you give it a `label`; `description` works as everywhere else. Layout
+keys and value keys never mix, in either direction: `default`, `placeholder`,
+`options`, `is_required` and `validate` are **refused** on a group that could
+never use them, and `fields` or `direction` on an answerable field is refused
+too — a mistyped layout is an error, never a form that quietly loses half its
+fields.
+
+Grouping is layout and nothing else. `answer.values` stays **flat** — the leaves
+key the answer, whatever the arrangement — errors come back keyed by the leaf,
+`is_required` and every rule run exactly as before, and a `{"matches": "…"}` rule
+names a field in any other group. Names stay unique across the whole tree, so two
+groups cannot both hold a `host`.
+
+The group crosses the wire as a tree — `{"type": "group", "direction": "row",
+"fields": [...]}` — so both surfaces read one layout instead of inventing their
+own. The TUI splits the band's width across a `row`: each column keeps its own
+label, `REQUIRED` marker, error line and cursor, `←`/`→` still move inside a
+field and `↑`/`↓` between them in reading order. The app renders a
+`fieldset`/`legend` with the same row or column flex, wrapping on a phone instead
+of overflowing.
 
 ### Validating a field
 

@@ -152,10 +152,20 @@
                   {:type :vis/human-input-invalid-request :reason message})))
 
 (def ^:private field-keys
-  "Every key a field spec may carry, in its canonical snake_case spelling.
-   `id` and `help` are the legacy names of `name` and `description`."
+  "Every key a VALUE field spec may carry, in its canonical snake_case spelling.
+   `id` and `help` are the legacy names of `name` and `description`.
+
+   Layout is deliberately NOT in here: `fields` and `direction` belong to a
+   `group` — see [[layout-keys]]."
   #{"name" "id" "type" "label" "description" "help" "is_required" "placeholder" "options"
-    "min_length" "max_length" "default" "min" "max" "step" "validate" "fields" "direction"})
+    "min_length" "max_length" "default" "min" "max" "step" "validate"})
+
+(def ^:private layout-keys
+  "The two keys only a `group` has. A field that holds an ANSWER carrying one of
+   them is a spec that meant to group and forgot to say so: dropping the key in
+   silence drew the form flat and sent the author hunting for a layout bug in
+   the surfaces, so it is refused with the fix in the message."
+  #{"fields" "direction"})
 
 (def ^:private group-keys
   "Every key a `group` may carry. A layout node has no answer, so every key that
@@ -355,7 +365,8 @@
    [[normalize-group]]."
   [field]
   (when-not (map? field) (invalid-field! nil "field must be a map"))
-  (check-keys! "field" field-keys field #(invalid-field! nil %))
+  ;; No key check yet: which keys are legal depends on whether this node holds
+  ;; an answer or only lays one out, and that is the `:type` below.
   (let
     [field-id
      (trimmed (pick field "name" :name "id" :id))
@@ -365,6 +376,22 @@
 
      is-group
      (= "group" (str/lower-case type-name))
+
+     _
+     ;; Layout keys are refused BEFORE the generic key check so the message can
+     ;; say what the author actually meant: `fields` on a `plaintext` is a group
+     ;; that forgot its `:type`, not a misspelling.
+     (when-not is-group
+       (when-let [k (first (sort (filter layout-keys (map snake-key (keys field)))))]
+         (invalid-field! field-id
+                         (str "key \""
+                              k
+                              "\" only exists on a group — a field that holds an answer has"
+                              " nothing to lay out. Put these fields inside"
+                              " {\"type\": \"group\", \"direction\": \"row\"} instead."))))
+
+     _
+     (when-not is-group (check-keys! "field" field-keys field #(invalid-field! field-id %)))
 
      _
      (when-not (or field-id is-group) (invalid-field! nil "field needs a non-blank :name"))
@@ -489,24 +516,41 @@
       description
       (assoc :description description))))
 
+(defn- leaves!
+  "Conjoin every ANSWERABLE field of `fields` onto TRANSIENT vector `acc`, depth
+   first. The accumulator is threaded through the recursion, so a tree of any
+   depth is flattened in one pass onto one array — where the `mapcat` shape this
+   replaces allocated a lazy seq and a fresh vector for every group it entered."
+  [acc fields]
+  (reduce (fn [acc {:keys [type] :as field}]
+            (if (= :group type) (leaves! acc (:fields field)) (conj! acc field)))
+          acc
+          fields))
+
 (defn input-fields
   "Every ANSWERABLE field in `fields`, depth-first in the order a surface draws
    them. A group carries no value, so it is walked through and never returned:
    this is the sequence that keys `:values`, and the reason a layout change can
-   never change an extension's answer map."
+   never change an extension's answer map.
+
+   The hot path of the whole module — every keystroke on every surface
+   re-validates through here — so it is a transient walk, not a lazy one."
   [fields]
-  (into []
-        (mapcat (fn [{:keys [type] :as field}]
-                  (if (= :group type) (input-fields (:fields field)) [field])))
-        fields))
+  (persistent! (leaves! (transient []) fields)))
+
+(defn- nodes!
+  "[[leaves!]] for the WHOLE tree: every group is conjoined before the children
+   it owns, on the same transient accumulator."
+  [acc fields]
+  (reduce (fn [acc {:keys [type] :as field}]
+            (if (= :group type) (nodes! (conj! acc field) (:fields field)) (conj! acc field)))
+          acc
+          fields))
 
 (defn- all-fields
   "Every node in the tree, groups included — what name uniqueness is checked on."
   [fields]
-  (into []
-        (mapcat (fn [{:keys [type] :as field}]
-                  (if (= :group type) (into [field] (all-fields (:fields field))) [field])))
-        fields))
+  (persistent! (nodes! (transient []) fields)))
 
 (defn- map-fields
   "Rewrite every node of the tree with `f`, children before their group."
@@ -778,41 +822,73 @@
         :else [:error "unknown field type"]))
 
 (defn- coerce-all
-  "Coerce every field's raw value. Pure: `{:values … :errors …}`, no vault."
-  [fields values]
-  (let [values (or values {})]
-    (reduce (fn [acc {:keys [id] :as field}]
-              (let
-                [raw (cond (contains? values id) (get values id)
-                           (contains? values (keyword id)) (get values (keyword id))
-                           ;; Absent means "the human left it alone" — the field's
-                           ;; declared default stands in, then gets validated like
-                           ;; any other value.
-                           :else (:default field))
-                 [status result] (coerce-value field raw)]
+  "Coerce every field's raw value. Pure: `{:values … :errors …}`, no vault.
 
-                (if (= :error status)
-                  (assoc-in acc [:errors id] result)
-                  ;; Every field id is present in `:values`, so a caller can
-                  ;; read a field without knowing whether it was filled in.
-                  (assoc-in acc [:values id] result))))
-            {:values {} :errors {}}
-            fields)))
+   Both maps grow as TRANSIENTS through one indexed pass. Every keystroke on
+   every surface lands here, and the `assoc-in` this replaces rebuilt two nested
+   persistent maps per field for an answer the caller only ever reads once."
+  [fields values]
+  (let
+    [values
+     (or values {})
+
+     fields
+     (vec fields)
+
+     n
+     (long (count fields))]
+
+    (loop
+      [i
+       0
+
+       out
+       (transient {})
+
+       errs
+       (transient {})]
+
+      (if-not (< i n)
+        {:values (persistent! out) :errors (persistent! errs)}
+        (let
+          [{:keys [id] :as field}
+           (nth fields i)
+
+           raw
+           (cond (contains? values id) (get values id)
+                 (contains? values (keyword id)) (get values (keyword id))
+                 ;; Absent means "the human left it alone" — the field's
+                 ;; declared default stands in, then gets validated like
+                 ;; any other value.
+                 :else (:default field))
+
+           [status result]
+           (coerce-value field raw)]
+
+          (if (= :error status)
+            (recur (inc i) out (assoc! errs id result))
+            ;; Every field id is present in `:values`, so a caller can
+            ;; read a field without knowing whether it was filled in.
+            (recur (inc i) (assoc! out id result) errs)))))))
 
 (defn- check-all
   "Run each field's `:validate` rules over the COERCED values. A field the type
    already rejected is left alone: one message per field, and the one that
-   explains the earliest problem."
+   explains the earliest problem.
+
+   The map [[coerce-all]] just handed over is grown further as a transient
+   instead of being rebuilt rule by rule."
   [fields {:keys [values errors]}]
   {:values values
-   :errors (reduce (fn [acc {:keys [id validate]}]
-                     (if (or (empty? validate) (contains? acc id))
-                       acc
-                       (if-let [message (validation/check validate (get values id) values)]
-                         (assoc acc id message)
-                         acc)))
-                   errors
-                   fields)})
+   :errors (persistent! (reduce (fn [acc {:keys [id validate]}]
+                                  (if (or (empty? validate) (some? (get acc id)))
+                                    acc
+                                    (if-let
+                                      [message (validation/check validate (get values id) values)]
+                                      (assoc! acc id message)
+                                      acc)))
+                                (transient errors)
+                                fields))})
 
 (defn validate-values
   "Coerce and rule-check a raw `field id -> value` map against a request's
@@ -843,12 +919,13 @@
     (if-not (:is-accepted result)
       result
       (assoc result
-        :values
-        (reduce (fn [acc {:keys [id is-secret]}]
-                  (let [value (get acc id)]
-                    (if (and is-secret (some? value)) (assoc acc id (stash-secret! value)) acc)))
-                (:values result)
-                (input-fields fields))))))
+        :values (persistent! (reduce (fn [acc {:keys [id is-secret]}]
+                                       (let [value (get acc id)]
+                                         (if (and is-secret (some? value))
+                                           (assoc! acc id (stash-secret! value))
+                                           acc)))
+                                     (transient (:values result))
+                                     (input-fields fields)))))))
 
 ;; =============================================================================
 ;; Channel projection

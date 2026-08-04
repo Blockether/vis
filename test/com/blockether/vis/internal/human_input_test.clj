@@ -1018,6 +1018,18 @@
       (expect (throws? clojure.lang.ExceptionInfo
                        #(normalized-fields
                           {"type" "group" "default" "x" "fields" [{"name" "a"}]}))))
+  (it "refuses a layout key on a field that could never lay anything out"
+      ;; The mirror of the rule above: `fields`/`direction` describe an
+      ;; arrangement, and a leaf arranges nothing — silently ignoring them would
+      ;; drop half the form the caller wrote.
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(normalized-fields {"name" "host" "fields" [{"name" "a"}]})))
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(normalized-fields {"name" "host" "direction" "row"})))
+      (expect (str/includes? (try (normalized-fields {"name" "host" "direction" "row"})
+                                  nil
+                                  (catch clojure.lang.ExceptionInfo e (ex-message e)))
+                             "only exists on a group")))
   (it "still refuses two fields with the same name across different groups"
       (expect (throws? clojure.lang.ExceptionInfo
                        #(normalized-fields {"type" "group" "fields" [{"name" "a"}]}

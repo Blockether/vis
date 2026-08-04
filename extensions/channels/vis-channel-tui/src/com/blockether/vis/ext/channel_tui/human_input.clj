@@ -648,11 +648,40 @@
                :is-focused (boolean (some :is-focused entries))}))
           (range height))))
 
+(def ^:private option-stop-kinds
+  "Stop kinds that carry a `:value`: one focus stop per option, not per field."
+  #{:select-option :multi-option})
+
+(defn- stop-index
+  "Focus lookup for ONE paint: stop identity → its index in the flat `stops`
+   vector, keyed by field id — or by `[field-id value]` for the option kinds,
+   which put several stops on the same field.
+
+   Built once with a transient and threaded through the plan, because every row
+   asks \"is this the focused stop?\": scanning `stops` per row made painting a
+   form quadratic in its field count. Earlier stops win, so a duplicate id keeps
+   the first stop ↑/↓ would reach."
+  [stops]
+  (loop
+    [i
+     (dec (count stops))
+
+     acc
+     (transient {})]
+
+    (if (neg? i)
+      (persistent! acc)
+      (let [{:keys [kind field-id value]} (nth stops i)]
+        (recur (dec i)
+               (cond-> acc
+                 field-id
+                 (assoc! (if (contains? option-stop-kinds kind) [field-id value] field-id) i)))))))
+
 (defn- group-rows
   "Rows for a layout group: its optional heading, then its children — stacked
    when the group is a `:column`, side by side when it is a `:row`. A child may
    itself be a group, so the two directions compose without another rule."
-  [form errors focus text-w {:keys [direction fields] :as group}]
+  [ctx text-w {:keys [direction fields] :as group}]
   (let
     [heading
      (into (if (:label group) [{:kind :label :text (:label group)}] [])
@@ -664,21 +693,22 @@
      body
      (if (= :row direction)
        (let [cell-w (when text-w (max 4 (- (quot (+ (long text-w) 2) n) 2 (long column-gutter))))]
-         (zip-columns (mapv #(vec (field-rows form errors focus cell-w %)) fields)))
-       (into [] (mapcat #(field-rows form errors focus text-w %)) fields))]
+         (zip-columns (mapv #(vec (field-rows ctx cell-w %)) fields)))
+       (into [] (mapcat #(field-rows ctx text-w %)) fields))]
 
     (into (vec heading) body)))
 
 (defn- field-rows
-  [form errors focus text-w {:keys [id type] :as field}]
+  "Rows for ONE node of the field tree. `ctx` is the per-paint context built by
+   [[form-rows]] — the form, its visible errors, the focused stop and the
+   [[stop-index]] — and `text-w` is the prose budget of the column this node
+   lands in, which a `:row` group narrows for its children."
+  [{:keys [form errors focus index] :as ctx} text-w {:keys [id type] :as field}]
   (if (= :group type)
-    (group-rows form errors focus text-w field)
+    (group-rows ctx text-w field)
     (let
-      [stop-index
-       (fn [pred]
-         (first (keep-indexed (fn [i s]
-                                (when (pred s) i))
-                              (:stops form))))
+      [idx
+       (get index id)
 
        value
        (get-in form [:values id])
@@ -687,13 +717,7 @@
        (description-rows (:description field) text-w)
 
        rows
-       (cond (= :otp type) (let
-                             [idx
-                              (stop-index #(= id (:field-id %)))
-
-                              slots
-                              (otp-slots field)]
-
+       (cond (= :otp type) (let [slots (otp-slots field)]
                              [{:kind :otp
                                :field-id id
                                :text (otp-text slots value)
@@ -701,10 +725,7 @@
                                :is-focused (= idx focus)}])
              (contains? text-types type)
              (let
-               [idx
-                (stop-index #(= id (:field-id %)))
-
-                focused?
+               [focused?
                 (= idx focus)
 
                 shown
@@ -731,10 +752,7 @@
                    :is-focused focused?
                    :placeholder (:placeholder field)}]))
              (= :range type) (let
-                               [idx
-                                (stop-index #(= id (:field-id %)))
-
-                                bounds
+                               [bounds
                                 (range-bounds field)
 
                                 v
@@ -745,21 +763,19 @@
                                  :value v
                                  :text (range-text bounds v)
                                  :is-focused (= idx focus)}])
-             (= :checkbox type) (let [idx (stop-index #(= id (:field-id %)))]
-                                  [{:kind :checkbox
-                                    :field-id id
-                                    :text (label-text field)
-                                    :is-checked (boolean value)
-                                    :is-focused (= idx focus)}])
+             (= :checkbox type) [{:kind :checkbox
+                                  :field-id id
+                                  :text (label-text field)
+                                  :is-checked (boolean value)
+                                  :is-focused (= idx focus)}]
              (contains? choice-types type)
              (let [chosen (if (= :multiselect type) (set value) #{value})]
                (mapv (fn [{:keys [value label]}]
-                       (let [idx (stop-index #(and (= id (:field-id %)) (= value (:value %))))]
-                         {:kind :option
-                          :field-id id
-                          :text (or label (str value))
-                          :is-checked (contains? chosen value)
-                          :is-focused (= idx focus)}))
+                       {:kind :option
+                        :field-id id
+                        :text (or label (str value))
+                        :is-checked (contains? chosen value)
+                        :is-focused (= (get index [id value]) focus)})
                      (field-options field)))
              :else [])]
 
@@ -804,16 +820,18 @@
    `text-w` is the column budget prose gets — the request's description and
    every field's wrap to it. Omit it (or pass nil) for the unwrapped plan."
   ([form] (form-rows form nil))
-  ([{:keys [request focus] :as form} text-w]
+  ([{:keys [request focus stops] :as form} text-w]
    (let
      [head
       (when-let [rows (seq (description-rows (:description request) text-w))]
         (conj (vec rows) {:kind :blank}))
 
-      errors
-      (visible-errors form)]
+      ;; ONE context per paint — including the stop index the whole tree shares,
+      ;; so nested groups cost lookups, not rescans.
+      ctx
+      {:form form :errors (visible-errors form) :focus (or focus 0) :index (stop-index stops)}]
 
-     (into (vec head) (mapcat #(field-rows form errors (or focus 0) text-w %)) (:fields request)))))
+     (into (vec head) (mapcat #(field-rows ctx text-w %)) (:fields request)))))
 
 (defn focused-row
   "Index of the row carrying the focused stop, or 0."

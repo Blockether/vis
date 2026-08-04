@@ -294,6 +294,8 @@ def ask(title, fields, **options):
     # A 'group' field answers nothing — it LAYS OUT: 'fields' (its children) and
     # 'direction' ('column' stacks, the default; 'row' side by side). Groups
     # nest, need no name, and never appear in `values`, which stays flat.
+    # Layout and value keys never mix: 'default'/'is_required'/'validate' on a
+    # group, or 'fields'/'direction' on an answerable field, are both REFUSED.
     # Field types: plaintext, password, multiline, select, multiselect,
     # checkbox, range, otp, group. Dialog options: description (prose under the title explaining
     # what the whole ask is about — it wraps), submit_label, cancel_label,
