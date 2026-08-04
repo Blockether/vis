@@ -7,8 +7,9 @@
   (:require [com.blockether.imaging :as im]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
+            [com.blockether.vis.internal.foundation.shim-pil :as shim-pil]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [java.util Base64]
+  (:import [java.util Arrays Base64]
            [org.graalvm.polyglot Context]))
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
@@ -597,58 +598,76 @@
           ;; still cost ~1.4 ms (~3 s here) because the canvas round-trips through the
           ;; renderer per call. Queued as ONE batch, the whole run is a few milliseconds.
           (expect (< ms 1000) (str "2000 draws took " (long ms) " ms")))))
+  ;; Regression: the flush converted the canvas with `aset-byte`, i.e.
+  ;; `java.lang.reflect.Array/setByte` -- four reflective stores per pixel, 65 ms per
+  ;; 800x600 flush against 1.8 ms for the inlined store. Neither a wall-clock budget nor
+  ;; a canvas-size ratio catches that portably: a loaded runner failed the clock at
+  ;; 2350 ms with nothing wrong, and on a runner whose fixed per-eval cost is small the
+  ;; 480k-pixel canvas legitimately costs ~120x the 1.2k-pixel one. So time the
+  ;; reflective store ITSELF, on this machine and in this JVM, against the shipped
+  ;; conversion of the same raster: the margin is a property of the code, not the host.
   (it
-    "reading a drawn canvas does not pay a reflective store per pixel"
-    (with-python-context
-      (let
-        [cycles
-         (fn [w h]
-           (str "from PIL import Image, ImageDraw\n"
-                "im = Image.new('RGB',(" w
-                "," h
-                "),(0,0,0))\n" "d = ImageDraw.Draw(im)\n"
-                "for i in range(20):\n" "    d.rectangle([i,i,i+4,i+4], fill=(255,0,0))\n"
-                "    im.getpixel((i+1,i+1))\n" "list(im.getpixel((1,1)))"))
+    "converting a drawn canvas does not pay a reflective store per pixel"
+    (let
+      [w
+       800
 
-         timed
-         (fn [w h]
-           (let
-             [t0
-              (System/nanoTime)
+       h
+       600
 
-              painted
-              (ev python-context (cycles w h))]
+       px
+       (int-array (* w h) (unchecked-int 0xff204060))
 
-             [(/ (- (System/nanoTime) t0) 1e6) painted]))
+       raster
+       (shim-pil/->Raster px w h 0xff000000)
 
-         ;; Warm both sizes first: the very first eval pays GraalPy parse and JIT,
-         ;; which on a cold CI runner dwarfs everything measured after it.
-         _
-         (timed 40 30)
+       inlined
+       (fn []
+         (#'shim-pil/raster->rgba raster))
 
-         _
-         (timed 800 600)
+       reflective
+       (fn []
+         (let
+           [n
+            (alength ^ints px)
 
-         [small _]
-         (timed 40 30)
+            b
+            (byte-array (* 4 n))]
 
-         [big painted]
-         (timed 800 600)]
+           (dotimes [i n]
+             (let
+               [p (bit-or 0xff000000 (bit-and 0xffffffff (aget ^ints px i)))
+                o (* 4 i)]
 
-        (expect (= [255 0 0] painted))
-        ;; Every read flushes the queue, so the canvas is converted both ways per
-        ;; cycle. `aset-byte` is `java.lang.reflect.Array/setByte`: four reflective
-        ;; stores per pixel cost ~65 ms a flush on this 480k-pixel canvas -- ~1.4 s
-        ;; for these cycles -- while the 1.2k-pixel canvas paid almost nothing, a
-        ;; ratio near 100x. The inlined array store keeps the big canvas within a
-        ;; small multiple of the small one. This was a wall-clock budget once, and
-        ;; a loaded CI runner failed it at 2350 ms with nothing actually wrong.
-        (expect (< big (* 30 small))
-                (str "20 draw/read cycles took "
-                     (long big)
-                     " ms on a 800x600 canvas but "
-                     (long small)
-                     " ms on a 40x30 one"))))))
+               (aset-byte b o (unchecked-byte (bit-and (bit-shift-right p 16) 0xff)))
+               (aset-byte b (+ o 1) (unchecked-byte (bit-and (bit-shift-right p 8) 0xff)))
+               (aset-byte b (+ o 2) (unchecked-byte (bit-and p 0xff)))
+               (aset-byte b (+ o 3) (unchecked-byte (bit-and (bit-shift-right p 24) 0xff)))))
+           b))
+
+       ;; Warm both paths, then time three conversions of each.
+       ms
+       (fn [f]
+         (dotimes [_ 2]
+           (f))
+         (let [t0 (System/nanoTime)]
+           (dotimes [_ 3]
+             (f))
+           (/ (- (System/nanoTime) t0) 1e6)))
+
+       fast
+       (ms inlined)
+
+       slow
+       (ms reflective)]
+
+      (expect (Arrays/equals ^bytes (inlined) ^bytes (reflective)))
+      (expect (< (* 4 fast) slow)
+              (str "the shipped conversion took "
+                   (long fast)
+                   " ms where four reflective stores per pixel took "
+                   (long slow)
+                   " ms -- no faster than reflection")))))
 
 (defdescribe
   pil-font-family-test
