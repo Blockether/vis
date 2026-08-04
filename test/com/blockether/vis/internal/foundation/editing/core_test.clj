@@ -3325,37 +3325,42 @@
   ;; `ls` is a SEPARATE native tool, not a directory mode smuggled into `cat`.
   ;; Its listing options must be advertised on the native surface, and `cat`'s
   ;; surface must stay free of directory options.
-  (it "ls is its own native tool advertising `depth` and `is_hidden`"
-      (let
-        [ls
-         (some #(when (= 'ls (:ext.symbol/symbol %)) %) (editing/available-editing-symbols))
+  (it
+    "ls is its own native tool advertising `depth` and `is_hidden`"
+    (let
+      [ls
+       (some #(when (= 'ls (:ext.symbol/symbol %)) %) (editing/available-editing-symbols))
 
-         schema
-         (:ext.symbol/schema ls)
+       schema
+       (:ext.symbol/schema ls)
 
-         entry
-         (->> (get-in schema [:properties "paths" :items :oneOf])
-              (filter #(= "object" (:type %)))
-              first)
+       entry
+       (->> (get-in schema [:properties "paths" :items :oneOf])
+            (filter #(= "object" (:type %)))
+            first)
 
-         cat-entry
-         (->> (get-in editing/cat-symbol [:ext.symbol/schema :properties "files" :items :oneOf])
-              (filter #(= "object" (:type %)))
-              first)]
+       cat-entry
+       (->> (get-in editing/cat-symbol [:ext.symbol/schema :properties "files" :items :oneOf])
+            (filter #(= "object" (:type %)))
+            first)]
 
-        (expect (some? ls))
-        (expect (true? (:ext.symbol/native-tool? ls)))
-        (expect (= ["paths"] (:required schema)))
-        (expect (= "integer" (get-in schema [:properties "depth" :type])))
-        (expect (= 1 (get-in schema [:properties "depth" :minimum])))
-        (expect (= "boolean" (get-in schema [:properties "is_hidden" :type])))
-        (expect (= "integer" (get-in entry [:properties "depth" :type])))
-        (expect (string/includes? (:ext.symbol/description ls) "Directory contents"))
-        (expect (string/includes? (:ext.symbol/result ls) "children"))
-        ;; cat is a FILE reader again: no directory knobs, no ls prose
-        (expect (not (contains? (:properties cat-entry) "depth")))
-        (expect (not (contains? (:properties cat-entry) "is_hidden")))
-        (expect (not (string/includes? (:ext.symbol/result editing/cat-symbol) "Directory")))))
+      (expect (some? ls))
+      (expect (true? (:ext.symbol/native-tool? ls)))
+      (expect (= ["paths"] (:required schema)))
+      (expect (= "integer" (get-in schema [:properties "depth" :type])))
+      (expect (= 1 (get-in schema [:properties "depth" :minimum])))
+      (expect (= "boolean" (get-in schema [:properties "is_hidden" :type])))
+      (expect (= "integer" (get-in entry [:properties "depth" :type])))
+      (expect (string/includes? (:ext.symbol/description ls) "Directory contents"))
+      ;; `ls` advertises itself as the SHAPE-first move; without this the model reached
+      ;; for `grep`/`cat` on guessed paths in a tree it had never listed.
+      (expect (string/includes? (:ext.symbol/description ls) "SHAPE here first"))
+      (expect (string/includes? (:ext.symbol/description ls) "`depth` descends"))
+      (expect (string/includes? (:ext.symbol/result ls) "children"))
+      ;; cat is a FILE reader again: no directory knobs, no ls prose
+      (expect (not (contains? (:properties cat-entry) "depth")))
+      (expect (not (contains? (:properties cat-entry) "is_hidden")))
+      (expect (not (string/includes? (:ext.symbol/result editing/cat-symbol) "Directory")))))
   (it "uses one portable patch shape with a path on every edit"
       (let [schema (:ext.symbol/schema editing/patch-symbol)]
         (expect (= "object" (:type schema)))

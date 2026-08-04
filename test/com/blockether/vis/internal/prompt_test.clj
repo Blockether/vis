@@ -141,6 +141,10 @@
           ;; Anchor MECHANICS (which files a write invalidates) belong to the `patch` and
           ;; `cat` descriptions — see editing core_test. The core keeps only the ordering rule.
           "Re-read a file you already wrote before editing it again"
+          ;; `ls` is a first-class INSPECTION move, not a footnote: the core used to name it
+          ;; only as "`ls` lists directories", and the shape of an unfamiliar tree got guessed
+          ;; (or paid for with a wide `grep`) instead of listed in one cheap batched call.
+          "`ls` FIRST maps an unknown tree's shape in ONE" "so no path is guessed"
           ;; One batching rule for EVERY tool — reads, shell/git commands and edits.
           "BATCH every tool" "`patch`/`struct_patch` `edits`" "one call, never one per file"
           "re-read that one target and retry"

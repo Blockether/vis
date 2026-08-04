@@ -6632,6 +6632,8 @@
        "entries are `{name,path,type,size}` plus `children` when `depth` nests.")
      :description
      (str "Directory contents batched over `paths`: directories first, then alphabetical. "
+          "Map an unfamiliar tree's SHAPE here first — `depth` descends — instead of guessing "
+          "paths for `cat`/`grep`. "
           "Dotfiles need `is_hidden`; gitignored entries are never listed. `cat` reads files.")
      :render render-ls-results
      :color-role :tool-color/read
