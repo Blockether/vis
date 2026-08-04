@@ -188,25 +188,21 @@ export function Spinner({ className = '' }: { className?: string }) {
 /**
  * A live count that rides INSIDE another label — a scope chip, a machine row.
  *
- * The strip used to paint the number and a `●` glyph as one text run: the glyph
- * carries its own metrics and drops below the digits' optical centre, so the
- * green pair read as one smudged token hanging low in a chip whose every other
- * part is centred. There is no room for the word "live" beside a machine name,
- * so the count goes in SQUARE brackets instead: the brackets in the host's own
- * ink, the number in green. It is nothing but text, so it sits on the label's
- * baseline by construction, and colour is what still says "live" — with the word
- * itself kept for anyone who cannot see the colour.
+ * It is the SAME filled block as the unread badge, in green: the strip's two
+ * numbers are one shape in two colours — `macbook \u25ae3\u25ae\u25ae4\u25ae`,
+ * running then waiting — so the chip reports both without a word and without a
+ * second kind of thing to learn. A filled box aligns by its own box instead of
+ * by a glyph's metrics, which is why it sits centred where the earlier `\u25cf`
+ * hung low and the bracketed `[3]` read lighter than the badge beside it.
  *
- * Square rather than round, because the unread badge beside it is a FILLED
- * rectangle: brackets make the two counts one shape in two weights — outlined
- * box = running, filled box = waiting — instead of a round token sitting next to
- * a block. In a monospaced strip both glyphs occupy one cell, so the chip is
- * exactly as wide either way.
+ * Colour is the whole signal, so the word is kept for anyone who cannot see it,
+ * and a count of zero renders nothing at all: an empty green box is not news.
  */
 export function LiveTally({ count }: { count: number }) {
+  if (count <= 0) return null;
   return (
-    <span className="whitespace-nowrap">
-      [<span className="font-bold text-ok">{count}</span>]
+    <span className="inline-flex items-center bg-ok px-1 font-mono text-chip font-bold text-ok-foreground">
+      {count}
       <span className="sr-only"> live</span>
     </span>
   );

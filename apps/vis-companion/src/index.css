@@ -147,6 +147,13 @@
      dark #fde68a). Amber text uses accent-ink; amber fills use accent. */
   --color-accent-ink: var(--warning);
   --color-ok: var(--ok);
+  /* Ink for a FILLED green block (the live badge). --ok is a mid green on paper
+     (#16a34a) and a bright green on ink (#4ade80), so the readable side is dark
+     in BOTH palettes: pale ink on the light-theme green measures 2.9:1 and
+     fails. --primary-fg is that dark ink (light #261e00 = 5.0:1, dark #0f1117 =
+     9.5:1) and every gateway theme ships it, because the amber badge beside the
+     green one needs exactly the same thing. */
+  --color-ok-foreground: var(--primary-fg);
   --color-warn: var(--warning);
   --color-warn-strong: var(--warning-border);
   --color-warn-surface: var(--warning-bg);

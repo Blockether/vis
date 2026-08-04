@@ -3,22 +3,29 @@ import { describe, expect, it } from 'vitest';
 
 import { LiveTally, UnreadBadge } from './ui';
 
-// A scope chip has no room for the word "live", so the count is bracketed and
-// only the NUMBER is green: `All [5]`. The `\u25cf` glyph it replaces carried its
-// own metrics and sat below the digits' optical centre, which is what made the
-// green read as one low, smudged token in an otherwise centred chip.
+// The live count wears the SAME filled block as the unread badge, in green:
+// `macbook \u25ae3\u25ae\u25ae4\u25ae` — one shape, two colours, running then
+// waiting. It replaced a bracketed `[3]`, which read lighter than the badge
+// beside it, and before that a `\u25cf` whose metrics sat below the digits.
 describe('LiveTally', () => {
-  it('colours the number and nothing else, with no glyph', () => {
+  it('is a filled green block, not bracketed text or a glyph', () => {
     const html = renderToStaticMarkup(<LiveTally count={5} />);
 
+    expect(html).toContain('bg-ok');
+    expect(html).toContain('text-ok-foreground');
+    expect(html).toContain('>5<');
+    expect(html).not.toContain('[');
     expect(html).not.toContain('\u25cf');
-    expect(html).toContain('[<span class="font-bold text-ok">5</span>]');
   });
 
   it('says what the number counts, for a reader that cannot see green', () => {
     const html = renderToStaticMarkup(<LiveTally count={1} />);
 
     expect(html).toContain('<span class="sr-only"> live</span>');
+  });
+
+  it('renders nothing when nothing is running', () => {
+    expect(renderToStaticMarkup(<LiveTally count={0} />)).toBe('');
   });
 });
 

@@ -878,7 +878,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
               onClick={() => selectScope(null)}
             >
               All
-              {fleetLive > 0 && <LiveTally count={fleetLive} />}
+              <LiveTally count={fleetLive} />
               {/* Unread is the one count that ARRIVES on its own, so the fleet
                   total stays a live region now that the header line above no
                   longer says it. `contents` keeps the chip's own layout. */}
@@ -902,7 +902,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                     <span className="opacity-70">offline</span>
                   ) : (
                     <>
-                      {!!tally?.live && <LiveTally count={tally.live} />}
+                      <LiveTally count={tally?.live ?? 0} />
                       <UnreadBadge count={tally?.unread ?? 0} />
                     </>
                   )}

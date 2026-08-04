@@ -53,24 +53,10 @@ function chipClass(isOn: boolean): string {
   }`;
 }
 
-/** Shipped today: green count in the host's own brackets, unread as the filled
- *  amber block the session row already uses. */
+/** Shipped: both counts as filled blocks, green running beside amber waiting. */
 const mixedCounts: Counts = ({ live, unread }) => (
   <>
-    {live > 0 && <LiveTally count={live} />}
-    <UnreadBadge count={unread} />
-  </>
-);
-
-/** Both counts as filled blocks — the literal "put live in a box too". */
-const badgeCounts: Counts = ({ live, unread }) => (
-  <>
-    {live > 0 && (
-      <span className="inline-flex items-center bg-ok px-1 font-mono text-chip font-bold text-ink">
-        {live}
-        <span className="sr-only"> live</span>
-      </span>
-    )}
+    <LiveTally count={live} />
     <UnreadBadge count={unread} />
   </>
 );
@@ -237,28 +223,28 @@ export function TallyHeaderVariant({ state }: { state: string }) {
 }
 
 /**
- * B — TWO BADGES, NO WORDS. Live becomes a filled green block beside the amber
- * one and the header line drops both counts for good. Reads fast, but the two
- * blocks weigh the same, so "running" shouts as loudly as "someone is waiting
- * for you" — and solo, where there is no strip, the fleet stops counting at all.
+ * B — TWO BADGES EVERYWHERE. The same filled pair as C, repeated in every
+ * machine header, with the fleet line silent even when there is no strip. Reads
+ * fast, but solo — where the strip does not exist — the fleet stops counting
+ * altogether, which is the one thing C refuses to do.
  */
 export function TallyBadgesVariant({ state }: { state: string }) {
   return (
     <Proposal
       state={state}
       headerTallies={() => null}
-      chipCounts={badgeCounts}
-      sectionCounts={badgeCounts}
+      chipCounts={mixedCounts}
+      sectionCounts={mixedCounts}
     />
   );
 }
 
 /**
- * C — THE STRIP IS THE TALLY. The chip keeps the shipped pair (a light green
- * `[3]`, a solid amber badge) and becomes the ONLY place the numbers appear:
- * the header line and the machine headers go quiet while the strip is on
- * screen. With one machine paired there is no strip, so the header line takes
- * the counts back — the words appear exactly where nothing else can say them.
+ * C — SHIPPED. The chip carries both counts as filled blocks (green running,
+ * amber waiting) and becomes the ONLY place the numbers appear: the header line
+ * and the machine headers go quiet while the strip is on screen. With one
+ * machine paired there is no strip, so the header line takes the counts back —
+ * the words appear exactly where nothing else can say them.
  */
 export function TallyStripVariant({ state }: { state: string }) {
   return (
