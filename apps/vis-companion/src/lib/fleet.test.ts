@@ -19,6 +19,7 @@ import {
   scopedSessions,
   sessionIsEmpty,
   sessionIsListed,
+  sessionIsPeeked,
   showsScopeStrip,
   startAsk,
   START_IDLE,
@@ -248,6 +249,57 @@ describe('dirty sessions', () => {
     expect(sessionIsListed(fresh(), true)).toBe(true);
     expect(sessionIsListed(fresh(), false)).toBe(false);
     expect(sessionIsListed(fresh({ title: 'Named' }), false)).toBe(true);
+  });
+});
+
+// Regression (reported in-app: "we have this function which is hiding the session
+// if it's longer then 1 hour and not touched … it SHOULD NEVER HIDE the RUNNING
+// SESSIONS OR THE ONES WHICH ARE FINISHED AND NOT READ"). A collapsed project
+// used to peek only its live rows plus whatever was touched within the last hour,
+// so the one row that MUST be seen — an answer that landed while the app was shut,
+// still wearing its unread badge, the very thing the push notification was about —
+// disappeared an hour later, and a session merely waiting for human input went
+// with it. Age may only ever hide a session that is idle, answered and read.
+describe('sessionIsPeeked', () => {
+  const HOUR = 60 * 60 * 1000;
+  const now = 1_700_000_000_000;
+  const aged = (ms: number, extra: Partial<Session> = {}): Session =>
+    session('s1', { modified_at: new Date(now - ms).toISOString(), ...extra });
+  const peek = (
+    row: Session,
+    flags: Partial<{ isUnread: boolean; hasUnsentDraft: boolean }> = {},
+  ): boolean => sessionIsPeeked(row, now, { isUnread: false, hasUnsentDraft: false, ...flags });
+
+  it('never hides an unread answer, however old the session is', () => {
+    expect(peek(aged(5 * HOUR), { isUnread: true })).toBe(true);
+    expect(peek(aged(400 * 24 * HOUR), { isUnread: true })).toBe(true);
+  });
+
+  it('never hides a running session, whatever its clock says', () => {
+    expect(peek(aged(5 * HOUR, { live: true }))).toBe(true);
+    expect(peek(aged(5 * HOUR, { status: 'running' }))).toBe(true);
+    // A gateway that reports liveness explicitly wins over a stale status.
+    expect(peek(aged(5 * HOUR, { live: true, status: 'idle' }))).toBe(true);
+  });
+
+  it('never hides a session that is waiting for the human', () => {
+    expect(peek(aged(5 * HOUR, { status: 'suspended' }))).toBe(true);
+  });
+
+  it('keeps unsent words and anything touched within the hour', () => {
+    expect(peek(aged(5 * HOUR), { hasUnsentDraft: true })).toBe(true);
+    expect(peek(aged(59 * 60 * 1000))).toBe(true);
+  });
+
+  it('hides only what is old, idle and already read', () => {
+    expect(peek(aged(2 * HOUR))).toBe(false);
+    expect(peek(session('s1'))).toBe(false);
+    expect(peek(session('s1', { modified_at: 'not a date' }))).toBe(false);
+  });
+
+  it('ages off the created/last-active fallbacks too', () => {
+    expect(peek(session('s1', { last_active_at: new Date(now - 2 * HOUR).toISOString() }))).toBe(false);
+    expect(peek(session('s1', { created_at: new Date(now - 30 * 1000).toISOString() }))).toBe(true);
   });
 });
 

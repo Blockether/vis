@@ -63,6 +63,8 @@ import {
   searchTally,
   sessionIsListed,
   sessionIsLive,
+  sessionIsPeeked,
+  RECENT_WINDOW_MS,
   showsScopeStrip,
   isDraftWorkspace,
   projectPath,
@@ -91,10 +93,9 @@ const SESSION_LIST_EVENTS = new Set([
 // this is treated as lost.
 const STALE_POLL_MS = 20_000;
 
-// Each project is a collapsible section: collapsed shows its live sessions plus any
-// that stopped being live within the last hour (capped), expanded pages the rest of
-// its history in place — so the DOM is bounded without a global window over the fleet.
-const RECENT_WINDOW_MS = 60 * 60 * 1000;
+// Each project is a collapsible section: collapsed peeks the rows `sessionIsPeeked`
+// keeps (capped), expanded pages the rest of its history in place — so the DOM is
+// bounded without a global window over the fleet.
 
 // Same frames as the session transcript's spinner and the TUI's
 // `paint-content-loading!` — one vocabulary for "working" across the product.
@@ -1590,6 +1591,9 @@ const ProjectGroup = memo(function ProjectGroup({
 }) {
   const root = projectRoot(sessions);
   const base = useMemo(() => clientFor(conn).base, [conn]);
+  // Unread answers survive collapsing (`sessionIsPeeked`), so this group's peek
+  // has to repaint when a read mark moves.
+  const readMarks = useReadMarks();
   const liveSessions = useMemo(() => sessions.filter(sessionIsLive), [sessions]);
   const liveCount = liveSessions.length;
   const isOpen = expanded || forceExpand;
@@ -1630,23 +1634,26 @@ const ProjectGroup = memo(function ProjectGroup({
     };
   }, [menu, closeMenu, openMenu]);
 
-  // A coarse clock ages the recency window: once a session is more than an hour past
-  // its last activity it leaves the collapsed peek on its own, no refresh needed.
+  // A coarse clock ages the recency window: an hour past its last activity a session
+  // that is idle, answered and read leaves the collapsed peek on its own, no refresh
+  // needed.
   const now = useNow(RECENT_WINDOW_MS / 60);
   const collapsedSessions = useMemo(
-    // A row holding unsent work is never hidden by collapsing: it is the one thing
-    // in this list that exists on this device alone.
     () =>
-      sessions.filter(
-        (session) =>
-          draftMessageHasUnsent(drafts[draftMessageKey(base, session.id)])
-          || sessionFresh(session, now),
+      sessions.filter((session) =>
+        sessionIsPeeked(session, now, {
+          isUnread: unreadTurnCount(session) > 0,
+          hasUnsentDraft: draftMessageHasUnsent(drafts[draftMessageKey(base, session.id)]),
+        }),
       ),
-    [sessions, now, drafts, base],
+    // `readMarks` is the store version: marks move outside React, and a row that
+    // survives collapsing only because it is UNREAD has to leave the peek on the
+    // paint that reads it.
+    [sessions, now, drafts, base, readMarks],
   );
 
-  // Expanded pages its own history in place; collapsing exposes the live few plus any
-  // session active within the last hour.
+  // Expanded pages its own history in place; collapsing exposes the live few plus
+  // everything `sessionIsPeeked` refuses to age out.
   const [shown, setShown] = useState(pageSize);
   useEffect(() => {
     setShown(pageSize);
@@ -2293,15 +2300,6 @@ function projectLabel(session: Session): string {
 
 function projectRoot(sessions: Session[]): string {
   return homeifyPath(sessions.map(projectPath).find(Boolean));
-}
-
-function sessionFresh(session: Session, now: number): boolean {
-  // Live sessions are always shown collapsed; a session that STOPPED being live still
-  // lingers for one hour so it doesn't vanish the instant it goes idle. Uses the same
-  // timestamp chain the row displays, so "fresh" == "its clock reads < 1h ago".
-  if (sessionIsLive(session)) return true;
-  const millis = dateMillis(session.modified_at ?? session.last_active_at ?? session.created_at);
-  return millis > 0 && now - millis <= RECENT_WINDOW_MS;
 }
 
 function statusLabel(session: Session): string {
