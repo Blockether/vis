@@ -114,6 +114,23 @@
     (p/fill-rect! g 0 0 cols rows)
     (.refresh screen Screen$RefreshType/DELTA)))
 
+(defn open-nested!
+  "Run `f` with the screen cleared before AND after it, for a dialog opened
+   from inside another dialog.
+
+   Modals float over the CHAT on purpose, but a modal opened over another modal
+   paints a SMALLER box on top of the parent's, so the parent's border, ✕ and
+   hint bar keep framing it and the user sees two stacked popups. Erasing on the
+   way in gives the nested flow a clean surface; erasing on the way out lets the
+   caller repaint its own frame from scratch."
+  [^TerminalScreen screen f]
+  ;; `screen` is nil in unit tests that redefine every dialog away.
+  (some-> screen
+          clear-screen!)
+  (try (f)
+       (finally (some-> screen
+                        clear-screen!))))
+
 (defn ellipsize
   "Right-truncate `s` to `max-w` columns with a trailing `…`.
    Thin delegate over the canonical `p/ellipsize` (lanterna-backed)."

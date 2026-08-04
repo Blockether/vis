@@ -1,6 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.provider-test
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.capture :as cap]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
             [com.blockether.vis.internal.external-opener :as opener]
@@ -994,6 +995,35 @@
           (expect (= :zai-coding-plan (:id cfg)))
           (expect (= [{:name "glm-5.2"}] (:models cfg)))
           (expect (nil? (:api-key cfg))))))))
+
+;; ── Regression (user report, first run): "I want to connect provider — WHY IS
+;; IT NOT OPENING THE SETTINGS? we should not duplicate the popups".
+;; Enter on the welcome screen painted the "Add Provider" picker straight on top
+;; of the welcome dialog, and the Base URL step on top of the picker: the outer
+;; box's border, ✕ and hint bar still framed the inner one, so the user saw two
+;; stacked popups instead of one wizard step. ───────────────────────────────────
+
+(defdescribe add-provider-wizard-step-test
+             (it "erases the parent dialog before each step, so only ONE popup is ever on screen"
+                 (with-redefs
+                   [vis/provider-presets
+                    (constantly [{:id :ollama :label "Ollama" :base-url "http://localhost:11434"}])]
+                   (let
+                     [captured (cap/capture! {:keys [:enter :enter :esc :esc :esc]
+                                              :paint! (fn [{:keys [screen]}]
+                                                        (provider/show-welcome! screen))})
+                      frames (mapv #(cap/frame-text captured %) (range (count (:frames captured))))
+                      picker (first (filter #(str/includes? % "Add Provider") frames))
+                      base-url (first (filter #(str/includes? % "Base URL") frames))]
+
+                     (expect (nil? (:error captured)))
+                     (expect (some? picker))
+                     (expect (some? base-url))
+                     ;; Every ✕ is one dialog's close marker: two of them in a frame means
+                     ;; the parent's chrome survived underneath the nested step.
+                     (expect (every? #(<= (count (re-seq #"✕" %)) 1) frames))
+                     ;; ...and the welcome body is gone while the picker is up.
+                     (expect (not (str/includes? picker "Your terminal, now agentic.")))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Regression: success popups MUST stay silent.

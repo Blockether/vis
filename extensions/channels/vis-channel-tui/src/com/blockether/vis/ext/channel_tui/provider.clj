@@ -458,10 +458,19 @@
 (defn- add-provider!
   "Show add-provider flow. `existing-ids` is a set of already-configured :id keywords."
   [^TerminalScreen screen existing-ids]
+  ;; Every step is a WIZARD STEP, not a stacked popup: the caller's own modal
+  ;; (welcome screen, provider manager) is still painted and each step draws a
+  ;; SMALLER box, so without `dlg/open-nested!` the previous box's border, ✕ and
+  ;; hint bar keep framing the current one — two popups at once. Both callers
+  ;; repaint on `recur`, so erasing on the way out is safe.
   (let [available (vec (remove #(contains? existing-ids (:id %)) (vis/provider-presets)))]
     (if (empty? available)
-      (do (dlg/text-view-dialog! screen "Add Provider" ["All providers already configured."]) nil)
-      (when-let [preset (dlg/select-dialog! screen "Add Provider" available)]
+      (do (dlg/open-nested!
+            screen
+            #(dlg/text-view-dialog! screen "Add Provider" ["All providers already configured."]))
+          nil)
+      (when-let
+        [preset (dlg/open-nested! screen #(dlg/select-dialog! screen "Add Provider" available))]
         (let
           [pid (:id preset)
            local? (contains? #{:ollama :lmstudio} pid)
@@ -469,11 +478,13 @@
            ;; hosts them, so let them override the default host:port.
            ;; Blank input or Esc keeps the preset default.
            base-url (if local?
-                      (or (some-> (dlg/text-input-dialog! screen
-                                                          (str (:label preset) " Setup")
-                                                          "Base URL:"
-                                                          :initial
-                                                          (or (:base-url preset) ""))
+                      (or (some-> (dlg/open-nested! screen
+                                                    #(dlg/text-input-dialog!
+                                                       screen
+                                                       (str (:label preset) " Setup")
+                                                       "Base URL:"
+                                                       :initial
+                                                       (or (:base-url preset) "")))
                                   str/trim
                                   (str/replace #"/+$" "")
                                   not-empty)
@@ -486,17 +497,21 @@
            (or (github-copilot-provider? pid) (= :openai-codex pid) (= :anthropic-coding-plan pid))
            ;; Local providers need no key
            needs-key? (not (or has-key? oauth? local?))
-           api-key
-           (cond has-key? (:api-key preset)
-                 (github-copilot-provider? pid)
-                 (when (gateway-device-login! screen pid (vis/display-label pid)) :oauth-ready)
-                 (= pid :openai-codex) (when (codex-oauth-ready! screen) :oauth-ready)
-                 (= pid :anthropic-coding-plan) (when (anthropic-oauth-ready! screen) :oauth-ready)
-                 ;; Plain API-key providers go through the GATEWAY too: the
-                 ;; daemon mints the flow, persists the key in ITS config and
-                 ;; creates the fleet entry. The TUI never writes a credential.
-                 needs-key? (when (gateway-api-key-login! screen {:id pid}) :key-saved)
-                 :else nil)
+           api-key (dlg/open-nested!
+                     screen
+                     (fn []
+                       (cond has-key? (:api-key preset)
+                             (github-copilot-provider? pid)
+                             (when (gateway-device-login! screen pid (vis/display-label pid))
+                               :oauth-ready)
+                             (= pid :openai-codex) (when (codex-oauth-ready! screen) :oauth-ready)
+                             (= pid :anthropic-coding-plan) (when (anthropic-oauth-ready! screen)
+                                                              :oauth-ready)
+                             ;; Plain API-key providers go through the GATEWAY too: the
+                             ;; daemon mints the flow, persists the key in ITS config and
+                             ;; creates the fleet entry. The TUI never writes a credential.
+                             needs-key? (when (gateway-api-key-login! screen {:id pid}) :key-saved)
+                             :else nil)))
            auth-ok? (cond has-key? true
                           oauth? (some? api-key)
                           needs-key? (some? api-key)
@@ -506,13 +521,15 @@
             (if-let [oauth-models (when oauth? (not-empty (default-model-configs preset)))]
               (provider-config-with-models preset oauth-models)
               (when-let
-                [model (select-provider-model! screen
-                                               (cond->
-                                                 {:id (:id preset)
-                                                  :base-url base-url
-                                                  :default-models (:default-models preset)}
-                                                 (string? api-key)
-                                                 (assoc :api-key api-key)))]
+                [model (dlg/open-nested! screen
+                                         #(select-provider-model! screen
+                                                                  (cond->
+                                                                    {:id (:id preset)
+                                                                     :base-url base-url
+                                                                     :default-models
+                                                                     (:default-models preset)}
+                                                                    (string? api-key)
+                                                                    (assoc :api-key api-key))))]
                 (cond-> (provider-config-with-models preset [{:name model}])
                   (and (string? api-key) (not oauth?))
                   (assoc :api-key api-key))))))))))
