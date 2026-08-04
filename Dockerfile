@@ -405,6 +405,12 @@ RUN set -eux; \
         /opt/vis/spel/spel install --with-deps; \
         rm -rf /var/lib/apt/lists/*; \
     fi; \
+    # `spel install` assembles the Node driver as root and leaves
+    # <driver>/<platform> at 0700. The runtime user cannot traverse it, so
+    # `driver-ready?` reads false and spel re-assembles into the root-owned
+    # driver directory — an AccessDeniedException instead of a browser. These
+    # caches are shared and read-only at runtime; make the tree traversable.
+    chmod -R a+rX /opt/vis/spel /opt/vis/playwright; \
     spel version
 
 # Prove the copied bundles are visible through the env set above.
@@ -429,6 +435,12 @@ RUN /usr/sbin/useradd --create-home --shell /bin/bash --uid 10001 vis \
     && mkdir -p /home/vis/.vis /home/vis/.ssh /home/vis/.config/gh /home/vis/.config/git /work \
     && chmod 0700 /home/vis/.ssh \
     && chown -R vis:vis /home/vis /work
+
+# The runtime user, not root, is what launches browsers: an unreadable driver
+# is what turns `spel open` into an AccessDeniedException at 03:00.
+RUN test "${WITH_BROWSERS}" != "true" \
+    || su -s /bin/sh vis -c 'test -r /opt/vis/spel/driver/linux/package/cli.js \
+                            && test -x /opt/vis/spel/driver/linux/node'
 
 # ── Vis Agent: the JVM runtime, from this source ──
 # The container runs `clojure -M:vis` (the wrapper's `jvm` runtime), NOT a
