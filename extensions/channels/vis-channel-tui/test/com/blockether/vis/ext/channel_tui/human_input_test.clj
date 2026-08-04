@@ -264,7 +264,16 @@
              (it "offers Enter as a newline chord inside a multiline field"
                  (let [pairs (hi/hint (assoc (hi/init-form (request)) :focus 7))]
                    (expect (some #{["Enter" "newline"]} pairs))
-                   (expect (not-any? #{"submit"} (map second pairs))))))
+                   (expect (not-any? #{"submit"} (map second pairs)))))
+             ;; Regression: an exclusive option said `Space toggle` — the very word an
+             ;; inclusive one uses — promising an off state a single choice never has.
+             (it "says pick on an exclusive option and toggle on an inclusive one"
+                 (let
+                   [pairs-at (fn [focus]
+                               (hi/hint (assoc (hi/init-form (request)) :focus focus)))]
+                   (expect (= [["Space" "pick"]] (pairs-at 2)))
+                   (expect (= [["Space" "toggle"]] (pairs-at 4)))
+                   (expect (= [["Space" "toggle"]] (pairs-at 6))))))
 
 (defdescribe paint-test
              (it "paints the title, the description and every field label"
@@ -470,6 +479,36 @@
       (expect (some #{(canonical-row (fn [g]
                                        (dialogs/draw-radio-item! g 0 0 40 false false "Prod")))}
                     (painted-rows (assoc (hi/init-form (request)) :focus 2) "Prod"))))
+  ;; Regression: EVERY option row was painted with the radio ●/○ mark, so a
+  ;; `multiselect` — where several answers are legal — looked exactly like the
+  ;; `select` above it and nothing on the screen said "choose any".
+  (it
+    "paints multiselect options as INCLUSIVE checkbox boxes, never radio dots"
+    (let
+      [rows (into (painted-rows (assoc (hi/init-form (request)) :focus 4) "Alpha")
+                  (painted-rows (assoc (hi/init-form (request)) :focus 4) "Beta"))]
+      (expect (some #{(canonical-row (fn [g]
+                                       (dialogs/draw-checkbox-item! g 0 0 40 true false "Alpha")))}
+                    rows))
+      (expect (some #{(canonical-row (fn [g]
+                                       (dialogs/draw-checkbox-item! g 0 0 40 false false "Beta")))}
+                    rows))
+      (expect (not-any? #(or (str/includes? % "●") (str/includes? % "○")) rows))))
+  (it "fills the box of a chosen inclusive option and leaves its sibling empty"
+      (let [form (feed (assoc (hi/init-form (request)) :focus 4) [(ch \space)])]
+        (expect (some #{(canonical-row (fn [g]
+                                         (dialogs/draw-checkbox-item! g 0 0 40 true true "Alpha")))}
+                      (painted-rows form "Alpha")))
+        (expect (some #{(canonical-row
+                          (fn [g]
+                            (dialogs/draw-checkbox-item! g 0 0 40 false false "Beta")))}
+                      (painted-rows form "Beta")))))
+  (it "never lends the inclusive box to an EXCLUSIVE option"
+      (let
+        [rows (into (painted-rows (assoc (hi/init-form (request)) :focus 2) "Dev")
+                    (painted-rows (assoc (hi/init-form (request)) :focus 2) "Prod"))]
+        (expect (seq rows))
+        (expect (not-any? #(str/includes? % "[") rows))))
   (it "paints text fields with the shared borderless input row"
       (expect (some #{(canonical-row (fn [g]
                                        (dialogs/draw-text-input-field! g 0 0 40 "" 0 "who")))}

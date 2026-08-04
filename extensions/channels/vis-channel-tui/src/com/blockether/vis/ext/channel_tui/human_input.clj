@@ -753,6 +753,11 @@
                (mapv (fn [{:keys [value label]}]
                        {:kind :option
                         :field-id id
+                        ;; EXCLUSIVE (`:select`) or INCLUSIVE (`:multiselect`): the row
+                        ;; carries the ANSWER SHAPE, and the painter answers it with the
+                        ;; radio dot or the checkbox box — so the option itself says
+                        ;; whether picking a second one replaces the first or adds to it.
+                        :is-exclusive (= :select type)
                         :text (or label (str value))
                         :is-checked (contains? chosen value)
                         :is-focused (= (get index [id value]) focus)})
@@ -884,8 +889,14 @@
      (= :otp (:type (field-by-id form (:field-id stop))))]
 
     (cond-> []
-      (contains? #{:checkbox :select-option :multi-option} (:kind stop))
+      (contains? #{:checkbox :multi-option} (:kind stop))
       (conj ["Space" "toggle"])
+
+      ;; An EXCLUSIVE option has no off state — Space moves the single choice onto
+      ;; this row. Calling that "toggle" promised an off switch the field does not
+      ;; have, and the same word then meant two different things one field apart.
+      (= :select-option (:kind stop))
+      (conj ["Space" "pick"])
 
       otp?
       (conj ["0–9" "fill"])
@@ -1011,14 +1022,22 @@
                                      (:text entry))
         nil)
 
+    ;; One row shape, TWO toggle vocabularies. An exclusive `:select` option wears
+    ;; the shared ●/○ radio mark — picking one drops the other; an inclusive
+    ;; `:multiselect` option wears the `[✓]`/`[ ]` box — pick as many as apply.
+    ;; Painting both with the radio dot made "choose any" look exactly like "choose
+    ;; one", which is the one thing an option row exists to say. The companion app
+    ;; already draws the two marks apart, so this is also what keeps the surfaces
+    ;; speaking one vocabulary.
     :option
-    (do (dialogs/draw-radio-item! g
-                                  left
-                                  row
-                                  inner-w
-                                  (:is-focused entry)
-                                  (:is-checked entry)
-                                  (:text entry))
+    (do ((if (:is-exclusive entry) dialogs/draw-radio-item! dialogs/draw-checkbox-item!)
+          g
+          left
+          row
+          inner-w
+          (:is-focused entry)
+          (:is-checked entry)
+          (:text entry))
         nil)
 
     :range

@@ -324,6 +324,43 @@ Field `type` is one of `plaintext`, `password`, `multiline`, `select`,
 and — for the two `select` types — `options` (strings, or `{"value": ..., "label": ...}` maps).
 `fields` and `direction` belong to `group` alone (see below).
 
+#### Toggles: exclusive `select`, inclusive `multiselect` and `checkbox`
+
+There are two kinds of toggle, and every surface says which one it is drawing
+before the person touches it:
+
+| Field | Rule | Answer | TUI | Companion app |
+| --- | --- | --- | --- | --- |
+| `select` | **exclusive** — exactly one option | the chosen `value` | `●` / `○` dots, `Space` **picks** | radio group |
+| `multiselect` | **inclusive** — any number of options | list of values, in the order the request declared them | `[✓]` / `[ ]` boxes, `Space` **toggles** | pressed toggles |
+| `checkbox` | **inclusive**, one lone switch | `true` / `false` | `[✓]` / `[ ]` box on the label row | pressed toggle |
+
+An exclusive option has no off state: `Space` moves the single choice onto the row
+under the cursor and never clears it. The TUI starts a `select` on its `default`, or
+on the first option when the spec names none, so an exclusive field is never left
+unanswered by accident. An inclusive option is independent: `Space` adds or drops
+exactly that value, and an empty list is a legal answer unless the field says
+`is_required`.
+
+```python
+answer = vis.ask("Release", [
+    {"name": "channel", "type": "select", "label": "Channel",
+     "options": ["testflight", "appstore"], "default": "testflight"},
+    {"name": "stores", "type": "multiselect", "label": "Also ship to",
+     "options": ["ios", "android", "web"], "default": ["ios"], "is_required": True},
+    {"name": "notes", "type": "checkbox", "label": "Attach release notes"},
+])
+# answer.values == {"channel": "appstore", "stores": ["ios", "web"], "notes": True}
+```
+
+An `options` entry is either a plain string, where the value IS the label, or a
+`{"value": ..., "label": ...}` map when the answer key and the shown text differ.
+An option nobody declared is refused, not dropped: a `multiselect` answers
+`unknown option zz` and a `select` answers `must be one of a, b`, and the dialog
+turns red on that one field. Shape follows the kind of toggle, and only the inclusive
+side is forgiving about it: one bare value counts as a list of one, while a list
+handed to an exclusive `select` is not one of its options and answers nothing.
+
 A `range` is a bounded number: `min` (default 0), `max` (default 100) and `step`
 (default 1). It answers with a number, not a string — a `long` when all three
 bounds are whole, otherwise a `double` — and the engine clamps nothing: a value
