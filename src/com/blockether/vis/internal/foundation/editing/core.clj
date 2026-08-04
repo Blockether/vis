@@ -4458,7 +4458,12 @@
 
 (defn- ls-one
   "List ONE normalized `ls` spec. `ls` is the DIRECTORY tool, so a file path is a
-   routing mistake and says so instead of returning a degenerate one-row tree."
+   routing mistake and says so instead of returning a degenerate one-row tree.
+   A path that does NOT exist reports the nearest EXISTING directory above it
+   (`nearest-existing-dir`, the same climb `grep` uses for `missing_paths`), so an
+   invented address — typically a filesystem path assembled from a language
+   namespace, which is wrong in a workspace with many source roots — is recovered
+   by listing that real directory instead of being guessed a second time."
   [spec]
   (let
     [path
@@ -4468,8 +4473,18 @@
      (safe-path path)]
 
     (when-not (.exists f)
-      (throw (ex-info (str "`ls`: no such path `" path "`")
-                      {:type :ext.foundation.editing/invalid-ls-args :path path})))
+      (let
+        [near (some-> (nearest-existing-dir f)
+                      rel-path)]
+        (throw (ex-info (str "`ls`: no such path `" path
+                             "`" (when near
+                                   (str
+                                     " \u2014 nearest existing directory is `" near
+                                     "`. List that, or `grep` the name: a language namespace is"
+                                     " not a path \u2014 this workspace has many source roots.")))
+                        (cond-> {:type :ext.foundation.editing/invalid-ls-args :path path}
+                          near
+                          (assoc :nearest near))))))
     (when-not (.isDirectory f)
       (throw (ex-info (str "`ls` lists directories \u2014 `"
                            path
@@ -6612,7 +6627,9 @@
    {"paths" {:type "array"
              :items {:oneOf [{:type "string" :minLength 1} ls-entry-schema]}
              :minItems 1
-             :description "Directories; an object entry overrides shared options."}
+             :description (str "Directories; an object entry overrides shared options. "
+                               "Exact physical paths a tool returned; never assembled from a "
+                               "language namespace \u2014 a workspace has many source roots.")}
     "depth" {:type "integer"
              :minimum 1
              :description "Levels to descend (default 1); nested rows sit in `children`."}

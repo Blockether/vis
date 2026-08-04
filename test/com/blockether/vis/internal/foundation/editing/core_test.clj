@@ -1367,7 +1367,32 @@
          (try (ls-tool {"paths" [file]}) nil (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (= :ext.foundation.editing/ls-on-file (:type (ex-data err))))
-        (expect (string/includes? (ex-message err) "cat")))))
+        (expect (string/includes? (ex-message err) "cat"))))
+  ;; Regression: `ls` on a path that does not exist answered with nothing but
+  ;; "no such path", so an address INVENTED from a language namespace
+  ;; (`com.blockether.vis.ext.channel-tui.human-input` →
+  ;; `src/com/blockether/vis/channel_tui`) bounced with no way back and the next
+  ;; call guessed again. The nearest EXISTING directory turns that bounce into a
+  ;; recovery and names the wrong move.
+  (it "ls names the nearest existing directory for a path that does not exist"
+      (let
+        [_
+         (write-temp! "lsnear/real/keep.txt" "x")
+
+         missing
+         (str (temp-dir-path "lsnear") "/real/com/blockether/nope")
+
+         ls-tool
+         (private-fn "ls-tool")
+
+         err
+         (try (ls-tool {"paths" [missing]}) nil (catch clojure.lang.ExceptionInfo e e))]
+
+        (expect (= :ext.foundation.editing/invalid-ls-args (:type (ex-data err))))
+        (expect (string/includes? (ex-message err) "no such path"))
+        (expect (string/includes? (ex-message err) "nearest existing directory"))
+        (expect (string/includes? (ex-message err) "namespace"))
+        (expect (string/ends-with? (:nearest (ex-data err)) "lsnear/real")))))
 
 (defdescribe
   vis-ensure-existing-file-home-homogenized-test
@@ -3356,6 +3381,12 @@
       ;; for `grep`/`cat` on guessed paths in a tree it had never listed.
       (expect (string/includes? (:ext.symbol/description ls) "SHAPE here first"))
       (expect (string/includes? (:ext.symbol/description ls) "`depth` descends"))
+      ;; The `paths` argument itself says where a real path comes from: the namespace
+      ;; → path arithmetic that broke `ls` is only valid inside ONE source root.
+      (expect (string/includes? (get-in schema [:properties "paths" :description])
+                                "Exact physical paths a tool returned"))
+      (expect (string/includes? (get-in schema [:properties "paths" :description])
+                                "never assembled from a language namespace"))
       (expect (string/includes? (:ext.symbol/result ls) "children"))
       ;; cat is a FILE reader again: no directory knobs, no ls prose
       (expect (not (contains? (:properties cat-entry) "depth")))
