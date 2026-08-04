@@ -114,13 +114,14 @@
           "on the second occurrence factor it out and call the helper"
           "Call advertised native tools directly" "for unadvertised sandbox" "read-only `session`"
           "raw data, not rendered text" "Use documented keys" "never a `session_fold` receipt"
-          ;; The transcript HEADS every result with its coordinate and only foots it with the
-          ;; `toolu_…` id, so the coordinate is a first-class `ntr` key and the core says so.
-          "# saved:" "Before re-running or scanning transcript" "recover raw result" "saved id"
-          "the coordinate" "above it (`ntr[\"t5/i1\"]`)" "`ntr.describe()`" "labelled candidates"
-          "not `ntr.keys()`/`items()` to discover results" "shape before indexing"
-          "inspect keys/types" "then adapt" "do not print it or call `repl` status merely to"
-          "reproduce before editing"
+          ;; The transcript HEADS every result with its coordinate AND stamps that same
+          ;; coordinate under it (`# saved:`), so the coordinate — never the opaque
+          ;; `toolu_…` id — is the `ntr` key the core teaches.
+          "# saved:" "Before re-running or scanning transcript" "recover raw result"
+          "the `# saved:` coordinate" "under it (`ntr[\"t5/i1/f2\"]`)" "`ntr.describe()`"
+          "labelled candidates" "not `ntr.keys()`/`items()` to discover results"
+          "shape before indexing" "inspect keys/types" "then adapt"
+          "do not print it or call `repl` status merely to" "reproduce before editing"
           ;; Reproduction is REPL-first and the reproduction SURVIVES as a suite test:
           ;; a bare "reproduce" was read as an ad-hoc check that vanished with the session,
           ;; leaving fixed bugs with nothing pinning them.

@@ -4361,18 +4361,27 @@
      ;; Build the wire body for ONE tool-call from ITS OWN forms, plus the
      ;; iteration-level lines (folds / form-budget / ctx delta) carried on the
      ;; first call only (they describe the whole reply, not a single call).
-     ;; RESULT HANDLE: a NATIVE tool call stores its return value keyed by THIS
-     ;; tool_use id, so the model can re-read it later via `ntr[<id>]` without
-     ;; re-running the tool. Surface the EXACT key inline (the id the model saw
-     ;; on the wire can differ from the one vis stored — e.g. OpenAI Responses'
-     ;; composite `call_id|item_id` — so we must hand it the literal key, not
-     ;; let it guess). Emitted only when the call actually produced a stored
-     ;; `:result` (python_execution prints, it doesn't store a return, so it
+     ;; RESULT HANDLE: a NATIVE tool call stores its return value, and the key handed
+     ;; back is the transcript COORDINATE of the form that produced it (`t5/i1/f2`) —
+     ;; the SAME address already printed as this result's header, one `/fK` digit
+     ;; longer. Stamping the provider `tool_use` id instead cost 24 unreadable
+     ;; characters and, on a provider whose wire id is not the key vis stored (OpenAI
+     ;; Responses' composite `call_id|item_id`), was the one handle the model could
+     ;; not have guessed. A form with no coordinate (legacy record) keeps the literal
+     ;; stored id, which still resolves. Emitted only when the call actually produced
+     ;; a stored `:result` (python_execution prints, it doesn't store a return, so it
      ;; gets no handle).
      result-handle
      (fn [tc own]
-       (when (and (:id tc) (not= "session_fold" (:name tc)) (some #(some? (:result %)) own))
-         (str "# saved: ntr[" (pr-str (str (:id tc))) "] — re-read without re-running")))
+       (when (and (:id tc) (not= "session_fold" (:name tc)))
+         (when-let
+           [f (first (filter #(and (some? (:result %)) (= (:id tc) (:svar/tool-call-id %))) own))]
+           (let
+             [scope (:scope f)
+              handle
+              (if (and (string? scope) (not (str/blank? scope))) (str/trim scope) (str (:id tc)))]
+
+             (str "# saved: ntr[" (pr-str handle) "] — re-read without re-running")))))
 
      call-content
      (fn [idx tc]
@@ -4956,7 +4965,8 @@
      "Run Python in the session sandbox to batch, filter, and chain tool calls: `await gather(...)` independent "
      "natives, then print only needed output. State persists; project packages need a project REPL. "
      "Only `print` returns; bare expressions drop and errors surface. Native results return inline and stay "
-     "at `ntr[tool_id]`; engine-bound natives are bare snake_case, native-only ones absent. Never "
+     "at their `# saved:` coordinate (`ntr[\"t5/i1/f2\"]`); engine-bound natives are bare snake_case, "
+     "native-only ones absent. Never "
      "`time.sleep`/poll for background shells \u2014 use `shell` op `wait` (a REQUIRED `until` regex ends it "
      "line), via `gather` when parallel. Close what you open (`with open(...)`): a dropped file handle is "
      "NOT auto-closed here, so the sandbox reclaims leaked descriptors and refuses more than 512 held at "
@@ -4990,7 +5000,8 @@
      "Collapse SETTLED wire steps into a breadcrumb; folding changes rendering, not storage. "
      "Settled = prior turns plus this turn's finished iterations (see `session[\"turn\"]`); fold a step "
      "once its takeaway is captured. The live iteration and future steps are refused. "
-     "Folded data-tool results stay recoverable at `ntr[tool_id]` (no rerun, survives restart), but "
+     "Folded data-tool results stay recoverable at their `# saved:` coordinate (`ntr[\"tN/iM/fK\"]`, "
+     "no rerun, survives restart), but "
      "`ntr` never stores fold receipts"
      (if (toggles/enabled? "introspection")
        "; `await session_state()` keeps `transcript/turns/iterations/blocks` (`code`/`result`)"

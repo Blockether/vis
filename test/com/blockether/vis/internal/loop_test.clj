@@ -2784,11 +2784,14 @@
           (expect (str/includes? (by-id "B") "BBB"))
           ;; python_execution → its PRINTED string
           (expect (str/includes? (by-id "P") "PPP"))))
-    (it "a NATIVE result tool_result carries its ntr[id] handle; python_execution does NOT"
-        ;; MODEL-SEES-IT: each native call's result is retrievable later via
-        ;; `ntr[<tool_use_id>]`; the id vis stored can differ from the wire id the
-        ;; model saw (OpenAI Responses composite), so we surface the EXACT key inline.
-        ;; python_execution stores no return → no handle.
+    (it "a NATIVE result tool_result carries its ntr[coordinate] handle; python_execution does NOT"
+        ;; MODEL-SEES-IT: each native call's result is retrievable later, and the key
+        ;; we hand back is the transcript COORDINATE of the form that produced it —
+        ;; the SAME address printed as this result's header, one `/fK` digit longer.
+        ;; The opaque `toolu_…` id is never stamped: it is 24 unreadable characters,
+        ;; and on a provider whose wire id is not the key vis stored (OpenAI Responses'
+        ;; composite `call_id|item_id`) it was the only handle the model could not
+        ;; guess. python_execution stores no return → no handle.
         (let
           [m
            (irm {:tool-calls [{:id "toolu_A" :name "cat"} {:id "call_1|fc_9" :name "rg"}
@@ -2800,11 +2803,22 @@
            by-id
            (into {} (map (juxt :tool_use_id :content)) (:content m))]
 
-          ;; native results advertise the literal retrieval key (composite included)
-          (expect (str/includes? (by-id "toolu_A") "ntr[\"toolu_A\"]"))
-          (expect (str/includes? (by-id "call_1|fc_9") "ntr[\"call_1|fc_9\"]"))
+          ;; native results advertise the COORDINATE of their own form
+          (expect (str/includes? (by-id "toolu_A") "ntr[\"t1/i1/f1\"]"))
+          (expect (str/includes? (by-id "call_1|fc_9") "ntr[\"t1/i1/f2\"]"))
+          ;; …and never the opaque id, composite or not
+          (expect (not (str/includes? (by-id "toolu_A") "ntr[\"toolu_A\"]")))
+          (expect (not (str/includes? (by-id "call_1|fc_9") "ntr[\"call_1|fc_9\"]")))
           ;; python_execution printed — no stored return, so no handle offered
           (expect (not (str/includes? (by-id "P") "ntr")))))
+    (it "a stored result whose form carries NO coordinate falls back to its literal id"
+        ;; Legacy/unscoped record: the id still resolves, so the handle is still real.
+        (let
+          [m
+           (irm {:tool-calls [{:id "toolu_L" :name "cat"}]
+                 :forms-vec [{:svar/tool-call-id "toolu_L" :result "AAA"}]})]
+
+          (expect (str/includes? (:content (first (:content m))) "ntr[\"toolu_L\"]"))))
     (it "an ERRORED native call gets no result handle (nothing was stored)"
         (let
           [m
@@ -3987,7 +4001,7 @@
       (expect (= ["tool_call_id"] (get-in by-name ["retry_native" :schema :required])))
       (let [python-description (get-in by-name ["python_execution" :description])]
         (doseq
-          [fact ["project packages need a project REPL" "ntr[tool_id]" "bare snake_case"
+          [fact ["project packages need a project REPL" "ntr[\"t5/i1/f2\"]" "bare snake_case"
                  "errors surface"
                  ;; The sleep/poll prohibition lives HERE and nowhere else: the core
                  ;; prompt deliberately dropped its duplicate copy.

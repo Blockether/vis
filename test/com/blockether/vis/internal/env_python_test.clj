@@ -821,17 +821,25 @@
                                       (str "try:\n" "    ntr['toolu_NOPE']\n"
                                            "except KeyError as e:\n" "    print(str(e))\n"))
                                  "tN/iM"))))
-    (it "describe() labels each id with the coordinate the transcript shows"
+    ;; Regression: the `# saved:` line under every result now stamps the COORDINATE, so
+    ;; describe() leads with the same key instead of a 24-character id to copy.
+    (it "describe() leads each entry with the coordinate the transcript stamped"
         (let [own (:python-context (ep/create-python-context {}))]
           (ep/set-python-binding!
             own
             (symbol "__vis_native_result_index__")
             (fn []
-              [{"id" "toolu_A" "scope" "t7/i3" "tool" "grep" "gist" "26 hits"}]))
-          (expect (str/includes? (run own
-                                      (str "for line in ntr.describe(ids=['toolu_A']):\n"
-                                           "    print(line)\n"))
-                                 "toolu_A · t7/i3 · grep · 26 hits"))))))
+              [{"id" "toolu_A" "scope" "t7/i3" "form" "t7/i3/f2" "tool" "grep" "gist" "26 hits"}
+               {"id" "toolu_OLD" "tool" "cat"}]))
+          (let
+            [out (run own
+                      (str "for line in ntr.describe(ids=['toolu_A', 'toolu_OLD']):\n"
+                           "    print(line)\n"))]
+            (expect (str/includes? out "t7/i3/f2 · grep · 26 hits"))
+            ;; the opaque id is never stamped in front of a key that reads back
+            (expect (not (str/includes? out "toolu_A ·")))
+            ;; …but a record too old to carry a coordinate still names its id
+            (expect (str/includes? out "toolu_OLD · cat")))))))
 
 (defdescribe collect-garbage-gil-budget-test
              ;; Regression: `collect-garbage!` runs in `loop/send!`'s `finally`, i.e. between

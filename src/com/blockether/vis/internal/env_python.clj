@@ -1118,7 +1118,7 @@
     (set-python-binding-doc!
       ctx
       'session-fold
-      "session_fold(target, gist=None) -> str. Collapse SETTLED steps: prior turns and the current turn only through its last completed iteration; live/future steps cannot fold. Targets: step/turn ids or through/from/to/since selectors. Folding changes rendering, not storage; there is no destructive unfold command. `ntr` never stores a `session_fold` receipt. Recover a folded result with `ntr[tool_id]`; if absent, use `s = await session_state()` and filter `['transcript']['turns'][...]['iterations'][...]['blocks']`. A broader newer fold supersedes fully covered breadcrumbs; equal scope keeps newer. Partial overlaps remain separate.")))
+      "session_fold(target, gist=None) -> str. Collapse SETTLED steps: prior turns and the current turn only through its last completed iteration; live/future steps cannot fold. Targets: step/turn ids or through/from/to/since selectors. Folding changes rendering, not storage; there is no destructive unfold command. `ntr` never stores a `session_fold` receipt. Recover a folded result with its `# saved:` coordinate, `ntr[\"tN/iM/fK\"]`; if absent, use `s = await session_state()` and filter `['transcript']['turns'][...]['iterations'][...]['blocks']`. A broader newer fold supersedes fully covered breadcrumbs; equal scope keeps newer. Partial overlaps remain separate.")))
 
 
 (def ^:private posix-compat-shim-src

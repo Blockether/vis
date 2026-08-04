@@ -2184,9 +2184,9 @@ class __VisNativeResults__:
     def __getitem__(self, __vis_id__):
         if __vis_id__ in self.__vis_cache__:
             return self.__vis_cache__[__vis_id__]
-        # The transcript heads every result with its coordinate and only foots it
-        # with the id, so `ntr["t5/i1"]` is a first-class read — and `ntr["t5/i1/f2"]`
-        # picks one call of an iteration that ran several.
+        # The transcript both heads a result with its coordinate and stamps that same
+        # coordinate under it (`# saved: ntr["t5/i1/f2"]`), so a coordinate is the
+        # ordinary key here and `/fK` picks one call of an iteration that ran several.
         __vis_c__ = self.__vis_coord_key__(__vis_id__)
         if __vis_c__ is not None:
             if __vis_c__ in self.__vis_cache__:
@@ -2204,10 +2204,9 @@ class __VisNativeResults__:
         raise KeyError(
             "no native tool result for "
             + repr(__vis_id__)
-            + " — that tool_use id is unknown or produced no return (a python_execution "
-            "call returns what it print()s, not a stored value). Re-run the tool, use "
-            "the exact tool_use id shown on a prior tool_result, or the transcript "
-            'coordinate printed above it (ntr["tN/iM"]).'
+            + " — that key is unknown or produced no return (a python_execution "
+            "call returns what it print()s, not a stored value). Re-run the tool, or use "
+            'the `# saved:` coordinate stamped under a prior result (ntr["tN/iM/fK"]).'
         )
 
     def get(self, __vis_id__, __vis_default__=None):
@@ -2332,9 +2331,10 @@ class __VisNativeResults__:
             return "result"
 
     def describe(self, limit=20, ids=None):
-        # ['toolu_01Tc… · t7/i3/f2 · grep · session_fold, 6 file names', …] — that
-        # coordinate is what the transcript shows above the result, and the `/fK` tail
-        # names THIS call of it, so a listed id also reads back as ntr["t7/i3/f2"].
+        # ['t7/i3/f2 · grep · session_fold, 6 file names', …] — every entry LEADS with
+        # the key that reads it back: the `# saved:` coordinate stamped under that
+        # result, whose `/fK` tail names THIS call of an iteration that ran several.
+        # Only a record too old to carry a coordinate falls back to its opaque id.
         __vis_idx__ = self.__vis_index__()
         __vis_lbl__ = {}
         if __vis_idx__ is not None:
@@ -2345,7 +2345,9 @@ class __VisNativeResults__:
                             [
                                 __vis_x__
                                 for __vis_x__ in (
-                                    __vis_e__.get("form") or __vis_e__.get("scope"),
+                                    __vis_e__.get("form")
+                                    or __vis_e__.get("scope")
+                                    or __vis_e__.get("id"),
                                     __vis_e__.get("tool"),
                                     __vis_e__.get("gist"),
                                 )
@@ -2374,15 +2376,20 @@ class __VisNativeResults__:
         __vis_out__ = []
         for __vis_i__ in __vis_sel__:
             if __vis_i__ in __vis_lbl__:
-                __vis_gist__ = __vis_lbl__[__vis_i__]
+                # Already LED by the coordinate that reads it back; stamping the opaque
+                # id in front of it would only bury the key that matters.
+                __vis_out__.append(__vis_lbl__[__vis_i__])
             else:
                 __vis_v__ = self.get(__vis_i__)
-                __vis_gist__ = (
-                    "<missing>"
-                    if __vis_v__ is None
-                    else self.__vis_gist_of__(__vis_v__)
+                __vis_out__.append(
+                    str(__vis_i__)
+                    + " · "
+                    + (
+                        "<missing>"
+                        if __vis_v__ is None
+                        else self.__vis_gist_of__(__vis_v__)
+                    )
                 )
-            __vis_out__.append(str(__vis_i__) + " · " + __vis_gist__)
         return __vis_out__
 
     def __repr__(self):
@@ -2393,10 +2400,10 @@ class __VisNativeResults__:
         return (
             "<ntr: "
             + str(__vis_n__)
-            + ' stored native results · ntr[tool_id] or ntr["tN/iM"] fetches one with no '
-            're-run (ntr["tN/iM/fK"] picks one call of an iteration that ran several, '
-            'ntr.at("tN/iM") takes them all) · ntr.describe() lists the latest turn with '
-            "what each holds>"
+            + ' stored native results · ntr["tN/iM/fK"] — the `# saved:` coordinate '
+            'stamped under a result — fetches it with no re-run (ntr["tN/iM"] reads an '
+            'iteration that ran one tool, ntr.at("tN/iM") all of them) · '
+            "ntr.describe() — what each holds>"
         )
 
 
