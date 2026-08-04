@@ -96,6 +96,29 @@
                                    {:id "test_epsilon" :old true :new false}]
                                   (mapv #(select-keys % [:id :old :new]) @events))))))))
 
+;; Regression, issue #106: `clear-state!` wiped LISTENERS as well as overrides,
+;; so this test helper silently detached the engine's toggle -> tool-binding
+;; fan-out for the rest of the JVM (and, in a suite that shares one process,
+;; for every namespace that ran after it).
+(defdescribe clear-state-keeps-listeners-test
+             (it "drops overrides but leaves listeners attached"
+                 (with-clean-state (fn []
+                                     (t/register-toggle!
+                                       {:id "test_zeta" :label "Zeta" :default false})
+                                     (let
+                                       [events
+                                        (atom [])
+
+                                        dispose
+                                        (t/add-listener! #(swap! events conj %))]
+
+                                       (try (t/set-enabled! "test_zeta" true)
+                                            (t/clear-state!)
+                                            (expect (false? (t/enabled? "test_zeta")))
+                                            (t/set-enabled! "test_zeta" true)
+                                            (expect (= 2 (count @events)))
+                                            (finally (dispose))))))))
+
 (defdescribe
   persistence-test
   (it "snapshot omits non-persistent toggles and includes effective values for persistent ones"

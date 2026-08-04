@@ -514,11 +514,16 @@
 ;; =============================================================================
 
 (defn clear-state!
-  "Wipe live overrides and listeners. Registry is untouched. Used by
-   tests; production callers should prefer `reset-to-default!`."
+  "Wipe live overrides so every id resolves to its registered default.
+   Registry AND listeners are untouched: a registry listener is process
+   infrastructure (the engine refreshes every cached session's tool
+   bindings from one), so a test helper that dropped them silently
+   disabled that fan-out for the rest of the JVM. A caller that adds a
+   listener detaches it with the `dispose!` thunk `add-listener!`
+   returns. Used by tests; production callers should prefer
+   `reset-to-default!`."
   []
   (reset! state {})
-  (reset! listeners [])
   nil)
 
 ;; =============================================================================

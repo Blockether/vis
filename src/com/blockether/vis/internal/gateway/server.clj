@@ -1402,7 +1402,6 @@
                             (when (some? chosen) (toggles/set-value! id chosen)))
                           (= action "cycle") (toggles/cycle-value! id)
                           :else (toggles/set-enabled! id (not (toggles/enabled? id))))
-                    (lp/sync-cached-extension-symbols!)
                     (json-response (toggle-json (toggles/toggle-spec id)))))))
 
 (defn- mcp-error-response

@@ -5368,6 +5368,86 @@
                           (expect (= [old-env] @disposed)))
                         (finally (swap! env-cache dissoc k)))))))
 
+;; Regression, issue #106: a Settings flip only reached live tool bindings when it
+;; arrived through the gateway HTTP handler, which called
+;; `sync-cached-extension-symbols!` inline. A flip made anywhere else — the TUI
+;; settings dialog calls `toggles/set-enabled!` directly, as does any extension —
+;; persisted to state.yml and refreshed nothing: every other cached session kept
+;; its stale tool surface (no `shell`, no `subprocess`) until a restart.
+(defdescribe toggle-change-refreshes-cached-envs-test
+             (describe
+               "a toggle change from ANY channel"
+               (it
+                 "refreshes extension bindings in every idle cached env"
+                 (toggles/register-toggle!
+                   {:id "loop_test_fanout" :label "Fan-out" :default false})
+                 (let
+                   [k
+                    "toggle-fanout-test/idle"
+
+                    entry
+                    (new-cache-entry {:marker :idle})
+
+                    synced
+                    (atom [])]
+
+                   (swap! env-cache assoc k entry)
+                   (try (with-redefs
+                          [lp/sync-active-extension-symbols!
+                           (fn [e]
+                             (swap! synced conj e))]
+
+                          ;; NOT the HTTP handler: the bare toggles API the TUI
+                          ;; dialog and every extension flip goes through.
+                          (toggles/set-enabled! "loop_test_fanout" true))
+                        (expect (some #(= {:marker :idle} %) @synced))
+                        (finally (swap! env-cache dissoc k)
+                                 (toggles/set-enabled! "loop_test_fanout" false)))))
+               (it
+                 "leaves a session that is mid-turn to its own next-turn sync"
+                 (toggles/register-toggle!
+                   {:id "loop_test_fanout_busy" :label "Fan-out busy" :default false})
+                 (let
+                   [k
+                    "toggle-fanout-test/busy"
+
+                    entry
+                    (new-cache-entry {:marker :busy})
+
+                    ^java.util.concurrent.locks.ReentrantLock lock
+                    (:lock entry)
+
+                    release
+                    (promise)
+
+                    started
+                    (promise)
+
+                    holder
+                    (doto (Thread. ^Runnable (fn []
+                                               (.lock lock)
+                                               (deliver started true)
+                                               (try @release (finally (.unlock lock)))))
+                      (.setDaemon true)
+                      (.start))
+
+                    synced
+                    (atom [])]
+
+                   (swap! env-cache assoc k entry)
+                   (try @started
+                        (with-redefs
+                          [lp/sync-active-extension-symbols!
+                           (fn [e]
+                             (swap! synced conj e))]
+
+                          (toggles/set-enabled! "loop_test_fanout_busy" true))
+                        (expect (not-any? #(= {:marker :busy} %) @synced))
+                        (finally (deliver release true)
+                                 (.join holder 1000)
+                                 (swap! env-cache dissoc k)
+                                 (toggles/set-enabled! "loop_test_fanout_busy" false)))))))
+
 (defdescribe env-reaper-enablement-test
              (it "starts for the absolute heap budget even when every older policy is off"
                  (let [enabled? (deref #'lp/env-reaper-enabled?)]

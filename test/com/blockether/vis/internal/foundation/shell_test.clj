@@ -1274,6 +1274,36 @@
              (lp/sync-active-extension-symbols! env)
              (expect (false? (boolean (py c "'shell' in globals()"))))
              (finally (toggles/set-enabled! "shell" before)))))
+  ;; Regression, issue #106: turning Shell commands back ON from a settings
+  ;; dialog left every session that was already open without the `shell` global
+  ;; (and `subprocess` still raising) until the process restarted — only the
+  ;; gateway's HTTP settings handler ever fanned the refresh out to cached
+  ;; sessions, so a TUI flip refreshed nothing.
+  (it "restores the binding in an already-open CACHED session on the flip alone"
+      (let
+        [before
+         (toggles/enabled? "shell")
+
+         c
+         (py-ctx {})
+
+         env
+         {:extensions (atom (vec (extension/registered-extensions)))
+          :active-extensions (atom [])
+          :python-context c}
+
+         cached
+         (lp/cache-env! (str "shell-toggle-fanout-" (System/nanoTime)) env)]
+
+        (try (toggles/set-enabled! "shell" false)
+             (lp/sync-active-extension-symbols! env)
+             (expect (false? (boolean (py c "'shell' in globals()"))))
+             ;; No explicit sync and no HTTP handler: the toggle flip alone has
+             ;; to reach this session's live Python globals.
+             (toggles/set-enabled! "shell" true)
+             (expect (true? (boolean (py c "'shell' in globals()"))))
+             (finally (swap! (deref #'lp/cache) dissoc (:id cached))
+                      (toggles/set-enabled! "shell" before)))))
   (it
     "routes map-only logs and stop calls through the native Python bridge"
     ;; Regression: a stale positional wrapper invoked shell-dispatch as

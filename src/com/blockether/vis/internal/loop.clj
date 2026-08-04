@@ -12352,6 +12352,18 @@
              0
              @cache))
 
+;; A Settings flip must reach the TOOLS, whatever channel made it. The fan-out
+;; used to sit inline in the gateway's HTTP settings handler, so a flip from the
+;; TUI dialog (which calls `toggles/set-enabled!` straight) or from an extension
+;; persisted to state.yml and refreshed nothing — every other cached session kept
+;; its stale tool surface until a restart. The toggle registry is the ONE seam
+;; every channel goes through, so the fan-out belongs on its listener.
+;; `notify!` swallows listener throws, and `defonce` keeps the registration
+;; idempotent across `(require ... :reload)`.
+(defonce ^:private _toggle-extension-sync-listener
+  (toggles/add-listener! (fn [_event]
+                           (sync-cached-extension-symbols!))))
+
 (defn refresh-cached-routers!
   "Reseat `:router` on every cached env's environment map.
 
