@@ -96,13 +96,14 @@
   {:title "Fix the gateway" :body "Done." :data {:session_id "s-1"} :collapse-id "s-1"})
 
 (deftest relay-config-test
-  (testing "no relay.edn and no env is simply OFF — never an error"
+  (testing "no relay.edn and no env is the PUBLISHER's relay, never an error"
     #_{:clj-kondo/ignore [:unresolved-symbol]}
     (with-push-home [_home]
                     (let [cfg (relay/config)]
-                      (is (false? (:is-configured cfg)))
-                      (is (nil? (:url cfg)))
-                      (is (false? (relay/configured?))))))
+                      (is (true? (:is-configured cfg)))
+                      (is (= relay/DEFAULT-URL (:url cfg)))
+                      (is (= "default" (:source cfg)))
+                      (is (true? (relay/configured?))))))
   (testing "~/.vis/relay.edn configures it, and a trailing slash is not a second path"
     #_{:clj-kondo/ignore [:unresolved-symbol]}
     (with-push-home [home]
@@ -203,20 +204,29 @@
                     (testing "and nothing in the wire encoding leaks it either"
                       (is (not (str/includes? (wire/json-str d) "abcdef123456")))))))
 
-(deftest a-grant-device-without-a-relay-is-honest-about-it-test
-  (with-push-home [_home]
-                  (testing "registration still works — the relay may be configured later"
-                    (let
-                      [device (push/register-device! {:grant "GRANT-abcdef123456" :platform "ios"})]
-                      (is (some? device))
-                      (testing "but a send says exactly why it cannot happen, and keeps the device"
-                        (let [result (push/send-to-device! device ALERT)]
-                          (is (false? (:is-delivered result)))
-                          (is (= "relay-not-configured" (:reason result))))
-                        (is (= 1 (push/device-count))))))
-                  (testing "a registration with neither token nor grant is refused"
-                    (is (nil? (push/register-device! {:token "  "})))
-                    (is (nil? (push/register-device! {}))))))
+;; A device that named no relay comes from a build that predates the address
+;; travelling with the grant. It is not silent: the gateway spends that grant at
+;; the relay IT names, which is the publisher's until an operator says otherwise.
+
+(deftest a-grant-device-without-a-relay-uses-the-gateways-own-test
+  (with-push-home
+    [home]
+    (let
+      [relay-server (start-relay! (fn [_]
+                                    {:status 200 :body "{\"is_delivered\":true}"}))]
+      (try (configure-relay! home (:url relay-server))
+           (let [device (push/register-device! {:grant "GRANT-abcdef123456" :platform "ios"})]
+             (is (some? device))
+             (is (nil? (:relay-url device)))
+             (testing "the grant is spent at the gateway's own relay"
+               (is (true? (:is-delivered (push/send-to-device! device ALERT))))
+               (is (= "Bearer GRANT-abcdef123456"
+                      (:authorization (first @(:requests relay-server)))))
+               (is (= 1 (push/device-count)))))
+           (finally ((:stop! relay-server)))))
+    (testing "a registration with neither token nor grant is refused"
+      (is (nil? (push/register-device! {:token "  "})))
+      (is (nil? (push/register-device! {}))))))
 
 ;; A relay is one more machine on the network, so the failures worth testing are
 ;; the network's: a stumble that must be tried again, a verdict that must not be,
@@ -283,43 +293,64 @@
 ;; the address, and it learns it from the relay that sealed its grant.
 
 (deftest a-device-names-the-relay-that-sealed-its-grant-test
-  (with-push-home [_home]
-                  (let
-                    [relay-server (start-relay! (fn [_]
-                                                  {:status 200 :body "{\"is_delivered\":true}"}))]
-                    (try (testing "this gateway is configured with nothing at all"
-                           (is (false? (relay/configured?)))
-                           (is (nil? (:url (relay/config)))))
-                         (let
-                           [device (push/register-device! {:grant "GRANT-abcdef123456"
-                                                           :platform "ios"
-                                                           :relay-url (:url relay-server)})]
-                           (testing "push is nevertheless available — a device brought an address"
-                             (is (true? (push/any-configured?)))
-                             (is (true? (:is-available (push/status)))))
-                           (testing "and the alert goes to the relay the DEVICE named"
-                             (let [result (push/send-to-device! device ALERT)]
-                               (is (true? (:is-delivered result)))
-                               (is (= 200 (:status result))))
-                             (let [request (first @(:requests relay-server))]
-                               (is (= 1 (count @(:requests relay-server))))
-                               (is (= "/v1/push" (:path request)))
-                               (is (= "Bearer GRANT-abcdef123456" (:authorization request)))))
-                           (testing
-                             "the address is not a secret: it is where this device's alerts go"
-                             (is (= (:url relay-server) (:relay-url (first (push/list-devices)))))))
-                         (finally ((:stop! relay-server)))))))
+  (with-push-home
+    [_home]
+    (let
+      [relay-server (start-relay! (fn [_]
+                                    {:status 200 :body "{\"is_delivered\":true}"}))]
+      (try (testing "this gateway is configured with nothing, so it names the publisher's relay"
+             (is (true? (relay/configured?)))
+             (is (= relay/DEFAULT-URL (:url (relay/config))))
+             (is (= "default" (:source (relay/config)))))
+           (let
+             [device (push/register-device! {:grant "GRANT-abcdef123456"
+                                             :platform "ios"
+                                             :relay-url (:url relay-server)})]
+             (testing "push is nevertheless available — a device brought an address"
+               (is (true? (push/any-configured?)))
+               (is (true? (:is-available (push/status)))))
+             (testing "and the alert goes to the relay the DEVICE named"
+               (let [result (push/send-to-device! device ALERT)]
+                 (is (true? (:is-delivered result)))
+                 (is (= 200 (:status result))))
+               (let [request (first @(:requests relay-server))]
+                 (is (= 1 (count @(:requests relay-server))))
+                 (is (= "/v1/push" (:path request)))
+                 (is (= "Bearer GRANT-abcdef123456" (:authorization request)))))
+             (testing "the address is not a secret: it is where this device's alerts go"
+               (is (= (:url relay-server) (:relay-url (first (push/list-devices)))))))
+           (finally ((:stop! relay-server)))))))
 
 (deftest a-device-may-not-name-a-cleartext-relay-test
   (testing "an address a device supplies is still TLS or nothing"
-    (with-push-home [_home]
+    (with-push-home [home]
                     (let
-                      [device (push/register-device! {:grant "GRANT-abcdef123456"
-                                                      :platform "ios"
-                                                      :relay-url "http://push.example.com"})]
-                      (is (some? device))
-                      (is (nil? (:relay-url device)))
-                      (is (false? (push/any-configured?)))
-                      (let [result (push/send-to-device! device ALERT)]
-                        (is (false? (:is-delivered result)))
-                        (is (= "relay-not-configured" (:reason result))))))))
+                      [relay-server (start-relay! (fn [_]
+                                                    {:status 200 :body "{\"is_delivered\":true}"}))]
+                      (try (configure-relay! home (:url relay-server))
+                           (let
+                             [device (push/register-device! {:grant "GRANT-abcdef123456"
+                                                             :platform "ios"
+                                                             :relay-url "http://push.example.com"})]
+                             (is (some? device))
+                             (is (nil? (:relay-url device)))
+                             (testing "and the alert goes to the relay this gateway names instead"
+                               (is (true? (:is-delivered (push/send-to-device! device ALERT))))
+                               (is (= 1 (count @(:requests relay-server))))))
+                           (finally ((:stop! relay-server))))))))
+
+;; One constant in two languages. The gateway must name the relay the APP mints
+;; at: a grant is gibberish to every relay but the one that sealed it, so drift
+;; between the two is silent and total — every push 404s. Read the file rather
+;; than remember it.
+
+(deftest the-app-and-the-gateway-name-the-same-relay-test
+  (let
+    [src
+     (slurp (io/file "apps/vis-companion/src/lib/relay.ts"))
+
+     named
+     (second (re-find #"PUBLISHER_RELAY_URL\s*=\s*\n?\s*\"([^\"]+)\"" src))]
+
+    (is (some? named))
+    (is (= relay/DEFAULT-URL named))))

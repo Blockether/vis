@@ -21,14 +21,15 @@
    * a grant expires by itself. Its expiry travels inside it, sealed, so the
      relay keeps no list of anybody and an abandoned gateway simply goes mute.
 
-   The relay itself lives in `apps/vis-companion-relay` (a Cloudflare Worker).
-   The DEVICE names it: which relay can sign for a build is a property of the
+   The relay itself lives in `apps/vis-companion-relay` (a Cloudflare Worker),
+   and every gateway names the publisher's one by DEFAULT (`DEFAULT-URL`): a
+   machine nobody configured is already able to push. A device may name another
+   and is believed — which relay can sign for a build is a property of the
    BUILD, so the app mints its grant at the relay serving the app it is and
-   posts `{grant, relay_url}` to `/v1/devices` — a gateway nobody configured
-   still delivers. `VIS_PUSH_RELAY_URL`, or `~/.vis/relay.edn`
-   `{:url \"https://push.example.com\"}`, is an operator override for devices
-   that named nothing; the direct `gateway.push` / `gateway.fcm` credentials
-   still work exactly as before."
+   posts `{grant, relay_url}` to `/v1/devices`. `VIS_PUSH_RELAY_URL`, or
+   `~/.vis/relay.edn` `{:url \"https://push.example.com\"}`, replaces the default
+   on one machine; the direct `gateway.push` / `gateway.fcm` credentials still
+   work exactly as before."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -83,17 +84,38 @@
                    (and (str/starts-with? u "http://") (loopback? u))))
       u)))
 
+(def DEFAULT-URL
+  "The relay a gateway names until an operator names another.
+
+   It is the publisher's, and the same address the app mints at:
+   `PUBLISHER_RELAY_URL` in `apps/vis-companion/src/lib/relay.ts`. The two are
+   one constant in two languages and `relay-test` reads that file to prove they
+   have not drifted — a grant is sealed by ONE relay, so a gateway that guessed
+   a different address could only ever be refused.
+
+   Naming it here is what makes the product claim true from the gateway's side
+   too: `features.push` is available on a machine that was never configured, so
+   nothing has to pretend push is broken until the first phone registers. Ship
+   your own build and both constants move together, beside the bundle id and
+   `google-services.json` that already had to."
+  "https://vis-companion-relay.blockether.workers.dev")
+
 (defn config
-  "The relay this gateway names for EVERY device, or `:is-configured false`.
-   Never throws. An operator override; most gateways need none, because a
-   registered device carries the address of the relay that sealed its grant."
+  "The relay this gateway names for every device that named none.
+
+   Configured by default; `VIS_PUSH_RELAY_URL` or `~/.vis/relay.edn` replaces
+   `DEFAULT-URL` on this machine, and an empty value turns relaying off. Never
+   throws."
   []
   (let
     [side
      (or (side-config) {})
 
+     env
+     (env-val "VIS_PUSH_RELAY_URL")
+
      raw
-     (some-> (or (env-val "VIS_PUSH_RELAY_URL") (:url side))
+     (some-> (or env (:url side) DEFAULT-URL)
              str
              str/trim
              (str/replace #"/+$" ""))
@@ -102,9 +124,9 @@
      (usable-url raw)]
 
     {:url (when-not (str/blank? raw) raw)
-     :source (cond (env-val "VIS_PUSH_RELAY_URL") "env"
+     :source (cond env "env"
                    (:url side) "file"
-                   :else nil)
+                   :else "default")
      :is-insecure (boolean (and (not (str/blank? raw)) (nil? usable)))
      :is-configured (some? usable)}))
 

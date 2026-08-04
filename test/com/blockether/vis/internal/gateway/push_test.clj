@@ -8,6 +8,7 @@
             [clojure.string :as str]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.gateway.push :as push]
+            [com.blockether.vis.internal.gateway.relay :as relay]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire])
   (:import [java.security KeyPairGenerator Signature]
@@ -143,36 +144,38 @@
 
 (deftest device-registry-test
   #_{:clj-kondo/ignore [:unresolved-symbol]}
-  (with-push-home [_home]
-                  (let [tok (apply str (repeat 64 "a"))]
-                    (testing "registration is idempotent and persists across a cache drop"
-                      (is (some? (push/register-device! {:token tok
-                                                         :platform "ios"
-                                                         :environment "sandbox"
-                                                         :client "vis-companion"
-                                                         :client-version "1.0.1"})))
-                      (is (= 1 (push/device-count)))
-                      (push/register-device! {:token tok :platform "ios" :environment "sandbox"})
-                      (is (= 1 (push/device-count)))
-                      (push/reload-devices!)
-                      (is (= 1 (push/device-count))))
-                    (testing "listed devices never carry the raw token"
-                      (let [d (first (push/list-devices))]
-                        (is (nil? (:token d)))
-                        (is (= "aaaaaa…aaaa" (:token_preview d)))
-                        (is (= "sandbox" (:environment d)))))
-                    (testing "a blank token is refused"
-                      (is (nil? (push/register-device! {:token "  "})))
-                      (is (= 1 (push/device-count))))
-                    (testing "unregister is idempotent"
-                      (is (true? (push/unregister-device! tok)))
-                      (is (false? (push/unregister-device! tok)))
-                      (is (= 0 (push/device-count))))
-                    (testing "status reports availability, device count and what is missing"
-                      (let [st (push/status)]
-                        (is (= "apns" (:provider st)))
-                        (is (false? (:is-available st)))
-                        (is (= 0 (:devices st))))))))
+  (with-push-home
+    [_home]
+    (let [tok (apply str (repeat 64 "a"))]
+      (testing "registration is idempotent and persists across a cache drop"
+        (is (some? (push/register-device! {:token tok
+                                           :platform "ios"
+                                           :environment "sandbox"
+                                           :client "vis-companion"
+                                           :client-version "1.0.1"})))
+        (is (= 1 (push/device-count)))
+        (push/register-device! {:token tok :platform "ios" :environment "sandbox"})
+        (is (= 1 (push/device-count)))
+        (push/reload-devices!)
+        (is (= 1 (push/device-count))))
+      (testing "listed devices never carry the raw token"
+        (let [d (first (push/list-devices))]
+          (is (nil? (:token d)))
+          (is (= "aaaaaa…aaaa" (:token_preview d)))
+          (is (= "sandbox" (:environment d)))))
+      (testing "a blank token is refused"
+        (is (nil? (push/register-device! {:token "  "})))
+        (is (= 1 (push/device-count))))
+      (testing "unregister is idempotent"
+        (is (true? (push/unregister-device! tok)))
+        (is (false? (push/unregister-device! tok)))
+        (is (= 0 (push/device-count))))
+      (testing "status: available with nothing configured, through the publisher's relay"
+        (let [st (push/status)]
+          (is (= "relay" (:provider st)))
+          (is (true? (:is-available st)))
+          (is (= relay/DEFAULT-URL (:url (:relay st))))
+          (is (= 0 (:devices st))))))))
 
 (deftest turn-finished-trigger-test
   (with-push-home

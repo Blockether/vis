@@ -1716,19 +1716,20 @@ function NotificationsPanel({
   }, [client, gateway.url, load]);
 
   // Push has two independent halves; this device only cares about its own. An
-  // iOS-only gateway is "available" to an iPhone and "not configured" to a
-  // Pixel, and the missing-credentials banner must name the right ones.
+  // iOS-only gateway can sign for an iPhone and not for a Pixel, so the verdict
+  // is per platform, never the summary flag.
   const provider = pushPlatform() === "android" ? push?.fcm : push?.apns;
-  // A machine holding no signing key is not silent if it has a relay: this device
-  // hands it a grant instead of a token, so "not configured" would be a lie.
+  // A machine holding no signing key is not silent: it reaches this device
+  // through a relay, which needs nothing configured on either side — the app
+  // was built naming one, and so was the gateway.
   const relayUrl = relayUrlFor(push ?? undefined, pushPlatform());
-  // A relay this device refused is a MISCONFIGURED machine, not a machine
-  // without credentials — and the address is the only part its operator can fix.
+  // The one way that breaks is an operator who named an address we refuse. That
+  // is a MISCONFIGURED machine, not a machine without credentials — and the
+  // address is the only part its operator can fix.
   const refusedRelay = refusedRelayUrl(push ?? undefined, pushPlatform());
   const available =
     Boolean(relayUrl) ||
     (provider ? provider.is_available : (push?.is_available ?? false));
-  const missing = provider?.missing ?? push?.missing;
 
   // Gateway too old to know about push at all: render nothing.
   if (unsupported) return null;
@@ -1741,7 +1742,7 @@ function NotificationsPanel({
         push
           ? available
             ? `${push.devices} device${push.devices === 1 ? "" : "s"} · ${relayUrl ? `via ${relayHost(relayUrl)}` : pushPlatform() === "android" ? (push.fcm?.project_id ?? "fcm") : (push.environment ?? "production")}`
-            : "not configured"
+            : "relay not https"
           : "checking…"
       }
     >
@@ -1753,16 +1754,9 @@ function NotificationsPanel({
           <Banner kind="warn">
             This machine relays notifications through {refusedRelay}, which is
             not https — this device will not hand a push grant to an address on
-            the wire. Point it at an https relay (VIS_PUSH_RELAY_URL) and try
-            again.
-          </Banner>
-        )}
-
-        {push && !available && !refusedRelay && (
-          <Banner kind="warn">
-            This machine cannot push to{" "}
-            {pushPlatform() === "android" ? "Android" : "iOS"} yet — missing{" "}
-            {(missing ?? ["push credentials"]).join(", ")}.
+            the wire. Unset VIS_PUSH_RELAY_URL there and it goes back to the
+            relay this app was built with; point it at an https address to keep
+            your own.
           </Banner>
         )}
 

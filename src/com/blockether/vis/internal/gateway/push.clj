@@ -353,18 +353,15 @@
 (defn device-count ^long [] (count (ensure-loaded!)))
 
 (defn any-configured?
-  "True when this gateway can deliver a push to SOME platform — with its own
-   Apple or Android credentials, through an operator-configured relay, or
-   because a registered DEVICE named the relay that sealed its grant.
+  "True when this gateway can deliver a push to SOME platform.
 
-   That last one is the zero-configuration path and the common one: which relay
-   can sign for a build is a property of the build, so the phone knows the
-   address and this machine has no way to. Any of the four is a valid setup."
+   It normally can, with nothing configured: a gateway names the publisher's
+   relay by default, and a registered device may name the one that sealed its
+   grant. Its own Apple or Android credentials answer yes too. The only no left
+   is an operator who pointed this machine at an address a bearer grant may not
+   be handed to."
   []
-  (boolean (or (configured?)
-               (fcm/configured?)
-               (relay/configured?)
-               (some :relay-url (vals (ensure-loaded!))))))
+  (boolean (or (configured?) (fcm/configured?) (relay/configured?))))
 
 (defn- not-blank
   [s]
@@ -756,18 +753,12 @@
      (fcm/config)
 
      r
-     (relay/status)
+     (relay/status)]
 
-     ;; A gateway holding no credential and naming no relay is still able to
-     ;; push, if a device brought its own address. Reporting otherwise would
-     ;; make the app offer to fix a machine that has nothing wrong with it.
-     is-relayed
-     (or (:is-available r) (boolean (some :relay-url (vals (ensure-loaded!)))))]
-
-    {:is-available (or (:is-configured cfg) (:is-configured f) is-relayed)
+    {:is-available (or (:is-configured cfg) (:is-configured f) (:is-available r))
      :provider (cond (and (:is-configured cfg) (:is-configured f)) "apns+fcm"
                      (:is-configured f) "fcm"
-                     (and is-relayed (not (:is-configured cfg))) "relay"
+                     (and (:is-available r) (not (:is-configured cfg))) "relay"
                      :else "apns")
      :environment (:default-environment cfg)
      :topic (:topic cfg)

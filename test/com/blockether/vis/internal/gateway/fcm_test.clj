@@ -144,8 +144,10 @@
 
 (deftest status-exposes-both-providers
   (with-push-home [home]
-                  (is (false? (:is-available (push/status))))
-                  (is (false? (push/any-configured?)))
+                  (testing "with no credentials at all it is still push-capable — the relay"
+                    (is (true? (:is-available (push/status))))
+                    (is (= "relay" (:provider (push/status))))
+                    (is (true? (push/any-configured?))))
                   (write-service-account! home)
                   (let [st (push/status)]
                     (testing "Android-only credentials are a valid, push-capable setup"

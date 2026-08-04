@@ -264,9 +264,11 @@ no key, topic, or environment value works around it.
 | your gateway + a store-distributed companion | only from a gateway holding **that publisher's** credentials |
 | your gateway + a store-distributed companion, using your own key | ❌ permanent 403 — nothing to configure |
 
-Push is optional. With no credentials the gateway still registers devices,
-reports `features.push` as unavailable, and simply never sends; sessions,
-streaming, and drafts are unaffected.
+Push needs no credentials at all. A gateway holding none reports `features.push`
+as **available** and delivers through the relay described next; the credentials
+below only matter for a companion you build and sign yourself, when you would
+rather push directly than through anybody's relay. Sessions, streaming, and
+drafts are unaffected either way.
 
 ### Relayed push (a gateway with no Apple or Google key)
 
@@ -281,13 +283,16 @@ gateway -> POST   /v1/push          Bearer <grant>   => the relay signs and send
 (nothing is stored: the grant carries its own sealed expiry)
 ```
 
-Nothing to configure. Which relay can sign for a companion build is a property of
-the **build**, so the app — not your laptop — knows the address: it mints its
-grant there and posts `{grant, relay_url}` to `/v1/devices` in one request. A
-gateway nobody ever configured delivers.
+Nothing to configure, on either side. This gateway names the publisher's relay by
+default (`relay/DEFAULT-URL`), so `features.push` is available on a machine that
+was never configured — and which relay can sign for a companion build is a
+property of the **build**, so the app knows the address too: it mints its grant
+there and posts `{grant, relay_url}` to `/v1/devices` in one request. When the
+two differ the device wins, because only the relay that sealed a grant can open
+it.
 
-An operator can still name a relay, which is then used for devices that named
-none:
+An operator can replace that default on one machine; it is then used for every
+device that named no relay of its own:
 
 ```bash
 export VIS_PUSH_RELAY_URL=https://push.example.com
@@ -327,8 +332,9 @@ sealed capability carrying its own device token and expiry, and the abuse counte
 live in Cloudflare's rate limiting bindings, so there is no table to dump, exhaust,
 or migrate. Its README covers deploying, the limits and the failure verdicts.
 
-**Run your own.** The companion carries its publisher's relay as a build
-constant — a self-hoster changes it in their own build, next to the bundle id and
+**Run your own.** The address is a build constant on both sides — the companion's
+`PUBLISHER_RELAY_URL` and the gateway's `relay/DEFAULT-URL`, which a test keeps
+equal. A self-hoster changes them in their own build, next to the bundle id and
 `google-services.json` they already had to change. Deploy that Worker to your own
 Cloudflare account with your own `RELAY_SEAL_KEY` and your own APNs key or
 Firebase service account, and every phone running your build mints there, on

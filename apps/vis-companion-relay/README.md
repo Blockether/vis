@@ -134,12 +134,13 @@ Then point a gateway at it:
 export VIS_PUSH_RELAY_URL=https://push.example.com
 ```
 
-The companion needs no configuration and no gateway does either: the app carries
-its publisher's relay as a build constant, mints its grant there, and hands the
-paired gateway `{grant, relay_url}` together — over `https` only. A gateway that
-was told nothing still delivers, and `VIS_PUSH_RELAY_URL` overrides one machine.
-So running your own relay is a deploy plus one constant in your own build, and it
-serves the companion build whose signing key you put in it.
+Neither side needs configuring: the app carries its publisher's relay as a build
+constant, mints its grant there, and hands the paired gateway `{grant,
+relay_url}` together — over `https` only — while the gateway names that same
+relay by default, so a machine that was told nothing reports push as available
+and delivers. `VIS_PUSH_RELAY_URL` overrides one machine. So running your own
+relay is a deploy plus one constant in each build, and it serves the companion
+build whose signing key you put in it.
 
 `npm run dev` deliberately uses `--remote`: local workerd has no HTTP/2 and APNs
 will fail there with code that works deployed.
