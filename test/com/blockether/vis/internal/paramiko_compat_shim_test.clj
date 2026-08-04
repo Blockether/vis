@@ -290,7 +290,9 @@
          (fn [_u _p]
            0)
          (fn [_a _p]
-           true))
+           true)
+         (fn [_u]
+           1))
 
        handle
        (long (get info "handle"))
@@ -326,3 +328,56 @@
                           :else (do (Thread/sleep 10) (recur (dec tries))))))))
       ;; Never leak this test's server into later tests, even if the reap was skipped.
       ((deref #'shim/op-server-stop) handle))))
+
+(def ^:private none-auth-server-src
+  "Guest paramiko SSH server whose `ServerInterface` advertises and accepts `none`
+   authentication, accepting connections in a loop (the shim's client-side
+   `auth_none` re-dials the peer, so the server sees more than one connection)."
+  (str "import socket, threading, paramiko\n"
+       "lst = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+       "lst.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+       "lst.bind(('127.0.0.1', 0)); lst.listen(4)\n"
+       "hostkey = paramiko.RSAKey.generate(1024)\n" "class Srv(paramiko.ServerInterface):\n"
+       "  def get_allowed_auths(self, u):\n" "    return 'none'\n"
+       "  def check_auth_none(self, u):\n"
+       "    return paramiko.AUTH_SUCCESSFUL if u == 'bob' else paramiko.AUTH_FAILED\n"
+       "def _one(conn):\n" "  t = paramiko.Transport(conn)\n"
+       "  t.add_server_key(hostkey)\n" "  t.start_server(server=Srv())\n"
+       "def _serve():\n" "  while True:\n"
+       "    conn, _ = lst.accept()\n"
+       "    threading.Thread(target=_one, args=(conn,), daemon=True).start()\n"
+       "threading.Thread(target=_serve, daemon=True).start()\n" "PORT = lst.getsockname()[1]\n"))
+
+(defn- none-auth-client-src
+  "The issue's own client: connect, `start_client()`, `auth_none(username)`."
+  [username]
+  (str "import socket, paramiko\n"
+       "out = None\n"
+       "try:\n"
+       "  s = socket.create_connection(('127.0.0.1', PORT), 10)\n"
+       "  c = paramiko.Transport(s)\n"
+       "  c.start_client()\n"
+       "  c.auth_none('"
+       username
+       "')\n"
+       "  out = ['authenticated', bool(c.is_active())]\n" "except Exception as e:\n"
+       "  out = [type(e).__name__, str(e)]\n" "out\n"))
+
+;; Regression, issue #79: a guest `ServerInterface` returning AUTH_SUCCESSFUL from
+;; `check_auth_none` still refused the client's `auth_none`, which died with
+;; "Auth fail for methods 'password,keyboard-interactive,publickey'" — the MINA
+;; server behind `start_server` only ever offered password auth and never asked
+;; the guest about `none`.
+(defdescribe
+  paramiko-none-auth-test
+  (it "authenticates Transport.auth_none against a guest ServerInterface that accepts none"
+      (let [{python-context :python-context} (ep/create-python-context {} nil {:enabled? true})]
+        (try (.eval ^Context python-context "python" none-auth-server-src)
+             (expect (= ["authenticated" true] (ev python-context (none-auth-client-src "bob"))))
+             (finally (.close ^Context python-context)))))
+  (it "refuses none for a user the ServerInterface rejects, instead of authenticating everyone"
+      (let [{python-context :python-context} (ep/create-python-context {} nil {:enabled? true})]
+        (try (.eval ^Context python-context "python" none-auth-server-src)
+             (let [[kind _msg] (ev python-context (none-auth-client-src "mallory"))]
+               (expect (= "AuthenticationException" kind)))
+             (finally (.close ^Context python-context))))))

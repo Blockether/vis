@@ -695,13 +695,19 @@ def __vis_install_paramiko__():
                     except Exception:
                         return AUTH_FAILED
 
+                def _auth_none(u):
+                    try:
+                        return srv.check_auth_none(u)
+                    except Exception:
+                        return AUTH_FAILED
+
                 def _forward(addr, port):
                     try:
                         return bool(srv.check_port_forward_request(addr, port))
                     except Exception:
                         return False
 
-                info = _call(_server_start, _auth_pw, _forward)
+                info = _call(_server_start, _auth_pw, _forward, _auth_none)
                 self._server_handle = info.get("handle")
                 relay = _socketmod.create_connection(
                     ("127.0.0.1", int(info.get("port")))

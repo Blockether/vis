@@ -15,7 +15,8 @@
            [org.apache.sshd.common.util.net SshdSocketAddress]
            [org.apache.sshd.common.session SessionListener]
            [org.apache.sshd.server SshServer]
-           [org.apache.sshd.server.auth.password PasswordAuthenticator]
+           [org.apache.sshd.server.auth UserAuthNone UserAuthNoneFactory]
+           [org.apache.sshd.server.auth.password PasswordAuthenticator UserAuthPasswordFactory]
            [org.apache.sshd.server.forward ForwardingFilter]
            [org.apache.sshd.server.keyprovider SimpleGeneratorHostKeyProvider]
            [org.graalvm.polyglot Value]))
@@ -389,13 +390,31 @@
 
 (declare op-server-stop)
 
+(defn- none-auth-factory
+  "A MINA `none` user-auth factory that delegates to the guest `ServerInterface`'s
+   `check_auth_none` (a paramiko AUTH_* int; 0 == AUTH_SUCCESSFUL). Without it MINA
+   never offers `none`, so a server that advertises it through `get_allowed_auths`
+   still rejects the client. The guest decides: a stock `ServerInterface` answers
+   AUTH_FAILED, so nothing authenticates by default."
+  [auth-none-fn]
+  (proxy [UserAuthNoneFactory] []
+    (createUserAuth [_session]
+      (proxy [UserAuthNone] []
+        (doAuth [_buffer init]
+          (Boolean/valueOf
+            (boolean (and init
+                          (try (= 0 (guest-call auth-none-fn [(.getUsername ^UserAuthNone this)]))
+                               (catch Throwable _ false))))))))))
+
 (defn- op-server-start
   "Start an Apache MINA SSHD server on an ephemeral loopback port; returns
    `{\"handle\" H \"port\" P}`. The paramiko shim's `Transport.start_server` relays
    the pre-accepted client socket to `127.0.0.1:P`, so MINA terminates SSH while
    auth and reverse-forward decisions delegate to the guest `ServerInterface`:
-   `auth-pw-fn` (-> paramiko AUTH_* int; 0 == success) and `forward-fn` (-> truthy
-   to allow a `tcpip-forward` request). A fresh host key is generated per server.
+   `auth-pw-fn` / `auth-none-fn` (-> paramiko AUTH_* int; 0 == success) and
+   `forward-fn` (-> truthy to allow a `tcpip-forward` request). Only `none` and
+   `password` are offered, and `none` succeeds only when the guest's
+   `check_auth_none` says so. A fresh host key is generated per server.
 
    The server self-reaps HOST-side via a `SessionListener`: the instant its (single)
    relayed SSH session closes it is stopped and deregistered, so its acceptor and
@@ -403,7 +422,7 @@
    Python `_reap` daemon — GraalPy cancels that thread when the context closes
    (logging \"Could not stop thread\"), which used to strand the MINA server and leak
    its threads (and grow `server-registry` unbounded across turns/sessions)."
-  [auth-pw-fn forward-fn]
+  [auth-pw-fn forward-fn auth-none-fn]
   (let
     [hostkey
      (.resolve (Files/createTempDirectory "vis-sshd-hostkey" (make-array FileAttribute 0))
@@ -414,6 +433,7 @@
        (.setHost "127.0.0.1")
        (.setPort 0)
        (.setKeyPairProvider (SimpleGeneratorHostKeyProvider. hostkey))
+       (.setUserAuthFactories [(none-auth-factory auth-none-fn) UserAuthPasswordFactory/INSTANCE])
        (.setPasswordAuthenticator (reify
                                     PasswordAuthenticator
                                       (authenticate [_ u p _session]
@@ -498,8 +518,8 @@
                             (ssh-envelope #(op-key-generate kind bits passphrase)))
    "__vis_key_load__" (fn [private-b64 passphrase]
                         (ssh-envelope #(op-key-load private-b64 passphrase)))
-   "__vis_server_start__" (fn [auth-pw forward]
-                            (ssh-envelope #(op-server-start auth-pw forward)))
+   "__vis_server_start__" (fn [auth-pw forward auth-none]
+                            (ssh-envelope #(op-server-start auth-pw forward auth-none)))
    "__vis_server_stop__" (fn [h]
                            (ssh-envelope #(op-server-stop h)))})
 
@@ -520,7 +540,7 @@
      [{:shim/name "paramiko"
        :shim/imports ["paramiko"]
        :shim/description
-       "Paramiko-compatible SSH2 via pure-Java JSch: SSHClient exec/SFTP, RSA/DSS/ECDSA/Ed25519 keys, and server APIs/constants. `Transport(real_socket).start_server()` runs Apache MINA SSHD for reverse `tcpip-forward`, delegating password auth and approval to `ServerInterface` (`check_auth_password`/`check_port_forward_request`). Import and socket-less `start_server()` start nothing; live servers cap at 32 and self-reap. Not supported: `invoke_shell`; use `exec_command`/SFTP."
+       "Paramiko-compatible SSH2 via pure-Java JSch: SSHClient exec/SFTP, RSA/DSS/ECDSA/Ed25519 keys, and server APIs/constants. `Transport(real_socket).start_server()` runs Apache MINA SSHD for reverse `tcpip-forward`, delegating `none`/password auth and approval to `ServerInterface` (`check_auth_none`/`check_auth_password`/`check_port_forward_request`); `Transport.auth_none` authenticates against a server that accepts it. Import and socket-less `start_server()` start nothing; live servers cap at 32 and self-reap. Not supported: `invoke_shell`; use `exec_command`/SFTP."
        :shim/bindings paramiko-bridge-bindings
        :shim/source "vis-shims/paramiko.py"}]}))
 
