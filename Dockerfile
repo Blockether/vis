@@ -171,23 +171,15 @@ RUN check-graal-pins
 # do it: the JDK derives user.home from getpwuid(), and the build runs as root.
 #
 # `vis/VERSION` — what `vis-agent --version` prints — is the repo-root
-# VIS_VERSION plus the build sha, and `.dockerignore` drops `.git`, so
-# `build.clj`'s own sha probe finds no repo here and stamped every
-# container-built asset with no sha at all. `bin/release-native` passes the
-# host's sha as VIS_BUILD_SHA; declared HERE so a new sha rebuilds only this
-# layer (`COPY . .` busts it anyway) and never the dependency cache above.
-ARG VIS_BUILD_SHA=""
-RUN VIS_BUILD_SHA="${VIS_BUILD_SHA}" \
-    VIS_NATIVE_EXTRA_ARGS="-Duser.home=/home/vis ${VIS_NATIVE_EXTRA_ARGS}" \
+# VIS_VERSION, verbatim: that file is the only version source, and the build
+# below refuses to ship a binary that reports anything else.
+RUN VIS_NATIVE_EXTRA_ARGS="-Duser.home=/home/vis ${VIS_NATIVE_EXTRA_ARGS}" \
     clojure -T:build native \
     && test -x target/vis \
     && test -d target/resources \
     && ./target/vis --version \
-    && { ./target/vis --version | grep -q "$(tr -d '[:space:]' < VIS_VERSION)" \
-         || { echo "native image does not report VIS_VERSION=$(tr -d '[:space:]' < VIS_VERSION)" >&2; exit 1; }; } \
-    && { [ -z "${VIS_BUILD_SHA}" ] \
-         || ./target/vis --version | grep -q "${VIS_BUILD_SHA}" \
-         || { echo "native image reports no VIS_BUILD_SHA=${VIS_BUILD_SHA}" >&2; exit 1; }; }
+    && { [ "$(./target/vis --version | tr -d '[:space:]')" = "vis-agent$(tr -d '[:space:]' < VIS_VERSION)" ] \
+         || { echo "native image does not report exactly VIS_VERSION=$(tr -d '[:space:]' < VIS_VERSION)" >&2; exit 1; }; }
 
 # ── Stage: native-export ─────────────────────────────────────────────────────
 # Not part of the runtime image: a BUILD-ONLY stage whose whole filesystem is the
@@ -471,16 +463,13 @@ COPY --chown=vis:vis . /opt/vis/src
 RUN ln -sf /opt/vis/src/bin/vis-agent /usr/local/bin/vis-agent
 
 # `vis/VERSION` — what `vis-agent --version` prints — is a classpath resource
-# the native build writes from VIS_VERSION plus the build sha. This JVM image
-# runs the source tree, where nothing writes it, so stamp it here or the
-# runtime reports "dev". VIS_VERSION is the single version source; the sha
-# (`bin/release-native` and CI already pass one in) rides along as semver build
-# metadata, because `.dockerignore` drops `.git` and there is no repo to ask.
-ARG VIS_BUILD_SHA=""
+# the native build writes from the repo-root VIS_VERSION. This JVM image runs
+# the source tree, where nothing writes it, so stamp it here or the runtime
+# reports "dev". VIS_VERSION is the only version source: it goes in verbatim,
+# with nothing appended.
 RUN set -eux; \
     version="$(tr -d '[:space:]' < /opt/vis/src/VIS_VERSION)"; \
     test -n "${version}"; \
-    if [ -n "${VIS_BUILD_SHA}" ]; then version="${version}+${VIS_BUILD_SHA}"; fi; \
     install -d -o vis -g vis /opt/vis/src/resources/vis; \
     printf '%s\n' "${version}" > /opt/vis/src/resources/vis/VERSION; \
     chown vis:vis /opt/vis/src/resources/vis/VERSION

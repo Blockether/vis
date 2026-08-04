@@ -30,17 +30,11 @@
 ;; =============================================================================
 
 (def version
-  "Single source of truth for the published version. The `VIS_VERSION` env
-   var (set by CI on regular tag pushes) wins; otherwise the repo-root
-   VIS_VERSION file is read and tagged `-SNAPSHOT` for non-release builds."
-  (let
-    [env
-     (System/getenv "VIS_VERSION")
-
-     env
-     (when env (if (str/starts-with? env "v") (subs env 1) env))]
-
-    (or env (str (str/trim (slurp "VIS_VERSION")) "-SNAPSHOT"))))
+  "Single source of truth for the published version: the repo-root VIS_VERSION
+   file, verbatim. No env override, no snapshot suffix, no git sha — the jar
+   coordinates, the native image, the container and `vis-agent --version` all
+   report this one string."
+  (str/trim (slurp "VIS_VERSION")))
 
 ;; =============================================================================
 ;; Package catalog
@@ -848,24 +842,15 @@
     ;; index Flyway migrations so they're discoverable without dir listing
     (write-migration-indexes! native-class-dir)
     ;; `vis/VERSION` resource: what `vis-agent --version` prints and the gateway
-    ;; advertises. VIS_VERSION is the single version source, so that is what
-    ;; ships, with the build sha as semver metadata (`0.1.28+a1b2c3d`) — an
-    ;; untagged image still has to be traceable. A container build has no repo to
-    ;; ask (`.dockerignore` drops `.git`), so the probe below finds nothing there
-    ;; and `bin/release-native` passes the host's sha in as VIS_BUILD_SHA, which
-    ;; wins.
+    ;; advertises. The repo-root VIS_VERSION file is the ONLY version source, so
+    ;; its contents ship verbatim. Which build produced an artifact is the image
+    ;; tag's job, never the version string's.
     (let
-      [sha
-       (or (not-empty (str/trim (or (System/getenv "VIS_BUILD_SHA") "")))
-           (try (str/trim (:out (b/process {:command-args ["git" "rev-parse" "--short" "HEAD"]
-                                            :out :capture})))
-                (catch Throwable _ nil)))
-
-       vfile
+      [vfile
        (io/file native-class-dir "vis" "VERSION")]
 
       (io/make-parents vfile)
-      (spit vfile (cond-> version (not-empty sha) (str "+" sha))))
+      (spit vfile version))
     ;; no :ns-compile => compile EVERY ns found in :src-dirs (extensions included)
     (b/compile-clj {:basis basis :src-dirs srcs :class-dir native-class-dir})
     basis))

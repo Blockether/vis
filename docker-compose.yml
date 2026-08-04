@@ -30,10 +30,8 @@ services:
         # Build-time toggles only; version pins live in the Dockerfile's ARGs.
         WITH_BROWSERS: ${WITH_BROWSERS:-true}
         WITH_CHROME: ${WITH_CHROME:-true}
-        # `vis-agent --version` reads a resource stamped from this sha; the
-        # image says "dev" without one, because `.dockerignore` drops `.git`.
-        #   VIS_BUILD_SHA=$(git rev-parse --short HEAD) docker compose build
-        VIS_BUILD_SHA: ${VIS_BUILD_SHA:-}
+        # No version arg: `vis-agent --version` reads a resource stamped from
+        # the repo-root VIS_VERSION, which is the only version source there is.
     image: ${VIS_IMAGE:-vis-gateway}:${VIS_TAG:-local}
     container_name: vis-gateway
     restart: unless-stopped

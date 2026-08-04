@@ -4093,8 +4093,8 @@
   (contains? #{["--version"] ["-V"] ["version"]} (vec args)))
 
 (defn- vis-version
-  "Vis version string: the `vis/VERSION` resource written at build time from
-   VIS_VERSION plus the build sha (`0.1.28+a1b2c3d`), else \"dev\"."
+  "Vis version string: the `vis/VERSION` resource written at build time from the
+   repo-root VIS_VERSION, verbatim (`0.1.28`), else \"dev\"."
   []
   (or (some-> (io/resource "vis/VERSION")
               slurp

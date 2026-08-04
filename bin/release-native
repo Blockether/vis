@@ -282,11 +282,6 @@ require_usable_platform() {
         "VIS_ALLOW_SLOW_EMULATION=1 overrides this, at that cost."
 }
 
-# The sha `vis-agent --version` reports. `.dockerignore` drops `.git`, so a
-# container build cannot ask git itself and stamps "dev" unless the host tells
-# it; `build.clj` prefers this value over its own probe.
-build_sha() { git rev-parse --short HEAD 2>/dev/null || true; }
-
 # podman exports the stage out of a CONTAINER instead of through `--output`:
 # `-o type=local,dest=…` is a LOCAL-only flag, and a Mac client drives its Linux
 # VM in REMOTE mode, where podman rejects it outright ("'--output' option is not
@@ -303,7 +298,6 @@ podman_export() {
     --platform "$platform" \
     --build-arg GRAAL_ARCH="$graal_arch" \
     --build-arg VIS_NATIVE_EXTRA_ARGS="${VIS_NATIVE_EXTRA_ARGS:-}" \
-    --build-arg VIS_BUILD_SHA="$(build_sha)" \
     -t "$image" \
     .
   ctr="$(eng create --platform "$platform" "$image" /vis-agent)" || \
@@ -344,7 +338,6 @@ build_linux() {
       --platform "$platform" \
       --build-arg GRAAL_ARCH="$graal_arch" \
       --build-arg VIS_NATIVE_EXTRA_ARGS="${VIS_NATIVE_EXTRA_ARGS:-}" \
-      --build-arg VIS_BUILD_SHA="$(build_sha)" \
       --output "type=local,dest=$out" \
       .
   fi

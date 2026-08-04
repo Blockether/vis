@@ -159,7 +159,6 @@ jobs:
       - name: Build & Deploy monorepo packages to Clojars
         if: steps.check-clojars.outputs.exists != 'true'
         env:
-          VIS_VERSION: ${{ github.ref_name }}
           CLOJARS_USERNAME: blockether-deployer
           CLOJARS_PASSWORD: ${{ secrets.CLOJARS_DEPLOY_TOKEN }}
         run: clojure -T:build deploy

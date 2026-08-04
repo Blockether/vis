@@ -217,7 +217,7 @@
       ;; `podman build -o type=local,dest=…` is a LOCAL-only flag: a Mac client
       ;; drives its Linux VM in REMOTE mode and refuses it AFTER the whole build
       ;; has run. The export therefore goes through create + cp, and the build
-      ;; args this host overrides (heap, version sha) must reach the builder.
+      ;; args this host overrides (heap) must reach the builder.
       (write-executable!
         podman
         (str "#!/usr/bin/env bash\n"
@@ -242,56 +242,65 @@
              (expect (str/includes? logged "--target native-export") logged)
              (expect (not (str/includes? logged "type=local")) logged)
              (expect (str/includes? logged "--build-arg VIS_NATIVE_EXTRA_ARGS=-J-Xmx7g") logged)
-             (expect (re-find #"--build-arg VIS_BUILD_SHA=[0-9a-f]{7,}" logged) logged)
              (expect (str/includes? logged "create --platform linux/arm64") logged)
              (doseq
                [entry ["vis-agent" "vis-agent-native" "install-vis-agent" "vis-agent-resources"]]
                (expect (str/includes? logged (str "cp ctr123:/" entry " ")) logged)))
            (finally (delete-tree! mac))))))
 
-;; Regression: every container-built asset reported `vis-agent <git-sha>`, so a
-;; deployed gateway could not say which VIS_VERSION it was actually running.
+;; Regression: container-built assets reported `vis-agent <git-sha>`, then
+;; `vis-agent <VIS_VERSION>+<git-sha>`, so a deployed gateway never simply said
+;; which VIS_VERSION it was running. VIS_VERSION is the only version there is.
 (defdescribe
   version-stamp-test
-  (it "stamps VIS_VERSION, plus the build sha, into `vis/VERSION`"
-      (let
-        [dockerfile
-         (slurp "Dockerfile")
+  (it
+    "stamps the repo-root VIS_VERSION into `vis/VERSION`, verbatim"
+    (let
+      [dockerfile
+       (slurp "Dockerfile")
 
-         build-clj
-         (slurp "build.clj")
+       build-clj
+       (slurp "build.clj")
 
-         declared
-         (str/trim (slurp "VIS_VERSION"))]
+       compose
+       (slurp "docker-compose.yml")
 
-        (expect (re-matches #"\d+\.\d+\.\d+" declared) declared)
-        ;; VIS_VERSION is the single version source: the native build stamps
-        ;; build.clj's `version` (that file, or CI's env var) and appends the sha
-        ;; as semver build metadata rather than shipping the sha alone.
-        (expect (str/includes? build-clj
-                               "(spit vfile (cond-> version (not-empty sha) (str \"+\" sha)))")
-                build-clj)
-        ;; `.dockerignore` drops `.git`, so build.clj's own `git rev-parse` finds
-        ;; no repo inside the image. The host's sha arrives as a build arg.
-        (expect (str/includes? (slurp ".dockerignore") ".git"))
-        (expect (str/includes? dockerfile "ARG VIS_BUILD_SHA") dockerfile)
-        (expect (str/includes? build-clj "(System/getenv \"VIS_BUILD_SHA\")") build-clj)
-        ;; the native stage refuses to ship an image whose --version is not the
-        ;; declared VIS_VERSION
-        (expect (str/includes? dockerfile "grep -q \"$(tr -d '[:space:]' < VIS_VERSION)\"")
-                dockerfile)
-        ;; the JVM runtime image runs the source tree, where no build writes the
-        ;; resource, so it stamps the very same string itself
-        (expect (str/includes? dockerfile "tr -d '[:space:]' < /opt/vis/src/VIS_VERSION")
-                dockerfile)
-        (expect (str/includes? dockerfile "> /opt/vis/src/resources/vis/VERSION") dockerfile)))
+       release-native
+       (slurp "bin/release-native")
+
+       declared
+       (str/trim (slurp "VIS_VERSION"))]
+
+      (expect (re-matches #"\d+\.\d+\.\d+" declared) declared)
+      ;; VIS_VERSION is the ONLY version source: build.clj's `version` IS that
+      ;; file and the native build spits it unchanged.
+      (expect (str/includes? build-clj "(str/trim (slurp \"VIS_VERSION\"))") build-clj)
+      (expect (str/includes? build-clj "(spit vfile version)") build-clj)
+      ;; no second version source may creep back in through a build arg, an env
+      ;; override or a snapshot suffix
+      (doseq
+        [[what source] {"build.clj" build-clj
+                        "Dockerfile" dockerfile
+                        "docker-compose.yml" compose
+                        "bin/release-native" release-native}]
+        (expect (not (str/includes? source "VIS_BUILD_SHA")) what)
+        (expect (not (str/includes? source "-SNAPSHOT")) what)
+        (expect (not (str/includes? source "rev-parse --short HEAD")) what))
+      ;; the native stage refuses to ship an image whose --version is anything
+      ;; other than the declared VIS_VERSION
+      (expect (str/includes? dockerfile "= \"vis-agent$(tr -d '[:space:]' < VIS_VERSION)\"")
+              dockerfile)
+      ;; the JVM runtime image runs the source tree, where no build writes the
+      ;; resource, so it stamps the very same string itself
+      (expect (str/includes? dockerfile "tr -d '[:space:]' < /opt/vis/src/VIS_VERSION") dockerfile)
+      (expect (str/includes? dockerfile "> /opt/vis/src/resources/vis/VERSION") dockerfile)))
   (it "reports the stamped string verbatim from the classpath resource"
       (let
         [dir
          (.toFile (Files/createTempDirectory "vis-version" (make-array FileAttribute 0)))
 
          stamped
-         (str (str/trim (slurp "VIS_VERSION")) "+a1b2c3d")
+         (str/trim (slurp "VIS_VERSION"))
 
          thread
          (Thread/currentThread)

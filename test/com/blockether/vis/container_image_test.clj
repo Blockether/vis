@@ -82,12 +82,14 @@
               (runtime-stage))))
 
 (defdescribe compose-build-is-native-image-free-test
-             (it "drops the native-image knob and stamps the version instead"
+             (it "drops the native-image knob and passes no second version source"
                  (let [compose (slurp "docker-compose.yml")]
                    ;; VIS_ORACLE_NATIVE_IMAGE only ever tuned the native build; passing it
                    ;; to an image that has none is a lie about what the build does.
                    (expect (not (str/includes? compose "VIS_ORACLE_NATIVE_IMAGE")) compose)
-                   (expect (str/includes? compose "VIS_BUILD_SHA: ${VIS_BUILD_SHA:-}") compose))))
+                   ;; A build-arg version would be a SECOND version source; the only one
+                   ;; is the repo-root VIS_VERSION, stamped inside the image.
+                   (expect (not (str/includes? compose "VIS_BUILD_SHA")) compose))))
 
 (defdescribe
   wrapper-selects-jvm-through-a-symlink-test
