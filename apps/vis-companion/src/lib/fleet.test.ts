@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   creatableMachines,
   dirtyFirst,
+  draftsRead,
+  draftsReadKey,
   fleetError,
   isFleetLoaded,
   machineCounts,
@@ -227,5 +229,48 @@ describe('dirtyFirst', () => {
   it('leaves a list with nothing unsent exactly as it came', () => {
     const rows = [session('a'), session('b')];
     expect(dirtyFirst(rows, () => false)).toBe(rows);
+  });
+});
+
+// Regression: the start menu's "Or a draft you parked" list never arrived on a
+// phone — it sat on "Reading drafts..." forever, and a menu opened before that
+// machine's session list had landed latched "No drafts parked in this project
+// yet.". The read was keyed on the OBJECT identity of the target machine (a
+// background poll replaces it) and of the anchored menu position (the iOS
+// keyboard fires `resize` in the very tap that opens the menu), so the in-flight
+// request was aborted and restarted on every one of those frames.
+describe('draftsRead', () => {
+  const parked = session('s1');
+
+  it('reads the parked list through the probe session on the target machine', () => {
+    expect(draftsRead(machine(studio, [parked]), parked)).toEqual({
+      kind: 'read',
+      conn: studio,
+      sid: 's1',
+    });
+  });
+
+  it('keys a read by machine and probe, so a poll replacing the objects never restarts it', () => {
+    const before = machine(studio, [parked]);
+    const after = machine({ ...studio }, [{ ...parked }]);
+    // Exactly what a background refresh hands the screen: same read, new objects.
+    expect(after).not.toBe(before);
+    expect(after.sessions?.[0]).not.toBe(before.sessions?.[0]);
+    expect(draftsReadKey(draftsRead(after, after.sessions![0]))).toBe(
+      draftsReadKey(draftsRead(before, before.sessions![0])),
+    );
+  });
+
+  it('re-keys when the new session would be created on another machine', () => {
+    expect(draftsReadKey(draftsRead(machine(tower, [parked]), parked))).not.toBe(
+      draftsReadKey(draftsRead(machine(studio, [parked]), parked)),
+    );
+  });
+
+  it('waits while that machine is still loading instead of reporting no drafts', () => {
+    expect(draftsRead(machine(studio, null), null)).toEqual({ kind: 'wait' });
+    expect(draftsReadKey(draftsRead(machine(studio, null), null))).toBe('wait');
+    expect(draftsRead(machine(studio, []), null)).toEqual({ kind: 'none' });
+    expect(draftsRead(null, null)).toEqual({ kind: 'none' });
   });
 });

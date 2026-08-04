@@ -38,6 +38,8 @@ import type { PendingAttachment } from '../lib/attachments';
 import {
   creatableMachines,
   dirtyFirst,
+  draftsRead,
+  draftsReadKey,
   fleetError,
   isFleetLoaded,
   machineCounts,
@@ -549,6 +551,19 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   );
   const draftRepo = draftProbe ? projectLabel(draftProbe) : '';
 
+  // The read cares only WHETHER the menu is open, never where it is anchored.
+  const isStartMenuOpen = startMenu !== null;
+  // WHAT the picker reads, as a value with a string identity. The effect below
+  // depends on that identity and reaches the value through a ref, so the objects
+  // changing underneath it — a background poll replacing the machine and its
+  // sessions, `resize` re-anchoring the menu — cannot abort a request in flight.
+  const draftsSource = draftsRead(targetMachine, draftProbe);
+  const draftsSourceKey = draftsReadKey(draftsSource);
+  const draftsSourceRef = useRef(draftsSource);
+  useEffect(() => {
+    draftsSourceRef.current = draftsSource;
+  }, [draftsSource]);
+
   const openStartMenu = useCallback(() => {
     setStartMenu(menuPosition(startAnchorRef.current?.getBoundingClientRect(), START_MENU_WIDTH));
   }, []);
@@ -561,17 +576,26 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   // Read the parked drafts the first time the menu opens, and again after a fork or
   // resume invalidated the list. A failure is reported IN the menu: the three fixed
   // choices above it still work without it.
+  //
+  // Deps are the OPEN flag and the read's key, never the menu position or the
+  // machine object: on a phone the on-screen keyboard fires `resize` in the very
+  // tap that opens the menu, and the fleet poll replaces the machine every few
+  // seconds — depending on either aborted this request on the frame it started,
+  // over and over, and the menu never left "Reading drafts...".
   useEffect(() => {
-    if (!startMenu || drafts !== null) return;
-    const conn = targetMachine?.conn;
-    if (!draftProbe || !conn) {
+    if (!isStartMenuOpen || drafts !== null) return;
+    const source = draftsSourceRef.current;
+    // That machine's first session list has not landed: keep reading, do not
+    // answer "nothing parked" on behalf of a project we have not seen yet.
+    if (source.kind === 'wait') return;
+    if (source.kind === 'none') {
       setDrafts([]);
       return;
     }
     const controller = new AbortController();
     setDraftsError(null);
-    void clientFor(conn)
-      .drafts(draftProbe.id, controller.signal)
+    void clientFor(source.conn)
+      .drafts(source.sid, controller.signal)
       .then((rows) => setDrafts(rows))
       .catch((cause) => {
         if (controller.signal.aborted) return;
@@ -579,7 +603,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
         setDraftsError((cause as Error).message);
       });
     return () => controller.abort();
-  }, [startMenu, drafts, draftProbe, targetMachine]);
+  }, [isStartMenuOpen, drafts, draftsSourceKey]);
 
   // An anchored popover whose anchor moved is a lie, so a resize RE-ANCHORS it to
   // the live caret; only a caret that has left the document closes it. Closing on

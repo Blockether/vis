@@ -211,3 +211,35 @@ export function dirtyFirst(
 export function sessionIsListed(session: Session, hasDraftMessage: boolean): boolean {
   return !sessionIsEmpty(session) || hasDraftMessage;
 }
+
+/**
+ * What the start menu's parked-drafts picker should read, and NOTHING about when.
+ *
+ * Drafts are repo-scoped and the gateway only lists them through a session living
+ * in that repo, so the read is a (machine, probe session) pair. Modelling it as a
+ * value is the point: `draftsReadKey` gives that pair a STRING identity, and the
+ * screen depends on the identity instead of on the objects. A background poll
+ * hands back a new `FleetMachine` and new `Session` rows for the very same read —
+ * keyed on object identity the request was aborted and restarted forever, and the
+ * menu sat on "Reading drafts..." on a phone, where `resize` re-anchors it too.
+ *
+ * `wait` is the other half: a machine whose first list has not landed knows
+ * nothing yet, and must not be reported as a project with no drafts parked.
+ */
+export type DraftsRead =
+  | { kind: 'wait' }
+  | { kind: 'none' }
+  | { kind: 'read'; conn: GatewayConn; sid: string };
+
+export function draftsRead(machine: FleetMachine | null, probe: Session | null): DraftsRead {
+  if (!machine) return { kind: 'none' };
+  // Still loading — but a machine that FAILED to load has answered: no drafts.
+  if (machine.sessions === null && !machine.error) return { kind: 'wait' };
+  if (!probe) return { kind: 'none' };
+  return { kind: 'read', conn: machine.conn, sid: probe.id };
+}
+
+/** Identity of a read: same key, same request — do not start it again. */
+export function draftsReadKey(read: DraftsRead): string {
+  return read.kind === 'read' ? `${machineKey(read.conn)}\u0000${read.sid}` : read.kind;
+}
