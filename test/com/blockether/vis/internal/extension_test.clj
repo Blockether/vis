@@ -571,8 +571,8 @@
        edits
        (get-in schema [:properties "edits"])]
 
-      ;; `minItems 1` is the one array bound the strict subset enforces: it stays,
-      ;; and is what makes `"[{…}]"` unsamplable as a STRING.
+      ;; `minItems 0/1` is the one array bound a tool API keeps as a real
+      ;; constraint, so it survives on the wire.
       (expect (= 1 (:minItems edits)))
       ;; The live API rejects `maxItems` outright and every `minItems` past 0/1,
       ;; so those are inlined instead of dropped.
@@ -580,14 +580,14 @@
       (expect (= "Edit maps. {maxItems: 8}" (:description edits)))
       (expect (= {:type "array" :description "{maxItems: 2, minItems: 2}"}
                  (get-in schema [:properties "pair"])))
-      ;; Outside the Anthropic subset ⇒ inlined into the node's own description,
+      ;; Outside what a tool API enforces ⇒ inlined into the node's own description,
       ;; never dropped, appended after an existing description.
       (expect (= {:type "string" :description "{minLength: 1}"}
                  (get-in edits [:items :properties "path"])))
       (expect (= {:type "integer" :description "{minimum: 1, maximum: 9}"}
                  (get-in schema [:properties "depth"])))
       (expect (= ["edits"] (:required schema)))))
-  (it "rewrites oneOf unions to anyOf — no strict subset accepts oneOf"
+  (it "rewrites oneOf unions to anyOf — no tool-schema validator accepts oneOf"
       (expect (= {:type "object"
                   :properties {"x" {:anyOf [{:type "string"} {:type "integer"}]}}
                   :additionalProperties false}
@@ -596,305 +596,50 @@
                    :properties {"x" {:oneOf [{:type "string"} {:type "integer"}]}}
                    :additionalProperties false})))))
 
-(defdescribe
-  strict-samplable-schema-test
-  (it "a closed object schema is advertised with :strict true"
-      (let
-        [tool (extension/advertise-tool
-                {:name "patchy"
-                 :description "d"
-                 :schema {:type "object"
-                          :properties {"edits" {:type "array"
-                                                :minItems 1
-                                                :items {:type "object"
-                                                        :properties {"path" {:type "string"}}
-                                                        :required ["path"]
-                                                        :additionalProperties false}}}
-                          :required ["edits"]
-                          :additionalProperties false}})]
-        (expect (true? (:strict tool)))
-        (expect (= 1 (get-in tool [:schema :properties "edits" :minItems])))))
-  (it "a FOREIGN/free-form object payload is never advertised strict"
-      ;; `mcp__call`'s `args` is another server's schema; `struct_patch`'s edit
-      ;; maps are heterogeneous. An open object cannot be grammar-constrained, so
-      ;; the flag is simply absent instead of 400-ing the whole request.
-      (expect (nil? (:strict (extension/advertise-tool
-                               {:name "mcpish"
-                                :description "d"
-                                :schema {:type "object"
-                                         :properties {"server" {:type "string"}
-                                                      "args" {:type "object"
-                                                              :description "Foreign args."}}
-                                         :required ["server"]
-                                         :additionalProperties false}}))))
-      (expect (nil? (:strict (extension/advertise-tool {:name "editsish"
-                                                        :description "d"
-                                                        :schema {:type "object"
-                                                                 :properties
-                                                                 {"edits" {:type "array"
-                                                                           :items {:type "object"}}}
-                                                                 :required ["edits"]
-                                                                 :additionalProperties false}})))))
-  (it "an object that does not close itself is not strict-samplable"
-      (expect (false? (extension/strict-samplable-schema?
-                        {:type "object" :properties {"a" {:type "string"}} :required ["a"]})))
-      (expect (false? (extension/strict-samplable-schema?
-                        {:type "object"
-                         :properties {"a" {:type "object" :additionalProperties false}}
-                         :additionalProperties false})))
-      (expect (true? (extension/strict-samplable-schema?
-                       {:type "object"
-                        :properties {"a" {:anyOf [{:type "string"}
-                                                  {:type "object"
-                                                   :properties {"b" {:type "string"}}
-                                                   :additionalProperties false}]}}
-                        :additionalProperties false})))))
-
-(defn- batch-tool
-  "A strict-samplable tool taking a BATCH — an array of maps, `payload-risk` 0 —
-   plus `n` optional scalar properties."
-  [name n]
-  (extension/advertise-tool {:name name
-                             :description "d"
-                             :schema {:type "object"
-                                      :properties
-                                      (into {"edits" {:type "array"
-                                                      :items {:type "object"
-                                                              :properties {"path" {:type "string"}}
-                                                              :required ["path"]
-                                                              :additionalProperties false}}}
-                                            (map (fn [i]
-                                                   [(str "o" i) {:type "string"}]))
-                                            (range n))
-                                      :required ["edits"]
-                                      :additionalProperties false}}))
-
-(defn- flat-tool
-  "A strict-samplable tool whose only container is an array of STRINGS —
-   `payload-risk` 1."
-  [name]
-  (extension/advertise-tool {:name name
-                             :description "d"
-                             :schema {:type "object"
-                                      :properties {"paths" {:type "array" :items {:type "string"}}}
-                                      :required ["paths"]
-                                      :additionalProperties false}}))
-
-(defn- scalar-tool
-  "A strict-samplable tool with scalars only — `payload-risk` 2, nothing a grammar
-   could fix."
-  [name]
-  (extension/advertise-tool {:name name
-                             :description "d"
-                             :schema {:type "object"
-                                      :properties {"q" {:type "string"}}
-                                      :required ["q"]
-                                      :additionalProperties false}}))
-
-(def ^:private strict-grammar-budget-for-test
-  "The production grammar budget, read from the var the wire projection uses."
-  @#'extension/strict-grammar-budget)
-
-(defn- grammar-spend
-  "Total compiled-grammar cost of the tools that KEPT `:strict` — one slot per
-   tool plus its schema, exactly as `budget-strict-tools` spends it."
-  [tools]
-  (let [strict (filter :strict tools)]
-    (reduce + (count strict) (map #(#'extension/schema-grammar-cost (:schema %)) strict))))
-
-(defdescribe
-  strict-budget-test
-  (it "a batch of maps is what earns the request's grammar budget"
-      ;; Every mis-serialized argument in this repo's journals was a nested
-      ;; container; a scalars-only tool cannot be malformed that way, so it never
-      ;; spends budget a batch tool could have used.
-      (let [tools (extension/budget-strict-tools [(scalar-tool "scalars") (batch-tool "batch" 0)])]
-        (expect (= [nil true] (mapv :strict tools)))))
-  (it "the more exposed payloads outbid the flatter one for a scarce budget"
-      ;; The flat array of strings is the CHEAPEST tool here and still loses: the
-      ;; batches of maps are ranked first, and what they leave does not fit it.
-      (let
-        [tools
-         (extension/budget-strict-tools (conj (mapv #(batch-tool (str "b" %) 1) (range 12))
-                                              (flat-tool "flat")))
-
-         strict
-         (into #{} (comp (filter :strict) (map :name)) tools)]
-
-        (expect (not (contains? strict "flat")))
-        (expect (seq strict))
-        (expect (every? #(= \b (first %)) strict))
-        (expect (>= (long strict-grammar-budget-for-test) (long (grammar-spend tools))))))
-  (it "the EXPENSIVE schemas lose strict once the request grammar is spent"
-      ;; Anthropic compiles ONE grammar per request: individually legal strict
-      ;; tools still 400 the whole call together. Cheapest first, deterministic.
-      (let
-        [tools
-         (extension/budget-strict-tools (mapv #(batch-tool (str "b" %) 0) (range 40)))
-
-         strict
-         (filter :strict tools)]
-
-        (expect (seq strict))
-        (expect (< (count strict) (count tools)))
-        (expect (>= (long strict-grammar-budget-for-test) (long (grammar-spend tools))))
-        (expect (= (mapv :name tools) (mapv :name (extension/budget-strict-tools tools))))))
-  (it "the optional-parameter limit binds before the grammar does"
-      ;; Measured live: `Schemas contains too many optional parameters … limit: 24`.
-      ;; Two 13-optional batches are cheap enough to compile and still illegal.
-      (let [tools (extension/budget-strict-tools [(batch-tool "a" 13) (batch-tool "b" 13)])]
-        (expect (= 1 (count (filter :strict tools))))
-        (expect (>= (long strict-grammar-budget-for-test) (long (grammar-spend tools))))
-        (expect (>= 24
-                    (reduce +
-                            0
-                            (map #(#'extension/optional-parameter-count (:schema %))
-                                 (filter :strict tools)))))))
-  (it "unconstrained tools cost nothing and are left alone"
-      ;; The provider counts the optional parameters of STRICT tools only, so an
-      ;; open/foreign payload never crowds out a constrained one.
-      (let
-        [foreign
-         {:name "mcpish" :description "d" :schema {:type "object"}}
-
-         tools
-         (extension/budget-strict-tools [foreign (batch-tool "a" 0)])]
-
-        (expect (nil? (:strict (first tools))))
-        (expect (true? (:strict (second tools))))
-        (expect (= "mcpish" (:name (first tools))))))
-  (it "nested optional properties are counted, exactly as the provider counts them"
-      (let [nested (batch-tool "nested" 0)]
-        ;; "path" is required; add one optional INSIDE the array items.
-        (expect (= 0 (#'extension/optional-parameter-count (:schema nested))))
-        (expect (= 1
-                   (#'extension/optional-parameter-count
-                    (assoc-in (:schema nested)
-                      [:properties "edits" :items :properties "ranges"]
-                      {:type "string"}))))))
-  (it "the union-type limit binds on its own budget"
-      ;; Measured live: `Schemas contains too many parameters with union types
-      ;; (17 …)` — 16 pass, 17 are refused, and the grammar of both is tiny. A
-      ;; `required` nullable parameter therefore buys nothing: it only moves the
-      ;; same parameter from the optional budget onto this one.
-      (let
-        [union-tool
-         (fn [name n]
-           (extension/advertise-tool
-             {:name name
-              :description "d"
-              :schema {:type "object"
-                       :properties (into {}
-                                         (map (fn [i]
-                                                [(str "u" i)
-                                                 {:anyOf [{:type "string"}
-                                                          {:type "object"
-                                                           :properties {"a" {:type "string"}}
-                                                           :required ["a"]
-                                                           :additionalProperties false}]}]))
-                                         (range n))
-                       :required (mapv #(str "u" %) (range n))
-                       :additionalProperties false}}))
-
-         strict-of
-         (fn [tool]
-           (:strict (first (extension/budget-strict-tools [tool]))))]
-
-        (expect (= 16 (#'extension/union-parameter-count (:schema (union-tool "ok" 16)))))
-        (expect (true? (strict-of (union-tool "ok" 16))))
-        (expect (nil? (strict-of (union-tool "over" 17))))
-        ;; …and the grammar is nowhere near its own budget, so nothing else did it.
-        (expect (>= (long strict-grammar-budget-for-test)
-                    (long (grammar-spend [(assoc (union-tool "over" 17) :strict true)]))))))
-  (it "grammar cost is structure — names and prose are free"
-      ;; Measured live: twenty strict tools with 24-character property names and
-      ;; 800-character descriptions compile; one more property each does not.
-      (let
-        [terse
-         {:type "object"
-          :properties {"p" {:type "string"}}
-          :required ["p"]
-          :additionalProperties false}
-
-         verbose
-         {:type "object"
-          :properties {"a-very-long-parameter-name" {:type "string"
-                                                     :description (apply str (repeat 800 \z))}}
-          :required ["a-very-long-parameter-name"]
-          :additionalProperties false}]
-
-        (expect (= (#'extension/schema-grammar-cost terse)
-                   (#'extension/schema-grammar-cost verbose)))
-        (expect (< (long (#'extension/schema-grammar-cost terse))
-                   (long (#'extension/schema-grammar-cost
-                          (assoc-in terse [:properties "q"] {:type "string"}))))))))
-
-(defn- openai-refused-tool
-  "The exact shape an OpenAI-compatible wire refuses: a batch whose item is either
-   a bare string or an object with an OPTIONAL key, carrying a real `minItems`
-   bound — i.e. `struct_index`'s `paths`."
-  [name]
-  (extension/advertise-tool
-    {:name name
-     :description "d"
-     :schema {:type "object"
-              :properties {"paths" {:type "array"
-                                    :minItems 1
-                                    :items {:anyOf [{:type "string"}
-                                                    {:type "object"
-                                                     :properties {"path" {:type "string"}
-                                                                  "ranges" {:type "array"
-                                                                            :items {:type
-                                                                                    "integer"}}}
-                                                     :required ["path"]
-                                                     :additionalProperties false}]}}}
-              :required ["paths"]
-              :additionalProperties false}}))
-
 ;; Regression: switching to `github-copilot`/`gpt-5.6-terra` (an
 ;; OpenAI-compatible chat wire) made EVERY turn fail before a single token, with
 ;; no provider information in the TUI beyond "turn failed" — the provider 400ed
 ;; the whole request: `Invalid schema for function 'struct_index': In
 ;; context=('properties', 'paths', 'items', 'anyOf', '1'), 'required' is required
 ;; to be supplied and to be an array including every key in properties. Missing
-;; 'ranges'.` `advertise-tool` had stamped `:strict true` on it because it
-;; measures the ANTHROPIC subset, which permits an optional property and a
-;; `minItems` bound.
+;; 'ranges'.` Vis used to stamp `:strict true` on every schema it judged
+;; grammar-samplable — a judgement calibrated on ANTHROPIC's subset, which allows
+;; an optional property and a real `minItems` bound. Nothing is advertised strict.
 (defdescribe
-  strict-wire-subset-test
-  (it "the schema OpenAI refuses keeps :strict on Anthropic and loses it elsewhere"
-      (let [tool (openai-refused-tool "struct_index")]
-        ;; The Anthropic-calibrated gate says yes, which is how this shipped.
-        (expect (true? (:strict tool)))
-        (expect (= [true] (mapv :strict (extension/strict-tools-for-wire :anthropic [tool]))))
-        (expect (= [nil] (mapv :strict (extension/strict-tools-for-wire :openai [tool]))))
-        (expect (= [nil] (mapv :strict (extension/strict-tools-for-wire :openai-responses [tool]))))
-        ;; svar builds an OpenAI-compatible chat body when nothing declares a
-        ;; style, so an unknown/absent api-style takes the harsher subset too.
-        (expect (= [nil] (mapv :strict (extension/strict-tools-for-wire nil [tool]))))
-        (expect (= [nil]
-                   (mapv :strict (extension/strict-tools-for-wire "github-copilot" [tool]))))))
-  (it "an all-required, bound-free schema stays strict on every wire"
-      (let [tool (scalar-tool "scalars")]
-        (expect (true? (:strict tool)))
-        (expect (= [true] (mapv :strict (extension/strict-tools-for-wire :anthropic [tool]))))
-        (expect (= [true] (mapv :strict (extension/strict-tools-for-wire :openai [tool]))))))
-  (it "a bound alone disqualifies a schema that is otherwise fully required"
-      (let [tool (assoc-in (flat-tool "flat") [:schema :properties "paths" :minItems] 1)]
-        (expect (true? (:strict (flat-tool "flat"))))
-        (expect (= [true] (mapv :strict (extension/strict-tools-for-wire :anthropic [tool]))))
-        (expect (= [nil] (mapv :strict (extension/strict-tools-for-wire :openai [tool]))))))
-  (it "the surface is otherwise untouched, order included"
+  unconstrained-tools-test
+  (it "the very shape an OpenAI-compatible wire refused is advertised untouched"
       (let
-        [tools
-         [(openai-refused-tool "a") (scalar-tool "b") (flat-tool "c")]
+        [schema
+         {:type "object"
+          :properties {"paths" {:type "array"
+                                :minItems 1
+                                :items {:anyOf [{:type "string"}
+                                                {:type "object"
+                                                 :properties {"path" {:type "string"}
+                                                              "ranges" {:type "array"
+                                                                        :items {:type "integer"}}}
+                                                 :required ["path"]
+                                                 :additionalProperties false}]}}}
+          :required ["paths"]
+          :additionalProperties false}
 
-         wire
-         (extension/strict-tools-for-wire :openai tools)]
+         tool
+         (extension/advertise-tool {:name "struct_index" :description "d" :schema schema})]
 
-        (expect (= (mapv :name tools) (mapv :name wire)))
-        (expect (= (mapv #(dissoc % :strict) tools) (mapv #(dissoc % :strict) wire)))
-        (expect (= [nil true true] (mapv :strict wire))))))
+        (expect (nil? (:strict tool)))
+        (expect (= schema (:schema tool)))))
+  (it "a closed, fully-required scalar schema is not advertised strict either"
+      ;; This one is inside EVERY provider's strict subset, and the flag is gone
+      ;; regardless: no advertised tool depends on which wire built the request.
+      (let
+        [tool (extension/advertise-tool {:name "scalars"
+                                         :description "d"
+                                         :schema {:type "object"
+                                                  :properties {"q" {:type "string"}}
+                                                  :required ["q"]
+                                                  :additionalProperties false}})]
+        (expect (nil? (:strict tool)))
+        (expect (= #{:name :description :schema} (set (keys tool)))))))
 
 ;; ── ONE context for the extension and the session (issue #104) ────────────────
 ;;

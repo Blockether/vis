@@ -1045,24 +1045,23 @@
                (native-tools-for active-extensions env)))))
 
 (def ^:private wire-schema-prose-keys
-  "Constraint keys OUTSIDE the Anthropic strict-tool subset, in wire order. They
-   are INLINED into the enclosing `description` — the same transform the official
+  "Constraint keys no tool API takes as a real bound, in wire order. They are
+   INLINED into the enclosing `description` — the same transform the official
    Anthropic SDK applies — never dropped: the model still reads the bound, and a
-   strict tool call cannot 400 on an unsupported keyword. Nothing re-validates an
+   tool call cannot 400 on an unsupported keyword. Nothing re-validates an
    inbound tool input against `:ext.symbol/schema`, so every tool still coerces
    and checks its OWN arguments.
 
-   Measured against the live API (`strict: true`, sonnet 4.5), NOT guessed:
-   `maxItems` is rejected outright (`For 'array' type, property 'maxItems' is not
-   supported`) and `minItems` only takes 0 or 1 (`'minItems' values other than 0
-   or 1 are not supported`) — hence `wire-schema`'s special case, which keeps a
-   real `minItems 0/1` and proses every other array bound. A `minItems 1` on an
-   array argument is exactly what makes `\"[{…}]\"` unsamplable as a STRING."
+   Measured against the live Anthropic tool API, NOT guessed: `maxItems` is
+   rejected outright (`For 'array' type, property 'maxItems' is not supported`)
+   and `minItems` only takes 0 or 1 (`'minItems' values other than 0 or 1 are not
+   supported`) — hence `wire-schema`'s special case, which keeps a real
+   `minItems 0/1` and proses every other array bound."
   [:minLength :maxLength :minimum :maximum :minProperties :maxProperties :maxItems])
 
 (defn- enforceable-min-items?
-  "True for the only `minItems` values the strict subset keeps as a real
-   constraint; every other bound becomes prose."
+  "True for the only `minItems` values a tool API keeps as a real constraint;
+   every other bound becomes prose."
   [x]
   (or (= x 0) (= x 1)))
 
@@ -1087,8 +1086,8 @@
 (defn- wire-schema
   "Recursively rewrite a JSON-schema tree for the model-facing wire:
    `wire-schema-prose-keys` (and an unenforceable `minItems`) move into the
-   node's own `description`; `oneOf` becomes `anyOf` — no provider strict subset
-   accepts `oneOf` (`Schema type 'oneOf' is not supported`) and every one accepts
+   node's own `description`; `oneOf` becomes `anyOf` — the tool-schema validators
+   refuse `oneOf` (`Schema type 'oneOf' is not supported`) and every one accepts
    `anyOf`, which for these disjoint unions means the same thing. What survives
    is a real provider-enforceable constraint."
   [x]
@@ -1126,360 +1125,25 @@
         (sequential? x) (mapv wire-schema x)
         :else x))
 
-(defn- strict-samplable-node?
-  "True when ONE wire-schema node can be sampled under provider grammar
-   constraints. The binding rules, measured live:
-
-   - every node must SAY what it is — `:type`, a union (`:anyOf`/`:allOf`), a
-     `:$ref`, or a closed value set (`:enum`/`:const`). A node carrying only a
-     description cannot be compiled (`Invalid schema: Schema type is missing for
-     schema: {'description': …}`);
-   - every `object` node must close itself with `additionalProperties false` and
-     declare its properties (`For 'object' type, 'additionalProperties' must be
-     explicitly set to false`). A FREE-FORM object — `{:type \"object\"}` with no
-     properties — is by definition unconstrainable, so a tool carrying one can
-     never be strict."
-  [node]
-  (or (not (map? node))
-      (and (or (:type node) (:anyOf node) (:allOf node) (:$ref node) (:enum node) (:const node))
-           (if (= "object" (:type node))
-             (and (false? (:additionalProperties node)) (seq (:properties node)))
-             true)
-           (every? strict-samplable-node? (vals (:properties node)))
-           (every? strict-samplable-node? (vals (:$defs node)))
-           (let [items (:items node)]
-             (if (sequential? items)
-               (every? strict-samplable-node? items)
-               (strict-samplable-node? items)))
-           (every? strict-samplable-node? (concat (:anyOf node) (:allOf node)))
-           true)))
-
-(defn strict-samplable-schema?
-  "True when a WIRE schema (post-`wire-schema`) is inside the provider's strict
-   subset, i.e. the model can be FORCED to sample arguments that match it. Only
-   such a tool is advertised with `:strict true`; anything else would 400 the
-   whole request, so the flag is derived, never hand-maintained.
-
-   The tools that fail are the ones whose payload is FOREIGN or dynamic — an MCP
-   server's own arguments, an editor's heterogeneous edit maps — where the schema
-   is deliberately open. Those stay unconstrained: the tool's own coercion and
-   validation is their gate."
-  [schema]
-  (and (map? schema) (= "object" (:type schema)) (strict-samplable-node? schema)))
-
-(defn- schema-child-nodes
-  "Every nested schema node of ONE wire-schema node: its properties, `$defs`
-   entries, array item schema(s) and union branches."
-  [node]
-  (let [items (:items node)]
-    (concat (vals (:properties node))
-            (vals (:$defs node))
-            (if (sequential? items) items (when items [items]))
-            (:anyOf node)
-            (:allOf node))))
-
-(def ^:private openai-strict-unsupported-keys
-  "JSON-Schema keywords the OpenAI strict subset refuses OUTRIGHT.
-
-   `wire-schema` already proses most of them into their node's description, but
-   `minItems` is the one it deliberately KEEPS as a real bound: Anthropic
-   enforces `0`/`1`, and that bound is exactly what makes a batch argument
-   unsamplable as a bare string. On an OpenAI wire the very same bound is a hard
-   rejection, so a schema carrying one can never be strict there."
-  [:minItems :maxItems :minLength :maxLength :pattern :format :uniqueItems :minimum :maximum
-   :multipleOf :minProperties :maxProperties])
-
-(defn- openai-strict-node?
-  "True when ONE wire-schema node is inside the OpenAI strict subset, which is
-   harsher than Anthropic's in two ways, both measured live:
-
-   - every `object` must list EVERY property in `required` (`'required' is
-     required to be supplied and to be an array including every key in
-     properties`); an optional argument has to be modelled as nullable instead,
-   - no type-specific bound may appear at all."
-  [node]
-  (or (not (map? node))
-      (and (not-any? #(contains? node %) openai-strict-unsupported-keys)
-           (if (= "object" (:type node))
-             (= (set (keys (:properties node))) (set (:required node)))
-             true)
-           (every? openai-strict-node? (schema-child-nodes node)))))
-
-(defn- openai-strict-samplable-schema?
-  "`strict-samplable-schema?` for an OpenAI-compatible wire (chat or responses)."
-  [schema]
-  (and (strict-samplable-schema? schema) (openai-strict-node? schema)))
-
 (defn advertise-tool
   "Project ONE finalized tool def `{:name :description :schema}` onto the
-   model-facing wire: schema through `wire-schema`, plus `:strict true` when the
-   result is grammar-samplable. `:strict` is svar's per-tool opt-in to
-   grammar-constrained tool sampling (Anthropic `strict`, OpenAI/Codex
-   `strict`); a provider that has no such mode ignores it."
+   model-facing wire: the schema through `wire-schema`, and nothing else.
+
+   Vis advertises NO grammar-constrained (`strict`) tool. That flag is a per-wire
+   opt-in whose accepted schema subset differs per provider — an
+   OpenAI-compatible wire refuses the ENTIRE request when a single strict tool
+   misses its subset (measured on `github-copilot`/`gpt-5.6-terra`: `Invalid
+   schema for function 'struct_index': … 'required' is required to be supplied and
+   to be an array including every key in properties. Missing 'ranges'.`), so a
+   flag derived from one provider's rules is a turn that never starts on another.
+   Arguments are sampled unconstrained and every tool coerces and validates its
+   own input — that coercion is the gate."
   [tool]
-  (let [wire (wire-schema (:schema tool))]
-    (cond-> (assoc tool :schema wire)
-      (strict-samplable-schema? wire)
-      (assoc :strict true))))
-
-(defn- optional-parameter-count
-  "How many OPTIONAL properties a WIRE schema declares, counting every nested
-   object, list item, `$defs` entry and union branch.
-
-   This is the exact quantity Anthropic budgets: it compiles ONE grammar for all
-   strict tools of a request and refuses the whole request past its limit —
-   `Schemas contains too many optional parameters (72), which would make grammar
-   compilation inefficient … (limit: 24)`. Measured against the live API: the
-   number it reports is this recursive count summed over the STRICT tools only;
-   unconstrained tools are free."
-  [node]
-  (cond (map? node)
-        (let
-          [props
-           (:properties node)
-
-           items
-           (:items node)]
-
-          (+ (long (if (map? props) (count (remove (set (:required node)) (keys props))) 0))
-             (long (transduce (map optional-parameter-count)
-                              +
-                              0
-                              (concat (when (map? props) (vals props))
-                                      (vals (:$defs node))
-                                      (if (sequential? items) items (when items [items]))
-                                      (:anyOf node)
-                                      (:allOf node))))))
-        (sequential? node) (long (transduce (map optional-parameter-count) + 0 node))
-        :else 0))
-
-(def ^:private strict-optional-parameter-budget
-  "Optional parameters one request's strict tools may declare in total (Anthropic
-   grammar compilation). Beyond it the API 400s the ENTIRE request, so the budget
-   is enforced on our side before a tool surface ever goes out."
-  24)
-
-(defn- union-parameter-count
-  "How many parameters of a WIRE schema have a UNION type — a vector `:type` or an
-   `:anyOf` — counting nested objects, `$defs` and array items.
-
-   Anthropic budgets this SEPARATELY from optional parameters: `Schemas contains
-   too many parameters with union types (17 parameters with union types)`.
-   Measured live, 16 is accepted and 17 refused, nested unions count exactly like
-   top-level ones — so declaring an optional parameter `required` and nullable
-   buys nothing at all: it moves the same parameter from one budget to the other."
-  [node]
-  (cond (map? node) (let
-                      [props
-                       (:properties node)
-
-                       items
-                       (:items node)]
-
-                      (+ (if (or (sequential? (:type node)) (:anyOf node)) 1 0)
-                         (long (transduce (map union-parameter-count)
-                                          +
-                                          0
-                                          (concat
-                                            (when (map? props) (vals props))
-                                            (vals (:$defs node))
-                                            (if (sequential? items) items (when items [items]))
-                                            (:anyOf node)
-                                            (:allOf node))))))
-        (sequential? node) (long (transduce (map union-parameter-count) + 0 node))
-        :else 0))
-
-(def ^:private strict-union-parameter-budget
-  "Union-typed parameters one request's strict tools may declare in total."
-  16)
-
-
-(defn- non-scalar-node?
-  "True when a wire-schema node is a container or a union — anything a model can
-   get structurally WRONG."
-  [node]
-  (and (map? node)
-       (boolean (or (contains? #{"array" "object"} (:type node))
-                    (:anyOf node)
-                    (:allOf node)
-                    (:$ref node)))))
-
-(defn- payload-risk
-  "How exposed a WIRE schema is to a mis-SERIALIZED argument, as a sort tier
-   (lower is more exposed):
-
-   0 — a NESTED container: a batch of maps, an array of arrays, a union of
-       shapes. Every mis-serialized argument in this repo's own gateway journals
-       was one of these (`patch \"edits\"` as JSON text, `grep \"include\"` as a
-       quoted list);
-   1 — a flat container: an array of strings;
-   2 — scalars only. Grammar constraint cannot change such a call, so it never
-       earns a slice of the request's grammar budget.
-
-   Tiering matters because that budget is far smaller than the tool surface: it
-   has to be spent where a wrong shape actually happens."
-  [schema]
-  (let [props (vals (:properties schema))]
-    (cond (some (fn [p]
-                  (and (non-scalar-node? p)
-                       (let [items (:items p)]
-                         (or (non-scalar-node? items)
-                             (and (sequential? items) (some non-scalar-node? items))
-                             (some non-scalar-node? (concat (:anyOf p) (:allOf p)))
-                             (= "object" (:type p))))))
-                props)
-          0
-          (some non-scalar-node? props) 1
-          :else 2)))
-
-(defn- schema-grammar-cost
-  "GRAMMAR SLOTS one wire schema contributes: every property (recursively), every
-   array's item schema, every union branch, every `$defs` entry.
-
-   Measured against the live API, this — not schema text — is the currency.
-   Twenty strict tools carrying 24-character property names and 800-character
-   descriptions compile fine; one extra property each does not. Arrays are the
-   expensive slot: the same twenty parameters pass as scalars and are refused as
-   arrays."
-  [node]
-  (cond (map? node) (let
-                      [props
-                       (:properties node)
-
-                       items
-                       (:items node)]
-
-                      (+ (long (if (map? props) (count props) 0))
-                         (long (if items (inc (long (schema-grammar-cost items))) 0))
-                         (long (transduce (map schema-grammar-cost)
-                                          +
-                                          0
-                                          (concat (when (map? props) (vals props))
-                                                  (vals (:$defs node))
-                                                  (:anyOf node)
-                                                  (:allOf node))))))
-        (sequential? node) (long (transduce (map schema-grammar-cost) + 0 node))
-        :else 0))
-
-(def ^:private strict-grammar-budget
-  "Grammar slots one request's strict tools may spend IN TOTAL — one per tool plus
-   its `schema-grammar-cost`. Anthropic compiles them into ONE grammar and refuses
-   the whole request when it grows too large.
-
-   Measured live: `{git patch ls cat grep struct_index}` scores 50 and is
-   accepted; every probe that scored 60 or more was refused with `The compiled
-   grammar is too large`, including this surface plus `shell` (60) or
-   `struct_nodes` (63). A separate hard cap — `The maximum number of strict tools
-   supported is 20` — never binds under it: a container-bearing tool costs at
-   least three slots, so this budget runs out first."
-  50)
-
-(defn budget-strict-tools
-  "Keep `:strict` on as much of an advertised surface as ONE request can carry.
-
-   `advertise-tool` decides per tool whether a schema is grammar-samplable, but
-   the provider compiles ONE grammar for the whole request and rejects it whole
-   past ANY of three aggregate limits, every one of them measured live against
-   `api.anthropic.com`:
-
-   - at most `strict-optional-parameter-budget` optional parameters;
-   - at most `strict-union-parameter-budget` union-typed parameters;
-   - `strict-grammar-budget` grammar slots for the compiled grammar.
-
-   This is the aggregate gate over the FINAL surface (extension natives plus
-   engine-owned tools), and it is what keeps a growing tool surface from 400-ing
-   every request.
-
-   The budget fits roughly a quarter of this repo's own tools, so it is spent by
-   `payload-risk` first — a batch of maps before an array of strings, scalars
-   never — then cheapest grammar first, ties by name, so the outcome is
-   deterministic. Everything else loses the flag and is sampled unconstrained,
-   exactly as before strict existed; the tool's own coercion stays its gate."
-  [tools]
-  (let
-    [tools
-     (vec tools)
-
-     cost
-     (into {}
-           (map-indexed (fn [i t]
-                          [i
-                           {:grammar (inc (long (schema-grammar-cost (:schema t))))
-                            :optional (optional-parameter-count (:schema t))
-                            :union (union-parameter-count (:schema t))
-                            :risk (payload-risk (:schema t))}]))
-           tools)
-
-     eligible
-     (keep-indexed (fn [i t]
-                     (when (and (:strict t) (< (long (:risk (cost i))) 2)) i))
-                   tools)
-
-     affordable
-     (->> eligible
-          (sort-by (juxt #(:risk (cost %)) #(:grammar (cost %)) #(:name (nth tools %))))
-          (reduce (fn [{:keys [grammar optional union kept] :as acc} i]
-                    (let
-                      [g
-                       (+ (long grammar) (long (:grammar (cost i))))
-
-                       o
-                       (+ (long optional) (long (:optional (cost i))))
-
-                       u
-                       (+ (long union) (long (:union (cost i))))]
-
-                      (if (and (<= g (long strict-grammar-budget))
-                               (<= o (long strict-optional-parameter-budget))
-                               (<= u (long strict-union-parameter-budget)))
-                        {:grammar g :optional o :union u :kept (conj kept i)}
-                        acc)))
-                  {:grammar 0 :optional 0 :union 0 :kept #{}})
-          :kept)]
-
-    (into []
-          (map-indexed (fn [i t]
-                         (if (or (not (:strict t)) (contains? affordable i)) t (dissoc t :strict))))
-          tools)))
-
-(def ^:private lenient-strict-api-styles
-  "svar `:api-style`s whose strict mode accepts an OPTIONAL property and a real
-   `minItems 0/1` — the subset every budget in this namespace was measured
-   against. Everything else, INCLUDING an undeclared api-style, is the harsher
-   OpenAI wire: svar's `tool-def->wire` defaults to OpenAI-compatible chat."
-  #{:anthropic})
-
-(defn strict-tools-for-wire
-  "Drop `:strict` from every advertised tool whose schema is outside the strict
-   subset of THIS request's wire.
-
-   `advertise-tool` decides whether a schema is grammar-samplable at all against
-   the Anthropic subset, which allows optional properties. The OpenAI-compatible
-   wires enforce a harsher one and refuse the ENTIRE request when one strict tool
-   misses it — measured live on `github-copilot`/`gpt-5.6-terra`: `Invalid schema
-   for function 'struct_index': In context=('properties', 'paths', 'items',
-   'anyOf', '1'), 'required' is required to be supplied and to be an array
-   including every key in properties. Missing 'ranges'.`
-
-   Every batch tool here declares optional keys and `minItems 1` on purpose, so
-   on that wire the flag simply comes off: the tool is sampled unconstrained,
-   exactly as before strict existed, and its own coercion stays the gate. This
-   runs BEFORE `budget-strict-tools` so the request's grammar budget is spent
-   only on tools that will really carry the flag."
-  [api-style tools]
-  (if (contains? lenient-strict-api-styles
-                 (some-> api-style
-                         keyword))
-    (vec tools)
-    (mapv (fn [t]
-            (if (and (:strict t) (not (openai-strict-samplable-schema? (:schema t))))
-              (dissoc t :strict)
-              t))
-          tools)))
+  (assoc tool :schema (wire-schema (:schema tool))))
 
 (defn native-tool-schemas
-  "The model-facing `:tools` surface: `{:name :description :schema}` (plus
-   `:strict` where enforceable) for every ACTIVE native tool, in extension/symbol
+  "The model-facing `:tools` surface: `{:name :description :schema}` for every
+   ACTIVE native tool, in extension/symbol
    order. Each description automatically includes the symbol's mandatory
    raw-result contract. Schema constraints no provider can enforce are inlined
    into their own `description` here."

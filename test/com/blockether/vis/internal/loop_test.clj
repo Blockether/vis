@@ -4028,7 +4028,7 @@
        {:ext/name "foundation.editing" :ext/engine {:ext.engine/symbols @ed/editing-symbols}}
 
        tools
-       (@#'lp/native-tools [editing-ext] nil nil :anthropic)
+       (@#'lp/native-tools [editing-ext] nil nil)
 
        by-name
        (into {} (map (juxt :name identity)) tools)]
@@ -4092,14 +4092,21 @@
           (expect (= expected-type (:type (ex-data err)))))))
   (it "does not advertise retry_native when no active tool owns a replay policy"
       (expect (= ["apropos" "doc" "session_fold" "python_execution"]
-                 (mapv :name (@#'lp/native-tools [] nil nil :anthropic)))))
+                 (mapv :name (@#'lp/native-tools [] nil nil)))))
+  ;; Regression: `github-copilot`/`gpt-5.6-terra` 400ed the WHOLE request over a
+  ;; `:strict true` flag Vis derived from Anthropic's own grammar subset, so every
+  ;; turn failed before a token. No native tool is advertised strict on any wire.
+  (it "advertises every native tool unconstrained — nothing carries :strict"
+      (let [editing-ext {:ext/name "foundation.editing"
+                         :ext/engine {:ext.engine/symbols @ed/editing-symbols}}]
+        (expect (not-any? :strict (@#'lp/native-tools [editing-ext] nil nil)))))
   (it "deduplicates provider names and Python compatibility aliases from native apropos"
       (let
         [editing-ext
          {:ext/name "foundation.editing" :ext/engine {:ext.engine/symbols @ed/editing-symbols}}
 
          tools
-         (@#'lp/native-tools [editing-ext] nil nil :anthropic)
+         (@#'lp/native-tools [editing-ext] nil nil)
 
          names
          (@#'lp/advertised-native-capability-names [editing-ext] nil tools)]
