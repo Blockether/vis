@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Keep the generated `ios/` project on STOCK Capacitor.
+ * Prepare the generated iOS project around Capacitor's stock bridge controller.
  *
  * This used to install a tracked `CAPBridgeViewController` subclass
  * (`native/ios/VisBridgeViewController.swift`) that pushed UIKit's view size into
@@ -15,12 +15,14 @@
  * root controller is `customClass="VisBridgeViewController"`. Leaving that behind
  * means the storyboard names a class that no longer exists — a crash on launch.
  *
- * So the same hook now UN-stamps: drop the marker block, put
- * `CAPBridgeViewController` back. Idempotent, and a no-op on a fresh project.
+ * The hook removes that obsolete bridge and restores `CAPBridgeViewController`.
+ * It also stamps the small native lifecycle behavior that must happen before the
+ * asynchronous JavaScript bridge can react: ending keyboard editing synchronously
+ * as the app resigns active. Every operation is idempotent.
  *
  * Usage:
  *   node scripts/ios-prepare.mjs
- *   node scripts/ios-prepare.mjs --check   # exit 1 if the project is still stamped
+ *   node scripts/ios-prepare.mjs --check   # exit 1 if the project needs preparation
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -56,13 +58,24 @@ if (!existsSync(delegate)) {
   process.exit(0);
 }
 
-// ── 1. the appended bridge controller, if this checkout still has one ─────────
+// ── 1. generated AppDelegate hygiene + pre-background keyboard release ─────────
 
 const currentDelegate = readFileSync(delegate, 'utf8');
 const cleanedDelegate = currentDelegate.includes(BEGIN)
   ? `${currentDelegate.slice(0, currentDelegate.indexOf(BEGIN)).trimEnd()}\n`
   : currentDelegate;
-const delegateOk = cleanedDelegate === currentDelegate;
+const KEYBOARD_RELEASE = 'window?.endEditing(true)';
+const WILL_RESIGN_ACTIVE = '    func applicationWillResignActive(_ application: UIApplication) {\n';
+if (!cleanedDelegate.includes(KEYBOARD_RELEASE) && !cleanedDelegate.includes(WILL_RESIGN_ACTIVE)) {
+  die('AppDelegate.swift has no applicationWillResignActive method to stamp');
+}
+const preparedDelegate = cleanedDelegate.includes(KEYBOARD_RELEASE)
+  ? cleanedDelegate
+  : cleanedDelegate.replace(
+      WILL_RESIGN_ACTIVE,
+      `${WILL_RESIGN_ACTIVE}        // Release WebKit's editor before UIKit starts the scene transition.\n        ${KEYBOARD_RELEASE}\n`,
+    );
+const delegateOk = preparedDelegate === currentDelegate;
 
 // ── 2. the storyboard, back to Capacitor's own controller ────────────────────
 
@@ -664,24 +677,26 @@ const shareOk = shareFilesOk && projectOk;
 
 if (check) {
   if (delegateOk && boardOk && plistOk && appIconOk && shareOk) {
-    console.log('· ios: stock Capacitor host with required app capabilities, branded icon, share extension and Shortcuts');
+    console.log('· ios: prepared stock Capacitor host with required app capabilities, branded icon, share extension and Shortcuts');
     process.exit(0);
   }
   const missing = missingPlistEntries.map(([key]) => key).join(', ');
   die(
     !appIconOk
       ? 'ios: generated AppIcon is not the tracked Vis icon — run `node scripts/ios-prepare.mjs`'
-      : !delegateOk || !boardOk
-        ? 'ios: stale viewport bridge — run `node scripts/ios-prepare.mjs`'
-        : !shareOk
-          ? 'ios: no share extension / Shortcuts target — run `node scripts/ios-prepare.mjs`'
-          : `ios: Info.plist is missing ${missing} — run \`node scripts/ios-prepare.mjs\``,
+      : !delegateOk
+        ? 'ios: AppDelegate needs native hygiene — run `node scripts/ios-prepare.mjs`'
+        : !boardOk
+          ? 'ios: stale viewport bridge — run `node scripts/ios-prepare.mjs`'
+          : !shareOk
+            ? 'ios: no share extension / Shortcuts target — run `node scripts/ios-prepare.mjs`'
+            : `ios: Info.plist is missing ${missing} — run \`node scripts/ios-prepare.mjs\``,
   );
 }
 
 if (!appIconOk) copyFileSync(appIconSource, appIconTarget);
 
-if (!delegateOk) writeFileSync(delegate, cleanedDelegate);
+if (!delegateOk) writeFileSync(delegate, preparedDelegate);
 if (!boardOk) writeFileSync(storyboard, cleanedBoard);
 if (!plistOk) writeFileSync(infoPlist, preparedPlist);
 
@@ -694,8 +709,9 @@ if (!shareFilesOk) {
 if (project !== projectBefore) writeFileSync(pbxprojPath, project);
 
 console.log(
-  `· ios: ${delegateOk && boardOk ? 'stock Capacitor host' : 'removed the viewport bridge'}; ${
-    plistOk ? 'app capabilities already present' : `stamped ${missingPlistEntries.map(([key]) => key).join(', ')}`
+  `· ios: ${delegateOk ? 'AppDelegate already prepared' : 'prepared AppDelegate'}; ${
+    boardOk ? 'stock Capacitor bridge' : 'removed the viewport bridge'
+  }; ${plistOk ? 'app capabilities already present' : `stamped ${missingPlistEntries.map(([key]) => key).join(', ')}`
   }; ${appIconOk ? 'branded icon already present' : 'stamped branded app icon'}; ${
     shareOk ? 'share extension + Shortcuts already present' : 'stamped VisShare extension + App Intents'
   }`,
