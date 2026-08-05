@@ -1623,7 +1623,7 @@ def __vis_install_pandas__():
             return DataFrame(data, columns=outcols, index=idx)
 
         def to_markdown(self, index=True, tablefmt="pipe"):
-            baz = chr(124)
+            bar = chr(124)
 
             def _cell(v):
                 if _isna(v):
@@ -1645,17 +1645,17 @@ def __vis_install_pandas__():
 
             def _line(cells):
                 return (
-                    baz
-                    + baz.join(
+                    bar
+                    + bar.join(
                         " " + cells[j].ljust(widths[j]) + " " for j in range(len(cells))
                     )
-                    + baz
+                    + bar
                 )
 
             sep = (
-                baz
-                + baz.join(":" + ("-" * (widths[j] + 1)) for j in range(len(head)))
-                + baz
+                bar
+                + bar.join(":" + ("-" * (widths[j] + 1)) for j in range(len(head)))
+                + bar
             )
             return _NL.join([_line(head), sep] + [_line(row) for row in rows])
 

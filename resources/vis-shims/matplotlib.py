@@ -168,7 +168,7 @@ def __vis_install_matplotlib__():
                 order.append(key)
         return [index[str(v)] for v in seq], order
 
-    def baz(x, height, width=0.8, label=None, color=None, **kwargs):
+    def bar(x, height, width=0.8, label=None, color=None, **kwargs):
         pos, labels = _categorical(x)
         if pos is not None:
             _add_series("bar", pos, height, label, color, labels=labels)
@@ -602,8 +602,8 @@ def __vis_install_matplotlib__():
         def scatter(self, *a, **k):
             return scatter(*a, **k)
 
-        def baz(self, *a, **k):
-            return baz(*a, **k)
+        def bar(self, *a, **k):
+            return bar(*a, **k)
 
         def barh(self, *a, **k):
             return barh(*a, **k)
@@ -2393,7 +2393,7 @@ def __vis_install_matplotlib__():
         figure,
         plot,
         scatter,
-        baz,
+        bar,
         barh,
         hist,
         fill_between,

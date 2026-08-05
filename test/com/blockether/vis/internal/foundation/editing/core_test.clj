@@ -3806,14 +3806,14 @@
           ;; each row the same shape as an occurrences def — name/kind/anchor/end_anchor.
           (let
             [defs (get entry "definitions")
-             baz (first (filter #(= "bar" (get % "name")) defs))]
+             bar (first (filter #(= "bar" (get % "name")) defs))]
 
             (expect (vector? defs))
-            (expect (= "fn" (get baz "kind")))
-            (expect (= "[x]" (get baz "signature")))
-            (expect (string? (get baz "anchor")))
-            (expect (string? (get baz "end_anchor")))
-            (expect (= 0 (get baz "depth"))))))
+            (expect (= "fn" (get bar "kind")))
+            (expect (= "[x]" (get bar "signature")))
+            (expect (string? (get bar "anchor")))
+            (expect (string? (get bar "end_anchor")))
+            (expect (= 0 (get bar "depth"))))))
     (it "REFUSES a path that escapes the workspace (proves safe-path confinement)"
         (expect (true? (try (index-tool {"paths" ["/etc/hosts"]})
                             false

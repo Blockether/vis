@@ -685,15 +685,15 @@
          foot-rule-y
          (dec (long (:hint-row (tr/band-region 80 30 1))))
 
-         baz
+         bar
          (screen-row screen (dec foot-rule-y))]
 
         (expect (rule-row? (screen-row screen foot-rule-y)))
         ;; Ink pill for Submit, muted pill for Cancel — two filled caps, no rails.
-        (expect (str/includes? baz " Submit "))
-        (expect (str/includes? baz " Cancel"))
-        (expect (not (str/includes? baz "▏")))
-        (expect (not (str/includes? baz "▕")))))
+        (expect (str/includes? bar " Submit "))
+        (expect (str/includes? bar " Cancel"))
+        (expect (not (str/includes? bar "▏")))
+        (expect (not (str/includes? bar "▕")))))
   ;; Regression: the band said the same two things twice — the pinned
   ;; `[ Submit ]` / `[ Cancel ]` row and, one row under it, a hint bar reading
   ;; `Enter submit · Esc cancel`. Two rows of chrome for one meaning — and the
@@ -710,7 +710,7 @@
          hint-y
          (long (:hint-row (tr/band-region 80 30 1)))
 
-         baz
+         bar
          (screen-row screen (- hint-y 2))
 
          hints
@@ -719,8 +719,8 @@
          text
          (screen-text screen)]
 
-        (expect (str/includes? baz " Submit "))
-        (expect (str/includes? baz " Cancel"))
+        (expect (str/includes? bar " Submit "))
+        (expect (str/includes? bar " Cancel"))
         (expect (not (str/includes? text "Enter")))
         (expect (not (str/includes? text "Esc")))
         ;; ...and with focus on a plain text field the bar below has nothing to
@@ -746,10 +746,10 @@
         ;; recolours itself when focus arrives, and the gutter it needed had to be
         ;; reserved in every state just to keep the row still.
         (doseq [f [form (assoc form :focus (dec cancel-idx)) (assoc form :focus cancel-idx)]]
-          (let [baz (bar-of f)]
-            (expect (str/includes? baz " Submit "))
-            (expect (str/includes? baz " Cancel"))
-            (expect (not (str/includes? baz "•")))))))
+          (let [bar (bar-of f)]
+            (expect (str/includes? bar " Submit "))
+            (expect (str/includes? bar " Cancel"))
+            (expect (not (str/includes? bar "•")))))))
   (it "marks exactly the focused button and keeps the buttons out of the body"
       (let
         [form

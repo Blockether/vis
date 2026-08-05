@@ -479,15 +479,15 @@
   "Centre `label` in `bar` (a string of horizontal box characters) and
    return the resulting string. `bar` length is unchanged. nil/blank
    labels return the bar untouched."
-  [baz label]
-  (let [w (count baz)]
+  [bar label]
+  (let [w (count bar)]
     (if (and label (not (str/blank? label)) (<= (count label) w))
       (let
         [start (max 0 (quot (- w (count label)) 2))
          end (min w (+ start (count label)))]
 
-        (str (subs baz 0 start) label (subs baz end)))
-      baz)))
+        (str (subs bar 0 start) label (subs bar end)))
+      bar)))
 
 ;; ----------------------------------------------------------------------------
 ;; Sideless box-border padding
@@ -528,7 +528,7 @@
      [inner-w
       (- (long cols) 2)
 
-      baz
+      bar
       (repeat-str Symbols/SINGLE_LINE_HORIZONTAL inner-w)]
 
      (.setForegroundColor g t/border-fg)
@@ -537,14 +537,14 @@
        (do
          ;; Top: ┌── top-hint ──┐
          (.setCharacter g 0 (int box-top) Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
-         (.putString g (int 1) (int box-top) ^String (embed-in-bar baz top-hint))
+         (.putString g (int 1) (int box-top) ^String (embed-in-bar bar top-hint))
          (.setCharacter g
                         (int (dec (long cols)))
                         (int box-top)
                         Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
          ;; Bottom: └──────┘ (plain rule - status moved to footer row).
          (.setCharacter g 0 (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
-         (.putString g (int 1) (int box-bottom) ^String baz)
+         (.putString g (int 1) (int box-bottom) ^String bar)
          (.setCharacter g
                         (int (dec (long cols)))
                         (int box-bottom)
@@ -827,7 +827,7 @@
          rule-w
          (max 0 (- cols (* 2 pad)))
 
-         baz
+         bar
          (repeat-str Symbols/SINGLE_LINE_HORIZONTAL rule-w)
 
          pill
@@ -835,8 +835,8 @@
 
         (.setForegroundColor g t/tool-color-shell)
         (.setBackgroundColor g t/terminal-bg)
-        (.putString g (int pad) (int box-top) ^String (embed-in-bar baz pill))
-        (.putString g (int pad) (int box-bottom) ^String baz)))
+        (.putString g (int pad) (int box-top) ^String (embed-in-bar bar pill))
+        (.putString g (int pad) (int box-bottom) ^String bar)))
     (when more-hint
       (.setForegroundColor g t/border-fg)
       (.setBackgroundColor g t/terminal-bg)

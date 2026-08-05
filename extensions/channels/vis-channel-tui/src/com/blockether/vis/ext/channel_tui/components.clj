@@ -1439,11 +1439,11 @@
         filled
         (long (Math/round (* bar-w (/ done-n (double total)))))
 
-        baz
+        bar
         (str (apply str (repeat filled "▰")) (apply str (repeat (- bar-w filled) "▱")))
 
         header
-        [[(str baz "  ") (if (= done-n total) t/status-ok t/header-active-tab-accent) false]
+        [[(str bar "  ") (if (= done-n total) t/status-ok t/header-active-tab-accent) false]
          [(str done-n " of " total " done") t/footer-fg-strong true]]
 
         cards

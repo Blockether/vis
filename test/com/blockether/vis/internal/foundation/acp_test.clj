@@ -135,7 +135,7 @@
                       "ratio" 22/7
                       "atom" (atom :x)
                       "set" #{:a :b}
-                      "sym" 'foo/baz})
+                      "sym" 'foo/bar})
 
          m
          (decode-line line)]

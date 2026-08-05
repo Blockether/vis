@@ -856,11 +856,11 @@
                     (if (margin? (first run)) [(first run)] run)))
           vec)
 
-     baz
+     bar
      {:text "│ " :style #{:quote} :node nil}]
 
     (mapv (fn [l]
-            (update l :runs #(into [baz] %)))
+            (update l :runs #(into [bar] %)))
           compact)))
 
 (defn- inline-chars
