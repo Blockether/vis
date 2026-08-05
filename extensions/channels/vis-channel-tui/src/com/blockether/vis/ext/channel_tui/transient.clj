@@ -49,11 +49,20 @@
   (:refer-clojure :exclude [run!])
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [com.blockether.vis.ext.channel-tui.theme :as t]))
+            [com.blockether.vis.ext.channel-tui.theme :as t]
+            [com.blockether.vis.ext.channel-tui.transient.spec :as sp]))
 
 (set! *unchecked-math* :warn-on-boxed)
 
 ;;; ── Pure model ──────────────────────────────────────────────────────────────
+
+(defn check
+  "nil when `spec` is a legal transient, else ONE line saying why. The same
+   judge [[run!]] uses, answering instead of throwing: a producer's own test —
+   or a caller assembling a spec from live data — asks BEFORE a terminal is
+   involved, and gets prose a human can read."
+  [spec]
+  (sp/spec-error spec))
 
 (defn item-by-key
   "PURE: the spec item bound to single character `ch` (a Character or string),
@@ -75,6 +84,36 @@
             (some #(when (= id (:id %)) %) items))
           (:groups spec))))
 
+(defn- index-by-key
+  "PURE: `{keystroke item}` over every row of `spec`, in group order. Two rows
+   sharing a keystroke make one of them unreachable, which is why the spec
+   refuses it — so this index loses nothing and the key loop stops scanning."
+  [spec]
+  (into {} (map (juxt :key identity)) (mapcat :items (:groups spec))))
+
+(defn- item-step
+  "PURE: what pressing `it`'s key does to `state`, decided by the TRAITS its
+   type carries in `sp/item-types` and never by the type keyword itself — a
+   COMMAND ends the run, a VALUED row sends the caller off to read a value, a
+   FLAG toggles in place. A new kind of row is a row in that table, not a new
+   branch here."
+  [state {:keys [type id] :as it}]
+  (let [{:keys [is-flag is-valued is-command]} (get sp/item-types type)]
+    (cond is-command {:kind :action :item it}
+          is-valued {:kind :option :item it}
+          is-flag {:kind :continue
+                   :state
+                   (update state :switches #(if (contains? % id) (disj % id) (conj (or % #{}) id)))}
+          :else {:kind :continue :state state})))
+
+(defn- step-key
+  "PURE: [[item-step]] for whatever `index` binds `ch` to. An unbound key is a
+   no-op that keeps the popup open."
+  [index state ch]
+  (if-let [it (get index (str ch))]
+    (item-step state it)
+    {:kind :continue :state state}))
+
 (defn toggle
   "PURE reducer for ONE keystroke against a transient `state`
    (`{:switches #{ids} :options {id val}}`). Returns a map whose `:kind` tells
@@ -86,31 +125,19 @@
    Switches are the only kind this fn mutates; options/actions leave `state`
    untouched (the impure loop finishes their job)."
   [spec state ch]
-  (if-let [{:keys [type id] :as it} (item-by-key spec ch)]
-    (case type
-      :switch
-      {:kind :continue
-       :state (update state :switches #(if (contains? % id) (disj % id) (conj (or % #{}) id)))}
-
-      :option
-      {:kind :option :item it}
-
-      :action
-      {:kind :action :item it}
-
-      {:kind :continue :state state})
-    {:kind :continue :state state}))
+  (step-key (index-by-key spec) state ch))
 
 (defn key-glyph
   "PURE: the key column glyph magit paints for one item. FLAGS (`:switch` /
    `:option`) carry magit's leading `-` — `-h`, `-t` — so a toggle can never be
-   mistaken for a fire-once verb; COMMANDS (`:action`) show the bare key."
+   mistaken for a fire-once verb; COMMANDS (`sp/command-types`) show the bare
+   key. Tolerant of a partial item: an unknown type is not a command."
   [{:keys [type key]}]
-  (if (= :action type) (str key) (str "-" key)))
+  (if (contains? sp/command-types type) (str key) (str "-" key)))
 
 (defn item-arg
   "PURE: the trailing git-argument cell magit shows for a FLAG: `(--no-verify)` for
-   a switch, `(%topic=fix)` for an option carrying `value`. nil for actions (a
+   a switch, `(%topic=fix)` for an option carrying `value`. nil for commands (a
    command contributes no argument) and for flags that name none.
 
    A `:secret? true` option NEVER renders what it holds: an armed API key shows
@@ -124,8 +151,8 @@
      v
      (when raw (if secret? "••••••" raw))]
 
-    (cond (= :action type) nil
-          (and arg (= :option type)) (str "(" arg v ")")
+    (cond (contains? sp/command-types type) nil
+          (and arg (contains? sp/valued-types type)) (str "(" arg v ")")
           arg (str "(" arg ")")
           v (str "(" v ")")
           :else nil)))
@@ -156,13 +183,19 @@
                                         [{:kind :blank}])))
                       (:groups spec)))))
 
+(def ^:private chrome-rows
+  "Rows of the popup's OWN chrome above its body: the opening separator, the
+   title, and the title's rule. The closing rule and the hint bar belong to the
+   host's bottom chrome, so they are not counted here."
+  3)
+
 (defn height
   "PURE: rows the popup needs INSIDE the host's frame — its opening separator,
    the title, the title's rule, and every display row. The closing rule and the
    hint bar are the host's OWN bottom chrome, so they are not counted; a host
    sizes its box with this before it paints one."
   ^long [spec]
-  (+ 3 (count (rows spec))))
+  (+ (long chrome-rows) (count (rows spec))))
 
 (defn band-geometry
   "PURE: which row of `region` every part of a band `n` display rows tall
@@ -283,11 +316,30 @@
    not advertise a `-key` nothing responds to."
   [spec]
   (cond-> []
-    (some (comp #{:switch :option} :type) (mapcat :items (:groups spec)))
+    (some (comp sp/flag-types :type) (mapcat :items (:groups spec)))
     (conj ["-key" "toggle flag"])
 
     :always
     (into [["key" "run command"] ["Esc" "cancel"]])))
+
+(defn layout
+  "PURE: everything ONE frame needs from `spec`, computed ONCE — the display
+   [[rows]] and how many there are, the grid [[columns]] every row aligns to,
+   the [[hint-pairs]] its footer shows, the [[height]] a host sizes its box
+   with, and the keystroke index its key loop dispatches on.
+
+   Painting used to walk the whole spec twice per frame (once for geometry,
+   once for the body) and scan every group again for each keystroke; a run
+   builds this once and the loop reads it."
+  [spec]
+  (let [display-rows (rows spec)]
+    {:title (:title spec)
+     :rows display-rows
+     :row-count (count display-rows)
+     :columns (columns spec)
+     :hint-pairs (hint-pairs spec)
+     :height (+ (long chrome-rows) (count display-rows))
+     :by-key (index-by-key spec)}))
 
 (defn- draw-item!
   "One transient row as a GRID cell: key glyph column, description column, and the
@@ -418,27 +470,21 @@
               (p/set-char! g left row p/BOX_V)
               (p/set-char! g right row p/BOX_V)))))))
 
-(defn paint!
-  "Paint ONE frame of `spec` at `state` into `region` on `host`. Pure geometry,
-   one pass, no key handling — a host that owns its own event loop embeds a
-   transient with this plus `toggle`; `run!` is the batteries-included loop."
-  [{:keys [g hint-bar!]} {:keys [left inner-w text-w restore!] :as region} spec state]
+(defn- paint-layout!
+  "Paint ONE frame of an already-computed [[layout]] at `state`. Everything the
+   spec decides is decided in [[layout]]; this fn only puts cells on a screen."
+  [{:keys [g hint-bar!]} {:keys [left inner-w text-w restore!] :as region}
+   {title :title display-rows :rows n :row-count grid :columns hints :hint-pairs} state]
   (let
     [{:keys [sep-row title-row title-rule-row body-top foot-rule-row foot-row wipe-top visible
              top-limit]}
-     (geometry region spec)
+     (band-geometry region n)
 
      left
      (long left)
 
      inner-w
      (long inner-w)
-
-     display-rows
-     (rows spec)
-
-     grid
-     (columns spec)
 
      clear-row!
      (fn [row]
@@ -455,9 +501,7 @@
     (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
       (draw-rule! g region foot-rule-row))
     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-    (p/styled g
-              [p/BOLD]
-              (p/put-str! g (+ left 2) title-row (p/ellipsize (str (:title spec)) text-w)))
+    (p/styled g [p/BOLD] (p/put-str! g (+ left 2) title-row (p/ellipsize (str title) text-w)))
     (dotimes [i visible]
       (let
         [r (nth display-rows i)
@@ -477,35 +521,67 @@
           :item
           (let
             [{:keys [type id] :as it} (:item r)
-             active? (case type
-                       :switch
-                       (contains? (:switches state) id)
-
-                       :option
-                       (contains? (:options state) id)
-
-                       false)
-             value (when (= type :option) (get (:options state) id))]
+             {:keys [is-flag is-valued]} (get sp/item-types type)
+             active? (boolean (or (and is-valued (contains? (:options state) id))
+                                  (and is-flag (contains? (:switches state) id))))
+             value (when is-valued (get (:options state) id))]
 
             (draw-item! g left row inner-w grid it active? value)))))
-    (hint-bar! g left foot-row inner-w (hint-pairs spec))))
+    (hint-bar! g left foot-row inner-w hints)))
+
+(defn paint!
+  "Paint ONE frame of `spec` at `state` into `region` on `host`. Pure geometry,
+   one pass, no key handling — a host that owns its own event loop embeds a
+   transient with this plus `toggle`; `run!` is the batteries-included loop.
+   A host that paints many frames computes [[layout]] once instead."
+  [host region spec state]
+  (paint-layout! host region (layout spec) state))
 
 ;;; ── Run ─────────────────────────────────────────────────────────────────────
+
+(defn- invalid!
+  "Refuse at the ONE seam where a producer's data meets a terminal, with the
+   envelope the rest of the product uses: a `:type` a caller can match and the
+   spec ns' own one-line `:reason`."
+  [type message data]
+  (throw (ex-info (str "Invalid transient " (name type) ": " message)
+                  (assoc data
+                    :type type
+                    :reason message))))
 
 (defn run!
   "Paint `spec` into `region` on `host` and run its key loop until an ACTION
    fires or the user cancels. Returns `{:action id :switches #{…} :options {…}}`,
    or nil on Esc. Flags toggle in place and keep the popup open; an OPTION calls
-   the spec's `:read-option` for a value."
+   the spec's `:read-option` for a value.
+
+   The contract is checked ONCE per run, here: an illegal spec, an unpaintable
+   region or a host that cannot answer keystrokes throws
+   `:vis/transient-invalid-spec` / `-invalid-region` / `-invalid-host` before a
+   single cell is painted, and a `:read-option` that hands back something no row
+   can carry throws `:vis/transient-invalid-option` instead of painting it. Not
+   once per keystroke: the loop below runs on data already known legal."
   [{:keys [read-key! refresh!] :as host} region spec]
-  (let [read-option (or (:read-option spec) (constantly nil))]
+  (when-let [why (sp/spec-error spec)]
+    (invalid! :vis/transient-invalid-spec why {:spec spec}))
+  (when-let [why (sp/region-error region)]
+    (invalid! :vis/transient-invalid-region why {:region region}))
+  (when-let [why (sp/host-error host)]
+    (invalid! :vis/transient-invalid-host why {}))
+  (let
+    [lay
+     (layout spec)
+
+     read-option
+     (or (:read-option spec) (constantly nil))]
+
     (loop [state {:switches #{} :options {}}]
-      (paint! host region spec state)
+      (paint-layout! host region lay state)
       (refresh!)
       (let [k (read-key!)]
         (cond (= :esc k) nil
               (nil? k) (recur state)
-              :else (let [r (toggle spec state k)]
+              :else (let [r (step-key (:by-key lay) state k)]
                       (case (:kind r)
                         :continue
                         (recur (:state r))
@@ -515,6 +591,9 @@
                           [{:keys [id] :as it} (:item r)
                            v (read-option it (get (:options state) id))]
 
+                          (when (some? v)
+                            (when-let [why (sp/option-value-error v)]
+                              (invalid! :vis/transient-invalid-option why {:item it})))
                           (recur (if (nil? v) state (assoc-in state [:options id] v))))
 
                         :action

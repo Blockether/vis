@@ -367,3 +367,92 @@
         ;; …and the title keeps its own rule even when the band is clamped.
         (expect (str/includes? (nth grid 7) "────"))
         (expect (every? str/blank? (take 6 grid))))))
+
+;;; ── The contract: one seam, one refusal ─────────────────────────────────────
+
+(def ^:private legal-region
+  "The rectangle `magit-status-buffer!` hands the popup."
+  {:left 0 :inner-w 78 :hint-row 28 :text-w 70})
+
+(def ^:private topic-transient-spec
+  {:groups [{:title "Arguments"
+             :items [{:key "t" :type :option :id :topic :label "Topic" :arg "%topic="}]}]})
+
+(defn- stub-host
+  "A host that SATISFIES the contract and paints nothing: every refusal below
+   fires before the first cell, so no terminal is needed to watch it."
+  []
+  {:g :graphics
+   :hint-bar! (fn [& _])
+   :refresh! (fn [])
+   :read-key! (fn []
+                :esc)})
+
+(defn- refusal
+  "The `:type` of the `ex-info` `f` throws, nil when it returns normally. `run!`
+   is the ONE place the component refuses, so a caller matches on that keyword."
+  [f]
+  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+
+(defdescribe
+  transient-layout-test
+  (it "ONE pass over the spec answers every question a frame asks"
+      (let [lay (tr/layout commit-transient-spec)]
+        (expect (= (tr/rows commit-transient-spec) (:rows lay)))
+        (expect (= (count (:rows lay)) (:row-count lay)))
+        (expect (= (tr/columns commit-transient-spec) (:columns lay)))
+        (expect (= (tr/hint-pairs commit-transient-spec) (:hint-pairs lay)))
+        (expect (= (tr/height commit-transient-spec) (:height lay)))
+        ;; The key loop dispatches on this index instead of rescanning
+        ;; every group for each keystroke.
+        (expect (= (tr/item-by-key commit-transient-spec \c) (get (:by-key lay) "c")))
+        (expect (nil? (get (:by-key lay) "z")))))
+  (it "a band of pure commands never advertises a flag key nothing responds to"
+      (expect (= [["key" "run command"] ["Esc" "cancel"]]
+                 (:hint-pairs
+                   (tr/layout
+                     {:groups [{:title "Commands"
+                                :items [{:key "c" :type :action :id :commit :label "Commit"}]}]}))))
+      (expect (some #{["-key" "toggle flag"]} (:hint-pairs (tr/layout commit-transient-spec))))))
+
+(defdescribe
+  transient-contract-test
+  (it "`check` ANSWERS instead of throwing, so a producer asks before it paints"
+      (expect (nil? (tr/check commit-transient-spec)))
+      (expect (string? (tr/check (assoc commit-transient-spec :nope 1)))))
+  (it "an illegal spec is refused at the seam, before a single cell is painted"
+      (expect (= :vis/transient-invalid-spec
+                 (refusal #(tr/run!
+                             (stub-host)
+                             legal-region
+                             (assoc-in commit-transient-spec [:groups 0 :items 0 :labl] "typo")))))
+      ;; A second row on `c` is a command nobody can ever fire: the
+      ;; first one wins the keystroke forever.
+      (expect (= :vis/transient-invalid-spec
+                 (refusal #(tr/run!
+                             (stub-host)
+                             legal-region
+                             (update-in
+                               commit-transient-spec
+                               [:groups 1 :items]
+                               conj
+                               {:key "c" :type :action :id :other :label "Something else"}))))))
+  (it "a region the popup cannot paint into is refused"
+      (expect (= :vis/transient-invalid-region
+                 (refusal
+                   #(tr/run! (stub-host) (dissoc legal-region :hint-row) commit-transient-spec)))))
+  (it "a host that cannot answer a keystroke is refused"
+      (expect (= :vis/transient-invalid-host
+                 (refusal
+                   #(tr/run! (dissoc (stub-host) :read-key!) legal-region commit-transient-spec)))))
+  (it "a `:read-option` value no row can paint is refused, not painted"
+      (expect (= :vis/transient-invalid-option
+                 (refusal #(drive-transient! (assoc topic-transient-spec
+                                               :read-option (fn [_ _]
+                                                              "   "))
+                                             [\t :esc]))))
+      ;; nil is how a cancelled prompt says "unchanged" — it is not a value.
+      (expect (nil? (refusal #(drive-transient! (assoc topic-transient-spec
+                                                  :read-option (fn [_ _]
+                                                                 nil))
+                                                [\t :esc]))))))
