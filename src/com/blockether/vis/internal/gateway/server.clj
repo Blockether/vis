@@ -2731,8 +2731,10 @@
              :transport "audio/wav"
              :transcription "gateway-local"
              ;; the POST returns a JOB, not a transcript: a client that sees this
-             ;; polls progress instead of holding a socket open for a minute.
+             ;; STREAMS the job's own progress (`/voice/jobs/:id/events`) instead of
+             ;; holding a socket open for a minute or polling for a percentage.
              :is-async true
+             :progress "sse"
              :phases (mapv name voice/phases)
              :model
              (if engine (voice-state->json (voice/readiness engine)) {:status "unavailable"})}
@@ -2788,7 +2790,7 @@
 (defn- voice-handler
   "POST /v1/sessions/:sid/voice — body is a recorded WAV blob. ACCEPTS the audio
    and answers **202 with a job**; transcription runs on its own thread and the
-   client watches `/voice/jobs/:job-id`.
+   client STREAMS `/voice/jobs/:job-id/events` (SSE) to watch it.
 
    That split is the whole point: the upload is the CLIENT's progress (bytes in
    flight), and 202 is the gateway saying \"I have your recording\" — from then on
@@ -2828,7 +2830,9 @@
 
 (defn- voice-job-handler
   "GET    /v1/sessions/:sid/voice/jobs/:job-id — where this transcription is:
-          `{:id :engine :phase :progress :is_done :text? :error?}`.
+          `{:id :engine :phase :progress :is_done :text? :error?}`. ONE read of
+          the job resource; a client that wants to WATCH it streams the twin
+          below instead of asking again and again.
    DELETE /v1/sessions/:sid/voice/jobs/:job-id — forget it once the transcript has
           been collected (finished jobs also expire on their own)."
   [request]
@@ -2845,6 +2849,83 @@
           :else (if-let [job (voice/job job-id)]
                   (json-response 200 job)
                   (json-response 404 {:error "unknown transcription job"})))))
+
+(def ^:private VOICE_JOB_QUEUE_CAP
+  "Per-connection queue of job states. A transcription reports a handful of
+   percentages per second at most, so anything the writer cannot keep up with is
+   a dead socket, not backpressure worth buffering."
+  64)
+
+(defn- voice-job-frame ^String [job] (str "event: voice.job\ndata: " (wire/json-str job) "\n\n"))
+
+(defn- voice-job-events-body
+  "Ring streamable body for ONE transcription job: its CURRENT state first, then
+   a `voice.job` frame per change until the job is done or failed.
+
+   The current state rides first on purpose — that is what makes a reconnect free
+   of a poll: the stream is subscribed BEFORE the snapshot is read, so a job that
+   finished in that instant is still reported, and a client that lost the socket
+   re-opens and is told the terminal phase immediately.
+
+   [[voice/watch!]] only enqueues; this thread is the connection's single socket
+   writer, so the engine's thread is never blocked by a stalled reader."
+  [job-id]
+  (reify
+    ring-protocols/StreamableResponseBody
+      (write-body-to-stream [_ _ output-stream]
+        (let
+          [^OutputStream out
+           output-stream
+
+           queue
+           (ArrayBlockingQueue. (int VOICE_JOB_QUEUE_CAP))
+
+           unwatch
+           (voice/watch! job-id
+                         (fn [job]
+                           (.offer queue job)))
+
+           write!
+           (fn [job]
+             (.write out (.getBytes (voice-job-frame job) StandardCharsets/UTF_8))
+             (.flush out))]
+
+          (try (let [current (voice/job job-id)]
+                 (when current (write! current))
+                 (loop [done? (or (nil? current) (:is-done current))]
+                   (when-not done?
+                     (if-let [job (.poll queue (long HEARTBEAT_MS) TimeUnit/MILLISECONDS)]
+                       (do (write! job) (recur (:is-done job)))
+                       ;; heartbeat comment: keeps proxies from reaping a quiet
+                       ;; upload-to-first-chunk gap, and detects a dead client.
+                       (do (.write out (.getBytes ": ping\n\n" StandardCharsets/UTF_8))
+                           (.flush out)
+                           (recur false))))))
+               (catch Throwable _ nil)
+               (finally (unwatch) (try (.close out) (catch Throwable _ nil))))))))
+
+(defn- voice-job-events-handler
+  "GET /v1/sessions/:sid/voice/jobs/:job-id/events — the job's phase and
+   percentage PUSHED as they happen, as `text/event-stream`.
+
+   Progress that is polled is progress that arrives late and costs a request per
+   tick; this is the same job resource, streamed. The stream ENDS itself on the
+   terminal frame, so the client neither polls nor guesses when to stop reading."
+  [request]
+  (let
+    [sid
+     (path-sid request)
+
+     job-id
+     (get-in request [:path-params :job-id])]
+
+    (cond (not (and sid (state/soul sid))) (json-response 404 {:error "unknown session"})
+          (nil? (voice/job job-id)) (json-response 404 {:error "unknown transcription job"})
+          :else {:status 200
+                 :headers {"Content-Type" "text/event-stream"
+                           "Cache-Control" "no-cache, no-transform"
+                           "X-Accel-Buffering" "no"}
+                 :body (voice-job-events-body job-id)})))
 
 (defn- suggest-handler
   "GET /v1/sessions/:sid/suggest?kind=file&q= — the SHARED fuzzy suggestion
@@ -3173,6 +3254,7 @@
         [(sid-route "/events") {:get events-handler}] [(sid-route "/voice") {:post voice-handler}]
         [(sid-route "/voice/model") {:get voice-model-handler :post voice-model-handler}]
         [(sid-route "/voice/jobs/:job-id") {:get voice-job-handler :delete voice-job-handler}]
+        [(sid-route "/voice/jobs/:job-id/events") {:get voice-job-events-handler}]
         [(sid-route "/events-since") {:get events-since-handler}]
         [(sid-route "/seq") {:get seq-handler}] [(sid-route "/context") {:get context-handler}]
         [(sid-route "/transcript") {:get transcript-handler}]

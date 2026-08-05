@@ -16,7 +16,8 @@
       `:queued` -> `:preparing` -> `:transcribing` -> `:done` | `:failed`.
       `:uploading` is the client's own half — the bytes are still travelling and
       no job exists yet — and is part of the vocabulary so every surface names
-      the same five things."
+      the same five things. Every change is PUSHED to [[watch!]] watchers, so
+      the gateway streams a job as SSE and no surface ever polls."
   (:require [clojure.string :as str])
   (:import [java.util UUID]))
 
@@ -301,57 +302,88 @@
   (swap! jobs* dissoc id)
   nil)
 
+;; =============================================================================
+;; Watchers - a job PUSHES, nobody polls
+;; =============================================================================
+
+(defonce ^:private watchers* (atom {}))
+
+(defn watch!
+  "Call `f` with the PUBLIC job on every state change of `job-id`, until the
+   returned zero-arg fn is called.
+
+   This is what makes progress a STREAM rather than a poll: the gateway's SSE
+   body parks on a queue this fills, so a percentage reaches the human the
+   instant the engine reports it instead of on the next tick of a timer. `f`
+   runs on the ENGINE's own thread, so it must only ENQUEUE - a slow or throwing
+   watcher can never stall a transcription, and a throw costs that one delivery
+   and nothing else."
+  [job-id f]
+  (let [k (str (UUID/randomUUID))]
+    (swap! watchers* assoc-in [job-id k] f)
+    (fn unwatch []
+      (swap! watchers* (fn [ws]
+                         (let [left (dissoc (get ws job-id) k)]
+                           (if (seq left) (assoc ws job-id left) (dissoc ws job-id)))))
+      nil)))
+
+(defn- notify-watchers!
+  [job-id job]
+  (doseq [f (vals (get @watchers* job-id))]
+    (try (f job) (catch Throwable _ nil)))
+  nil)
+
 (defn- advance!
-  "Move a live job forward. Progress never goes BACKWARDS inside a phase — a
-   surface must not flicker 60% → 20% — but a new phase is a new scale and starts
-   over: `:preparing 100` is followed by `:transcribing 0`."
+  "Move a live job forward and tell its watchers. Progress never goes BACKWARDS
+   inside a phase - a surface must not flicker 60% -> 20% - but a new phase is a
+   new scale and starts over: `:preparing 100` is followed by `:transcribing 0`.
+   A TERMINAL phase keeps the percentage it arrived with: `:failed` at 40% is
+   where the engine gave up, not zero."
   [job-id update-map]
-  (swap! jobs* (fn [jobs]
-                 (if-let [j (get jobs job-id)]
-                   (if (terminal-phases (:phase j))
-                     jobs
-                     (let
-                       [same-phase? (or (nil? (:phase update-map))
-                                        (= (:phase update-map) (:phase j)))
-                        floor (if same-phase? (clamp-progress (:progress j)) 0)]
+  (let
+    [[before after] (swap-vals! jobs*
+                                (fn [jobs]
+                                  (if-let [j (get jobs job-id)]
+                                    (if (terminal-phases (:phase j))
+                                      jobs
+                                      (let
+                                        [same-phase? (or (nil? (:phase update-map))
+                                                         (= (:phase update-map) (:phase j)))
+                                         floor (if same-phase? (clamp-progress (:progress j)) 0)]
 
-                       (assoc jobs
-                         job-id (merge j
-                                       (cond-> (assoc update-map :updated-at (now-ms))
-                                         (:progress update-map)
-                                         (update :progress
-                                                 (fn [p]
-                                                   (max (clamp-progress p) floor)))
+                                        (assoc jobs
+                                          job-id
+                                          (merge j
+                                                 (cond-> (assoc update-map :updated-at (now-ms))
+                                                   (:progress update-map)
+                                                   (update :progress
+                                                           (fn [p]
+                                                             (max (clamp-progress p) floor)))
 
-                                         (and (not same-phase?) (nil? (:progress update-map)))
-                                         (assoc :progress 0))))))
-                   jobs)))
+                                                   (and (not same-phase?)
+                                                        (nil? (:progress update-map))
+                                                        (not (terminal-phases (:phase update-map))))
+                                                   (assoc :progress 0))))))
+                                    jobs)))]
+    (when (not= (get before job-id) (get after job-id))
+      (notify-watchers! job-id (public-job (get after job-id)))))
   nil)
 
 (defn- run-job!
   [job-id engine audio-path on-done]
-  (try
-    (advance! job-id {:phase :preparing :progress 0})
-    (let
-      [text (str ((:transcribe engine)
-                   {:audio-path (str audio-path)
-                    :job-id job-id
-                    :on-progress (fn [update-map]
-                                   (advance! job-id
-                                             (select-keys update-map [:phase :progress])))}))]
-      (advance! job-id {:phase :transcribing :progress 100})
-      (swap! jobs*
-        (fn [jobs]
-          (cond-> jobs
-            (contains? jobs job-id)
-            (update job-id assoc :phase :done :progress 100 :text text :updated-at (now-ms))))))
-    (catch Throwable t
-      (swap! jobs*
-        (fn [jobs]
-          (cond-> jobs
-            (contains? jobs job-id)
-            (update job-id assoc :phase :failed :error (error-message t) :updated-at (now-ms))))))
-    (finally (when on-done (try (on-done (job job-id)) (catch Throwable _ nil)))))
+  (try (advance! job-id {:phase :preparing :progress 0})
+       (let
+         [text (str ((:transcribe engine)
+                      {:audio-path (str audio-path)
+                       :job-id job-id
+                       :on-progress (fn [update-map]
+                                      (advance! job-id
+                                                (select-keys update-map [:phase :progress])))}))]
+         ;; No `:transcribing 100` filler: the DONE frame is the completion, and a
+         ;; pushed stream would otherwise spend a frame saying the same thing twice.
+         (advance! job-id {:phase :done :progress 100 :text text}))
+       (catch Throwable t (advance! job-id {:phase :failed :error (error-message t)}))
+       (finally (when on-done (try (on-done (job job-id)) (catch Throwable _ nil)))))
   (job job-id))
 
 (defn submit!
@@ -402,4 +434,9 @@
                    (assoc (sweep jobs) id job)))
     (run-job! id engine audio-path on-done)))
 
-(defn reset-jobs! "Forget every job (tests)." [] (reset! jobs* {}) nil)
+(defn reset-jobs!
+  "Forget every job and every watcher (tests)."
+  []
+  (reset! jobs* {})
+  (reset! watchers* {})
+  nil)

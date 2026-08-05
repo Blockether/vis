@@ -239,3 +239,102 @@
   (is (= "root cause"
          (voice/error-message (java.io.IOException. (RuntimeException. "root cause")))))
   (is (string? (voice/error-message (NullPointerException.)))))
+
+;; =============================================================================
+;; A job PUSHES - watchers, not polls
+;; =============================================================================
+
+(defn- wait-done!
+  "Block until `job-id` is terminal (or 5s pass) and return its public job."
+  [job-id]
+  (let [deadline (+ (System/currentTimeMillis) 5000)]
+    (while (and (not (:is-done (voice/job job-id))) (< (System/currentTimeMillis) deadline))
+      (Thread/sleep 5))
+    (voice/job job-id)))
+
+(deftest a-watcher-is-told-every-step-as-it-happens
+  ;; The percentage is only worth showing while the work is happening, so a
+  ;; surface must never have to ASK for it: the gateway's SSE body is one of
+  ;; these watchers, and it writes a frame the instant the engine reports.
+  (let
+    [armed
+     (promise)
+
+     seen
+     (atom [])]
+
+    (with-only-engines! [{:id :steps
+                          :transcribe (fn [{:keys [on-progress]}]
+                                        (on-progress {:phase :preparing :progress 50})
+                                        @armed
+                                        (on-progress {:phase :transcribing :progress 20})
+                                        (on-progress {:phase :transcribing :progress 80})
+                                        "the words")}]
+                        (fn []
+                          (voice/reset-jobs!)
+                          (let
+                            [job
+                             (voice/submit! {:audio-path "/tmp/a.wav"})
+
+                             unwatch
+                             (voice/watch! (:id job)
+                                           (fn [j]
+                                             (swap! seen conj [(:phase j) (:progress j)])))]
+
+                            (deliver armed :go)
+                            (let [final (wait-done! (:id job))]
+                              (unwatch)
+                              (testing
+                                "each step arrives on its own, in order, ending at the transcript"
+                                ;; whatever the engine had already reported before the watcher
+                                ;; arrived is the SNAPSHOT's job, not the stream's
+                                (is (= [["transcribing" 20] ["transcribing" 80] ["done" 100]]
+                                       (vec (remove (comp #{"queued" "preparing"} first) @seen)))
+                                    (pr-str @seen))
+                                (testing "and no filler frame that repeats what DONE already says"
+                                  (is (not-any? #{["transcribing" 100]} @seen))))
+                              (testing "the terminal step carries the text, so nothing follows it"
+                                (is (= "the words" (:text final))))))))))
+
+(deftest a-watcher-that-let-go-is-never-called-again
+  (let
+    [gate
+     (promise)
+
+     heard
+     (atom [])]
+
+    (with-only-engines! [{:id :gated
+                          :transcribe (fn [_]
+                                        @gate
+                                        "late")}]
+                        (fn []
+                          (voice/reset-jobs!)
+                          (let
+                            [job
+                             (voice/submit! {:audio-path "/tmp/a.wav"})
+
+                             unwatch
+                             (voice/watch! (:id job)
+                                           (fn [j]
+                                             (swap! heard conj (:phase j))))]
+
+                            (unwatch)
+                            (deliver gate :go)
+                            (is (= "done" (:phase (wait-done! (:id job)))))
+                            (testing "a disconnected client costs the engine nothing"
+                              (is (not (some #{"done"} @heard)))))))))
+
+(deftest a-failed-job-keeps-the-percentage-it-died-at
+  ;; :failed is not a new scale to start over on - where the engine gave up is
+  ;; part of the report.
+  (with-only-engines! [{:id :breaks
+                        :transcribe (fn [{:keys [on-progress]}]
+                                      (on-progress {:phase :transcribing :progress 60})
+                                      (throw (ex-info "the decoder died" {})))}]
+                      (fn []
+                        (voice/reset-jobs!)
+                        (let [job (voice/submit-sync! {:audio-path "/tmp/a.wav"})]
+                          (is (= "failed" (:phase job)))
+                          (is (= 60 (:progress job)))
+                          (is (= "the decoder died" (:error job)))))))

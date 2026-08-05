@@ -169,17 +169,46 @@ function voiceTimeoutMs(bytes: number): number {
   );
 }
 
-/** How often a running transcription job is asked where it is. */
-const VOICE_POLL_MS = 700;
-
 /**
- * A job that reports no new phase or percentage for this long is dead, not slow:
- * progress is measured per decoded chunk, so a live engine always moves.
+ * A job whose stream says nothing for this long is dead, not slow: the gateway
+ * pushes a frame per phase and per percentage and a heartbeat comment between
+ * them, so a live engine always reaches us.
  */
 const VOICE_STALL_TIMEOUT_MS = 120_000;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
+/**
+ * Read an SSE body and hand every `data:` payload to `onData`.
+ *
+ * Both live streams in this client parse frames by hand — a native
+ * `EventSource` cannot carry the bearer header in a Capacitor webview — so the
+ * framing is written once, here. `onChunk` fires on every read, heartbeat
+ * comments included, which is exactly what a stall watchdog has to count.
+ */
+async function readSseData(
+  body: ReadableStream<Uint8Array>,
+  onData: (json: string) => void,
+  onChunk?: () => void,
+): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    onChunk?.();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+    let boundary: number;
+    while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+      const frame = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      for (const line of frame.split("\n")) {
+        const trimmed = line.trimStart();
+        if (!trimmed.startsWith("data:")) continue;
+        const json = trimmed.slice(5).trim();
+        if (json) onData(json);
+      }
+    }
+  }
 }
 
 /** The gateway's own `{error}` sentence, or the bare status when it sent none. */
@@ -835,14 +864,87 @@ export class GatewayClient {
     });
   }
 
-  /** Where one transcription job is right now. */
-  voiceJob(sid: string, jobId: string, signal?: AbortSignal): Promise<VoiceJob> {
-    return this.request<VoiceJob>(
-      "GET",
-      `/v1/sessions/${encodeURIComponent(sid)}/voice/jobs/${encodeURIComponent(jobId)}`,
-      undefined,
-      signal,
-    );
+  /**
+   * Follow ONE job's own event stream to the end and return the terminal job.
+   *
+   * Nothing is polled: the gateway pushes a frame the instant the engine moves,
+   * and the closing frame carries the transcript, so the percentage a human
+   * reads is never a poll interval stale and there is no "ask again" to time.
+   */
+  private async voiceJobStream(
+    sid: string,
+    jobId: string,
+    onJob: (job: VoiceJob) => void,
+    signal?: AbortSignal,
+  ): Promise<VoiceJob> {
+    const watchdog = new AbortController();
+    const streamSignal = signal
+      ? anySignal([signal, watchdog.signal])
+      : watchdog.signal;
+    const seen: { job: VoiceJob | null } = { job: null };
+    let stalled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const armStall = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        stalled = true;
+        watchdog.abort();
+      }, VOICE_STALL_TIMEOUT_MS);
+    };
+    try {
+      armStall();
+      const response = await fetch(
+        `${this.base}/v1/sessions/${encodeURIComponent(sid)}/voice/jobs/${encodeURIComponent(jobId)}/events`,
+        {
+          headers: this.headers({ Accept: "text/event-stream" }),
+          signal: streamSignal,
+        },
+      );
+      if (!response.ok || !response.body) {
+        let parsed: unknown;
+        try {
+          parsed = await response.json();
+        } catch {
+          parsed = undefined;
+        }
+        throw new GatewayError(
+          response.status,
+          errorText(parsed, response.status),
+          parsed,
+        );
+      }
+      await readSseData(
+        response.body,
+        (json) => {
+          let job: VoiceJob;
+          try {
+            job = JSON.parse(json) as VoiceJob;
+          } catch {
+            return;
+          }
+          if (!job || typeof job !== "object" || !job.id) return;
+          seen.job = job;
+          onJob(job);
+        },
+        armStall,
+      );
+    } catch (error) {
+      if (stalled && !signal?.aborted) {
+        throw new GatewayError(
+          0,
+          `transcription stopped reporting for ${Math.round(VOICE_STALL_TIMEOUT_MS / 1000)}s`,
+        );
+      }
+      throw error;
+    } finally {
+      if (timer) clearTimeout(timer);
+      watchdog.abort();
+    }
+    const job = seen.job;
+    if (!job?.is_done) {
+      throw new GatewayError(0, "transcription ended before the transcript");
+    }
+    return job;
   }
 
   /** Drop a collected job. Finished jobs also expire on the gateway by themselves. */
@@ -890,39 +992,27 @@ export class GatewayClient {
       (percent) => report({ phase: "uploading", progress: percent }),
       signal,
     );
-    let job = accepted;
     report({
-      phase: job.phase ?? "queued",
-      progress: job.progress ?? 0,
-      engine: job.engine,
+      phase: accepted.phase ?? "queued",
+      progress: accepted.progress ?? 0,
+      engine: accepted.engine,
     });
 
-    // A job that stops MOVING is the failure mode worth naming: the daemon died,
-    // the engine wedged. Every fresh phase/percentage resets the patience.
-    let movedAt = Date.now();
-    let seen = `${job.phase}:${job.progress}`;
-    while (!job.is_done) {
-      if (signal?.aborted) {
-        throw signal.reason ?? new DOMException("Aborted", "AbortError");
-      }
-      await sleep(VOICE_POLL_MS);
-      job = await this.voiceJob(sid, job.id, signal);
-      const mark = `${job.phase}:${job.progress}`;
-      if (mark !== seen) {
-        seen = mark;
-        movedAt = Date.now();
-      } else if (Date.now() - movedAt > VOICE_STALL_TIMEOUT_MS) {
-        throw new GatewayError(
-          0,
-          `transcription stopped reporting for ${Math.round(VOICE_STALL_TIMEOUT_MS / 1000)}s`,
+    // The upload is the only half this client can measure; the rest is PUSHED
+    // from the job's own stream, frame by frame, until the terminal one.
+    const job = accepted.is_done
+      ? accepted
+      : await this.voiceJobStream(
+          sid,
+          accepted.id,
+          (tick) =>
+            report({
+              phase: tick.phase,
+              progress: tick.progress ?? 0,
+              engine: tick.engine,
+            }),
+          signal,
         );
-      }
-      report({
-        phase: job.phase,
-        progress: job.progress ?? 0,
-        engine: job.engine,
-      });
-    }
     void this.forgetVoiceJob(sid, job.id);
     if (job.phase === "failed" || job.error) {
       throw new GatewayError(0, job.error || "transcription failed");
@@ -2766,61 +2856,41 @@ export class GatewayClient {
 
           opts.onOpen?.();
           retryMs = 400;
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = "";
-
           // Stall watchdog: the gateway sends a heartbeat every 15 s. If we
           // see nothing for 45 s the socket was silently frozen (iOS
           // backgrounding, dead NAT, half-open TCP) — abort this attempt so
           // the outer loop reconnects with the up-to-date cursor.
           armStall(SSE_STALL_TIMEOUT_MS);
 
-          for (;;) {
-            const { value, done } = await reader.read();
-            armStall(SSE_STALL_TIMEOUT_MS);
-            if (done) break;
-            buffer += decoder
-              .decode(value, { stream: true })
-              .replace(/\r\n/g, "\n");
-            let boundary: number;
-            while ((boundary = buffer.indexOf("\n\n")) >= 0) {
-              const frame = buffer.slice(0, boundary);
-              buffer = buffer.slice(boundary + 2);
-              for (const line of frame.split("\n")) {
-                const trimmed = line.trimStart();
-                if (!trimmed.startsWith("data:")) continue;
-                const json = trimmed.slice(5).trim();
-                if (!json) continue;
-                try {
-                  const event = JSON.parse(json) as SseEvent;
-                  const sid =
-                    typeof event.session_id === "string"
-                      ? event.session_id
-                      : typeof event.sid === "string"
-                        ? event.sid
-                        : "";
-                  // Deliver FIRST, then advance the cursor: an event whose
-                  // handler failed must replay on reconnect, never be skipped.
-                  onEvent(event);
-                  if (
-                    sid &&
-                    event.type === "subscription.ready" &&
-                    typeof event.cursor === "number"
-                  ) {
-                    cursors.set(sid, event.cursor);
-                  } else if (sid && typeof event.seq === "number") {
-                    cursors.set(
-                      sid,
-                      Math.max(cursors.get(sid) ?? -1, event.seq),
-                    );
-                  }
-                } catch {
-                  // Ignore one malformed frame without ending sibling sessions.
+          await readSseData(
+            response.body,
+            (json) => {
+              try {
+                const event = JSON.parse(json) as SseEvent;
+                const sid =
+                  typeof event.session_id === "string"
+                    ? event.session_id
+                    : typeof event.sid === "string"
+                      ? event.sid
+                      : "";
+                // Deliver FIRST, then advance the cursor: an event whose
+                // handler failed must replay on reconnect, never be skipped.
+                onEvent(event);
+                if (
+                  sid &&
+                  event.type === "subscription.ready" &&
+                  typeof event.cursor === "number"
+                ) {
+                  cursors.set(sid, event.cursor);
+                } else if (sid && typeof event.seq === "number") {
+                  cursors.set(sid, Math.max(cursors.get(sid) ?? -1, event.seq));
                 }
+              } catch {
+                // Ignore one malformed frame without ending sibling sessions.
               }
-            }
-          }
+            },
+            () => armStall(SSE_STALL_TIMEOUT_MS),
+          );
           if (!signal.aborted) throw new GatewayError(0, "event stream closed");
         } catch (error) {
           if (signal.aborted) break;
@@ -2893,42 +2963,25 @@ export class GatewayClient {
 
           opts.onOpen?.();
           retryMs = 400;
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = "";
-
           // Stall watchdog — same heartbeat bound as the multiplexed variant.
           armStall(SSE_STALL_TIMEOUT_MS);
 
-          for (;;) {
-            const { value, done } = await reader.read();
-            armStall(SSE_STALL_TIMEOUT_MS);
-            if (done) break;
-            buffer += decoder
-              .decode(value, { stream: true })
-              .replace(/\r\n/g, "\n");
-            let boundary: number;
-            while ((boundary = buffer.indexOf("\n\n")) >= 0) {
-              const frame = buffer.slice(0, boundary);
-              buffer = buffer.slice(boundary + 2);
-              for (const line of frame.split("\n")) {
-                const trimmed = line.trimStart();
-                if (!trimmed.startsWith("data:")) continue;
-                const json = trimmed.slice(5).trim();
-                if (!json) continue;
-                try {
-                  const event = JSON.parse(json) as SseEvent;
-                  // Deliver FIRST, then advance: an event whose handler
-                  // failed must replay on reconnect, never be skipped.
-                  onEvent(event);
-                  if (typeof event.seq === "number")
-                    cursor = Math.max(cursor ?? 0, event.seq);
-                } catch {
-                  // A malformed frame must not end an otherwise healthy stream.
-                }
+          await readSseData(
+            response.body,
+            (json) => {
+              try {
+                const event = JSON.parse(json) as SseEvent;
+                // Deliver FIRST, then advance: an event whose handler
+                // failed must replay on reconnect, never be skipped.
+                onEvent(event);
+                if (typeof event.seq === "number")
+                  cursor = Math.max(cursor ?? 0, event.seq);
+              } catch {
+                // A malformed frame must not end an otherwise healthy stream.
               }
-            }
-          }
+            },
+            () => armStall(SSE_STALL_TIMEOUT_MS),
+          );
           if (!signal.aborted) throw new GatewayError(0, "event stream closed");
         } catch (error) {
           if (signal.aborted) return;

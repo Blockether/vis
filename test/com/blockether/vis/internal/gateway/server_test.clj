@@ -19,6 +19,7 @@
             [com.blockether.vis.internal.loop :as lp]
             [reitit.ring :as rr]
             [ring.adapter.jetty :as jetty]
+            [ring.core.protocols :as ring-protocols]
             [ring.middleware.params :as ring-params]))
 
 (defn- rv
@@ -523,8 +524,10 @@
                            (is (true? (get-in body ["features" "voice" "enabled"])))
                            (is (= "audio/wav" (get-in body ["features" "voice" "transport"])))
                            (is (= "ready" (get-in body ["features" "voice" "model" "status"])))
-                           ;; a client that sees this polls a job instead of holding a socket open
+                           ;; a client that sees this STREAMS the job's progress instead of
+                           ;; holding a socket open for a minute or polling for a percentage
                            (is (true? (get-in body ["features" "voice" "is_async"])))
+                           (is (= "sse" (get-in body ["features" "voice" "progress"])))
                            (is (= ["uploading" "queued" "preparing" "transcribing" "done" "failed"]
                                   (get-in body ["features" "voice" "phases"])))
                            (is (= "fake-engine" (get-in body ["features" "voice" "selected"])))
@@ -591,6 +594,93 @@
                        (:status ((rv 'voice-job-handler)
                                   {:request-method :get
                                    :path-params {:sid sid :job-id "vj_nope"}}))))))))))))
+
+(defn- sse-jobs
+  "Every `data:` payload of an SSE body, parsed, in the order it was written."
+  [body]
+  (into []
+        (comp (map str/split-lines)
+              (mapcat (fn [lines]
+                        (filter #(str/starts-with? % "data: ") lines)))
+              (map #(wire/parse-json (subs % 6))))
+        (str/split body #"\n\n")))
+
+(deftest voice-job-progress-is-pushed-as-server-sent-events
+  ;; Progress used to be POLLED: one request per tick, a percentage that was
+  ;; already up to a poll interval stale when it was painted, and a client left
+  ;; guessing when to stop asking. The job's own stream answers all three.
+  (let
+    [sid
+     (str (random-uuid))
+
+     release
+     (promise)]
+
+    (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
+      (fn []
+        (voice/reset-jobs!)
+        (with-only-engine!
+          {:id :slow
+           :label "Slow"
+           :transcribe (fn [{:keys [on-progress]}]
+                         (on-progress {:phase :transcribing :progress 40})
+                         @release
+                         "the transcript")}
+          (fn []
+            (let
+              [job-id
+               (get (wire/parse-json (:body ((rv 'voice-handler)
+                                              {:path-params {:sid sid} :body (wav-body)})))
+                    "id")
+
+               response
+               ((rv 'voice-job-events-handler)
+                 {:request-method :get :path-params {:sid sid :job-id job-id}})
+
+               out
+               (java.io.ByteArrayOutputStream.)
+
+               written
+               (fn []
+                 (String. (.toByteArray out) "UTF-8"))
+
+               stream
+               (future (ring-protocols/write-body-to-stream (:body response) response out)
+                       (written))]
+
+              (testing "it is an event stream, and no intermediary may buffer it"
+                (is (= 200 (:status response)))
+                (is (= "text/event-stream" (get-in response [:headers "Content-Type"])))
+                (is (= "no" (get-in response [:headers "X-Accel-Buffering"]))))
+              (testing "the percentage reaches the client while the engine is still working"
+                (is (wait-until #(str/includes? (written) "\"transcribing\""))))
+              (deliver release :go)
+              (let [body (deref stream 5000 :timeout)]
+                (testing "the stream ENDS itself on the terminal frame - nothing to poll"
+                  (is (string? body)))
+                (let
+                  [jobs (sse-jobs (str body))
+                   final (last jobs)]
+
+                  (is (str/includes? (str body) "event: voice.job"))
+                  (is (seq jobs))
+                  (is (= #{job-id} (set (map #(get % "id") jobs))))
+                  (is (contains? (set (map #(get % "phase") jobs)) "transcribing"))
+                  (is (= 40
+                         (apply max
+                           (map #(get % "progress")
+                                (filter #(= "transcribing" (get % "phase")) jobs)))))
+                  (testing "the last frame IS the result: no follow-up request"
+                    (is (= "done" (get final "phase")))
+                    (is (true? (get final "is_done")))
+                    (is (= 100 (get final "progress")))
+                    (is (= "the transcript" (get final "text"))))))
+              (testing "a job nobody submitted is refused before a stream is opened"
+                (is (= 404
+                       (:status ((rv 'voice-job-events-handler)
+                                  {:request-method :get
+                                   :path-params {:sid sid :job-id "vj_nope"}}))))))))))))
+
 
 (deftest voice-refusals-name-the-reason-instead-of-failing-late
   (let [sid (str (random-uuid))]

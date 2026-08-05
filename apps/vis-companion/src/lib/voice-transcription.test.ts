@@ -2,9 +2,10 @@
 // machine…" from the moment the microphone stopped until the words appeared,
 // and the socket that held the request was also the only thing holding the
 // result. These pin the replacement — bytes reported while they upload, then the
-// gateway job's own phase and percentage until the transcript is collected.
+// gateway PUSHING the job's own phase and percentage until the transcript
+// arrives in the closing frame. Nothing here may poll.
 import { afterEach, beforeEach, expect, it, describe } from "vitest";
-import type { GatewayConn, VoiceProgress } from "./types";
+import type { GatewayConn, VoiceJob, VoiceProgress } from "./types";
 import { voiceProgressLabel } from "./voice";
 
 // Same reason as `gateway-providers.test.ts`: `gateway.ts` arms timers and reads
@@ -91,13 +92,39 @@ interface Call {
 let calls: Call[];
 let realFetch: typeof globalThis.fetch;
 
-/** One canned JSON answer per polled request, in order. */
-function pollsAnswer(...payloads: unknown[]): void {
+/** One `voice.job` frame, exactly as the gateway writes it. */
+function frame(job: Partial<VoiceJob>): string {
+  return `event: voice.job\ndata: ${JSON.stringify(job)}\n\n`;
+}
+
+/** A body that hands the reader one chunk at a time, in order. */
+function sseBody(chunks: string[]): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
   let next = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (next >= chunks.length) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(encoder.encode(chunks[next++]));
+    },
+  });
+}
+
+/** The job's event stream for `…/events`, plain JSON for everything else. */
+function gatewayStreams(...chunks: string[]): void {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    calls.push({ url: String(input), method: init?.method ?? "GET" });
-    const payload = payloads[Math.min(next++, payloads.length - 1)];
-    return new Response(JSON.stringify(payload), {
+    const url = String(input);
+    calls.push({ url, method: init?.method ?? "GET" });
+    if (url.endsWith("/events")) {
+      return {
+        ok: true,
+        status: 200,
+        body: sseBody(chunks),
+      } as unknown as Response;
+    }
+    return new Response(JSON.stringify({ is_forgotten: true }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
@@ -122,7 +149,7 @@ afterEach(() => {
 const wav = () => new Blob([new Uint8Array(4096)], { type: "audio/wav" });
 
 describe("transcribeVoice", () => {
-  it("reports the upload, then the job, and returns the transcript", async () => {
+  it("reports the upload, then every pushed frame, and returns the transcript", async () => {
     upload.body = {
       id: "vj_1",
       engine: "parakeet-local",
@@ -130,23 +157,33 @@ describe("transcribeVoice", () => {
       progress: 0,
       is_done: false,
     };
-    pollsAnswer(
-      {
+    const done = frame({
+      id: "vj_1",
+      engine: "parakeet-local",
+      phase: "done",
+      progress: 100,
+      is_done: true,
+      text: "add this to the prompt",
+    });
+    gatewayStreams(
+      ": ping\n\n",
+      frame({
+        id: "vj_1",
+        engine: "parakeet-local",
+        phase: "preparing",
+        progress: 30,
+        is_done: false,
+      }),
+      frame({
         id: "vj_1",
         engine: "parakeet-local",
         phase: "transcribing",
         progress: 50,
         is_done: false,
-      },
-      {
-        id: "vj_1",
-        engine: "parakeet-local",
-        phase: "done",
-        progress: 100,
-        is_done: true,
-        text: "add this to the prompt",
-      },
-      { is_forgotten: true },
+      }),
+      // A frame split across two reads is still ONE frame.
+      done.slice(0, 20),
+      done.slice(20),
     );
 
     const seen: VoiceProgress[] = [];
@@ -166,38 +203,54 @@ describe("transcribeVoice", () => {
       "uploading:50",
       "uploading:100",
       "queued:0",
+      "preparing:30",
       "transcribing:50",
       "done:100",
     ]);
     expect(seen.at(-1)?.engine).toBe("parakeet-local");
-    // Polls address the job by id, and the collected job is dropped.
+    // ONE GET, and it is the job's own stream: the client never asks again.
+    expect(calls.filter((call) => call.method === "GET")).toHaveLength(1);
     expect(calls[0]?.url).toBe(
-      "http://gateway.example.com:7777/v1/sessions/s1/voice/jobs/vj_1",
+      "http://gateway.example.com:7777/v1/sessions/s1/voice/jobs/vj_1/events",
     );
     expect(calls.at(-1)?.method).toBe("DELETE");
   });
 
   it("fails with the engine's own reason, not a dead spinner", async () => {
     upload.body = { id: "vj_2", phase: "queued", progress: 0, is_done: false };
-    pollsAnswer({
-      id: "vj_2",
-      phase: "failed",
-      progress: 0,
-      is_done: true,
-      error: "Voice recording too short - try again",
-    });
+    gatewayStreams(
+      frame({
+        id: "vj_2",
+        phase: "failed",
+        progress: 40,
+        is_done: true,
+        error: "Voice recording too short - try again",
+      }),
+    );
 
     const client = new GatewayClient(CONN);
-    await expect(
-      client.transcribeVoice("s1", wav()),
-    ).rejects.toThrowError("Voice recording too short - try again");
+    await expect(client.transcribeVoice("s1", wav())).rejects.toThrowError(
+      "Voice recording too short - try again",
+    );
+  });
+
+  it("says so when the stream ends before the transcript, instead of hanging", async () => {
+    upload.body = { id: "vj_3", phase: "queued", progress: 0, is_done: false };
+    gatewayStreams(
+      frame({ id: "vj_3", phase: "transcribing", progress: 10, is_done: false }),
+    );
+
+    const client = new GatewayClient(CONN);
+    await expect(client.transcribeVoice("s1", wav())).rejects.toThrowError(
+      /ended before the transcript/,
+    );
   });
 
   it("refuses the recording when the engine is not ready yet", async () => {
     // 425 Too Early: the gateway never blocks a request thread on a download.
     upload.status = 425;
     upload.body = { status: "downloading", progress: 12 };
-    pollsAnswer({});
+    gatewayStreams();
 
     const client = new GatewayClient(CONN);
     const failure = await client
@@ -205,7 +258,7 @@ describe("transcribeVoice", () => {
       .catch((cause: unknown) => cause);
     expect(failure).toBeInstanceOf(GatewayError);
     expect((failure as InstanceType<typeof GatewayError>).status).toBe(425);
-    // Nothing was polled: there is no job to watch.
+    // Nothing was streamed: there is no job to watch.
     expect(calls).toEqual([]);
   });
 });

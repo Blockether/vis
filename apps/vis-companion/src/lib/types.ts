@@ -465,6 +465,8 @@ export interface GatewayCapabilities {
       is_async?: boolean;
       /** Every phase a job can report, in order. */
       phases?: VoicePhase[];
+      /** How a job reports: the gateway PUSHES every step on the job's stream. */
+      progress?: "sse";
       model: VoiceModelState;
       /** Every transcription engine this gateway can use. */
       engines?: VoiceEngine[];
@@ -499,7 +501,7 @@ export type VoicePhase =
   | "done"
   | "failed";
 
-/** A transcription job as `/voice/jobs/:id` reports it. */
+/** A transcription job, as its own `/voice/jobs/:id/events` stream reports it. */
 export interface VoiceJob {
   id: string;
   engine?: string;
