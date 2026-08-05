@@ -11,6 +11,11 @@ other channels drive — no separate backend.
   `vis://gateway?url=…&token=…` deep link, or pasting the URL + bearer token.
 - **Sessions** — list, create, open, send turns, and watch replies stream live
   over SSE (`GET /v1/sessions/:sid/events`).
+- **Voice dictation** — uploads the WAV, then follows that ONE transcription
+  job's own SSE stream (`GET /v1/sessions/:sid/voice/jobs/:id/events`), whose every
+  frame is named `voice.job`, so "Sending 42%" and "Transcribing 70%" are different
+  sentences. That stream is a different resource from the session log above and is
+  matched by event name, never by payload shape.
 - **Settings** — renders the gateway's cross-channel feature-toggle registry
   (`GET /v1/settings?channel=all`). Flipping a toggle persists in the daemon, so
   the **TUI and the app share one settings state**.

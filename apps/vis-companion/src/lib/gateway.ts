@@ -177,16 +177,35 @@ function voiceTimeoutMs(bytes: number): number {
 const VOICE_STALL_TIMEOUT_MS = 120_000;
 
 /**
- * Read an SSE body and hand every `data:` payload to `onData`.
+ * SSE `event:` name of every frame on a transcription job's stream.
  *
- * Both live streams in this client parse frames by hand — a native
- * `EventSource` cannot carry the bearer header in a Capacitor webview — so the
- * framing is written once, here. `onChunk` fires on every read, heartbeat
- * comments included, which is exactly what a stall watchdog has to count.
+ * Mirror of `wire/voice-job-event` (src/com/blockether/vis/internal/gateway/wire.clj)
+ * and of `features.voice.progress_event` in `GET /v1/capabilities`; a
+ * cross-channel test pins the two spellings together. It exists because this
+ * client reads TWO unrelated SSE resources: a session's ordered event LOG (`id:`
+ * cursor, engine event types, replayed from that cursor, open for the session's
+ * life) and ONE transcription job's state (no cursor, no replay, this single
+ * name, ends on the terminal frame). Keying off the name is what keeps a job
+ * frame out of the session reducer, and a session event out of the progress
+ * notice.
  */
-async function readSseData(
+export const VOICE_JOB_EVENT = "voice.job";
+
+/**
+ * Read an SSE body and hand every `data:` payload to `onData`, together with
+ * its frame's `event:` name (null when the frame named none).
+ *
+ * Both live streams in this client parse frames by hand, because a native
+ * `EventSource` cannot carry the bearer header in a Capacitor webview, so the
+ * framing is written once, here. The event NAME is part of that framing: a
+ * caller that dropped it would have to guess a frame's meaning from the shape of
+ * its JSON, and would accept anything that merely looked like its own payload.
+ * `onChunk` fires on every read, heartbeat comments included, which is exactly
+ * what a stall watchdog has to count.
+ */
+async function readSseFrames(
   body: ReadableStream<Uint8Array>,
-  onData: (json: string) => void,
+  onData: (json: string, event: string | null) => void,
   onChunk?: () => void,
 ): Promise<void> {
   const reader = body.getReader();
@@ -201,11 +220,13 @@ async function readSseData(
     while ((boundary = buffer.indexOf("\n\n")) >= 0) {
       const frame = buffer.slice(0, boundary);
       buffer = buffer.slice(boundary + 2);
-      for (const line of frame.split("\n")) {
-        const trimmed = line.trimStart();
-        if (!trimmed.startsWith("data:")) continue;
-        const json = trimmed.slice(5).trim();
-        if (json) onData(json);
+      const lines = frame.split("\n").map((line) => line.trimStart());
+      const named = lines.find((line) => line.startsWith("event:"));
+      const event = named ? named.slice(6).trim() || null : null;
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const json = line.slice(5).trim();
+        if (json) onData(json, event);
       }
     }
   }
@@ -913,9 +934,14 @@ export class GatewayClient {
           parsed,
         );
       }
-      await readSseData(
+      await readSseFrames(
         response.body,
-        (json) => {
+        (json, event) => {
+          // This stream carries `voice.job` frames and nothing else. Any other
+          // name (an intermediary's own notice, a future kind sharing the
+          // connection, a session event from a misrouted URL) is not this job's
+          // progress and must never be reported as it.
+          if (event !== VOICE_JOB_EVENT) return;
           let job: VoiceJob;
           try {
             job = JSON.parse(json) as VoiceJob;
@@ -2862,9 +2888,13 @@ export class GatewayClient {
           // the outer loop reconnects with the up-to-date cursor.
           armStall(SSE_STALL_TIMEOUT_MS);
 
-          await readSseData(
+          await readSseFrames(
             response.body,
-            (json) => {
+            (json, frameName) => {
+              // The session's own event LOG lives here. A transcription's
+              // progress rides its own job stream under `VOICE_JOB_EVENT`, is
+              // not an engine event, and never enters this reducer.
+              if (frameName === VOICE_JOB_EVENT) return;
               try {
                 const event = JSON.parse(json) as SseEvent;
                 const sid =
@@ -2966,9 +2996,11 @@ export class GatewayClient {
           // Stall watchdog — same heartbeat bound as the multiplexed variant.
           armStall(SSE_STALL_TIMEOUT_MS);
 
-          await readSseData(
+          await readSseFrames(
             response.body,
-            (json) => {
+            (json, frameName) => {
+              // Session log only: a `voice.job` frame belongs to its own stream.
+              if (frameName === VOICE_JOB_EVENT) return;
               try {
                 const event = JSON.parse(json) as SseEvent;
                 // Deliver FIRST, then advance: an event whose handler

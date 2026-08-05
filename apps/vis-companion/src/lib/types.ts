@@ -467,6 +467,12 @@ export interface GatewayCapabilities {
       phases?: VoicePhase[];
       /** How a job reports: the gateway PUSHES every step on the job's stream. */
       progress?: "sse";
+      /**
+       * The `event:` name every frame on that stream carries (`voice.job`). Told,
+       * never guessed: it is what separates a job's progress from a session
+       * event, and `VOICE_JOB_EVENT` in `./gateway` is this client's copy.
+       */
+      progress_event?: string;
       model: VoiceModelState;
       /** Every transcription engine this gateway can use. */
       engines?: VoiceEngine[];

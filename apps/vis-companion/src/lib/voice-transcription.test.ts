@@ -24,7 +24,9 @@ Object.defineProperty(globalThis, "localStorage", {
 });
 (globalThis as { window?: unknown }).window ??= globalThis;
 
-const { GatewayClient, GatewayError } = await import("./gateway");
+const { GatewayClient, GatewayError, VOICE_JOB_EVENT } = await import(
+  "./gateway",
+);
 
 const CONN = {
   id: "gw",
@@ -214,6 +216,44 @@ describe("transcribeVoice", () => {
       "http://gateway.example.com:7777/v1/sessions/s1/voice/jobs/vj_1/events",
     );
     expect(calls.at(-1)?.method).toBe("DELETE");
+  });
+
+  it("ignores every frame that is not named `voice.job`", async () => {
+    // This client used to take ANY JSON with an `id` off the socket, so a session
+    // event, an intermediary's notice, or a future frame kind sharing the
+    // connection would have been painted as transcription progress.
+    expect(VOICE_JOB_EVENT).toBe("voice.job");
+    upload.body = { id: "vj_4", phase: "queued", progress: 0, is_done: false };
+    gatewayStreams(
+      // A session-log frame, cursor and all: same framing, different resource.
+      'id: 12\nevent: turn.delta\ndata: {"id":"vj_4","phase":"transcribing","progress":99}\n\n',
+      // A frame that names nothing is just as unidentified.
+      'data: {"id":"vj_4","phase":"transcribing","progress":98}\n\n',
+      frame({ id: "vj_4", phase: "transcribing", progress: 10, is_done: false }),
+      frame({
+        id: "vj_4",
+        phase: "done",
+        progress: 100,
+        is_done: true,
+        text: "only the named frames counted",
+      }),
+    );
+
+    const seen: VoiceProgress[] = [];
+    const client = new GatewayClient(CONN);
+    const transcript = await client.transcribeVoice("s1", wav(), {
+      onProgress: (progress) => seen.push(progress),
+    });
+
+    expect(transcript.text).toBe("only the named frames counted");
+    expect(seen.map((p) => `${p.phase}:${p.progress}`)).toEqual([
+      "uploading:0",
+      "uploading:50",
+      "uploading:100",
+      "queued:0",
+      "transcribing:10",
+      "done:100",
+    ]);
   });
 
   it("fails with the engine's own reason, not a dead spinner", async () => {

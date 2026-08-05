@@ -176,3 +176,28 @@
        "data: "
        (json-str event)
        "\n\n"))
+
+(def voice-job-event
+  "SSE `event:` name of EVERY frame on a transcription job's stream — the ONE
+   discriminator that keeps a job's progress from being read as a session event.
+
+   The gateway speaks SSE on two unrelated resources and a consumer must never
+   mistake one for the other. `GET /v1/sessions/:sid/events` is the session's
+   ordered event LOG: every frame carries an `id:` cursor, its `event:` is the
+   engine event TYPE, it replays from `Last-Event-ID`, and it stays open for the
+   life of the session. `GET /v1/sessions/:sid/voice/jobs/:job-id/events` is ONE
+   transcription's state: no cursor, no replay, exactly this event name on every
+   frame, and the stream ENDS on the terminal one. `/v1/capabilities` publishes
+   this string as `features.voice.progress_event` and the companion mirrors it as
+   `VOICE_JOB_EVENT` (apps/vis-companion/src/lib/gateway.ts), so a client filters
+   on a name it was told rather than guessing from the payload's shape."
+  "voice.job")
+
+(defn voice-job-sse-frame
+  "Render one transcription job as its own SSE frame.
+
+   Deliberately no `id:`: a job stream carries a RESOURCE's current state, not a
+   replayable log, so there is no cursor to resume from — a reconnect is answered
+   with the job as it is now (see [[voice-job-event]])."
+  ^String [job]
+  (str "event: " voice-job-event "\ndata: " (json-str job) "\n\n"))

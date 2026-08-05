@@ -662,7 +662,16 @@
                   [jobs (sse-jobs (str body))
                    final (last jobs)]
 
-                  (is (str/includes? (str body) "event: voice.job"))
+                  (testing "EVERY frame names itself, and none carries a session cursor"
+                    (let
+                      [frames (->> (str/split (str body) #"\n\n")
+                                   (remove str/blank?)
+                                   ;; `: ping` heartbeats are comments, not frames.
+                                   (remove #(str/starts-with? % ":")))]
+                      (is (seq frames))
+                      (is (every? #(str/starts-with? % (str "event: " wire/voice-job-event))
+                                  frames))
+                      (is (not-any? #(str/includes? % "id: ") frames))))
                   (is (seq jobs))
                   (is (= #{job-id} (set (map #(get % "id") jobs))))
                   (is (contains? (set (map #(get % "phase") jobs)) "transcribing"))
@@ -681,6 +690,34 @@
                                   {:request-method :get
                                    :path-params {:sid sid :job-id "vj_nope"}}))))))))))))
 
+;; A job frame used to be recognisable only by the SHAPE of its JSON: the event
+;; name was hand-written at the one place that emitted it and no client was ever
+;; TOLD it, so a consumer of an SSE socket had to guess whether a frame was a
+;; session event or a transcription's progress.
+(deftest voice-job-frames-are-named-and-that-name-is-published
+  (testing "the frame names itself, and carries no session cursor"
+    (let [frame (wire/voice-job-sse-frame {"id" "vj_1" "phase" "transcribing"})]
+      (is (= "voice.job" wire/voice-job-event))
+      (is (str/starts-with? frame (str "event: " wire/voice-job-event "\n")))
+      (is (str/includes? frame "data: {"))
+      (is (str/ends-with? frame "\n\n"))
+      ;; `id:` is the SESSION log's replay cursor. A job has no log to replay, so
+      ;; a client must never mistake this stream for a resumable one.
+      (is (not (str/includes? frame "id:")))))
+  (testing "capabilities tell a client the name instead of leaving it to guess"
+    (let
+      [voice (-> ((rv 'capabilities-handler) {})
+                 :body
+                 wire/parse-json
+                 (get-in ["features" "voice"]))]
+      (is (= "sse" (get voice "progress")))
+      (is (= wire/voice-job-event (get voice "progress_event")))
+      (is (true? (get voice "is_async")))))
+  (testing "the companion filters on that very string, not on a payload's shape"
+    (let [ts (slurp "apps/vis-companion/src/lib/gateway.ts")]
+      (is (str/includes? ts (str "export const VOICE_JOB_EVENT = \"" wire/voice-job-event "\";")))
+      (is (str/includes? ts "if (event !== VOICE_JOB_EVENT) return;"))
+      (is (str/includes? ts "if (frameName === VOICE_JOB_EVENT) return;")))))
 
 (deftest voice-refusals-name-the-reason-instead-of-failing-late
   (let [sid (str (random-uuid))]

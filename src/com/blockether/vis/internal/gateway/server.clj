@@ -2732,9 +2732,13 @@
              :transcription "gateway-local"
              ;; the POST returns a JOB, not a transcript: a client that sees this
              ;; STREAMS the job's own progress (`/voice/jobs/:id/events`) instead of
-             ;; holding a socket open for a minute or polling for a percentage.
+             ;; holding a socket open for a minute or polling for a percentage. That
+             ;; stream is NOT the session event log, so `:progress-event` NAMES every
+             ;; frame on it — a client filters on a name it was told rather than
+             ;; guessing a job from the payload's shape.
              :is-async true
              :progress "sse"
+             :progress-event wire/voice-job-event
              :phases (mapv name voice/phases)
              :model
              (if engine (voice-state->json (voice/readiness engine)) {:status "unavailable"})}
@@ -2856,8 +2860,6 @@
    a dead socket, not backpressure worth buffering."
   64)
 
-(defn- voice-job-frame ^String [job] (str "event: voice.job\ndata: " (wire/json-str job) "\n\n"))
-
 (defn- voice-job-events-body
   "Ring streamable body for ONE transcription job: its CURRENT state first, then
    a `voice.job` frame per change until the job is done or failed.
@@ -2887,7 +2889,7 @@
 
            write!
            (fn [job]
-             (.write out (.getBytes (voice-job-frame job) StandardCharsets/UTF_8))
+             (.write out (.getBytes (wire/voice-job-sse-frame job) StandardCharsets/UTF_8))
              (.flush out))]
 
           (try (let [current (voice/job job-id)]

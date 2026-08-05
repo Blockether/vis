@@ -472,6 +472,43 @@ forwarding) is stamped into the regenerable `ios/` project by
 no entitlement — only `google-services.json`, stamped by `npm run prepare:android`.
 
 
+## Voice transcription: two SSE streams, one name
+
+A recording is POSTed once and then WATCHED. The gateway never holds the upload
+socket open for the length of a transcription, and nothing polls for a percentage.
+
+| Route | Answer |
+| --- | --- |
+| `POST /v1/sessions/:sid/voice` | `202` with the JOB (`id`, `phase`, `percent`), not a transcript |
+| `GET /v1/sessions/:sid/voice/jobs/:job-id` | that job's current state, one shot |
+| `GET /v1/sessions/:sid/voice/jobs/:job-id/events` | SSE: the job's state now, then one frame per change |
+| `DELETE /v1/sessions/:sid/voice/jobs/:job-id` | release the job once its transcript has been read |
+
+Phases are `uploading`, `queued`, `preparing`, `transcribing`, `done`, `failed`.
+`percent` is monotonic *within* a phase and resets when the phase changes, so
+"sending" and "transcribing" are two different sentences to a human and a first-run
+model download reports its own `preparing` percentage instead of looking stuck.
+
+### The job stream is NOT the session event log
+
+The gateway speaks SSE on two unrelated resources, so a client keys off the
+frame's `event:` name and never off the shape of the JSON inside it:
+
+| | `GET /v1/sessions/:sid/events` | `GET .../voice/jobs/:job-id/events` |
+| --- | --- | --- |
+| `event:` | the engine event type (`turn.delta`, ...) | always `voice.job` |
+| `id:` | the event `seq`; resumable with `Last-Event-ID` | none, a job has no log to replay |
+| Lifetime | open for the session | ends on the job's terminal frame |
+| `data:` | one engine event | that one job's whole state |
+
+`GET /v1/capabilities` advertises the contract so none of it has to be guessed:
+`features.voice.is_async`, `features.voice.progress` (`"sse"`),
+`features.voice.progress_event` (`"voice.job"`), the `phases` vocabulary, every
+registered engine in `engines[]`, and the `selected` engine id. That name has one
+source, `wire/voice-job-event`; the companion mirrors it as `VOICE_JOB_EVENT`
+(`apps/vis-companion/src/lib/gateway.ts`) and a cross-channel test fails if the two
+spellings ever drift.
+
 ## Shared slash commands
 
 `GET /v1/slashes` returns the channel-safe command palette used by web clients.
