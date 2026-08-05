@@ -7,6 +7,205 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.31] - 2026-08-05
+
+### Changed
+- Release v0.1.31
+- Prove format_code/lint_code's invoke-symbol-wrapper respects draft cwd
+- Prove native-handler workspace-root fix covers repl/repl_connect/repl_eval
+- Coerce the fold ledger's own anchor grammar in session_fold
+- Draw the proposal in the app's own chrome
+- Bind workspace context for native handler-tool dispatch
+- Add opencode-go provider with per-model wire routing
+- Draw the path pencil as ink, not a box
+- Photograph the chosen session flow: machine menu, path pencil, one switch
+- Refuse an unparseable session_fold scope id instead of acking a fold of nothing
+- Show per-file +/- line counts in the /draft apply report
+- Keep an icon's size when a caller only styles it
+- Fix non-deterministic model picker title in the add-provider band
+- Show draft workspace name in session header status row
+- Check home for dotfiles where the filesystem root has none
+- Refresh the audit snapshot for imaging 0.1.9
+- Refuse a misplaced shell options map by name
+- Spec the TUI transient and compute its layout once
+- Compose every band on one embed-transient! seam
+- Revert "Rename bar identifiers to baz"
+- feat(tui): answer every /draft slash with the draft band
+- fix(gateway,hitl): one sid spelling in the registry, lock-free hydrate, OTP as a secret
+- Serve ls of an unindexable directory from fff itself
+- Split the draft band into create, switch and abandon commands
+- Merge the draft transient's Create and Danger groups into Actions
+- Make drafts a magit transient band
+- Make environment refresh! a host-only /reload hook
+- Make environment refresh host-only, off the Python sandbox
+- Convey caller thread bindings into the structural scan pool
+- Enforce the provider auth cooldown vis already logged
+- Fall back to a filesystem walk when ls cannot use fff
+- Track agent skills under .agents/
+- Rename bar identifiers to baz
+- Remove /draft blank
+- Replay every parked human-input request on attach
+- Surface daemon-side human input in the terminal
+- Run bang turns in the session workspace root
+- Separate the artifacts band from the dark chrome above it
+- Find search hits the session list has not paged in, and date the rows
+- Draw every companion icon at one optical size
+- Stream empty-reply resends live and name why each provider call exists
+- Pretty-print nested status_fn maps in provider status text
+- Draw every control mark in the companion as a real icon
+- Size the artifacts chip to the session id beside it and give it a paperclip
+- Make the favorite star icon truly yellow
+- Keep the caller's session inside a bounded provider probe
+- Make failed-turn error cards selectable in the TUI transcript
+- Give the artifacts sheet the dialog band's own height
+- Keep Python provider limits rows valid
+- Open text artifacts and give the artifacts sheet canonical chrome
+- Name the provider and model a stalled turn died on
+- Bound provider probes off the UI thread
+- Pin the strings-only Python boundary across the whole tool surface
+- Refuse human input requests without a session
+- Cross the Python boundary string-clean from every environment symbol
+- Cache companion artifacts on the device and page a gallery by size
+- List attachments without their bytes and filter history like the byte endpoint
+- Move the desktop header tabs to the right, beside the cog
+- Split extension jail policy modes
+- Automate iOS crash collection
+- Anchor the desktop header tabs to the left edge
+- Serve attachment bytes from the list the descriptors number
+- Treat a blank rg include glob as no filter
+- Release iOS keyboard before backgrounding
+- Ship the artifacts sheet: one index of everything a session produced
+- Keep trusted extension shell outside the jail
+- Guard collapsed tool result memory
+- Unify filesystem tool input schema
+- Allow trusted extensions to spawn subprocesses
+- Extract the annotation stack into reusable single-purpose modules
+- Give the TUI error card a margin row and bottom padding
+- Make the artifacts gallery proposals operable and touch-sized
+- Paint a failed turn as a card in the TUI
+- Stop advertising strict tools on every wire
+- Log the tool-call transport wreckage the door drops
+- Gate advertised :strict on the request's own wire
+- Refuse a tool-call arguments payload that is not an object
+- Decode drifted escapes in one linear allocation-free pass
+- Propose three Artifacts gallery designs for the session header
+- Drop leaked tool-call close tags from tool arguments
+- Describe a failed turn in its own terminal event
+- Decode drifted \uXXXX escapes only into visible assigned characters
+- Let the app annotate a PDF page or an HTML artifact and attach it
+- fix(gateway/bus): mirror sibling events under the sid the process registered
+- Decode drifted unicode escapes in patch and struct_patch text
+- Name the voice job SSE stream so clients cannot confuse it with the session log
+- Cross-validate every anydoc example against the engine
+
+### Package changes
+
+#### com.blockether/vis
+- Release v0.1.31 (91f6db754)
+- Prove format_code/lint_code's invoke-symbol-wrapper respects draft cwd (80a31e269)
+- Prove native-handler workspace-root fix covers repl/repl_connect/repl_eval (3c7620aec)
+- Coerce the fold ledger's own anchor grammar in session_fold (52d4e4c3a)
+- Draw the proposal in the app's own chrome (d3187b86a)
+- Bind workspace context for native handler-tool dispatch (6afd4bf25)
+- Add opencode-go provider with per-model wire routing (a6dc50277)
+- Draw the path pencil as ink, not a box (9a13e8a00)
+- Photograph the chosen session flow: machine menu, path pencil, one switch (3c94a6df4)
+- Refuse an unparseable session_fold scope id instead of acking a fold of nothing (6cc908129)
+- Show per-file +/- line counts in the /draft apply report (3695a2a1b)
+- Keep an icon's size when a caller only styles it (a16f467c8)
+- Show draft workspace name in session header status row (d1eaf593d)
+- Check home for dotfiles where the filesystem root has none (0be3bca04)
+- Refresh the audit snapshot for imaging 0.1.9 (80df2e0ea)
+- Refuse a misplaced shell options map by name (92e01d772)
+- Revert "Rename bar identifiers to baz" (8105572f7)
+- fix(gateway,hitl): one sid spelling in the registry, lock-free hydrate, OTP as a secret (fd152579d)
+- Serve ls of an unindexable directory from fff itself (23d49aaa7)
+- Make environment refresh! a host-only /reload hook (c2cc94560)
+- Make environment refresh host-only, off the Python sandbox (cea42698a)
+- Convey caller thread bindings into the structural scan pool (e0459543e)
+- Enforce the provider auth cooldown vis already logged (b1c1c50bc)
+- Fall back to a filesystem walk when ls cannot use fff (16b25bccd)
+- Track agent skills under .agents/ (6ace873ab)
+- Rename bar identifiers to baz (d921da75a)
+- Remove /draft blank (45f5ff1fa)
+- Surface daemon-side human input in the terminal (537da3648)
+- Run bang turns in the session workspace root (4b4989131)
+- Separate the artifacts band from the dark chrome above it (14a251b7f)
+- Find search hits the session list has not paged in, and date the rows (f79fba147)
+- Draw every companion icon at one optical size (770e51cda)
+- Stream empty-reply resends live and name why each provider call exists (8569d0fed)
+- Pretty-print nested status_fn maps in provider status text (27beac717)
+- Draw every control mark in the companion as a real icon (5345456ec)
+- Size the artifacts chip to the session id beside it and give it a paperclip (01d4a9eac)
+- Make the favorite star icon truly yellow (674b790cd)
+- Keep the caller's session inside a bounded provider probe (1e08f32a1)
+- Give the artifacts sheet the dialog band's own height (702eb438d)
+- Keep Python provider limits rows valid (92a9400b6)
+- Open text artifacts and give the artifacts sheet canonical chrome (51005c0ed)
+- Name the provider and model a stalled turn died on (c4482e973)
+- Bound provider probes off the UI thread (5e863831a)
+- Pin the strings-only Python boundary across the whole tool surface (da43f3352)
+- Refuse human input requests without a session (9eb733c90)
+- Cross the Python boundary string-clean from every environment symbol (2ab1690ec)
+- Cache companion artifacts on the device and page a gallery by size (4ab23fa96)
+- List attachments without their bytes and filter history like the byte endpoint (f1d3de024)
+- Move the desktop header tabs to the right, beside the cog (c659e46f5)
+- Split extension jail policy modes (27a7da8a3)
+- Automate iOS crash collection (25fd7f414)
+- Anchor the desktop header tabs to the left edge (edb5c0606)
+- Serve attachment bytes from the list the descriptors number (e64b35427)
+- Treat a blank rg include glob as no filter (bb617c375)
+- Release iOS keyboard before backgrounding (376ca3b23)
+- Ship the artifacts sheet: one index of everything a session produced (d62ac00b4)
+- Keep trusted extension shell outside the jail (a6aecf9f9)
+- Guard collapsed tool result memory (38f630b98)
+- Unify filesystem tool input schema (f62d39a97)
+- Allow trusted extensions to spawn subprocesses (cf6498c3a)
+- Extract the annotation stack into reusable single-purpose modules (d88225c54)
+- Make the artifacts gallery proposals operable and touch-sized (66166db20)
+- Stop advertising strict tools on every wire (6d60bf87f)
+- Log the tool-call transport wreckage the door drops (b6a5630e0)
+- Gate advertised :strict on the request's own wire (0276623e9)
+- Refuse a tool-call arguments payload that is not an object (242250462)
+- Decode drifted escapes in one linear allocation-free pass (34fdf9f66)
+- Propose three Artifacts gallery designs for the session header (44aac9a23)
+- Drop leaked tool-call close tags from tool arguments (a7fd20b95)
+- Describe a failed turn in its own terminal event (5dc4e2abf)
+- Decode drifted \uXXXX escapes only into visible assigned characters (3bfb8633d)
+- Let the app annotate a PDF page or an HTML artifact and attach it (66f6d90ba)
+- fix(gateway/bus): mirror sibling events under the sid the process registered (64d0e8de7)
+- Decode drifted unicode escapes in patch and struct_patch text (90b79ba69)
+- Name the voice job SSE stream so clients cannot confuse it with the session log (6237baaa9)
+- Cross-validate every anydoc example against the engine (380d8f0ae)
+
+#### com.blockether/vis-channel-tui
+- Fix non-deterministic model picker title in the add-provider band (996e8422e)
+- Spec the TUI transient and compute its layout once (a1235b3a3)
+- Compose every band on one embed-transient! seam (aa009dad5)
+- Revert "Rename bar identifiers to baz" (8105572f7)
+- feat(tui): answer every /draft slash with the draft band (4dcfef4e7)
+- fix(gateway,hitl): one sid spelling in the registry, lock-free hydrate, OTP as a secret (fd152579d)
+- Split the draft band into create, switch and abandon commands (35adceb1e)
+- Merge the draft transient's Create and Danger groups into Actions (2f39dafc8)
+- Make drafts a magit transient band (d1cef6941)
+- Rename bar identifiers to baz (d921da75a)
+- Remove /draft blank (45f5ff1fa)
+- Replay every parked human-input request on attach (03e86ba9c)
+- Surface daemon-side human input in the terminal (537da3648)
+- Stream empty-reply resends live and name why each provider call exists (8569d0fed)
+- Make failed-turn error cards selectable in the TUI transcript (1f9ab4fcf)
+- Bound provider probes off the UI thread (5e863831a)
+- Give the TUI error card a margin row and bottom padding (3a8364543)
+- Paint a failed turn as a card in the TUI (a18825579)
+
+#### com.blockether/vis-persistance-sqlite
+- List attachments without their bytes and filter history like the byte endpoint (f1d3de024)
+
+#### com.blockether/vis-provider-opencode-go
+- Add opencode-go provider with per-model wire routing (a6dc50277)
+
+
+
 ## [v0.1.28] - 2026-08-04
 
 ### Changed
@@ -3373,7 +3572,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.28...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.31...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -3397,3 +3596,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.26]: https://github.com/Blockether/vis/releases/tag/v0.1.26
 [v0.1.27]: https://github.com/Blockether/vis/releases/tag/v0.1.27
 [v0.1.28]: https://github.com/Blockether/vis/releases/tag/v0.1.28
+[v0.1.31]: https://github.com/Blockether/vis/releases/tag/v0.1.31
