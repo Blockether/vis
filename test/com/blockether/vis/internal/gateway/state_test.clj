@@ -7,6 +7,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
@@ -3412,3 +3413,63 @@
           (expect (= [(str a) (str b)] (:deleted_session_ids result)))
           (expect (= 2 (:session_count result)))
           (expect (= (str pid) (:project_id result)))))))
+
+;; Regression: a GitHub-Copilot turn stalled 123507ms in `:provider-call`, landed its
+;; styled stall card, and the gateway re-queued it for the automatic retry — after
+;; which the blocking submit result came back as a bare `ERROR: turn failed` with no
+;; blocks at all, because `re-queue-turn!` strips `:content`/`:error` off the very row
+;; `terminal-event->result` reads while the waiter is still on that terminal event.
+(defdescribe
+  terminal-event-survives-retry-requeue-test
+  (it
+    "keeps the settled failure card after the turn was re-queued for a retry"
+    (let
+      [sid
+       (str "terminal-requeue-" (java.util.UUID/randomUUID))
+
+       tid
+       "t-stalled"
+
+       reason
+       (str "Provider stream stalled: no output at all for 123507ms since the"
+            " turn started, in phase :provider-call")
+
+       registry
+       @#'state/registry]
+
+      (try (swap! registry assoc
+             sid
+             {:next-seq 0
+              :current-turn tid
+              :turn-order [tid]
+              :turns {tid {:turn_id tid :status "running" :role "assistant"}}})
+           (#'state/finish-turn!
+            sid
+            tid
+            {:status "failed"
+             :role "assistant"
+             :content [(content/error "provider_stalled" reason false)]
+             :error reason
+             :completed_at 1})
+           (let
+             [event
+              (wire/->wire (assoc (#'state/turn-terminal-payload sid tid "failed")
+                             :type "turn.failed"
+                             :session_id sid))
+
+              block-message
+              (fn [m]
+                (some-> (first (get m "content"))
+                        (get "message")))]
+
+             ;; the terminal event describes the failure ON ITS OWN
+             (expect (= reason (get event "error")))
+             (expect (= reason (block-message event)))
+             ;; the automatic retry wipes the row the waiter would read
+             (#'state/re-queue-turn! sid tid)
+             (expect (= "queued" (:status (get-in @registry [sid :turns tid]))))
+             (let [result (#'state/terminal-event->result event tid)]
+               (expect (= reason (get result "error")))
+               (expect (= 1 (count (get result "content"))))
+               (expect (= reason (block-message result)))))
+           (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid tid))))))

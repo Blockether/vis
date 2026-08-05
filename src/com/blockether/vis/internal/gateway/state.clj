@@ -1879,19 +1879,31 @@
      key
      (:idempotency_key turn)
 
-     ;; A FAILED turn ships its SETTLED content too. A channel that reconciles
-     ;; the terminal independently of the blocking worker has nothing else to
-     ;; paint, so it fabricated a bare "Turn failed." row — the ugly duplicate
-     ;; next to (or instead of) the styled provider card the worker delivers.
+     ;; A FAILED turn ships its SETTLED content and reason too, so the terminal
+     ;; event ALONE describes the failure. A channel that reconciles the terminal
+     ;; independently of the blocking worker has nothing else to paint, so it
+     ;; fabricated a bare "Turn failed." row — the ugly duplicate next to (or
+     ;; instead of) the styled provider card the worker delivers. The ROW is no
+     ;; durable source either: a transient failure is re-queued for the automatic
+     ;; retry in the same breath, and `re-queue-turn!` strips exactly these two
+     ;; fields off the row this event just settled.
      content
-     (when (= "failed" status) (not-empty (vec (:content turn))))]
+     (when (= "failed" status) (not-empty (vec (:content turn))))
+
+     error
+     (when (= "failed" status)
+       (not-empty (some-> (:error turn)
+                          str)))]
 
     (cond-> {:turn_id tid :status status}
       key
       (assoc :idempotency_key key)
 
       content
-      (assoc :content content))))
+      (assoc :content content)
+
+      error
+      (assoc :error error))))
 
 (defn turn-answer-text
   "Plain-text projection of ONE finished turn's answer content, or nil.
@@ -3515,8 +3527,14 @@
      message
      (when sid (get-turn sid turn-id))
 
+     ;; The ROW is the primary source but is NOT durable: a transient failure is
+     ;; re-queued for the automatic retry the moment its terminal is appended,
+     ;; and `re-queue-turn!` strips `:content`/`:error` off the row for the fresh
+     ;; run. A waiter that read the row after that lost the styled failure card
+     ;; and reported a bare "turn failed", which is why the terminal event carries
+     ;; its own copy (`turn-terminal-payload`).
      blocks
-     (or (get message "content") [])]
+     (or (not-empty (get message "content")) (not-empty (get event "content")) [])]
 
     ;; The terminal event is deliberately LEAN ({:turn_id :status}); the
     ;; registry row (`message`, patched by finish-turn!) owns the settled
