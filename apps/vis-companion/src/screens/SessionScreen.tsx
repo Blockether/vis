@@ -119,6 +119,7 @@ import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 
 import { workspaceRelativePath } from "../lib/path";
+import { isDraftWorkspace } from "../lib/fleet";
 
 interface LiveActivity {
   kind: string;
@@ -4085,6 +4086,14 @@ export function SessionScreen({
     prompt.includes(paste.token),
   );
   const title = session?.title?.trim() || "Chat";
+  // A draft is a per-session clone of the project — an isolated agent
+  // workspace, NOT the unsent composer text (that is a "draft message"). The
+  // header names it so the operator always knows the session is parked in a
+  // draft and not on the project itself; nothing renders here otherwise.
+  const draftName =
+    session && isDraftWorkspace(session)
+      ? session.workspace?.label?.trim() ?? ""
+      : "";
   // Cumulative session usage — the SAME fold the TUI footer runs over its message
   // vector (`footer/session-usage`), so both surfaces read one number. Memoized on
   // the transcript identity: it only moves when a turn lands, never per keystroke.
@@ -4342,11 +4351,22 @@ export function SessionScreen({
             <h1 className="truncate font-mono text-body font-bold text-white">
               {title}
             </h1>
-            <div className="flex items-center gap-1.5 font-mono text-meta text-dialog-hint">
+            <div className="flex min-w-0 items-center gap-1.5 font-mono text-meta text-dialog-hint">
               <span
-                className={`size-1.5 ${connected ? "bg-ok" : "animate-pulse bg-turn-edge motion-reduce:animate-none"}`}
+                className={`size-1.5 shrink-0 ${connected ? "bg-ok" : "animate-pulse bg-turn-edge motion-reduce:animate-none"}`}
               />
-              {connected ? "Connected" : "Reconnecting"}
+              <span className="shrink-0">{connected ? "Connected" : "Reconnecting"}</span>
+              {draftName !== "" && (
+                <>
+                  <span className="shrink-0 opacity-40" aria-hidden="true">·</span>
+                  <span
+                    className="inline-flex min-w-0 items-center truncate font-bold uppercase tracking-[0.08em] text-warn-strong"
+                    title={session?.workspace?.root}
+                  >
+                    draft {draftName || ""}
+                  </span>
+                </>
+              )}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1 self-center pl-1 pr-[max(0.5rem,env(safe-area-inset-right))] sm:pr-[max(0.75rem,env(safe-area-inset-right))]">

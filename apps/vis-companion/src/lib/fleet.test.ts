@@ -6,6 +6,7 @@ import {
   draftsReadKey,
   fleetError,
   isFleetLoaded,
+  isDraftWorkspace,
   machineCounts,
   machineKey,
   machineLabel,
@@ -54,6 +55,27 @@ describe('machineLabel', () => {
   });
 });
 
+describe('isDraftWorkspace', () => {
+  it('is false when the session names no workspace', () => {
+    expect(isDraftWorkspace(session('x'))).toBe(false);
+  });
+  it('trusts the gateway is_draft flag when present', () => {
+    expect(
+      isDraftWorkspace(session('x', { workspace: { root: '/vis', is_draft: true } })),
+    ).toBe(true);
+    expect(
+      isDraftWorkspace(session('x', { workspace: { root: '/vis', is_draft: false } })),
+    ).toBe(false);
+  });
+  it('falls back to the drafts path for a gateway without the flag', () => {
+    expect(
+      isDraftWorkspace(session('x', { workspace: { root: '/Users/me/.vis/drafts/vis/wire' } })),
+    ).toBe(true);
+    expect(
+      isDraftWorkspace(session('x', { workspace: { root: '/Users/me/vis' } })),
+    ).toBe(false);
+  });
+});
 describe('reconcileMachines', () => {
   it('keeps loaded rows across a re-pair, drops removed machines, blanks new ones', () => {
     const loaded = machine(studio, [session('a')]);
