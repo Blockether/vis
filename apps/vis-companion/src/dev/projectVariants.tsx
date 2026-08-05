@@ -370,6 +370,24 @@ const HOME_ENTRIES: Entry[] = [
 ];
 
 /**
+ * The pencil is INK, not a control: a bare glyph on the header's own paper, at the
+ * same 32px hit box as a kebab. A box around it would read as a second button
+ * competing with the path it edits.
+ */
+function PencilButton({ label, active = false }: { label: string; active?: boolean }) {
+  return (
+    <span
+      aria-label={label}
+      className={`inline-flex size-8 shrink-0 items-center justify-center font-mono text-ui ${
+        active ? 'font-bold text-accent-ink' : 'text-dialog-hint'
+      }`}
+    >
+      {PENCIL}
+    </span>
+  );
+}
+
+/**
  * The path IS the control: an ancestor is a tap back up, and the pencil on its
  * right turns the very same header into a field you type into.
  */
@@ -405,9 +423,7 @@ function PathField() {
         <span className="text-dialog-hint">ompanion</span>
         <Caret />
       </span>
-      <IconButton label="Back to browsing" tone="accent">
-        {PENCIL}
-      </IconButton>
+      <PencilButton label="Back to browsing" active />
     </div>
   );
 }
@@ -458,7 +474,7 @@ function SheetFooter({ path, primary }: { path: string; primary: string }) {
  */
 function SwitchSheet({ mode }: { mode: 'browse' | 'typed' | 'new-folder' }) {
   const creating = mode === 'new-folder';
-  const pencil = <IconButton label="Type a path">{PENCIL}</IconButton>;
+  const pencil = <PencilButton label="Type a path" />;
   return (
     <BottomSheet
       title="Switch project · studio-mbp"

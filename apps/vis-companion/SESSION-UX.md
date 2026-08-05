@@ -46,6 +46,8 @@ the tap already answered.
    the pencil is for people who know where they are going: it replaces the crumbs with
    the path itself, the list below narrows to matches as you type, and the pencil stays
    lit as the way back to browsing. Two modes, one header, one control to switch them.
+   The pencil is **ink, never a box**: a bare glyph at a full hit box, because a bordered
+   button beside the path reads as a second, competing action.
 9. **Drafts are a preference, not a step.** There is one switch, `Offer drafts`, in
    **app settings** — this device, every machine. (Board: K.) With it off no surface in
    the app ever asks "the project or a copy?". A gateway still refuses a draft where a
