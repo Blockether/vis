@@ -373,8 +373,25 @@ export function App() {
     if (!ready) return;
     if (!routeApplied) {
       // Adopting the address bar IS synchronising from an external system, and it
-      // happens exactly once per load — not a cascading render.
-      applyRoute(window.location.hash);
+      // happens exactly once per load — not a cascading render. But a cold
+      // relaunch after iOS killed the WebContent process (Capacitor #7810/#7905)
+      // reboots from capacitor://localhost's blank hash, not the previous
+      // address bar — so a route-less cold start here does NOT mean "go to the
+      // list", it means "we lost the address bar". Resume the last subscribed
+      // session for the active gateway instead, so an abandoned in-flight turn
+      // never gets silently orphaned by a background/foreground cycle.
+      const hash = window.location.hash;
+      if (!hash && active) {
+        void loadSubscribedSessions(active.url).then(([sid]) => {
+          if (sid) {
+            openGatewaySession(active, sid);
+          } else {
+            applyRoute(hash);
+          }
+        });
+      } else {
+        applyRoute(hash);
+      }
       setRouteApplied(true);
     }
     const onHash = () => {
@@ -386,7 +403,7 @@ export function App() {
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
-  }, [ready, routeApplied, applyRoute]);
+  }, [ready, routeApplied, applyRoute, active, openGatewaySession]);
 
   // Reflect view state back into the URL so the address bar is always shareable.
   useEffect(() => {
