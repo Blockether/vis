@@ -35,6 +35,13 @@ interface ImageViewerProps {
   name: string;
   onClose: () => void;
   onApply?: (edited: Blob) => void | Promise<void>;
+  /**
+   * What the primary button says when the picture can go back. "Use edit"
+   * replaces the attachment it came from; a capture of a document has no slot
+   * yet, so it says "Attach to message" instead — the promise made to the human
+   * has to match what actually happens.
+   */
+  applyLabel?: string;
 }
 
 type Point = { x: number; y: number };
@@ -155,7 +162,12 @@ export function ExpandableImage({
   );
 }
 
-function ImageViewer({ src, name, onClose, onApply }: ImageViewerProps) {
+/**
+ * A picture, full screen: pinch/scroll/double-click zoom, pan, and a pen. Given
+ * `onApply` it also hands the flattened result back, which is what makes an
+ * attachment editable and a rendered document page sendable.
+ */
+export function ImageViewer({ src, name, onClose, onApply, applyLabel = 'Use edit' }: ImageViewerProps) {
   const imageRef = useRef<HTMLImageElement | null>(null);
   const transformedRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -593,7 +605,7 @@ function ImageViewer({ src, name, onClose, onApply }: ImageViewerProps) {
             </Button>
             {onApply && (
               <Button variant="solid" className="py-2" onClick={applyEdit} disabled={busy !== null}>
-                {busy === 'apply' ? 'Applying…' : 'Use edit'}
+                {busy === 'apply' ? 'Applying…' : applyLabel}
               </Button>
             )}
           </div>

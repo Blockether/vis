@@ -22,6 +22,7 @@ import {
   pickMediaAttachments,
   type PendingAttachment,
 } from '../lib/attachments';
+import { AttachImageContext } from '../lib/attach-image';
 import type { GatewayClient } from '../lib/gateway';
 import { holdKeyboardAcrossSheet } from '../lib/keyboard';
 import { mergeQueueBacklog, queuedTurnFromWire, type QueueDelta } from '../lib/gateway';
@@ -3268,6 +3269,35 @@ export function SessionScreen({
     }
   }
 
+  // A page of a DOCUMENT arrives here as fresh PNG bytes named after the page it
+  // came from (`report-p3.png`). It becomes a NEW pending attachment rather than
+  // replacing anything: `vis_attach` keeps the PDF or the HTML page itself off
+  // the wire, so the captured — and possibly drawn-on — picture is the only
+  // thing that can carry its content to the model, and the name is what says
+  // which page that was. A refusal THROWS because the human is still standing in
+  // the viewer: the message belongs there, not only in the composer behind it.
+  const attachCapturedImage = useCallback(
+    async (image: Blob, filename: string) => {
+      const limits = capabilities?.features.attachments;
+      const maximum = limits?.max_files ?? 8;
+      if (attachments.length >= maximum) throw new Error(`You can attach up to ${maximum} files`);
+      const result = await attachmentsFromFiles(
+        [new File([image], filename, { type: image.type || 'image/png' })],
+        {
+          maxFiles: 1,
+          maxFileBytes: limits?.max_file_bytes ?? 25 * 1024 * 1024,
+          maxVideoBytes: limits?.max_video_bytes,
+          mediaTypes: limits?.media_types,
+        },
+      );
+      const attached = result.attachments[0];
+      if (!attached) throw new Error(result.rejected[0] ?? 'This page could not be attached');
+      setAttachments((current) => [...current, attached].slice(0, maximum));
+      setComposerNotice(`${attached.filename} is attached to your message`);
+    },
+    [attachments.length, capabilities],
+  );
+
   // A picture that has not been sent yet is still EDITABLE: the viewer flattens
   // the annotations into fresh bytes and they go back into the same composer
   // slot, so "paste a screenshot, circle the bug, send" stays one gesture chain
@@ -3976,6 +4006,7 @@ export function SessionScreen({
   };
 
   return (
+    <AttachImageContext.Provider value={attachCapturedImage}>
     <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-ink transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
       {/* A run BLOCKED on the operator (`vis.request_human_input`) parks until it
          is answered. The prompt portals its own overlay, so it sits here purely
@@ -4733,5 +4764,6 @@ export function SessionScreen({
         </div>
       </footer>
     </section>
+    </AttachImageContext.Provider>
   );
 }

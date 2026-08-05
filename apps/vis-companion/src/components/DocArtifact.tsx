@@ -1,11 +1,23 @@
-import { memo, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
+import {
+  captureHtmlDocument,
+  pageCaptureFilename,
+  viewCaptureFilename,
+} from '../lib/doc-capture';
+import { openPdfPages, type PdfPages } from '../lib/pdf-pages';
+import { useAttachImage } from '../lib/attach-image';
+import { ImageViewer } from './ImageViewer';
 
 // A PDF or an HTML page is a DOCUMENT, not a picture and not data: nothing in it
 // is worth spending a model's context on, so `vis_attach` clamps it to
 // `audience: "user"` and emits a ````vis-doc` fence with five header lines
 // (summary / host path / mime / name / size) and NO payload. The TUI opens the
 // host file in the system viewer; this component is the app's half — a card in
-// the transcript, and a SANDBOXED frame for the artifact's own bytes.
+// the transcript, a SANDBOXED frame for the artifact's own bytes, and a way
+// back: any page of it can be rasterised, drawn on, and attached to the next
+// message as an image, which is the only way its content ever reaches a model.
+// See `lib/doc-capture.ts` for why that picture is a sanitised copy painted in
+// a shadow root rather than a photograph of the frame on screen.
 
 export type DocArtifact = {
   /** `[Document: report.pdf PDF, 1.2 MB]` — the caption row. */
@@ -149,8 +161,83 @@ export const DocCard = memo(function DocCard({
 });
 
 /**
+ * The strip under an opened artifact: which page, and "draw on it".
+ *
+ * Presentational on purpose — every byte of state lives in `DocPreview`, so this
+ * is what the tests can render. The page number is a control rather than a
+ * readout because the browser's own PDF viewer runs in an opaque origin: the app
+ * cannot ask it which page the human is looking at, so the human says so here,
+ * and that same number becomes the attachment's name.
+ */
+export function DocAnnotateBar({
+  page,
+  pageCount,
+  busy,
+  disabled,
+  notice,
+  onPage,
+  onCapture,
+}: {
+  page: number;
+  /** 0 until a PDF has been parsed; an HTML artifact has no pages at all. */
+  pageCount: number;
+  busy: boolean;
+  disabled: boolean;
+  notice: string;
+  onPage: (page: number) => void;
+  onCapture: () => void;
+}) {
+  const paged = pageCount > 0;
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-t border-code-edge bg-panel px-2 py-1">
+      {paged && (
+        <div className="flex shrink-0 items-center">
+          <button
+            type="button"
+            className={DOC_BUTTON}
+            onClick={() => onPage(page - 1)}
+            disabled={page <= 1}
+            aria-label="Previous page"
+          >
+            ‹
+          </button>
+          <span
+            className="flex min-h-11 min-w-24 items-center justify-center border-y border-edge-strong px-2 text-chip text-muted"
+            aria-live="polite"
+          >
+            Page {page} of {pageCount}
+          </span>
+          <button
+            type="button"
+            className={DOC_BUTTON}
+            onClick={() => onPage(page + 1)}
+            disabled={page >= pageCount}
+            aria-label="Next page"
+          >
+            ›
+          </button>
+        </div>
+      )}
+      <button
+        type="button"
+        className={DOC_BUTTON}
+        onClick={onCapture}
+        disabled={busy || disabled}
+      >
+        {busy ? 'Rendering…' : paged ? `Draw on page ${page}` : 'Draw on page'}
+      </button>
+      <span className="min-w-0 flex-1 truncate text-chip text-footer-muted" aria-live="polite">
+        {notice}
+      </span>
+    </div>
+  );
+}
+
+/**
  * A document attachment, opened on demand. Collapsed by default: a transcript
- * with a dozen reports in it must not fetch and decode a dozen PDFs to paint.
+ * with a dozen reports in it must not fetch and decode a dozen PDFs to paint —
+ * and pdf.js, the heaviest module in the app, is imported only once one is
+ * actually opened.
  */
 export const DocPreview = memo(function DocPreview({
   name,
@@ -170,7 +257,78 @@ export const DocPreview = memo(function DocPreview({
   onOpen: (open: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageCount, setPageCount] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [capture, setCapture] = useState<{ url: string; filename: string } | null>(null);
+  const pagesRef = useRef<PdfPages | null>(null);
+  const attachImage = useAttachImage();
   const kind = docKindLabel(mime);
+  const pdf = isPdfMedia(mime);
+
+  // The page count is the document's own, so it has to be parsed to be known —
+  // but only once the human opened this artifact, and it is released with it.
+  useEffect(() => {
+    if (!open || !pdf || !url) return;
+    let alive = true;
+    let opened: PdfPages | null = null;
+    openPdfPages(url)
+      .then((pages) => {
+        if (!alive) {
+          pages.close();
+          return;
+        }
+        opened = pages;
+        pagesRef.current = pages;
+        setPageCount(pages.pageCount);
+      })
+      .catch(() => {
+        if (alive) setNotice('This PDF could not be read for drawing.');
+      });
+    return () => {
+      alive = false;
+      pagesRef.current = null;
+      opened?.close();
+      setPageCount(0);
+    };
+  }, [open, pdf, url]);
+
+  function closeCapture() {
+    setCapture((current) => {
+      if (current) URL.revokeObjectURL(current.url);
+      return null;
+    });
+  }
+
+  useEffect(() => closeCapture, []);
+
+  async function captureDocument() {
+    if (!url) return;
+    setBusy(true);
+    setNotice('');
+    try {
+      const pages = pagesRef.current;
+      if (pdf && !pages) throw new Error('This PDF is still loading.');
+      const filename = pdf ? pageCaptureFilename(name, page) : viewCaptureFilename(name);
+      const image = pages && pdf ? await pages.renderPage(page) : await captureHtmlDocument(url);
+      setCapture({ url: URL.createObjectURL(image), filename });
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : 'This document could not be captured.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // The flattened picture is a NEW attachment rather than an edit of this one:
+  // the document itself stays where it is (the model still may not read it), and
+  // what travels is the page the human drew on, named after that page.
+  async function attachCapture(edited: Blob) {
+    if (!attachImage || !capture) return;
+    await attachImage(edited, capture.filename);
+    setNotice(`Attached ${capture.filename} to your message.`);
+  }
+
   return (
     <div className="mt-2 min-w-0 border border-code-edge bg-input">
       <div className="flex flex-wrap items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
@@ -210,11 +368,31 @@ export const DocPreview = memo(function DocPreview({
               This document could not be loaded from the gateway.
             </p>
           ) : url ? (
-            <DocFrame url={url} mime={mime} name={name} />
+            <>
+              <DocFrame url={url} mime={mime} name={name} />
+              <DocAnnotateBar
+                page={page}
+                pageCount={pageCount}
+                busy={busy}
+                disabled={pdf && pageCount === 0}
+                notice={notice}
+                onPage={(next) => setPage(Math.max(1, Math.min(next, pageCount || 1)))}
+                onCapture={captureDocument}
+              />
+            </>
           ) : (
             <p className="px-2 py-3 text-meta text-footer-muted">Loading…</p>
           )}
         </div>
+      )}
+      {capture && (
+        <ImageViewer
+          src={capture.url}
+          name={capture.filename}
+          onClose={closeCapture}
+          onApply={attachImage ? attachCapture : undefined}
+          applyLabel="Attach to message"
+        />
       )}
     </div>
   );
