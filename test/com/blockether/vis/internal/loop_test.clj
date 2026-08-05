@@ -6163,6 +6163,31 @@
         (expect (= "doc({\"name\": \"struct_patch\"})"
                    (#'lp/tool-call->python-source real-call-shapes tc)))))))
 
+;; A tool call whose arguments were CORRUPTED inside the provider's own
+;; tool-call encoding: the model's closing tag arrived mangled
+;; (`</antmlutparameter>`, `</invoke>`) and the API handed that tag over as the
+;; VALUE of an argument. Vis ran the call verbatim, so `apropos()` became
+;; `apropos("</antmlutparameter>\n")` and answered "no unadvertised capabilities
+;; match" to a question nobody asked, and a `cat` whose JSON the model
+;; entity-escaped (`&quot;`) reached the tool as one garbage key.
+(defdescribe tool-call-protocol-leak-test
+  (describe "a leaked tool-call tag is not an argument value"
+    (it "drops the mangled closing tag and runs the call the model meant"
+      (let [[tc] (#'lp/normalize-tool-calls
+                   [{:id "a" :name "apropos" :input {"query" "</antmlutparameter>\n"}}])]
+        (expect (= {} (:input tc)))
+        (expect (= "__vis_apropos_table__()"
+                   (#'lp/tool-call->python-source @#'lp/engine-native-tool-call-shapes tc)))))
+    (it "drops a `</invoke>` value carried under an entity-escaped key"
+      (let [[tc] (#'lp/normalize-tool-calls
+                   [{:id "c" :name "cat"
+                     :input {"workflows/ci.yml&quot;, &quot;ranges&quot;: [[-1, -1]]}]" "\n</invoke>\n"}}])]
+        (expect (= {} (:input tc)))))
+    (it "keeps a value that merely MENTIONS the tag"
+      (let [[tc] (#'lp/normalize-tool-calls
+                   [{:id "g" :name "grep" :input {"query" "who writes </parameter> here"}}])]
+        (expect (= {"query" "who writes </parameter> here"} (:input tc)))))))
+
 ;; GitHub Copilot bills a request as a FULL premium interaction unless the
 ;; caller marks it `X-Initiator: agent` (a MISSING header means `user`), and
 ;; svar infers that header from message roles. Vis' background one-shots build a

@@ -5222,13 +5222,28 @@
         (number? v) (str v)
         :else (py-literal (str v))))
 
+(def ^:private tool-protocol-leak-re
+  "A LONE closing tool-call tag. `invoke`/`parameter` are the provider's own
+   tool-call encoding, never data, and a mangled close tag (`</antmlutparameter>`
+   instead of the real one) makes the API hand the tag itself over as the
+   parameter's VALUE. The tag name is matched loosely on both sides so the
+   mangling — the whole reason this arrives at all — is still recognized."
+  #"\s*</[A-Za-z0-9_:.-]*(?:invoke|parameter|function_calls|function_results)>\s*")
+
+(defn- tool-protocol-leak?
+  "True when `v` is a string that is NOTHING BUT a tool-call closing tag, so it
+   is transport wreckage rather than an argument. A value that merely MENTIONS
+   the tag (a grep query, a paragraph about the protocol) is left alone."
+  [v]
+  (and (string? v) (some? (re-matches tool-protocol-leak-re v))))
+
 (defn- normalize-tool-input
   "MODEL-DRIFT + EXTENSION-EDN adapter for ONE tool call's arguments.
 
    NOT a svar workaround: svar decodes tool arguments strings-only at the wire
    edge — it parses a provider body with the tool-argument subtrees left
    UNINTERNED (`RAW_TOOL_ARG_KEYS` / `keywordize-response`) — so nothing that
-   arrives from a provider is ever a keyword. What this pass owns is the two
+   arrives from a provider is ever a keyword. What this pass owns is the three
    things svar rightly refuses to touch:
 
      1. MODEL DRIFT — a model that literally writes `\":path\"` as a JSON key.
@@ -5236,6 +5251,14 @@
         extraction still finds the key and the call just works.
      2. EXTENSION-AUTHORED EDN — `:retry-overrides` and `:call` shapes are
         Clojure data written by humans, so they legitimately carry keywords.
+     3. TRANSPORT WRECKAGE — the model's tool-call close tag arrives mangled
+        and the provider hands the TAG over as an argument value
+        (`apropos(\"</antmlutparameter>\\n\")`, `cat` with `\"\\n</invoke>\\n\"`
+        under an entity-escaped key). Such an entry is DROPPED
+        (`tool-protocol-leak?`), which is what the model meant: an optional
+        argument disappears and `apropos()` runs, a required one is missing and
+        the tool says so, instead of the call silently answering a question
+        nobody asked.
 
    DEEP: keys are normalized at EVERY depth, not just the top level. Tools like
    `patch` carry NESTED dicts (`edits [{\":from_anchor\" …}]`); a shallow pass
@@ -5253,8 +5276,8 @@
           (nv [x] (if (keyword? x) (subs (str x) 1) (str x)))
           (walk [x]
             (cond (map? x) (into {}
-                                 (map (fn [[k v]]
-                                        [(nk k) (walk v)]))
+                                 (keep (fn [[k v]]
+                                         (when-not (tool-protocol-leak? v) [(nk k) (walk v)])))
                                  x)
                   (or (vector? x) (seq? x) (set? x)) (mapv walk x)
                   (or (keyword? x) (symbol? x)) (nv x)
