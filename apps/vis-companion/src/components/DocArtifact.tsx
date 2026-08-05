@@ -1,9 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import {
-  captureHtmlDocument,
-  pageCaptureFilename,
-  viewCaptureFilename,
-} from '../lib/doc-capture';
+import { captureHtmlDocument } from '../lib/doc-capture';
+import { pageCaptureFilename, viewCaptureFilename } from '../lib/image-file';
 import { openPdfPages, type PdfPages } from '../lib/pdf-pages';
 import { useAttachImage } from '../lib/attach-image';
 import { ImageViewer } from './ImageViewer';
@@ -226,7 +223,10 @@ export function DocAnnotateBar({
       >
         {busy ? 'Rendering…' : paged ? `Draw on page ${page}` : 'Draw on page'}
       </button>
-      <span className="min-w-0 flex-1 truncate text-chip text-footer-muted" aria-live="polite">
+      <span
+        className="min-w-0 flex-1 truncate text-chip text-footer-muted"
+        aria-live="polite"
+      >
         {notice}
       </span>
     </div>
@@ -261,7 +261,10 @@ export const DocPreview = memo(function DocPreview({
   const [pageCount, setPageCount] = useState(0);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
-  const [capture, setCapture] = useState<{ url: string; filename: string } | null>(null);
+  const [capture, setCapture] = useState<{
+    url: string;
+    filename: string;
+  } | null>(null);
   const pagesRef = useRef<PdfPages | null>(null);
   const attachImage = useAttachImage();
   const kind = docKindLabel(mime);
@@ -310,11 +313,20 @@ export const DocPreview = memo(function DocPreview({
     try {
       const pages = pagesRef.current;
       if (pdf && !pages) throw new Error('This PDF is still loading.');
-      const filename = pdf ? pageCaptureFilename(name, page) : viewCaptureFilename(name);
-      const image = pages && pdf ? await pages.renderPage(page) : await captureHtmlDocument(url);
+      const filename = pdf
+        ? pageCaptureFilename(name, page)
+        : viewCaptureFilename(name);
+      const image =
+        pages && pdf
+          ? await pages.renderPage(page)
+          : await captureHtmlDocument(url);
       setCapture({ url: URL.createObjectURL(image), filename });
     } catch (cause) {
-      setNotice(cause instanceof Error ? cause.message : 'This document could not be captured.');
+      setNotice(
+        cause instanceof Error
+          ? cause.message
+          : 'This document could not be captured.',
+      );
     } finally {
       setBusy(false);
     }
@@ -376,7 +388,9 @@ export const DocPreview = memo(function DocPreview({
                 busy={busy}
                 disabled={pdf && pageCount === 0}
                 notice={notice}
-                onPage={(next) => setPage(Math.max(1, Math.min(next, pageCount || 1)))}
+                onPage={(next) =>
+                  setPage(Math.max(1, Math.min(next, pageCount || 1)))
+                }
                 onCapture={captureDocument}
               />
             </>

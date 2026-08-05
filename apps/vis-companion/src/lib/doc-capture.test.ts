@@ -7,37 +7,7 @@ import {
   SANITIZE_CONFIG,
   captureHeight,
   captureScale,
-  documentBaseName,
-  pageCaptureFilename,
-  viewCaptureFilename,
 } from './doc-capture';
-
-// The model never receives the PDF or the HTML page itself, so a capture's NAME
-// is the only thing that says what it is a picture of. `report-p3.png` answers
-// "which page did the human draw on"; `capture.png` would not.
-describe('capture filenames', () => {
-  it('carries the page number of a PDF page', () => {
-    expect(pageCaptureFilename('report.pdf', 3)).toBe('report-p3.png');
-    expect(pageCaptureFilename('Q3 report.pdf', 12)).toBe('Q3-report-p12.png');
-  });
-
-  it('never invents a page zero', () => {
-    expect(pageCaptureFilename('report.pdf', 0)).toBe('report-p1.png');
-    expect(pageCaptureFilename('report.pdf', -4)).toBe('report-p1.png');
-    expect(pageCaptureFilename('report.pdf', 2.7)).toBe('report-p2.png');
-  });
-
-  it('says capture, not page, for an artifact that has no pages', () => {
-    expect(viewCaptureFilename('page.html')).toBe('page-capture.png');
-  });
-
-  it('always ends up with a usable png name', () => {
-    expect(documentBaseName('')).toBe('document');
-    expect(documentBaseName('.hidden')).toBe('document');
-    expect(documentBaseName('a/b\\c.html')).toBe('a-b-c');
-    expect(viewCaptureFilename('../../etc/passwd')).toBe('etc-passwd-capture.png');
-  });
-});
 
 describe('capture geometry', () => {
   it('paints the document at its own height, one screenful at the least', () => {
@@ -64,7 +34,9 @@ describe('capture geometry', () => {
     const height = MAX_CAPTURE_HEIGHT;
     const scale = captureScale(width, height, 2);
     expect(scale).toBeLessThan(1);
-    expect(width * scale * height * scale).toBeLessThanOrEqual(MAX_CAPTURE_PIXELS + 1);
+    expect(width * scale * height * scale).toBeLessThanOrEqual(
+      MAX_CAPTURE_PIXELS + 1,
+    );
     expect(scale).toBeGreaterThan(0);
   });
 });

@@ -1,5 +1,6 @@
 import { FilePicker, type PickedFile } from '@capawesome/capacitor-file-picker';
 import { Capacitor } from '@capacitor/core';
+import { blobAsDataUrl } from './image-file';
 import type { GatewayAttachment } from './types';
 
 export interface PendingAttachment extends GatewayAttachment {
@@ -28,7 +29,10 @@ const DEFAULT_IMAGE_MEDIA_TYPES = [
 // has to admit the type, size it, and play it back.
 const DEFAULT_VIDEO_MEDIA_TYPES = ['video/mp4', 'video/quicktime'];
 
-const DEFAULT_MEDIA_TYPES = [...DEFAULT_IMAGE_MEDIA_TYPES, ...DEFAULT_VIDEO_MEDIA_TYPES];
+const DEFAULT_MEDIA_TYPES = [
+  ...DEFAULT_IMAGE_MEDIA_TYPES,
+  ...DEFAULT_VIDEO_MEDIA_TYPES,
+];
 
 // Intake ceiling, not the provider's: the gateway shrinks an oversize still on
 // the way out, so a phone photo is worth uploading. `max_file_bytes` from the
@@ -50,23 +54,10 @@ export interface AttachmentLimits {
   mediaTypes?: string[];
 }
 
-/** Treat an intentional picker dismissal as a normal selection outcome. */
-export function filePickerCancelled(cause: unknown): boolean {
-  const message = cause instanceof Error ? cause.message : String(cause);
-  return /cancel|dismiss|abort/iu.test(message);
-}
-
-function blobAsDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error('Could not read file'));
-    reader.onload = () => resolve(String(reader.result));
-    reader.readAsDataURL(blob);
-  });
-}
-
 function base64AsBlob(base64: string, mimeType: string): Blob {
-  const payload = base64.startsWith('data:') ? base64.slice(base64.indexOf(',') + 1) : base64;
+  const payload = base64.startsWith('data:')
+    ? base64.slice(base64.indexOf(',') + 1)
+    : base64;
   const binary = atob(payload);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
@@ -77,7 +68,8 @@ function base64AsBlob(base64: string, mimeType: string): Blob {
 // of this module only ever wants a Blob, because that is what decodes.
 async function pickedFileBlob(file: PickedFile): Promise<Blob> {
   if (file.blob) return file.blob;
-  if (file.data) return base64AsBlob(file.data, file.mimeType || 'application/octet-stream');
+  if (file.data)
+    return base64AsBlob(file.data, file.mimeType || 'application/octet-stream');
   if (file.path) {
     const response = await fetch(file.path);
     if (!response.ok) throw new Error(`Could not read ${file.name}`);
@@ -138,7 +130,8 @@ function attachmentGate({
 }: AttachmentLimits) {
   return {
     accepts: (mimeType: string) => mediaTypes.includes(mimeType),
-    limitFor: (mimeType: string) => (isVideoMediaType(mimeType) ? maxVideoBytes : maxFileBytes),
+    limitFor: (mimeType: string) =>
+      isVideoMediaType(mimeType) ? maxVideoBytes : maxFileBytes,
   };
 }
 
@@ -212,8 +205,11 @@ export async function pickMediaAttachments(
 export async function capturePhotoAttachment(
   limits: AttachmentLimits = {},
 ): Promise<PickAttachmentResult> {
-  const { Camera, CameraResultType, CameraSource } = await import('@capacitor/camera');
-  const permission = await Camera.requestPermissions({ permissions: ['camera'] });
+  const { Camera, CameraResultType, CameraSource } =
+    await import('@capacitor/camera');
+  const permission = await Camera.requestPermissions({
+    permissions: ['camera'],
+  });
   if (permission.camera === 'denied') {
     throw new Error('Camera access was denied — enable it in Settings');
   }
@@ -230,16 +226,19 @@ export async function capturePhotoAttachment(
 
   const format = photo.format.toLowerCase();
   const extension = format === 'jpeg' ? 'jpg' : format;
-  const mimeType = format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : `image/${format}`;
+  const mimeType =
+    format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : `image/${format}`;
   const timestamp = new Date().toISOString().replace(/[:.]/gu, '-');
   const blob = base64AsBlob(photo.base64String, mimeType);
 
   return collectAttachments(
-    [{
-      name: `photo-${timestamp}.${extension}`,
-      mimeType,
-      blob: async () => blob,
-    }],
+    [
+      {
+        name: `photo-${timestamp}.${extension}`,
+        mimeType,
+        blob: async () => blob,
+      },
+    ],
     { ...limits, maxFiles: 1 },
   );
 }
@@ -253,7 +252,9 @@ export async function attachmentsFromFiles(
 ): Promise<PickAttachmentResult> {
   return collectAttachments(
     files.map((file) => ({
-      name: file.name || (isVideoMediaType(file.type) ? 'pasted-clip' : 'pasted-image'),
+      name:
+        file.name ||
+        (isVideoMediaType(file.type) ? 'pasted-clip' : 'pasted-image'),
       mimeType: file.type,
       blob: async () => file,
     })),
@@ -283,7 +284,8 @@ export async function editedAttachment(
 ): Promise<PendingAttachment> {
   const mediaType = edited.type || 'image/png';
   const gate = attachmentGate(limits);
-  if (!gate.accepts(mediaType)) throw new Error(`${mediaType} is not accepted here`);
+  if (!gate.accepts(mediaType))
+    throw new Error(`${mediaType} is not accepted here`);
   const prepared = await prepareAttachment(
     edited,
     pngFilename(previous.filename),

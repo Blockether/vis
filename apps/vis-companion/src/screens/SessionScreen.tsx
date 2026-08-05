@@ -17,11 +17,11 @@ import {
   attachmentsFromFiles,
   capturePhotoAttachment,
   editedAttachment,
-  filePickerCancelled,
   isVideoMediaType,
   pickMediaAttachments,
   type PendingAttachment,
 } from '../lib/attachments';
+import { sheetDismissed } from '../lib/image-file';
 import { AttachImageContext } from '../lib/attach-image';
 import type { GatewayClient } from '../lib/gateway';
 import { holdKeyboardAcrossSheet } from '../lib/keyboard';
@@ -3118,7 +3118,7 @@ export function SessionScreen({
       setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
       setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
     } catch (cause) {
-      setComposerNotice(filePickerCancelled(cause) ? 'No files selected.' : (cause as Error).message);
+      setComposerNotice(sheetDismissed(cause) ? 'No files selected.' : (cause as Error).message);
     } finally {
       restoreKeyboard();
     }
@@ -3146,7 +3146,7 @@ export function SessionScreen({
       setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
     } catch (cause) {
       // A cancelled shutter is a decision, not a failure.
-      setComposerNotice(filePickerCancelled(cause) ? 'No photo taken.' : (cause as Error).message);
+      setComposerNotice(sheetDismissed(cause) ? 'No photo taken.' : (cause as Error).message);
     } finally {
       restoreKeyboard();
     }

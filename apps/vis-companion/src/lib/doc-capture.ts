@@ -38,6 +38,7 @@
  * this product — that shortcut returns a blank picture instead of an error.
  */
 import DOMPurify, { type Config } from 'dompurify';
+import { canvasPngBlob } from './image-file';
 
 /** CSS width the artifact is laid out at before it is painted. */
 export const CAPTURE_WIDTH = 1024;
@@ -61,7 +62,15 @@ export const MAX_CAPTURE_HEIGHT = 8_000;
 export const SANITIZE_CONFIG = {
   WHOLE_DOCUMENT: true,
   RETURN_DOM: true,
-  FORBID_TAGS: ['script', 'iframe', 'frame', 'object', 'embed', 'base', 'noscript'],
+  FORBID_TAGS: [
+    'script',
+    'iframe',
+    'frame',
+    'object',
+    'embed',
+    'base',
+    'noscript',
+  ],
   FORBID_ATTR: ['srcdoc', 'ping', 'formaction'],
   ALLOW_UNKNOWN_PROTOCOLS: false,
 } satisfies Config;
@@ -78,33 +87,13 @@ export const CAPTURE_RESET_CSS =
 /** How long the artifact's bytes get before the capture gives up. */
 const FETCH_TIMEOUT_MS = 20_000;
 
-/** `report.pdf` → `report`: filesystem-safe, extension dropped, never empty. */
-export function documentBaseName(name: string): string {
-  const base = (name || '')
-    .replace(/\.[^./\\]+$/u, '')
-    .replace(/[^a-zA-Z0-9._-]+/gu, '-')
-    .replace(/^[-.]+|-+$/gu, '');
-  return base || 'document';
-}
-
-/**
- * The name a captured PDF page is attached under. The page number is IN the
- * filename because that is the only thing the model receives about it — a bare
- * `capture.png` would leave "which page is this" unanswerable.
- */
-export function pageCaptureFilename(name: string, page: number): string {
-  const index = Math.max(1, Math.trunc(page) || 1);
-  return `${documentBaseName(name)}-p${index}.png`;
-}
-
-/** The name a captured HTML artifact is attached under: it has no pages. */
-export function viewCaptureFilename(name: string): string {
-  return `${documentBaseName(name)}-capture.png`;
-}
-
 /** The full document height, floored at one screenful and capped at a sane one. */
-export function captureHeight(contentHeight: number, max: number = MAX_CAPTURE_HEIGHT): number {
-  if (!Number.isFinite(contentHeight) || contentHeight <= 0) return Math.min(720, max);
+export function captureHeight(
+  contentHeight: number,
+  max: number = MAX_CAPTURE_HEIGHT,
+): number {
+  if (!Number.isFinite(contentHeight) || contentHeight <= 0)
+    return Math.min(720, max);
   return Math.min(Math.ceil(contentHeight), max);
 }
 
@@ -125,23 +114,16 @@ export function captureScale(
   return Math.max(0.1, Math.min(wanted, fits));
 }
 
-/** PNG bytes for a canvas, as a rejected promise rather than a null blob. */
-export function canvasPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) resolve(blob);
-      else reject(new Error('Could not prepare the picture'));
-    }, 'image/png');
-  });
-}
-
 /** A background is needed under transparent markup, or the PNG reads as black. */
 export function paperColor(element: Element | null | undefined): string {
   for (const candidate of [element?.querySelector('body'), element]) {
     if (!candidate) continue;
-    const color = candidate.ownerDocument?.defaultView?.getComputedStyle(candidate)
-      .backgroundColor;
-    if (color && !/^(transparent|rgba\(0,\s*0,\s*0,\s*0\))$/u.test(color)) return color;
+    const color =
+      candidate.ownerDocument?.defaultView?.getComputedStyle(
+        candidate,
+      ).backgroundColor;
+    if (color && !/^(transparent|rgba\(0,\s*0,\s*0,\s*0\))$/u.test(color))
+      return color;
   }
   return '#ffffff';
 }
@@ -170,7 +152,8 @@ async function artifactHtml(url: string): Promise<string> {
   const timer = window.setTimeout(() => abort.abort(), FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(url, { signal: abort.signal });
-    if (!response.ok) throw new Error(`The document could not be loaded (${response.status})`);
+    if (!response.ok)
+      throw new Error(`The document could not be loaded (${response.status})`);
     return await response.text();
   } finally {
     window.clearTimeout(timer);

@@ -11,7 +11,8 @@
  * pdf.js is loaded on DEMAND: it is by far the heaviest dependency in the app,
  * and a transcript full of documents nobody opened must not pay for it.
  */
-import { CAPTURE_WIDTH, MAX_CAPTURE_PIXELS, canvasPngBlob, captureScale } from './doc-capture';
+import { CAPTURE_WIDTH, MAX_CAPTURE_PIXELS, captureScale } from './doc-capture';
+import { canvasPngBlob } from './image-file';
 
 // Bundled and fetched as a URL, not inlined: the worker is a separate script by
 // construction, and Vite rewrites this to the emitted asset for both the web
@@ -48,7 +49,12 @@ export function pdfPageScale(
   const width = pageWidth > 0 ? pageWidth : targetWidth;
   const height = pageHeight > 0 ? pageHeight : targetWidth;
   const fit = targetWidth / width;
-  const dense = captureScale(width * fit, height * fit, devicePixelRatio, maxPixels);
+  const dense = captureScale(
+    width * fit,
+    height * fit,
+    devicePixelRatio,
+    maxPixels,
+  );
   return Math.max(0.1, fit * dense);
 }
 
@@ -72,12 +78,18 @@ export async function openPdfPages(
       const target = await doc.getPage(clampPage(page, doc.numPages));
       const unscaled = target.getViewport({ scale: 1 });
       const viewport = target.getViewport({
-        scale: pdfPageScale(unscaled.width, unscaled.height, targetWidth, window.devicePixelRatio),
+        scale: pdfPageScale(
+          unscaled.width,
+          unscaled.height,
+          targetWidth,
+          window.devicePixelRatio,
+        ),
       });
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.ceil(viewport.width));
       canvas.height = Math.max(1, Math.ceil(viewport.height));
-      if (!canvas.getContext('2d')) throw new Error('This page cannot be rendered here');
+      if (!canvas.getContext('2d'))
+        throw new Error('This page cannot be rendered here');
       // A PDF page is transparent where it is white, so it needs paper under it:
       // without one the capture arrives as black pixels with black ink on them.
       await target.render({ canvas, viewport, background: '#ffffff' }).promise;
