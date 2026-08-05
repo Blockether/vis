@@ -264,6 +264,34 @@ class Answer:
             sorted(self.values),
         )
 
+def _validator_arity(fn):
+    # How a validator wants to be CALLED: 2 for (value, every value), 1 for the
+    # value alone, and None when it can take neither. The shape is judged here,
+    # at `vis.ask` / `vis.check`, instead of blowing up in front of the human on
+    # submit - a `lambda: None` is a bug in the extension, not a bad answer.
+    import inspect
+
+    try:
+        params = list(inspect.signature(fn).parameters.values())
+    except (TypeError, ValueError):
+        # A builtin with no introspectable signature: assume the common shape.
+        return 1
+    positional = 0
+    required = 0
+    for p in params:
+        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
+            positional += 1
+            if p.default is p.empty:
+                required += 1
+        elif p.kind is p.VAR_POSITIONAL:
+            return 2
+        elif p.kind is p.KEYWORD_ONLY and p.default is p.empty:
+            return None
+    if positional < 1 or required > 2:
+        return None
+    return 2 if positional >= 2 else 1
+
+
 def _field_specs(fields, validators):
     # Canonicalize a field TREE to snake_case string keys and pull the `validate`
     # callables out of it.
@@ -292,6 +320,12 @@ def _field_specs(fields, validators):
                     'value (and optionally every value) and answering None or a '
                     'message string'
                 )
+            for c in checks:
+                if _validator_arity(c) is None:
+                    raise TypeError(
+                        'a validate function takes the value, or the value and '
+                        'every value - this one takes neither'
+                    )
             name = str(spec.get('name') or spec.get('id') or '').strip()
             if not name:
                 raise TypeError('a field with validate needs a name')
@@ -375,7 +409,6 @@ def ask(title, fields, **options):
     # `reason == 'undeliverable'` means no surface was mounted to show the
     # dialog: the host logged an error and gave up at once instead of parking
     # you — even an indefinite ask cannot wait on a human who was never asked.
-    import inspect
     import json
     validators = {}
     request = _request_spec(title, fields, options, validators)
@@ -385,11 +418,7 @@ def ask(title, fields, **options):
         # caught: the host turns it into 'could not be validated: …' rather than
         # accepting a value the extension refused to judge.
         check = validators[str(name)][int(index)]
-        try:
-            wants_values = len(inspect.signature(check).parameters) >= 2
-        except (TypeError, ValueError):
-            wants_values = False
-        if wants_values:
+        if _validator_arity(check) == 2:
             verdict = check(json.loads(value_json), json.loads(values_json))
         else:
             verdict = check(json.loads(value_json))
@@ -523,9 +552,14 @@ def check(title, fields, **options):
     # `vis.ask(...)` in a file without importing it.
     import json
 
-    verdict = json.loads(
-        _host['check_input'](json.dumps(_request_spec(title, fields, options, {}))),
-    )
+    try:
+        request = _request_spec(title, fields, options, {})
+    except (TypeError, ValueError) as exc:
+        # A shape `ask` refuses outright - a field that is not a dict, a
+        # `validate=` that is not a function or cannot take the value - is
+        # ANSWERED here rather than raised: `check` never throws.
+        return str(exc)
+    verdict = json.loads(_host['check_input'](json.dumps(request)))
     if verdict.get('is_valid'):
         return None
     return str(verdict.get('error') or 'invalid human-input request')

@@ -525,22 +525,50 @@ def a_slug(text):
     if len(text) > 32:
         return "at most 32 characters"
 
-vis.ask("Sign up", [
-    {"name": "email", "label": "Email",
-     "validate": lambda text: None if "@" in text else "must be an email address"},
-    {"name": "slug", "label": "Project", "validate": a_slug},
-    {"name": "pass", "label": "Password", "type": "password",
-     "validate": lambda text: "at least 12 characters" if len(text) < 12 else None},
-    {"name": "again", "label": "Repeat it", "type": "password",
-     "validate": lambda text, values:
-         None if text == values["pass"] else "the two do not match"},
+
+def is_free(name):
+    return None if name not in TAKEN else "already taken"
+
+
+answer = vis.ask("Sign up", [
+    vis.plaintext("email", label="Email",
+                  validate=lambda text: None if "@" in text else "must be an email"),
+    vis.plaintext("slug", label="Project", validate=[a_slug, is_free]),
+    vis.password("pass", label="Password",
+                 validate=lambda text: "at least 12 characters" if len(text) < 12 else None),
+    vis.password("again", label="Repeat it",
+                 validate=lambda text, values:
+                     None if text == values["pass"] else "the two do not match"),
 ])
+
+if answer:
+    print(answer["slug"])          # already validated, already coerced
 ```
+
+A list runs **in order** and the first message wins, which is how a cheap shape
+check comes before the expensive lookup behind it.
 
 A validator takes **one** argument (the value) or **two** (the value and every
 answer in the form — flat, whatever the layout); that second argument is how one
-field compares itself with another, across groups included. Any other arity is
-refused when the request is built, not when someone finally types. `False`
+field compares itself with another, across groups included. Any other shape is
+refused where you wrote it - by `vis.ask` and `vis.check` when the request is
+built, and by `vis-agent extension check` without running the file at all - never
+in front of the human who is finally typing:
+
+```python
+vis.check("Sign up", [vis.plaintext("email", validate=lambda: None)])
+# -> 'a validate function takes the value, or the value and every value - this
+#     one takes neither'
+
+vis.check("Sign up", [vis.plaintext("email", validate=r"[a-z]+")])
+# -> 'validate is a function, or a list of functions, taking the value (and
+#     optionally every value) and answering None or a message string'
+
+vis.check("Sign up", [vis.plaintext("email", validate=a_slug)])
+# -> None
+```
+
+`False`
 refuses with `is not valid`, anything else is refused with its own text, and a
 validator that raises refuses with `could not be validated: <the exception>` — a
 broken check never swallows an answer silently. A validator never fires on a
@@ -750,6 +778,13 @@ That is possible because the builders are pure: reconstructing
 cannot be known without running the file (a field list handed in as a parameter,
 an f-string title, a comprehension) is reported as **skipped** rather than
 guessed at.
+
+A `validate=` function is judged too, by SHAPE and without ever being called: a
+lambda or a `def` in the file stands in for one taking exactly the arguments it
+declares, so `validate=lambda: None` and `validate=takes_nothing` are refused
+here for the same reason `vis.ask` refuses them. A validator that arrives from
+somewhere the parse tree cannot see is assumed to be the ordinary one value
+shape rather than reported.
 
 ```
 FAIL .vis/extensions/deploy.py  (2 forms checked, 1 skipped)
@@ -1080,6 +1115,52 @@ Every builder returns the plain map you could have typed by hand, and validates
 it on the way out: `(hi/select "env" [])` throws at that line. `hi/form` does the
 same for the assembled request, and `hi/check` answers instead of throwing -
 `nil` when the request is fine, one line of prose when it is not.
+
+### Validating a field (Clojure)
+
+`:validate` is a **function**, or a vector of them, the same contract Python
+has. One argument is the coerced value; two are the value and the whole
+`field name -> value` map of the answer (string keys, flat, whatever the
+layout). Answer `nil`/`true` to accept, a string to refuse with that message.
+The vector runs in order and the first message wins.
+
+```clojure
+(defn- a-slug [text]
+  (when-not (re-matches #"[a-z][a-z0-9-]*" text)
+    "lowercase, digits and dashes"))
+
+(defn- is-free [text]
+  (when (contains? @taken text) "already taken"))
+
+(vis/request-human-input!
+  (hi/form {:title "Sign up"}
+           (hi/plaintext "slug" {:label "Project" :validate [a-slug is-free]})
+           (hi/password "pass" {:label "Password"
+                                :validate #(when (< (count %) 12) "at least 12 characters")})
+           (hi/password "again" {:label "Repeat it"
+                                 :validate (fn [text values]
+                                             (when-not (= text (get values "pass"))
+                                               "the two do not match"))})))
+```
+
+The function is judged where you wrote it, long before a human sees the form:
+
+```clojure
+(hi/plaintext "slug" {:validate "[a-z]+"})
+;; throws Invalid human-input field slug: :validate takes a FUNCTION, not "[a-z]+" ...
+
+(hi/checkbox "ack" {:validate (fn [] nil)})
+;; throws Invalid human-input field ack: :validate function takes the value, or
+;;        the value and every value ... this one takes neither
+
+(hi/check {:title "Sign up"
+           :fields [{:type "plaintext" :name "slug" :validate "[a-z]+"}]})
+;; => "Invalid human-input field slug: :validate takes a FUNCTION ...", never a throw
+```
+
+The functions stay in your process. The engine runs them when the form is
+CONFIRMED, hands the surfaces one message per broken field, and `:validate` is
+stripped from the field before any surface sees it.
 
 ### Shipping doc pages
 

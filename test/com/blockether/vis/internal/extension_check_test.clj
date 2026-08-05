@@ -51,6 +51,22 @@
        "    return vis.ask(\"Deploy\", fields)\n" "\n"
        "\n" "vis.extension(name=\"demo\")\n"))
 
+(def ^:private validators-py
+  ;; Five validators the checker can see, and one it cannot.
+  (str "import vis\n"
+       "\n" "\n"
+       "def is_a_slug(value):\n" "    return None if value.islower() else \"lowercase please\"\n"
+       "\n" "\n"
+       "def takes_nothing():\n" "    return None\n"
+       "\n" "\n"
+       "def deploy(args):\n" "    vis.check(\"D\", [vis.plaintext(\"a\", validate=is_a_slug)])\n"
+       "    vis.check(\"D\", [vis.plaintext(\"b\", validate=lambda v, all: None)])\n"
+       "    vis.check(\"D\", [vis.plaintext(\"c\", validate=lambda: None)])\n"
+       "    vis.check(\"D\", [vis.plaintext(\"d\", validate=takes_nothing)])\n"
+       "    vis.check(\"D\", [vis.plaintext(\"e\", validate=[lambda v: None, \"nope\"])])\n"
+       "    return vis.ask(\"D\", [vis.plaintext(\"f\", validate=args.get(\"rule\"))])\n" "\n"
+       "\n" "vis.extension(name=\"demo\")\n"))
+
 (def ^:private broken-py "import vis\n\ndef deploy(:\n")
 
 (def ^:private library-py "import vis\n\nENV = \"prod\"\n")
@@ -76,7 +92,7 @@
                (check/check-sources [["valid.py" valid-py] ["bad-select.py" bad-select-py]
                                      ["typo.py" typo-py] ["duplicate-names.py" duplicate-names-py]
                                      ["unknowable.py" unknowable-py] ["broken.py" broken-py]
-                                     ["library.py" library-py]
+                                     ["library.py" library-py] ["validators.py" validators-py]
                                      ["side-effect.py" side-effect-py]]))))
 
 (defn- report [path] (get @reports path))
@@ -107,6 +123,31 @@
                 (expect (= #{"invalid-request"} (kinds "duplicate-names.py")))
                 (expect (str/includes? (reason "duplicate-names.py")
                                        "field names must be distinct"))))
+  (describe "a validate= function"
+            (it "is judged by SHAPE, never called"
+                ;; A validator is code, so the checker stands a placeholder taking
+                ;; exactly the arguments the lambda or the def declares in its place:
+                ;; `validate=lambda: None` is refused here for the same reason the
+                ;; running `vis.ask` refuses it, instead of blowing up at submit time.
+                (let
+                  [messages
+                   (mapv :message (:problems (report "validators.py")))
+
+                   neither
+                   (str "a validate function takes the value, or the value "
+                        "and every value - this one takes neither")]
+
+                  (expect (= #{"invalid-request"} (kinds "validators.py")))
+                  (expect (= 3 (count messages)))
+                  (expect (= [neither neither] (subvec messages 0 2)))
+                  (expect (str/includes? (nth messages 2)
+                                         "validate is a function, or a list of functions"))))
+            (it "accepts a named def, a two argument lambda, and one it cannot see"
+                ;; Six asks judged, none skipped: the three that pass are the named
+                ;; `is_a_slug`, the `(value, values)` lambda, and the runtime value
+                ;; `args.get(\"rule\")`, which stands in as the common one value shape.
+                (expect (= 6 (:checked (report "validators.py"))))
+                (expect (= 0 (:skipped (report "validators.py"))))))
   (describe "a vis name that does not exist"
             (it "is caught before it raises in front of a human"
                 (expect (contains? (kinds "typo.py") "unknown-attribute"))

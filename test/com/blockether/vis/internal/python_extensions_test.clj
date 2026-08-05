@@ -1764,6 +1764,10 @@ vis.extension(name='rebuilder', description='rebuilder', alias='rb',
 import vis
 
 
+def _at_least_8(secret):
+    return None if len(secret) >= 8 else 'at least 8 characters'
+
+
 def forms_report():
     '''await forms_report() -> {'ok', ...} - build a form and check it.'''
     good = vis.column(
@@ -1795,6 +1799,12 @@ def forms_report():
         'bad_names': vis.check('Deploy', [vis.plaintext('who'), vis.password('who')]),
         'bad_title': vis.check('', [vis.plaintext('who')]),
         'bad_key': vis.check('Deploy', [vis.plaintext('who', required=True)]),
+        'validated': vis.check('Deploy', [
+            vis.plaintext('who', validate=lambda text: None if text else 'who?'),
+            vis.password('token', validate=[_at_least_8, lambda value, values: None]),
+        ]),
+        'bad_validator': vis.check('Deploy', [vis.plaintext('who', validate=lambda: None)]),
+        'not_a_validator': vis.check('Deploy', [vis.plaintext('who', validate='nope')]),
     }
 
 
@@ -1808,31 +1818,41 @@ vis.extension(
 )
 ")
 
-(defdescribe human-input-builders-test
-             (it "gives Python extensions the same form builders, checked by the engine itself"
-                 (with-loaded
-                   {"forms.py" forms-py}
-                   (fn [_ _]
-                     (let
-                       [ext
-                        (registered "forms")
+(defdescribe
+  human-input-builders-test
+  (it
+    "gives Python extensions the same form builders, checked by the engine itself"
+    (with-loaded
+      {"forms.py" forms-py}
+      (fn [_ _]
+        (let
+          [ext
+           (registered "forms")
 
-                        res
-                        (:result ((symbol-fn ext 'report)))]
+           res
+           (:result ((symbol-fn ext 'report)))]
 
-                       ;; the builders compose plain wire data: a group, and nameless ink
-                       (expect (= "group:column" (get res "kind")))
-                       (expect (= {"type" "heading" "text" "Target"} (get res "ink")))
-                       ;; `slider` is spelled so it never shadows the `range` builtin
-                       (expect (= "range" (get res "slider_type")))
-                       ;; a valid request is answered with None, never an exception
-                       (expect (nil? (get res "ok")))
-                       ;; and every mistake comes back as the engine's own one-line reason
-                       (expect (= "Invalid human-input field env: select needs at least one option"
-                                  (get res "bad_option")))
-                       (expect (= "Invalid human-input field canary: :max must be greater than :min"
-                                  (get res "bad_track")))
-                       (expect (= "Invalid human-input request: field names must be distinct"
-                                  (get res "bad_names")))
-                       (expect (str/includes? (get res "bad_title") "non-blank :title"))
-                       (expect (str/includes? (get res "bad_key") "unknown field key")))))))
+          ;; the builders compose plain wire data: a group, and nameless ink
+          (expect (= "group:column" (get res "kind")))
+          (expect (= {"type" "heading" "text" "Target"} (get res "ink")))
+          ;; `slider` is spelled so it never shadows the `range` builtin
+          (expect (= "range" (get res "slider_type")))
+          ;; a valid request is answered with None, never an exception
+          (expect (nil? (get res "ok")))
+          ;; and every mistake comes back as the engine's own one-line reason
+          (expect (= "Invalid human-input field env: select needs at least one option"
+                     (get res "bad_option")))
+          (expect (= "Invalid human-input field canary: :max must be greater than :min"
+                     (get res "bad_track")))
+          (expect (= "Invalid human-input request: field names must be distinct"
+                     (get res "bad_names")))
+          (expect (str/includes? (get res "bad_title") "non-blank :title"))
+          (expect (str/includes? (get res "bad_key") "unknown field key"))
+          ;; a validator is CODE: it never crosses the wire, so only its
+          ;; SHAPE is judged, and it is judged where it was written
+          (expect (nil? (get res "validated")))
+          (expect (= (str "a validate function takes the value, or the value "
+                          "and every value - this one takes neither")
+                     (get res "bad_validator")))
+          (expect (str/includes? (get res "not_a_validator")
+                                 "validate is a function, or a list of functions")))))))

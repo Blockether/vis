@@ -110,4 +110,47 @@
                                  "fields" [{"type" "select"
                                             "name" "env"
                                             "options" [{"value" "a"}]
-                                            "is_required" true}]}))))))
+                                            "is_required" true}]})))))
+  (describe
+    "validate"
+    (it "keeps the validator itself in the map, in either shape"
+        ;; A validator is a FUNCTION, and a function is not wire data: the builder
+        ;; hands it straight back, and the engine calls it on the answered value
+        ;; (one argument) or on the value and every value (two).
+        (let
+          [required
+           (fn [value]
+             (when (= "" value) "who?"))
+
+           agrees
+           (fn [value values]
+             (when-not (= value (get values "who")) "must match"))]
+
+          (expect (= {:type "plaintext" :name "who" :validate required}
+                     (hi/plaintext "who" {:validate required})))
+          (expect (= {:type "password" :name "token" :validate [required agrees]}
+                     (hi/password "token" {:validate [required agrees]})))
+          (expect (nil? (hi/check (hi/form {:title "Deploy"}
+                                           (hi/plaintext "who" {:validate required})
+                                           (hi/password "token" {:validate [required agrees]})))))))
+    (it "refuses at the builder call what is not a function at all"
+        (expect (re-find #":validate takes a FUNCTION"
+                         (refusal #(hi/plaintext "who" {:validate "nope"}))))
+        (expect (re-find #":validate takes a FUNCTION"
+                         (refusal #(hi/plaintext "who" {:validate ["nope"]})))))
+    (it "refuses a function the dialog could never call"
+        ;; It receives the value, so a validator that takes no argument is a bug in
+        ;; the extension, caught on this line instead of at submit time.
+        (expect (re-find #"takes neither"
+                         (refusal #(hi/checkbox "ack"
+                                                {:validate (fn []
+                                                             nil)}))))
+        (expect (re-find #"takes neither"
+                         (refusal #(hi/plaintext "who"
+                                                 {:validate (fn [a b c]
+                                                              [a b c])})))))
+    (it "says the same thing without throwing, through check"
+        (expect (re-find #":validate takes a FUNCTION"
+                         (hi/check {:title "Deploy"
+                                    :fields
+                                    [{:type "plaintext" :name "who" :validate "nope"}]}))))))

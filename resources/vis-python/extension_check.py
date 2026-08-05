@@ -15,6 +15,10 @@ Three things come out of that:
   validated through the engine's own seam via `vis.check` - the same judge the
   running dialog uses, never a second opinion about it.
 
+A `validate=` function is checked by SHAPE, never called: a lambda or a `def` in
+the file stands in as a placeholder taking exactly the arguments it declares, so
+`validate=lambda: None` is refused here for the same reason `vis.ask` refuses it.
+
 An argument that cannot be known without running the file (a variable from an
 argument, an f-string, a comprehension) is COUNTED as skipped rather than
 guessed at: a checker that invents values would report problems nobody has.
@@ -51,9 +55,37 @@ class _Unknown(Exception):
     """This expression's value is not knowable without running the file."""
 
 
-def _validator_placeholder(_answer):
-    """Stand in for a `validate=` function the check cannot evaluate."""
+# Stand-ins for a `validate=` function. A validator is CODE, so it is never run;
+# only its call shape matters, and these carry every shape the engine tells
+# apart: the value alone, the value and every value, anything at all, and one
+# that can take neither (which is exactly what `vis.ask` refuses).
+def _one(_value):
     return None
+
+
+def _two(_value, _values):
+    return None
+
+
+def _any_args(*_args):
+    return None
+
+
+def _refused():
+    return None
+
+
+def _placeholder(args):
+    """A stand-in with the same call shape as this `lambda` / `def` signature."""
+    if args.vararg is not None:
+        return _any_args
+    if any(default is None for default in args.kw_defaults):
+        return _refused  # a required keyword-only argument: never fillable
+    total = len(getattr(args, "posonlyargs", [])) + len(args.args)
+    required = total - len(args.defaults)
+    if total < 1 or required > 2:
+        return _refused
+    return _two if total >= 2 else _one
 
 
 def _vis_names(tree):
@@ -95,6 +127,8 @@ def _value(node, env, names):
         if node.id in env:
             return env[node.id]
         raise _Unknown(node.id)
+    if isinstance(node, ast.Lambda):
+        return _placeholder(node.args)
     if isinstance(node, ast.Call):
         builder = _read(node.func, names)
         if builder in _BUILDERS:
@@ -112,10 +146,11 @@ def _kwargs(node, env, names):
         try:
             out[kw.arg] = _value(kw.value, env, names)
         except _Unknown:
-            # A validator IS code; the request only cares that it is callable.
+            # A validator nobody can see IS code; the request only cares that it
+            # is callable, so the common one-value shape stands in for it.
             if kw.arg != "validate":
                 raise
-            out[kw.arg] = _validator_placeholder
+            out[kw.arg] = _one
     return out
 
 
@@ -155,6 +190,9 @@ def _check_ask(node, env, names, report):
 def _walk(node, env, names, report):
     """Depth first, in source order: bind what is knowable, check every ask."""
     for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # `validate=is_a_slug` is knowable: the name stands for its shape.
+            env[child.name] = _placeholder(child.args)
         if isinstance(child, ast.Attribute):
             attr = _read(child, names)
             if attr and not hasattr(vis, attr):
