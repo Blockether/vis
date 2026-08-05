@@ -215,7 +215,7 @@
   (vis/extension
     {:ext/name "foundation-shim-attach"
      :ext/description
-     "Sandbox `vis_attach(path)`/`vis_attach_bytes(data, filename)`: persists any artifact — image, CSV/TSV, JSON, PDF, wav — as a durable session attachment without stdout parsing. Survives restart; `image/*` replays to vision models across turns; a CSV/TSV becomes a live transcript table whose rows never reach the model. ONE OR TWO artifacts per turn: `audience` routes each one to `both`/`user`/`model` and `in_answer=True` collects the figures into a single gallery under the final answer."
+     "Sandbox `vis_attach(path)`/`vis_attach_bytes(data, filename)`: persists any artifact — image, CSV/TSV, JSON, PDF, wav — as a durable session attachment without stdout parsing. Survives restart; `image/*` replays to vision models across turns; a CSV/TSV becomes a live transcript table whose rows never reach the model. SAME DOCUMENT, SAME NAME: a revision goes back under the filename it already had and is stored as that artifact's next VERSION, so one document stays one continuous thread. ONE OR TWO artifacts per turn: `audience` routes each one to `both`/`user`/`model` and `in_answer=True` collects the figures into a single gallery under the final answer."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -226,7 +226,7 @@
        :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_read_attachment"
                       "vis_reinspect_attachment" "vis_attachment_versions" "vis_attachment_version"]
        :shim/description
-       "`vis_attach`/`vis_attach_bytes`: persist artifacts (images, CSV/TSV tables, JSON, PDF, audio) as durable DB-owned iteration attachments with sniffed media types. Re-attaching the SAME filename bumps that artifact's VERSION instead of making a second artifact, so `vis_attachment_versions(name)` walks the whole thread and `vis_attachment_version(name, n)` picks one cut. ATTACH ONE OR TWO ARTIFACTS PER TURN — compose many images into ONE sheet; `audience='both'|'user'|'model'` decides who sees it, `in_answer=True` paints it once in the FINAL ANSWER's gallery. Vis-native; no upstream library."
+       "`vis_attach`/`vis_attach_bytes`: persist artifacts (images, CSV/TSV tables, JSON, PDF, audio) as durable DB-owned iteration attachments with sniffed media types. SAME DOCUMENT, SAME NAME — a new revision of an artifact you already attached goes back under its OWN filename and is stored as that artifact's next VERSION, never `report_v2.png` beside `report.png`; a fresh name is for a genuinely different document, so `vis_attachment_versions(name)` walks the whole thread and `vis_attachment_version(name, n)` picks one cut. ATTACH ONE OR TWO ARTIFACTS PER TURN — compose many images into ONE sheet; `audience='both'|'user'|'model'` decides who sees it, `in_answer=True` paints it once in the FINAL ANSWER's gallery. Vis-native; no upstream library."
        :shim/bindings attach-bridge-bindings
        :shim/source "vis-shims/attach.py"}]}))
 

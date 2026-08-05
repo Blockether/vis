@@ -8,6 +8,7 @@
   (:require [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
+            [com.blockether.vis.internal.foundation.shim-attach :as shim-attach]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context Value]
            [java.nio.file Files]
@@ -688,3 +689,33 @@
       ;; A version that never existed says which ones did.
       (expect (re-find #"RAISED True" so))
       (expect (re-find #"MISSING" so)))))
+
+(defdescribe
+  attach-continuity-guidance-test
+  "Versioning only pays off if the WRITE side reaches for it: a model that names
+   the next cut `report_v2.png` gets two loose artifacts and the thread it was
+   supposed to continue is gone. So every surface a block reads BEFORE attaching
+   — the shim description that rides the prompt, and the sandbox `doc()` plus
+   `__doc__` of both attach twins — carries the same rule in the same words."
+  (it "tells the write side to keep one document under one name"
+      (let
+        [shim
+         (->> shim-attach/vis-extension
+              :ext/sandbox-shims
+              (filter #(= "attach" (:shim/name %)))
+              first)
+
+         descr
+         (str (:shim/description shim))]
+
+        (expect (re-find #"SAME DOCUMENT, SAME NAME" descr))
+        (expect (re-find #"(?i)next VERSION" descr))
+        (expect (re-find #"(?i)different document" descr)))
+      (let [pctx (ctx-with-root (temp-root))]
+        (doseq [n ["vis_attach" "vis_attach_bytes"]]
+          ;; The rule is on the callable's own docstring...
+          (expect (true? (ev pctx (str "'SAME DOCUMENT, SAME NAME' in " n ".__doc__")))
+                  (str n ".__doc__ must state the same-name rule"))
+          ;; ...and on the `doc()` entry the model actually looks up.
+          (expect (true? (ev pctx (str "'SAME DOCUMENT, SAME NAME' in doc('" n "')")))
+                  (str "doc('" n "') must state the same-name rule"))))))

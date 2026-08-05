@@ -432,7 +432,13 @@ def __vis_install_attach__():
         }
 
     vis_attach.__doc__ = (
-        "Persist a produced file as a durable attachment. ATTACH ONE OR TWO "
+        "Persist a produced file as a durable attachment. SAME DOCUMENT, SAME "
+        "NAME: a new revision of something you already attached goes back under "
+        "its OWN filename - report.png again, never report_v2.png or "
+        "report_final.png - and is stored as the next VERSION of that one "
+        "artifact, so a document reads as one continuous thread instead of a "
+        "pile of near-duplicates; a new name is for a genuinely different "
+        "document. ATTACH ONE OR TWO "
         "ARTIFACTS PER TURN: a human reviews a figure, not a filmstrip, so "
         "COMPOSE many images into a SINGLE sheet (a matplotlib grid of subplots, "
         "one montage PNG) and attach that instead of N separate shots. audience "
@@ -458,7 +464,10 @@ def __vis_install_attach__():
     )
     vis_attach_bytes.__doc__ = (
         "Persist bytes (or a UTF-8 str) as a durable attachment without a "
-        "temporary file; filename drives media-type inference. ATTACH ONE OR TWO "
+        "temporary file; filename drives media-type inference. SAME DOCUMENT, "
+        "SAME NAME: re-attach a revision under the filename you already used "
+        "and it becomes the next VERSION of that artifact - keep one thread of "
+        "work, do not invent report_v2.csv. ATTACH ONE OR TWO "
         "ARTIFACTS PER TURN and COMPOSE many images into a single sheet rather "
         "than attaching each one. audience is 'both' (human and model), 'user' "
         "(human only, never in the model's context) or 'model' (model only, "
@@ -502,7 +511,11 @@ def __vis_install_attach__():
     docs["vis_attach"] = (
         "vis_attach(path, kind=None, media_type=None, filename=None, label=None, "
         "audience='both', in_answer=False): persist a produced file as a durable "
-        "attachment across restarts. ATTACH ONE OR TWO ARTIFACTS PER TURN - a "
+        "attachment across restarts. SAME DOCUMENT, SAME NAME - a revision of an "
+        "artifact you already attached goes back under its own filename and "
+        "becomes its next VERSION, never report_v2.png beside report.png; a new "
+        "name is for a genuinely different document. "
+        "ATTACH ONE OR TWO ARTIFACTS PER TURN - a "
         "human cannot review a filmstrip: COMPOSE many images into ONE sheet (a "
         "matplotlib subplot grid, a single montage PNG) and attach that, never N "
         "separate shots. audience='both' shows the human and sends it to the "
@@ -523,7 +536,10 @@ def __vis_install_attach__():
     docs["vis_attach_bytes"] = (
         "vis_attach_bytes(data, filename, kind=None, media_type=None, label=None, "
         "audience='both', in_answer=False): persist bytes/str as a durable "
-        "attachment. ATTACH ONE OR TWO ARTIFACTS PER TURN and COMPOSE many images "
+        "attachment. SAME DOCUMENT, SAME NAME - re-attaching a filename you "
+        "already used stores the next VERSION of that artifact, so keep one "
+        "continuous thread per document. "
+        "ATTACH ONE OR TWO ARTIFACTS PER TURN and COMPOSE many images "
         "into ONE sheet instead of attaching each one. audience routes it to "
         "'both', 'user' (human only, out of the model's context) or 'model' "
         "(model only, nothing painted for the human); in_answer=True defers it to "
