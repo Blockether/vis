@@ -534,8 +534,8 @@
 
       (with-redefs
         [vis/gateway-create-draft!
-         (fn [sid label blank?]
-           (swap! calls conj [:create sid label blank?])
+         (fn [sid label clean?]
+           (swap! calls conj [:create sid label clean?])
            created)
 
          vis/gateway-abandon-draft!

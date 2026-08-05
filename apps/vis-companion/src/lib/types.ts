@@ -86,7 +86,7 @@ export interface WorkspaceDraft {
   label?: string | null;
   root?: string | null;
   repo_root?: string | null;
-  /** When the clone was forked off trunk. `0` for a blank draft — never a date. */
+  /** When the clone was forked off trunk. Absent when none was recorded. */
   fork_ms?: number | null;
   is_current?: boolean;
 }

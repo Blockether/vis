@@ -2134,15 +2134,14 @@ export class GatewayClient {
 
   /**
    * Fork `sid` into a fresh draft and enter it — the wire twin of `/draft new`
-   * (a clone of the repo as it stands), `/draft clean` (`clean: true`, seeded
-   * from the committed HEAD so the user's uncommitted work stays in the repo)
-   * and `/draft blank` (`blank: true`, an empty lineage). The gateway rejects a
-   * blank label, and a clean draft in a repo without a commit.
+   * (a clone of the repo as it stands) and `/draft clean` (`clean: true`, seeded
+   * from the committed HEAD so the user's uncommitted work stays in the repo).
+   * The gateway rejects a blank label, and a clean draft in a repo without a
+   * commit.
    */
   createDraft(
     sid: string,
     label: string,
-    blank = false,
     clean = false,
   ): Promise<unknown> {
     return this.request(
@@ -2150,7 +2149,6 @@ export class GatewayClient {
       `/v1/sessions/${encodeURIComponent(sid)}/workspace/drafts`,
       {
         label,
-        blank,
         clean,
       },
     );

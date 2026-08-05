@@ -293,51 +293,6 @@
                                  false
                                  (catch clojure.lang.ExceptionInfo _ true)))))))
 
-(defdescribe
-  fresh-draft-roundtrip-test
-  (it
-    "create! :blank? starts EMPTY; apply! lands only created files and never deletes trunk"
-    (let [base (temp-dir "vis-ws-fresh")]
-      (try
-        (if-not (ws/isolated-workspaces-supported? base)
-          ;; No copy-on-write backend here (CI) — the live round-trip can't run.
-          (expect (not (ws/isolated-workspaces-supported? base)))
-          (do
-            (spit (io/file base "keep.txt") "KEEP\n")
-            (with-store
-              (fn [store]
-                (let
-                  [seed (seed-workspace! store base)
-                   draft (ws/create! store {:from seed :blank? true})
-                   draft-id (:id draft)]
-
-                  (try
-                    ;; an isolated root that carries NOTHING from trunk (HEAD)
-                    (expect (some? (:root draft)))
-                    (expect (not= base (:root draft)))
-                    (expect (not (.exists (io/file (:root draft) "keep.txt"))))
-                    ;; still a real draft applying back into base, with the
-                    ;; zero baseline that makes deletions un-inferable
-                    (expect (ws/draft? draft))
-                    (expect (= base (:repo-root draft)))
-                    (expect (= 0 (:fork-ms draft)))
-                    ;; a file created in the fresh draft lands on apply!…
-                    (spit (io/file (:root draft) "new.txt") "NEW\n")
-                    ;; adversarial: recreate a trunk-named file inside the
-                    ;; draft, then delete it again — the deletion must NOT
-                    ;; travel to trunk (the draft never owned that file)
-                    (spit (io/file (:root draft) "keep.txt") "SCRATCH\n")
-                    (io/delete-file (io/file (:root draft) "keep.txt"))
-                    (let [{:keys [changed]} (ws/apply! store {:workspace-id draft-id})]
-                      (expect (= #{"new.txt"} (set (map :path changed))))
-                      (expect (not (some #(= :delete (:status %)) changed)))
-                      (expect (= "NEW\n" (slurp (io/file base "new.txt"))))
-                      ;; …and trunk's pre-existing file SURVIVES: a fresh
-                      ;; draft can never report files it never saw as deleted
-                      (expect (= "KEEP\n" (slurp (io/file base "keep.txt")))))
-                    (finally (try (ws/abandon! store {:workspace-id draft-id})
-                                  (catch Throwable _ nil)))))))))
-        (finally (delete-tree! base))))))
 
 (defdescribe
   clean-draft-roundtrip-test
@@ -383,8 +338,8 @@
                          (expect (not (.exists (io/file root "staged.txt"))))
                          ;; nested committed content is restored, directories included
                          (expect (= "NESTED\n" (slurp (io/file root "sub" "deep.txt"))))
-                         ;; a REAL baseline, unlike a blank draft: this draft saw
-                         ;; trunk's committed files and may report deletions of them
+                         ;; a real baseline: this draft saw trunk's committed
+                         ;; files and may report deletions of them
                          (expect (pos? (long (:fork-ms draft))))
                          (spit (io/file root "made.txt") "MADE\n")
                          (let [{:keys [changed]} (ws/apply! store {:workspace-id draft-id})]
@@ -699,45 +654,6 @@
                       (ws/deleted-paths clone trunk (System/currentTimeMillis))))
            (finally (delete-tree! trunk) (delete-tree! clone))))))
 
-(defdescribe
-  fresh-lineage-inheritance-test
-  (it
-    "a draft forked :from a FRESH draft (sub-loop/revision) inherits baseline 0, so its apply! can never delete trunk (HEAD) files"
-    (let [base (temp-dir "vis-ws-fresh-lineage")]
-      (try
-        (if-not (ws/isolated-workspaces-supported? base)
-          ;; No copy-on-write backend here (CI) — the live round-trip can't run.
-          (expect (not (ws/isolated-workspaces-supported? base)))
-          (do (spit (io/file base "head.txt") "REAL WORK\n")
-              (with-store
-                (fn [store]
-                  (let
-                    [seed (seed-workspace! store base)
-                     fresh (ws/create! store {:from seed :blank? true})
-                     ;; exactly what loop/child-workspace! does for a
-                     ;; sub-loop spawned INSIDE the fresh draft
-                     child (ws/create! store {:from fresh :label "subloop"})]
-
-                    (try
-                      ;; the child clones the (near-empty) fresh clone and
-                      ;; MUST inherit the zero baseline: a wall-clock
-                      ;; baseline here would make apply! read every trunk
-                      ;; file (older + absent from the clone) as DELETED
-                      ;; and wipe the repo
-                      (expect (= 0 (:fork-ms child)))
-                      (expect (not (.exists (io/file (:root child) "head.txt"))))
-                      (spit (io/file (:root child) "made.txt") "BY CHILD\n")
-                      (let [{:keys [changed]} (ws/apply! store {:workspace-id (:id child)})]
-                        ;; a fresh lineage NEVER deletes…
-                        (expect (not (some #(= :delete (:status %)) changed)))
-                        (expect (some #(= "made.txt" (:path %)) changed))
-                        ;; …and trunk's real HEAD work survives the merge
-                        (expect (= "REAL WORK\n" (slurp (io/file base "head.txt"))))
-                        (expect (= "BY CHILD\n" (slurp (io/file base "made.txt")))))
-                      (finally (doseq [wid [(:id child) (:id fresh)]]
-                                 (try (ws/abandon! store {:workspace-id wid})
-                                      (catch Throwable _ nil))))))))))
-        (finally (delete-tree! base))))))
 
 (defdescribe
   draft-isolation-test

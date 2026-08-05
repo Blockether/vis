@@ -12,8 +12,6 @@
      /draft new <label>    clone cwd into a draft named <label>, enter it
      /draft apply          land the draft's changes into cwd, leave the draft
      /draft abandon [why]  discard the draft, leave it
-     /draft blank <label>  like /draft new, but the draft starts EMPTY —
-                           no files at all are carried in
      /draft clean <label>  like /draft new, but seeded from the LAST COMMIT —
                            your uncommitted changes stay in cwd
 
@@ -78,11 +76,10 @@
 ;; Handlers
 ;; =============================================================================
 (defn- handle-create
-  "Shared `/draft new` + `/draft blank` + `/draft clean` implementation. `kind`
-   is :new (clone cwd exactly as it stands, uncommitted work included), :blank
-   (start with NO files at all) or :clean (clone, then rewind to the COMMITTED
-   HEAD so uncommitted work stays behind in cwd)."
-  [ctx kind]
+  "Shared `/draft new` + `/draft clean` implementation. `clean?` false clones cwd
+   exactly as it stands (uncommitted work included); true clones, then rewinds the
+   copy to the COMMITTED HEAD so uncommitted work stays behind in cwd."
+  [ctx clean?]
   (let
     [db
      (ctx-db ctx)
@@ -98,21 +95,8 @@
      current
      (session-workspace ctx)
 
-     blank?
-     (= :blank kind)
-
-     clean?
-     (= :clean kind)
-
      usage
-     (case kind
-       :blank
-       "/draft blank <label>"
-
-       :clean
-       "/draft clean <label>"
-
-       "/draft new <label>")]
+     (if clean? "/draft clean <label>" "/draft new <label>")]
 
     (cond
       (nil? state-id) (err (str "Send a message first, then " usage " (session not ready yet)"))
@@ -135,32 +119,18 @@
       :else
       (try
         (let
-          [draft
-           (workspace/create!
-             db
-             {:session-state-id state-id :label label :from current :blank? blank? :clean? clean?})]
+          [draft (workspace/create!
+                   db
+                   {:session-state-id state-id :label label :from current :clean? clean?})]
           {:slash/status :ok
-           :slash/title (str (case kind
-                               :blank
-                               "Blank draft '"
-
-                               :clean
-                               "Clean draft '"
-
-                               "Draft '")
+           :slash/title (str (if clean? "Clean draft '" "Draft '")
                              (workspace/display-label draft)
                              "' — you're in it now")
            :slash/body
-           (case kind
-             :blank
-             "Started EMPTY — nothing from your repo was carried in. /draft apply lands created files into your repo · /draft abandon discards."
-
-             :clean
+           (if clean?
              "Started from your last commit — your uncommitted changes stayed in your repo, untouched. /draft apply lands this draft's changes into your repo · /draft abandon discards."
-
              "Edits here stay isolated. /draft apply lands them into your repo · /draft abandon discards.")
-           :slash/data
-           {:workspace-id (:id draft) :label (:label draft) :blank? blank? :clean? clean?}})
+           :slash/data {:workspace-id (:id draft) :label (:label draft) :clean? clean?}})
         ;; The only expected failure is "no commit to rewind to" — everything
         ;; else is a real fault and must keep its own error path.
         (catch clojure.lang.ExceptionInfo e
@@ -173,20 +143,15 @@
 (defn- handle-new
   "`/draft new <label>` — clone cwd into a draft named <label> and enter it."
   [ctx]
-  (handle-create ctx :new))
+  (handle-create ctx false))
 
-(defn- handle-new-blank
-  "`/draft blank <label>` — like /draft new, but the draft starts EMPTY: no
-   files at all are carried into it."
-  [ctx]
-  (handle-create ctx :blank))
 
 (defn- handle-new-clean
   "`/draft clean <label>` — like /draft new, but the draft is seeded from the
    COMMITTED HEAD: every committed file is there, and the uncommitted work in
    cwd stays behind in cwd."
   [ctx]
-  (handle-create ctx :clean))
+  (handle-create ctx true))
 
 (defn- handle-apply
   "`/draft apply` — land the draft's changes into cwd, then leave the draft."
@@ -451,7 +416,7 @@
     [{:slash/name "draft"
       :slash/doc "Drafts — isolated workspace copies of your repo (opt-in)."
       :slash/usage
-      "/draft <new <label> | clean <label> | blank <label> | apply | stash | resume <label> | list | abandon>"
+      "/draft <new <label> | clean <label> | apply | stash | resume <label> | list | abandon>"
       :slash/ui {:kind :navigator}
       :slash/run-fn handle-status}
      {:slash/name "new"
@@ -492,14 +457,6 @@
       :slash/doc "List every stashed/active draft in this repo."
       :slash/usage "/draft list"
       :slash/run-fn handle-list}
-     {:slash/name "blank"
-      :slash/parent ["draft"]
-      :slash/doc
-      "Like /draft new, but the draft starts with NO files at all — not even what is committed."
-      :slash/usage "/draft blank <label>"
-      :slash/prompt-arg "Draft label (e.g. feature-x)"
-      :slash/requires #{:session}
-      :slash/run-fn handle-new-blank}
      {:slash/name "clean"
       :slash/parent ["draft"]
       :slash/doc

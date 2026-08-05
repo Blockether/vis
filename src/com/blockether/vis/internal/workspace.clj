@@ -941,11 +941,11 @@
    the prune keeps cache churn (e.g. `.clj-kondo/.cache` rewritten in the
    clone) from being reported as spurious deletions.
 
-   A non-positive `fork-ms` is the FRESH-lineage baseline: the clone never
-   saw trunk's files, so a deletion is semantically impossible — return []
-   unconditionally, whatever the trees contain. The hard exit (rather than
-   relying on the `<` comparison alone) also keeps pathological trunk
-   mtimes (epoch/pre-epoch, e.g. unpacked from a tarball) from ever
+   A non-positive `fork-ms` means no baseline was ever recorded for this clone
+   (an extra root entry that carries none): a deletion cannot be attributed to
+   the agent, so return [] unconditionally, whatever the trees contain. The hard
+   exit (rather than relying on the `<` comparison alone) also keeps pathological
+   trunk mtimes (epoch/pre-epoch, e.g. unpacked from a tarball) from ever
    comparing below the baseline into a real `.delete` of the user's files.
 
    Paths a CLEAN seed dropped (`clean-seed-skips`) are excluded too: the
@@ -1325,15 +1325,6 @@
         current
         (insert-trunk! db-info session-state-id canon)))))
 
-(defn- fresh-seed-root
-  "Empty, reusable fork SOURCE for FRESH drafts of `trunk`: cloning it yields
-   a draft that starts with NO files. Lives inside the trunk's draft store so
-   the backend's availability probe/fork see the same filesystem, and stays
-   around (a tiny empty dir) so backend bookkeeping never dangles on a
-   deleted source."
-  ^File [trunk]
-  (doto (io/file (draft-store-root trunk) ".fresh-seed") (.mkdirs)))
-
 (defn- fork-extra-roots!
   "Mint one private clone per planned extra root (`[{:trunk :policy}]`, from
    `draft-isolation-plan`). Returns persistable entries, each recording the
@@ -1367,22 +1358,6 @@
    inherit its `:repo-root` (apply target); otherwise the parent is the
    user's real cwd (trunk).
 
-   `:fresh? true` forks from an EMPTY seed instead: the draft starts with
-   NONE of the files currently in trunk (HEAD). Its baseline `:fork-ms` is 0,
-   so every file created inside the draft counts as a since-fork edit and
-   lands on `apply!`, while `deleted-paths` (trunk files OLDER than the
-   baseline yet absent from the clone) can never match — a fresh draft only
-   ever ADDS/OVERWRITES into trunk, it cannot infer deletions of files it
-   never saw. The ZERO baseline is HEREDITARY: a draft forked `:from` a
-   fresh-lineage workspace (a sub-loop child, a revision) keeps baseline 0
-   too — its clone still lacks the trunk files the lineage never saw, so
-   applying it with a real fork timestamp would mass-report trunk's files
-   never saw. The ZERO baseline is HEREDITARY: a draft forked `:from` a
-   fresh-lineage workspace (a sub-loop child, a revision) keeps baseline 0
-   too — its clone still lacks the trunk files the lineage never saw, so
-   applying it with a real fork timestamp would mass-report trunk's files
-   as deletions and wipe the repo.
-
    `:clean? true` forks the REAL tree and then scrubs the clone back to the
    committed HEAD: every tracked file is present at its committed content and
    the user's uncommitted work is left behind in trunk. The baseline is a
@@ -1390,8 +1365,7 @@
    as agent edits, and the dropped paths are recorded so `deleted-paths`
    never mistakes them for deletions. Requires a repository with a commit;
    throws `:workspace/clean-seed-unavailable` otherwise."
-  [db-info
-   {:keys [session-state-id label from required-capabilities blank? clean? filesystem-roots]}]
+  [db-info {:keys [session-state-id label from required-capabilities clean? filesystem-roots]}]
   (let
     [trunk
      (or (:repo-root from) (trunk-root))
@@ -1402,7 +1376,7 @@
                        {:type :workspace/clean-seed-unavailable :root (file-path trunk)})))
 
      parent
-     (if blank? (fresh-seed-root trunk) (or (:root from) (trunk-root)))
+     (or (:root from) (trunk-root))
 
      rid
      (repo-id-for trunk)
@@ -1422,20 +1396,9 @@
          (catch Throwable t (try (discard-root! backend root) (catch Throwable _ nil)) (throw t))))
 
      ;; Capture AFTER the clone returns: cloned files keep their (older)
-     ;; source mtime, so only post-fork agent edits exceed this. A FRESH
-     ;; LINEAGE instead anchors at 0 — the lineage never saw trunk's files,
-     ;; so everything that ever appears in the clone is an agent edit and
-     ;; no trunk file can predate the baseline into a spurious deletion.
-     ;; Zero-heredity applies only to a real non-trunk parent (its clone
-     ;; lacks trunk's files); a nil `from` / trunk parent forks the REAL
-     ;; tree and must get a real timestamp or deletions can never land.
-     inherited-fresh?
-     (boolean (and from
-                   (not= (:root from) (:repo-root from))
-                   (zero? (long (or (apply-fork-ms-of from) 0)))))
-
+     ;; source mtime, so only post-fork agent edits exceed this baseline.
      fork-ms
-     (if (or blank? inherited-fresh?) 0 (System/currentTimeMillis))
+     (System/currentTimeMillis)
 
      ;; Every catalog root whose `draft` policy demands a PRIVATE copy gets one
      ;; minted here, so the draft never writes through to the real root. The

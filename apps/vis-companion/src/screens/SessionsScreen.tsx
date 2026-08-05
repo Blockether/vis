@@ -802,7 +802,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
       if (startIn.kind !== 'trunk') {
         try {
           if (startIn.kind === 'fork')
-            await api.createDraft(session.id, startIn.label, false, startIn.clean);
+            await api.createDraft(session.id, startIn.label, startIn.clean);
           else await api.resumeDraft(session.id, startIn.draft.workspace_id);
         } catch (cause) {
           await api.deleteSession(session.id).catch(() => {});
@@ -2547,8 +2547,8 @@ function StartOption({
 }
 
 // A parked draft says WHEN it forked, because that — not its name — is what tells
-// you whether it still matches the project. Drafts with no fork time (blank ones)
-// name their clone instead of inventing a date.
+// you whether it still matches the project. A draft with no recorded fork time
+// names its clone instead of inventing a date.
 function draftHint(draft: WorkspaceDraft): string {
   const forked = draft.fork_ms
     ? relativeTime(new Date(draft.fork_ms).toISOString())

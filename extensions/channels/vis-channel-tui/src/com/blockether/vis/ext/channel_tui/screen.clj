@@ -5196,7 +5196,6 @@
                              (when draft
                                (vis/gateway-create-draft! id
                                                           (:label draft)
-                                                          false
                                                           (boolean (:clean? draft))))
                              (state/dispatch [:bind-built-session build-id {:id id} history
                                               (session-workspace id)])
