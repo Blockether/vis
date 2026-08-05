@@ -1652,3 +1652,57 @@
              (expect (= :ok (:status @inventory)))
              (expect (= [:openai] (mapv #(:id (:provider %)) (:providers @inventory)))))
            (finally (reset! inventory original))))))
+
+;;; ── One band, every question it can ask ─────────────────────────────────────
+
+(defdescribe
+  band-questions-test
+  (it
+    "binds every question a band can ask to that band's OWN region"
+    ;; Each host used to unpack `:left`/`:inner-w`/`:hint-row`/`:text-w` again
+    ;; and reach for `tr/run!` plus `transient-host` itself — five copies of
+    ;; the same six coordinates, which is how two bands drift apart. The magit
+    ;; status buffer, the provider manager, Settings, `transient-dialog!` and
+    ;; the session band all compose THIS map now.
+    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
+      (try
+        (let
+          [g (.newTextGraphics screen)
+           region {:left 2 :inner-w 40 :hint-row 20 :text-w 38}
+           questions (dlg/band-questions screen g region)
+           feed! (fn [& ks]
+                   (doseq [k ks]
+                     (.addInput terminal
+                                (if (= :enter k) (KeyStroke. KeyType/Enter) (term/keystroke k)))))]
+
+          (expect (= #{:read! :choose! :confirm! :transient! :read-option} (set (keys questions))))
+          ;; One line of text, asked on the hint row of THIS region and
+          ;; nowhere else — row 20, not a window.
+          (feed! \h \i :enter)
+          (expect (= "hi" ((:read! questions) "Name:")))
+          (expect (= "Name: hi" (str/trim (nth (term/grid terminal) 20))))
+          ;; y/n and WHICH-one, same row, single key.
+          (feed! \y)
+          (expect (true? ((:confirm! questions) "Sure?")))
+          (feed! \b)
+          (expect (= :bb
+                     ((:choose! questions)
+                       "Which:"
+                       [{:key \a :id :aa :label "A"} {:key \b :id :bb :label "B"}])))
+          ;; A transient that opens a transient: the second band lands INSIDE
+          ;; the first one's box (its rows start at the region's own left
+          ;; edge), which is how magit asks a second thing without a second
+          ;; frame.
+          (feed! \x)
+          (expect (= :ex
+                     (:action ((:transient! questions)
+                                {:title "T"
+                                 :groups [{:title "G"
+                                           :items
+                                           [{:key "x" :type :action :id :ex :label "Ex"}]}]}))))
+          (expect (some #(str/starts-with? % "  │ x Ex") (term/grid terminal)))
+          ;; And the `:read-option` an OPTION item hands `tr/run!`, bound to
+          ;; the same hint row.
+          (feed! \z \z :enter)
+          (expect (= "zz" ((:read-option questions) {:label "Token" :prompt "Token:"} nil))))
+        (finally (.stopScreen screen))))))

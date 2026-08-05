@@ -22,7 +22,6 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
-            [com.blockether.vis.ext.channel-tui.transient :as tr]
             [com.blockether.vis.internal.external-opener :as opener])
   (:import [com.googlecode.lanterna.input KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen Screen$RefreshType TerminalScreen]))
@@ -1070,24 +1069,17 @@
   (update region :restore! #(or % (dlg/frame-restorer screen))))
 
 (defn- run-transient!
-  "Embed ONE transient (`tr/run!`) INSIDE the caller's own frame: same box, same
-   hint row, no second window. Nothing in this dialog is a flag, so the spec needs
-   no option reader.
+  "Embed ONE transient INSIDE the caller's own frame (`dlg/embed-transient!`):
+   same box, same hint row, no second window. Nothing in this dialog is a flag,
+   so the spec needs no option reader.
 
    The band paints ITS OWN rows and nothing above them: whatever the caller has
    on screen — the card, the settings list — stays visible behind it, exactly
    like magit. A caller that pages bands of different heights hands the region a
    `:restore!` snapshot, and the rows a taller band covered are handed back to
    the host instead of blanked."
-  [^TerminalScreen screen g {:keys [left inner-w hint-row text-w min-row restore!]} title spec]
-  (tr/run! (dlg/transient-host screen g)
-           {:left left
-            :inner-w inner-w
-            :hint-row hint-row
-            :text-w text-w
-            :min-row min-row
-            :restore! restore!}
-           (assoc spec :title title)))
+  [^TerminalScreen screen g region title spec]
+  (dlg/embed-transient! screen g region (assoc spec :title title)))
 
 (defn- run-paged-transient!
   "Run a `paged-key-groups` band until one of its items is chosen, paging in

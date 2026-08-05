@@ -2600,6 +2600,53 @@
             {:ok? false :msg "Empty message — commit aborted"}
             (magit/commit! root msg {:amend? amend? :no-verify? no-verify?})))))))
 
+;;; ── One band, every question it can ask ─────────────────────────────────────
+;; A band IS a region — six coordinates — plus the screen it paints on. They are
+;; bound ONCE, here, and every host COMPOSES the result: the magit status
+;; buffer, the provider manager, Settings, the session band and
+;; `transient-dialog!` open their sub-transients through the same host and ask
+;; their follow-up questions on their own hint row through the same minibuffers.
+;; A caller that unpacks `:left`/`:inner-w`/`:hint-row`/`:text-w` again, or
+;; reaches for `tr/run!` plus `transient-host` itself, is how two bands drift
+;; apart.
+
+(defn embed-transient!
+  "Run ONE transient (`tr/run!`) INSIDE a frame someone else owns — same box,
+   same hint row, no second window.
+
+   `region` is already in `tr/run!` geometry (`:left`, `:inner-w`, `:hint-row`,
+   `:text-w`, plus the optional `:min-row` floor and the `:restore!` snapshot a
+   host that pages bands of different heights hands in). Returns `tr/run!`'s
+   `{:action :switches :options}`, or nil on Esc.
+
+   This is THE seam between a Lanterna surface and the host-agnostic transient
+   component. Nothing else calls `tr/run!` with a `transient-host`."
+  [^TerminalScreen screen g region spec]
+  (tr/run! (transient-host screen g) region spec))
+
+(defn band-questions
+  "Everything a band can ASK, bound to its own `region` once:
+
+     `:read!`        one line of text on the hint row — `[label]` / `[label opts]`
+     `:choose!`      WHICH one, single-key — `[title choices]`, returns the `:id`
+     `:confirm!`     y/n — `[question]`
+     `:transient!`   ANOTHER transient over the SAME band region — `[spec]`
+     `:read-option`  the `:read-option` a spec with OPTION items hands `tr/run!`
+
+   A transient that opens a transient, and a question asked on the hint row
+   instead of in a window, is how magit asks a second thing without a second
+   frame — every band in the TUI does both through this map."
+  [^TerminalScreen screen g {:keys [left inner-w hint-row text-w] :as region}]
+  {:read! (fn read! ([label] (read! label {}))
+            ([label opts] (magit-mini-read! screen g left inner-w hint-row text-w label opts)))
+   :choose! (fn [title choices]
+              (magit-mini-choose! screen g left inner-w hint-row text-w title choices))
+   :confirm! (fn [question]
+               (magit-mini-confirm! screen g left inner-w hint-row text-w question))
+   :transient! (fn [spec]
+                 (embed-transient! screen g region spec))
+   :read-option (region-option-reader screen g region)})
+
 (defn transient-dialog!
   "Host ONE magit transient in its OWN modal — the popup for flows that have no
    status buffer to sit in (provider authentication). `body` (a string or lines)
@@ -2675,23 +2722,18 @@
       (let [row (+ content-top (long idx))]
         (p/fill-rect! g (inc left) row inner-w 1)
         (p/put-str! g (+ left 2) row (ellipsize line text-w))))
-    (tr/run! (transient-host screen g)
-             {:left left
-              :inner-w inner-w
-              :hint-row hint-row
-              :text-w text-w
-              :min-row (+ content-top (count wrapped) (long body-gap))}
-             (assoc spec
-               :title (or (:title spec) title)
-               :read-option (fn [{:keys [label prompt mask]} current]
-                              (magit-mini-read! screen
-                                                g
-                                                left
-                                                inner-w
-                                                hint-row
-                                                text-w
-                                                (or prompt (str label ":"))
-                                                {:initial current :mask mask}))))))
+    (let
+      [region {:left left
+               :inner-w inner-w
+               :hint-row hint-row
+               :text-w text-w
+               :min-row (+ content-top (count wrapped) (long body-gap))}]
+      (embed-transient! screen
+                        g
+                        region
+                        (assoc spec
+                          :title (or (:title spec) title)
+                          :read-option (region-option-reader screen g region))))))
 
 (defn- magit-push-flow!
   "Magit-style push transient (`tr/run!`). SWITCHES (all optional):
@@ -3170,23 +3212,13 @@
                 (catch Throwable _ nil)))
 
          mini
-         {:confirm! (fn [prompt]
-                      (magit-mini-confirm! screen g left inner-w hint-row text-w prompt))
-          :read! (fn [label opts]
-                   (magit-mini-read! screen g left inner-w hint-row text-w label opts))
-          :choose! (fn [title choices]
-                     (magit-mini-choose! screen g left inner-w hint-row text-w title choices))
-          :transient! (fn [spec]
-                        (tr/run! (transient-host screen g)
-                                 {:left left
-                                  :inner-w inner-w
-                                  :hint-row hint-row
-                                  :text-w text-w
-                                  ;; The popup opens INSIDE the status buffer's own
-                                  ;; frame and may never climb over the box's top
-                                  ;; border or the rows it keeps visible.
-                                  :min-row content-top}
-                                 spec))}]
+         (band-questions
+           screen
+           g
+           ;; The band opens INSIDE the status buffer's own frame and
+           ;; may never climb over the box's top border or the rows it
+           ;; keeps visible.
+           {:left left :inner-w inner-w :hint-row hint-row :text-w text-w :min-row content-top})]
 
         (dotimes [i visible]
           (let
@@ -4329,7 +4361,7 @@
    the context the band is about, exactly what magit keeps visible behind a
    popup."
   [^TerminalScreen screen g region spec]
-  (:action (tr/run! (transient-host screen g) region spec)))
+  (:action (embed-transient! screen g region spec)))
 
 (defn- activate-settings-row!
   [^TerminalScreen screen g region values callbacks row]
@@ -6266,9 +6298,10 @@
    which command it is, so the band is the FRAME its follow-up question is asked
    in — the title, the rows and the hint bar the human would have seen — and not
    a menu to pick from."
-  [{:keys [refresh!] :as host} region spec]
-  (tr/paint! host region spec {:switches #{} :options {}})
-  (refresh!))
+  [^TerminalScreen screen g region spec]
+  (let [{:keys [refresh!] :as host} (transient-host screen g)]
+    (tr/paint! host region spec {:switches #{} :options {}})
+    (refresh!)))
 
 (defn session-band!
   "Run ONE transient as a magit BAND inside the LIVE SESSION frame — the same
@@ -6310,16 +6343,13 @@
       (frame-restorer screen)
 
       region
-      (assoc (tr/band-region cols rows (or content-top 1)) :restore! restore!)
-
-      host
-      (transient-host screen g)]
+      (assoc (tr/band-region cols rows (or content-top 1)) :restore! restore!)]
 
      (try (when-let
             [result (if pressed
-                      (do (band-frame! host region spec)
+                      (do (band-frame! screen g region spec)
                           {:action pressed :switches #{} :options {}})
-                      (tr/run! host region spec))]
+                      (embed-transient! screen g region spec))]
             (f {:screen screen :g g :region region :result result}))
           (finally (when restore! (restore!))
                    (.setCursorPosition screen nil)
@@ -6327,37 +6357,39 @@
 
 ;;; ── Questions a band asks on its OWN hint row ───────────────────────────────
 ;; `ctx` is what `session-band!` hands its `f`: the screen, its graphics and the
-;; band's region. These four wrappers are the whole reason a band's follow-up
-;; question reads as a QUESTION at the call site — the six coordinates a magit
-;; minibuffer is painted at are unpacked here, once, instead of inline in every
-;; branch that has something to ask.
+;; band's region. These wrappers are the whole reason a band's follow-up
+;; question reads as a QUESTION at the call site — they name it, while
+;; `band-questions` is what binds it to the band's own coordinates.
+
+(defn- band-ask
+  "The questions THIS band can ask, bound to the region `session-band!` handed
+   `f` — one composed map instead of six coordinates unpacked again in every
+   branch that has something to ask."
+  [{:keys [screen g region]}]
+  (band-questions screen g region))
 
 (defn- band-read!
   "Ask for one line of text on the band's hint row; nil on Esc."
   ([ctx label] (band-read! ctx label {}))
-  ([{:keys [screen g region]} label opts]
-   (let [{:keys [left inner-w hint-row text-w]} region]
-     (magit-mini-read! screen g left inner-w hint-row text-w label opts))))
+  ([ctx label opts] ((:read! (band-ask ctx)) label opts)))
 
 (defn- band-choose!
   "Ask WHICH one, single-key, on the band's hint row; returns the chosen `:id`."
-  [{:keys [screen g region]} title choices]
-  (let [{:keys [left inner-w hint-row text-w]} region]
-    (magit-mini-choose! screen g left inner-w hint-row text-w title choices)))
+  [ctx title choices]
+  ((:choose! (band-ask ctx)) title choices))
 
 (defn- band-confirm!
   "Ask y/n on the band's hint row."
-  [{:keys [screen g region]} question]
-  (let [{:keys [left inner-w hint-row text-w]} region]
-    (magit-mini-confirm! screen g left inner-w hint-row text-w question)))
+  [ctx question]
+  ((:confirm! (band-ask ctx)) question))
 
 (defn- band-run!
   "Run ANOTHER transient over the SAME band region — a transient that opens a
    transient, which is how magit asks a second question without a second
    window. The frame is snapshotted and restored once, by the `session-band!`
    that owns this region."
-  [{:keys [screen g region]} spec]
-  (tr/run! (transient-host screen g) region spec))
+  [ctx spec]
+  ((:transient! (band-ask ctx)) spec))
 
 ;;; ── Drafts ──────────────────────────────────────────────────────────────────
 

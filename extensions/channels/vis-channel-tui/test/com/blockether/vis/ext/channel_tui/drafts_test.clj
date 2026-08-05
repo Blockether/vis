@@ -5,7 +5,8 @@
   (:require [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.drafts :as drafts]
-            [com.blockether.vis.ext.channel-tui.transient :as tr]))
+            [com.blockether.vis.ext.channel-tui.transient :as tr]
+            [com.blockether.vis.internal.foundation.workspace-slashes :as wss]))
 
 (def ^:private sample
   [{"workspace_id" "ws-parked" "label" "feature-b" "root" "/tmp/b" "is_current" false}
@@ -126,3 +127,29 @@
       ;; Every command a slash names is a command the band actually offers.
       (expect (every? #(tr/item-by-id (drafts/spec sample) (:pressed (drafts/slash-band %)))
                       [["draft" "new"] ["draft" "clean"] ["draft" "resume"] ["draft" "abandon"]]))))
+
+(defdescribe draft-slash-coverage-test
+             (it "the band answers every `/draft` verb the ENGINE offers, or says why not"
+                 ;; The drift guard: `slash-band` is a table, and a table beside another
+                 ;; table rots. `/draft`'s own usage line in the engine is the list of verbs
+                 ;; a human can type, so a verb added there and not here fails HERE instead
+                 ;; of silently falling back to the modal path.
+                 (let
+                   [usage
+                    (->> wss/specs
+                         (filter #(= "draft" (:slash/name %)))
+                         first
+                         :slash/usage)
+
+                    verbs
+                    (->> (re-find #"<(.*)>" usage)
+                         second
+                         (re-seq #"[a-z]+")
+                         (remove #{"label"})
+                         set)]
+
+                   (expect (= #{"new" "clean" "apply" "stash" "resume" "list" "abandon"} verbs))
+                   ;; `apply` and `stash` ask nothing — they carry their own answer and stay
+                   ;; engine slashes. Everything else is a question, so it is a band.
+                   (expect (= #{"apply" "stash"}
+                              (set (remove #(:pressed (drafts/slash-band ["draft" %])) verbs)))))))
