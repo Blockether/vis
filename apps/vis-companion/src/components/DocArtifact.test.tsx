@@ -158,11 +158,12 @@ describe('DocAnnotateBar', () => {
     expect(bar({ disabled: true })).toContain('disabled=""');
   });
 
-  // Density follows the pointer, not the width: these are the same touch-sized
-  // hit boxes as every other control in the rail.
-  it('keeps a touch-sized hit box', () => {
-    expect(
-      bar({ page: 2, pageCount: 4 }).match(/min-h-11/g)?.length,
-    ).toBeGreaterThanOrEqual(3);
+  // Density follows the pointer, not the width: these are the same shared
+  // `Button` component every other control in the app uses — never a bespoke
+  // touch target.
+  it('renders the pager and draw button with the shared Button component', () => {
+    const rendered = bar({ page: 2, pageCount: 4 });
+    expect(rendered).not.toContain('min-h-11');
+    expect(rendered.match(/sm:min-h-8/g)?.length).toBeGreaterThanOrEqual(3);
   });
 });

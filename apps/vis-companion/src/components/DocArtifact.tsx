@@ -5,6 +5,7 @@ import { openPdfPages, type PdfPages } from '../lib/pdf-pages';
 import { docKindLabel, isPdfMedia } from '../lib/artifacts';
 import { useAttachImage } from '../lib/attach-image';
 import { ImageViewer } from './ImageViewer';
+import { Button } from './ui';
 
 // A PDF or an HTML page is a DOCUMENT, not a picture and not data: nothing in it
 // is worth spending a model's context on, so `vis_attach` clamps it to
@@ -86,9 +87,6 @@ export const DocFrame = memo(function DocFrame({
   );
 });
 
-const DOC_BUTTON =
-  'flex min-h-11 shrink-0 items-center border border-edge-strong px-3 text-ui text-code-foreground active:bg-hover';
-
 /**
  * The fence as it appears in a tool result. The transcript carries descriptors
  * only — the bytes live on the gateway — so the card states WHAT was produced
@@ -168,40 +166,33 @@ export function DocAnnotateBar({
     <div className="flex flex-wrap items-center gap-2 border-t border-code-edge bg-panel px-2 py-1">
       {paged && (
         <div className="flex shrink-0 items-center">
-          <button
-            type="button"
-            className={DOC_BUTTON}
+          <Button
+            variant="ghost"
             onClick={() => onPage(page - 1)}
             disabled={page <= 1}
             aria-label="Previous page"
           >
             ‹
-          </button>
+          </Button>
           <span
-            className="flex min-h-11 min-w-24 items-center justify-center border-y border-edge-strong px-2 text-chip text-muted"
+            className="flex min-h-7 min-w-24 items-center justify-center border-y border-edge-strong px-2 text-chip text-muted sm:min-h-8"
             aria-live="polite"
           >
             Page {page} of {pageCount}
           </span>
-          <button
-            type="button"
-            className={DOC_BUTTON}
+          <Button
+            variant="ghost"
             onClick={() => onPage(page + 1)}
             disabled={page >= pageCount}
             aria-label="Next page"
           >
             ›
-          </button>
+          </Button>
         </div>
       )}
-      <button
-        type="button"
-        className={DOC_BUTTON}
-        onClick={onCapture}
-        disabled={busy || disabled}
-      >
+      <Button variant="ghost" onClick={onCapture} disabled={busy || disabled}>
         {busy ? 'Rendering…' : paged ? `Draw on page ${page}` : 'Draw on page'}
-      </button>
+      </Button>
       <span
         className="min-w-0 flex-1 truncate text-chip text-footer-muted"
         aria-live="polite"
@@ -329,27 +320,24 @@ export const DocPreview = memo(function DocPreview({
         <span className="min-w-0 flex-1 truncate font-mono text-chip text-muted">
           {[name, sizeLabel].filter(Boolean).join(' · ')}
         </span>
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           aria-expanded={open}
           onClick={() => {
             const next = !open;
             setOpen(next);
             onOpen(next);
           }}
-          className={DOC_BUTTON}
         >
           {open ? 'Hide' : 'Open'}
-        </button>
+        </Button>
         {url && (
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer noopener"
-            className={DOC_BUTTON}
+          <Button
+            variant="ghost"
+            onClick={() => window.open(url, '_blank', 'noreferrer,noopener')}
           >
             New tab
-          </a>
+          </Button>
         )}
       </div>
       {open && (
