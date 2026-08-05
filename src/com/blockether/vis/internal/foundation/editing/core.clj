@@ -2928,10 +2928,25 @@
      raw-include
      (get spec "include")
 
+     ;; A blank glob filters NOTHING, so `""`, `[""]` and a stray empty entry in
+     ;; a real list all mean exactly what nil/[] mean: no include filter. Refusing
+     ;; the whole search over an empty OPTIONAL filter threw away a caller's call
+     ;; for a field that was asking for no restriction in the first place.
      include
-     (if (or (nil? raw-include) (and (sequential? raw-include) (empty? raw-include)))
-       []
-       (vector-of-strings :include raw-include))
+     (let
+       [raw
+        (parse-stringish-vector raw-include)
+
+        items
+        (cond (nil? raw) []
+              (string? raw) [raw]
+              (sequential? raw) (vec raw)
+              :else [raw])
+
+        items
+        (into [] (remove #(and (string? %) (str/blank? %))) items)]
+
+       (if (empty? items) [] (vector-of-strings :include items)))
 
      nonneg-int!
      (fn [label v]

@@ -5272,6 +5272,29 @@
         ;; scalar-tolerant path wraps the raw string and it stays one glob.
         (expect (= ["[1, 2]"] (:include (coerce-rg {"query" ["x"] "include" "[1, 2]"})))))))
 
+;; Regression, session c3caf9c2-58c8-4678-bf2f-8d3efae2e305: a grep carrying
+;; `include ""` — an empty OPTIONAL filter — was refused outright with "rg string
+;; values must be non-blank.", losing the whole search, while `include []` and a
+;; missing `include` searched everything.
+(defdescribe
+  rg-blank-include-test
+  "An empty include glob restricts nothing and must read as NO filter, exactly
+   like nil/[], instead of failing the call."
+  (let [coerce-rg (private-fn "coerce-rg-spec")]
+    (it "include \"\" is no filter, like a missing include"
+        (expect (= [] (:include (coerce-rg {"query" ["x"] "include" ""}))))
+        (expect (= [] (:include (coerce-rg {"query" ["x"] "include" "   "}))))
+        (expect (= [] (:include (coerce-rg {"query" ["x"]})))))
+    (it "a blank entry inside a real list is dropped, the real globs survive"
+        (expect (= ["**/*.clj"] (:include (coerce-rg {"query" ["x"] "include" ["" "**/*.clj"]}))))
+        (expect (= [] (:include (coerce-rg {"query" ["x"] "include" ["" "  "]})))))
+    (it "a non-string include is still refused"
+        (let [err (try (coerce-rg {"query" ["x"] "include" [42]}) (catch Exception e e))]
+          (expect (= :ext.foundation.editing/invalid-rg-spec (:type (ex-data err))))))
+    (it "a blank QUERY term is still an error, since a query is the search itself"
+        (let [err (try (coerce-rg {"query" [""]}) (catch Exception e e))]
+          (expect (= :ext.foundation.editing/invalid-rg-spec (:type (ex-data err))))))))
+
 (defdescribe
   find-relevance-filter-test
   "Regression: fff's native matcher returns a full page of loose subsequence
