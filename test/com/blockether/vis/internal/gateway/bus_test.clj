@@ -186,7 +186,7 @@
                        [bus/deliver-line! (fn [s l]
                                             @gate
                                             (orig s l))]
-                       (#'bus/drain-file! f)))]
+                       (#'bus/drain-file! sid f)))]
 
             (Thread/sleep 100)
             ;; producer appends while the drain is parked, then a subscriber hydrates
@@ -201,7 +201,7 @@
             (Thread/sleep 200)
             (expect (= (.length f) (long (get-in @(var-get #'bus/tails) [sid :off]))))
             (reset! capture [])
-            (#'bus/drain-file! f)
+            (#'bus/drain-file! sid f)
             (expect (empty? @capture))))))))
 
 (defdescribe
@@ -299,7 +299,7 @@
           (write! sid
                   [(turn-started prod pid sid "T-old") (delta prod pid "T-old")
                    (delta prod pid "T-old")])
-          (#'bus/drain-file! f)
+          (#'bus/drain-file! sid f)
           (expect (= 3 (count @capture)))
           (let [off1 (long (get-in @(var-get #'bus/tails) [sid :off]))]
             (expect (= (.length f) off1))
@@ -310,7 +310,7 @@
                     (into [(assoc (turn-started prod pid sid "T-new") :seq 99)]
                           (repeat 4 (delta prod pid "T-new"))))
             (expect (> (.length f) off1))
-            (#'bus/drain-file! f)
+            (#'bus/drain-file! sid f)
             ;; The whole new generation is delivered, head first.
             (expect (= 5 (count @capture)))
             (expect (= "turn.started" (get (first @capture) "type")))
@@ -318,7 +318,7 @@
             (expect (= (.length f) (long (get-in @(var-get #'bus/tails) [sid :off]))))
             ;; …and exactly once: a same-generation re-drain delivers nothing.
             (reset! capture [])
-            (#'bus/drain-file! f)
+            (#'bus/drain-file! sid f)
             (expect (empty? @capture))))))))
 
 (defdescribe
@@ -355,7 +355,7 @@
             ;; the sibling finishes the line
             (spit f (subs whole cut) :append true)
             (reset! capture [])
-            (#'bus/drain-file! f)
+            (#'bus/drain-file! sid f)
             (expect (= ["IMPORTANT"] (mapv #(get % "text") @capture))))))))
 
 (defdescribe
@@ -376,10 +376,10 @@
                               (.pid (java.lang.ProcessHandle/current))]
 
                              (write-journal! sid [(turn-started prod pid sid "T")])
-                             (#'bus/drain-file! (#'bus/session-file sid))
+                             (#'bus/drain-file! sid (#'bus/session-file sid))
                              (expect (contains? @(var-get #'bus/tails) sid))
                              (bus/forget! sid)
-                             (#'bus/drain-file! (#'bus/session-file sid))
+                             (#'bus/drain-file! sid (#'bus/session-file sid))
                              (expect (not (contains? @(var-get #'bus/tails) sid))))))))
 
 (defdescribe
@@ -428,3 +428,38 @@
             (bus/hydrate! sid)
             (expect (= [["turn.failed" "T9"]]
                        (mapv #(vector (get % "type") (get % "turn_id")) @capture))))))))
+
+;; Regression: the companion sat on "thinking" forever while the turn ran in
+;; another process. `hydrate!` mirrored the turn as running (it keeps the
+;; CALLER's sid), then every live delta and the terminal event were dropped.
+(defdescribe
+  mirrored-sid-identity-test
+  "The tailer must hand the deliver-fn the sid this process NAMED as relevant —
+   its own registry key — not a lookalike re-derived from the journal FILE NAME.
+   The gateway registry is UUID-keyed (`path-sid`), so a String sid made
+   `state/ingest-mirrored-event!`'s `(contains? @registry sid)` false for every
+   mirrored event and discarded a whole sibling turn without a word."
+  (it "delivers a mirrored event under the very sid the process asked for"
+      (with-temp-journal
+        (fn [_capture write!]
+          (let
+            [sid
+             (java.util.UUID/randomUUID)
+
+             seen
+             (atom [])
+
+             prod
+             (str (random-uuid))
+
+             pid
+             (.pid (java.lang.ProcessHandle/current))]
+
+            (bus/set-deliver-fn! (fn [s _store? _ev]
+                                   (swap! seen conj s)))
+            (bus/set-relevant-sids-fn! (fn []
+                                         [sid]))
+            (try (write! sid [(turn-started prod pid (str sid) "T-mirror")])
+                 (expect (true? (#'bus/poll-once!)))
+                 (expect (= [sid] @seen))
+                 (finally (bus/set-relevant-sids-fn! nil))))))))

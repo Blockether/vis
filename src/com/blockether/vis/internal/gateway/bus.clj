@@ -453,88 +453,87 @@
                    (tel/log! :debug ["gateway-bus: deliver failed" (ex-message t)])))))))))
 
 (defn- drain-file!
-  [^File f]
-  (let
-    [name
-     (.getName f)
+  "Drain the journal `f` of the session the CALLER named `sid`.
 
-     sid
-     (subs name 0 (- (count name) (count ".ndjson")))]
+   `sid` is passed in and never re-derived from the file name: this process
+   registers, looks up and mirrors a session under ONE key (the gateway registry
+   is UUID-keyed, `server/path-sid`), and a String lookalike parsed out of
+   `<sid>.ndjson` made `state/ingest-mirrored-event!`'s registry lookup miss —
+   silently discarding every live event of a turn running in a sibling process."
+  [sid ^File f]
+  ;; Missing (session closed) or empty journal: nothing to deliver, and — the
+  ;; point of doing this BEFORE `tail-lock` — nothing to remember either. A
+  ;; drain that still had a closed sid in flight used to re-create its tail
+  ;; entry after `forget!` dropped it, and `sweep!` only forgets sids whose
+  ;; FILE it deletes, so that entry would sit in the map for the daemon's life.
+  (when (pos? (.length f))
+    ;; ONE tail owner per sid: `hydrate!` reads the same file and claims the same
+    ;; cursor from an HTTP thread, so without this both deliver the same lines.
+    #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+    (locking (tail-lock sid)
+      (let
+        [{:keys [head] prev :off}
+         (tail sid)
 
-    ;; Missing (session closed) or empty journal: nothing to deliver, and — the
-    ;; point of doing this BEFORE `tail-lock` — nothing to remember either. A
-    ;; drain that still had a closed sid in flight used to re-create its tail
-    ;; entry after `forget!` dropped it, and `sweep!` only forgets sids whose
-    ;; FILE it deletes, so that entry would sit in the map for the daemon's life.
-    (when (pos? (.length f))
-      ;; ONE tail owner per sid: `hydrate!` reads the same file and claims the same
-      ;; cursor from an HTTP thread, so without this both deliver the same lines.
-      #_{:clj-kondo/ignore [:locking-suspicious-lock]}
-      (locking (tail-lock sid)
-        (let
-          [{:keys [head] prev :off}
-           (tail sid)
+         off0
+         (long (or prev 0))
 
-           off0
-           (long (or prev 0))
+         len
+         (.length f)]
 
-           len
-           (.length f)]
+        ;; Unchanged since the last drain: no open, no read, no parse.
+        (when-not (== len off0)
+          (with-open [raf (RandomAccessFile. f "r")]
+            (let
+              [head' (read-head! raf len)
+               ;; The producer TRUNCATES the journal at every `turn.started` (and
+               ;; at the size cap), so a file that regrows PAST our cursor inside
+               ;; ONE poll interval is indistinguishable from appended data by
+               ;; length alone: the new turn's head — `turn.started` included —
+               ;; would be skipped forever and the tab would sit frozen-idle
+               ;; through a live sibling turn. That first line is the new turn's
+               ;; `turn.started` (unrepeatable seq + ms ts), so a CHANGED head
+               ;; PROVES a rewrite and we replay from byte 0.
+               off (if (or (and head (not= head head')) (> off0 len)) 0 off0)
+               ;; Bytes of COMPLETE lines this drain consumed (0 = nothing whole).
+               consumed
+               (if (<= len off)
+                 0
+                 (let
+                   [want (int (- len off))
+                    ;; Reuse one growable buffer across polls (single tailer thread) so
+                    ;; steady-state tailing allocates NOTHING — no per-drain byte-array.
+                    ^bytes buf (let [^bytes b @drain-buf]
+                                 (if (>= (alength b) want) b (reset! drain-buf (byte-array want))))
+                    ;; Bytes ACTUALLY read: a sibling truncating mid-drain just
+                    ;; shortens this, and the head check above already caught it.
+                    remaining (int (read-at! raf off buf want))]
 
-          ;; Unchanged since the last drain: no open, no read, no parse.
-          (when-not (== len off0)
-            (with-open [raf (RandomAccessFile. f "r")]
-              (let
-                [head' (read-head! raf len)
-                 ;; The producer TRUNCATES the journal at every `turn.started` (and
-                 ;; at the size cap), so a file that regrows PAST our cursor inside
-                 ;; ONE poll interval is indistinguishable from appended data by
-                 ;; length alone: the new turn's head — `turn.started` included —
-                 ;; would be skipped forever and the tab would sit frozen-idle
-                 ;; through a live sibling turn. That first line is the new turn's
-                 ;; `turn.started` (unrepeatable seq + ms ts), so a CHANGED head
-                 ;; PROVES a rewrite and we replay from byte 0.
-                 off (if (or (and head (not= head head')) (> off0 len)) 0 off0)
-                 ;; Bytes of COMPLETE lines this drain consumed (0 = nothing whole).
-                 consumed
-                 (if (<= len off)
-                   0
-                   (let
-                     [want (int (- len off))
-                      ;; Reuse one growable buffer across polls (single tailer thread) so
-                      ;; steady-state tailing allocates NOTHING — no per-drain byte-array.
-                      ^bytes buf
-                      (let [^bytes b @drain-buf]
-                        (if (>= (alength b) want) b (reset! drain-buf (byte-array want))))
-                      ;; Bytes ACTUALLY read: a sibling truncating mid-drain just
-                      ;; shortens this, and the head check above already caught it.
-                      remaining (int (read-at! raf off buf want))]
+                   ;; ONE forward pass over the tail: decode each COMPLETE line in
+                   ;; isolation and deliver it inline — no whole-tail String, no regex
+                   ;; `split-lines`, no backward pre-scan, no re-encode to count bytes.
+                   ;; `last-nl` tracks the last newline seen, so a trailing partial
+                   ;; line simply stays unconsumed for the next drain.
+                   (loop
+                     [start 0
+                      i 0
+                      last-nl -1]
 
-                     ;; ONE forward pass over the tail: decode each COMPLETE line in
-                     ;; isolation and deliver it inline — no whole-tail String, no regex
-                     ;; `split-lines`, no backward pre-scan, no re-encode to count bytes.
-                     ;; `last-nl` tracks the last newline seen, so a trailing partial
-                     ;; line simply stays unconsumed for the next drain.
-                     (loop
-                       [start 0
-                        i 0
-                        last-nl -1]
+                     (if (< i remaining)
+                       (if (== (aget buf i) 10)
+                         (let
+                           [end (if (and (> i start) (== (aget buf (dec i)) 13))
+                                  (dec i) ; strip a CR from a CRLF line ending
+                                  i)]
+                           (when (> end start)
+                             (let [line (String. buf start (- end start) StandardCharsets/UTF_8)]
+                               (when-not (str/blank? line) (deliver-line! sid line))))
+                           (recur (inc i) (inc i) i))
+                         (recur start (inc i) last-nl))
+                       (inc last-nl)))))]
 
-                       (if (< i remaining)
-                         (if (== (aget buf i) 10)
-                           (let
-                             [end (if (and (> i start) (== (aget buf (dec i)) 13))
-                                    (dec i) ; strip a CR from a CRLF line ending
-                                    i)]
-                             (when (> end start)
-                               (let [line (String. buf start (- end start) StandardCharsets/UTF_8)]
-                                 (when-not (str/blank? line) (deliver-line! sid line))))
-                             (recur (inc i) (inc i) i))
-                           (recur start (inc i) last-nl))
-                         (inc last-nl)))))]
-
-                (set-tail! sid (+ off (long consumed)) head')
-                (pos? (long consumed))))))))))
+              (set-tail! sid (+ off (long consumed)) head')
+              (pos? (long consumed)))))))))
 
 (defn journal-high-water-seq
   "Highest `\"seq\"` persisted in `sid`'s journal file, or 0 when there is none.
@@ -687,7 +686,7 @@
   []
   (try (if-let [sids-fn @relevant-sids-fn]
          (reduce (fn [busy sid]
-                   (or (try (boolean (drain-file! (session-file sid)))
+                   (or (try (boolean (drain-file! sid (session-file sid)))
                             (catch Throwable t
                               (tel/log! :debug
                                         ["gateway-bus: drain failed" (str sid) (ex-message t)])
@@ -700,7 +699,7 @@
              (reduce (fn [busy ^File f]
                        (let [sid (journal-sid (.getName f))]
                          (if (and sid (relevant-sid? sid))
-                           (or (try (boolean (drain-file! f))
+                           (or (try (boolean (drain-file! sid f))
                                     (catch Throwable t
                                       (tel/log! :debug
                                                 ["gateway-bus: drain failed" (.getName f)
