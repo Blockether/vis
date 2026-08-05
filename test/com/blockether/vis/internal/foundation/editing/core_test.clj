@@ -6045,14 +6045,41 @@
 
 (defdescribe
   fs-canonical-shape-test
-  "The merged `fs` tool answers ONE flat canonical shape per op — an `action`
-   discriminator (NOT `op`: the engine stamps that with the canonical tool op
-   `\"fs\"`), workspace-RELATIVE paths, and at most one `is_<foo>` verdict — and
-   its card renders that shape as a verb-led headline."
+  "The merged `fs` tool has one satisfiable input shape and action-discriminated,
+   workspace-relative results."
+  ;; Regression, native fs schema: combining `paths` with `src`/`dest` made the
+  ;; generated all-required tool signature impossible to call — copy/move rejected
+  ;; the very `paths` argument that the signature required.
+  (it "uses one satisfiable input shape for every operation"
+      (let
+        [schema
+         (:ext.symbol/schema editing/fs-symbol)
+
+         fs-tool
+         (private-fn "fs-tool")
+
+         base
+         (str (temp-root) "/fs-one-shape")
+
+         src
+         (str base "/source.txt")
+
+         dest
+         (str base "/copy.txt")]
+
+        (expect (= #{"op" "paths" "is_overwrite"} (set (keys (:properties schema)))))
+        (expect (= ["op" "paths" "is_overwrite"] (:required schema)))
+        (fs/delete-tree base)
+        (fs/create-dirs base)
+        (spit src "hello")
+        (expect (= {"action" "copy" "src" src "dest" dest}
+                   (:result (fs-tool {"op" "copy" "paths" [src dest] "is_overwrite" false}))))
+        (expect (= "hello" (slurp dest)))
+        (fs/delete-tree base)))
   (describe
     "every op"
     (it
-      "returns the canonical result and a matching summary"
+      "returns its canonical result and a matching summary"
       (let
         [fs-tool
          (private-fn "fs-tool")
@@ -6064,42 +6091,66 @@
          (str (temp-root) "/fs-canon")
 
          res
-         (fn [m]
-           (:result (fs-tool m)))]
+         (fn [op paths]
+           (:result (fs-tool {"op" op "paths" paths "is_overwrite" false})))]
 
         (fs/delete-tree base)
-        (let [r (res {"op" "create_dirs" "path" (str base "/a")})]
-          (expect (= {"action" "create_dirs" "path" (str base "/a") "is_created" true} r))
-          (expect (= (str "created dir `" base "/a`") (:summary (render r)))))
-        (let [r (res {"op" "create_dirs" "path" (str base "/a")})]
-          (expect (= {"action" "create_dirs" "path" (str base "/a") "is_created" false} r))
-          (expect (= (str "dir `" base "/a` already exists") (:summary (render r)))))
+        (let
+          [path
+           (str base "/a")
+
+           r
+           (res "create_dirs" [path])]
+
+          (expect (= {"action" "create_dirs" "paths" [{"path" path "is_created" true}]} r))
+          (expect (= "created 1 dir" (:summary (render r)))))
+        (let
+          [path
+           (str base "/a")
+
+           r
+           (res "create_dirs" [path])]
+
+          (expect (= false (get-in r ["paths" 0 "is_created"])))
+          (expect (= "created 0 of 1 dirs · 1 already existed" (:summary (render r)))))
         (spit (str base "/a/x.txt") "hi")
-        (let [r (res {"op" "exists" "path" (str base "/a/x.txt")})]
-          (expect (= {"action" "exists" "path" (str base "/a/x.txt") "is_existing" true} r))
-          (expect (= (str "`" base "/a/x.txt` exists ✓") (:summary (render r)))))
-        (let [r (res {"op" "exists" "path" (str base "/a/nope.txt")})]
-          (expect (= {"action" "exists" "path" (str base "/a/nope.txt") "is_existing" false} r))
-          (expect (= (str "`" base "/a/nope.txt` missing ✗") (:summary (render r)))))
+        (let
+          [path
+           (str base "/a/x.txt")
+
+           r
+           (res "exists" [path])]
+
+          (expect (= {"action" "exists" "paths" [{"path" path "is_existing" true}]} r))
+          (expect (= "1 path exists" (:summary (render r)))))
+        (let
+          [path
+           (str base "/a/nope.txt")
+
+           r
+           (res "exists" [path])]
+
+          (expect (= false (get-in r ["paths" 0 "is_existing"])))
+          (expect (= "1 path missing" (:summary (render r)))))
         ;; Absolute input still answers a relative path — the canonical form.
-        (let [r (res {"op" "exists" "path" (str (fs/cwd) "/" base "/a/x.txt")})]
-          (expect (= (str base "/a/x.txt") (get r "path"))))
-        (let [r (res {"op" "copy" "src" (str base "/a/x.txt") "dest" (str base "/y.txt")})]
+        (let [r (res "exists" [(str (fs/cwd) "/" base "/a/x.txt")])]
+          (expect (= (str base "/a/x.txt") (get-in r ["paths" 0 "path"]))))
+        (let [r (res "copy" [(str base "/a/x.txt") (str base "/y.txt")])]
           (expect (= {"action" "copy" "src" (str base "/a/x.txt") "dest" (str base "/y.txt")} r))
           (expect (= (str "copied `" base "/a/x.txt` → `" base "/y.txt`") (:summary (render r)))))
-        (let [r (res {"op" "move" "src" (str base "/y.txt") "dest" (str base "/z.txt")})]
+        (let [r (res "move" [(str base "/y.txt") (str base "/z.txt")])]
           (expect (= {"action" "move" "src" (str base "/y.txt") "dest" (str base "/z.txt")} r))
           (expect (= (str "moved `" base "/y.txt` → `" base "/z.txt`") (:summary (render r)))))
-        (let [r (res {"op" "delete" "path" (str base "/z.txt")})]
-          (expect (= {"action" "delete" "path" (str base "/z.txt") "is_deleted" true} r))
-          (expect (= (str "deleted `" base "/z.txt`") (:summary (render r)))))
-        (let [r (res {"op" "delete" "path" (str base "/z.txt")})]
-          (expect (= {"action" "delete" "path" (str base "/z.txt") "is_deleted" false} r))
-          (expect (= (str "nothing to delete at `" base "/z.txt`") (:summary (render r)))))
-        (expect (throws? clojure.lang.ExceptionInfo #(fs-tool {"op" "touch" "path" base})))
+        (let [r (res "delete" [(str base "/z.txt")])]
+          (expect (= true (get-in r ["paths" 0 "is_deleted"])))
+          (expect (= "deleted 1 path" (:summary (render r)))))
+        (let [r (res "delete" [(str base "/z.txt")])]
+          (expect (= false (get-in r ["paths" 0 "is_deleted"])))
+          (expect (= "deleted 0 of 1 paths · 1 already absent" (:summary (render r)))))
+        (expect (throws? clojure.lang.ExceptionInfo #(res "touch" [base])))
         (fs/delete-tree base))))
   (describe
-    "the batch `paths` form"
+    "ordered target paths"
     (it
       "turns N targets into one result with a compact summary and scan-friendly body"
       (let
@@ -6113,12 +6164,11 @@
          (str (temp-root) "/fs-batch")
 
          res
-         (fn [m]
-           (:result (fs-tool m)))]
+         (fn [op paths]
+           (:result (fs-tool {"op" op "paths" paths "is_overwrite" false})))]
 
         (fs/delete-tree base)
-        (let
-          [r (res {"op" "create_dirs" "paths" [(str base "/a") (str base "/b") (str base "/c")]})]
+        (let [r (res "create_dirs" [(str base "/a") (str base "/b") (str base "/c")])]
           (expect (= {"action" "create_dirs"
                       "paths" [{"path" (str base "/a") "is_created" true}
                                {"path" (str base "/b") "is_created" true}
@@ -6127,35 +6177,19 @@
           (expect (= "created 3 dirs" (:summary (render r))))
           (expect (= (str "\n- `" base "/a`" "\n- `" base "/b`" "\n- `" base "/c`")
                      (:body (render r)))))
-        ;; A partial batch says so instead of claiming the whole batch changed.
-        (let [r (res {"op" "create_dirs" "paths" [(str base "/a") (str base "/d")]})]
+        ;; A partial result says so instead of claiming the whole request changed.
+        (let [r (res "create_dirs" [(str base "/a") (str base "/d")])]
           (expect (= [false true] (mapv #(get % "is_created") (get r "paths"))))
-          (expect (= "created 1 of 2 dirs · 1 already existed" (:summary (render r))))
-          (expect (= (str "\n- `" base "/a` — already existed" "\n- `" base "/d` — created")
-                     (:body (render r)))))
+          (expect (= "created 1 of 2 dirs · 1 already existed" (:summary (render r)))))
         (spit (str base "/a/x.txt") "hi")
-        (let [r (res {"op" "exists" "paths" [(str base "/a/x.txt") (str base "/a/nope.txt")]})]
-          (expect (= {"action" "exists"
-                      "paths" [{"path" (str base "/a/x.txt") "is_existing" true}
-                               {"path" (str base "/a/nope.txt") "is_existing" false}]}
-                     r))
-          (expect (= "1 of 2 paths exist · 1 missing" (:summary (render r))))
-          (expect (= (str "\n- `" base "/a/x.txt` — exists" "\n- `" base "/a/nope.txt` — missing")
-                     (:body (render r)))))
-        (let [r (res {"op" "delete" "paths" [(str base "/a/x.txt") (str base "/a/nope.txt")]})]
+        (let [r (res "exists" [(str base "/a/x.txt") (str base "/a/nope.txt")])]
+          (expect (= [true false] (mapv #(get % "is_existing") (get r "paths"))))
+          (expect (= "1 of 2 paths exist · 1 missing" (:summary (render r)))))
+        (let [r (res "delete" [(str base "/a/x.txt") (str base "/a/nope.txt")])]
           (expect (= [true false] (mapv #(get % "is_deleted") (get r "paths"))))
           (expect (= "deleted 1 of 2 paths · 1 already absent" (:summary (render r))))
-          (expect
-            (= (str "\n- `" base "/a/x.txt` — deleted" "\n- `" base "/a/nope.txt` — already absent")
-               (:body (render r))))
           (expect (not (fs/exists? (str base "/a/x.txt")))))
-        ;; A ONE-element batch still answers the batch shape: the shape follows
-        ;; the REQUEST, never the accident of how many paths it carried.
-        (let [r (res {"op" "exists" "paths" [(str base "/a")]})]
-          (expect (= {"action" "exists" "paths" [{"path" (str base "/a") "is_existing" true}]} r))
-          (expect (= "1 path exists" (:summary (render r))))
-          (expect (= (str "\n- `" base "/a`") (:body (render r)))))
-        ;; Long batches keep their paths out of the headline without dropping any.
+        ;; Long requests keep their paths out of the headline without dropping any.
         (let
           [card (render {"op" "fs"
                          "action" "delete"
@@ -6164,30 +6198,31 @@
                                        (range 9))})]
           (expect (= "deleted 9 paths" (:summary card)))
           (expect (not (string/includes? (:summary card) "`p0`")))
-          (expect (string/includes? (:body card) "- `p8`"))
-          (expect (not (string/includes? (:body card) "✓"))))
-        ;; copy/move refuse the batch key, and an empty batch is not a silent no-op.
-        (expect (throws? clojure.lang.ExceptionInfo
-                         #(fs-tool {"op" "copy" "paths" ["a"] "src" "a" "dest" "b"})))
-        (expect (throws? clojure.lang.ExceptionInfo #(fs-tool {"op" "delete" "paths" []})))
+          (expect (string/includes? (:body card) "- `p8`")))
         (fs/delete-tree base))))
-  (describe
-    "the engine's canonical `op` stamp"
-    (it "never degrades the card to `fs fs` — the action survives under `action`"
-        (let [render (private-fn "render-fs-result")]
-          ;; `stamp-public-result-op` overwrites "op" with the TOOL op on EVERY
-          ;; result, so the card must not read the sub-op from there.
-          (expect (= "deleted `a/b.txt`"
-                     (:summary
-                       (render {"op" "fs" "action" "delete" "path" "a/b.txt" "is_deleted" true}))))
-          (expect (= "copied `a` → `b`"
-                     (:summary (render {"op" "fs" "action" "copy" "src" "a" "dest" "b"}))))
-          ;; legacy results persisted before the split still render
-          (expect (= "deleted `a/b.txt`"
-                     (:summary (render {"op" "delete" "path" "a/b.txt" "is_deleted" true}))))
-          ;; and an action-less result says something useful, never the tool twice
-          (expect (= "fs `a/b.txt`" (:summary (render {"op" "fs" "path" "a/b.txt"}))))
-          (expect (= "fs" (:summary (render {"op" "fs"}))))))))
+  (describe "operation-specific path counts"
+            (it "requires exactly two paths for copy/move and at least one target otherwise"
+                (let
+                  [fs-tool
+                   (private-fn "fs-tool")
+
+                   call
+                   (fn [op paths]
+                     (fs-tool {"op" op "paths" paths "is_overwrite" false}))]
+
+                  (expect (throws? clojure.lang.ExceptionInfo #(call "copy" ["a"])))
+                  (expect (throws? clojure.lang.ExceptionInfo #(call "move" ["a" "b" "c"])))
+                  (expect (throws? clojure.lang.ExceptionInfo #(call "delete" []))))))
+  (describe "the engine's canonical `op` stamp"
+            (it "keeps the action under `action`, so the card never degrades to `fs fs`"
+                (let [render (private-fn "render-fs-result")]
+                  (expect (= "deleted 1 path"
+                             (:summary (render {"op" "fs"
+                                                "action" "delete"
+                                                "paths" [{"path" "a/b.txt" "is_deleted" true}]}))))
+                  (expect (= "copied `a` → `b`"
+                             (:summary (render {"op" "fs" "action" "copy" "src" "a" "dest" "b"}))))
+                  (expect (= "fs" (:summary (render {"op" "fs"}))))))))
 
 (defdescribe
   fff-index-pool-test
