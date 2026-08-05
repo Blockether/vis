@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { Markdown, UserMessage } from './ChatContent';
+import { AssistantMessage, Markdown, UserMessage } from './ChatContent';
 import { mediaFrameClass } from '../lib/media-frame';
+import type { TranscriptTurn } from '../lib/types';
 
 /** Visible text of a rendered chunk: tags out, entities back. */
 const text = (html: string) =>
@@ -94,5 +95,36 @@ describe('user bubble pictures', () => {
   it('never lets the picture size its own slot', () => {
     expect(html()).not.toMatch(/<img[^>]*\bw-auto\b/u);
     expect(html()).not.toMatch(/<img[^>]*\bh-auto\b/u);
+  });
+});
+
+// Regression, TestFlight crash feedback: build 2875 rendered every collapsed tool result body,
+// so a large transcript left WebKit with hundreds of thousands of DOM nodes until iOS killed it
+// at the 2 GiB per-process limit.
+describe('collapsed tool results', () => {
+  it('does not mount result bodies before a card is opened', () => {
+    const bodySentinel = 'UNMOUNTED_TOOL_RESULT_BODY';
+    const turn: TranscriptTurn = {
+      id: 'large-trace',
+      status: 'completed',
+      iterations: [
+        {
+          id: 'iteration-1',
+          forms: Array.from({ length: 400 }, (_, index) => ({
+            tool_name: 'shell',
+            result: 'ok',
+            result_summary: `summary ${index}`,
+            result_render: `**STDOUT**\n\n\`\`\`\n${bodySentinel} ${index}\n\`\`\``,
+          })),
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<AssistantMessage turn={turn} />);
+
+    expect(count(html, /<details/g)).toBe(400);
+    expect(html).toContain('summary 0');
+    expect(html).toContain('summary 399');
+    expect(html).not.toContain(bodySentinel);
   });
 });
