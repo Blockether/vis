@@ -206,26 +206,18 @@
 ;; =============================================================================
 ;; Trusted extension context
 ;; =============================================================================
-
-(def ^:private extension-posix-python
-  ;; Keep the Python compatibility layer in its resource file, never as a
-  ;; Clojure string. The native build embeds `vis-shims/.*`. Read through the
-  ;; ONE shared reader (`env/runtime-python-src`) so a resource missing from the
-  ;; image fails LOUDLY here instead of eval'ing a silent `nil` body.
-  (env/runtime-python-src "vis-shims/posix.py"))
-
 (defn ^:no-doc build-context
-  "Build one Python extension context. Native process creation stays disabled;
-   the POSIX compatibility layer routes `subprocess` and `os.system` through
-   `vis.shell`, where the invoking session's `wrap-argv` policy applies.
-   Host interop remains restricted to the explicitly bound `vis` callbacks."
+  "Build one trusted extension context on the shared Engine. Extensions have
+   real filesystem, network, environment, thread, and subprocess access; only
+   arbitrary host interop remains unavailable. Use `vis.jailed_shell` when a
+   command should instead run under the current session's jail policy."
   ^Context []
   (-> (Context/newBuilder (into-array String ["python"]))
       (.engine ^Engine @env/shared-engine)
       (.allowAllAccess false)
       (.allowIO IOAccess/ALL)
       (.allowCreateThread true)
-      (.allowCreateProcess false)
+      (.allowCreateProcess true)
       (.allowNativeAccess false)
       (.allowPolyglotAccess PolyglotAccess/NONE)
       (.allowEnvironmentAccess EnvironmentAccess/INHERIT)
@@ -1287,8 +1279,6 @@
     (try (bind-host! ctx (.getName f))
          (locking ctx
            (.eval ctx "python" ^String bootstrap-python)
-           ;; Normal Python process APIs are virtualized through the session
-           ;; shell dispatcher instead of receiving native process access.
            ;; Prepend the extension file's own dir to sys.path so sibling
            ;; packages/modules import cleanly. Path crosses as a bound
            ;; member (no string-escaping into a Python snippet).
@@ -1299,7 +1289,6 @@
                     (str "import sys as __vis_pathsys__\n"
                          "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
                          "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n")))
-           (.eval ctx "python" ^String extension-posix-python)
            (.eval ctx (.build (Source/newBuilder "python" ^String source (.getName f)))))
          (let
            [g

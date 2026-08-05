@@ -1079,13 +1079,23 @@ vis.extension(
           (let [seen (symbol-fn ext (clojure.core/symbol "seen_selected"))]
             (expect (= {"source" "tui" "provider_id" "acme"} (get-in (seen) [:result])))))))))
 
+;; Regression, issue #113: ordinary subprocess calls in process-level provider
+;; callbacks were redirected into the session-only jailed shell and returned nil.
 (defdescribe
   python-extension-process-boundary-test
   (it
-    "routes public vis.shell commands through the live session jail"
+    "lets a provider callback spawn a native subprocess outside any session"
+    (with-loaded
+      {"process_provider.py"
+       "import subprocess\nimport vis\ndef detect():\n    result = subprocess.run(['/bin/sh', '-c', 'printf extension-native'], capture_output=True, text=True, check=True)\n    return {'token': result.stdout, 'source': 'subprocess'}\nvis.extension(name='process-provider', description='process provider', providers=[vis.provider(id='process-provider', label='Process provider', detect_fn=detect)])"}
+      (fn [_ _]
+        (expect (= {:token "extension-native" :source :subprocess}
+                   ((:provider/detect-fn (registry/provider-by-id :process-provider))))))))
+  (it
+    "keeps explicit vis.jailed_shell calls on the live session jail"
     (with-loaded
       {"jail.py"
-       "import subprocess\nimport vis\ndef run():\n    \"Run through the session jail.\"\n    return [subprocess.run(['echo', 'jailed']).stdout, vis.shell({'commands':['echo mapped']})['commands'][0]['stdout'], vis.jailed_shell is vis.shell]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+       "import vis\ndef run():\n    \"Run through the session jail.\"\n    return vis.jailed_shell({'commands':['echo mapped']})['commands'][0]['stdout']\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
       (fn [_ _]
         (let
           [run
@@ -1102,9 +1112,8 @@ vis.extension(
                                   (swap! seen conj [actual-env opts])
                                   {"commands" [{"stdout" (first (get opts "commands"))}]})]
             (binding [extension/*current-environment* env]
-              (expect (= ["echo jailed" "echo mapped" true] (:result (run))))
-              (expect (= [[env {"commands" ["echo jailed"]}] [env {"commands" ["echo mapped"]}]]
-                         @seen))))))))
+              (expect (= "echo mapped" (:result (run))))
+              (expect (= [[env {"commands" ["echo mapped"]}]] @seen))))))))
   (it
     "unwraps the host tool ENVELOPE so a shelling extension crosses the boundary"
     ;; Regression, issue #96: `jailed-shell` returns an `extension/success`
