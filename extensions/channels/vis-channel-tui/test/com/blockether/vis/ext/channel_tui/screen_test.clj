@@ -1318,6 +1318,28 @@
             (open-click-target! {:kind :file :url "deps.edn#L42"})
             (expect (= "deps.edn#L42" (deref editor-opened 1000 ::timeout)))
             (expect (= ::timeout (deref url-opened 100 ::timeout)))))))
+  ;; A `vis-doc` card is a HANDLE: a PDF or an HTML page has nothing a terminal
+  ;; can paint, so the click must reach the OS viewer. The file lives in the
+  ;; display cache OUTSIDE the workspace, which the cwd-confined `open!` refuses
+  ;; — only `open-local!` can hand it to Preview / the browser.
+  (it "document click targets open the host PDF/HTML in the system viewer"
+      (let
+        [local-opened
+         (promise)
+
+         url-opened
+         (promise)]
+
+        (with-redefs-fn {#'opener/open-local! (fn [target]
+                                                (deliver local-opened target)
+                                                {:status :ok})
+                         #'opener/open! (fn [target]
+                                          (deliver url-opened target)
+                                          {:status :ok})}
+          (fn []
+            (open-click-target! {:kind :doc :url "/var/tmp/vis-display/doc-9f2.pdf"})
+            (expect (= "/var/tmp/vis-display/doc-9f2.pdf" (deref local-opened 1000 ::timeout)))
+            (expect (= ::timeout (deref url-opened 100 ::timeout)))))))
   (it "reports clipboard failure instead of claiming the selection was copied"
       (let [notified (promise)]
         (with-redefs-fn {#'input/clipboard-copy! (constantly false)
