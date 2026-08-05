@@ -66,6 +66,17 @@ the tap already answered.
     carries the primary gets a quiet title band. `projectVariants.test.ts` reads the
     source and fails on each of those drifts.
 
+12. **The chrome is imported, not re-typed.** The list under every proposal is the
+    shipped one: the machine block renders through the app's own `MachineGap`,
+    `MachineRail`, `MachineBanner` and `MachineMark`, the disclosure is `ChevronIcon`,
+    and the rows keep the shipped geometry (`min-h-11` project header, `min-h-14`
+    session row, `w-8` rollup column, the counts as whole nowrap units). Where a class
+    string must be repeated it is lifted VERBATIM into one named const — `ROW` is
+    `StartOption`, `CHIP` is its badge, `FIELD` is `ui.tsx`'s `Input`, `BAND` is the
+    menu heading — so there is exactly one field skin, one badge look and one row
+    geometry on the board. A settings section wears `SettingsPanel`'s accent tick, not
+    the menu's filled band. A second, hand-rolled copy of any of them is the drift.
+
 ## Non-negotiable states
 
 - **Solo:** one machine paired ⇒ nothing costs a machine question, and no machine

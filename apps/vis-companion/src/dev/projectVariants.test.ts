@@ -1,6 +1,8 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import gallerySource from './DesignGallery.tsx?raw';
-import { FLOW_STEPS, PROJECT_STATES } from './projectVariants';
+import { FLOW_STEPS, PROJECT_STATES, SessionFlowVariant } from './projectVariants';
 import variantSource from './projectVariants.tsx?raw';
 
 /**
@@ -91,5 +93,68 @@ describe('the design board wears the shipped chrome', () => {
     // The switch sheet already spends its amber on `Switch here`, so its title
     // band goes quiet; a filled band above a filled primary says it twice.
     expect(variantSource).toMatch(/<Sheet\s+tone="quiet"/);
+  });
+
+  it('renders a machine with the components the app renders it with', () => {
+    // `MachineGap`/`MachineRail`/`MachineBanner` ARE the fleet list's machine block.
+    // Re-drawing that block in look-alike classes is how the board and the screen
+    // start disagreeing about what a machine looks like.
+    for (const primitive of ['<MachineGap', '<MachineRail', '<MachineBanner', '<ChevronIcon']) {
+      expect(variantSource, primitive).toContain(primitive);
+    }
+    // Identity, not liveness: the mark wears this machine's own hue, and `offline`
+    // is a word — a green/grey lamp in that slot means something else entirely.
+    expect(variantSource).toMatch(/<MachineMark color=\{machineHue\(/);
+    expect(variantSource).toContain('offline');
+  });
+
+  it('draws every glyph as an icon, never as a dingbat', () => {
+    // A literal `▸` or `✎` renders in whatever fallback face the machine happens to
+    // have, so it is the one thing on the board that is not the app's own type. The
+    // prose above may name the glyph it bans, so only the CODE is scanned.
+    const rendered = variantSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '');
+    for (const dingbat of ['▸', '▾', '✎', '✓']) {
+      expect(rendered, dingbat).not.toContain(dingbat);
+    }
+  });
+
+  it('has exactly one field skin, lifted from `ui.tsx`’s Input', () => {
+    // Two hand-rolled copies of `bg-input …` had already drifted apart by a
+    // `rounded-none`; the const is the only place that skin may be spelled.
+    expect(variantSource.match(/bg-input/g)).toHaveLength(1);
+    expect(variantSource).toMatch(/const FIELD =[\s\S]*?ring-1 ring-accent\/30/);
+    // And one badge look, `StartOption`'s, so a chip never competes with a primary.
+    expect(variantSource).toContain('{entry.badge && <span className={CHIP}>');
+    expect(variantSource).not.toContain('border-accent text-accent-ink');
+  });
+
+  it('titles a settings section the way `SettingsPanel` does', () => {
+    // The shipped panel header is a 2px accent tick beside the name, not the menu's
+    // filled band: the settings screen has never worn a menu heading.
+    expect(variantSource).toMatch(/function SettingsBand[\s\S]*?border-l-2 border-accent/);
+    expect(variantSource).toMatch(/<SettingsBand title="Sessions"/);
+    expect(variantSource).not.toMatch(/\$\{QUIET_BAND\}`}>(settings|appearance)/);
+  });
+});
+/**
+ * The one test here that RENDERS instead of reading: the solo promise is about what
+ * is absent, and absence is the thing a source grep is worst at proving. The board
+ * shipped a card captioned "no machine header, no chips, no machine question" whose
+ * fleet bar counted three machines.
+ */
+describe('solo pays nothing', () => {
+  const html = (state: string) =>
+    renderToStaticMarkup(createElement(SessionFlowVariant, { state }));
+
+  it('never mentions the fleet when one machine is paired', () => {
+    const solo = html('solo');
+    expect(solo).not.toMatch(/machines?</);
+    expect(solo).toContain('3 projects');
+    expect(solo).toContain('214 sessions');
+  });
+
+  it('still counts machines when there is a fleet to count', () => {
+    // The negative above only means something next to the state it contrasts with.
+    expect(html('menu')).toContain('3 machines');
   });
 });

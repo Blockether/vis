@@ -22,13 +22,14 @@ import type { ReactNode } from 'react';
 import {
   MACHINES,
   byProject,
+  liveCount,
   projectRoot,
   sessionsOf,
   type FleetMachine,
   type FleetSession,
 } from './fleet';
-import { PencilIcon } from '../components/icons';
-import { Button, MachineMark } from '../components/ui';
+import { ChevronIcon, PencilIcon } from '../components/icons';
+import { Button, MachineBanner, MachineGap, MachineMark, MachineRail } from '../components/ui';
 import { assignMachineColors, machineColor } from '../lib/machine-colors';
 
 /** The states each proposal is photographed in; the gallery registers these. */
@@ -39,10 +40,26 @@ export const PROJECT_STATES: Record<string, string[]> = {
 
 /* -------------------------------------------------------------------- atoms */
 
-const BAND = 'px-3 py-1.5 font-mono text-chip uppercase tracking-[0.08em]';
+/* Every class string below is LIFTED from the screen it belongs to, never
+   approximated: the list, its menus and its rows come from `SessionsScreen`, the
+   panel header and the switch from `SettingsScreen`, the field from `ui.tsx`'s
+   `Input`, and the machine chrome is the app's OWN `MachineBanner`, `MachineRail`
+   and `MachineMark` rather than a look-alike. A proposal drawn in classes this
+   app does not use is a proposal about a different app. */
+
+/** `SessionsScreen`'s menu heading; amber only when it names the unskippable question. */
+const BAND = 'px-3 py-2 font-mono text-chip uppercase tracking-[0.08em]';
 const LOUD_BAND = 'border-b-2 border-warn-strong bg-accent font-bold text-accent-foreground';
 const QUIET_BAND = 'border-b border-dialog-edge bg-panel-2 text-dialog-hint';
-const ROW = 'flex min-h-11 items-center gap-2 border-b border-dialog-edge px-3 py-2 text-left';
+/** `StartOption`: one menu row — a 44px thumb target with a hairline under it. */
+const ROW =
+  'flex min-h-11 w-full items-start gap-2 border-b border-dialog-edge px-3 py-2 text-left';
+/** The badge a row hangs on its right edge, exactly as `StartOption` draws it. */
+const CHIP =
+  'mt-0.5 shrink-0 border border-edge px-1 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint';
+/** `ui.tsx`'s `Input`, in the focused state a caret implies. */
+const FIELD =
+  'min-h-7 min-w-0 flex-1 rounded-none border border-accent bg-input px-2.5 py-0.5 font-mono text-meta text-white ring-1 ring-accent/30';
 
 function Caret() {
   return (
@@ -54,18 +71,22 @@ function Caret() {
 }
 
 // The mark is IDENTITY, not liveness: `MachineMark` wears the hue the shipped list
-// gives this machine on its scope chip and its rail, and `not answering` is the word
-// that carries the state. A green/grey dot in the same slot means something else.
+// gives this machine on its scope chip and its rail, and `offline` is the word that
+// carries the state. A green/grey dot in the same slot means something else.
 const MACHINE_COLORS = assignMachineColors(MACHINES.map((machine) => machine.id));
+const machineHue = (machine: FleetMachine) => machineColor(MACHINE_COLORS, machine.id);
 
-function MachineName({ machine, className = '' }: { machine: FleetMachine; className?: string }) {
-  return (
-    <span className={`inline-flex min-w-0 items-center gap-1.5 ${className}`}>
-      <MachineMark color={machineColor(MACHINE_COLORS, machine.id)} />
-      <span className="truncate">{machine.label}</span>
-    </span>
-  );
-}
+/** A session's status is one table in `SessionsScreen`: a tone and a dot, together. */
+const STATUS_TONE: Record<FleetSession['status'], string> = {
+  LIVE: 'text-ok',
+  WAITING: 'text-warn-strong',
+  IDLE: 'text-dialog-hint',
+};
+const STATUS_DOT: Record<FleetSession['status'], string> = {
+  LIVE: 'animate-pulse bg-ok motion-reduce:animate-none',
+  WAITING: 'bg-warn-strong',
+  IDLE: 'border border-dialog-hint',
+};
 
 /**
  * The shipped kebab is frameless INK at a 44px tap target — `min-h-11 … px-3`,
@@ -76,7 +97,7 @@ function KebabButton({ label, open = false }: { label: string; open?: boolean })
   return (
     <span
       aria-label={label}
-      className={`inline-flex min-h-11 shrink-0 items-center justify-center px-3 font-mono text-ui ${
+      className={`flex min-h-11 shrink-0 items-center justify-center px-3 font-mono text-ui ${
         open ? 'bg-hover text-white' : 'text-dialog-hint'
       }`}
     >
@@ -85,12 +106,12 @@ function KebabButton({ label, open = false }: { label: string; open?: boolean })
   );
 }
 
-/** The app's own switch: a mono ON/OFF block, never an iOS sliding knob. */
+/** The app's own switch (`SettingsScreen`): a mono ON/OFF block, never a sliding knob. */
 function Toggle({ on }: { on: boolean }) {
   return (
     <span
       aria-hidden="true"
-      className={`inline-flex h-8 w-[3.25rem] shrink-0 items-center justify-center border border-transparent font-mono text-chip font-black tracking-[0.08em] ${
+      className={`mt-0.5 inline-flex h-8 w-[3.25rem] shrink-0 items-center justify-center border border-transparent font-mono text-chip font-black tracking-[0.08em] ${
         on ? 'bg-accent text-accent-foreground' : 'bg-panel-2 text-dialog-hint'
       }`}
     >
@@ -99,106 +120,143 @@ function Toggle({ on }: { on: boolean }) {
   );
 }
 
-/** One tappable answer: title, one line of consequence, an optional badge. */
-function Item({
-  title,
-  hint,
-  badge,
-  tone = 'plain',
-}: {
-  title: ReactNode;
-  hint?: ReactNode;
-  badge?: ReactNode;
-  tone?: 'plain' | 'muted' | 'accent';
-}) {
+/**
+ * One tappable answer: title, one line of consequence, an optional badge. This is
+ * `StartOption` verbatim — and every row of a menu is one, so nothing in a menu is
+ * tinted, dimmed or emphasised into looking like a different KIND of answer.
+ */
+function Item({ title, hint, badge }: { title: ReactNode; hint?: ReactNode; badge?: ReactNode }) {
   return (
-    <div className={`${ROW} ${tone === 'muted' ? 'opacity-55' : ''}`}>
+    <div className={ROW}>
       <span className="min-w-0 flex-1">
-        <span
-          className={`block truncate font-mono text-ui font-bold ${
-            tone === 'accent' ? 'text-accent-ink' : 'text-white'
-          }`}
-        >
-          {title}
-        </span>
-        {hint && (
-          <span className="mt-0.5 block truncate font-mono text-meta text-dialog-hint">{hint}</span>
-        )}
+        <span className="block truncate font-mono text-ui font-bold text-white">{title}</span>
+        {hint && <span className="mt-0.5 block font-mono text-meta text-dialog-hint">{hint}</span>}
       </span>
-      {badge && (
-        <span className="shrink-0 border border-edge px-1 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-          {badge}
-        </span>
-      )}
+      {badge && <span className={CHIP}>{badge}</span>}
+    </div>
+  );
+}
+
+/** `SettingsPanel`'s header: the accent is a 2px tick beside the name, not a filled band. */
+function SettingsBand({ title }: { title: string }) {
+  return (
+    <div className="flex min-h-8 items-center gap-3 border-b border-dialog-edge bg-panel-2 px-3 py-1.5">
+      <h3 className="min-w-0 truncate border-l-2 border-accent pl-2 font-mono text-meta font-black uppercase tracking-[0.12em] text-white">
+        {title}
+      </h3>
     </div>
   );
 }
 /* ------------------------------------------------------------- the list */
 
+/** The panel the sessions list lives in, flush under the app header as on a phone. */
 function Screen({ children }: { children: ReactNode }) {
   return (
-    <div className="relative flex h-full min-h-[42rem] flex-col overflow-hidden bg-panel">
+    <div className="relative flex h-full min-h-[42rem] flex-col overflow-hidden border-b border-dialog-edge bg-panel">
       {children}
     </div>
   );
 }
 
+/**
+ * The counts line is the shipped one: every fact is a WHOLE nowrap unit and the
+ * groups are separated by space, so a wrap can never strand a `·` at the end of a
+ * line. Scoped to one machine the machine count is gone — the title says it.
+ */
 function FleetBar({
   action,
   title = 'Fleet',
-  subtitle = '3 machines · 5 projects · 813 sessions',
+  machines = 3,
+  projects = 5,
+  sessions = 813,
 }: {
   action?: ReactNode;
   title?: string;
-  subtitle?: string;
+  machines?: number;
+  projects?: number;
+  sessions?: number;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
-      <span className="min-w-0">
-        <span className="block font-mono text-body font-bold text-white">{title}</span>
-        <span className="mt-0.5 block font-mono text-chip text-dialog-hint">{subtitle}</span>
-      </span>
-      {action}
+    <div className="bg-panel-2 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate font-mono text-body font-bold text-white">{title}</p>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-meta text-dialog-hint">
+            {machines > 1 && <span className="whitespace-nowrap">{machines} machines</span>}
+            <span className="whitespace-nowrap">
+              {projects} projects
+              <span className="px-1 opacity-40">·</span>
+              {sessions} sessions
+            </span>
+          </p>
+        </div>
+        {action}
+      </div>
     </div>
   );
 }
 
 function FilterBar() {
   return (
-    <div className="flex min-h-10 items-center gap-2 border-b border-dialog-edge bg-panel px-3">
+    <div className="flex min-h-10 items-center border-y border-dialog-edge bg-panel px-3">
       <span className="shrink-0 font-mono text-ui text-accent-ink">›</span>
-      <span className="font-mono text-meta text-dialog-hint">Filter title, project, session</span>
-    </div>
-  );
-}
-
-function SessionRow({ session }: { session: FleetSession }) {
-  return (
-    <div className="flex items-start gap-2 border-b border-dialog-edge px-3 py-2">
-      <span className="font-mono text-ui text-accent-ink opacity-40" aria-hidden="true">
-        ›
+      <span className="min-w-0 flex-1 px-2 py-2 font-mono text-ui text-dialog-hint">
+        Filter title, project, session
       </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate font-mono text-ui font-semibold text-white">
-          {session.title}
-        </span>
-        <span className="mt-0.5 block truncate font-mono text-chip text-dialog-hint">
-          {session.id.slice(-6)} · {session.turns} turns · {session.ago}
-        </span>
-      </span>
-      {session.status === 'LIVE' && (
-        <span className="shrink-0 font-mono text-chip font-bold tracking-[0.08em] text-ok">
-          LIVE
-        </span>
-      )}
     </div>
   );
 }
 
 /**
- * The shipped list, with every row's actions supplied by the proposal. A machine
- * that is not answering shows why instead of its projects — a design is only
- * reviewable next to the machine it cannot start a session on.
+ * A session row, at the shipped geometry: a `w-8` disclosure column that opens the
+ * usage rollup, a `min-h-14` body, the status as a dot AND a word, and the facts
+ * line with the time pushed to the right edge. Rows are separated by their own
+ * `[&+&]` rule, so the last row of a project does not draw one.
+ */
+function SessionRow({ session }: { session: FleetSession }) {
+  return (
+    <div className="[&+&]:border-t [&+&]:border-dialog-edge">
+      <div className="flex items-stretch">
+        <span
+          aria-hidden="true"
+          className="flex w-8 shrink-0 items-start justify-center pt-2.5 font-mono text-body text-accent-ink opacity-40"
+        >
+          ›
+        </span>
+        <span className="flex min-h-14 min-w-0 flex-1 items-start py-2.5 pl-2 pr-3 text-left">
+          <span className="min-w-0 flex-1">
+            <span className="flex min-w-0 items-start justify-between gap-3">
+              <span className="block min-w-0 truncate font-mono text-ui font-semibold text-white">
+                {session.title}
+              </span>
+              <span
+                className={`inline-flex shrink-0 items-center gap-1 font-mono text-chip font-bold tracking-[0.08em] ${STATUS_TONE[session.status]}`}
+              >
+                <span className={`size-1.5 ${STATUS_DOT[session.status]}`} />
+                {session.status}
+              </span>
+            </span>
+            <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-chip text-dialog-hint">
+              <span className="text-white/55">{session.id.slice(-6)}</span>
+              <span className="opacity-40" aria-hidden="true">
+                ·
+              </span>
+              <span>{session.turns} turns</span>
+              <span className="ml-auto shrink-0 pl-2">{session.ago}</span>
+            </span>
+          </span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The shipped list, with every row's actions supplied by the proposal: the app's
+ * own `MachineGap` between machines, its `MachineRail` down everything one machine
+ * owns, its `MachineBanner` on top and its project header inside. A machine that is
+ * not answering says `offline` and offers a Retry — a design is only reviewable
+ * next to the machine it cannot start a session on.
  */
 function FleetList({
   header,
@@ -208,7 +266,12 @@ function FleetList({
   machines = MACHINES,
   withMachineHeader = true,
 }: {
-  header?: { title: string; subtitle: string };
+  header?: {
+    title: string;
+    machines?: number;
+    projects: number;
+    sessions: number;
+  };
   headerAction?: ReactNode;
   machineAction?: (machine: FleetMachine) => ReactNode;
   projectAction?: (project: string) => ReactNode;
@@ -218,56 +281,101 @@ function FleetList({
 }) {
   return (
     <>
-      <FleetBar action={headerAction} title={header?.title} subtitle={header?.subtitle} />
+      {/* Solo cannot lie about the fleet: with the machine chrome off, the bar counts
+          ONE machine — which is exactly the count `FleetBar` then refuses to print. */}
+      <FleetBar
+        action={headerAction}
+        {...header}
+        machines={withMachineHeader ? header?.machines : 1}
+      />
       <FilterBar />
-      {machines.map((machine) => {
-        const projects = byProject(sessionsOf(machine.id));
-        const dead = machine.state !== 'online';
-        return (
-          <div key={machine.id} className="relative">
-            {withMachineHeader && (
-              <div
-                className={`flex items-center justify-between gap-2 border-b border-dialog-edge bg-panel-2 pl-3 pr-2 ${
-                  machineAction ? 'py-1' : 'py-1.5'
-                }`}
-              >
-                <MachineName
-                  machine={machine}
-                  className={`font-mono text-chip font-bold uppercase tracking-[0.08em] ${
-                    dead ? 'text-dialog-hint' : 'text-white'
-                  }`}
-                />
-                <span className="flex items-center gap-2">
-                  <span className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-                    {dead ? 'not answering' : `${projects.length} projects`}
-                  </span>
-                  {machineAction?.(machine)}
-                </span>
-              </div>
-            )}
-            {dead
-              ? null
-              : projects.map(([project, sessions]) => (
-                  <div key={project}>
-                    <div className="flex items-center gap-2 border-b border-dialog-edge pl-3 pr-2 py-2">
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-mono text-ui font-bold text-white">
-                          {project}
-                        </span>
-                        <span className="mt-0.5 block truncate font-mono text-chip text-dialog-hint">
-                          {projectRoot(sessions)} · {sessions.length * 8} sessions
-                        </span>
+      <div className="border-t border-dialog-edge">
+        {machines.map((machine, index) => {
+          const projects = byProject(sessionsOf(machine.id));
+          const dead = machine.state !== 'online';
+          return (
+            <section key={machine.id}>
+              {withMachineHeader && index > 0 && <MachineGap />}
+              <MachineRail color={withMachineHeader ? machineHue(machine) : undefined}>
+                {withMachineHeader && (
+                  <MachineBanner>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <MachineMark color={machineHue(machine)} />
+                      <span className="truncate font-mono text-ui font-bold text-white">
+                        {machine.label}
                       </span>
-                      {projectAction?.(project)}
-                    </div>
-                    {sessions.slice(0, 2).map((session) => (
-                      <SessionRow key={session.id} session={session} />
-                    ))}
-                  </div>
-                ))}
-          </div>
-        );
-      })}
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2 font-mono text-chip text-dialog-hint">
+                      {dead ? (
+                        <>
+                          <span>offline</span>
+                          <span className="border border-edge px-1.5 py-0.5">Retry</span>
+                        </>
+                      ) : (
+                        <span>
+                          {projects.length} {projects.length === 1 ? 'project' : 'projects'}
+                        </span>
+                      )}
+                      {machineAction?.(machine)}
+                    </span>
+                  </MachineBanner>
+                )}
+                {dead ? (
+                  <p className="px-3 py-3 font-mono text-meta text-dialog-hint">
+                    This machine is not answering.
+                  </p>
+                ) : (
+                  projects.map(([project, sessions]) => {
+                    const live = liveCount(sessions);
+                    return (
+                      <section
+                        key={project}
+                        className="border-t border-dialog-edge first:border-t-0"
+                      >
+                        <header className="flex items-stretch bg-panel-2">
+                          <span className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2 text-left">
+                            <span className="flex min-w-0 items-center gap-2">
+                              <ChevronIcon open className="size-3.5 text-dialog-hint" />
+                              <span className="min-w-0">
+                                <span className="block truncate font-mono text-ui font-bold text-white">
+                                  {project}
+                                </span>
+                                <span className="mt-0.5 block truncate font-mono text-chip text-dialog-hint">
+                                  {projectRoot(sessions)}
+                                </span>
+                              </span>
+                            </span>
+                            <span className="flex shrink-0 items-center gap-2 font-mono text-chip text-dialog-hint">
+                              <span>{sessions.length * 8} sessions</span>
+                              {live > 0 && (
+                                <>
+                                  <span className="opacity-40" aria-hidden="true">
+                                    ·
+                                  </span>
+                                  <span className="inline-flex items-center gap-1 font-bold text-ok">
+                                    <span className="size-1.5 animate-pulse bg-ok motion-reduce:animate-none" />
+                                    {live} live
+                                  </span>
+                                </>
+                              )}
+                            </span>
+                          </span>
+                          {projectAction?.(project)}
+                        </header>
+                        <div className="border-t border-dialog-edge">
+                          {sessions.slice(0, 2).map((session) => (
+                            <SessionRow key={session.id} session={session} />
+                          ))}
+                        </div>
+                      </section>
+                    );
+                  })
+                )}
+              </MachineRail>
+            </section>
+          );
+        })}
+      </div>
     </>
   );
 }
@@ -326,8 +434,8 @@ function MachineMenu({ label, withDraft = true }: { label: string; withDraft?: b
           hint="a private copy of vis, uncommitted work included"
         />
       )}
-      <Item title="Switch project…" hint="browse this machine's files" tone="accent" />
-      <Item title="Machine settings" hint="name, pairing, unpair" tone="muted" />
+      <Item title="Switch project…" hint="browse this machine's files" />
+      <Item title="Machine settings" hint="name, pairing, unpair" />
     </Sheet>
   );
 }
@@ -403,7 +511,7 @@ function Crumbs({ trail, action }: { trail: string[]; action?: ReactNode }) {
 function PathField() {
   return (
     <div className="flex items-center gap-2 border-b border-dialog-edge bg-panel px-3 py-1">
-      <span className="min-h-7 min-w-0 flex-1 border border-accent bg-input px-2.5 py-0.5 font-mono text-meta text-white ring-1 ring-accent/30">
+      <span className={FIELD}>
         ~/vis/apps/vis-c
         <span className="text-dialog-hint">ompanion</span>
         <Caret />
@@ -416,26 +524,17 @@ function PathField() {
 function FolderRow({ entry, dim = false }: { entry: Entry; dim?: boolean }) {
   return (
     <div className={`${ROW} ${dim ? 'opacity-40' : ''}`}>
-      <span aria-hidden="true" className="shrink-0 font-mono text-ui text-accent-ink">
-        ▸
-      </span>
+      <ChevronIcon className="mt-0.5 size-3.5 shrink-0 text-dialog-hint" />
       <span className="min-w-0 flex-1">
         <span className="block truncate font-mono text-ui text-white">{entry.name}/</span>
         <span className="mt-0.5 block truncate font-mono text-meta text-dialog-hint">
           {entry.meta}
         </span>
       </span>
-      {entry.badge && (
-        <span
-          className={`shrink-0 border px-1 font-mono text-chip uppercase tracking-[0.08em] ${
-            entry.badge === 'project'
-              ? 'border-accent text-accent-ink'
-              : 'border-edge text-dialog-hint'
-          }`}
-        >
-          {entry.badge}
-        </span>
-      )}
+      {/* One badge look in the whole app (`StartOption`'s): the WORD says whether this
+          is a repo or a folder Vis already knows, exactly as `offline` does upstairs.
+          A second, accent-bordered chip would spend the amber twice on one surface. */}
+      {entry.badge && <span className={CHIP}>{entry.badge}</span>}
     </div>
   );
 }
@@ -484,7 +583,7 @@ function SwitchSheet({ mode }: { mode: 'browse' | 'typed' | 'new-folder' }) {
           <PathField />
           <p className={`${BAND} ${QUIET_BAND}`}>2 matches</p>
           <Item title="~/vis/apps/vis-companion" hint="128 entries · main" badge="git" />
-          <Item title="~/vis/apps/vis-companion/ios" hint="generated · not a repo" tone="muted" />
+          <Item title="~/vis/apps/vis-companion/ios" hint="generated · not a repo" />
           <p className={`${BAND} ${QUIET_BAND}`}>already known here</p>
           <Item title="~/vis" hint="128 sessions" badge="project" />
           <Item title="~/tree-sitter-clojure" hint="8 sessions" badge="project" />
@@ -495,7 +594,7 @@ function SwitchSheet({ mode }: { mode: 'browse' | 'typed' | 'new-folder' }) {
           {creating && (
             <div className="flex items-center gap-2 border-b border-dialog-edge bg-panel px-3 py-1.5">
               <span className="shrink-0 font-mono text-ui text-accent-ink">+</span>
-              <span className="min-h-7 min-w-0 flex-1 border border-accent bg-input px-2.5 py-0.5 font-mono text-meta text-white ring-1 ring-accent/30">
+              <span className={FIELD}>
                 band-repaint
                 <Caret />
               </span>
@@ -541,8 +640,7 @@ export function SessionFlowVariant({ state }: { state: string }) {
   if (state === 'settings') {
     return (
       <Screen>
-        <div className={`${BAND} ${QUIET_BAND}`}>settings</div>
-        <div className={`${BAND} ${QUIET_BAND}`}>sessions</div>
+        <SettingsBand title="Sessions" />
         <SettingsRow
           title="Offer drafts"
           hint="Ask whether a session runs in the project or in a private copy of it."
@@ -553,7 +651,7 @@ export function SessionFlowVariant({ state }: { state: string }) {
           hint="A new session skips the picker when the machine has an obvious answer."
           on={false}
         />
-        <div className={`${BAND} ${QUIET_BAND}`}>appearance</div>
+        <SettingsBand title="Appearance" />
         <SettingsRow title="Theme" hint="Follow the system" />
         <SettingsRow title="Notifications" hint="A turn finished while the app was closed" />
         <p className="px-3 py-2 font-mono text-meta text-dialog-hint">
@@ -570,7 +668,7 @@ export function SessionFlowVariant({ state }: { state: string }) {
         <FleetList
           machines={MACHINES.slice(0, 1)}
           withMachineHeader={false}
-          header={{ title: 'studio-mbp', subtitle: '3 projects · 214 sessions' }}
+          header={{ title: 'studio-mbp', projects: 3, sessions: 214 }}
           headerAction={<KebabButton label="Actions for studio-mbp" open />}
           projectAction={PROJECT_ACTION}
         />
