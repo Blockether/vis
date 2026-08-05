@@ -1021,13 +1021,14 @@ export function Header({
             VIS
           </span>
         </div>
-        {/* The desktop tabs sit at the LEFT, next to the wordmark, because they are
-            navigation and navigation belongs where the eye starts a row — `mx-auto`
-            floated them into the middle of a 1400px header, miles from the logo they
-            belong to and miles from the cog they are read with. The cog keeps its own
-            `ml-auto`, so the row is: brand · nav ……… settings. */}
+        {/* The desktop tabs sit at the RIGHT, grouped with the cog, so the header is a
+            wordmark at one edge and every control you can press at the other; `mx-auto`
+            floated them in the middle of a 1400px header, tied to neither. Exactly one
+            element may claim the free space: the nav takes it at `sm:` and the cog then
+            follows it (`sm:ml-0`), while below the breakpoint the nav is `hidden` and
+            the cog's own `ml-auto` holds the edge. Two auto margins would split it. */}
         <nav
-          className="ml-4 hidden h-full items-stretch sm:ml-6 sm:flex"
+          className="hidden h-full items-stretch sm:ml-auto sm:flex"
           aria-label="Primary navigation"
         >
           {(hasConn
@@ -1054,7 +1055,7 @@ export function Header({
             content edge of everything below it. */}
         <button
           type="button"
-          className="-mr-3 ml-auto grid min-h-12 min-w-12 place-items-center text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent sm:-mr-4"
+          className="-mr-3 ml-auto grid min-h-12 min-w-12 place-items-center text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent sm:-mr-4 sm:ml-0"
           onClick={onAppSettings}
           aria-label="Open application settings"
         >

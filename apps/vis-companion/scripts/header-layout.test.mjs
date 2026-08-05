@@ -4,12 +4,12 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-// The desktop header reads left to right: brand, then where you can GO, then the
-// cog pinned to the far edge. `mx-auto` on the primary nav centred the Sessions
-// and Machines tabs in a 1400px header, so on a desktop window they floated in
-// the middle of the bar, detached from the wordmark they belong to. Navigation
-// starts where the row starts; only the settings cog is allowed to claim the
-// remaining space with `ml-auto`.
+// The desktop header reads: brand at the far left, then a long quiet stretch, then
+// the two controls you actually reach for — the Sessions/Machines tabs and the cog —
+// grouped together at the right edge. `mx-auto` centred the tabs in a 1400px header,
+// so they floated in the middle of the bar, tied to nothing. Only ONE element may
+// claim the free space: the nav takes it on desktop (`sm:ml-auto`, cog follows it),
+// and the cog takes it below the breakpoint where the nav is not rendered at all.
 
 const app = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'App.tsx'),
@@ -34,11 +34,10 @@ export function classes(tag) {
 describe('desktop header', () => {
   const nav = classes(openingTag(app, 'Primary navigation'));
 
-  it('keeps the Sessions and Machines tabs at the left, beside the wordmark', () => {
+  it('pushes the Sessions and Machines tabs to the right, beside the cog', () => {
     expect(nav).not.toContain('mx-auto');
-    expect(nav).not.toContain('ml-auto');
     expect(nav.some((token) => /^(sm:|mouse:)?justify-center$/.test(token))).toBe(false);
-    expect(nav.some((token) => /^(sm:|mouse:)?ml-\d/.test(token))).toBe(true);
+    expect(nav).toContain('sm:ml-auto');
   });
 
   it('still hides that nav below the desktop breakpoint', () => {
@@ -46,7 +45,12 @@ describe('desktop header', () => {
     expect(nav).toContain('sm:flex');
   });
 
-  it('leaves the settings cog as the only control that claims the free space', () => {
-    expect(classes(openingTag(app, 'Open application settings'))).toContain('ml-auto');
+  it('hands the free space to the nav on desktop and to the cog without it', () => {
+    const cog = classes(openingTag(app, 'Open application settings'));
+    // Below `sm:` the nav is `hidden`, so its auto margin collapses and the cog is the
+    // only thing left to hold the right edge; at `sm:` the nav has already taken the
+    // space and the cog must sit flush against it instead of splitting it in two.
+    expect(cog).toContain('ml-auto');
+    expect(cog).toContain('sm:ml-0');
   });
 });
