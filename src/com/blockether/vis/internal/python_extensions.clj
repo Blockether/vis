@@ -846,16 +846,26 @@
 (def ^:private provider-enum-keys
   #{:provider-id :id :source :status :kind :scope :precision :api-style :unit})
 
+(def ^:private verbatim-is-keys
+  "Boolean keys the HOST schema itself spells `is-<foo>`, kept VERBATIM instead of
+   taking the `:<foo>?` convention.
+
+   `is-authenticated` is the shared connection verdict (wire, dot, status dialog,
+   routing). `is-unlimited` is required by `provider-limits/::limit-row`, the
+   schema behind the TUI footer's live usage line — renaming it to `:unlimited?`
+   made EVERY Python `limits-fn` report fail validation, so the footer only ever
+   said `limits: error`."
+  #{"is-authenticated" "is-unlimited"})
+
 (defn- py-key->kw
   "A Python provider-map key -> Clojure keyword. Underscores become dashes, and a
    boolean-predicate `is_foo` / `is-foo` becomes the Clojure `:foo?` convention
    (Python identifiers can't carry the trailing `?`, so `is_default` -> `:default?`,
-   etc.). A bare `is` / `is_` is left as-is. The ONE exception is `is_authenticated`:
-   it is the shared connection-verdict key, kept VERBATIM as `:is-authenticated`
-   end-to-end (wire, dot, status dialog, routing) — never `:authenticated?`."
+   etc.). A bare `is` / `is_` is left as-is. The exceptions are `verbatim-is-keys`,
+   the `is-<foo>` names the host's own schemas require end-to-end."
   [k]
   (let [s (str/replace (str k) "_" "-")]
-    (cond (= s "is-authenticated") :is-authenticated
+    (cond (verbatim-is-keys s) (keyword s)
           (and (str/starts-with? s "is-") (> (count s) 3)) (keyword (str (subs s 3) "?"))
           :else (keyword s))))
 

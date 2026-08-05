@@ -13,6 +13,8 @@
             [com.blockether.vis.internal.human-input :as human-input]
             [com.blockether.vis.internal.persistance :as ps]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
+            [com.blockether.vis.internal.provider-limits :as provider-limits]
+            [com.blockether.vis.internal.limits-format :as limits-format]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.python-extensions :as pyx]
@@ -898,8 +900,11 @@ def _logout():
 
 def _limits():
     return {'provider_id': 'acme', 'status': 'ok',
-            'dynamic': {'limits': [{'id': 'acme-daily', 'kind': 'tokens',
-                                    'used': 10.0, 'limit': 100.0}]}}
+            'dynamic': {'limits': [{'id': 'acme-daily', 'label': 'Daily tokens',
+                                    'scope': 'account', 'kind': 'tokens',
+                                    'precision': 'exact', 'source': 'provider-api',
+                                    'is_unlimited': False,
+                                    'used': 25.49, 'limit': 100.0}]}}
 
 
 # Strict 0-param refresh: the runtime calls (f rejected-token); the adapter
@@ -1939,3 +1944,33 @@ vis.extension(
                      (get res "bad_validator")))
           (expect (str/includes? (get res "not_a_validator")
                                  "validate is a function, or a list of functions")))))))
+
+;; Regression, issue #118: a Python provider could never publish live account
+;; usage. Its `limits_fn` row came back with `:unlimited?` instead of the host
+;; schema's `:is-unlimited`, so every row failed `::limit-row`, the whole report
+;; was replaced by an invalid-report error, and the TUI footer showed
+;; "limits: error (Provider limits fn returned an invalid report)".
+(defdescribe python-provider-limits-test
+             (it "a Python limits_fn yields a valid report the footer can render"
+                 (with-loaded {"acme.py" provider-py}
+                              (fn [_ _]
+                                (provider-limits/flush-limits-cache!)
+                                (let
+                                  [report
+                                   (provider-limits/provider-limits :acme)
+
+                                   row
+                                   (first (get-in report [:dynamic :limits]))]
+
+                                  (expect (= :ok (:status report)))
+                                  (expect (nil? (:error report)))
+                                  ;; the host-schema boolean survives the Python boundary verbatim
+                                  (expect (false? (:is-unlimited row)))
+                                  (expect (nil? (:unlimited? row)))
+                                  (expect (= :account (:scope row)))
+                                  (expect (= :provider-api (:source row)))
+                                  (expect (= 25.49 (:used row)))
+                                  ;; and the footer's own formatter renders it
+                                  (let [summary (limits-format/dynamic-summary report)]
+                                    (expect (some? summary))
+                                    (expect (str/includes? summary "Daily tokens"))))))))

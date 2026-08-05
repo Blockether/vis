@@ -685,6 +685,21 @@ returns `is_authenticated` (Python can't spell the trailing `?`), which the
 runtime consumes as `:is-authenticated`. `vis-agent providers auth/status/limits
 <id>` work against it like any other provider.
 
+Where a slot's output lands differs. `status_fn` answers *am I connected*: the host
+reads `is_authenticated` (plus an optional `error`) for the provider dot and for
+routing, and any extra key you return is shown in the status dialog only. **Live
+quota is a different slot** — only `limits_fn` feeds the TUI footer's usage line.
+It returns `{"provider_id": ..., "status": "ok", "dynamic": {"limits": [row, ...]}}`,
+and every row must carry `id`, `label`, `scope` (`account` / `plan` / `workspace` /
+`model`), `kind` (`requests` / `tokens` / `usd` / `credits` / `sessions` / `rate`),
+`precision` (`exact` / `estimate` / `derived` / `unknown`), `source` (`provider-api` /
+`derived` / `static` / `local`) and `is_unlimited`; `used`, `limit`, `remaining`,
+`subject`, `note` and `window` (`{"kind": "calendar"|"rolling"|"lifetime", "unit":
+..., "size": N, "resets_at_ms": ...}`) are optional. `is_authenticated` and
+`is_unlimited` are the two keys kept **verbatim** — every other `is_<name>` still
+becomes `:<name>?`. One missing required key invalidates the whole report and the
+footer renders `limits: error`, so check yours with `vis-agent providers limits <id>`.
+
 For an interactive login, give `auth_fn=` a `def login(printer): ...` — the runtime
 hands it a `printer(line)` callback to emit instructions, and its return signals
 the outcome (`"ok"` / `"already-authenticated"` = silent success; anything else
