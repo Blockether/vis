@@ -283,7 +283,7 @@ function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
         <div className="min-w-0 flex-1 truncate font-mono text-ui text-dialog-hint-key">
           {name}
         </div>
-        <Button variant="ghost" className="py-2" onClick={onClose} autoFocus>
+        <Button variant="ghost" onClick={onClose} autoFocus>
           Close
         </Button>
       </header>
@@ -328,7 +328,6 @@ function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
           >
             <Button
               variant="ghost"
-              className="py-2"
               onClick={() => zoomBy(1 / 1.35)}
               aria-label="Zoom out"
             >
@@ -336,7 +335,7 @@ function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
             </Button>
             <Button
               variant="ghost"
-              className="min-w-14 border-x-0 py-2"
+              className="min-w-14 border-x-0"
               onClick={resetTransform}
               aria-label="Reset zoom"
             >
@@ -344,7 +343,6 @@ function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
             </Button>
             <Button
               variant="ghost"
-              className="py-2"
               onClick={() => zoomBy(1.35)}
               aria-label="Zoom in"
             >
@@ -354,7 +352,6 @@ function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
 
           <Button
             variant={drawing ? 'solid' : 'ghost'}
-            className="py-2"
             onClick={() => {
               resetTransform();
               setDrawing((current) => !current);
@@ -368,7 +365,6 @@ function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
           <div className="ml-auto flex shrink-0 items-center gap-2">
             <Button
               variant="ghost"
-              className="py-2"
               onClick={() =>
                 run('copy', 'Could not copy image', (blob) =>
                   copyImage(blob, name),
@@ -382,7 +378,6 @@ function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
                 back into the message, THAT is the primary action and sharing steps down. */}
             <Button
               variant={onApply ? 'ghost' : 'solid'}
-              className="py-2"
               onClick={() =>
                 run('share', 'Could not share image', (blob) =>
                   shareImage(blob, name),
@@ -395,7 +390,6 @@ function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
             {onApply && (
               <Button
                 variant="solid"
-                className="py-2"
                 onClick={() =>
                   // Hand the drawn-on picture back to whoever opened the viewer. The
                   // caller owns the slot it came from, so an annotated attachment

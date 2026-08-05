@@ -204,7 +204,6 @@ export function PenToolbar({
       ))}
       <Button
         variant="ghost"
-        className="py-2"
         onClick={onUndo}
         disabled={!strokeCount}
       >
@@ -212,7 +211,6 @@ export function PenToolbar({
       </Button>
       <Button
         variant="ghost"
-        className="py-2"
         onClick={onClear}
         disabled={!strokeCount}
       >
