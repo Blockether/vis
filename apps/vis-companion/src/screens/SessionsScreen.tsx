@@ -263,8 +263,8 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
   // Forking asks for the draft's name first: the gateway rejects a blank label, and
   // the name is what `/draft list` and every later resume will show.
   const namePrompt = startFlow.step === 'name' ? startFlow : null;
-  // The control the open order hangs from — the fleet bar's `⋯` or one machine's own.
-  // It is an element and not a ref, because every machine header carries the control.
+  // The control the open order hangs from — a machine header's `⋯`, or the solo
+  // fleet bar's. It is an element, not a ref, because every header carries one.
   const startAnchorEl = useRef<HTMLElement | null>(null);
   // Drafts are an expert move, off by default: with the switch off "New session" is
   // one verb and the private-copy question is never asked. See Settings.
@@ -751,9 +751,9 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
   }, []);
 
   /**
-   * Open the machine's menu under the control that was tapped — the fleet bar's `⋯`
-   * or one machine header's own. Passing `on` ANSWERS which machine at the same time,
-   * because a header can only ever mean its own gateway.
+   * Open the machine's menu under the control that was tapped — a machine header's
+   * `⋯`, or the solo fleet bar's. Passing `on` ANSWERS which machine at the same
+   * time, because a header can only ever mean its own gateway.
    */
   const openStartMenuAt = useCallback(
     (anchor: HTMLElement | null, on: GatewayConn | null = null) => {
@@ -1129,35 +1129,23 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                 )}
               </p>
             </div>
-            {/* SPLIT control: one button, two jobs. The wide half stays the plain new
-                session it always was — the common path never grows a click — and the
-                caret half is where the workspace question lives, so starting in a draft
-                stops being a TUI-only slash command. With several machines in scope
-                there is no workspace question yet, because there is no MACHINE yet:
-                both halves then open the same chooser, and picking a machine creates
-                the session there. Scope one machine in the strip and the tap goes
-                straight through again.
-
-                Everything a machine can do lives behind ONE control, so the bar does
-                not grow a verb per feature: `⋯` opens it, and with several machines
-                paired it asks WHICH machine before it offers anything at all.
-
-                Two kebabs can be on screen at once, so only the one the menu is
-                actually hanging from may report itself expanded: this one owns it
-                while the machine question is still open, and whenever the machine
-                headers (and their own kebabs) are absent. */}
+            {/* With several machines paired each header carries its own `⋯`, so the
+                fleet bar grows one ONLY for a solo machine — there the bar IS the
+                machine, and its `⋯` is the only control on the screen. */}
             <div className="flex shrink-0 items-center gap-2">
               {createBusy && (
                 <span aria-live="polite" className="font-mono text-chip text-dialog-hint">
                   {createBusyLabel}
                 </span>
               )}
-              <MachineKebab
-                label={scopeTarget ? machineLabel(scopeTarget) : 'this fleet'}
-                open={startMenu !== null && (!target || !showMachineHeaders)}
-                disabled={createBusy || machines.length === 0 || !!scopeMachine?.error}
-                onOpen={(anchor) => (startMenu ? leaveStart(true) : openStartMenuAt(anchor))}
-              />
+              {!showMachineHeaders && (
+                <MachineKebab
+                  label={scopeTarget ? machineLabel(scopeTarget) : 'this fleet'}
+                  open={startMenu !== null}
+                  disabled={createBusy || machines.length === 0 || !!scopeMachine?.error}
+                  onOpen={(anchor) => (startMenu ? leaveStart(true) : openStartMenuAt(anchor))}
+                />
+              )}
             </div>
           </div>
           {createError && (
