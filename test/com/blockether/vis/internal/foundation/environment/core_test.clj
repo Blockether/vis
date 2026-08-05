@@ -53,7 +53,10 @@
                    (expect (contains? syms 'repositories))
                    (expect (contains? syms 'languages))
                    (expect (contains? syms 'monorepo))
-                   (expect (contains? syms 'refresh!))
+                   ;; `refresh!` is HOST-ONLY: dropping the env snapshot and
+                   ;; rescanning the tree is the user's `/reload`, never
+                   ;; something the model can call from `python_execution`.
+                   (expect (not (contains? syms 'refresh!)))
                    (expect (not (contains? syms 'render)))
                    (expect (contains? syms 'main-agent-instructions))
                    (expect (not (contains? syms 'load-skill!)))
@@ -62,6 +65,11 @@
                    (expect (not (contains? syms 'scan-warnings)))
                    (expect (not (contains? syms 'reload-instructions!)))
                    (expect (not (contains? syms 'reload-extensions!)))))
+             ;; `/reload` is the ONLY refresh path left: the hook registration is
+             ;; what replaces the removed sandbox symbol, so a user who reshapes
+             ;; the tree still gets a fresh scan without the model reloading.
+             (it "registers its refresh as a `/reload` hook"
+                 (expect (= ::env-core/environment-refresh @#'env-core/_environment-reload-hook)))
              (it "provides foundation environment info through ctx"
                  (let [ctx (env-core/environment-ctx {})]
                    (expect (contains? ctx :project))
@@ -110,11 +118,14 @@
                      (expect (:success? envelope) (str sym " envelope must succeed"))
                      (expect (map? view) (str sym " must return a dict"))
                      (expect (every? string? (keys view)) (str sym " top-level keys")))))
-             (it "spells refresh() keys the way its docstring promises"
-                 (let [view (symbol-view 'refresh!)]
-                   (expect (= #{"host" "git" "languages" "monorepo" "repositories"}
-                              (set (keys view))))
-                   (expect (string? (get-in view ["host" "os_name"])))
-                   (expect (contains? (get view "languages") "total_files"))
-                   (expect (contains? (get view "languages") "is_truncated"))
-                   (expect (contains? (get view "repositories") "count")))))
+             (it "spells its keys the way the docstrings promise"
+                 (let
+                   [languages
+                    (symbol-view 'languages)
+
+                    repositories
+                    (symbol-view 'repositories)]
+
+                   (expect (contains? languages "total_files"))
+                   (expect (contains? languages "is_truncated"))
+                   (expect (contains? repositories "count")))))

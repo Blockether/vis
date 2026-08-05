@@ -67,18 +67,18 @@
                   [(:ext/id ext) f])))
         (extensions)))
 
-;; Regression, issue #115: `refresh()`, `repositories()`, `languages()`,
-;; `monorepo()` and `main_agent_instructions()` all handed Python their RAW
-;; keyword-keyed engine snapshot, so every one of them raised "STRINGS-ONLY
-;; boundary violation: non-string-key :host at the TOP-LEVEL map key" instead of
-;; returning the string-keyed dict their docstrings promised.
+;; Regression, issue #115: `repositories()`, `languages()`, `monorepo()` and
+;; `main_agent_instructions()` all handed Python their RAW keyword-keyed engine
+;; snapshot, so every one of them raised "STRINGS-ONLY boundary violation:
+;; non-string-key :host at the TOP-LEVEL map key" instead of returning the
+;; string-keyed dict their docstrings promised.
 (defdescribe
   tool-surface-boundary-test
   (it "reaches a real registry, so a green run is never vacuous"
       (let [syms (readable-symbols)]
-        (expect (<= 5 (count syms)) "the registry must expose at least the environment symbols")
-        (expect (contains? (set (map (comp str :ext.symbol/symbol second) syms)) "refresh!")
-                "issue #115's own symbol must be among the probed ones")
+        (expect (<= 4 (count syms)) "the registry must expose at least the environment symbols")
+        (expect (contains? (set (map (comp str :ext.symbol/symbol second) syms)) "repositories")
+                "issue #115's own symbols must be among the probed ones")
         (expect (seq (ctx-fns)) "at least one extension contributes ctx")))
   (it "hands Python string-keyed payloads for every no-arg observation tool"
       (doseq [[ext e] (readable-symbols)]

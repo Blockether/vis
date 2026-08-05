@@ -12,11 +12,12 @@
 
    Model-facing VCS/workspace truth lives in `session[\"workspace\"]`.
    Remaining helpers cover coarse project shape (`languages`,
-   `monorepo`, `repositories`) and cache invalidation (`refresh!`).
+   `monorepo`, `repositories`).
 
    Runtime facts are computed lazily on first access and cached per
    working-directory. The cache is invalidated automatically when
-   `cwd` changes between calls and explicitly by `(refresh!)`."
+   `cwd` changes between calls, and explicitly by the HOST-ONLY
+   `refresh!` — which `/reload` runs and the sandbox cannot call."
   (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.environment.agents :as agents]
             [com.blockether.vis.internal.foundation.environment.git :as git]
@@ -111,8 +112,13 @@
         value))))
 
 (defn refresh!
-  "await refresh()
-Drop the cached env snapshot and recompute. Returns the fresh snapshot. Use after large tree/branch changes."
+  "Drop the cached env snapshot, forget the repository inventory, rescan project
+   guidance, and return the fresh snapshot.
+
+   HOST-ONLY, deliberately NOT a `v/` symbol: refreshing the environment is a
+   USER action. It is registered as a `/reload` hook below, and nothing running
+   inside `python_execution` can reach it — the sandbox reads the snapshot
+   through `repositories()` / `languages()` / `monorepo()`, it never reloads."
   []
   (reset! cache {:key nil :value nil})
   (repositories/refresh-inventory!)
@@ -120,6 +126,13 @@ Drop the cached env snapshot and recompute. Returns the fresh snapshot. Use afte
        (catch Throwable t
          (tel/log! {:level :warn :id ::agents-reload-failed :data {:error (ex-message t)}})))
   (snapshot))
+
+;; `/reload` — and only `/reload` — refreshes the environment. The snapshot is
+;; cached per cwd, so a user who reshapes the tree and reloads must not keep
+;; reading a stale scan. `defonce` keeps the registration idempotent across
+;; `(require ... :reload)`.
+(defonce ^:private _environment-reload-hook
+  (extension/register-reload-hook! ::environment-refresh refresh!))
 
 ;; ---------------------------------------------------------------------------
 ;; Extension definition.
@@ -186,12 +199,6 @@ Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": 
   []
   (success-envelope (monorepo)))
 
-(defn- refresh!-tool
-  "await refresh()
-Drop the cached env snapshot and recompute. Returns the fresh snapshot {\"host\", \"git\", \"languages\", \"monorepo\", \"repositories\"} - the same payloads git()/languages()/monorepo()/repositories() return."
-  []
-  (success-envelope (refresh!)))
-
 (defn- env-data-symbol
   "Register an explicit envelope-returning tool var under a stable `v/` name.
    The public helper vars above stay plain Clojure functions for host callers;
@@ -207,8 +214,6 @@ Drop the cached env snapshot and recompute. Returns the fresh snapshot {\"host\"
 (def languages-symbol (env-data-symbol #'languages-tool 'languages))
 
 (def monorepo-symbol (env-data-symbol #'monorepo-tool 'monorepo))
-
-(def refresh!-symbol (env-data-symbol #'refresh!-tool 'refresh!))
 
 ;; ---------------------------------------------------------------------------
 ;; Project guidance surface.
@@ -236,8 +241,7 @@ Returns {\"is_found\": True, \"source\", \"path\", \"bytes\": N, \"content\", \"
   (env-data-symbol #'main-agent-instructions-tool 'main-agent-instructions))
 
 (def environment-symbols
-  [repositories-symbol languages-symbol monorepo-symbol refresh!-symbol
-   main-agent-instructions-symbol])
+  [repositories-symbol languages-symbol monorepo-symbol main-agent-instructions-symbol])
 
 (defn environment-ctx
   "Foundation-owned structured ctx contribution. Runtime facts, project
