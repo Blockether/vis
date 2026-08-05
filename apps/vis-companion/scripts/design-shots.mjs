@@ -30,6 +30,24 @@ const VIEWPORTS = {
   desktop: { width: 1280, height: 900 },
 };
 
+/** `1728x3720` -> a viewport, so a proposal can name a size the presets do not have. */
+function parseViewport(spec) {
+  const match = /^(\d+)x(\d+)$/.exec(spec);
+  if (!match) {
+    throw new Error(`unknown viewport: ${spec} (have ${Object.keys(VIEWPORTS)}, or WIDTHxHEIGHT)`);
+  }
+  return { width: Number(match[1]), height: Number(match[2]) };
+}
+
+/**
+ * A proposal that only exists at one size says so in the registry, and that wins
+ * over the sweep: a comparison board shot at 390px is a column of clipped cards.
+ */
+const viewportsOf = (shot, names) =>
+  shot.viewport
+    ? [[shot.viewport, parseViewport(shot.viewport)]]
+    : names.map((name) => [name, VIEWPORTS[name] ?? parseViewport(name)]);
+
 function parseArgs(argv) {
   const args = {
     out: '/tmp/vis-ui',
@@ -48,7 +66,7 @@ function parseArgs(argv) {
     else throw new Error(`unknown flag: ${flag}`);
   }
   for (const name of args.viewports) {
-    if (!VIEWPORTS[name]) throw new Error(`unknown viewport: ${name} (have ${Object.keys(VIEWPORTS)})`);
+    if (!VIEWPORTS[name]) parseViewport(name);
   }
   for (const theme of args.themes) {
     if (theme !== 'light' && theme !== 'dark') throw new Error(`unknown theme: ${theme}`);
@@ -118,8 +136,7 @@ async function main() {
     if (shots.length === 0) throw new Error(`no proposals matched --only ${args.only}`);
     for (const shot of shots) {
       for (const theme of args.themes) {
-        for (const name of args.viewports) {
-          const { width, height } = VIEWPORTS[name];
+        for (const [name, { width, height }] of viewportsOf(shot, args.viewports)) {
           const path = join(args.out, `${shot.id}-${shot.state}-${theme}-${name}.png`);
           const url = `${server.url}/#/__design?v=${shot.id}&state=${shot.state}&theme=${theme}`;
           // One navigation per shot: the gallery reads the hash at mount, and the

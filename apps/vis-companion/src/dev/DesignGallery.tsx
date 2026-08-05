@@ -49,6 +49,14 @@ import {
   StartSheetVariant,
   StartShippedVariant,
 } from './startVariants';
+import {
+  DraftOfferVariant,
+  DraftsToggleVariant,
+  PROJECT_STATES,
+  PlaceNewSessionVariant,
+  SessionUxBoardVariant,
+  SwitchProjectVariant,
+} from './projectVariants';
 
 // Registered last so the four machine-separation proposals sit together in the index.
 
@@ -59,6 +67,12 @@ export interface DesignVariant {
   blurb: string;
   /** Named states worth their own screenshot (menu open, machine offline, ...). */
   states: string[];
+  /**
+   * `WIDTHxHEIGHT` when this proposal is only itself at one size — a comparison
+   * board photographed at 390px is a column of clipped thumbnails. The page owns
+   * the matrix, so it owns the viewport too.
+   */
+  viewport?: string;
   render: (state: string) => React.JSX.Element;
 }
 
@@ -299,6 +313,47 @@ export const DESIGN_VARIANTS: DesignVariant[] = [
     states: HUMAN_INPUT_STATES,
     render: (state) => <HumanInputSheetVariant state={state} />,
   },
+  {
+    id: 'session-ux-board',
+    title: 'Board · Machine, project, draft — every open question at once',
+    blurb:
+      'The deliverable: A–D where New session lives, E–G how a draft is offered, H–J the Switch-project sheet, K–L where the drafts switch belongs. One picture, one letter per answer.',
+    states: PROJECT_STATES['session-ux-board'],
+    viewport: '1728x3720',
+    render: () => <SessionUxBoardVariant />,
+  },
+  {
+    id: 'place-new-session',
+    title: 'Machine · Where “New session” lives',
+    blurb:
+      'A machine owns its projects, so the machine header — not a dialog — is where a session on that machine begins: a labelled button, an overflow entry, or a + on every row.',
+    states: PROJECT_STATES['place-new-session'],
+    render: (state) => <PlaceNewSessionVariant state={state} />,
+  },
+  {
+    id: 'draft-offer',
+    title: 'Machine · How a draft is offered',
+    blurb:
+      'With “Offer drafts” off the fork is never a question; with it on it is one chip row inside the destination sheet, or a second verb in the machine menu.',
+    states: PROJECT_STATES['draft-offer'],
+    render: (state) => <DraftOfferVariant state={state} />,
+  },
+  {
+    id: 'switch-project',
+    title: 'Machine · Switch project (bottom sheet)',
+    blurb:
+      'A real browser of that machine’s filesystem: down into any folder, back up through the path, above ~ to /, and a new folder created and chosen without a second dialog.',
+    states: PROJECT_STATES['switch-project'],
+    render: (state) => <SwitchProjectVariant state={state} />,
+  },
+  {
+    id: 'drafts-toggle',
+    title: 'Settings · Where “Offer drafts” belongs',
+    blurb:
+      'One switch for this device and every machine on it, or one per gateway that travels with the machine and can disagree with the machine beside it.',
+    states: PROJECT_STATES['drafts-toggle'],
+    render: (state) => <DraftsToggleVariant state={state} />,
+  },
 ];
 
 const noop = () => {};
@@ -341,11 +396,11 @@ function useShotReady() {
     let cancelled = false;
     const flags = window as unknown as {
       __designReady?: boolean;
-      __designShots?: { id: string; state: string }[];
+      __designShots?: { id: string; state: string; viewport?: string }[];
     };
     // The gallery, not the capture script, owns what exists to photograph.
     flags.__designShots = DESIGN_VARIANTS.flatMap((entry) =>
-      entry.states.map((state) => ({ id: entry.id, state })),
+      entry.states.map((state) => ({ id: entry.id, state, viewport: entry.viewport })),
     );
     const ready = () => {
       if (cancelled) return;
