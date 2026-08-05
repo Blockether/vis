@@ -136,7 +136,7 @@
   ;; `java.desktop` itself is still loaded, and that is FINE: mic capture uses
   ;; `javax.sound.sampled` (the JDK's only microphone API), while next.jdbc's
   ;; `clojure.java.data` uses `java.beans.Introspector`.
-  com.blockether/imaging {:mvn/version "0.1.8"}
+  com.blockether/imaging {:mvn/version "0.1.9"}
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
   com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.39"}

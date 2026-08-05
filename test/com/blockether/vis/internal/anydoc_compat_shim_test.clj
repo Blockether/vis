@@ -202,15 +202,122 @@
 
 ;; --- search: one document, a few, or a directory of many, with citations ---
 
-(def ^:private march-docx-bytes
-  "Three lines mention March; one of them only inside the word `Marching`."
-  (delay (im/docx {:blocks [{:type :heading :level 1 :text "Quarterly Report"}
-                            {:type :paragraph :text "January was quiet."}
-                            {:type :paragraph :text "March broke the record."}
-                            {:type :paragraph :text "Marching orders arrived."}
-                            {:type :paragraph :text "April cooled off, but March still leads."}]})))
+(defn- py
+  "Python source from lines — the sandbox programs below read like Python."
+  [& lines]
+  (str/join "\n" lines))
+
+(def ^:private report-docx-bytes
+  "One document carrying every shape a citation has to address, and every trap
+   the flat line-grep used to fall into: a word wearing emphasis, emphasis
+   INSIDE a word, a ligature, a decomposed accent, a curly apostrophe, a
+   non-breaking space, an eszett and a table."
+  (delay (im/docx {:blocks
+                   [{:type :heading :level 1 :text "Quarterly Report"}
+                    {:type :heading :level 2 :text "Revenue"}
+                    {:type :paragraph
+                     :runs [{:text "Revenue in "} {:text "March" :bold true} {:text " 2024 rose."}]}
+                    {:type :paragraph
+                     :runs [{:text "The "} {:text "mar" :italic true} {:text "ket closed early."}]}
+                    {:type :paragraph :text "It was the most e\ufb03cient month in Zu\u0308rich."}
+                    {:type :paragraph :text "We don\u2019t expect payments before March\u00a02024."}
+                    {:type :heading :level 2 :text "Regions"}
+                    {:type :paragraph :text "Marching orders arrived from Hauptstra\u00dfe."}
+                    {:type :table
+                     :header true
+                     :rows [{:cells [{:text "Month"} {:text "Revenue"}]}
+                            {:cells [{:text "March"} {:text "12.4"}]}
+                            {:cells [{:text "April"} {:text "9.1"}]}]}]})))
 
 (def ^:private march-csv-bytes (delay (.getBytes "month,revenue\nMarch,1200\nApril,900\n" "UTF-8")))
+
+(defn- pdf-bytes
+  "The smallest real PDF that carries text: one uncompressed content stream per
+   page, Helvetica, a correct xref. Handwritten because nothing here WRITES
+   PDFs and page provenance can only be proved against a document with pages."
+  ^bytes [pages]
+  (let
+    [n
+     (count pages)
+
+     page-ids
+     (mapv #(+ 3 (* 2 (long %))) (range n))
+
+     cont-ids
+     (mapv #(+ 4 (* 2 (long %))) (range n))
+
+     font-id
+     (+ 3 (* 2 n))
+
+     stream
+     (fn [lines]
+       (str "BT /F1 12 Tf 72 720 Td 16 TL\n"
+            (str/join "\n"
+                      (for [l lines]
+                        (str "(" (str/escape l {\\ "\\\\" \( "\\(" \) "\\)"}) ") Tj T*")))
+            "\nET"))
+
+     objs
+     (into (sorted-map)
+           (concat [[1 "<< /Type /Catalog /Pages 2 0 R >>"]
+                    [2
+                     (str "<< /Type /Pages /Kids ["
+                          (str/join " " (map #(str % " 0 R") page-ids))
+                          "] /Count "
+                          n
+                          " >>")]
+                    [font-id "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]]
+                   (for [i (range n)]
+                     [(page-ids i)
+                      (str "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents "
+                           (cont-ids i)
+                           " 0 R /Resources << /Font << /F1 "
+                           font-id
+                           " 0 R >> >> >>")])
+                   (for
+                     [i
+                      (range n)
+
+                      :let [s
+                            (stream (nth pages i))]]
+
+                     [(cont-ids i) (str "<< /Length " (count s) " >>\nstream\n" s "\nendstream")])))
+
+     out
+     (java.io.ByteArrayOutputStream.)
+
+     put!
+     (fn [^String s]
+       (.write out (.getBytes s "ISO-8859-1")))
+
+     _
+     (put! "%PDF-1.4\n")
+
+     offsets
+     (reduce (fn [acc [num body]]
+               (let [at (.size out)]
+                 (put! (str num " 0 obj\n" body "\nendobj\n"))
+                 (assoc acc num at)))
+             {}
+             objs)
+
+     xref-at
+     (.size out)
+
+     size
+     (inc (long (apply max (keys objs))))]
+
+    (put! (str "xref\n0 " size "\n0000000000 65535 f \n"))
+    (doseq [num (range 1 size)]
+      (put! (if-let [at (offsets num)]
+              (format "%010d 00000 n \n" at)
+              "0000000000 65535 f \n")))
+    (put! (str "trailer\n<< /Size " size " /Root 1 0 R >>\nstartxref\n" xref-at "\n%%EOF\n"))
+    (.toByteArray out)))
+
+(def ^:private report-pdf-bytes
+  (delay (pdf-bytes [["Quarterly Report" "Total quarterly" "revenue rose sharply."]
+                     ["Regional Detail" "April was quieter than March."]])))
 
 (defn- corpus
   "A directory of real documents on disk that the sandbox is allowed to open."
@@ -221,106 +328,222 @@
     dir))
 
 (defdescribe
-  anydoc-search-one-test
-  (it "cites the document id, the line a hit starts on and that line's own text"
-      (let [dir (corpus {"report.docx" @march-docx-bytes})]
-        (with-fs-context
-          dir
-          (expect (= [3 true "March" "docx" true true "March" true true true]
-                     (ev python-context
-                         (str "import anydoc\n"
-                              "path = '" dir
-                              "/report.docx'\n" "doc = anydoc.read(path)\n"
-                              "hits = doc.search('March')\n" "first = hits[0]\n"
-                              "lines = doc.markdown.split('\\n')\n" "[len(hits),\n"
-                              " first.document_id == doc.id == path,\n" " first.query,\n"
-                              " first.format,\n" " lines[first.line - 1] == first.text,\n"
-                              " first.text[first.column - 1:].startswith('March'),\n"
-                              " doc.markdown[first.offset:first.offset + 5],\n"
-                              " 'March broke the record.' in first.text,\n"
-                              " [c.line for c in hits] == sorted(c.line for c in hits),\n"
-                              " str(first) == '%s:%d: %s' % (first.document_id, first.line,"
-                              " first.text)]")))))))
-  (it "answers the question it was asked: whole words, patterns, caps, context"
-      (let [dir (corpus {"report.docx" @march-docx-bytes})]
+  anydoc-citation-test
+  (it
+    "addresses a hit the way a human quotes it: section, line, column, passage"
+    (let [dir (corpus {"report.docx" @report-docx-bytes})]
+      (with-fs-context
+        dir
+        (expect
+          (= [true "Revenue" "Revenue" true "Revenue" ["Quarterly Report" "Revenue"] "paragraph"
+              "**Revenue** in March 2024 rose." true true]
+             (ev
+               python-context
+               (py
+                 "import anydoc"
+                 (str "doc = anydoc.read('" dir "/report.docx')")
+                 ;; The best hit is the passage that answers the WHOLE
+                 ;; query, not the boosted heading that answers half.
+                 "hit = doc.search('March revenue')[0]"
+                 "line = doc.text.split('\\n')[hit.line - 1]" "[hit.document_id == doc.id,"
+                 " hit.match," " doc.text[hit.offset:hit.end],"
+                 " line[hit.column - 1:].startswith(hit.match)," " hit.section,"
+                 " list(hit.path)," " hit.block_kind,"
+                 " hit.highlight," " hit.snippet in line,"
+                 " str(hit).startswith(doc.id + ' line %d \\u203a Quarterly Report \\u203a Revenue'"
+                 "                     % hit.line)]")))))))
+  (it "cites the PAGE a PDF hit is printed on"
+      (let [dir (corpus {"report.pdf" @report-pdf-bytes})]
         (with-fs-context dir
-                         (expect (= [3 2 3 0 1 2 1 [1 1] false]
+                         (expect (= [2 2 true "pdf"]
                                     (ev python-context
-                                        (str "import anydoc\n"
-                                             "doc = anydoc.read('"
-                                             dir
-                                             "/report.docx')\n"
-                                             "near = doc.search('March', context=1)[0]\n"
-                                             "[len(doc.search('March')),\n"
-                                             " len(doc.search('March', whole_word=True)),\n"
-                                             " len(doc.search('march')),\n"
-                                             " len(doc.search('march', ignore_case=False)),\n"
-                                             " len(doc.search(r'Marc\\w+ orders', regex=True)),\n"
-                                             " len(doc.search(['January', 'April'])),\n"
-                                             " len(doc.search('March', limit=1)),\n"
-                                             " [len(near.before), len(near.after)],\n"
-                                             " bool(doc.search('nothing at all in here'))]"))))))))
+                                        (py "import anydoc"
+                                            (str "doc = anydoc.read('" dir "/report.pdf')")
+                                            "hit = doc.search('April')[0]"
+                                            "[doc.pages," " hit.page,"
+                                            " hit.location.startswith('p.2')," " hit.format]")))))))
+  (it "quotes a table hit by its own column"
+      (let [dir (corpus {"report.docx" @report-docx-bytes})]
+        (with-fs-context dir
+                         (expect (= ["table-row" "Month" "March"]
+                                    (ev python-context
+                                        (py "import anydoc"
+                                            (str "doc = anydoc.read('" dir "/report.docx')")
+                                            "hit = doc.search('table:March')[0]"
+                                            "[hit.block_kind, hit.cell.name, hit.cell.text]"))))))))
 
 (defdescribe
-  anydoc-search-many-test
-  (it "searches a whole directory and keeps a corpus that has one broken file in it"
+  anydoc-matching-test
+  (it "finds what a human would call a hit, not what a regex would"
+      (let [dir (corpus {"report.docx" @report-docx-bytes})]
+        (with-fs-context
+          dir
+          (expect
+            (= [2 1 1 1 1 1 1 1 1]
+               (ev python-context
+                   (py "import anydoc" (str "doc = anydoc.read('" dir "/report.docx')")
+                       "n = lambda q, **kw: len(doc.search(q, **kw))" "[n('\\\"March 2024\\\"'),"
+                       " n('market')," " n('efficient'),"
+                       " n('Z\u00fcrich')," " n(\"don't\"),"
+                       " n('HAUPTSTRASSE')," " n('payment'),"
+                       " n('Marching', whole_word=True)," " n('\\\"QUARTERLY REPORT\\\"')]")))))))
+  (it "still refuses what is genuinely not there, and says what it looked for"
+      (let [dir (corpus {"report.docx" @report-docx-bytes})]
+        (with-fs-context dir
+                         (expect (= [0 0 ["march"] 0 true]
+                                    (ev python-context
+                                        (py "import anydoc"
+                                            (str "doc = anydoc.read('" dir "/report.docx')")
+                                            "typo = doc.search('Marhc')" "[len(typo),"
+                                            " len(doc.search('march', ignore_case=False)),"
+                                            " typo.suggestions.get('marhc'),"
+                                            " len(doc.search('\\\"nothing at all in here\\\"')),"
+                                            " 'no hit for' in typo.explain()]"))))))))
+
+(defdescribe
+  anydoc-query-language-test
+  (it "reads a real query: phrases, +/-, NEAR, prefixes, kinds, regex, sections"
+      (let [dir (corpus {"report.docx" @report-docx-bytes})]
+        (with-fs-context
+          dir
+          (expect (= [1 0 5 0 0 1 1 1 0]
+                     (ev python-context
+                         (py "import anydoc" (str "doc = anydoc.read('" dir "/report.docx')")
+                             "n = lambda q, **kw: len(doc.search(q, **kw))"
+                             ;; `+`/`-` judge the DOCUMENT, the way Lucene does: a
+                             ;; document missing a required term is not searched at
+                             ;; all, and one carrying an excluded term is dropped
+                             ;; whole - `March -orders` finds nothing HERE because
+                             ;; this document also says `Marching orders`.
+                             "[n('\\\"market closed\\\"'),"
+                             " n('\\\"closed market\\\"')," " n('+March +2024'),"
+                             " n('+March +nowhere')," " n('March -orders'),"
+                             " n('NEAR(revenue rose, 4)')," " n('heading:Revenue'),"
+                             " n('/Marc\\\\w+ orders/')," " n('section:Revenue orders')]")))))))
+  (it "explains a query before a single document is read"
+      (with-fresh-python-context
+        (expect (= [true true true]
+                   (ev python-context
+                       (py "import anydoc"
+                           "text = anydoc.explain_query('\\\"total revenue\\\" +march -draft')"
+                           "[ 'phrase' in text, 'required' in text, 'excluded' in text]"))))))
+  (it "points at the character it choked on and suggests the spelling"
+      (with-fresh-python-context
+        (expect (= [true true true true true]
+                   (ev python-context
+                       (py "import anydoc" "out = []"
+                           "probes = ('', '\\\"unclosed', 'NEAR(a b, x)', '-only', 'page:x foo')"
+                           "for probe in probes:"
+                           "    try:" "        anydoc.explain_query(probe)"
+                           "        out.append(False)" "    except anydoc.QueryError as err:"
+                           "        out.append(isinstance(err, ValueError) and bool(err.message))"
+                           "out")))))))
+
+(defdescribe
+  anydoc-corpus-test
+  (it "searches a directory, ranks the documents and keeps a broken file out of the way"
       (let
-        [dir (corpus {"report.docx" @march-docx-bytes
+        [dir (corpus {"report.docx" @report-docx-bytes
                       "sales.csv" @march-csv-bytes
                       "broken.docx" (.getBytes "not a document at all" "UTF-8")
                       "notes.txt" (.getBytes "March again" "UTF-8")})]
         (with-fs-context
           dir
-          (expect (= [["report.docx" "sales.csv"] ["report.docx" "sales.csv"] ["broken.docx"]
-                      ["csv" "docx"] 4 2 true]
+          (expect (= [["report.docx" "sales.csv"] ["broken.docx"] true ["csv" "docx"] true 2 true]
                      (ev python-context
-                         (str "import anydoc\n"
-                              "found = anydoc.search('March', '"
-                              dir
-                              "')\n"
-                              "names = lambda ids: sorted(i.rsplit('/', 1)[-1] for i in ids)\n"
-                              "[names(found.documents),\n"
-                              " names(found.by_document()),\n"
-                              " names(s['id'] for s in found.skipped),\n"
-                              " sorted({c.format for c in found}),\n" " len(found),\n"
-                              " len(anydoc.search('March', '" dir
-                              "', per_document=1)),\n"
-                              " all(c.line >= 1 and c.match == 'March' for c in found)]")))))))
-  (it "takes the ids the caller chose, a plain list, or raw bytes"
-      (let [dir (corpus {"report.docx" @march-docx-bytes "sales.csv" @march-csv-bytes})]
+                         (py
+                           "import anydoc"
+                           (str "found = anydoc.search('March', '" dir "')")
+                           "names = lambda ids: sorted(i.rsplit('/', 1)[-1] for i in ids)"
+                           "[names(found.documents),"
+                           " names(s.id for s in found.skipped),"
+                           " bool(found.skipped[0].reason),"
+                           " sorted({c.format for c in found}),"
+                           " [score for _, score in found.ranking] == sorted("
+                           "     (score for _, score in found.ranking), reverse=True),"
+                           (str " len(anydoc.search('March', '" dir "', per_document=1)),")
+                           " all(c.line >= 1 and 'march' in c.match.lower() for c in found)]")))))))
+  (it "drops a whole document a NOT term rules out, and keeps the rest"
+      (let [dir (corpus {"report.docx" @report-docx-bytes "sales.csv" @march-csv-bytes})]
         (with-fs-context
           dir
-          (expect
-            (= [["ledger" "report"] ["ledger" "report"] 4 4 "document" true]
-               (ev python-context
-                   (str "import anydoc\n"
-                        "docx = '"
-                        dir
-                        "/report.docx'\n"
-                        "csv = '"
-                        dir
-                        "/sales.csv'\n"
-                        "named = anydoc.search('March', {'report': docx, 'ledger': csv})\n"
-                        "listed = anydoc.search('March', [docx, csv])\n"
-                        "raw = anydoc.search('March', "
-                        (py-bytes (b64 @march-docx-bytes))
-                        ")\n"
-                        "[sorted(named.documents),\n" " sorted({c.document_id for c in named}),\n"
-                        " len(named),\n" " len(listed),\n"
-                        " raw.citations[0].document_id,\n"
-                        " listed.documents[csv].format == 'csv']")))))))
-  (it "refuses a document it was told to read, an empty query and a bogus source"
-      (let [dir (corpus {"report.docx" @march-docx-bytes})]
+          (expect (= [["sales.csv"] 2]
+                     (ev python-context
+                         (py "import anydoc"
+                             (str "kept = anydoc.search('March -orders', '" dir "')")
+                             (str "both = anydoc.search('March', '" dir "')")
+                             "names = lambda ids: sorted(i.rsplit('/', 1)[-1] for i in ids)"
+                             ;; `documents` is everything READ; `ranking` is
+                             ;; what survived the query.
+                             "[names(d for d, _ in kept.ranking), len(both.ranking)]")))))))
+  (it "says so when a limit hid something"
+      (let [dir (corpus {"report.docx" @report-docx-bytes "sales.csv" @march-csv-bytes})]
         (with-fs-context dir
-                         (expect (= [true true true]
-                                    (ev python-context
-                                        (str "import anydoc\n" "out = []\n"
-                                             "probes = (lambda: anydoc.search('March', '" dir
-                                             "/missing.docx'),\n"
-                                             "          lambda: anydoc.search('', b'x'),\n"
-                                             "          lambda: anydoc.search('March', 42))\n"
-                                             "for probe in probes:\n"
-                                             "    try:\n" "        probe()\n"
-                                             "        out.append(False)\n"
-                                             "    except (OSError, ValueError, TypeError) as err:\n"
-                                             "        out.append(bool(str(err)))\n" "out"))))))))
+                         (expect
+                           (= [1 true false true]
+                              (ev python-context
+                                  (py "import anydoc"
+                                      (str "capped = anydoc.search('March', '" dir "', limit=1)")
+                                      (str "whole = anydoc.search('March', '" dir "')")
+                                      "[len(capped)," " capped.is_truncated,"
+                                      " whole.is_truncated,"
+                                      " capped.total_matches == whole.total_matches > 1]")))))))
+  (it "takes the ids the caller chose, a plain list, or bytes the caller named"
+      (let [dir (corpus {"report.docx" @report-docx-bytes "sales.csv" @march-csv-bytes})]
+        (with-fs-context
+          dir
+          (expect (= [["ledger" "report"] ["ledger" "report"] "ledger.csv" true]
+                     (ev python-context
+                         (py "import anydoc"
+                             (str "docx = '" dir "/report.docx'")
+                             (str "csv = '" dir "/sales.csv'")
+                             "named = anydoc.search('March', {'report': docx, 'ledger': csv})"
+                             "listed = anydoc.search('March', [docx, csv])"
+                             ;; Bytes have no name of their own, so a mapping key
+                             ;; lends them one: `ledger.csv` says what they are.
+                             (str "raw = anydoc.search('March', {'ledger.csv': "
+                                  (py-bytes (b64 @march-csv-bytes))
+                                  "})")
+                             "[sorted(named.documents)," " sorted({c.document_id for c in named}),"
+                             " raw.citations[0].document_id,"
+                             " listed.documents[csv].format == 'csv']")))))))
+  (it "converts a corpus once, however many questions it is asked"
+      (let [dir (corpus {"report.docx" @report-docx-bytes "sales.csv" @march-csv-bytes})]
+        (with-fs-context
+          dir
+          (expect (= [2 0 1 1 0]
+                     (ev python-context
+                         (py "import anydoc"
+                             "anydoc.clear_cache()"
+                             (str "first = anydoc.search('March', '" dir "')")
+                             (str "again = anydoc.search('April', '" dir "')")
+                             (str "raw = {'ledger.csv': " (py-bytes (b64 @march-csv-bytes)) "}")
+                             "anydoc.clear_cache()" "anydoc.search('March', raw)"
+                             "one = anydoc.cache_info()" "anydoc.search('April', raw)"
+                             "two = anydoc.cache_info()" "[first.stats['converted'],"
+                             " again.stats['converted']," " one['misses'],"
+                             " two['hits'] - one['hits']," " two['misses'] - one['misses']]"))))))))
+
+(defdescribe anydoc-refusal-test
+             (it "names the document, the source and the format when a document cannot be read"
+                 (let [dir (corpus {"report.docx" @report-docx-bytes})]
+                   (with-fs-context
+                     dir
+                     (expect
+                       (= [true true true "SourceError" true]
+                          (ev python-context
+                              (py "import anydoc" "out = []"
+                                  "try:" (str "    anydoc.search('March', '" dir "/missing.docx')")
+                                  "    out.append(False)" "except OSError as err:"
+                                  "    out.append('missing.docx' in str(err))" "try:"
+                                  "    anydoc.search('March', b'not a document at all')"
+                                  "    out.append(False)"
+                                  "except anydoc.DocumentError as err:"
+                                  "    out.append(bool(err.document_id) and bool(err.message))"
+                                  "try:" "    anydoc.search('', b'x')"
+                                  "    out.append(False)" "except anydoc.QueryError as err:"
+                                  "    out.append(bool(str(err)))" "try:"
+                                  "    anydoc.search('March', 42)" "    out.append('never')"
+                                  "except TypeError as err:" "    out.append(type(err).__name__)"
+                                  "    out.append('not int' in str(err) or 'not 42' in str(err))"
+                                  "out"))))))))

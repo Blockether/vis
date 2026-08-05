@@ -849,8 +849,8 @@ every `sub_loop` fork) and loaded lazily on first import:
 - Data / formats — `numpy`, `pandas`, `yaml`, `toml`, `tabulate`, `sqlite3`,
   `brotli`.
 - HTTP / web — `requests`, `httpx`, `urllib3`, `bs4`.
-- Documents / media — `anydoc` (any document as Markdown, plus a search that
-  cites document and line), `PIL`, `matplotlib`, `pptx`, `xlsxwriter`,
+- Documents / media — `anydoc` (any document as Markdown, and any question about
+  it as citations — see below), `PIL`, `matplotlib`, `pptx`, `xlsxwriter`,
   `fontTools`.
 - Time — `zoneinfo` (604+ zones from `java.time`), `dateutil`.
 - Ops / testing — `paramiko`, `pytest` (the same shim the test runner installs).
@@ -872,6 +872,76 @@ scripting and tests, not a substitute for the real library's every corner. Each
 shim's `:shim/description` names what it does NOT support, and the authoring
 contract lives in [Sandbox shims and autoloads](#sandbox-shims-and-autoloads)
 below — a Clojure-extension capability, since a shim needs host callables.
+
+#### Asking a document a question — `anydoc`
+
+`anydoc` converts anything the native `imaging` cdylib reads (PDF, DOCX, XLSX,
+PPTX, HTML, CSV, EPUB, Markdown, …) and answers questions **about** it with
+citations, so nothing has to paste a 200-page PDF into a context window:
+
+```python
+import anydoc
+
+hits = anydoc.search('"quarterly revenue" +march -draft', "/data/reports")
+for c in hits[:5]:
+    print(c)                       # q1.pdf p.7 line 12 > Revenue > …
+    print(c.snippet, c.page, c.section, c.score)
+print(hits.total_matches, hits.is_truncated, hits.skipped)
+print(hits.explain())              # the parse, the filters, the ranking
+```
+
+Reading is separate from asking: `anydoc.read(path)` gives a `Document`
+(`.markdown .text .blocks .pages .assets .outline()`), `anydoc.to_markdown(…)`
+the Markdown alone, and `doc.search(…)` asks one document you already hold.
+`sources` is a path, a directory (walked), bytes, a `Document`, a list of any of
+those, or a `{id: source}` mapping when the ids — or the names those bytes need
+to be read at all — are yours to choose.
+
+`blocks` are the document's OWN structure, straight from the cdylib: heading,
+paragraph, list item, table row (with its cells), code, note — each carrying its
+page, line, breadcrumb path and character offsets. That is what makes a citation
+possible in a format that has no lines, and what a phrase crosses when it wraps.
+
+**Query language** — `anydoc.explain_query(q)` parses one without reading a file:
+
+| Query | Means |
+| --- | --- |
+| `march revenue` | bare terms, ANY may match, ranked by BM25 |
+| `"quarterly revenue"` | a phrase — crosses line wraps AND table cells |
+| `+march`, `AND march` | the document MUST contain it |
+| `-draft`, `NOT draft` | the document must NOT contain it |
+| `rev*` | prefix |
+| `NEAR(revenue march, 8)` | within 8 words of each other |
+| `/reven[us]e?/` | a regular expression over folded text |
+| `heading:march` | headings only; also `table: list: code: note: paragraph:` |
+| `section:revenue`, `page:3` | filters — under that heading, on that page |
+
+Both the corpus and the query are FOLDED before matching, so `efficient` finds a
+PDF's `ﬁ` ligature, `Zurich` finds `Zürich`, `HAUPTSTRASSE` finds `Hauptstraße`,
+`don't` finds Word's curly apostrophe, `quarterly` finds a `quar-` / `terly`
+hyphen break across two lines, and
+`payments` finds `payment`. `fold=False`, `stem=False`, `ignore_case=False` and
+`whole_word=False` each turn one of those off. `limit` / `per_document` cap what
+is RETURNED and never what is counted (`total_matches`, `is_truncated`),
+`snippet` and `mark=("**", "**")` shape the quote, `context` adds neighbouring
+lines as `.before` / `.after`, and `kinds` / `pages` / `format` / `order` narrow
+without touching the query.
+
+Every hit is a `Citation`: `.document_id .format .page .section .path .line
+.column .offset .end .match .text .snippet .highlight .score .cell .block_kind`.
+
+Refusals are typed and say what to do about it: `QueryError` points at the
+character it choked on, `DocumentError` carries `.document_id` and `.format`,
+`SourceError` rejects something that cannot be a document — all `AnydocError`,
+and each also the builtin (`ValueError` / `TypeError`) a caller would have
+caught anyway. A file merely FOUND under a directory never ends a search: it
+lands in `results.skipped` with its reason. A term nothing matched comes back in
+`results.suggestions` (`{"marhc": ["march"]}`), which is how a typo answers.
+
+Conversions are cached in the host on the content HASH (LRU, byte-budgeted), so
+`doc.search(…)` and a second question about the same corpus convert nothing —
+`anydoc.cache_info()` is the proof (`hits` climbs, `misses` does not) and
+`anydoc.clear_cache()` empties it.
 
 ---
 
