@@ -2373,7 +2373,7 @@ export function SessionScreen({
     return () => window.clearInterval(timer);
   }, [client, sid, voiceModel?.status, voiceSupported]);
 
-  // A dictation of any length overflows the 112px composer, and a PROGRAMMATIC
+  // A dictation of any length overflows the 80px composer, and a PROGRAMMATIC
   // value change never scrolls a textarea to its caret (only real user input
   // does) — so the box keeps showing the FIRST lines of what was just said while
   // the end, the part you are about to keep typing after, sits below the fold.
@@ -3205,7 +3205,9 @@ export function SessionScreen({
       if (textarea.style.height) textarea.style.height = "";
       return;
     }
-    const needed = Math.min(textarea.scrollHeight, 112);
+    // 80px is `max-h-20`, the class's own ceiling: measuring past it only wrote
+    // a height the stylesheet clamps away, every keystroke, forever.
+    const needed = Math.min(textarea.scrollHeight, 80);
     if (needed > textarea.clientHeight + 1) {
       // Content wrapped past the current box — grow (one cheap targeted write).
       textarea.style.height = `${needed}px`;
@@ -3226,7 +3228,7 @@ export function SessionScreen({
       const parkedTop = box ? box.scrollTop : 0;
       const parkedHeight = box ? box.clientHeight : 0;
       textarea.style.height = "auto";
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 112)}px`;
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 80)}px`;
       if (
         box &&
         box.clientHeight === parkedHeight &&
@@ -5035,7 +5037,7 @@ export function SessionScreen({
                 aria-expanded={
                   slashMatches.length > 0 || fileMatches.length > 0
                 }
-                className="h-8 min-h-8 max-h-20 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-ui text-dialog-foreground outline-none placeholder:text-dialog-hint disabled:text-cancelled-foreground mouse:h-7 mouse:min-h-7 mouse:py-[0.4375rem] mouse:text-meta"
+                className="h-8 min-h-8 max-h-20 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-ui text-dialog-foreground outline-none placeholder:text-dialog-hint disabled:text-cancelled-foreground mouse:h-7 mouse:min-h-7 mouse:py-1.5 mouse:text-meta"
                 onPaste={handlePaste}
                 onFocus={handleComposerFocus}
                 onSelect={(event) =>

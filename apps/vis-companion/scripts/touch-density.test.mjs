@@ -189,3 +189,106 @@ describe('type scale', () => {
     expect(overridesLeading('<p className="text-chip tracking-wider" />')).toEqual([]);
   });
 });
+
+// A control that pins its own HEIGHT has to fit its own type step: the step owns
+// the line-height, so `h-7` (28px) with `py-[0.4375rem]` (14px) leaves 14px of
+// content box for a 16px line box and the single line the composer holds is
+// scrolled 2px out of its own field — and the autosizer, seeing scrollHeight 30
+// against clientHeight 28, then jumped the box on the first keystroke. Padding
+// is still not policed for hit boxes; it is policed HERE, because height minus
+// padding is what the text actually gets.
+
+/** Every `className` list in the file. Deliberately narrower than `literals`:
+ *  this check resolves a control's box, so it must not read prose or a `class`
+ *  fragment out of an unrelated string. */
+export function classLists(source) {
+  return [
+    ...source.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\}|\{'([^']*)'\})/g),
+  ].map((match) => match[1] ?? match[2] ?? match[3] ?? '');
+}
+
+/** A vertical Tailwind magnitude in px, or null when it carries none. */
+const pixels = (raw) => {
+  const arbitrary = /^\[(\d+(?:\.\d+)?)(px|rem)\]$/.exec(raw);
+  if (arbitrary) return Number(arbitrary[1]) * (arbitrary[2] === 'px' ? 1 : 16);
+  return /^\d+(?:\.\d+)?$/.test(raw) ? Number(raw) * 4 : null;
+};
+
+/** The box a class list declares at one breakpoint: base utilities, then the
+ *  variant's own overrides on top (`null` reads the base alone). */
+function box(tokens, variant) {
+  const seen = {};
+  for (const token of tokens) {
+    const colon = token.lastIndexOf(':');
+    if (colon >= 0 && token.slice(0, colon) !== variant) continue;
+    const utility = token.slice(colon + 1);
+    if (textScale.includes(utility)) seen.step = utility;
+    const box = /^(h|py|pt|pb|p)-(.+)$/.exec(utility);
+    if (box) seen[box[1]] = box[2];
+  }
+  return seen;
+}
+
+/** Every fixed-height control whose own line box does not fit inside it. */
+export function clipsItsLineBox(source, steps) {
+  const lineBox = new Map(steps.map(({ name, lineHeight }) => [name, lineHeight]));
+  const found = [];
+  for (const list of classLists(source)) {
+    const tokens = list.split(/\s+|\$\{[^}]*\}/).filter(Boolean);
+    const variants = new Set([null]);
+    for (const token of tokens) {
+      const colon = token.lastIndexOf(':');
+      if (colon >= 0) variants.add(token.slice(0, colon));
+    }
+    for (const variant of variants) {
+      const at = { ...box(tokens, null), ...(variant ? box(tokens, variant) : {}) };
+      const height = at.h === undefined ? null : pixels(at.h);
+      const line = lineBox.get(at.step);
+      if (height === null || !line) continue;
+      const pad =
+        (at.py !== undefined ? (pixels(at.py) ?? 0) * 2 : (at.p !== undefined ? (pixels(at.p) ?? 0) * 2 : 0)) +
+        (pixels(at.pt ?? '') ?? 0) +
+        (pixels(at.pb ?? '') ?? 0);
+      if (height - pad < line) {
+        found.push(
+          `${variant ? `${variant}:` : ''}h-${at.h} with ${pad}px padding leaves ${height - pad}px for a ${line}px ${at.step} line`,
+        );
+      }
+    }
+  }
+  return found;
+}
+
+describe('fixed-height controls', () => {
+  it('never pins a height that clips its own line box', () => {
+    const steps = typeSteps(readFileSync(join(src, 'index.css'), 'utf8'));
+    const offenders = sourceFiles(src).flatMap((file) =>
+      clipsItsLineBox(readFileSync(file, 'utf8'), steps).map(
+        (detail) => `${file.slice(src.length + 1)}: ${detail}`,
+      ),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('measures the composer the browser reported clipped', () => {
+    const steps = typeSteps(readFileSync(join(src, 'index.css'), 'utf8'));
+    // Measured in Chromium at 1280x900 with a fine pointer: clientHeight 28,
+    // scrollHeight 30.
+    expect(
+      clipsItsLineBox(
+        '<textarea className="h-8 py-2 text-ui mouse:h-7 mouse:py-[0.4375rem] mouse:text-meta" />',
+        steps,
+      ),
+    ).toEqual(['mouse:h-7 with 14px padding leaves 14px for a 16px text-meta line']);
+    expect(
+      clipsItsLineBox(
+        '<textarea className="h-8 py-2 text-ui mouse:h-7 mouse:py-1.5 mouse:text-meta" />',
+        steps,
+      ),
+    ).toEqual([]);
+    // A box that sets no height of its own, or none of ours, is not this test's
+    // business.
+    expect(clipsItsLineBox('<p className="min-h-7 py-2 text-ui" />', steps)).toEqual([]);
+    expect(clipsItsLineBox('<p className="h-4 text-[9px]" />', steps)).toEqual([]);
+  });
+});
