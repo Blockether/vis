@@ -1526,10 +1526,45 @@
         (extra-root-entries ws)))
 
 
+(defn- file-lines
+  "Text lines of `f`, or `[]` when it does not exist. Never throws — a binary
+   or unreadable file degrades to an empty line-set, so its diff stat comes out
+   0/0 instead of blowing up the whole apply."
+  [^File f]
+  (try (if (.exists f) (str/split-lines (slurp f)) []) (catch Exception _ [])))
+
+(defn- line-diff-counts
+  "Approximate `+insertions -deletions` between two line sequences via a
+   multiset (bag) intersection: every line the new side shares with the old
+   side counts once as UNCHANGED, whatever survives on each side is the
+   edit. Cheaper than an LCS/Myers diff and close enough for a summary —
+   this is a landed-file count for a human, not a rendered patch."
+  [old-lines new-lines]
+  (let
+    [freq
+     (atom (frequencies old-lines))
+
+     common
+     (atom 0)]
+
+    (doseq [line new-lines]
+      (when (pos? (long (clojure.core/get @freq line 0)))
+        (swap! freq update line dec)
+        (swap! common inc)))
+    {:insertions (- (count new-lines) (long @common))
+     :deletions (- (count old-lines) (long @common))}))
+
+(defn- diff-stats
+  "`{:insertions :deletions}` landing `new-file`'s content over `old-file`'s —
+   either side may be absent (add/delete)."
+  [^File old-file ^File new-file]
+  (line-diff-counts (file-lines old-file) (file-lines new-file)))
+
 (defn- land-clone!
   "Copy one clone tree's since-fork edits + deletions into its `trunk`,
    tagging each change with the `trunk` it landed under (so a multi-root
-   apply is unambiguous). Returns a vec of `{:status :path :root}`."
+   apply is unambiguous). Returns a vec of `{:status :path :root :insertions
+   :deletions}`."
   [clone trunk fork-ms]
   (let
     [edits
@@ -1542,17 +1577,27 @@
                 (io/file trunk path)
 
                 status
-                (if (.exists dst) :modify :add)]
+                (if (.exists dst) :modify :add)
+
+                stats
+                (diff-stats dst src)]
 
                (io/make-parents dst)
                (Files/copy (.toPath src) (.toPath dst) copy-opts)
-               {:status status :path path :root trunk}))
+               (merge {:status status :path path :root trunk} stats)))
            (changed-paths clone fork-ms))
 
      deletes
      (mapv (fn [path]
-             (.delete (io/file trunk path))
-             {:status :delete :path path :root trunk})
+             (let
+               [dst
+                (io/file trunk path)
+
+                stats
+                {:insertions 0 :deletions (count (file-lines dst))}]
+
+               (.delete dst)
+               (merge {:status :delete :path path :root trunk} stats)))
            (deleted-paths clone trunk fork-ms))]
 
     (into edits deletes)))

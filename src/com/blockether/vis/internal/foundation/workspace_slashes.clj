@@ -58,19 +58,47 @@
   ws)
 
 (defn- change-line
-  [{:keys [status path]}]
-  (str (case status
-         :add
-         "+ "
+  "One `git diff --stat`-flavored row: a glyph for the kind of change, the
+   path, and (when known) how many lines moved — `+12 -3` for a modify,
+   `+42` for an add, `-17` for a delete. Rendered inside a fenced code block
+   by the caller so it stays monospaced and never word-wraps a path."
+  [{:keys [status path insertions deletions]}]
+  (let
+    [glyph
+     (case status
+       :add
+       "+ "
 
-         :modify
-         "~ "
+       :modify
+       "~ "
 
-         :delete
-         "- "
+       :delete
+       "- "
 
-         "  ")
-       path))
+       "  ")
+
+     stat
+     (case status
+       :add
+       (when (pos? (long (or insertions 0))) (str "+" insertions))
+
+       :delete
+       (when (pos? (long (or deletions 0))) (str "-" deletions))
+
+       :modify
+       (when (or (pos? (long (or insertions 0))) (pos? (long (or deletions 0))))
+         (str "+" (or insertions 0) " -" (or deletions 0)))
+
+       nil)]
+
+    (str glyph path (when stat (str "  " stat)))))
+
+(defn- diff-totals
+  "`{:insertions :deletions}` summed across every landed change, for the
+   one-line title summary."
+  [changes]
+  {:insertions (reduce + 0 (map (comp long #(or % 0) :insertions) changes))
+   :deletions (reduce + 0 (map (comp long #(or % 0) :deletions) changes))})
 
 ;; =============================================================================
 ;; Handlers
@@ -182,12 +210,17 @@
                                      landed
                                      " file"
                                      (when (not= 1 landed) "s")
+                                     (let [{:keys [insertions deletions]} (diff-totals changed)]
+                                       (when (pos? (+ (long insertions) (long deletions)))
+                                         (str " (+" insertions " -" deletions ")")))
                                      " — left draft '"
                                      label
                                      "', back in your repo")
-                   :slash/body (->> changed
-                                    (map change-line)
-                                    (str/join "\n"))
+                   :slash/body (str "```\n"
+                                    (->> changed
+                                         (map change-line)
+                                         (str/join "\n"))
+                                    "\n```")
                    :slash/data {:landed landed :changed changed}}))))
 
 (defn- handle-abandon
