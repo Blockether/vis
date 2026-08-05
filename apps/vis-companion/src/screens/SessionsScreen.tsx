@@ -67,6 +67,8 @@ import {
   sessionIsLive,
   sessionIsPeeked,
   sessionOrder,
+  timeLabel,
+  withSearchHits,
   RECENT_WINDOW_MS,
   showsScopeStrip,
   isDraftWorkspace,
@@ -95,6 +97,10 @@ const SESSION_LIST_EVENTS = new Set([
 // skipped — the list froze until the app was restarted. Anything older than
 // this is treated as lost.
 const STALE_POLL_MS = 20_000;
+
+// A query can name more sessions than a phone will ever scroll. Hydrating the
+// unloaded hits is one GET each, so the tail is cut rather than paid for.
+const SEARCH_HYDRATE_MAX = 40;
 
 // Each project is a collapsible section: collapsed peeks the rows `sessionIsPeeked`
 // keeps (capped), expanded pages the rest of its history in place — so the DOM is
@@ -222,6 +228,10 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   // Keep keystrokes immediate even when a large session fleet is regrouped.
   const deferredQuery = useDeferredValue(query);
   const [transcriptMatches, setTranscriptMatches] = useState<Map<string, SessionMatch> | null>(null);
+  // Sessions a transcript hit named that this machine had not paged in yet, per
+  // machine key. Kept beside the list instead of merged into it: the 10s poll
+  // rewrites `machine.sessions` from the gateway's own paged answer.
+  const [searchHits, setSearchHits] = useState<Map<string, Session[]>>(() => new Map());
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   // "Creating..." is a lie while a 12k-file repo is being cloned, so the busy word
@@ -468,14 +478,41 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
       void Promise.all(
         // One machine failing to search (asleep, older gateway) must not blank the
         // matches the others found.
-        targets.map((conn) =>
-          clientFor(conn)
+        targets.map(async (conn) => {
+          const key = machineKey(conn);
+          const api = clientFor(conn);
+          const found = await api
             .searchSessionMatches(needle, controller.signal)
-            .catch(() => []),
-        ),
-      ).then((found) => {
+            .catch(() => []);
+          // The list is PAGED. Intersecting the hits with the rows already loaded
+          // meant search could only find what was on screen; a hit in a session
+          // further down the fleet's ordering vanished. Fetch those rows by id.
+          const loaded = new Set(
+            (machinesRef.current.find((machine) => machineKey(machine.conn) === key)
+              ?.sessions ?? []).map((session) => session.id),
+          );
+          const missing = found
+            .filter((match) => !loaded.has(match.sessionId))
+            .slice(0, SEARCH_HYDRATE_MAX);
+          const rows = await Promise.all(
+            missing.map((match) =>
+              api.session(match.sessionId, controller.signal).catch(() => null),
+            ),
+          );
+          return {
+            key,
+            found,
+            rows: rows.filter((row): row is Session => row !== null),
+          };
+        }),
+      ).then((results) => {
         if (controller.signal.aborted) return;
-        setTranscriptMatches(new Map(found.flat().map((match) => [match.sessionId, match])));
+        setTranscriptMatches(
+          new Map(
+            results.flatMap((result) => result.found).map((match) => [match.sessionId, match]),
+          ),
+        );
+        setSearchHits(new Map(results.map((result) => [result.key, result.rows])));
       });
     }, 200);
     return () => {
@@ -507,7 +544,10 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
       const base = clientFor(machine.conn).base;
       const draftFor = (session: Session) => draftMessages[draftMessageKey(base, session.id)];
       const rankFor = (session: Session) => favorites[favoriteKey(base, session.id)] ?? null;
-      const sessions = (machine.sessions ?? []).filter((session) => {
+      // Server-side transcript hits this machine had not paged in are part of the
+      // list a query filters: without them search only finds what is on screen.
+      const hits = needle ? (searchHits.get(machineKey(machine.conn)) ?? []) : [];
+      const sessions = withSearchHits(machine.sessions ?? [], hits).filter((session) => {
         const draft = draftFor(session);
         const listed = sessionIsListed(session, {
           hasDraftMessage: draftMessageHasUnsent(draft),
@@ -534,7 +574,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
         }),
       };
     });
-  }, [inScope, deferredQuery, matches, draftMessages, favorites]);
+  }, [inScope, deferredQuery, matches, searchHits, draftMessages, favorites]);
 
   // A filter is a FLEET question: it runs on every machine in scope, so the header
   // reports what came back and from how many of them.
@@ -1978,7 +2018,7 @@ const SessionRow = memo(function SessionRow({
                 </span>
               </>
             )}
-            <span className="ml-auto shrink-0 pl-2" title={formatExact(timestamp)}>{relativeTime(timestamp)}</span>
+            <span className="ml-auto shrink-0 pl-2" title={formatExact(timestamp)}>{timeLabel(timestamp)}</span>
           </span>
         </span>
         </button>

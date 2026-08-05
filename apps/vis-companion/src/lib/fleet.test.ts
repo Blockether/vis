@@ -21,6 +21,8 @@ import {
   sessionIsListed,
   sessionIsPeeked,
   sessionOrder,
+  timeLabel,
+  withSearchHits,
   showsScopeStrip,
   startAsk,
   START_IDLE,
@@ -253,6 +255,55 @@ describe('dirty sessions', () => {
     expect(
       sessionIsListed(fresh({ title: 'Named' }), { hasDraftMessage: false, isFavorite: false }),
     ).toBe(true);
+  });
+});
+
+// Regression (reported in-app: "I have the problem with searching the sessions …
+// on iOS"): the session list is paged, and the filter intersected the gateway's
+// server-side transcript hits with the rows already loaded — a match in a session
+// that had not been paged in was silently dropped, so search only ever found what
+// was already on screen.
+describe('withSearchHits', () => {
+  it('adds the hit sessions the paged list has not loaded, newest first', () => {
+    const loaded = [session('a', { modified_at: '2024-05-02T10:00:00Z' })];
+    const hits = [
+      session('a', { modified_at: '2024-05-02T10:00:00Z' }),
+      session('old', { modified_at: '2024-01-01T10:00:00Z' }),
+      session('newer', { modified_at: '2024-04-01T10:00:00Z' }),
+    ];
+    expect(withSearchHits(loaded, hits).map((row) => row.id)).toEqual(['a', 'newer', 'old']);
+  });
+
+  it('keeps the list identical when there is nothing to hydrate', () => {
+    const loaded = [session('a')];
+    expect(withSearchHits(loaded, [])).toBe(loaded);
+    expect(withSearchHits(loaded, [session('a')])).toBe(loaded);
+  });
+});
+
+describe('timeLabel', () => {
+  const now = Date.parse('2024-05-02T12:00:00Z');
+
+  it('stays relative inside a day', () => {
+    expect(timeLabel('2024-05-02T09:00:00Z', now)).toMatch(/hour/);
+    expect(timeLabel('2024-05-02T11:40:00Z', now)).toMatch(/minute/);
+  });
+
+  it('names the actual date once the row is older than a day', () => {
+    const label = timeLabel('2024-04-20T08:30:00Z', now);
+    expect(label).toMatch(/20/);
+    expect(label).toMatch(/:/);
+    expect(label).not.toMatch(/ago/);
+  });
+
+  it('adds the year only when it is not this one', () => {
+    expect(timeLabel('2023-11-04T08:30:00Z', now)).toMatch(/2023/);
+    expect(timeLabel('2024-04-20T08:30:00Z', now)).not.toMatch(/2024/);
+  });
+
+  it('has nothing to say about a missing stamp', () => {
+    expect(timeLabel(undefined, now)).toBe('-');
+    expect(timeLabel('not a date', now)).toBe('-');
   });
 });
 

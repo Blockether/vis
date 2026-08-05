@@ -398,6 +398,60 @@ export function draftsReadKey(read: DraftsRead): string {
   return read.kind === 'read' ? `${machineKey(read.conn)}\u0000${read.repo}` : read.kind;
 }
 
+/**
+ * The rows a QUERY may match on one machine: what is loaded, plus the sessions a
+ * server-side transcript hit named that this machine has not paged in yet.
+ *
+ * The list is paged, so filtering the loaded window alone made search find only
+ * what was already on screen — a hit in a session further down the fleet's own
+ * ordering was silently intersected away. Hydrated rows are appended (newest
+ * first among themselves); the gateway's order still owns everything it sent.
+ */
+export function withSearchHits(sessions: Session[], hits: Session[]): Session[] {
+  if (hits.length === 0) return sessions;
+  const known = new Set(sessions.map((session) => session.id));
+  const extra = hits
+    .filter((session) => !known.has(session.id))
+    .sort((a, b) => sessionMillis(b) - sessionMillis(a));
+  return extra.length === 0 ? sessions : [...sessions, ...extra];
+}
+
+function dateMillis(value?: string): number {
+  if (!value) return 0;
+  const millis = new Date(value).getTime();
+  return Number.isFinite(millis) ? millis : 0;
+}
+
+function sessionMillis(session: Session): number {
+  return dateMillis(session.modified_at ?? session.last_active_at ?? session.created_at);
+}
+
+/**
+ * When a row last moved, as a human reads it: relative inside the last day ("3
+ * hours ago"), an absolute DATE and time beyond it, with the year only when it is
+ * not this one. A bare "5d" hides which day it was, and the exact stamp used to
+ * live in a `title` tooltip — invisible on a touch screen.
+ */
+export function timeLabel(value?: string, now: number = Date.now()): string {
+  const millis = dateMillis(value);
+  if (!millis) return '-';
+  const seconds = Math.round((millis - now) / 1000);
+  const absolute = Math.abs(seconds);
+  const relative = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  if (absolute < 60) return relative.format(seconds, 'second');
+  if (absolute < 3_600) return relative.format(Math.round(seconds / 60), 'minute');
+  if (absolute < 86_400) return relative.format(Math.round(seconds / 3_600), 'hour');
+  const date = new Date(millis);
+  const sameYear = date.getFullYear() === new Date(now).getFullYear();
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(sameYear ? {} : { year: 'numeric' }),
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
 // A DRAFT is a per-session clone parked at ~/.vis/drafts/<repo>/<label>; it is a
 // workspace of the session, never a project of its own. `is_draft` is the gateway
 // fact (list rows carry it); the path shape is the fallback for a gateway older
