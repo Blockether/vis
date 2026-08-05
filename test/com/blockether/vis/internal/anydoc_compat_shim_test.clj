@@ -9,6 +9,7 @@
             [clojure.string :as str]
             [com.blockether.imaging :as im]
             [com.blockether.vis.internal.env-python :as ep]
+            [com.blockether.vis.internal.foundation.shim-anydoc :as shim-anydoc]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
@@ -547,3 +548,140 @@
                                   "except TypeError as err:" "    out.append(type(err).__name__)"
                                   "    out.append('not int' in str(err) or 'not 42' in str(err))"
                                   "out"))))))))
+
+;; --- the prose is CHECKED: what vis SAYS anydoc does, anydoc does -----------
+
+(def ^:private docs-anydoc-section
+  "The `anydoc` part of the docs page a human reads — heading to the next rule."
+  (delay (or (re-find #"(?s)#### Asking a document a question.*?(?=\n---|\n#)"
+                      (slurp (io/resource "vis-docs/extending.md")))
+             (throw (ex-info "extending.md no longer documents anydoc" {})))))
+
+(defn- py-list
+  "Python list literal of `values` — identifiers and queries, none of which
+   carries a single quote."
+  [values]
+  (str "[" (str/join ", " (map #(str "'" % "'") values)) "]"))
+
+(defn- claimed-members
+  "Every name the prose spells with a dot in front of it: `anydoc.search`,
+   `hit.block_kind`, `.total_matches`, `.docx`."
+  [text]
+  (into (sorted-set) (map second) (re-seq #"\.([a-z_][a-z0-9_]{2,})\b" text)))
+
+(defn- prose-surfaces
+  "Every place vis DESCRIBES anydoc to somebody who will not read the source: the
+   `:shim/description` the system prompt advertises, the module docstring the
+   sandbox hands the model, and the docs page. All three are prose nobody runs."
+  [^Context python-context]
+  {":shim/description" (-> shim-anydoc/vis-extension
+                           :ext/sandbox-shims
+                           first
+                           :shim/description)
+   "anydoc.__doc__" (ev python-context (py "import anydoc" "anydoc.__doc__"))
+   "extending.md" @docs-anydoc-section})
+
+(defn- unknown-members
+  "The claimed names that are NEITHER a member of one of anydoc's own objects NOR
+   a file extension anydoc really reads."
+  [^Context python-context dir claimed]
+  (ev python-context
+      (py "import anydoc"
+          (str "doc = anydoc.read('" dir "/report.docx')")
+          "hits = doc.search('March revenue')"
+          "cell_hit = doc.search('table:March')[0]" (str "walk = anydoc.search('March', '" dir "')")
+          "known = set()"
+          "for obj in (anydoc, doc, hits, hits[0], cell_hit, cell_hit.cell, doc.blocks[0],"
+          "            walk, walk.skipped[0], anydoc.Asset, anydoc.Document, anydoc.Citation,"
+          "            anydoc.SearchResults, anydoc.Skipped, anydoc.Block, anydoc.Cell):"
+          "    known |= set(dir(obj))" (str "claimed = " (py-list claimed))
+          "missing = [name for name in claimed if name not in known]"
+          "[name for name in missing if not anydoc.format_from_extension('.' + name)]")))
+
+(defn- documented-queries
+  "Every query vis SHOWS somebody: the first cell of each row of the docs table,
+   and each line of the module docstring's own query block. An example that is
+   printed has to parse and to run."
+  [^Context python-context]
+  (let
+    [doc-string
+     (ev python-context (py "import anydoc" "anydoc.__doc__"))
+
+     table
+     (->> (re-seq #"(?m)^\|([^|]*)\|" @docs-anydoc-section)
+          (mapcat (fn [[_ cell]]
+                    (map second (re-seq #"`([^`]+)`" cell)))))
+
+     listed
+     (some->> (second (str/split doc-string #"(?s)Query language[^\n]*\n" 2))
+              (#(str/split % #"\n\n"))
+              (filter #(str/starts-with? % "    "))
+              first
+              str/split-lines
+              (map #(first (str/split (str/trim %) #"\s{2,}"))))]
+
+    (into (sorted-set) (concat table listed))))
+
+(defn- query-report
+  "Per documented query: how `explain_query` parsed it, and whether a real search
+   over `dir` ran instead of refusing."
+  [^Context python-context dir queries]
+  (ev python-context
+      (py "import anydoc" (str "queries = " (py-list queries))
+          "out = []" "for query in queries:"
+          "    try:" "        head = anydoc.explain_query(query).splitlines()[0]"
+          "    except anydoc.AnydocError as err:" "        head = 'REFUSED: %s' % err"
+          "    try:" (str "        ran = bool(anydoc.search(query, '" dir "').documents)")
+          "    except anydoc.AnydocError as err:" "        ran = 'REFUSED: %s' % err"
+          "    out.append([query, head, ran])" "out")))
+
+(defdescribe
+  anydoc-prose-test
+  (it "keeps every promise it prints — the prompt, the docstring and the docs"
+      (let
+        [dir (corpus {"report.docx" @report-docx-bytes
+                      "sales.csv" @march-csv-bytes
+                      "broken.pdf" (.getBytes "not a pdf at all" "UTF-8")})]
+        (with-fs-context
+          dir
+          (expect (= {}
+                     (into {}
+                           (keep (fn [[label text]]
+                                   (let
+                                     [unknown
+                                      (unknown-members python-context dir (claimed-members text))]
+                                     (when (seq unknown) [label (vec unknown)]))))
+                           (prose-surfaces python-context)))))))
+  (it "parses AND runs every query it shows, from both surfaces"
+      (let [dir (corpus {"report.docx" @report-docx-bytes "report.pdf" @report-pdf-bytes})]
+        (with-fs-context dir
+                         (let [queries (documented-queries python-context)]
+                           (expect (<= 12 (count queries)))
+                           (expect (= []
+                                      (vec (remove (fn [[_ head ran]]
+                                                     (and (str/starts-with? head "query:")
+                                                          (true? ran)))
+                                             (query-report python-context dir queries)))))))))
+  (it "runs the very example the docs print, against real documents"
+      (let
+        [dir
+         (corpus {"q1.pdf" @report-pdf-bytes "march.docx" @report-docx-bytes})
+
+         example
+         (-> (re-find #"(?s)```python\n(.*?)```" @docs-anydoc-section)
+             second
+             (str/replace "\"/data/reports\"" (str "'" dir "'")))]
+
+        (with-fs-context dir
+                         (expect
+                           (= [true true true]
+                              (ev python-context
+                                  (py "import contextlib, io"
+                                      "with contextlib.redirect_stdout(io.StringIO()) as shown:"
+                                      (->> (str/split-lines example)
+                                           (map #(str "    " %))
+                                           (str/join "\n"))
+                                      "printed = shown.getvalue().strip()"
+                                      "lines = printed.splitlines()" "[bool(lines),"
+                                      " any('q1.pdf' in line for line in lines),"
+                                      " any(line.startswith('query:') for line in lines)]"))))))))

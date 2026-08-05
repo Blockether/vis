@@ -1738,17 +1738,22 @@ Asking:
 `sources` is a path, a directory (walked), bytes, a Document, a list of any of
 those, or a {id: source} mapping to name the ids yourself.
 
-Query language:
+Query language — each line below is a WHOLE query, and `explain_query` parses
+one without reading a file:
 
-    march revenue          bare terms, ANY may match (OR), ranked by BM25
-    "quarterly revenue"    a phrase — crosses line wraps AND table cells
-    +march   AND march     the document MUST contain it
-    -draft   NOT draft     the document must NOT contain it
-    rev*                   prefix
-    NEAR(revenue march, 8) within 8 words of each other
-    /reven[us]e?/          a regular expression over folded text
-    heading:march          only in headings; also table: list: code: note:
-                           paragraph: section:revenue page:3
+    march revenue           bare terms, ANY may match (OR), ranked by BM25
+    "quarterly revenue"     a phrase — crosses line wraps AND table cells
+    revenue +march          AND: the document MUST contain `march`
+    revenue -draft          NOT: the document must NOT contain `draft`
+    rev*                    prefix
+    NEAR(revenue march, 8)  within 8 words of each other
+    /reven[us]e?/           a regular expression over folded text
+    heading:march           headings only; also table: list: code: note: paragraph:
+    revenue section:Revenue under that heading only
+    revenue page:3          on that page only
+
+`+`/`-` may be spelled `AND`/`NOT`. A query needs at least one thing to look
+FOR: `-draft` or `page:3` alone is refused, and says so.
 
 Both the corpus and the query are FOLDED before matching, so `efficient` finds
 the ligature in a PDF, `Zurich` finds `Zürich`, `HAUPTSTRASSE` finds

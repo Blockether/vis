@@ -908,13 +908,17 @@ possible in a format that has no lines, and what a phrase crosses when it wraps.
 | --- | --- |
 | `march revenue` | bare terms, ANY may match, ranked by BM25 |
 | `"quarterly revenue"` | a phrase — crosses line wraps AND table cells |
-| `+march`, `AND march` | the document MUST contain it |
-| `-draft`, `NOT draft` | the document must NOT contain it |
+| `revenue +march`, `revenue AND march` | the document MUST contain `march` |
+| `revenue -draft`, `revenue NOT draft` | the document must NOT contain `draft` |
 | `rev*` | prefix |
 | `NEAR(revenue march, 8)` | within 8 words of each other |
 | `/reven[us]e?/` | a regular expression over folded text |
 | `heading:march` | headings only; also `table: list: code: note: paragraph:` |
-| `section:revenue`, `page:3` | filters — under that heading, on that page |
+| `revenue section:Revenue`, `revenue page:3` | filters — under that heading, on that page |
+
+Exclusions and filters only NARROW a search, so a query needs at least one thing
+to look FOR: `-draft` or `page:3` on its own is refused, pointing at the
+character and saying what to add.
 
 Both the corpus and the query are FOLDED before matching, so `efficient` finds a
 PDF's `ﬁ` ligature, `Zurich` finds `Zürich`, `HAUPTSTRASSE` finds `Hauptstraße`,
