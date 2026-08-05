@@ -14,7 +14,15 @@
    Reading a document is one call — `anydoc.to_markdown(path)` — and the richer
    `anydoc.to_document(...)` additionally returns the format that was detected,
    the evidence that identified it, and every embedded binary (`Asset`) as real
-   Python `bytes`."
+   Python `bytes`.
+
+   ASKING a question of one document, a handful, or a whole directory is one
+   call too: `anydoc.search('March', sources)` converts what it must and answers
+   with `Citation`s that carry the document's id, the 1-based line the hit
+   starts on and that line's own text, so an answer can point back at the page
+   it came from. That search is plain Python over the converted Markdown — no
+   host call of its own — which is why it lives in the shim and not in the
+   bridge below."
   (:require [clojure.string :as str]
             [com.blockether.imaging :as im]
             [com.blockether.vis.core :as vis])
@@ -109,7 +117,7 @@
   (vis/extension
     {:ext/name "foundation-shim-anydoc"
      :ext/description
-     "Sandbox `anydoc` module: Word/PDF/EPUB/presentation/spreadsheet bytes to GitHub-Flavored Markdown via com.blockether/imaging's Rust cdylib (no office suite, no wheel, no java.desktop)."
+     "Sandbox `anydoc` module: Word/PDF/EPUB/presentation/spreadsheet bytes to GitHub-Flavored Markdown via com.blockether/imaging's Rust cdylib (no office suite, no wheel, no java.desktop), plus a search over one document or a whole directory that cites the document id and the line each hit starts on."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -119,7 +127,7 @@
      [{:shim/name "anydoc"
        :shim/imports ["anydoc"]
        :shim/description
-       "`anydoc.to_markdown(path)` / `to_markdown_bytes(data)` render .doc .docx .odt .rtf .pdf .epub .ppt .pptx .odp .xls .xlsx .xlsm .xlsb .ods .csv as GitHub-Flavored Markdown; `to_document` adds the detected format, the evidence that identified it and embedded assets as bytes; `format_from_bytes/extension/path` identify without converting. Signature-less CSV needs a name or an explicit format. Not supported: writing documents, OCR of scanned pages, layout coordinates."
+       "`anydoc.to_markdown(path)` / `to_markdown_bytes(data)` render .doc .docx .odt .rtf .pdf .epub .ppt .pptx .odp .xls .xlsx .xlsm .xlsb .ods .csv as GitHub-Flavored Markdown; `to_document` adds the detected format, the evidence that identified it and embedded assets as bytes; `format_from_bytes/extension/path` identify without converting. `anydoc.search(query, sources)` searches ONE document, a list of them, a {id: document} mapping or a whole directory (recursive) and returns `Citation`s with `.document_id .line .column .text .match .format` — `str(citation)` is `id:line: text`; `regex=`, `whole_word=`, `ignore_case=`, `context=`, `limit=`, `per_document=`; `results.documents` keeps the converted `Document`s (`doc.search(...)` re-asks with no conversion) and `results.skipped` names files a directory walk could not read. Signature-less CSV needs a name or an explicit format. Not supported: writing documents, OCR of scanned pages, layout coordinates."
        :shim/bindings anydoc-bridge-bindings
        :shim/source "vis-shims/anydoc.py"}]}))
 
