@@ -558,7 +558,15 @@
                {"type" "activity" "activity" "shell-run" "cmd" "clojure -M:test" "iteration" 1}))))
     (it "a provider-call activity projects to :provider-call"
         (expect (= {:phase :provider-call :iteration 1}
-                   (g->c {"type" "activity" "activity" "provider-call" "iteration" 1}))))))
+                   (g->c {"type" "activity" "activity" "provider-call" "iteration" 1}))))
+    ;; Regression, issue #120: the reason a provider request exists never reached an
+    ;; attached tab, so a tool-result continuation read like a fresh user submit.
+    (it "a provider-call activity carries its continuation reason"
+        (expect (= {:phase :provider-call :iteration 3 :reason :tool-result}
+                   (g->c {"type" "activity"
+                          "activity" "provider-call"
+                          "iteration" 3
+                          "reason" "tool-result"}))))))
 
 (defdescribe provider-retry-event-chunk-test
              (let [g->c @#'chat/gateway-event->chunk]

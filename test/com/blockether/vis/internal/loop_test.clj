@@ -499,6 +499,88 @@
             (expect (= 2000 (:delay-ms ev)))))
         (finally (lp/dispose-environment! env))))))
 
+;; Regression, issue #116: svar's empty-reply resend ladder was only collected in
+;; an atom and prepended to the routing trace AFTER `ask-code!` returned, so a turn
+;; healing empty replies painted NOTHING for minutes and a user Esc threw the whole
+;; recap away with the cancelled turn.
+(defdescribe
+  empty-reply-resend-live-chunk-test
+  (it
+    "streams every empty-reply re-send to the channel WHILE the call is in flight"
+    (let
+      [env
+       (lp/create-environment ::router {:db :memory})
+
+       chunks
+       (atom [])
+
+       during
+       (atom nil)]
+
+      (try
+        (with-redefs
+          [svar/ask-code!
+           (fn [_router opts]
+             (when-let [on-resend (:on-empty-reply-resend opts)]
+               (on-resend {:model "claude-x"
+                           :provider-id :anthropic
+                           :attempt 1
+                           :max-resends 3
+                           :delay-ms 2000}))
+             ;; Everything the UI had been told while the ladder was still running.
+             (reset! during (vec @chunks))
+             {:stop-reason :end :tool-calls [] :content "ok" :tokens {}})]
+          (lp/run-iteration env
+                            []
+                            {:iteration 0
+                             :resolved-model {:provider :anthropic :name "claude-x"}
+                             :on-chunk #(swap! chunks conj %)})
+          (let
+            [live (filterv #(= :provider-retry-reset (:phase %)) @during)
+             ev (:event (first live))]
+
+            (expect (= 1 (count live)))
+            (expect (= {:iteration 1 :attempt 1 :max-retries 3 :delay-ms 2000}
+                       (select-keys (first live) [:iteration :attempt :max-retries :delay-ms])))
+            (expect (= :svar.llm/empty-content (get-in (first live) [:error :type])))
+            (expect (= :empty-content (:reason ev)))
+            (expect (= "anthropic" (:from-provider ev)))
+            (expect (= "claude-x" (:from-model ev)))))
+        (finally (lp/dispose-environment! env))))))
+
+;; Regression, issue #120: every provider request looked identical in the TUI, so a
+;; long tool-result loop was indistinguishable from the client re-sending on its
+;; own — the spinner said "Vis is calling the provider (iter 12)" and never why.
+(defdescribe
+  provider-call-continuation-reason-test
+  (let
+    [reason-of
+     (fn [iteration]
+       (let
+         [env
+          (lp/create-environment ::router {:db :memory})
+
+          chunks
+          (atom [])]
+
+         (try
+           (with-redefs
+             [svar/ask-code! (fn [_router _opts]
+                               {:stop-reason :end :tool-calls [] :content "ok" :tokens {}})]
+             (lp/run-iteration env
+                               []
+                               {:iteration iteration
+                                :resolved-model {:provider :anthropic :name "claude-x"}
+                                :on-chunk #(swap! chunks conj %)}))
+           (finally (lp/dispose-environment! env)))
+         (:reason (first (filter #(= :provider-call (:phase %)) @chunks)))))]
+
+    (it "names the FIRST provider call of a turn as the human's own submit"
+        (expect (= :user-submit (reason-of 0))))
+    (it "names every later call a tool-result continuation"
+        (expect (= :tool-result (reason-of 1)))
+        (expect (= :tool-result (reason-of 7))))))
+
 (defdescribe native-tool-timeout-settings-test
              (it "keeps the wall a grace period above the tool's own budget"
                  ;; The wall is a BACKSTOP: the tool's own timeout (30s fallback,
@@ -6290,6 +6372,7 @@
   (it "names the provider and model the call is dispatched to"
       (expect (= {:phase :provider-call
                   :iteration 3
+                  :reason :tool-result
                   :started-at-ms 42
                   :provider "github-copilot-enterprise"
                   :model "claude-opus-5"}
@@ -6301,6 +6384,7 @@
   (it "leaves out what the router could not resolve"
       (expect (= {:phase :provider-call
                   :iteration 0
+                  :reason :user-submit
                   :started-at-ms 1
                   :provider nil
                   :model nil}

@@ -300,6 +300,12 @@
                  (#'state/chunk->event {:phase :provider-call :iteration 1})))
       (expect (= ["activity" false {:activity "shell-run" :iteration 1 :cmd "clojure -M:test"}]
                  (#'state/chunk->event {:phase :shell-run :iteration 1 :cmd "clojure -M:test"}))))
+  ;; Regression, issue #120: the activity ticker never said WHY a provider request
+  ;; was being made, so an attached client could not tell a tool-result
+  ;; continuation from the human's own submit.
+  (it "a provider call ships the continuation reason that opened it"
+      (expect (= ["activity" false {:activity "provider-call" :iteration 3 :reason "tool-result"}]
+                 (#'state/chunk->event {:phase :provider-call :iteration 3 :reason :tool-result}))))
   (it "response-parse :done does NOT emit an activity event (the parse finished)"
       (let [[type] (#'state/chunk->event {:phase :response-parse :iteration 1 :status :done})]
         (expect (not= "activity" type)))))

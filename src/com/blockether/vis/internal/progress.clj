@@ -314,7 +314,12 @@
   [entry chunk]
   (case (:phase chunk)
     :provider-call
-    (assoc entry :activity :provider-call)
+    ;; `:activity/reason` says WHY the request exists (`:user-submit` /
+    ;; `:tool-result`) so a self-driven continuation never reads like a fresh
+    ;; human submit.
+    (assoc entry
+      :activity :provider-call
+      :activity/reason (:reason chunk))
 
     :shell-run
     (assoc entry

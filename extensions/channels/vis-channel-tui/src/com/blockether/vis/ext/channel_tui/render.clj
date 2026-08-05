@@ -5480,6 +5480,9 @@
      activity
      (:activity last-iteration)
 
+     activity-reason
+     (:activity/reason last-iteration)
+
      tool-op
      (:tool/op last-iteration)
 
@@ -5528,7 +5531,15 @@
           (= :shell-run activity) (str "Vis is running: " shell-label)
           (= :shell-bg activity) (str "Vis is starting: " shell-label)
           (= :slash activity) (str "Vis is running: " slash-label)
-          (= :provider-call activity) (str "Vis is calling the provider (iter " n ")")
+          (= :provider-call activity)
+          (case activity-reason
+            :tool-result
+            (str "Vis is continuing after tool results (iter " n ")")
+
+            :user-submit
+            (str "Vis is calling the provider (user submit, iter " n ")")
+
+            (str "Vis is calling the provider (iter " n ")"))
           (= :response-parse activity) (str "Vis is parsing model response (iter " n ")")
           (= :tool-call activity) (str "Vis is running: "
                                        (or tool-op "tool")

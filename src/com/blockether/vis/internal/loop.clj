@@ -505,6 +505,51 @@
      :error error
      :event event}))
 
+(defn- empty-reply-resend-chunk
+  "Live-progress chunk for ONE of svar's same-model empty-reply re-sends.
+
+   The ladder runs INSIDE a single `ask-code!` call, so collecting it and only
+   prepending it to the routing trace afterwards leaves the UI with nothing to
+   paint for the whole heal — minutes of a frozen bubble that reads as a hang,
+   and nothing at all when the human gives up and cancels. Same shape as a
+   transport rewind (`:provider-retry-reset`), so every channel already knows how
+   to draw it and the gateway persists it the moment it happens."
+  [iteration-position resolved-model {:keys [attempt max-resends delay-ms]}]
+  (let
+    [event
+     (cond->
+       {:event/type :llm.routing/provider-retry
+        :reason :empty-content
+        :attempt attempt
+        :max-resends max-resends
+        :delay-ms delay-ms}
+       (:provider resolved-model)
+       (assoc :from-provider (name (:provider resolved-model)))
+
+       (:name resolved-model)
+       (assoc :from-model (str (:name resolved-model))))
+
+     error
+     (cond->
+       {:type :svar.llm/empty-content
+        :message "Empty reply (no text, no tool call) — re-sending the same request"}
+       (some? attempt)
+       (assoc :attempt attempt)
+
+       (some? max-resends)
+       (assoc :max-retries max-resends)
+
+       (some? delay-ms)
+       (assoc :delay-ms delay-ms))]
+
+    {:phase :provider-retry-reset
+     :iteration iteration-position
+     :attempt attempt
+     :max-retries max-resends
+     :delay-ms delay-ms
+     :error error
+     :event event}))
+
 (defn- prepend-routing-trace
   [result retry-events]
   (if (seq retry-events)
@@ -5570,16 +5615,29 @@
       (not resolution-error)
       (assoc :vis/native-input (:input effective-tc)))))
 
+(defn- provider-call-reason
+  "WHY this provider request exists. The FIRST call of a turn answers the human's
+   own submit; every later one is the agent loop continuing by itself on the tool
+   results it just produced. A retry is never a `:provider-call` — it carries its
+   own `:provider-retry-reset` marker — so those are the only two reasons."
+  [^long iteration-position]
+  (if (<= iteration-position 1) :user-submit :tool-result))
+
 (defn- provider-call-chunk
   "The lifecycle marker that opens ONE provider call.
 
    It names the provider and the model the request is dispatched to: when the
    stream then goes silent, that marker is the only thing the gateway watchdog
    has left to attribute the stall to, and a failure card that cannot say WHICH
-   provider went quiet tells the human nothing."
+   provider went quiet tells the human nothing.
+
+   It also names WHY the request is being made (`:reason`): a tool-result
+   continuation that the loop decided on its own must not look like the human
+   pressing enter again."
   [iteration-position resolved-model started-at-ms]
   {:phase :provider-call
    :iteration iteration-position
+   :reason (provider-call-reason iteration-position)
    :started-at-ms started-at-ms
    :provider (some-> (:provider resolved-model)
                      name)
@@ -5746,18 +5804,21 @@
             :check-context? true
             :preserved-thinking? true
             :on-empty-reply-resend (fn [{:keys [attempt max-resends delay-ms]}]
-                                     (swap! empty-reply-resend-events conj
-                                       (cond->
-                                         {:event/type :llm.routing/provider-retry
-                                          :reason :empty-content
-                                          :attempt attempt
-                                          :max-resends max-resends
-                                          :delay-ms delay-ms}
-                                         (:provider resolved-model)
-                                         (assoc :from-provider (name (:provider resolved-model)))
-
-                                         (:name resolved-model)
-                                         (assoc :from-model (str (:name resolved-model))))))}
+                                     ;; LIVE, not post-hoc: emit the retry chunk the
+                                     ;; instant svar re-sends, so the channel paints
+                                     ;; "resend 1/3" instead of silence and the gateway
+                                     ;; persists the recap even if the human cancels
+                                     ;; mid-ladder. The same event still rides the
+                                     ;; routing trace the finished call returns.
+                                     (let
+                                       [chunk (empty-reply-resend-chunk iteration-position
+                                                                        resolved-model
+                                                                        {:attempt attempt
+                                                                         :max-resends max-resends
+                                                                         :delay-ms delay-ms})]
+                                       (swap! empty-reply-resend-events conj (:event chunk))
+                                       (reset-stream-state!)
+                                       (when on-chunk (on-chunk chunk))))}
            session-cache-key
            (assoc :cache-key session-cache-key)
 

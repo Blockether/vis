@@ -1785,6 +1785,32 @@
 
           (expect (not (str/includes? line p/INLINE_ERR_ON)))))))
 
+;; Regression, issue #120: a tool-result continuation was indistinguishable from
+;; the human's own submit — the spinner said "Vis is calling the provider (iter N)"
+;; for every request, so an unbounded loop looked exactly like ordinary work.
+(defdescribe
+  spinner-provider-call-reason-test
+  (let
+    [extra
+     {:now-ms 1700000000000 :turn-start-ms 1700000000000}
+
+     spinner
+     (fn [iterations]
+       (first (filter #(str/includes? (str %) "Esc to cancel")
+                      (:lines
+                        (render/progress->lines-data {:iterations iterations} 130 {} extra)))))]
+
+    (it "names the human's own submit on the first provider call"
+        (expect (str/includes? (spinner [{:activity :provider-call :activity/reason :user-submit}])
+                               "Vis is calling the provider (user submit, iter 1)")))
+    (it "names a tool-result continuation on every later call"
+        (expect (str/includes? (spinner [{:activity :provider-call}
+                                         {:activity :provider-call :activity/reason :tool-result}])
+                               "Vis is continuing after tool results (iter 2)")))
+    (it "keeps the plain label when no reason was recorded"
+        (expect (str/includes? (spinner [{:activity :provider-call}])
+                               "Vis is calling the provider (iter 1)")))))
+
 (defdescribe
   live-body-throttle-test
   ;; VIS_LIVE_BODY_THROTTLE_MS debounces the heavy live re-projection: within

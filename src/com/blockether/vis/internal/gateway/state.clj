@@ -1025,7 +1025,7 @@
   "Ephemeral `activity` wire event `[type store? payload]` for a coarse-progress
    phase, or nil. store? is false: channels paint a spinner label; nothing
    persists. `:response-parse :done` clears (emits nil) — the parse finished."
-  [{:keys [phase cmd iteration] :as chunk}]
+  [{:keys [phase cmd iteration reason] :as chunk}]
   (when (and (activity-phases phase)
              (not (and (= phase :response-parse) (= :done (:status chunk)))))
     (let
@@ -1043,6 +1043,10 @@
        (cond-> {:activity activity}
          (some? iteration)
          (assoc :iteration iteration)
+
+         ;; WHY the provider request exists (`user-submit` / `tool-result`).
+         (some? reason)
+         (assoc :reason (name reason))
 
          (some? cmd)
          (assoc :cmd (str cmd))

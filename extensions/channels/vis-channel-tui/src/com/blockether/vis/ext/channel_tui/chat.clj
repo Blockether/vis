@@ -973,7 +973,9 @@
 
         (case (str activity)
           "provider-call"
-          {:phase :provider-call :iteration iteration}
+          (cond-> {:phase :provider-call :iteration iteration}
+            (event-get event :reason)
+            (assoc :reason (wire-keyword (event-get event :reason))))
 
           "response-parse"
           {:phase :response-parse :iteration iteration}
