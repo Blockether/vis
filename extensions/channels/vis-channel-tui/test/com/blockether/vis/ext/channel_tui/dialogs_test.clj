@@ -1036,40 +1036,42 @@
       (expect (str/includes? inactive-label "│     0 │"))
       (expect (str/includes? inactive-label "-"))
       (expect (str/includes? inactive-label "Untitled session"))))
-  (it "the draft band is a TRANSIENT: one key per verb, the name typed on its own hint row"
-      ;; Drafts used to be a modal picker, then a text-input modal, then a confirm
-      ;; modal — three windows stacked over the very session the draft belongs to.
-      ;; It is one band inside the session's frame now, exactly like the HITL form.
-      (let
-        [drafts
-         [{"workspace_id" "ws-a" "label" "feature-a" "is_current" true}
-          {"workspace_id" "ws-b" "label" "feature-b" "is_current" false}]
+  (it
+    "the draft band is a TRANSIENT: one key per verb, the name typed on its own hint row"
+    ;; Drafts used to be a modal picker, then a text-input modal, then a confirm
+    ;; modal — three windows stacked over the very session the draft belongs to.
+    ;; It is one band inside the session's frame now, exactly like the HITL form.
+    (let
+      [drafts
+       [{"workspace_id" "ws-a" "label" "feature-a" "is_current" true}
+        {"workspace_id" "ws-b" "label" "feature-b" "is_current" false}]
 
-         ch
-         (fn [c]
-           (KeyStroke. (Character/valueOf (char c)) false false false))
+       ch
+       (fn [c]
+         (KeyStroke. (Character/valueOf (char c)) false false false))
 
-         band!
-         (fn [keys]
-           (let
-             [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-              (term/virtual-screen)]
-             (try (doseq [k keys]
-                    (.addInput terminal k))
-                  (dlg/draft-transient! screen 1 drafts)
-                  (finally (.stopScreen screen)))))]
+       band!
+       (fn [keys]
+         (let
+           [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
+           (try (doseq [k keys]
+                  (.addInput terminal k))
+                (dlg/draft-transient! screen 1 drafts)
+                (finally (.stopScreen screen)))))]
 
-        ;; A parked draft carries its OWN band key — no cursor, no Enter.
-        (expect (= {:action :draft :workspace-id "ws-b" :label "feature-b" :current? false}
-                   (band! [(ch \b)])))
-        ;; `t` is always trunk, and it knows that is not where we are.
-        (expect (= {:action :trunk :label "Trunk" :current? false} (band! [(ch \t)])))
-        ;; `-c` is a magit FLAG armed before the `n` command: the new draft is
-        ;; seeded from the last commit, and its name is read INLINE on the hint row.
-        (expect (= {:action :new :clean? true :label "wire-rework"}
-                   (band! (concat [(ch \c) (ch \n)]
-                                  (map ch "wire-rework")
-                                  [(KeyStroke. KeyType/Enter)]))))))
+      ;; Switching is its OWN command: `s` opens a second band over the same
+      ;; rows, where a parked draft carries its own key — no cursor, no Enter.
+      (expect (= {:action :draft :workspace-id "ws-b" :label "feature-b" :current? false}
+                 (band! [(ch \s) (ch \b)])))
+      ;; `t` is always trunk, and it knows that is not where we are.
+      (expect (= {:action :trunk :label "Trunk" :current? false} (band! [(ch \s) (ch \t)])))
+      ;; Creating is two commands rather than a command plus an armed flag:
+      ;; `c` forks the committed HEAD, `d` carries the working tree along, and
+      ;; either way the name is read INLINE on the hint row.
+      (expect (= {:action :new :clean? true :label "wire-rework"}
+                 (band! (concat [(ch \c)] (map ch "wire-rework") [(KeyStroke. KeyType/Enter)]))))
+      (expect (= {:action :new :clean? false :label "wire-rework"}
+                 (band! (concat [(ch \d)] (map ch "wire-rework") [(KeyStroke. KeyType/Enter)]))))))
   (it "command palette exposes the frequent app verbs; Providers is the provider/settings hub"
       (let
         [palette-commands

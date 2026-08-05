@@ -265,10 +265,18 @@
 
 ;;; ── Paint ───────────────────────────────────────────────────────────────────
 
-(def hint-pairs
-  "The footer every transient shows: what a flag key does, what a command key
-   does, and the way out."
-  [["-key" "toggle flag"] ["key" "run command"] ["Esc" "cancel"]])
+(defn hint-pairs
+  "The footer THIS transient shows: what a command key does, the way out, and
+   what a flag key does ONLY when the spec actually has a flag. A band whose
+   keys are all commands (the draft band spends `c`/`d`/`s`/`k` on verbs) must
+   not advertise a `-key` nothing responds to."
+  [spec]
+  (cond-> []
+    (some (comp #{:switch :option} :type) (mapcat :items (:groups spec)))
+    (conj ["-key" "toggle flag"])
+
+    :always
+    (into [["key" "run command"] ["Esc" "cancel"]])))
 
 (defn- draw-item!
   "One transient row as a GRID cell: key glyph column, description column, and the
@@ -469,7 +477,7 @@
              value (when (= type :option) (get (:options state) id))]
 
             (draw-item! g left row inner-w grid it active? value)))))
-    (hint-bar! g left foot-row inner-w hint-pairs)))
+    (hint-bar! g left foot-row inner-w (hint-pairs spec))))
 
 ;;; ── Run ─────────────────────────────────────────────────────────────────────
 

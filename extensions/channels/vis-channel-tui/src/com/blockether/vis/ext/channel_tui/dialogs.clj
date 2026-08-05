@@ -6306,108 +6306,138 @@
                   (.setCursorPosition screen nil)
                   (.refresh screen Screen$RefreshType/DELTA)))))
 
+;;; ── Questions a band asks on its OWN hint row ───────────────────────────────
+;; `ctx` is what `session-band!` hands its `f`: the screen, its graphics and the
+;; band's region. These four wrappers are the whole reason a band's follow-up
+;; question reads as a QUESTION at the call site — the six coordinates a magit
+;; minibuffer is painted at are unpacked here, once, instead of inline in every
+;; branch that has something to ask.
+
+(defn- band-read!
+  "Ask for one line of text on the band's hint row; nil on Esc."
+  ([ctx label] (band-read! ctx label {}))
+  ([{:keys [screen g region]} label opts]
+   (let [{:keys [left inner-w hint-row text-w]} region]
+     (magit-mini-read! screen g left inner-w hint-row text-w label opts))))
+
+(defn- band-choose!
+  "Ask WHICH one, single-key, on the band's hint row; returns the chosen `:id`."
+  [{:keys [screen g region]} title choices]
+  (let [{:keys [left inner-w hint-row text-w]} region]
+    (magit-mini-choose! screen g left inner-w hint-row text-w title choices)))
+
+(defn- band-confirm!
+  "Ask y/n on the band's hint row."
+  [{:keys [screen g region]} question]
+  (let [{:keys [left inner-w hint-row text-w]} region]
+    (magit-mini-confirm! screen g left inner-w hint-row text-w question)))
+
+(defn- band-run!
+  "Run ANOTHER transient over the SAME band region — a transient that opens a
+   transient, which is how magit asks a second question without a second
+   window. The frame is snapshotted and restored once, by the `session-band!`
+   that owns this region."
+  [{:keys [screen g region]} spec]
+  (tr/run! (transient-host screen g) region spec))
+
+;;; ── Drafts ──────────────────────────────────────────────────────────────────
+
+(defn- draft-name-prompt
+  "Which working tree the draft forks, said in the prompt itself: the band has
+   no armed flag to read it off any more, so the question has to carry it."
+  [clean?]
+  (if clean? "Name the draft (from committed HEAD):" "Name the draft (with my changes):"))
+
+(defn- name-new-draft!
+  "`c` / `d`: name the draft inline, or back out. An empty name is a cancelled
+   prompt, never an unnamed draft."
+  [ctx {:keys [clean?] :as choice}]
+  (when-let [label (band-read! ctx (draft-name-prompt clean?))]
+    (when-let [label (not-empty (str/trim label))]
+      (assoc choice :label label))))
+
+(defn- switch-draft!
+  "`s`: the SWITCH band — trunk and every draft, `●` on the one we are in —
+   resolved to the choice the screen's draft executor speaks."
+  [ctx draft-rows]
+  (drafts/switch-choice draft-rows (band-run! ctx (drafts/switch-spec draft-rows))))
+
+(defn- abandon-draft!
+  "`k`: WHICH draft (asked only when more than one exists), then a y/n that
+   names the draft it is about. Both on the hint row."
+  [ctx draft-rows]
+  (let
+    [choices
+     (drafts/abandon-choices draft-rows)
+
+     ws-id
+     (if (= 1 (count choices)) (:id (first choices)) (band-choose! ctx "Abandon draft:" choices))
+
+     row
+     (drafts/row-by-id (drafts/rows draft-rows) ws-id)]
+
+    (when (and row
+               (band-confirm!
+                 ctx
+                 (str "Permanently discard '" (:label row) "' and its isolated files?")))
+      {:action :abandon
+       :workspace-id ws-id
+       :label (:label row)
+       :reason "abandoned from the TUI draft transient"})))
+
+(defn- draft-band-choice
+  "ONE finished keystroke of the draft band, answered: create asks for a name,
+   switch opens the switch band, abandon asks which and then whether."
+  [ctx draft-rows]
+  (let [choice (drafts/choice (:result ctx))]
+    (case (:action choice)
+      :new
+      (name-new-draft! ctx choice)
+
+      :switch
+      (switch-draft! ctx draft-rows)
+
+      :abandon
+      (abandon-draft! ctx draft-rows)
+
+      choice)))
+
 (defn draft-transient!
-  "The DRAFT band: switch, create and abandon a draft workspace without ever
+  "The DRAFT band: create, switch and abandon a draft workspace without ever
    leaving the session. Returns the choice the screen executes — `:trunk`,
-   `:draft`, `:new` (with the typed `:label` and the `-c` `:clean?` flag) or
-   `:abandon` (with `:workspace-id` and `:reason`) — or nil when the human
-   backed out at any step.
+   `:draft`, `:new` (with the typed `:label` and `:clean?`) or `:abandon` (with
+   `:workspace-id` and `:reason`) — or nil when the human backed out at any
+   step.
 
-   Naming a new draft and confirming an abandon both happen INLINE on the band's
-   hint row, so the whole flow is one band and three keystrokes deep at most.
-   Abandoning asks WHICH draft only when there is more than one."
+   Creating, switching and abandoning are three separate keys: `c`/`d` fork a
+   draft and name it inline, `s` opens the switch band, `k` abandons one. No
+   step opens a window."
   [^TerminalScreen screen content-top draft-rows]
-  (session-band!
-    screen
-    content-top
-    (drafts/spec draft-rows)
-    (fn [{:keys [g region result]}]
-      (let
-        [{:keys [left inner-w hint-row text-w]}
-         region
-
-         choice
-         (drafts/choice draft-rows result)]
-
-        (case (:action choice)
-          :new
-          (when-let
-            [label (magit-mini-read! screen
-                                     g
-                                     left
-                                     inner-w
-                                     hint-row
-                                     text-w
-                                     (if (:clean? choice) "Name the clean draft:" "Name the draft:")
-                                     {})]
-            (when-let [label (not-empty (str/trim label))]
-              (assoc choice :label label)))
-
-          :abandon
-          (let
-            [choices
-             (drafts/abandon-choices draft-rows)
-
-             ws-id
-             (if (= 1 (count choices))
-               (:id (first choices))
-               (magit-mini-choose! screen g left inner-w hint-row text-w "Abandon draft:" choices))
-
-             row
-             (drafts/row-by-id (drafts/rows draft-rows) ws-id)]
-
-            (when (and row
-                       (magit-mini-confirm!
-                         screen
-                         g
-                         left
-                         inner-w
-                         hint-row
-                         text-w
-                         (str "Permanently discard '" (:label row) "' and its isolated files?")))
-              {:action :abandon
-               :workspace-id ws-id
-               :label (:label row)
-               :reason "abandoned from the TUI draft transient"}))
-
-          choice)))))
+  (session-band! screen content-top (drafts/spec draft-rows) #(draft-band-choice % draft-rows)))
 
 ;;; ── Where a NEW session starts ──────────────────────────────────────────────
 
+(defn- start-in-band-choice
+  "ONE finished keystroke of the start-in band: the project itself is the whole
+   answer, a draft still needs its name."
+  [ctx]
+  (let [choice (drafts/start-in-choice (:result ctx))]
+    (cond (nil? choice) nil
+          (= :trunk (:start-in choice)) choice
+          :else (when-let [label (band-read! ctx (draft-name-prompt (:clean? choice)))]
+                  (when-let [draft (drafts/draft-spec choice label)]
+                    (assoc choice :draft draft))))))
+
 (defn start-in-transient!
   "Ask WHERE a new session starts, as a band in the current session's frame:
-   `t` the project itself, `d` a new draft, `-c` seeding that draft from the last
-   commit instead of the working tree. A draft is named inline on the hint row.
+   `t` the project itself, `c` a draft forked from the committed HEAD, `d` a
+   draft carrying the uncommitted working tree. A draft is named inline on the
+   hint row.
 
    Returns `{:start-in :trunk}`, `{:start-in :draft :clean? bool :draft {:label :clean?}}`,
    or nil."
   [^TerminalScreen screen content-top]
-  (session-band! screen
-                 content-top
-                 drafts/start-in-spec
-                 (fn [{:keys [g region result]}]
-                   (let
-                     [{:keys [left inner-w hint-row text-w]}
-                      region
-
-                      choice
-                      (drafts/start-in-choice result)]
-
-                     (cond (nil? choice) nil
-                           (= :trunk (:start-in choice)) choice
-                           :else (when-let
-                                   [label (magit-mini-read! screen
-                                                            g
-                                                            left
-                                                            inner-w
-                                                            hint-row
-                                                            text-w
-                                                            (if (:clean? choice)
-                                                              "Name the clean draft:"
-                                                              "Name the draft:")
-                                                            {})]
-                                   (when-let [draft (drafts/draft-spec choice label)]
-                                     (assoc choice :draft draft))))))))
+  (session-band! screen content-top drafts/start-in-spec start-in-band-choice))
 
 (def palette-commands
   "Command palette entries. Each is {:id keyword :label str}. The `:id` is the
