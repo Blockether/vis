@@ -26,6 +26,7 @@
             [com.blockether.vis.internal.foundation.environment.render :as render]
             [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel]))
 
@@ -133,51 +134,61 @@ Drop the cached env snapshot and recompute. Returns the fresh snapshot. Use afte
 
 (defn repositories
   "await repositories()
-Returns {\"count\": N, \"repositories\": [{\"path\", \"branch\", \"dirty\": bool, \"changes\": bool, \"stale\": bool, \"stash_count\": N, ...}], \"truncated\": bool}."
+Returns {\"root\", \"count\": N, \"repositories\": [{\"path\", \"branch\", \"is_dirty\": bool, \"is_changes\": bool, \"is_stale\": bool, \"stash_count\": N, ...}], \"is_truncated\": bool}."
   []
   (:repositories (snapshot)))
 
 (defn git
   "await git()
-Returns {\"root\", \"branch\", \"detached\": bool, \"submodules\": bool, \"worktree\": bool, \"stash_count\", \"upstream\", \"ahead\", \"behind\", \"stale\", \"dirty\", \"clean\", \"modified\", \"untracked\", \"added\", \"changed\", \"removed\", \"missing\", \"conflicting\"}, or None outside a repo."
+Returns {\"root\", \"branch\", \"is_detached\": bool, \"is_submodules\": bool, \"is_worktree\": bool, \"stash_count\", \"upstream\", \"ahead\", \"behind\", \"is_stale\", \"is_dirty\", \"is_clean\", \"modified\", \"untracked\", \"added\", \"changed\", \"removed\", \"missing\", \"conflicting\"}, or None outside a repo."
   []
   (:git (snapshot)))
 
 (defn languages
   "await languages()
-Returns {\"total_files\": N, \"total_bytes\": N, \"primary\": \"clojure\", \"languages\": [{\"language\", \"files\": N, \"bytes\": N, \"files_pct\", \"bytes_pct\"}, ...], \"truncated\": bool, \"elapsed_ms\": N}. List sorted by files desc."
+Returns {\"total_files\": N, \"total_bytes\": N, \"primary\": \"clojure\", \"languages\": [{\"language\", \"files\": N, \"bytes\": N, \"files_pct\", \"bytes_pct\"}, ...], \"is_truncated\": bool, \"elapsed_ms\": N}. List sorted by files desc."
   []
   (:languages (snapshot)))
 
 (defn monorepo
   "await monorepo()
-Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": {\"clojure\": N, ...}, \"files\": {\"clojure\": [\"path/deps.edn\", ...], ...}, \"truncated\": bool}. \"shape\" is None for single-package repos."
+Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": {\"clojure\": N, ...}, \"files\": {\"clojure\": [\"path/deps.edn\", ...], ...}, \"is_truncated\": bool}. \"shape\" is None for single-package repos."
   []
   (:monorepo (snapshot)))
 
-(defn- success-envelope [result] (extension/success {:result result}))
+(defn- success-envelope
+  "Envelope for a sandbox env symbol. The snapshot pieces are ENGINE data —
+   kebab-case keyword keys, `foo?` booleans — but the Clojure->Python boundary
+   is STRINGS-ONLY and throws on the first keyword key it meets, so every one
+   of these tools used to die with `non-string-key :host` instead of
+   answering. `wire/->wire` is this repo's one deterministic engine->wire
+   encoder (kebab->snake, `foo?` -> `is_foo`, keyword values stringified), so
+   the payload crosses already string-clean and the docstrings above name the
+   keys Python actually holds."
+  [result]
+  (extension/success {:result (wire/->wire result)}))
 
 (defn- repositories-tool
   "await repositories()
-Returns {\"count\": N, \"repositories\": [{\"path\", \"branch\", \"dirty\": bool, \"changes\": bool, \"stale\": bool, \"stash_count\": N, ...}], \"truncated\": bool}."
+Returns {\"root\", \"count\": N, \"repositories\": [{\"path\", \"branch\", \"is_dirty\": bool, \"is_changes\": bool, \"is_stale\": bool, \"stash_count\": N, ...}], \"is_truncated\": bool}."
   []
   (success-envelope (repositories)))
 
 (defn- languages-tool
   "await languages()
-Returns {\"total_files\": N, \"total_bytes\": N, \"primary\": \"clojure\", \"languages\": [{\"language\", \"files\": N, \"bytes\": N, \"files_pct\", \"bytes_pct\"}, ...], \"truncated\": bool, \"elapsed_ms\": N}. List sorted by files desc."
+Returns {\"total_files\": N, \"total_bytes\": N, \"primary\": \"clojure\", \"languages\": [{\"language\", \"files\": N, \"bytes\": N, \"files_pct\", \"bytes_pct\"}, ...], \"is_truncated\": bool, \"elapsed_ms\": N}. List sorted by files desc."
   []
   (success-envelope (languages)))
 
 (defn- monorepo-tool
   "await monorepo()
-Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": {\"clojure\": N, ...}, \"files\": {\"clojure\": [\"path/deps.edn\", ...], ...}, \"truncated\": bool}. \"shape\" is None for single-package repos."
+Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": {\"clojure\": N, ...}, \"files\": {\"clojure\": [\"path/deps.edn\", ...], ...}, \"is_truncated\": bool}. \"shape\" is None for single-package repos."
   []
   (success-envelope (monorepo)))
 
 (defn- refresh!-tool
   "await refresh()
-Drop the cached env snapshot and recompute. Returns the fresh snapshot."
+Drop the cached env snapshot and recompute. Returns the fresh snapshot {\"host\", \"git\", \"languages\", \"monorepo\", \"repositories\"} - the same payloads git()/languages()/monorepo()/repositories() return."
   []
   (success-envelope (refresh!)))
 
@@ -205,7 +216,7 @@ Drop the cached env snapshot and recompute. Returns the fresh snapshot."
 
 (defn main-agent-instructions
   "await main_agent_instructions()
-Returns {\"found\": True, \"source\", \"path\", \"bytes\": N, \"content\"} from AGENTS.md/CLAUDE.md, else {\"found\": False}. Check found first."
+Returns {\"is_found\": True, \"source\", \"path\", \"bytes\": N, \"content\", \"files\"} from AGENTS.md/CLAUDE.md, else {\"is_found\": False}. Check is_found first."
   []
   (agents/instructions))
 
@@ -217,7 +228,7 @@ Returns {\"found\": True, \"source\", \"path\", \"bytes\": N, \"content\"} from 
 
 (defn- main-agent-instructions-tool
   "await main_agent_instructions()
-Returns {\"found\": True, \"source\", \"path\", \"bytes\": N, \"content\"} from AGENTS.md/CLAUDE.md, else {\"found\": False}. Check found first."
+Returns {\"is_found\": True, \"source\", \"path\", \"bytes\": N, \"content\", \"files\"} from AGENTS.md/CLAUDE.md, else {\"is_found\": False}. Check is_found first."
   []
   (success-envelope (main-agent-instructions)))
 

@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.foundation.environment.core-test
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.internal.env-python :as env-python]
             [com.blockether.vis.internal.foundation.environment.core :as env-core]
             [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]])
@@ -82,3 +83,38 @@
                         (finally (binding [workspace/*workspace-root* nil]
                                    (env-core/refresh!))
                                  (cleanup root))))))
+
+(defn- symbol-view
+  "Call the environment symbol named `sym` and return what Python would hold."
+  [sym]
+  (let
+    [{:ext.symbol/keys [fn]} (first (filter #(= sym (:ext.symbol/symbol %))
+                                            env-core/environment-symbols))]
+    (env-python/boundary-view (:result (fn)))))
+
+;; Regression, issue #115: every environment symbol handed Python its RAW
+;; keyword-keyed snapshot, so `await refresh()` died with "STRINGS-ONLY
+;; boundary violation: non-string-key :host at the TOP-LEVEL map key" — and so
+;; did repositories(), languages(), monorepo() and main_agent_instructions().
+(defdescribe environment-symbols-boundary-test
+             (it "hands Python string-keyed payloads for every environment symbol"
+                 (doseq [sym-map env-core/environment-symbols]
+                   (let
+                     [sym (:ext.symbol/symbol sym-map)
+                      envelope ((:ext.symbol/fn sym-map))
+                      ;; `boundary-view` is the no-context mirror of the real
+                      ;; Clojure->Python boundary: it THROWS on a keyword key or
+                      ;; value at any depth, exactly like `->py` does in GraalPy.
+                      view (env-python/boundary-view (:result envelope))]
+
+                     (expect (:success? envelope) (str sym " envelope must succeed"))
+                     (expect (map? view) (str sym " must return a dict"))
+                     (expect (every? string? (keys view)) (str sym " top-level keys")))))
+             (it "spells refresh() keys the way its docstring promises"
+                 (let [view (symbol-view 'refresh!)]
+                   (expect (= #{"host" "git" "languages" "monorepo" "repositories"}
+                              (set (keys view))))
+                   (expect (string? (get-in view ["host" "os_name"])))
+                   (expect (contains? (get view "languages") "total_files"))
+                   (expect (contains? (get view "languages") "is_truncated"))
+                   (expect (contains? (get view "repositories") "count")))))
