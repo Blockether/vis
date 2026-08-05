@@ -39,6 +39,7 @@
     "release:testflight": "node scripts/testflight.mjs",
     "release:expire": "node scripts/expire.mjs",
     "release:notes": "node scripts/release-notes.mjs",
+    "diagnostics:ios": "node scripts/ios-crashes.mjs",
     "secrets": "node scripts/secrets.mjs"
   },
   "dependencies": {
