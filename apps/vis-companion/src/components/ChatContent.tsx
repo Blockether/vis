@@ -46,6 +46,13 @@ import type {
 } from '../lib/types';
 import type { GatewayClient } from '../lib/gateway';
 import { ExpandableImage } from './ImageViewer';
+import {
+  mediaContentClass,
+  mediaFrameClass,
+  mediaPendingClass,
+  mediaSlotFrame,
+  type MediaSlotState,
+} from '../lib/media-frame';
 
 const disclosureClass =
   'inline-block shrink-0 text-ui transition-transform duration-150 group-open:rotate-90';
@@ -1343,48 +1350,60 @@ const AttachmentTile = memo(function AttachmentTile({
   }, [client, sid, iterationId, index, isPlayable, attempt]);
 
   // A non-visual artifact reaching a tile is the failure path only — the rail
-  // below routes files into the collapsed recorded-files row.
-  if (!isPlayable || failed || !iterationId) {
+  // below routes files into the collapsed recorded-files row. Decided at mount
+  // and never revisited, so this branch cannot resize anything.
+  if (!isPlayable || !iterationId) {
     return (
-      <div className="mt-2 min-w-0 truncate font-mono text-chip text-footer-muted">
-        {failed ? `✗ ${name}` : `↗ ${name}`}
-      </div>
+      <div className="mt-2 min-w-0 truncate font-mono text-chip text-footer-muted">{`↗ ${name}`}</div>
     );
   }
 
+  // ONE reserved box for the whole life of the slot — see `lib/media-frame`. A
+  // failure that arrives after the bytes were requested says so INSIDE the box
+  // it already holds: collapsing to a text line here would shove the reader
+  // just as hard as growing did.
+  const slot: MediaSlotState = failed ? 'failed' : url ? 'ready' : 'pending';
+
   return (
     <figure className="mt-2.5 min-w-0">
-      {!url ? (
-        <div className="h-24 w-full animate-pulse bg-thinking-surface" aria-hidden="true" />
-      ) : isVideo ? (
-        // A clip PLAYS in place, with the platform's own controls. It streams from
-        // the same attachment endpoint as the pictures, and `preload="metadata"`
-        // means a transcript full of clips costs a poster frame, not the bytes.
-        <video
-          src={url}
-          controls
-          playsInline
-          preload="metadata"
-          onError={() => setFailed(true)}
-          className="block max-h-[60svh] w-auto max-w-full object-contain"
-        />
-      ) : (
-        <ExpandableImage
-          src={url}
-          alt={name}
-          loading="lazy"
-          decoding="async"
-          onError={() => {
-            if (attempt >= 2) {
-              setFailed(true);
-              return;
-            }
-            setUrl(null);
-            setAttempt((current) => current + 1);
-          }}
-          className="block max-h-[60svh] w-auto max-w-full object-contain"
-        />
-      )}
+      <div className={mediaSlotFrame(slot)}>
+        {failed ? (
+          <div className="flex h-full w-full items-center bg-thinking-surface px-2 font-mono text-chip text-footer-muted">
+            {`✗ ${name}`}
+          </div>
+        ) : !url ? (
+          <div className={mediaPendingClass} aria-hidden="true" />
+        ) : isVideo ? (
+          // A clip PLAYS in place, with the platform's own controls. It streams from
+          // the same attachment endpoint as the pictures, and `preload="metadata"`
+          // means a transcript full of clips costs a poster frame, not the bytes.
+          <video
+            src={url}
+            controls
+            playsInline
+            preload="metadata"
+            onError={() => setFailed(true)}
+            className={mediaContentClass}
+          />
+        ) : (
+          <ExpandableImage
+            src={url}
+            alt={name}
+            loading="lazy"
+            decoding="async"
+            frameClassName="h-full w-full"
+            onError={() => {
+              if (attempt >= 2) {
+                setFailed(true);
+                return;
+              }
+              setUrl(null);
+              setAttempt((current) => current + 1);
+            }}
+            className={mediaContentClass}
+          />
+        )}
+      </div>
       <figcaption className="mt-1 truncate font-mono text-chip text-footer-muted">{name}</figcaption>
     </figure>
   );
@@ -2023,21 +2042,29 @@ export const UserMessage = memo(function UserMessage(
               : `data:${att.media_type};base64,${att.base64}`;
             // The clip the user sent replays from the SAME DB-owned bytes as a
             // picture, so it survives a restart after the source file is gone.
+            //
+            // These bytes are inline, so there is no pulse to swap out — but a
+            // picture whose box is its own decoded size still reserves NOTHING
+            // until it decodes, and on iOS that decode happens as the bubble
+            // nears the viewport, i.e. mid-scroll. Same reserved frame as a
+            // produced artifact, for the same reason.
             return att.media_type?.startsWith('video/') ? (
-              <video
-                key={key}
-                src={src}
-                controls
-                playsInline
-                preload="metadata"
-                className="max-h-[min(28rem,60dvh)] max-w-full w-auto rounded border border-code-edge object-contain"
-              />
+              <div key={key} className={`${mediaFrameClass} overflow-hidden rounded border border-code-edge`}>
+                <video
+                  src={src}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  className={mediaContentClass}
+                />
+              </div>
             ) : (
               <ExpandableImage
                 key={key}
                 src={src}
                 alt={att.filename ?? 'attachment'}
-                className="max-h-[min(28rem,60dvh)] max-w-full w-auto rounded border border-code-edge object-contain"
+                frameClassName={`${mediaFrameClass} overflow-hidden rounded border border-code-edge`}
+                className={mediaContentClass}
               />
             );
           })}

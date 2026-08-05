@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { Markdown } from './ChatContent';
+import { Markdown, UserMessage } from './ChatContent';
+import { mediaFrameClass } from '../lib/media-frame';
 
 /** Visible text of a rendered chunk: tags out, entities back. */
 const text = (html: string) =>
@@ -64,5 +65,34 @@ describe('Markdown tool card body', () => {
     expect(quote).not.toBe('');
     expect(count(quote, /<p class=/g)).toBe(2);
     expect(text(quote).replace(/\n+/g, '\n').trim()).toBe('feat: thing\nbody line');
+  });
+});
+
+// Regression, iOS scroll jump: a pasted picture used to be laid out at whatever
+// its own decoded pixels measured (`max-h-[min(28rem,60dvh)] w-auto`), so the
+// bubble reserved NOTHING for it until the decode landed — which, with
+// `loading="lazy"` on iOS, happens as the bubble nears the viewport, i.e. while
+// the reader is scrolling. Everything below it then jumped down by the height
+// of the picture, and this scroller (`overflow-anchor:none`, no WebKit
+// anchoring, corrector standing down mid-gesture) never put it back.
+describe('user bubble pictures', () => {
+  const html = () =>
+    renderToStaticMarkup(
+      <UserMessage
+        attachments={[
+          { filename: 'shot.png', media_type: 'image/png', base64: 'iVBORw0KGgo=', size: 8 },
+        ]}
+      >
+        {'look at this'}
+      </UserMessage>,
+    );
+
+  it('reserves the picture box before a single byte has decoded', () => {
+    expect(html()).toContain(mediaFrameClass);
+  });
+
+  it('never lets the picture size its own slot', () => {
+    expect(html()).not.toMatch(/<img[^>]*\bw-auto\b/u);
+    expect(html()).not.toMatch(/<img[^>]*\bh-auto\b/u);
   });
 });
