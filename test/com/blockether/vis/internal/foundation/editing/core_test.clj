@@ -2710,6 +2710,78 @@
         (expect (string/includes? (get-in out [:error :trace]) "ExceptionInfo"))
         (expect (not (contains? out :markdown))))))
 
+;; Regression: `patch` `replace` and `struct_patch` `code` used to write a
+;; literal `\u2014` -- the six characters -- into the file whenever the model
+;; emitted the escape instead of the em dash itself, so edited files ended up
+;; carrying `\u2014` in prose and docstrings where a dash belonged.
+(defdescribe
+  editing-unicode-escape-decode-test
+  "Drifted `\\uXXXX` escapes are decoded ONCE on the way in, for both text and
+   structural edits, and only where the escape can only BE drift: an escaped
+   `\\\\uXXXX`, a control escape, a private-use code point and a lone surrogate
+   are written through verbatim."
+  (it "decodes an unescaped escape that names a printable non-ASCII character"
+      (expect (= "a \u2014 b" (patch/decode-unicode-escapes "a \\u2014 b")))
+      (expect (= "\u2026" (patch/decode-unicode-escapes "\\u2026")))
+      (expect (= "caf\u00e9" (patch/decode-unicode-escapes "caf\\u00e9")))
+      ;; A surrogate PAIR is one character, so it decodes together.
+      (expect (= "\ud83d\ude42" (patch/decode-unicode-escapes "\\ud83d\\ude42"))))
+  (it "leaves every escape a real file may legitimately contain alone"
+      (doseq
+        [s ["\\\\u2014" ;; backslash escaped: text ABOUT an escape
+            "\\n\\t" ;; control escapes
+            "\\u001b[0m" ;; ANSI escape inside a string literal
+            "\\u0041" ;; ASCII
+            "\\ue0a1" ;; private use (icon font)
+            "\\ud83d" ;; lone surrogate
+            "\\u2028" ;; line separator: never invent a line
+            "\\ufeff" ;; byte-order mark
+            "\\uXYZW" ;; not an escape at all
+            "\\u20"]] ;; truncated
+        (expect (= s (patch/decode-unicode-escapes s))))
+      (expect (= "\\\\u2014 vs \u2014" (patch/decode-unicode-escapes "\\\\u2014 vs \\u2014"))))
+  (it "is total: nothing to decode, nothing to scan"
+      (expect (= "plain" (patch/decode-unicode-escapes "plain")))
+      (expect (= "" (patch/decode-unicode-escapes "")))
+      (expect (nil? (patch/decode-unicode-escapes nil))))
+  (it "patch writes the character, not the escape"
+      (let
+        [path
+         (write-temp! "escape/patch.txt" "alpha\n")
+
+         patch-safe
+         (private-fn "patch-safe")
+
+         r
+         (patch-safe [{"path" path
+                       "from_anchor" (patch/line-anchor 1 "alpha")
+                       "replace" "beta \\u2014 gamma"}])]
+
+        (expect (true? (:success? r)))
+        (expect (= "beta \u2014 gamma\n" (slurp path)))))
+  (it "struct_patch writes the character, not the escape"
+      (let
+        [sp
+         (private-fn "struct-patch-tool")
+
+         _
+         (temp-dir-path "spesc")
+
+         f
+         (str (temp-root) "/spesc/m.clj")]
+
+        (spit (fs/file f) "(def note \"old\")\n")
+        (let
+          [r
+           (sp {"path" f "op" "replace" "target" "note" "code" "(def note \"a \\u2014 b\")"})
+
+           src
+           (slurp (fs/file f))]
+
+          (expect (:success? r))
+          (expect (string/includes? src "a \u2014 b"))
+          (expect (not (string/includes? src "\\u2014")))))))
+
 (defdescribe
   vis-patch-hashline-test
   ;; End-to-end content-addressed editing: read hashes from cat, then

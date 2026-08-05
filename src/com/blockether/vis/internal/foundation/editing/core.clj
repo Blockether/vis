@@ -3377,37 +3377,43 @@
     (when (empty? edits)
       (throw (ex-info "patch expects at least one edit"
                       {:type :ext.foundation.editing/invalid-patch-edits :got edits})))
-    (mapv (fn [edit]
-            (when-not (map? edit)
-              (throw (ex-info "patch edit must be a map"
-                              {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
-            (let
-              [missing (seq (remove #(contains? edit %) patch-required-keys))
-               unknown (seq (remove patch-allowed-keys (keys edit)))]
+    (mapv
+      (fn [edit]
+        (when-not (map? edit)
+          (throw (ex-info "patch edit must be a map"
+                          {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
+        (let
+          [missing (seq (remove #(contains? edit %) patch-required-keys))
+           unknown (seq (remove patch-allowed-keys (keys edit)))]
 
-              (when missing
-                (throw (ex-info (str "patch edit missing required keys: "
-                                     (str/join ", " (map #(str "'" % "'") missing))
-                                     ". Use a fresh lineno:hash from cat as from_anchor.")
-                                {:type :ext.foundation.editing/invalid-patch-edit
-                                 :missing (vec missing)
-                                 :edit edit})))
-              (when unknown
-                (throw (ex-info (str "patch edit has unknown keys: "
-                                     (str/join ", " (map #(str "'" % "'") unknown))
-                                     ". Allowed: "
-                                     (str/join ", " (sort patch-allowed-keys))
-                                     ".")
-                                {:type :ext.foundation.editing/invalid-patch-edit
-                                 :unknown (vec unknown)
-                                 :allowed (vec patch-allowed-keys)
-                                 :edit edit}))))
-            ;; Generated callers can serialize an omitted optional anchor as "".
-            ;; That is equivalent to omitting the single-line range endpoint.
-            (cond-> (update edit "path" str)
-              (= "" (get edit "to_anchor"))
-              (dissoc "to_anchor")))
-          edits)))
+          (when missing
+            (throw (ex-info (str "patch edit missing required keys: "
+                                 (str/join ", " (map #(str "'" % "'") missing))
+                                 ". Use a fresh lineno:hash from cat as from_anchor.")
+                            {:type :ext.foundation.editing/invalid-patch-edit
+                             :missing (vec missing)
+                             :edit edit})))
+          (when unknown
+            (throw (ex-info (str "patch edit has unknown keys: "
+                                 (str/join ", " (map #(str "'" % "'") unknown))
+                                 ". Allowed: "
+                                 (str/join ", " (sort patch-allowed-keys))
+                                 ".")
+                            {:type :ext.foundation.editing/invalid-patch-edit
+                             :unknown (vec unknown)
+                             :allowed (vec patch-allowed-keys)
+                             :edit edit}))))
+        ;; Generated callers can serialize an omitted optional anchor as "".
+        ;; That is equivalent to omitting the single-line range endpoint.
+        ;; A literal `\uXXXX` in `replace` is model drift, not text the caller
+        ;; wants on disk: decode it here, once, before anything plans an edit.
+        (cond-> (update edit "path" str)
+          (contains? edit "replace")
+          (update "replace" patch/decode-unicode-escapes)
+
+          (= "" (get edit "to_anchor"))
+          (dissoc "to_anchor")))
+      edits)))
 
 ;; -----------------------------------------------------------------------------
 ;; Per-path consecutive-failure tracker (Roo-style loop detector)
@@ -6937,7 +6943,8 @@
            :else raw-op)
 
      code
-     (if delete? "" (get args "code"))
+     ;; Same drift as `patch` `replace`: decode `\uXXXX` before the code is parsed.
+     (if delete? "" (patch/decode-unicode-escapes (get args "code")))
 
      new-content
      (if path-locator?

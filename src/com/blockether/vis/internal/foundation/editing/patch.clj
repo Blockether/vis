@@ -549,3 +549,96 @@
              :end char-end
              :replacement rewritten
              :applied-line (inc line-start)}))))))
+
+;; =============================================================================
+;; Drifted `\uXXXX` escapes in edit TEXT
+;;
+;; A model sometimes emits the six characters `\u2014` where it means an em
+;; dash. JSON decoding is not the culprit: the escape arrives already escaped,
+;; so those six characters ARE the text the tool was asked to write, and they
+;; used to land on disk exactly like that.
+;;
+;; Decoding is therefore narrow enough that it can only ever undo drift: the
+;; backslash must be unescaped, and the code unit must name a printable
+;; non-ASCII character. Real source legitimately contains `\n`, `\u001b`, a
+;; doubled `\\uXXXX` inside prose about escapes, and private-use code points in
+;; icon fonts -- every one of those is written through verbatim.
+;; =============================================================================
+
+(def ^:private hex-quad-pattern #"[0-9a-fA-F]{4}")
+
+(defn- unicode-escape-unit
+  "The 16-bit value of the `\\uXXXX` escape whose backslash sits at `i` in `s`,
+   or nil when no complete escape starts there."
+  [^String s ^long i]
+  ;; An escape is exactly six characters wide: \ u and four hex digits.
+  (when (<= (+ i 6) (.length s))
+    (when (and (= \\ (.charAt s i)) (= \u0075 (.charAt s (inc i))))
+      (let [hex (.substring s (+ i 2) (+ i 6))]
+        (when (re-matches hex-quad-pattern hex) (Long/parseLong hex 16))))))
+
+(defn- printable-non-ascii-unit?
+  "True when `u` names a printable non-ASCII BMP character -- the only kind of
+   escape that is decoded. Below U+00A0 sit ASCII and the C0/C1 controls,
+   U+D800-U+DFFF are half characters (decoded only as PAIRS), U+E000-U+F8FF is
+   private use, U+2028/U+2029 would invent a line under a line-addressed patch,
+   and U+FEFF/U+FFF9+ is formatting and non-character space."
+  [^long u]
+  (and (>= u 0xA0)
+       (not (<= 0xD800 u 0xDFFF))
+       (not (<= 0xE000 u 0xF8FF))
+       (not (<= 0x2028 u 0x2029))
+       (not= u 0xFEFF)
+       (< u 0xFFF9)))
+
+(defn decode-unicode-escapes
+  "Decode the `\\uXXXX` escapes in edit text that can only be model drift.
+
+   A literal `\\u2014` handed to `patch` `replace` or `struct_patch` `code` used
+   to be written to disk as those six characters, so edited files grew
+   `\\u2014` where an em dash belonged. Here it becomes the em dash, while every
+   escape a real file may legitimately carry is returned untouched: a doubled
+   `\\\\uXXXX`, a control or ASCII escape, a private-use code point, a lone
+   surrogate, a line separator. A valid surrogate PAIR decodes together, so
+   emoji survive the same trip.
+
+   Pure and total: a non-string, or a string with no escape in it, is returned
+   as-is."
+  [s]
+  (if-not (and (string? s) (str/includes? s "\\u"))
+    s
+    (let
+      [^String text
+       s
+
+       n
+       (.length text)
+
+       sb
+       (StringBuilder. n)]
+
+      (loop [i 0]
+        (if (>= i n)
+          (.toString sb)
+          (if (not= \\ (.charAt text i))
+            (do (.append sb (.charAt text i)) (recur (inc i)))
+            (let
+              [run-end (long (loop [j i]
+                               (if (and (< j n) (= \\ (.charAt text j))) (recur (inc j)) j)))]
+              (if (even? (- run-end i))
+                ;; Every backslash is itself escaped: this is text ABOUT an escape.
+                (do (.append sb (.substring text i run-end)) (recur run-end))
+                (let
+                  [start (dec run-end)
+                   unit (unicode-escape-unit text start)
+                   low (when (and unit (<= 0xD800 (long unit) 0xDBFF))
+                         (unicode-escape-unit text (+ start 6)))]
+
+                  (.append sb (.substring text i start))
+                  (cond (and low (<= 0xDC00 (long low) 0xDFFF)) (do (.append sb (char (long unit)))
+                                                                    (.append sb (char (long low)))
+                                                                    ;; Both halves consumed: two escapes, one character.
+                                                                    (recur (+ start 12)))
+                        (and unit (printable-non-ascii-unit? (long unit)))
+                        (do (.append sb (char (long unit))) (recur (+ start 6)))
+                        :else (do (.append sb \\) (recur run-end))))))))))))
