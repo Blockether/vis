@@ -175,6 +175,32 @@
       (expect (every? #(= b64 (:base64 %)) got))
       (expect (= "image/png" (:media-type (first got))))
       (expect (= 8 (:size (first got))))
+      ;; The METADATA listers answer the SAME rows in the SAME order without a
+      ;; byte of payload. Everything that only NUMBERS or DESCRIBES artifacts
+      ;; (wire descriptors, transcript pages, the byte endpoint's own index
+      ;; lookup) used to read - and base64-encode - every blob of the iteration
+      ;; just to count them, so serving a gallery of N images cost N*N reads.
+      (let
+        [meta-rows
+         (vis/db-list-iteration-attachments-meta s iid)
+
+         meta-batch
+         (get (vis/db-list-iterations-attachments-meta s [iid]) (str iid))
+
+         facts
+         (juxt :id :source
+               :tool-call-id :position
+               :kind :media-type
+               :filename :size
+               :audience :storage-uri)]
+
+        (expect (= (mapv facts got) (mapv facts meta-rows) (mapv facts meta-batch)))
+        (expect (every? #(not (contains? % :base64)) meta-rows))
+        ;; …and each row still says whether an inline blob exists at all, so a
+        ;; reader can tell `:inline` from `:external` without fetching either.
+        (expect (every? :has-bytes meta-rows))
+        ;; The ONE artifact a caller actually serves is read by its own id.
+        (expect (= b64 (:base64 (vis/db-read-attachment s (:id (first meta-rows)))))))
       ;; Batch variant groups by iteration id.
       (let [batch (vis/db-list-iterations-attachments s [iid])]
         (expect (= 1 (count batch)))

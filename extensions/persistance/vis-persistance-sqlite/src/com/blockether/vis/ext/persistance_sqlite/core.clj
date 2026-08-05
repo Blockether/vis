@@ -2726,6 +2726,72 @@
                        :order-by [[:session_turn_iteration_id :asc] [:tool_call_id :asc]
                                   [:position :asc]]})))))
 
+(def ^:private attachment-meta-select
+  "Every `session_attachment` column EXCEPT the `bytes` BLOB, plus a computed
+   `has_bytes` flag. A metadata read - the wire descriptors, a transcript
+   projection, the byte endpoint's own index lookup - must never pay for the
+   payload: `SELECT *` over a 20-figure iteration reads megabytes off disk and
+   then base64-ENCODES every one of them into a String the caller throws away."
+  [:id :session_turn_soul_id :session_turn_iteration_id :tool_call_id :position :kind :media_type
+   :filename :audience :storage_uri :size_bytes [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
+
+(defn- row->attachment-meta
+  "[[row->attachment]] for a bytes-free row: the same envelope minus `:base64`,
+   with `:has-bytes` in its place so a caller can still tell an inline blob from
+   an external `:storage-uri` without reading either. `:size` stays exact -
+   `size_bytes` is written on insert, never derived from the blob at read time."
+  [row]
+  (let [flag (:has_bytes row)]
+    (-> (row->attachment row)
+        (dissoc :base64)
+        (assoc :has-bytes (if (number? flag) (pos? (long flag)) (true? flag))))))
+
+(defn db-list-iteration-attachments-meta
+  "[[db-list-iteration-attachments]] WITHOUT the bytes - the same rows in the
+   same `(tool_call_id, position)` order, `:base64` replaced by `:has-bytes`.
+   THE lister for everything that only NUMBERS or DESCRIBES an iteration's
+   artifacts; the one blob a caller actually serves is then read by id with
+   [[db-read-attachment]], so serving image N costs one blob and not all N."
+  [db-info iteration-id]
+  (if-not (and (ds db-info) iteration-id)
+    []
+    (let [iter-id-s (->ref iteration-id)]
+      (mapv row->attachment-meta
+            (query! db-info
+                    {:select attachment-meta-select
+                     :from :session_attachment
+                     :where [:= :session_turn_iteration_id iter-id-s]
+                     :order-by [[:tool_call_id :asc] [:position :asc]]})))))
+
+(defn db-list-iterations-attachments-meta
+  "Batch variant of [[db-list-iteration-attachments-meta]]: bytes-free rows for
+   MANY `session_turn_iteration` ids in ONE query, grouped as
+   `{iteration-id-string [{:id :source :tool-call-id :position :kind :media-type
+   :filename :audience :size :has-bytes :storage-uri} …]}`. Missing ids are
+   simply absent. Safe: no ids / no datasource -> `{}`. A transcript page reads
+   every iteration's artifact LIST this way and stays byte-free."
+  [db-info iteration-ids]
+  (let
+    [ids (->> iteration-ids
+              (keep #(some-> %
+                             ->ref))
+              distinct
+              vec)]
+    (if-not (and (ds db-info) (seq ids))
+      {}
+      (reduce (fn [m row]
+                (update m
+                        (:session_turn_iteration_id row)
+                        (fnil conj [])
+                        (row->attachment-meta row)))
+              {}
+              (query! db-info
+                      {:select attachment-meta-select
+                       :from :session_attachment
+                       :where [:in :session_turn_iteration_id ids]
+                       :order-by [[:session_turn_iteration_id :asc] [:tool_call_id :asc]
+                                  [:position :asc]]})))))
+
 (defn db-list-turn-all-attachments
   "EVERY attachment hanging off one TURN - user images AND tool artifacts
    together - in ONE indexed filter (`session_turn_soul_id = ?`), the roll-up

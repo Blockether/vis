@@ -918,17 +918,23 @@
 
 (defn iteration-attachments
   "Ordered OUTBOUND artifacts (matplotlib figures / produced images) a tool call
-   persisted under iteration `iid`, in the `db-list-iteration-attachments` shape
-   (each hydrated with inline `:base64` or an external `:storage-uri`), or `[]`.
+   persisted under iteration `iid` as METADATA ONLY — the
+   `db-list-iteration-attachments-meta` shape, never a byte of payload — or `[]`.
    THE canonical, ordered, UNFILTERED list. Everything a client sees is derived
    from it by [[user-iteration-attachments]], which is what both the descriptors
-   and the byte endpoint go through. nil/unparsable id -> `[]`."
+   and the byte endpoint go through; the ONE artifact the endpoint then serves
+   fetches its own bytes in [[attachment-bytes]].
+
+   Listing the bytes here made LISTING cost the whole iteration: every
+   `iteration.completed` frame read (and base64-encoded) every figure it was
+   only going to describe, and serving image N of a gallery re-read all N — a
+   9-image gallery paid 81 image reads for 9. nil/unparsable id -> `[]`."
   [iid]
   (try (if-let
          [iid (some-> iid
                       str
                       parse-uuid)]
-         (vec (persistance/db-list-iteration-attachments (lp/db-info) iid))
+         (vec (persistance/db-list-iteration-attachments-meta (lp/db-info) iid))
          [])
        (catch Throwable t
          (tel/log! :warn ["gateway: iteration-attachments read failed" (str iid) (ex-message t)])
@@ -947,14 +953,29 @@
   [iid]
   (into [] (remove attachments/hidden-from-user?) (iteration-attachments iid)))
 
+(defn- decode-base64 ^bytes [^String s] (.decode (java.util.Base64/getDecoder) s))
+
 (defn attachment-bytes
-  "Raw bytes for ONE attachment map (an [[iteration-attachments]] element): its
-   inline `:base64` decoded, else its external `:storage-uri` fetched through the
-   storage rail. nil when neither resolves."
-  ^bytes [{:keys [base64 storage-uri]}]
-  (cond (some? base64) (.decode (java.util.Base64/getDecoder) ^String base64)
-        (some? storage-uri) (attachment-storage/resolve-bytes storage-uri)
-        :else nil))
+  "Raw bytes for ONE attachment map (an [[iteration-attachments]] element),
+   fetched LAZILY — listing describes, only this reads. An inline `:base64` the
+   caller already holds is decoded; an external `:storage-uri` goes through the
+   storage rail; otherwise the row's own `:id` is re-read from the store, which
+   is why the metadata listers can stay byte-free.
+
+   TOTAL: a corrupt payload, a vanished row or an unreachable storage backend is
+   `nil` — the endpoint answers a clean 404 instead of throwing a 500 out of a
+   `Base64` decoder."
+  ^bytes [{:keys [base64 storage-uri id has-bytes]}]
+  (try (cond (some? base64) (decode-base64 base64)
+             (some? storage-uri) (attachment-storage/resolve-bytes storage-uri)
+             (and (some? id) (not (false? has-bytes)))
+             (some-> (persistance/db-read-attachment (lp/db-info) id)
+                     :base64
+                     decode-base64)
+             :else nil)
+       (catch Throwable t
+         (tel/log! :warn ["gateway: attachment-bytes read failed" (str id) (ex-message t)])
+         nil)))
 
 (defn- attachment-descriptors
   "Lean wire descriptors — metadata ONLY, NEVER base64 — for ONE iteration's
@@ -1576,8 +1597,12 @@
      (if (seq iteration-rows)
        (try (into {}
                   (map (fn [[iter-id rows]]
-                         [(str iter-id) rows]))
-                  (persistance/db-list-iterations-attachments db (keep :id iteration-rows)))
+                         ;; The HUMAN's own list, filtered once — the very door
+                         ;; the live frame and the byte endpoint go through — so
+                         ;; a model-only artifact is absent from history too and
+                         ;; index N names the same picture on every surface.
+                         [(str iter-id) (into [] (remove attachments/hidden-from-user?) rows)]))
+                  (persistance/db-list-iterations-attachments-meta db (keep :id iteration-rows)))
             (catch Throwable _ {}))
        {})
 

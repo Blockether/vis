@@ -148,15 +148,16 @@
 
 (defn- attachment-descriptor
   "Lean, byte-free descriptor for ONE persisted iteration attachment (an element
-   of `db-list-iteration-attachments`). Drops `:base64` — a produced artifact can
-   be MBs and would bloat every transcript projection — keeping only the metadata
+   of `db-list-iteration-attachments-meta`). Carries no `:base64` — a produced
+   artifact can be MBs and would bloat every transcript projection — keeping only
+   the metadata
    a reader needs PLUS the bare row `:id` to fetch the bytes on demand via
    `db-read-attachment` (Clojure) / the sandbox `vis_read_attachment(id)` shim.
    `:stored` records where the bytes live (`:inline` DB blob, `:external` storage
    backend, or `:none`) without carrying them."
   [att]
   (-> (select-keys att [:id :source :tool-call-id :position :kind :media-type :filename :size])
-      (assoc :stored (cond (:base64 att) :inline
+      (assoc :stored (cond (or (:has-bytes att) (:base64 att)) :inline
                            (:storage-uri att) :external
                            :else :none))))
 
@@ -189,7 +190,11 @@
 
      attachments
      (mapv attachment-descriptor
-           (try (vis/db-list-iteration-attachments db-info (:id iter)) (catch Throwable _ [])))]
+           ;; METADATA lister: this projection drops `:base64` anyway, and
+           ;; reading it first made every transcript page pay for (and
+           ;; base64-encode) every figure the conversation ever produced.
+           (try (vis/db-list-iteration-attachments-meta db-info (:id iter))
+                (catch Throwable _ [])))]
 
     (cond->
       (-> iter

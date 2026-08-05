@@ -528,6 +528,10 @@
 
 (defdelegate db-list-iterations-attachments [db-info iteration-ids])
 
+(defdelegate db-list-iteration-attachments-meta [db-info iteration-id])
+
+(defdelegate db-list-iterations-attachments-meta [db-info iteration-ids])
+
 (defdelegate db-read-attachment [db-info attachment-id])
 
 ;; --- Full-text search ---

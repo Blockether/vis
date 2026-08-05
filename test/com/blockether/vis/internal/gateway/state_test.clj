@@ -3473,3 +3473,85 @@
                (expect (= 1 (count (get result "content"))))
                (expect (= reason (block-message result)))))
            (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid tid))))))
+
+(defdescribe
+  attachment-listing-is-lean-and-filtered-test
+  "Artifacts are DESCRIBED cheaply and FETCHED lazily. The list a human is shown
+   is computed once — the descriptors number it, the byte endpoint indexes it,
+   and history repeats it — and listing it never touches a byte of payload."
+  ;; Regression: history disagreed with the live frame and with the byte
+  ;; endpoint. `transcript-turn` numbered the RAW persisted rows, so a
+  ;; model-only artifact reappeared in the transcript AND pushed every later
+  ;; index off the artifact the endpoint serves at that index. And every one of
+  ;; those listings read (and base64-encoded) every blob of the iteration just
+  ;; to report metadata, so a 9-image gallery cost 81 image reads.
+  (it "history drops model-only artifacts and renumbers, exactly like the byte endpoint"
+      (let
+        [rows
+         [{:id "a" :filename "MODEL-ONLY.png" :audience "model" :size 1}
+          {:id "b" :filename "SHOWN-1.png" :audience "both" :size 2}
+          {:id "c" :filename "SHOWN-2.png" :audience "user" :size 3}]
+
+         byte-lister-calls
+         (atom 0)]
+
+        (with-redefs-fn {#'persistance/db-list-session-turn-iterations (fn [_ _]
+                                                                         [{:id "iter-1"}])
+                         #'persistance/db-list-iterations-attachments (fn [_ _]
+                                                                        (swap! byte-lister-calls
+                                                                          inc)
+                                                                        {"iter-1" rows})
+                         #'persistance/db-list-iterations-attachments-meta (fn [_ _]
+                                                                             {"iter-1" rows})}
+          (fn []
+            (let
+              [turn
+               (#'state/transcript-turn ::db {} {:id "turn-1" :position 1})
+
+               atts
+               (:attachments (first (:iterations turn)))]
+
+              (expect (= ["SHOWN-1.png" "SHOWN-2.png"] (mapv :filename atts)))
+              (expect (= [0 1] (mapv :index atts)))
+              ;; …and the page never asked for the bytes it does not ship.
+              (expect (zero? @byte-lister-calls)))))))
+  (it
+    "lists metadata only and fetches ONE artifact's bytes, by its own id"
+    (let
+      [rows
+       [{:id "a" :filename "hidden.png" :audience "model" :size 1 :has-bytes true}
+        {:id "b" :filename "shown.png" :audience "both" :size 2 :has-bytes true}]
+
+       meta-calls
+       (atom 0)
+
+       byte-lister-calls
+       (atom 0)
+
+       reads
+       (atom [])]
+
+      (with-redefs-fn {#'lp/db-info (constantly ::db)
+                       #'persistance/db-list-iteration-attachments (fn [_ _]
+                                                                     (swap! byte-lister-calls inc)
+                                                                     rows)
+                       #'persistance/db-list-iteration-attachments-meta (fn [_ _]
+                                                                          (swap! meta-calls inc)
+                                                                          rows)
+                       #'persistance/db-read-attachment (fn [_ id]
+                                                          (swap! reads conj id)
+                                                          {:base64 (.encodeToString
+                                                                     (java.util.Base64/getEncoder)
+                                                                     (.getBytes "PNG" "UTF-8"))})}
+        (fn []
+          (let [user (state/user-iteration-attachments "00000000-0000-0000-0000-0000000000ab")]
+            (expect (= ["shown.png"] (mapv :filename user)))
+            (expect (= 1 @meta-calls))
+            (expect (zero? @byte-lister-calls))
+            ;; Bytes arrive only when asked for, and only that row's own.
+            (expect (= "PNG" (String. ^bytes (state/attachment-bytes (first user)) "UTF-8")))
+            (expect (= ["b"] @reads))
+            ;; TOTAL: a corrupt payload or a vanished row is a clean nil (404),
+            ;; never a decoder exception thrown out of the byte endpoint.
+            (expect (nil? (state/attachment-bytes {:base64 "!!! not base64 !!!"})))
+            (expect (nil? (state/attachment-bytes {})))))))))
