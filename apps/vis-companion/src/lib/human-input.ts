@@ -51,6 +51,29 @@ export const HUMAN_INPUT_NODE_TYPES = [
   ...HUMAN_INPUT_DECOR_TYPES,
 ] as const;
 
+/**
+ * The engine's own fallbacks, copied here because TypeScript needs them at
+ * compile time: `human-input.spec/range-defaults` and `human-input.spec/otp-defaults`.
+ * A slider with no bounds is a PERCENTAGE and a code with no width is six
+ * digits — on both surfaces, because a Clojure test reads these very lines and
+ * fails when the engine moves and the app does not.
+ */
+export const HUMAN_INPUT_RANGE_DEFAULTS = { min: 0, max: 100, step: 1 } as const;
+export const HUMAN_INPUT_OTP_DEFAULTS = { length: 6, ceiling: 12 } as const;
+
+/**
+ * The status glyph in front of a choice, from the one place the terminal keeps
+ * it (`channel-tui.dialogs/choice-mark`): a filled/hollow dot for an EXCLUSIVE
+ * choice — pick one and the other drops — and a box for an INCLUSIVE one, so
+ * "choose one" can never look like "choose any" on either surface.
+ */
+export const HUMAN_INPUT_CHOICE_MARKS = {
+  exclusiveOn: '●',
+  exclusiveOff: '○',
+  inclusiveOn: '[✓]',
+  inclusiveOff: '[ ]',
+} as const;
+
 export type HumanInputFieldType = (typeof HUMAN_INPUT_NODE_TYPES)[number];
 
 /** True when this node is pure decoration — read on the form, never answered. */
@@ -259,9 +282,15 @@ export function humanInputRequestsFromWire(raw: unknown): HumanInputRequest[] {
 
 /** A `range` field's bounds, with the engine's own defaults filled in. */
 export function humanInputRange(field: HumanInputField): { min: number; max: number; step: number } {
-  const min = Number.isFinite(field.min) ? (field.min as number) : 0;
-  const max = Number.isFinite(field.max) && (field.max as number) > min ? (field.max as number) : Math.max(min + 1, 100);
-  const step = Number.isFinite(field.step) && (field.step as number) > 0 ? (field.step as number) : 1;
+  const min = Number.isFinite(field.min) ? (field.min as number) : HUMAN_INPUT_RANGE_DEFAULTS.min;
+  const max =
+    Number.isFinite(field.max) && (field.max as number) > min
+      ? (field.max as number)
+      : Math.max(min + 1, HUMAN_INPUT_RANGE_DEFAULTS.max);
+  const step =
+    Number.isFinite(field.step) && (field.step as number) > 0
+      ? (field.step as number)
+      : HUMAN_INPUT_RANGE_DEFAULTS.step;
   return { min, max, step };
 }
 
@@ -279,7 +308,9 @@ export function clampHumanInputRange(field: HumanInputField, value: number): num
 
 /** How many digits an `otp` field holds — the engine's own six-by-default. */
 export function humanInputOtp(field: HumanInputField): { min: number; max: number } {
-  const max = Number.isFinite(field.max_length) ? (field.max_length as number) : 6;
+  const max = Number.isFinite(field.max_length)
+    ? (field.max_length as number)
+    : HUMAN_INPUT_OTP_DEFAULTS.length;
   const min = Number.isFinite(field.min_length) ? Math.min(field.min_length as number, max) : max;
   return { min, max };
 }

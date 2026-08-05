@@ -96,6 +96,14 @@
       "is_required": false
     },
     {
+      "id": "notes",
+      "name": "notes",
+      "type": "multiline",
+      "label": "Notes",
+      "is_required": false,
+      "placeholder": "Anything the on-call should know"
+    },
+    {
       "id": "group:host+group:port+tls",
       "name": "group:host+group:port+tls",
       "type": "group",

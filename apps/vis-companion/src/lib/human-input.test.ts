@@ -69,6 +69,7 @@ describe('humanInputRequestFromWire', () => {
       'risk:range',
       'code:otp',
       'notify:plaintext',
+      'notes:multiline',
       'group:host+group:port+tls:group',
     ]);
     // A group is a BRANCH: it answers nothing, and the leaves under it are the
@@ -81,6 +82,7 @@ describe('humanInputRequestFromWire', () => {
       'risk',
       'code',
       'notify',
+      'notes',
       'host',
       'port',
       'tls',
@@ -172,6 +174,7 @@ describe('initialHumanInputValues', () => {
       risk: 2.5,
       code: '',
       notify: '',
+      notes: '',
       tags: [],
       host: '',
       port: '',

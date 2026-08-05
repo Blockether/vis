@@ -31,18 +31,10 @@
 (set! *warn-on-reflection* true)
 
 (def ^:private text-types
-  "Field types edited as free text — `:otp` among them: it is typed, erased and
-   walked exactly like a text field, it only LOOKS like a row of boxes."
-  #{:plaintext :password :multiline :otp})
-
-(def ^:private choice-types
-  "Field types whose stops are individual options."
-  #{:select :multiselect})
-
-(def ^:private range-defaults
-  "Bounds a `:range` field falls back to — the engine's own defaults, so a
-   hand-made request view renders the same slider a normalized one does."
-  {:min 0 :max 100 :step 1})
+  "Field types edited as free text — the engine's own set plus `:otp`: a code is
+   typed, erased and walked exactly like a text field, it only LOOKS like a row
+   of boxes."
+  (conj hi-spec/text-types :otp))
 
 (defn- range-bounds
   "`{:lo :hi :st}` for a `:range` field. Named away from `min`/`max` on purpose:
@@ -51,7 +43,7 @@
   (let
     [num (fn [k]
            (let [v (get field k)]
-             (if (number? v) v (get range-defaults k))))]
+             (if (number? v) v (get hi-spec/range-defaults k))))]
     {:lo (num :min) :hi (num :max) :st (num :step)}))
 
 (defn- range-integral? [{:keys [lo hi st]}] (every? integer? [lo hi st]))
@@ -97,21 +89,21 @@
          hi
          ")")))
 
-(def ^:private otp-defaults
+(def ^:private otp-slot-default
   "Digits an `:otp` field falls back to — the engine's own default, so a view
    that somehow arrives without bounds still draws the six boxes everyone
    expects from a one-time code."
-  {:min-length 6 :max-length 6})
+  (long (:length hi-spec/otp-defaults)))
 
 (defn- otp-slots
   "`{:lo :hi}` — the fewest and the most digits this `:otp` field accepts."
   [field]
   (let
     [hi
-     (max 1 (long (or (:max-length field) (:max-length otp-defaults))))
+     (max 1 (long (or (:max-length field) otp-slot-default)))
 
      lo
-     (max 1 (min hi (long (or (:min-length field) (:min-length otp-defaults)))))]
+     (max 1 (min hi (long (or (:min-length field) otp-slot-default))))]
 
     {:lo lo :hi hi}))
 
@@ -156,7 +148,7 @@
   (cond (contains? text-types type) [{:kind :text :field-id id}]
         (= :checkbox type) [{:kind :checkbox :field-id id}]
         (= :range type) [{:kind :range :field-id id}]
-        (contains? choice-types type)
+        (contains? hi-spec/choice-types type)
         (mapv (fn [{:keys [value]}]
                 {:kind (if (= :multiselect type) :multi-option :select-option)
                  :field-id id
@@ -782,7 +774,7 @@
                                   :is-required (boolean (:is-required field))
                                   :is-checked (boolean value)
                                   :is-focused (= idx focus)}]
-             (contains? choice-types type)
+             (contains? hi-spec/choice-types type)
              (let [chosen (if (= :multiselect type) (set value) #{value})]
                (mapv (fn [{:keys [value label]}]
                        {:kind :option

@@ -335,11 +335,6 @@
                     (parse-double s)
                     (invalid-field! field-id (str label " must be a number"))))))
 
-(def ^:private range-defaults
-  "A `:range` with no bounds is a percentage — the one scale every operator
-   already reads without being told what the numbers mean."
-  {:min 0 :max 100 :step 1})
-
 (defn- normalize-range
   "The three numbers a slider needs. `:step` is the increment a surface nudges
    by, NOT a validation rule: the engine only refuses a value outside the
@@ -347,13 +342,13 @@
   [field-id field]
   (let
     [lo
-     (normalize-number field-id ":min" (pick field "min" :min) (:min range-defaults))
+     (normalize-number field-id ":min" (pick field "min" :min) (:min hi-spec/range-defaults))
 
      hi
-     (normalize-number field-id ":max" (pick field "max" :max) (:max range-defaults))
+     (normalize-number field-id ":max" (pick field "max" :max) (:max hi-spec/range-defaults))
 
      step
-     (normalize-number field-id ":step" (pick field "step" :step) (:step range-defaults))]
+     (normalize-number field-id ":step" (pick field "step" :step) (:step hi-spec/range-defaults))]
 
     (when-not (< (double lo) (double hi))
       (invalid-field! field-id ":max must be greater than :min"))
@@ -856,10 +851,10 @@
   [{lo :min hi :max st :step} value]
   (let
     [lo
-     (if (number? lo) lo (:min range-defaults))
+     (if (number? lo) lo (:min hi-spec/range-defaults))
 
      hi
-     (if (number? hi) hi (:max range-defaults))
+     (if (number? hi) hi (:max hi-spec/range-defaults))
 
      n
      (cond (nil? value) lo
@@ -874,7 +869,7 @@
           ;; The SPEC decides the answer's type, not the keystroke that produced it:
           ;; an all-integer slider always hands the extension a long, so `0`, `"0"`
           ;; and `0.0` cannot reach it as three different things.
-          (every? integer? [lo hi (if (number? st) st (:step range-defaults))])
+          (every? integer? [lo hi (if (number? st) st (:step hi-spec/range-defaults))])
           [:ok (long (Math/round (double n)))]
           :else [:ok (double n)])))
 

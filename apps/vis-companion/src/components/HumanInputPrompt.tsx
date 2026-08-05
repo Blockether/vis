@@ -14,6 +14,7 @@ import {
   humanInputRange,
   isHumanInputEvent,
   toggleHumanInputOption,
+  HUMAN_INPUT_CHOICE_MARKS,
   type HumanInputField,
   type HumanInputForm,
   type HumanInputRequest,
@@ -347,8 +348,8 @@ function FieldShell({
 
 /**
  * One row of the form. The field set is the engine's closed one, and every row
- * carries the same marks the TUI band draws: `●`/`○` for a single choice,
- * `[x]`/`[ ]` for a toggle.
+ * carries the marks the TUI band draws, from the one table both surfaces read:
+ * `●`/`○` for an exclusive choice, `[✓]`/`[ ]` for an inclusive one.
  */
 function HumanInputFieldRow({
   field,
@@ -433,7 +434,9 @@ function HumanInputFieldRow({
           className="flex w-full items-center gap-2 border border-edge bg-input px-2.5 py-1 text-left font-mono text-meta text-white transition-colors hover:border-accent focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted sm:text-ui"
           onClick={() => onChange(field.id, !on)}
         >
-          <span aria-hidden="true">{on ? '[x]' : '[ ]'}</span>
+          <span aria-hidden="true">
+            {on ? HUMAN_INPUT_CHOICE_MARKS.inclusiveOn : HUMAN_INPUT_CHOICE_MARKS.inclusiveOff}
+          </span>
           <span className="truncate">{field.label}</span>
         </button>
       </FieldShell>
@@ -465,7 +468,15 @@ function HumanInputFieldRow({
                   )
                 }
               >
-                <span aria-hidden="true">{isMulti ? (on ? '[x]' : '[ ]') : on ? '●' : '○'}</span>
+                <span aria-hidden="true">
+                  {isMulti
+                    ? on
+                      ? HUMAN_INPUT_CHOICE_MARKS.inclusiveOn
+                      : HUMAN_INPUT_CHOICE_MARKS.inclusiveOff
+                    : on
+                      ? HUMAN_INPUT_CHOICE_MARKS.exclusiveOn
+                      : HUMAN_INPUT_CHOICE_MARKS.exclusiveOff}
+                </span>
                 <span className="truncate">{option.label}</span>
               </button>
             );

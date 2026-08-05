@@ -2,7 +2,16 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { HumanInputSheet } from './HumanInputPrompt';
 import { HUMAN_INPUT_REQUESTS } from '../dev/humanInputVariants';
-import { initialHumanInputValues, type HumanInputValues } from '../lib/human-input';
+import fixture from '../lib/human-input.fixture.json';
+import {
+  humanInputIsDecoration,
+  humanInputRequestFromWire,
+  initialHumanInputValues,
+  HUMAN_INPUT_CHOICE_MARKS,
+  HUMAN_INPUT_NODE_TYPES,
+  type HumanInputField,
+  type HumanInputValues,
+} from '../lib/human-input';
 
 const noop = () => {};
 
@@ -114,10 +123,10 @@ describe('human input sheet', () => {
   it('masks a password and shows a checkbox as a pressed toggle', () => {
     const html = markup('slider');
     expect(html).toContain('type="password"');
-    // The checkbox is a TUI-style `[x]` toggle, so the state has to reach
+    // The checkbox is a TUI-style `[✓]` toggle, so the state has to reach
     // assistive tech through aria-pressed rather than a checked input.
     expect(html).toContain('aria-pressed="true"');
-    expect(html).toContain('[x]');
+    expect(html).toContain(HUMAN_INPUT_CHOICE_MARKS.inclusiveOn);
     expect(html).toContain('Halt on the first regression');
   });
 
@@ -197,5 +206,93 @@ describe('human input sheet', () => {
     // The checkbox is the column's second child, not part of that row.
     expect(inner).not.toContain('Require TLS');
     expect(pool).toContain('Require TLS');
+  });
+});
+
+// =============================================================================
+// FULL support, proved against the engine's own bytes
+//
+// `human-input.fixture.json` is `request->view` verbatim, and the Clojure suite
+// that re-derives it also pins that it holds ONE NODE OF EVERY KIND the engine
+// can send. Rendering that very request is therefore this app's proof of
+// complete human-input support: a node type nobody wired up is a hole in a
+// dialog that has already stopped somebody's run, and it fails here instead of
+// in front of the operator.
+// =============================================================================
+describe('the engine’s whole node vocabulary', () => {
+  const request = humanInputRequestFromWire(fixture);
+  if (!request) throw new Error('the engine fixture must parse');
+  const html = renderToStaticMarkup(
+    <HumanInputSheet
+      request={request}
+      values={initialHumanInputValues(request)}
+      onChange={noop}
+      onSubmit={noop}
+      onCancel={noop}
+    />,
+  );
+
+  /** Every node of the tree, groups and their children alike. */
+  function nodes(fields: readonly HumanInputField[]): HumanInputField[] {
+    return fields.flatMap((field) => [field, ...nodes(field.fields ?? [])]);
+  }
+
+  it('is what the engine sends — nothing skipped, nothing invented', () => {
+    expect([...new Set(nodes(request.fields).map((field) => field.type))].sort()).toEqual(
+      [...HUMAN_INPUT_NODE_TYPES].sort(),
+    );
+  });
+
+  it('gives every answerable type a control of its own', () => {
+    // plaintext / password / multiline: a line, a masked line, and a box.
+    expect(html).toContain('placeholder="Anything the on-call should know"');
+    expect(html).toContain('<textarea');
+    expect(html).toContain('type="password"');
+    expect(html).toContain('Notify');
+    // select vs multiselect: exclusive dots, inclusive boxes.
+    expect(html).toContain('role="radiogroup"');
+    expect(html).toContain(HUMAN_INPUT_CHOICE_MARKS.exclusiveOn);
+    expect(html).toContain(HUMAN_INPUT_CHOICE_MARKS.exclusiveOff);
+    expect(html).toContain('Staging');
+    expect(html).toContain(HUMAN_INPUT_CHOICE_MARKS.inclusiveOff);
+    // checkbox: the fixture's is defaulted ON, so it renders as pressed.
+    expect(html).toContain(HUMAN_INPUT_CHOICE_MARKS.inclusiveOn);
+    expect(html).toContain('aria-pressed="true"');
+    // range: the field's own track, not the engine's percentage default.
+    const slider = /<input[^>]*type="range"[^>]*>/.exec(html)?.[0] ?? '';
+    expect(slider).toContain('min="0"');
+    expect(slider).toContain('max="10"');
+    expect(slider).toContain('step="0.5"');
+    expect(slider).toContain('value="2.5"');
+    // otp: one box per digit it accepts, and it says the shorter code is enough.
+    expect(html.match(/aria-label="One-time code digit \d"/g) ?? []).toHaveLength(6);
+    expect(html).toContain('4–6 digits');
+    // group: the row, and the column nested inside it.
+    expect(html).toContain('data-direction="row"');
+    expect(html).toContain('data-direction="column"');
+    expect(html).toContain('Server');
+  });
+
+  it('paints ink as ink: read, never answered, never keyed', () => {
+    expect(html).toContain('<h3');
+    expect(html).toContain('Target');
+    expect(html).toContain('Staging pages nobody.');
+    // A decoration has no name and a group holds no answer, so the values map
+    // is exactly the answerable leaves.
+    expect(Object.keys(initialHumanInputValues(request)).sort()).toEqual(
+      nodes(request.fields)
+        .filter((field) => field.type !== 'group' && !humanInputIsDecoration(field))
+        .map((field) => field.id)
+        .sort(),
+    );
+  });
+
+  it('marks what the engine requires, for the eye and for a screen reader', () => {
+    const required = nodes(request.fields).filter((field) => field.is_required);
+    expect(required.map((field) => field.id).sort()).toEqual(['code', 'host', 'key']);
+    expect(html.match(/<span class="sr-only"> required<\/span>/g) ?? []).toHaveLength(
+      required.length,
+    );
+    expect(html).toContain('class="ml-1 text-err"');
   });
 });

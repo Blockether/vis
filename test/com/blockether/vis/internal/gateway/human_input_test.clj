@@ -18,6 +18,7 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.human-input :as hi]
+            [com.blockether.vis.internal.human-input.spec :as hi-spec]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [taoensso.telemere :as tel]))
 
@@ -307,48 +308,50 @@
    :timeout-ms 300000
    ;; Two DECORATIONS lead the form: they answer nothing, so the app must render
    ;; them and keep them out of its values map.
-   :fields [{:type "heading" :text "Target"} {:type "paragraph" :text "Staging pages nobody."}
-            {:name "env"
-             :type "select"
-             :label "Env"
-             :description "Where this deploy lands"
-             :default "prod"
-             :options [{:value "prod"} {:value "stg" :label "Staging"}]}
-            {:name "key" :type "password" :is-required true :max-length 40}
-            {:id "ok" :type "checkbox" :label "Confirm" :default true}
-            {:id "tags" :type "multiselect" :options ["a" "b"] :default []}
-            {:id "risk"
-             :type "range"
-             :label "Risk budget"
-             :description "How much of the error budget this may spend"
-             :min 0
-             :max 10
-             :step 0.5
-             :default 2.5}
-            {:id "code"
-             :type "otp"
-             :label "One-time code"
-             :description "From the authenticator on your phone"
-             :is-required true
-             :min-length 4
-             :max-length 6}
-            {:id "notify"
-             :type "plaintext"
-             :label "Notify"
-             :validate (fn [value]
-                         (when (> (count value) 60) "keep it short"))}
-            {:type "group"
-             :direction "row"
-             :label "Server"
-             :description "Where the pool dials out"
-             :fields [{:name "host" :label "Host" :is-required true}
-                      {:type "group"
-                       :direction "column"
-                       :fields [{:name "port"
-                                 :label "Port"
-                                 :validate (fn [value]
-                                             (when-not (re-matches #"\d+" value) "digits only"))}
-                                {:name "tls" :type "checkbox" :label "TLS"}]}]}]})
+   :fields
+   [{:type "heading" :text "Target"} {:type "paragraph" :text "Staging pages nobody."}
+    {:name "env"
+     :type "select"
+     :label "Env"
+     :description "Where this deploy lands"
+     :default "prod"
+     :options [{:value "prod"} {:value "stg" :label "Staging"}]}
+    {:name "key" :type "password" :is-required true :max-length 40}
+    {:id "ok" :type "checkbox" :label "Confirm" :default true}
+    {:id "tags" :type "multiselect" :options ["a" "b"] :default []}
+    {:id "risk"
+     :type "range"
+     :label "Risk budget"
+     :description "How much of the error budget this may spend"
+     :min 0
+     :max 10
+     :step 0.5
+     :default 2.5}
+    {:id "code"
+     :type "otp"
+     :label "One-time code"
+     :description "From the authenticator on your phone"
+     :is-required true
+     :min-length 4
+     :max-length 6}
+    {:id "notify"
+     :type "plaintext"
+     :label "Notify"
+     :validate (fn [value]
+                 (when (> (count value) 60) "keep it short"))}
+    {:id "notes" :type "multiline" :label "Notes" :placeholder "Anything the on-call should know"}
+    {:type "group"
+     :direction "row"
+     :label "Server"
+     :description "Where the pool dials out"
+     :fields [{:name "host" :label "Host" :is-required true}
+              {:type "group"
+               :direction "column"
+               :fields [{:name "port"
+                         :label "Port"
+                         :validate (fn [value]
+                                     (when-not (re-matches #"\d+" value) "digits only"))}
+                        {:name "tls" :type "checkbox" :label "TLS"}]}]}]})
 
 (defn- fixture-file
   "`apps/vis-companion/src/lib/human-input.fixture.json`, found from the working
@@ -359,14 +362,29 @@
       (let [f (io/file dir "apps/vis-companion/src/lib/human-input.fixture.json")]
         (if (.isFile f) f (recur (.getParentFile dir)))))))
 
+(defn- node-types
+  "Every `type` in a request view's field tree, groups and decorations included."
+  [fields]
+  (into #{}
+        (mapcat (fn [{:keys [type fields]}]
+                  (cons type (node-types fields))))
+        fields))
+
 (deftest the-app-fixture-is-the-engines-own-projection-test
-  (testing "the companion parses engine bytes, not a hand-written lookalike"
-    (let [file (fixture-file)]
-      (is (some? file))
-      (when file
-        (is (= (wire/parse-json (slurp file))
-               (wire/parse-json (wire/json-str (hi/request->view (hi/normalize-request
-                                                                   fixture-spec))))))))))
+  (let [view (hi/request->view (hi/normalize-request fixture-spec))]
+    (testing "the companion parses engine bytes, not a hand-written lookalike"
+      (let [file (fixture-file)]
+        (is (some? file))
+        (when file (is (= (wire/parse-json (slurp file)) (wire/parse-json (wire/json-str view)))))))
+    ;; The app's own suite renders this fixture and asserts a control for every
+    ;; node in it. That proof is only worth the vocabulary it covers, so the
+    ;; fixture holds ONE OF EVERY KIND the engine can send: a type added to the
+    ;; spec and left out of the fixture would otherwise ship an app that paints
+    ;; a hole in a dialog which has already stopped somebody's run.
+    (testing "and holds one node of every kind the engine can send"
+      (is (= (conj (into (set (vals hi-spec/field-types)) (vals hi-spec/decor-types))
+                   hi-spec/group-type)
+             (node-types (:fields view)))))))
 
 (deftest the-companion-urls-route-to-the-human-input-handlers-test
   (testing "the URLs `gateway.ts` builds are the URLs this router serves"

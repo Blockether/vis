@@ -11,12 +11,16 @@
    every assertion below is about one parked run: it opens on both surfaces,
    either surface can answer it, the answer releases the extension, and the
    OTHER surface drops its form instead of leaving a dead dialog behind."
-  (:require [com.blockether.vis.core :as vis]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.screen :as screen]
             [com.blockether.vis.internal.gateway.human-input :as gw]
             [com.blockether.vis.internal.gateway.state :as gw-state]
             [com.blockether.vis.internal.human-input :as engine]
+            [com.blockether.vis.internal.human-input.spec :as hi-spec]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
@@ -492,3 +496,100 @@
                  (is (= "1234" (get-in result [:values "code"])))
                  (is (= "ops@example.com" (get-in result [:values "notify"])))))
              (finally (engine/cancel! rid "cleanup")))))))
+
+;; =============================================================================
+;; One vocabulary, three surfaces
+;;
+;; The terminal reads the engine's own tables (`human-input.spec`) at runtime,
+;; so it cannot drift. The APP cannot: TypeScript needs its literals at compile
+;; time, so `apps/vis-companion/src/lib/human-input.ts` declares the same closed
+;; vocabulary a second time. That copy is checked HERE, against the engine's
+;; tables and the terminal's own glyphs — a type the engine gains and the app
+;; never learns fails this test instead of shipping a form the phone renders as
+;; a hole.
+;; =============================================================================
+
+(defn- repo-file
+  "A path under the repository root, found from the working directory upwards so
+   the test runs from this extension or from the root project."
+  [rel]
+  (loop [dir (.getCanonicalFile (io/file (System/getProperty "user.dir")))]
+    (when dir
+      (let [f (io/file dir rel)]
+        (if (.isFile f) f (recur (.getParentFile dir)))))))
+
+(defn- app-source
+  "One companion source file as text, or nil when it cannot be found."
+  [rel]
+  (some-> (repo-file (str "apps/vis-companion/src/" rel))
+          slurp))
+
+(defn- ts-strings
+  "The string literals of `export const NAME = [ ... ]` in a TypeScript source."
+  [source const-name]
+  (some->> (re-find (re-pattern (str "(?s)export const " const-name " = \\[(.*?)\\]")) source)
+           second
+           (re-seq #"'([^']*)'")
+           (mapv second)))
+
+(defn- ts-numbers
+  "The `key: number` entries of `export const NAME = { ... }`, as a map."
+  [source const-name]
+  (some->> (re-find (re-pattern (str "(?s)export const " const-name " = \\{(.*?)\\}")) source)
+           second
+           (re-seq #"(\w+):\s*(-?[\d.]+)")
+           (into {}
+                 (map (fn [[_ k v]]
+                        [(keyword k) (parse-long v)])))))
+
+(defn- ts-marks
+  "The `key: 'glyph'` entries of `export const NAME = { ... }`, as a map."
+  [source const-name]
+  (some->> (re-find (re-pattern (str "(?s)export const " const-name " = \\{(.*?)\\}")) source)
+           second
+           (re-seq #"(\w+):\s*'([^']*)'")
+           (into {}
+                 (map (fn [[_ k v]]
+                        [(keyword k) v])))))
+
+(deftest the-app-declares-the-engines-own-node-vocabulary-test
+  (let [source (app-source "lib/human-input.ts")]
+    (is (some? source))
+    (when source
+      (testing "every answerable field type, and not one the engine cannot parse"
+        (is (= (set (keys hi-spec/field-types))
+               (set (ts-strings source "HUMAN_INPUT_FIELD_TYPES")))))
+      (testing "ink is ink on both surfaces"
+        (is (= (set (keys hi-spec/decor-types))
+               (set (ts-strings source "HUMAN_INPUT_DECOR_TYPES")))))
+      (testing "and the layout group is the one node that is neither"
+        (is (contains? (set (ts-strings source "HUMAN_INPUT_NODE_TYPES")) hi-spec/group-type-name)))
+      (testing "a group runs in the directions the engine accepts"
+        (is (= (set (keys hi-spec/group-directions))
+               (set (map second
+                         (re-seq #"'(row|column)'"
+                                 (or (second (re-find #"direction\?: ([^;]+);" source)) "")))))))
+      (testing "an unbounded slider is the same percentage, and a code the same width"
+        (is (= hi-spec/range-defaults (ts-numbers source "HUMAN_INPUT_RANGE_DEFAULTS")))
+        (is (= hi-spec/otp-defaults (ts-numbers source "HUMAN_INPUT_OTP_DEFAULTS")))))))
+
+(deftest both-surfaces-mark-a-choice-the-same-way-test
+  (let
+    [source
+     (app-source "lib/human-input.ts")
+
+     sheet
+     (app-source "components/HumanInputPrompt.tsx")]
+
+    (is (some? source))
+    (is (some? sheet))
+    (when (and source sheet)
+      (testing "`choose one` and `choose any` look alike on neither surface"
+        (is (= {:exclusiveOn (str/trim (dialogs/choice-mark true true))
+                :exclusiveOff (str/trim (dialogs/choice-mark true false))
+                :inclusiveOn (str/trim (dialogs/choice-mark false true))
+                :inclusiveOff (str/trimr (dialogs/choice-mark false false))}
+               (ts-marks source "HUMAN_INPUT_CHOICE_MARKS"))))
+      (testing "and the sheet paints them from that table rather than its own"
+        (is (not (str/includes? sheet "'[x]'")))
+        (is (str/includes? sheet "HUMAN_INPUT_CHOICE_MARKS"))))))

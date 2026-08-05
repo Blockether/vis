@@ -100,6 +100,13 @@
    past a dozen the boxes no longer fit a narrow dialog."
   {:length 6 :ceiling 12})
 
+(def range-defaults
+  "The track a `:range` field falls back to. A slider with no bounds is a
+   PERCENTAGE — the one scale every operator already reads without being told
+   what the numbers mean — and every surface fills the same three numbers in, so
+   a hand-made request view draws the same knob a normalized one does."
+  {:min 0 :max 100 :step 1})
+
 (def secret-handle-prefix
   "What a submitted `:password` becomes before its answer leaves the engine. The
    plaintext stays in a process-local vault; this prefix is the whole difference
