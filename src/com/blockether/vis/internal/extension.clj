@@ -898,15 +898,21 @@
 ;;   :shim/globals     exact names users call directly without importing (optional).
 ;;                     These two fields drive prompt and `apropos` discovery; do not
 ;;                     infer either from :shim/name.
-;;   :shim/description prose (optional): what library it shims AND what is
+;;   :shim/description prose (REQUIRED): what library it shims AND what is
 ;;                     NOT supported, e.g. "... Not supported: X, Y." — a shim
-;;                     with no caveat is 100% compatible. It does NOT ride the
-;;                     system prompt (only the NAMES above do): env-python seeds
-;;                     it into the sandbox's `__vis_docs__` as the `doc`/`apropos`
-;;                     gist of every name this shim contributes that the shim's
-;;                     own Python did not already document. The VALUE is therefore
-;;                     ONE line — write it as a multi-line `(str "…" "…")` so a
-;;                     human can edit one sentence instead of a 700-char literal.
+;;                     with no caveat is 100% compatible. It RIDES THE SYSTEM
+;;                     PROMPT: `prompt/sandbox-shims-prompt-block` prints one
+;;                     bullet per shim, keyed by the very names above, because a
+;;                     bare name makes the model write against the UPSTREAM
+;;                     library and meet the hole at runtime. env-python also
+;;                     seeds it into the sandbox's `__vis_docs__` as the
+;;                     `doc`/`apropos` gist of every name this shim contributes
+;;                     that the shim's own Python did not already document. The
+;;                     VALUE is therefore ONE line — no newline may reach a
+;;                     prompt bullet — written as a multi-line `(str "…" "…")`
+;;                     so a human edits one sentence, not a 700-char literal.
+;;                     It is model-facing context with a real token price: say
+;;                     the surface and the refusals, nothing else.
 ;;   :shim/bindings    host callables the shim's Python delegates to — either a map
 ;;                     {py-name -> host-fn} or a 0-arg fn returning that map.
 ;;                     Each fn is wired onto the sandbox globals as a Python

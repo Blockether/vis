@@ -184,14 +184,18 @@
     (let
       [shims [{:shim/name "attach"
                :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments"
-                              "vis_read_attachment" "vis_reinspect_attachment"]}
+                              "vis_read_attachment" "vis_reinspect_attachment"]
+               :shim/description
+               "Persist artifacts as durable attachments. Vis-native; no upstream library."}
               {:shim/name "fonttools" :shim/imports ["brotli" "fontTools"]}
-              {:shim/name "numpy" :shim/imports ["numpy"]} {:shim/name "pil" :shim/imports ["PIL"]}
+              {:shim/name "numpy"
+               :shim/imports ["numpy"]
+               :shim/description "Pure-Python `numpy` subset. Not supported: eig/svd/qr."}
+              {:shim/name "pil" :shim/imports ["PIL"]}
               {:shim/name "tzdata" :shim/imports ["zoneinfo"]}]]
       (with-redefs [extension/sandbox-shims (constantly shims)]
         (let [text (#'prompt/sandbox-shims-prompt-block nil)]
-          (expect (< (count text) 1200))
-          (expect (not (str/includes? text "Not supported:")))
+          (expect (< (count text) 1800))
           (expect (not (str/includes? text "apropos")))
           (expect (not (str/includes? text "doc(name)")))
           (expect (str/includes? text "Auto-imported by `python_execution`"))
@@ -206,6 +210,20 @@
                      "vis_reinspect_attachment"]]
             (expect (str/includes? text (str "`" global "`"))))
           (expect (not (str/includes? text "`attach`")))
+          ;; NAMES ALONE ARE A TRAP. Every shim is a reimplementation, so the surface
+          ;; it supports and the APIs it refuses must travel WITH the name: reading
+          ;; only `numpy` in this block, the model wrote against the real numpy and
+          ;; first learned about `NotImplementedError` from a failed call.
+          (expect (str/includes? text "REIMPLEMENTATION"))
+          (expect (str/includes?
+                    text
+                    "- `numpy`: Pure-Python `numpy` subset. Not supported: eig/svd/qr."))
+          (expect (str/includes?
+                    text
+                    (str "- `vis_attach`, `vis_attach_bytes`, `vis_attachments`, "
+                         "`vis_read_attachment`, `vis_reinspect_attachment`: Persist artifacts")))
+          ;; A shim that documents nothing contributes no empty bullet.
+          (expect (not (str/includes? text "- `brotli`")))
           ;; With no shell layer active the block must SAY the process surface is
           ;; gone: silence read as "maybe try `subprocess`", and every attempt then
           ;; died on an opaque spawn failure instead of being ruled out up front.
@@ -221,14 +239,29 @@
       ;; Invocation syntax belongs to the shell symbol docs; this supplemental
       ;; block only exposes otherwise-undiscoverable compatibility routing.
       (let [text (#'prompt/sandbox-shims-prompt-block [{:ext/name "foundation-shell"}])]
-        (expect (< (count text) 1500))
         (expect (str/includes? text "active `shell` tool"))
         (expect (not (str/includes? text "DISABLED")))
         (expect (str/includes? text "subprocess"))
         (expect (str/includes? text "os.system"))
         (expect (str/includes? text "os.popen"))
         (expect (not (str/includes? text "shell(")))
-        (expect (not (str/includes? text "\"id\""))))))
+        (expect (not (str/includes? text "\"id\"")))))
+  (it "carries every REGISTERED shim's own limits into the prompt, inside budget"
+      ;; The registry itself, not a fixture: the shim the model actually gets has to
+      ;; be the shim the prompt describes, or the description is dead metadata.
+      (let
+        [text
+         (#'prompt/sandbox-shims-prompt-block [{:ext/name "foundation-shell"}])
+
+         described
+         (filter :shim/description (extension/sandbox-shims))]
+
+        (expect (seq described))
+        (doseq [shim described]
+          (expect (str/includes? text (str/trim (:shim/description shim)))))
+        ;; One stable block worth roughly 2.5k tokens. A description that grows
+        ;; without bound is a context regression, not documentation.
+        (expect (< (count text) 16000)))))
 
 (defdescribe
   project-instructions-hoist-test

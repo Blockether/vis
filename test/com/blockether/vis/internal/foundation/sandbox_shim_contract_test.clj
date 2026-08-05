@@ -116,9 +116,10 @@
                 (str name " declares neither :shim/imports nor :shim/bindings"))))
   ;; A description is WRITTEN over several lines — `(str "…" "…")` — so a human
   ;; edits ONE sentence instead of reflowing a 700-character literal. Its VALUE
-  ;; stays a single line, because `doc()` / `apropos` print it as one gist: a raw
-  ;; multi-line string literal would smuggle newlines and the source file's own
-  ;; indentation into that gist.
+  ;; stays a single line: it is printed as ONE bullet of the system prompt's
+  ;; sandbox-shims block and as one `doc()` / `apropos` gist, so a raw multi-line
+  ;; literal would break the bullet apart and smuggle the source file's own
+  ;; indentation into the model's context.
   (it "keeps every shim description a single line"
       (doseq [{:shim/keys [name description]} (registered-shims)]
         (expect (not (str/includes? (str description) "\n"))

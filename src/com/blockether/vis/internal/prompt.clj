@@ -568,6 +568,13 @@
    `:shim/name` is internal identity only; imports and direct globals come from
    their explicit metadata so an id such as `attach` is never presented as a module.
 
+   NAMES alone are a trap: every shim is a REIMPLEMENTATION, so a model that only
+   reads `numpy` writes against the real numpy and hits `NotImplementedError` at
+   runtime. `:shim/description` is that shim's supported surface and its refusals,
+   and this is the only place it reaches the model — `env_python`'s `__vis_docs__`
+   seeding is a `doc()` fallback the shim's own Python usually overrides. One line
+   per shim, keyed by the very names advertised above it.
+
    The process surface is stated either way. With shell active, name only the POSIX
    compatibility routing — the shell symbol's own docs remain the single authority
    for its invocation grammar. With shell OFF, say plainly that `subprocess` /
@@ -590,6 +597,24 @@
           distinct
           sort)
 
+     shim-capabilities
+     (->> shims
+          (keep (fn [shim]
+                  (let
+                    [names
+                     (seq (or (seq (:shim/imports shim)) (:shim/globals shim)))
+
+                     description
+                     (some-> (:shim/description shim)
+                             str/trim
+                             not-empty)]
+
+                    (when (and names description)
+                      [(first names)
+                       (str "- " (str/join ", " (map #(str "`" % "`") names)) ": " description)]))))
+          (sort-by first)
+          (mapv second))
+
      shell?
      (boolean (some #(= "foundation-shell" (:ext/name %)) (or active-extensions [])))
 
@@ -611,6 +636,11 @@
              (str "\nPrebound shim globals (use directly; never import them): `"
                   (str/join "`, `" shim-globals)
                   "`."))
+           (when (seq shim-capabilities)
+             (str "\nEach of these is a Vis REIMPLEMENTATION, not the upstream package: the line "
+                  "is its whole supported surface and what it refuses, so trust it over your "
+                  "memory of the library and do not reach for an API it does not claim.\n"
+                  (str/join "\n" shim-capabilities)))
            (if shell?
              (str "\n`subprocess`, `os.system`, and `os.popen` route through the active "
                   "`shell` tool; use that tool's authoritative contract for calls.")
