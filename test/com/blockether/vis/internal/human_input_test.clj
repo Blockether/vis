@@ -80,8 +80,8 @@
         (expect (= "api_key" (:id field)))
         (expect (= "API key" (:label field)))
         (expect (= "Found on the provider dashboard" (:description field)))))
-  (it "accepts the legacy :id and :help spellings"
-      (let [[field] (normalized-fields {:id "note" :help "Free text"})]
+  (it "accepts the :id spelling of a name"
+      (let [[field] (normalized-fields {:id "note" :description "Free text"})]
         (expect (= "note" (:name field)))
         (expect (= "note" (:id field)))
         (expect (= "Free text" (:description field)))))
@@ -220,6 +220,26 @@
   [thunk]
   (try (thunk) nil (catch clojure.lang.ExceptionInfo e (ex-message e))))
 
+(defn- wire-name
+  "A normalized key in the snake_case spelling a Python/JSON spec writes."
+  [k]
+  (str/replace (name k) "-" "_"))
+
+(defn- unknown-keys
+  "Of the spec vocabulary `ks`, the ones `normalize` calls an UNKNOWN key when
+   `base` is written with them. Always none: the snake_case keys the parser
+   accepts are derived from these very sets. A key `base` already carries is
+   proven by `base` parsing at all, and any other refusal is somebody else's
+   business."
+  [ks base normalize]
+  (into #{}
+        (comp (map wire-name)
+              (remove #(contains? base %))
+              (filter (fn [k]
+                        (boolean (some-> (refusal #(normalize (assoc base k nil)))
+                                         (str/includes? "unknown"))))))
+        ks))
+
 (defn- await-pending-id
   "Block until a request titled `title` is pending, then return its id."
   [title]
@@ -295,10 +315,33 @@
       (expect (some? (refusal #(normalized-fields {:name "env"
                                                    :type "select"
                                                    :options [{"value" "a" "Label" "A"}]})))))
-  (it "still takes both legacy spellings"
-      (let [[field] (normalized-fields {"id" "env" "help" "legacy prose"})]
+  (it "takes the `id` spelling of a name, and no longer a `help`"
+      ;; `help` was `description`'s legacy alias; the vocabulary has one spelling
+      ;; per key, so it is now as unknown as any other stray word.
+      (let [[field] (normalized-fields {"id" "env" "description" "prose"})]
         (expect (= "env" (:name field)))
-        (expect (= "legacy prose" (:description field))))))
+        (expect (= "prose" (:description field))))
+      (let [message (refusal #(normalized-fields {"name" "env" "help" "prose"}))]
+        (expect (some? message))
+        (expect (str/includes? message "unknown field key"))))
+  (it
+    "calls no key of the spec's own vocabulary unknown"
+    ;; The parser derives the snake_case keys it accepts from the spec's key
+    ;; sets, so nothing declared there can come back as an unknown key here.
+      (expect (= #{} (unknown-keys hs/field-keys {"name" "env"} normalized-fields)))
+      (expect (= #{}
+                 (unknown-keys hs/group-keys
+                               {"type" "group" "fields" [{"name" "a"}]}
+                               normalized-fields)))
+      (expect (= #{} (unknown-keys hs/decor-keys {"type" "heading"} normalized-fields)))
+      (expect (= #{}
+                 (unknown-keys hs/option-keys
+                               {"value" "a"}
+                               #(normalized-fields {"name" "env" "type" "select" "options" [%]}))))
+      (expect (= #{}
+                 (unknown-keys hs/request-keys
+                               {"title" "t" "fields" [{"name" "a"}]}
+                               hi/normalize-request)))))
 
 (defdescribe
   python-json-seam-test

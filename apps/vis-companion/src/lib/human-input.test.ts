@@ -114,7 +114,7 @@ describe('humanInputRequestFromWire', () => {
     expect(request?.is_cancellable).toBe(true);
   });
 
-  it('names a field by its wire name, and by its id for older engines', () => {
+  it('names a field by its wire name, or by the `id` spelling of that name', () => {
     const named = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
@@ -124,14 +124,6 @@ describe('humanInputRequestFromWire', () => {
     expect(named?.fields[0]?.id).toBe('token');
     expect(named?.fields[0]?.label).toBe('API token');
     expect(named?.fields[0]?.description).toBe('from 1Password');
-
-    const legacy = humanInputRequestFromWire({
-      id: 'r',
-      title: 'T',
-      fields: [{ id: 'token', type: 'plaintext', help: 'legacy help line' }],
-    });
-    expect(legacy?.fields[0]?.name).toBe('token');
-    expect(legacy?.fields[0]?.description).toBe('legacy help line');
   });
 
   it('carries a deadline, and reads 0 as no deadline at all', () => {

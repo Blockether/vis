@@ -185,15 +185,13 @@ function fieldFromWire(raw: unknown): HumanInputField | null {
       is_required: false,
       direction: row.direction === 'row' ? 'row' : 'column',
       fields: children,
-      ...(optionalText(row.description) ?? optionalText(row.help)
-        ? { description: optionalText(row.description) ?? optionalText(row.help) }
-        : {}),
+      ...(optionalText(row.description) ? { description: optionalText(row.description) } : {}),
     };
   }
   const options = Array.isArray(row.options)
     ? row.options.map(optionFromWire).filter((option): option is HumanInputOption => option !== null)
     : undefined;
-  const description = optionalText(row.description) ?? optionalText(row.help);
+  const description = optionalText(row.description);
   const placeholder = optionalText(row.placeholder);
   const minLength = typeof row.min_length === 'number' && row.min_length > 0 ? row.min_length : undefined;
   const maxLength = typeof row.max_length === 'number' && row.max_length > 0 ? row.max_length : undefined;

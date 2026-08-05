@@ -205,41 +205,6 @@
     (invalid-answer! request-id why)
     answer))
 
-(def ^:private field-keys
-  "Every key a VALUE field spec may carry, in its canonical snake_case spelling.
-   `id` and `help` are the legacy names of `name` and `description`.
-
-   Layout is deliberately NOT in here: `fields` and `direction` belong to a
-   `group` — see [[layout-keys]]."
-  #{"name" "id" "type" "label" "description" "help" "is_required" "placeholder" "options"
-    "min_length" "max_length" "default" "min" "max" "step" "validate"})
-
-(def ^:private layout-keys
-  "The two keys only a `group` has. A field that holds an ANSWER carrying one of
-   them is a spec that meant to group and forgot to say so: dropping the key in
-   silence drew the form flat and sent the author hunting for a layout bug in
-   the surfaces, so it is refused with the fix in the message."
-  #{"fields" "direction"})
-
-(def ^:private group-keys
-  "Every key a `group` may carry. A layout node has no answer, so every key that
-   describes ONE value — a default, a placeholder, options, rules — is refused
-   here instead of being silently ignored on a node that can never use it."
-  #{"name" "id" "type" "label" "description" "help" "fields" "direction"})
-
-(def ^:private decor-keys
-  "Every key a decoration may carry. No name, no label, no children: nobody
-   answers a heading, so it has its own type and the words it paints and nothing
-   else to say."
-  #{"type" "text"})
-
-(def ^:private option-keys "Every key one `:options` entry may carry." #{"value" "label"})
-
-(def ^:private request-keys
-  "Every key a request spec may carry, in its canonical snake_case spelling."
-  #{"id" "title" "description" "source" "fields" "submit_label" "cancel_label" "is_cancellable"
-    "timeout_ms" "session_id" "channel_id" "channel_ids"})
-
 (defn- snake-key
   "`k` as the canonical snake_case name it is reaching for: `:is-required`,
    `\"is-required\"` and `\"isRequired\"` all canonicalize to `\"is_required\"`."
@@ -250,6 +215,37 @@
       str/lower-case))
 
 (defn- kebab-key [canonical] (str/replace canonical "_" "-"))
+
+(defn- wire-keys
+  "The spec vocabulary `ks` in the canonical snake_case spelling a Python/JSON
+   spec writes. The keys a parser accepts are exactly the ones
+   [[com.blockether.vis.internal.human-input.spec]] declares — deriving them here
+   is what keeps the wire from growing a second copy of that table."
+  [ks]
+  (into #{} (map snake-key) ks))
+
+(def ^:private field-keys "Every key a VALUE field spec may carry." (wire-keys hi-spec/field-keys))
+
+(def ^:private layout-keys
+  "The keys only a `group` has. A field that holds an ANSWER carrying one of them
+   is a spec that meant to group and forgot to say so: dropping the key in
+   silence drew the form flat and sent the author hunting for a layout bug in the
+   surfaces, so it is refused with the fix in the message."
+  (wire-keys hi-spec/layout-keys))
+
+(def ^:private group-keys "Every key a `group` may carry." (wire-keys hi-spec/group-keys))
+
+(def ^:private decor-keys "Every key a decoration may carry." (wire-keys hi-spec/decor-keys))
+
+(def ^:private option-keys
+  "Every key one `:options` entry may carry."
+  (wire-keys hi-spec/option-keys))
+
+(def ^:private request-keys
+  "Every key a request spec may carry. `channel_id` is the singular spelling of
+   `channel_ids` — a one-channel convenience, and the only wire key with no
+   counterpart in the normalized form."
+  (conj (wire-keys hi-spec/request-keys) "channel_id"))
 
 (defn- accepted-spelling?
   "Two spellings, one meaning: the snake_case STRING a Python/JSON spec writes,
@@ -423,7 +419,7 @@
      - `:label` is how the field is SHOWN. Never blank: a field without one
        shows its `:name`, so no surface ever draws a bare, unlabelled input.
      - `:description` is the prose under that label, rendered in italic by every
-       dialog (`:help` is its legacy alias).
+       dialog.
 
    A layout group is not a field and never arrives here: [[normalize-node]]
    routes it to [[normalize-group]] before a single value key is parsed."
@@ -479,7 +475,7 @@
       field-id
       (let
         [description
-         (trimmed (pick field "description" :description "help" :help))
+         (trimmed (pick field "description" :description))
 
          ;; An `:otp` derives its own lengths from the same two keys — how many
          ;; boxes it draws IS its length — so it must not be length-checked twice.
@@ -563,7 +559,7 @@
        children (mapv normalize-node raw)
        _ (when (empty? children) (invalid-field! field-id "group needs at least one field"))
        id (or field-id (str "group:" (str/join "+" (map :name children))))
-       description (trimmed (pick group "description" :description "help" :help))]
+       description (trimmed (pick group "description" :description))]
 
       (checked-group id
                      (cond->

@@ -315,8 +315,8 @@ the same names as kebab keywords: `:is-required`.)
 
 Three names, three jobs: `name` keys the answer in `answer.values`, `label` is
 what the dialog shows above the input, and `description` is the italic line under
-that label. `id` and `help` are the legacy spellings of `name` and `description`
-and still work.
+that label. `id` is the same identity as `name` and may be written instead of it;
+every other key has exactly one spelling, and an unknown one is refused by name.
 
 Field `type` is one of `plaintext`, `password`, `multiline`, `select`,
 `multiselect`, `checkbox`, `range`, `otp`. A field may also carry

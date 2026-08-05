@@ -113,30 +113,64 @@
   (and (string? value) (str/starts-with? value secret-handle-prefix)))
 
 ;; ---------------------------------------------------------------------------
-;; Predicates
+;; The keys — one table, and the parser reads it too
 ;; ---------------------------------------------------------------------------
+;;
+;; Every map declared below is CLOSED, so each shape's key set is written down
+;; exactly once here, and the snake_case spelling a wire spec may use is derived
+;; from these very sets by the parser's `wire-keys`. A key added here reaches
+;; both layers with no second table to keep in step.
 
-(defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
+(def derived-keys
+  "Keys the ENGINE stamps on a normalized node, never written in a spec.
+   `:is-secret` follows from the type, so a caller offering it is refused."
+  #{:is-secret})
 
-(def ^:private value-keys
+(def value-keys
   "Every key an answerable field may carry, whatever its type."
   #{:id :name :type :label :description :placeholder :is-required :is-secret :default :validate})
 
-(def ^:private text-keys (into value-keys [:min-length :max-length]))
-(def ^:private choice-keys (conj value-keys :options))
-(def ^:private range-keys (into value-keys [:min :max :step]))
-(def ^:private group-keys #{:id :name :type :label :description :direction :fields})
+(def text-keys "Every key a typed field may carry." (into value-keys [:min-length :max-length]))
+(def choice-keys "Every key a field answered from `:options` may carry." (conj value-keys :options))
+(def range-keys
+  "Every key a field answered on a track may carry."
+  (into value-keys [:min :max :step]))
 
-(def ^:private decor-keys
+(def field-keys
+  "Every key a field spec may be WRITTEN with: the union of the per-type sets,
+   less what the engine derives. The parser accepts exactly this vocabulary in
+   its snake_case spelling, so there is no second table of keys to keep in step."
+  (apply disj (into text-keys (concat choice-keys range-keys)) derived-keys))
+
+(def group-keys
+  "Every key a layout group may carry. A node that holds no answer has no key
+   that describes one."
+  #{:id :name :type :label :description :direction :fields})
+
+(def layout-keys
+  "The keys only a group has. A field carrying one meant to group and forgot to
+   say so, which is worth its own message rather than an unknown-key refusal."
+  (apply disj group-keys field-keys))
+
+(def decor-keys
   "Every key a decoration may carry: its own type and the words it paints. A node
    nobody can answer has nothing else to say."
   #{:type :text})
 
-(def ^:private request-keys
+(def option-keys "Every key one `:options` entry may carry." #{:value :label})
+
+(def request-keys
+  "Every key a request may carry."
   #{:id :title :description :source :fields :submit-label :cancel-label :is-cancellable :timeout-ms
     :channel-ids :session-id})
 
 (def ^:private answer-keys #{:is-submitted :reason :request-id :values})
+
+;; ---------------------------------------------------------------------------
+;; Predicates
+;; ---------------------------------------------------------------------------
+
+(defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 
 (defn- closed?
   "True when `m` carries no key outside `allowed`. The internal form is closed
@@ -230,7 +264,7 @@
 (s/def ::value non-blank-string?)
 (s/def ::text non-blank-string?)
 
-(s/def ::option (s/and #(closed? #{:value :label} %) (s/keys :req-un [::value ::label])))
+(s/def ::option (s/and #(closed? option-keys %) (s/keys :req-un [::value ::label])))
 
 (s/def ::options
   (s/and (s/coll-of ::option :kind vector?)
