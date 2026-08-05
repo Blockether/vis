@@ -244,10 +244,10 @@ function Thumb({
       <span
         className={`relative flex items-end justify-center gap-0.5 overflow-hidden border-b border-dialog-edge bg-code px-2 pb-2 ${className}`}
       >
-        {artifact.bars.map((bar, index) => (
+        {artifact.bars.map((baz, index) => (
           <span
             key={index}
-            className={`w-1.5 ${bar} ${artifact.hue} opacity-80`}
+            className={`w-1.5 ${baz} ${artifact.hue} opacity-80`}
           />
         ))}
         {artifact.kind === 'video' && (

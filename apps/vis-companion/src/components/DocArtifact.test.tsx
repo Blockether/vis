@@ -110,7 +110,7 @@ describe('DocCard', () => {
 // bytes are clamped to `audience: "user"`, so what travels is a PICTURE of the
 // page the human chose — and the page number has to be visible while choosing.
 describe('DocAnnotateBar', () => {
-  const bar = (props: Partial<Parameters<typeof DocAnnotateBar>[0]> = {}) =>
+  const baz = (props: Partial<Parameters<typeof DocAnnotateBar>[0]> = {}) =>
     renderToStaticMarkup(
       <DocAnnotateBar
         page={1}
@@ -125,44 +125,44 @@ describe('DocAnnotateBar', () => {
     );
 
   it('says which page of a PDF the capture will be', () => {
-    const body = text(bar({ page: 3, pageCount: 12 }));
+    const body = text(baz({ page: 3, pageCount: 12 }));
     expect(body).toContain('Page 3 of 12');
     expect(body).toContain('Draw on page 3');
   });
 
   it('offers no page picker for an artifact that has no pages', () => {
-    const body = text(bar());
+    const body = text(baz());
     expect(body).not.toContain('Page 1 of');
     expect(body).toContain('Draw on page');
   });
 
   it('stops at the first and the last page', () => {
-    const first = bar({ page: 1, pageCount: 5 });
+    const first = baz({ page: 1, pageCount: 5 });
     expect(first).toContain('disabled="" aria-label="Previous page"');
     expect(first).not.toContain('disabled="" aria-label="Next page"');
-    const last = bar({ page: 5, pageCount: 5 });
+    const last = baz({ page: 5, pageCount: 5 });
     expect(last).toContain('disabled="" aria-label="Next page"');
     expect(last).not.toContain('disabled="" aria-label="Previous page"');
   });
 
   it('reports the render in progress and what came of it', () => {
-    expect(text(bar({ busy: true }))).toContain('Rendering');
-    expect(bar({ busy: true })).toContain('disabled=""');
+    expect(text(baz({ busy: true }))).toContain('Rendering');
+    expect(baz({ busy: true })).toContain('disabled=""');
     expect(
-      text(bar({ notice: 'Attached report-p3.png to your message.' })),
+      text(baz({ notice: 'Attached report-p3.png to your message.' })),
     ).toContain('Attached report-p3.png to your message.');
   });
 
   // A document whose page count is not known yet cannot be captured by page.
   it('waits for a PDF to be parsed before it will draw', () => {
-    expect(bar({ disabled: true })).toContain('disabled=""');
+    expect(baz({ disabled: true })).toContain('disabled=""');
   });
 
   // Density follows the pointer, not the width: these are the same touch-sized
   // hit boxes as every other control in the rail.
   it('keeps a touch-sized hit box', () => {
     expect(
-      bar({ page: 2, pageCount: 4 }).match(/min-h-11/g)?.length,
+      baz({ page: 2, pageCount: 4 }).match(/min-h-11/g)?.length,
     ).toBeGreaterThanOrEqual(3);
   });
 });

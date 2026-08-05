@@ -62,27 +62,27 @@
 
 (deftest on-track-and-on-thumb-honour-bar-column
   (let
-    [bar
+    [baz
      {:col 50 :top 10 :track-h 8}
 
      geom
      (scrollbar/geometry 100 8 nil)]
 
     (testing "On-track requires same column and Y inside track range"
-      (is (scrollbar/on-track? 50 10 bar))
-      (is (scrollbar/on-track? 50 17 bar))
-      (is (not (scrollbar/on-track? 50 18 bar)))
-      (is (not (scrollbar/on-track? 49 10 bar))))
+      (is (scrollbar/on-track? 50 10 baz))
+      (is (scrollbar/on-track? 50 17 baz))
+      (is (not (scrollbar/on-track? 50 18 baz)))
+      (is (not (scrollbar/on-track? 49 10 baz))))
     (testing "x-band widens horizontal tolerance left of the bar"
-      (let [wide (assoc bar :x-band 3)]
+      (let [wide (assoc baz :x-band 3)]
         (is (scrollbar/on-track? 48 10 wide))
         (is (scrollbar/on-track? 49 10 wide))
         (is (scrollbar/on-track? 50 10 wide))
         (is (not (scrollbar/on-track? 47 10 wide)))))
     (testing "On-thumb hits only the thumb's row"
       ;; nil scroll → thumb at row track-h - 1 = 7 (relative), abs row 17.
-      (is (scrollbar/on-thumb? 50 17 bar geom))
-      (is (not (scrollbar/on-thumb? 50 16 bar geom))))))
+      (is (scrollbar/on-thumb? 50 17 baz geom))
+      (is (not (scrollbar/on-thumb? 50 16 baz geom))))))
 
 (deftest scroll-from-mouse-y-maps-track-to-scroll
   (testing "Track top maps to scroll 0" (is (= 0 (scrollbar/scroll-from-mouse-y 10 10 8 100 20))))
