@@ -34,7 +34,7 @@
          by-key
          (into {} (map (juxt :key identity)) items)]
 
-        (expect (= ["Switch to" "Create" "Danger"] (mapv :title (:groups spec))))
+        (expect (= ["Switch to" "Actions"] (mapv :title (:groups spec))))
         (expect (= #{:action :switch} (set (map :type items))))
         (expect (= :switch (:type (by-key "c"))))
         (expect (= "--clean" (:arg (by-key "c"))))
@@ -51,7 +51,7 @@
         (expect (= :abandon (:id (tr/item-by-key spec \k))))))
   (it "with no drafts there is nothing to abandon and trunk is where we are"
       (let [spec (drafts/spec [])]
-        (expect (= ["Switch to" "Create"] (mapv :title (:groups spec))))
+        (expect (= ["Switch to" "Actions"] (mapv :title (:groups spec))))
         (expect (nil? (tr/item-by-key spec \k)))
         (expect (= (str (dlg/choice-mark true true) "Trunk") (:label (tr/item-by-key spec \t))))
         (expect (= {:action :trunk :label "Trunk" :current? true}

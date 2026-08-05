@@ -19,10 +19,9 @@
      Switch to
       t  ● Trunk
       a  ○ spike-parser
-     Create
+     Actions
       -c  Without my uncommitted changes  (--clean)
       n   New draft…
-     Danger
       k   Abandon draft…
 
    `t` and every draft letter are COMMANDS (fire once and close), `-c` is a
@@ -92,7 +91,7 @@
    Every switch TARGET is a command, because picking one closes the band and
    performs the switch; `-c` is the only flag, and it belongs to `n` (the
    gateway's clean fork seeds from the last commit instead of the working
-   tree). The Danger group only exists when there is something to abandon."
+   tree). Abandon only exists when there is something to abandon."
   [drafts]
   (let
     [rs
@@ -108,15 +107,14 @@
 
     {:title "Drafts"
      :groups
-     (cond->
-       [{:title "Switch to" :items switch-items}
-        {:title "Create"
-         :items
+     [{:title "Switch to" :items switch-items}
+      {:title "Actions"
+       :items
+       (cond->
          [{:key "c" :type :switch :id :clean :label "Without my uncommitted changes" :arg "--clean"}
-          {:key "n" :type :action :id :new :label "New draft…"}]}]
-       (seq rs)
-       (conj {:title "Danger"
-              :items [{:key "k" :type :action :id :abandon :label "Abandon draft…"}]}))}))
+          {:key "n" :type :action :id :new :label "New draft…"}]
+         (seq rs)
+         (conj {:key "k" :type :action :id :abandon :label "Abandon draft…"}))}]}))
 
 (defn choice
   "PURE: what one finished `transient/run!` result MEANS, in the shape the
