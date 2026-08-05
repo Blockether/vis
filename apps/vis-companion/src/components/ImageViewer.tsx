@@ -173,10 +173,15 @@ export function ImageViewer({
       annotationRef.current?.fit(image.naturalWidth, image.naturalHeight);
   }
 
-  function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
+function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
     if (drawing) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
+    // A live pinch/pan writes the transform every frame; the CSS transition
+    // meant for button/reset snaps fights that at exactly the frame rate a
+    // finger moves, which is what read as stutter and a lagging, rubber-banded
+    // pinch. Only a finger on the glass suspends it.
+    if (transformedRef.current) transformedRef.current.style.transitionDuration = '0ms';
     const point = { x: event.clientX, y: event.clientY };
     pointersRef.current.set(event.pointerId, point);
     const pointers = [...pointersRef.current.values()];
@@ -209,7 +214,7 @@ export function ImageViewer({
     }
   }
 
-  function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
+function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
     if (drawing) return;
     pointersRef.current.delete(event.pointerId);
     // Lifting one finger of a pinch continues as a pan from where the other one
@@ -218,6 +223,10 @@ export function ImageViewer({
     gestureRef.current = remaining
       ? panFrom(remaining[0], remaining[1], transformRef.current)
       : null;
+    // Last finger up: restore the CSS transition so a clamp snap-back (e.g.
+    // pinching past 1x) and the toolbar's own zoom buttons animate again.
+    if (!gestureRef.current && transformedRef.current)
+      transformedRef.current.style.transitionDuration = '';
   }
 
   function zoomBy(factor: number) {

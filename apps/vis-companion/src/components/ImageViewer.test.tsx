@@ -116,3 +116,36 @@ describe('ImageViewer', () => {
     expect(named('Attach to message')).toBeTruthy();
   });
 });
+
+// Regression: the CSS transition meant for button/reset snaps also applied
+// while a finger was dragging the picture every frame, fighting the direct
+// pointer-driven transform and reading as pinch/pan stutter and lag.
+it('suspends the snap transition while a pinch or pan is live, and restores it on lift', () => {
+  const surface = document.querySelector<HTMLDivElement>('[role="dialog"] .cursor-grab');
+  const transformed = document.querySelector<HTMLDivElement>('.origin-center');
+  if (!surface || !transformed) throw new Error('viewer surface not found');
+  Element.prototype.setPointerCapture = vi.fn();
+
+  expect(transformed.style.transitionDuration).toBe('');
+
+  act(() => {
+    surface.dispatchEvent(
+      new PointerEvent('pointerdown', { pointerId: 1, clientX: 0, clientY: 0, bubbles: true }),
+    );
+  });
+  expect(transformed.style.transitionDuration).toBe('0ms');
+
+  act(() => {
+    surface.dispatchEvent(
+      new PointerEvent('pointermove', { pointerId: 1, clientX: 10, clientY: 0, bubbles: true }),
+    );
+  });
+  expect(transformed.style.transitionDuration).toBe('0ms');
+
+  act(() => {
+    surface.dispatchEvent(
+      new PointerEvent('pointerup', { pointerId: 1, clientX: 10, clientY: 0, bubbles: true }),
+    );
+  });
+  expect(transformed.style.transitionDuration).toBe('');
+});
