@@ -149,3 +149,44 @@ describe('the artifacts sheet', () => {
     expect(text(sheet([]))).toContain('Nothing of that kind in this session.');
   });
 });
+
+describe('the artifacts sheet, paged', () => {
+  const many = (count: number, size: number) =>
+    Array.from({ length: count }, (_, at) =>
+      artifact({
+        key: `i${at}:0`,
+        name: `shot-${at}.png`,
+        iterationId: `i${at}`,
+        size,
+        sizeLabel: '64.0KB',
+      }),
+    );
+  const tiles = (html: string) => html.match(/aria-label="Open /g)?.length ?? 0;
+
+  it('paints one page of thumbnails, not two hundred downloads', () => {
+    // Every tile that mounts fetches its own bytes, so opening this sheet on a
+    // long session used to fire a request per artifact in a single tick.
+    const html = sheet(many(30, 64 * 1024));
+    expect(tiles(html)).toBe(12);
+    expect(text(html)).toContain('Load 18 more');
+    expect(html).toContain('aria-label="Load 18 more · 1.1MB of artifacts"');
+  });
+
+  it('pages on WEIGHT too, when a handful of artifacts is already heavy', () => {
+    const html = sheet(many(6, 8 * 1024 * 1024));
+    expect(tiles(html)).toBe(2);
+    expect(text(html)).toContain('4 more');
+  });
+
+  it('says nothing about more when the whole production fits', () => {
+    const html = sheet(many(4, 64 * 1024));
+    expect(tiles(html)).toBe(4);
+    expect(text(html)).not.toContain('more');
+  });
+
+  it('keeps the reveal control tappable', () => {
+    const html = sheet(many(30, 64 * 1024));
+    expect(html).toContain('min-h-11');
+    expect(html).toContain('mouse:min-h-8');
+  });
+});

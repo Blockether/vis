@@ -1,6 +1,12 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { AssistantMessage, Markdown, UserMessage } from './ChatContent';
+import {
+  AssistantMessage,
+  AttachmentRail,
+  Markdown,
+  UserMessage,
+} from './ChatContent';
+import type { GatewayClient } from '../lib/gateway';
 import { mediaFrameClass } from '../lib/media-frame';
 import type { TranscriptTurn } from '../lib/types';
 
@@ -126,5 +132,49 @@ describe('collapsed tool results', () => {
     expect(html).toContain('summary 0');
     expect(html).toContain('summary 399');
     expect(html).not.toContain(bodySentinel);
+  });
+});
+
+// Every tile in this rail fetches its own bytes on first paint, so an iteration
+// that produced forty artifacts fired forty requests in one tick — on whatever
+// connection the phone had. A page at a time now, by count AND by weight.
+describe('the attachment rail', () => {
+  const client = {
+    attachmentUrl: async () => 'blob:none',
+    retainAttachment: () => () => {},
+  } as unknown as GatewayClient;
+  const rail = (count: number, size: number) =>
+    renderToStaticMarkup(
+      <AttachmentRail
+        client={client}
+        sid="s1"
+        attachments={Array.from({ length: count }, (_, at) => ({
+          filename: `report-${at}.pdf`,
+          media_type: 'application/pdf',
+          size,
+          iteration_id: 'i1',
+          index: at,
+        }))}
+      />,
+    );
+
+  it('paints one page of artifacts and offers the rest', () => {
+    const html = rail(20, 64 * 1024);
+    expect(html).toContain('report-5.pdf');
+    expect(html).not.toContain('report-6.pdf');
+    expect(text(html)).toContain('Load 14 more');
+  });
+
+  it('pages on WEIGHT before it ever reaches the count', () => {
+    const html = rail(6, 3 * 1024 * 1024);
+    expect(html).toContain('report-1.pdf');
+    expect(html).not.toContain('report-2.pdf');
+    expect(text(html)).toContain('4 more');
+  });
+
+  it('leaves a rail that already fits completely alone', () => {
+    const html = rail(3, 64 * 1024);
+    expect(html).toContain('report-2.pdf');
+    expect(text(html)).not.toContain('more');
   });
 });

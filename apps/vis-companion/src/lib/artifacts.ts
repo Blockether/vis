@@ -185,3 +185,78 @@ export function artifactTotalLabel(list: SessionArtifact[]): string {
     known.reduce((sum, entry) => sum + (entry.size ?? 0), 0),
   );
 }
+
+/**
+ * HOW MUCH OF A GALLERY IS FETCHED AT ONCE — paging by NUMBER and by SIZE.
+ *
+ * Every tile that reaches the screen asks the gateway for its bytes, so an
+ * iteration that produced forty figures, or a session sheet with two hundred
+ * artifacts in it, is forty or two hundred downloads started in one tick — on
+ * whatever connection the phone happens to have. Counting tiles alone is not
+ * enough either: six 4K screenshots are not six thumbnails.
+ *
+ * So a page ends at whichever bound comes first, and "show more" buys exactly
+ * one more page of both. The first item is ALWAYS shown, however big it is: a
+ * budget that can hide the only artifact there is would be a broken screen
+ * rather than a thrifty one.
+ */
+export interface AttachmentPageLimits {
+  /** How many artifacts one page may paint. */
+  items: number;
+  /** How many of their bytes one page may pull. */
+  bytes: number;
+}
+
+/** In the transcript, under the tool call that made them: full-width pictures. */
+export const RAIL_PAGE: AttachmentPageLimits = {
+  items: 6,
+  bytes: 8 * 1024 * 1024,
+};
+
+/** In the artifacts sheet: a grid of thumbnails, so more of them fit a page. */
+export const SHEET_PAGE: AttachmentPageLimits = {
+  items: 12,
+  bytes: 16 * 1024 * 1024,
+};
+
+export interface AttachmentPage<T> {
+  /** What is painted — and therefore what is downloaded. */
+  shown: T[];
+  /** What is not, yet. */
+  rest: T[];
+  restBytes: number;
+  /** `18 more · 24.1MB` — what the control that reveals them says, or ''. */
+  restLabel: string;
+}
+
+/** One page of `items`, per [[AttachmentPageLimits]]; `pages` counts reveals. */
+export function pageBySize<T>(
+  items: T[],
+  sizeOf: (item: T) => number | undefined,
+  pages: number,
+  limits: AttachmentPageLimits,
+): AttachmentPage<T> {
+  const reveals = Math.max(1, Math.floor(pages) || 1);
+  const maxItems = Math.max(1, limits.items * reveals);
+  const maxBytes = limits.bytes * reveals;
+  const size = (item: T) => Math.max(0, sizeOf(item) ?? 0);
+  let bytes = 0;
+  let at = 0;
+  while (at < items.length && at < maxItems) {
+    const next = size(items[at]);
+    if (at > 0 && bytes + next > maxBytes) break;
+    bytes += next;
+    at += 1;
+  }
+  const rest = items.slice(at);
+  const restBytes = rest.reduce((sum, item) => sum + size(item), 0);
+  const weight = restBytes > 0 ? attachmentBytes(restBytes) : '';
+  return {
+    shown: items.slice(0, at),
+    rest,
+    restBytes,
+    restLabel: rest.length
+      ? `${rest.length} more${weight ? ` · ${weight}` : ''}`
+      : '',
+  };
+}

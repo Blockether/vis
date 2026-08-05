@@ -19,6 +19,8 @@ import {
   attachmentIsImage,
   attachmentIsPlayable,
   attachmentIsVideo,
+  pageBySize,
+  RAIL_PAGE,
 } from '../lib/artifacts';
 import { Spinner } from './ui';
 import 'prismjs/components/prism-bash';
@@ -1511,8 +1513,17 @@ export const AttachmentRail = memo(function AttachmentRail({
   attachments: IterationAttachment[];
 }) {
   const [open, setOpen] = useState(false);
-  const playable = attachments.filter(attachmentIsPlayable);
-  const docs = attachments.filter(attachmentIsDoc);
+  // ONE page of media at a time — see `pageBySize`. Every tile that mounts asks
+  // the gateway for its bytes, so an iteration that produced forty figures used
+  // to start forty downloads in the same tick, on whatever connection a phone
+  // happens to have. Revealed a page at a time, by count AND by weight.
+  const [pages, setPages] = useState(1);
+  const media = attachments.filter(
+    (entry) => attachmentIsPlayable(entry) || attachmentIsDoc(entry),
+  );
+  const page = pageBySize(media, (entry) => entry.size, pages, RAIL_PAGE);
+  const playable = page.shown.filter(attachmentIsPlayable);
+  const docs = page.shown.filter(attachmentIsDoc);
   const files = recordedFiles(
     attachments.filter((entry) => !attachmentIsPlayable(entry) && !attachmentIsDoc(entry)),
   );
@@ -1538,6 +1549,17 @@ export const AttachmentRail = memo(function AttachmentRail({
           attachment={attachment}
         />
       ))}
+      {page.rest.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setPages((current) => current + 1)}
+          aria-label={`Load ${page.restLabel} of attachments`}
+          className="mt-2 flex min-h-11 w-full min-w-0 items-center gap-1.5 border border-dialog-edge px-2 text-left font-mono text-chip text-footer-muted hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-8"
+        >
+          <span aria-hidden="true" className="shrink-0 opacity-70">↓</span>
+          <span className="min-w-0 truncate">Load {page.restLabel}</span>
+        </button>
+      )}
       {head && (
         <div className="mt-2 min-w-0">
           <button

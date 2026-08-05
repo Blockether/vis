@@ -30,6 +30,8 @@ import {
   ARTIFACT_FILTERS,
   artifactTotalLabel,
   docKindLabel,
+  pageBySize,
+  SHEET_PAGE,
   type SessionArtifact,
 } from '../lib/artifacts';
 import { useAttachImage } from '../lib/attach-image';
@@ -530,9 +532,14 @@ export function ArtifactsSheet({
 }) {
   const [filter, setFilter] = useState('All');
   const [opened, setOpened] = useState<SessionArtifact | null>(null);
+  // A thumbnail is a DOWNLOAD, so a session with two hundred artifacts in it is
+  // two hundred requests the moment this sheet opens. One page at a time, by
+  // count AND by weight, and a new filter starts its own first page.
+  const [pages, setPages] = useState(1);
   const kinds =
     ARTIFACT_FILTERS.find((entry) => entry.label === filter)?.kinds ?? [];
   const shown = artifacts.filter((entry) => kinds.includes(entry.kind));
+  const page = pageBySize(shown, (entry) => entry.size, pages, SHEET_PAGE);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -556,20 +563,40 @@ export function ArtifactsSheet({
       className="absolute inset-0 z-10 flex flex-col border-t border-dialog-edge bg-ink"
     >
       <SurfaceHeader list={artifacts} onClose={onClose} />
-      <FilterStrip list={artifacts} active={filter} onPick={setFilter} />
+      <FilterStrip
+        list={artifacts}
+        active={filter}
+        onPick={(label) => {
+          setFilter(label);
+          setPages(1);
+        }}
+      />
       <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
         {shown.length ? (
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 mouse:grid-cols-5">
-            {shown.map((artifact) => (
-              <Tile
-                key={artifact.key}
-                client={client}
-                sid={sid}
-                artifact={artifact}
-                onOpen={setOpened}
-              />
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 mouse:grid-cols-5">
+              {page.shown.map((artifact) => (
+                <Tile
+                  key={artifact.key}
+                  client={client}
+                  sid={sid}
+                  artifact={artifact}
+                  onOpen={setOpened}
+                />
+              ))}
+            </div>
+            {page.rest.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setPages((current) => current + 1)}
+                aria-label={`Load ${page.restLabel} of artifacts`}
+                className="mt-3 flex min-h-11 w-full items-center justify-center gap-1.5 border border-dialog-edge bg-panel font-mono text-meta text-dialog-hint hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-8"
+              >
+                <span aria-hidden="true">↓</span>
+                <span>Load {page.restLabel}</span>
+              </button>
+            )}
+          </>
         ) : (
           <p className="font-mono text-meta text-dialog-hint">
             Nothing of that kind in this session.

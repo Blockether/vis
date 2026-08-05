@@ -12,6 +12,9 @@ import {
   collectArtifacts,
   docKindLabel,
   isDocMedia,
+  pageBySize,
+  RAIL_PAGE,
+  SHEET_PAGE,
   isPdfMedia,
 } from './artifacts';
 import type { TranscriptTurn } from './types';
@@ -194,5 +197,66 @@ describe('collecting what a session produced', () => {
       'doc',
       'file',
     ]);
+  });
+});
+
+describe('pageBySize', () => {
+  const MB = 1024 * 1024;
+  const page = (sizes: (number | undefined)[], pages = 1, limits = RAIL_PAGE) =>
+    pageBySize(
+      sizes.map((size, at) => ({ name: `a${at}.png`, size })),
+      (entry) => entry.size,
+      pages,
+      limits,
+    );
+
+  it('hides nothing when a gallery already fits', () => {
+    const shown = page([1024, 1024, 1024]);
+    expect(shown.shown).toHaveLength(3);
+    expect(shown.rest).toEqual([]);
+    expect(shown.restLabel).toBe('');
+  });
+
+  it('stops at the COUNT bound and says what is left, with its weight', () => {
+    const shown = page(Array.from({ length: 20 }, () => 1024));
+    expect(shown.shown).toHaveLength(RAIL_PAGE.items);
+    expect(shown.rest).toHaveLength(14);
+    expect(shown.restBytes).toBe(14 * 1024);
+    expect(shown.restLabel).toBe('14 more · 14.0KB');
+  });
+
+  it('stops at the BYTE bound long before the count one', () => {
+    // Six 3 MB screenshots are not six thumbnails: two fit an 8 MB page.
+    const shown = page([3 * MB, 3 * MB, 3 * MB, 3 * MB]);
+    expect(shown.shown).toHaveLength(2);
+    expect(shown.rest).toHaveLength(2);
+    expect(shown.restBytes).toBe(6 * MB);
+  });
+
+  it('always shows the first artifact, however heavy it is', () => {
+    // A budget that can hide the ONLY picture there is would be a broken
+    // screen, not a thrifty one.
+    const shown = page([64 * MB, 1024]);
+    expect(shown.shown).toHaveLength(1);
+    expect(shown.rest).toHaveLength(1);
+  });
+
+  it('falls back to the count bound when no size is known', () => {
+    const shown = page(Array.from({ length: 9 }, () => undefined));
+    expect(shown.shown).toHaveLength(RAIL_PAGE.items);
+    expect(shown.restBytes).toBe(0);
+    // Nothing weighed: claiming "3 more · 0B" would be a lie.
+    expect(shown.restLabel).toBe('3 more');
+  });
+
+  it('buys exactly one more page of BOTH bounds per reveal', () => {
+    const sizes = Array.from({ length: 20 }, () => 1024);
+    expect(page(sizes, 2).shown).toHaveLength(2 * RAIL_PAGE.items);
+    expect(page([3 * MB, 3 * MB, 3 * MB, 3 * MB], 2).shown).toHaveLength(4);
+  });
+
+  it('gives the thumbnail grid a bigger page than the transcript rail', () => {
+    expect(SHEET_PAGE.items).toBeGreaterThan(RAIL_PAGE.items);
+    expect(SHEET_PAGE.bytes).toBeGreaterThan(RAIL_PAGE.bytes);
   });
 });

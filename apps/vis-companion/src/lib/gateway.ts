@@ -7,6 +7,12 @@
 // prompt a re-pair.
 
 import type { PushGateway } from "./relay";
+import {
+  ATTACHMENT_MEMORY_BUDGET,
+  cacheVictims,
+  readCachedAttachment,
+  writeCachedAttachment,
+} from './attachment-cache';
 import type {
   AuthFlow,
   AuthVerdict,
@@ -567,11 +573,13 @@ export class GatewayClient {
   // append-only and content-addressed by that triple, so one download per
   // picture — but BOUNDED, because every entry pins full decoded bytes.
   private readonly attachmentUrls = new Map<string, Promise<string>>();
+  // What each of those rows actually COSTS, learned when its bytes land. A bound
+  // counted in entries alone cannot tell 24 thumbnails from 24 video clips.
+  private readonly attachmentSizes = new Map<string, number>();
   // How many MOUNTED tiles are painting each key right now. Eviction REVOKES an
   // object URL, and a revoked URL is a permanently broken `<img>` — so a picture
   // that is on screen must never be the one handed back to the collector.
   private readonly attachmentHolds = new Map<string, number>();
-  private static readonly ATTACHMENT_URL_CACHE = 24;
   // Last conditional-GET validators for the session LIST, per gateway: one per
   // page window, plus the merged array they were built from. Static because the
   // screens build a throwaway client whenever the connection object changes, and
@@ -2498,9 +2506,15 @@ export class GatewayClient {
    * `GET /v1/sessions/:sid/iterations/:iid/attachments/:idx`, the endpoint the
    * `iteration.completed` / transcript descriptors index. `<img src>` cannot
    * carry the bearer header a token-gated gateway demands, so the bytes are
-   * fetched WITH the auth headers and handed back as an object URL. Immutable
-   * by construction, hence cached; a FAILED fetch is evicted so a row that has
-   * not landed yet is retried by the next render.
+   * fetched WITH the auth headers and handed back as an object URL.
+   *
+   * THREE TIERS, and the network is the LAST one: the object URL this document
+   * already made; else the bytes this DEVICE already downloaded, from the
+   * persistent store in `attachment-cache`; else, and only then, the gateway.
+   * An artifact is immutable, so a re-entered session, a re-opened app and a
+   * figure scrolled back to all cost zero bytes on the wire — only artifacts
+   * this device has never seen are downloaded. A FAILED fetch is evicted so a
+   * row that has not landed yet is retried by the next render.
    */
   attachmentUrl(
     sid: string,
@@ -2517,22 +2531,42 @@ export class GatewayClient {
       this.attachmentUrls.set(key, cached);
       return cached;
     }
+    const endpoint = this.attachmentEndpoint(sid, iterationId, index);
     const pending = (async () => {
-      const path = `/v1/sessions/${encodeURIComponent(sid)}/iterations/${encodeURIComponent(iterationId)}/attachments/${index}`;
+      const stored = await readCachedAttachment(endpoint);
+      if (stored) {
+        this.attachmentSizes.set(key, stored.size);
+        return URL.createObjectURL(stored);
+      }
       let response: Response;
       try {
-        response = await fetch(this.base + path, { headers: this.headers() });
+        response = await fetch(endpoint, { headers: this.headers() });
       } catch (error) {
         throw new GatewayError(0, `network error: ${(error as Error).message}`);
       }
       if (!response.ok)
         throw new GatewayError(response.status, `HTTP ${response.status}`);
-      return URL.createObjectURL(await response.blob());
+      const blob = await response.blob();
+      this.attachmentSizes.set(key, blob.size);
+      // Keeping it is best-effort and never blocks the picture it just produced.
+      void writeCachedAttachment(endpoint, blob);
+      return URL.createObjectURL(blob);
     })();
     pending.catch(() => this.attachmentUrls.delete(key));
     this.attachmentUrls.set(key, pending);
+    // Twice: once for the COUNT bound, which is knowable immediately, and again
+    // when the bytes have landed and the SIZE bound finally has numbers to add.
     this.evictAttachmentUrls();
+    void pending.then(
+      () => this.evictAttachmentUrls(),
+      () => undefined,
+    );
     return pending;
+  }
+
+  /** Where ONE artifact is served from — its identity in every tier of cache. */
+  attachmentEndpoint(sid: string, iterationId: string, index: number): string {
+    return `${this.base}/v1/sessions/${encodeURIComponent(sid)}/iterations/${encodeURIComponent(iterationId)}/attachments/${index}`;
   }
 
   private static attachmentKey(
@@ -2578,20 +2612,31 @@ export class GatewayClient {
   }
 
   /**
-   * Every live entry pins full decoded bytes for the lifetime of the document,
+   * Bring the object-URL tier back inside its budget — by SIZE and by NUMBER,
+   * through `cacheVictims`, the same policy the persistent tier is held to.
+   *
+   * Every live entry pins full DECODED bytes for the lifetime of the document,
    * and a long session of figures is exactly the memory curve iOS answers by
-   * killing the webview — so the cache is bounded and the oldest object URLs go
-   * back to the collector. Held keys are SKIPPED, never merely deferred: the
-   * cache may sit over its bound while that many pictures are genuinely on
-   * screen, which is the honest trade (a visible image beats a freed URL).
+   * killing the webview. A bound counted in entries alone could not tell 24
+   * thumbnails from 24 clips, so what each artifact landed with is counted too.
+   * Held keys are SKIPPED, never merely deferred: the tier may sit over its
+   * bound while that many pictures are genuinely on screen, which is the honest
+   * trade (a visible image beats a freed URL).
+   *
+   * Cheap, now that the bytes survive on disk: a revoked URL costs a decode when
+   * that figure scrolls back into view, never another download.
    */
   private evictAttachmentUrls(): void {
-    if (this.attachmentUrls.size <= GatewayClient.ATTACHMENT_URL_CACHE) return;
-    for (const candidate of Array.from(this.attachmentUrls.keys())) {
-      if (this.attachmentUrls.size <= GatewayClient.ATTACHMENT_URL_CACHE) break;
-      if (this.attachmentHolds.has(candidate)) continue;
-      const stale = this.attachmentUrls.get(candidate);
-      this.attachmentUrls.delete(candidate);
+    const entries = Array.from(this.attachmentUrls.keys()).map((key, at) => ({
+      url: key,
+      bytes: this.attachmentSizes.get(key) ?? 0,
+      used: at,
+      pinned: this.attachmentHolds.has(key),
+    }));
+    for (const key of cacheVictims(entries, ATTACHMENT_MEMORY_BUDGET)) {
+      const stale = this.attachmentUrls.get(key);
+      this.attachmentUrls.delete(key);
+      this.attachmentSizes.delete(key);
       void stale
         ?.then((url) => URL.revokeObjectURL(url))
         .catch(() => undefined);
