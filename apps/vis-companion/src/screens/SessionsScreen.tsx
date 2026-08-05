@@ -1054,13 +1054,13 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
           Machines (which floats its cards below a gap) wore 1px. Bottom edge only;
           the full box comes back once the panel detaches at `sm`. */}
       <div className="flex h-full min-h-0 flex-col overflow-hidden border-b border-dialog-edge bg-panel sm:border">
-        <div className="bg-panel-2 px-3 py-2.5 sm:px-4 sm:py-3">
+        <div className="bg-panel-2 px-3 py-2 sm:px-4">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="truncate font-mono text-body font-bold text-white">
+              <p className="truncate font-mono text-ui font-bold text-white">
                 {scopeMachine ? machineLabel(scopeMachine.conn) : machines.length > 1 ? 'Fleet' : 'Projects'}
               </p>
-              <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-meta text-dialog-hint">
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-chip text-dialog-hint">
                 {sessions === null ? (
                   <>
                     <Spinner className="text-accent-ink" />
@@ -2636,8 +2636,8 @@ function MachineKebab({
       aria-expanded={open}
       aria-label={`Actions for ${label}`}
       title={`Actions for ${label}`}
-      className={`-mr-1 flex min-h-11 shrink-0 items-center justify-center px-3 text-ui transition-colors duration-150 disabled:opacity-40 motion-reduce:transition-none ${
-        open ? 'bg-hover text-white' : 'text-dialog-hint hover:text-white'
+      className={`-mr-3 flex min-h-11 shrink-0 items-center justify-center px-3 text-ui transition-colors duration-150 disabled:opacity-40 focus-visible:outline-none motion-reduce:transition-none sm:-mr-4 sm:px-4 ${
+        open ? 'bg-hover text-white' : 'text-dialog-hint hover:bg-hover hover:text-white focus-visible:bg-hover focus-visible:text-white'
       }`}
       onClick={(event) => onOpen(event.currentTarget)}
     >
