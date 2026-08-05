@@ -781,20 +781,59 @@
 
 (def ^:private initial-provider-limits vis/provider-initial-limits)
 
+(def gateway-probe-timeout-ms
+  "Wall for ONE gateway provider diagnostics call, in milliseconds.
+
+   A provider's `detect_fn`/`status_fn` is extension code and may block for as
+   long as it likes; the terminal must not. Every probe runs on a worker thread
+   and is abandoned here, so a wedged extension costs ONE card its verdict
+   instead of freezing the key/paint loop until the gateway client's own
+   request budget expires."
+  6000)
+
+(defn- probe-within
+  "Run `f` on a worker future and give up after `gateway-probe-timeout-ms`,
+   answering `(on-timeout message)` rather than blocking the caller further."
+  [label f on-timeout]
+  (let
+    [fut
+     (vis/worker-future label f)
+
+     value
+     (deref fut gateway-probe-timeout-ms ::timed-out)]
+
+    (if (identical? ::timed-out value)
+      (do (.cancel ^java.util.concurrent.Future fut true)
+          (on-timeout (str "timed out after " gateway-probe-timeout-ms "ms")))
+      value)))
+
 (defn- gateway-provider-status-safe
   [provider]
-  (try (vis/gateway-provider-status (:id provider))
-       (catch Throwable e {"is_authenticated" false "error" (or (ex-message e) (str e))})))
+  (probe-within "vis-tui-provider-status-probe"
+                (fn []
+                  (try (vis/gateway-provider-status (:id provider))
+                       (catch Throwable e
+                         {"is_authenticated" false "error" (or (ex-message e) (str e))})))
+                (fn [message]
+                  {"is_authenticated" false "error" message})))
 
 (defn- gateway-provider-limits-safe
   [provider]
-  (try (vis/gateway-provider-limits (:id provider))
-       (catch Throwable e
-         {:provider-id (:id provider)
-          :status :error
-          :static {}
-          :dynamic {:limits []}
-          :error {:message (or (ex-message e) (str e))}})))
+  (probe-within "vis-tui-provider-limits-probe"
+                (fn []
+                  (try (vis/gateway-provider-limits (:id provider))
+                       (catch Throwable e
+                         {:provider-id (:id provider)
+                          :status :error
+                          :static {}
+                          :dynamic {:limits []}
+                          :error {:message (or (ex-message e) (str e))}})))
+                (fn [message]
+                  {:provider-id (:id provider)
+                   :status :error
+                   :static {}
+                   :dynamic {:limits []}
+                   :error {:message message}})))
 
 (defn- refresh-provider-diagnostics!
   [provider statuses limits]

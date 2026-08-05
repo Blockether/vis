@@ -4,6 +4,7 @@
    a warm caller, a stale snapshot must refresh OFF the calling thread, and
    every same-process fleet mutation must invalidate the snapshot."
   (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]
+            [com.blockether.vis.internal.cancellation :as cancel]
             [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.providers :as providers]
@@ -521,3 +522,39 @@
     (is (str/includes? (providers/status-md {:id :slow} {:is-authenticated false} limits) "no ✗"))
     (is (str/includes? (providers/status-text {:id :slow} {:is-authenticated false} limits)
                        "Authenticated: no"))))
+
+;; Regression, issue #113: a provider lifecycle callback that never returned ran
+;; unbounded on the caller's thread, so one wedged extension held the gateway's
+;; provider-status request — and the card behind it — open until the HTTP client
+;; gave up 30s later.
+(deftest provider-probe-never-runs-unbounded-test
+  (let
+    [gate
+     (promise)
+
+     probe
+     (fn [provider]
+       (deref (cancel/worker-future "provider-probe-test"
+                                    #(providers/safe-provider-status provider))
+              8000
+              ::still-running))
+
+     status
+     (probe {:id :wedged
+             :provider/status-fn (fn []
+                                   @gate
+                                   {:is-authenticated true})})
+
+     detected
+     (probe {:id :wedged
+             :provider/detect-fn (fn []
+                                   @gate
+                                   true)})]
+
+    (deliver gate true)
+    (is (not= ::still-running status))
+    (is (false? (:is-authenticated status)))
+    (is (str/includes? (str (:error status)) "timed out"))
+    (is (not= ::still-running detected))
+    (is (false? (:is-authenticated detected)))
+    (is (str/includes? (str (:error detected)) "timed out"))))

@@ -16,6 +16,7 @@
    automatically works in every channel."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
+            [com.blockether.vis.internal.cancellation :as cancel]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.format :as format]
             [com.blockether.vis.internal.gateway.wire :as wire]
@@ -210,15 +211,51 @@
 
 ;;; ── Status + limits ─────────────────────────────────────────────────────────
 
+(def probe-timeout-ms
+  "Wall a provider lifecycle callback (`:provider/status-fn`,
+   `:provider/detect-fn`) gets before it is declared wedged. These callbacks are
+   trusted extension code — often Python — and a hung one used to hold the
+   gateway request, and the card behind it, for the client's whole 30s budget."
+  5000)
+
+(defn- probe-within
+  "Run `f` off the calling thread and wait at most `probe-timeout-ms` for it.
+   Returns `::timed-out` when the callback is still running by then; whatever
+   the callback threw is rethrown as-is, so callers keep one error path."
+  [label f]
+  (let [fut (cancel/worker-future (str "vis-provider-" label) f)]
+    (try (let [value (deref fut probe-timeout-ms ::timed-out)]
+           (when (identical? ::timed-out value) (.cancel ^java.util.concurrent.Future fut true))
+           value)
+         (catch java.util.concurrent.ExecutionException e (throw (or (.getCause e) e))))))
+
 (defn safe-provider-status
   "Status of a REGISTERED provider descriptor via its `:provider/status-fn`
-   (falling back to `:provider/detect-fn`). Never throws."
+   (falling back to `:provider/detect-fn`). Never throws, and never runs longer
+   than `probe-timeout-ms`: a callback that is still going by then answers
+   `{:is-authenticated false :error \"…timed out…\"}` — an honest verdict the
+   surface can paint — instead of parking the thread that asked."
   [provider]
-  (try (cond (:provider/status-fn provider) ((:provider/status-fn provider))
-             (:provider/detect-fn provider) {:is-authenticated (boolean ((:provider/detect-fn
-                                                                           provider)))}
-             :else nil)
-       (catch Throwable e {:is-authenticated false :error (or (ex-message e) (str e))})))
+  (let
+    [label
+     (str (or (:id provider) "provider"))
+
+     verdict
+     (fn [value]
+       (if (identical? ::timed-out value)
+         {:is-authenticated false
+          :error (str "status check timed out after " (quot (long probe-timeout-ms) 1000) "s")}
+         value))]
+
+    (try (cond (:provider/status-fn provider) (verdict
+                                                (probe-within label (:provider/status-fn provider)))
+               (:provider/detect-fn provider)
+               (let [detected (probe-within label (:provider/detect-fn provider))]
+                 (if (identical? ::timed-out detected)
+                   (verdict detected)
+                   {:is-authenticated (boolean detected)}))
+               :else nil)
+         (catch Throwable e {:is-authenticated false :error (or (ex-message e) (str e))}))))
 
 (defn probe-local-reachable
   "Probe a local OpenAI-compatible provider (Ollama / LM Studio) by

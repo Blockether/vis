@@ -103,7 +103,7 @@
 
            vis/worker-future
            (fn [_ f]
-             (f))
+             (future (f)))
 
            vis/gateway-provider-model-options
            (fn [provider-id _]
@@ -360,7 +360,38 @@
         (deliver release true)
         (expect (eventually #(= true (get-in @statuses [:slow "is_authenticated"]))))
         (expect (eventually #(= :ok (get-in @limits [:slow :status]))))
-        (expect (= false (@#'provider/provider-diagnostics-loading? @statuses @limits)))))))
+        (expect (= false (@#'provider/provider-diagnostics-loading? @statuses @limits))))))
+  ;; Regression, issue #113: a wedged provider probe (a Python `status_fn`/
+  ;; `detect_fn` that never returns) blocked the TUI key/paint thread until the
+  ;; gateway client's own 30s budget expired, so "Show Status + Limits" and the
+  ;; provider action menu froze the whole terminal.
+  (it "bounds a wedged gateway probe instead of blocking the calling thread"
+      (with-redefs
+        [provider/gateway-probe-timeout-ms
+         200
+
+         vis/gateway-provider-status
+         (fn [_]
+           (Thread/sleep 3000)
+           {"is_authenticated" true})
+
+         vis/gateway-provider-limits
+         (fn [_]
+           (Thread/sleep 3000)
+           {:status :ok :static {} :dynamic {:limits []}})]
+
+        (let
+          [status
+           (@#'provider/gateway-provider-status-safe {:id :wedged})
+
+           limits
+           (@#'provider/gateway-provider-limits-safe {:id :wedged})]
+
+          (expect (= false (get status "is_authenticated")))
+          (expect (clojure.string/includes? (str (get status "error")) "timed out"))
+          (expect (= :error (:status limits)))
+          (expect (clojure.string/includes? (str (get-in limits [:error :message]))
+                                            "timed out"))))))
 
 (defdescribe
   provider-action-items-test
@@ -1225,7 +1256,7 @@
 
          vis/worker-future
          (fn [_ f]
-           (f))
+           (future (f)))
 
          vis/gateway-provider-model-options
          (fn [provider-id _]
