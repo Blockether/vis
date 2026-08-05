@@ -953,13 +953,30 @@
     (some #(str/starts-with? line (str % selection-output-indent))
           selection-output-indent-markers)))
 
+(defn- error-card-row-geometry?
+  "True when a bubble is painted as the failed-turn CARD.
+
+   `render/draw-chat-bubble!` gives that card exactly the geometry of a user
+   bubble - one pad row under the role label (`top-pad`) and a text inset of
+   `h-pad` columns - so selection has to take the SAME decision. While it only
+   asked `(= :user role)`, every range on a provider/turn failure named the
+   blank pad row above the sentence and started two columns left of it: the
+   error text was the one thing in the transcript you could not drag over."
+  [message]
+  (and (not= :queued (:status message))
+       (not= :cancelled (:status message))
+       (render/error-message? message)))
+
 (defn- bubble-line-text-col
-  [role bubble-left line]
-  (cond (= :user role) (+ (long bubble-left) (long bubble-content-h-pad))
+  [message bubble-left line]
+  (cond (or (= :user (:role message)) (error-card-row-geometry? message))
+        (+ (long bubble-left) (long bubble-content-h-pad))
+
         (assistant-code-text-row? line)
         (+ (long bubble-left)
            1
            (if (output-indented-row? line) (p/display-width selection-output-indent) 0))
+
         :else bubble-left))
 
 (def ^:private transcript-copy-skip-markers
@@ -1042,7 +1059,7 @@
    row, and a click on the last row of an expanded disclosure missed its block
    and fell through to the whole-bubble copy."
   ^long [message ^long text-top ^long top]
-  (+ text-top top 1 (if (= :user (:role message)) 1 0)))
+  (+ text-top top 1 (if (or (= :user (:role message)) (error-card-row-geometry? message)) 1 0)))
 
 (defn- bubble-selectable-ranges
   "Return absolute screen-cell ranges for visible transcript message content.
@@ -1095,7 +1112,7 @@
            :when (and (<= top-limit row) (< row bottom-limit) (copyable-transcript-line? line))]
 
           {:row row
-           :col (bubble-line-text-col (:role message) bubble-left line)
+           :col (bubble-line-text-col message bubble-left line)
            :width content-w
            :text (selectable-line-visible-text line)
            :wrap-w
@@ -1208,7 +1225,7 @@
                visible)]
 
             {:row row
-             :col (bubble-line-text-col (:role message) bubble-left line)
+             :col (bubble-line-text-col message bubble-left line)
              :width content-w
              :text visible}))))))
 

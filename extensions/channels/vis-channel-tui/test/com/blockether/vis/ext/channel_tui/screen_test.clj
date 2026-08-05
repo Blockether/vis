@@ -838,6 +838,56 @@
                 "copied result text has no baked leading indent")
         (expect (= 2 (- (long result-col) (long plain-col)))
                 "result row is selectable starting after the 2-col output indent")))
+  ;; Regression, issue #119: a failed turn's error card is painted like a user
+  ;; bubble - one pad row under the role label, text inset by the bubble's
+  ;; horizontal padding - but selection geometry only made that adjustment for
+  ;; `:user` messages. Every range on a provider/turn failure therefore named the
+  ;; blank pad row ABOVE the sentence and started 2 columns left of it, so a drag
+  ;; over the error copied an empty string and the reason could only be read out
+  ;; of `~/.vis/vis.log`.
+  (it
+    "selects the failed-turn error card on the rows and columns it is painted on"
+    (let
+      [message
+       {:role :assistant
+        :status :failed
+        :content
+        [{"id" "e1" "type" "error" "code" "turn_failed" "message" "provider stream stalled"}]
+        :prewrapped-lines [(str p/MARKER_ANSWER_TXT "turn_failed provider stream stalled")]}
+
+       layout-of
+       (fn [msg]
+         {:total-h 6
+          :heights [6]
+          :offsets [0 6]
+          :visible [{:idx 0 :top 0 :height 6 :projected msg}]})
+
+       ;; The same bubble WITHOUT error blocks: a plain answer, painted flush
+       ;; against the message column on the row right below the role label.
+       plain-range
+       (first (bubble-selectable-ranges (layout-of (dissoc message :content)) 0 10 60))
+
+       error-range
+       (first (bubble-selectable-ranges (layout-of message) 0 10 60))
+
+       ;; Screen rows as `render/draw-chat-bubble!` paints the card: role label,
+       ;; pad row, then the sentence inset by `h-pad`.
+       rows
+       (mapv #(format "%-60s" %)
+             ["  Vis" ""
+              (str (apply str (repeat (+ (long render/MESSAGE_MARGIN_LEFT) 2) \space))
+                   "turn_failed provider stream stalled") "" "" ""])]
+
+      (expect (= (inc (long (:row plain-range))) (long (:row error-range)))
+              "the card's pad row pushes its text one row down")
+      (expect (= (+ 2 (long (:col plain-range))) (long (:col error-range)))
+              "the card's text is inset by the bubble's horizontal padding")
+      (expect (= "turn_failed provider stream stalled"
+                 (selection/selected-text rows
+                                          {:anchor (selection/point 0 0)
+                                           :focus (selection/point 59 5)}
+                                          (bubble-selectable-ranges (layout-of message) 0 10 60)))
+              "dragging over the card copies the error sentence")))
   (it
     "copies a multi-bubble chunk that auto-scrolled off-screen while dragging"
     (let
