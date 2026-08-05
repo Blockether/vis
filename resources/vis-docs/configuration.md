@@ -26,6 +26,40 @@ Two things are **runtime**, not config, so they work on hand-written servers too
 
 Because the flow lives on the gateway, a Companion on your phone and a TUI attached to a remote gateway authorize a server exactly the same way, and neither one ever holds a token or a PKCE verifier. In the TUI it is the `MCP Servers` command in the palette.
 
+### CLI: `vis-agent gateway mcp`
+
+Every MCP admin action above is also a CLI verb, talking to the gateway already running for `--db` (or the default DB) over the same HTTP surface as the Companion and the TUI: `list`, `add`, `test`, `remove`, `enable`, `disable`, `kill`, `start`, and the OAuth legs `auth-start` / `auth-complete` / `auth-poll` / `auth-cancel` / `auth-logout`. Run `vis-agent gateway mcp --help` for the full flag reference.
+
+Step-by-step for a remote OAuth server (e.g. Linear's `https://mcp.linear.app/mcp`):
+
+```sh
+# 1. A gateway must already be running (vis-agent gateway start, or the one
+#    Vis starts for you). Then save the server -- a URL alone infers
+#    Streamable HTTP:
+vis-agent gateway mcp add linear --url https://mcp.linear.app/mcp
+
+# 2. Begin the headless OAuth 2.1 flow (RFC 9728/8414 discovery, dynamic
+#    client registration, PKCE). This prints an authorize URL and a flow_id:
+vis-agent gateway mcp auth-start linear
+
+# 3. Open the printed URL in a browser and approve access. The provider
+#    redirects to a loopback URL (http://127.0.0.1:PORT/mcp-callback?code=...).
+#    Copy that FULL URL (or just the bare code) and finish the flow:
+vis-agent gateway mcp auth-complete linear --flow-id <FLOW_ID> --input "<PASTED_URL_OR_CODE>"
+
+# 4. Confirm it is authorized and connected:
+vis-agent gateway mcp list
+```
+
+Read-only access is a URL, not a flag: point `--url` at Linear's `/mcp/readonly` endpoint instead. A static API key/bearer token (Linear's non-interactive alternative) skips `auth-start` entirely: pass it as a header instead --
+
+```sh
+vis-agent gateway mcp add linear --url https://mcp.linear.app/mcp --headers "Authorization=Bearer <TOKEN>"
+```
+
+`vis-agent gateway mcp test` connects a candidate spec (same flags as `add`) without saving it, so a bad URL/command is caught before it is persisted. `kill`/`start` are the runtime pause/resume described above; `disable`/`enable` persist the on/off switch; `auth-logout` forgets stored tokens; `remove` deletes the server and stops it.
+
+
 ## Keys are snake_case strings
 
 Config is YAML only, validated exactly as parsed:
