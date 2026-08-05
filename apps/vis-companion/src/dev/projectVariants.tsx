@@ -27,6 +27,9 @@ import {
   type FleetMachine,
   type FleetSession,
 } from './fleet';
+import { PencilIcon } from '../components/icons';
+import { Button, MachineMark } from '../components/ui';
+import { assignMachineColors, machineColor } from '../lib/machine-colors';
 
 /** The states each proposal is photographed in; the gallery registers these. */
 export const PROJECT_STATES: Record<string, string[]> = {
@@ -40,10 +43,6 @@ const BAND = 'px-3 py-1.5 font-mono text-chip uppercase tracking-[0.08em]';
 const LOUD_BAND = 'border-b-2 border-warn-strong bg-accent font-bold text-accent-foreground';
 const QUIET_BAND = 'border-b border-dialog-edge bg-panel-2 text-dialog-hint';
 const ROW = 'flex min-h-11 items-center gap-2 border-b border-dialog-edge px-3 py-2 text-left';
-const PRIMARY =
-  'shrink-0 border border-accent bg-accent px-2 py-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground';
-const GHOST =
-  'shrink-0 border border-edge px-2 py-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-white';
 
 function Caret() {
   return (
@@ -54,49 +53,48 @@ function Caret() {
   );
 }
 
+// The mark is IDENTITY, not liveness: `MachineMark` wears the hue the shipped list
+// gives this machine on its scope chip and its rail, and `not answering` is the word
+// that carries the state. A green/grey dot in the same slot means something else.
+const MACHINE_COLORS = assignMachineColors(MACHINES.map((machine) => machine.id));
+
 function MachineName({ machine, className = '' }: { machine: FleetMachine; className?: string }) {
   return (
     <span className={`inline-flex min-w-0 items-center gap-1.5 ${className}`}>
-      <span
-        aria-hidden="true"
-        className={`size-1.5 shrink-0 ${machine.state === 'online' ? 'bg-ok' : 'bg-muted'}`}
-      />
+      <MachineMark color={machineColor(MACHINE_COLORS, machine.id)} />
       <span className="truncate">{machine.label}</span>
     </span>
   );
 }
 
-/** A square icon affordance at the 32px the shipped kebab uses. */
-function IconButton({
-  label,
-  tone = 'plain',
-  children,
-}: {
-  label: string;
-  tone?: 'plain' | 'accent';
-  children: ReactNode;
-}) {
-  const skin =
-    tone === 'accent' ? 'border-accent bg-accent text-accent-foreground' : 'border-edge text-white';
+/**
+ * The shipped kebab is frameless INK at a 44px tap target — `min-h-11 … px-3`,
+ * `text-dialog-hint`, `hover:bg-hover` (`SessionsScreen`). A bordered box, and
+ * worse an amber-filled one, is a control this app never draws.
+ */
+function KebabButton({ label, open = false }: { label: string; open?: boolean }) {
   return (
     <span
       aria-label={label}
-      className={`inline-flex size-8 shrink-0 items-center justify-center border font-mono text-ui font-bold ${skin}`}
+      className={`inline-flex min-h-11 shrink-0 items-center justify-center px-3 font-mono text-ui ${
+        open ? 'bg-hover text-white' : 'text-dialog-hint'
+      }`}
     >
-      {children}
+      {KEBAB}
     </span>
   );
 }
 
+/** The app's own switch: a mono ON/OFF block, never an iOS sliding knob. */
 function Toggle({ on }: { on: boolean }) {
   return (
     <span
       aria-hidden="true"
-      className={`inline-flex h-6 w-11 shrink-0 items-center border px-0.5 ${
-        on ? 'justify-end border-accent bg-accent' : 'justify-start border-edge bg-panel-2'
+      className={`inline-flex h-8 w-[3.25rem] shrink-0 items-center justify-center border border-transparent font-mono text-chip font-black tracking-[0.08em] ${
+        on ? 'bg-accent text-accent-foreground' : 'bg-panel-2 text-dialog-hint'
       }`}
     >
-      <span className={`size-4 ${on ? 'bg-accent-foreground' : 'bg-muted'}`} />
+      {on ? 'ON' : 'OFF'}
     </span>
   );
 }
@@ -207,7 +205,6 @@ function FleetList({
   headerAction,
   machineAction,
   projectAction,
-  underMachine,
   machines = MACHINES,
   withMachineHeader = true,
 }: {
@@ -215,7 +212,6 @@ function FleetList({
   headerAction?: ReactNode;
   machineAction?: (machine: FleetMachine) => ReactNode;
   projectAction?: (project: string) => ReactNode;
-  underMachine?: (machine: FleetMachine) => ReactNode;
   /** Solo is the falsifier: one machine paired must cost no machine chrome at all. */
   machines?: FleetMachine[];
   withMachineHeader?: boolean;
@@ -269,7 +265,6 @@ function FleetList({
                     ))}
                   </div>
                 ))}
-            {underMachine?.(machine)}
           </div>
         );
       })}
@@ -277,34 +272,31 @@ function FleetList({
   );
 }
 
-/** A menu hung under the row that opened it — never over the whole screen. */
-function Popover({ children, offset = 'top-full' }: { children: ReactNode; offset?: string }) {
-  return (
-    <div
-      className={`absolute right-2 ${offset} z-10 w-72 border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)]`}
-    >
-      {children}
-    </div>
-  );
-}
-
-/** Phone: docked to the bottom edge, under the thumb, over a dimmed list. */
-function BottomSheet({
+/**
+ * A menu in this app is a SHEET on a phone. Both shipped `role="menu"` portals in
+ * `SessionsScreen` dock to the bottom edge over a scrim — `inset-x-0 bottom-0`,
+ * `border-t-2 border-accent` — and only become a popover pinned under the caret
+ * from `sm:` up. Every card here is a 390px column, so the docked form is the
+ * true one; a floating popover on a phone is a screen the app has never shown.
+ */
+function Sheet({
   title,
+  tone = 'loud',
   children,
   footer,
 }: {
   title: string;
+  /** One amber per surface: a sheet that carries a primary button spends it there. */
+  tone?: 'loud' | 'quiet';
   children: ReactNode;
   footer?: ReactNode;
 }) {
   return (
     <>
       <div className="absolute inset-0 z-10 bg-black/40" />
-      <div className="absolute inset-x-0 bottom-0 z-20 flex max-h-[82%] flex-col border-t border-dialog-edge bg-panel">
-        <div className={`flex items-center justify-between gap-2 ${BAND} ${LOUD_BAND}`}>
-          <span className="truncate">{title}</span>
-          <span className="shrink-0 opacity-70">esc</span>
+      <div className="absolute inset-x-0 bottom-0 z-20 flex max-h-[82%] flex-col border-t-2 border-accent bg-panel">
+        <div className={`${BAND} ${tone === 'loud' ? LOUD_BAND : QUIET_BAND} truncate`}>
+          {title}
         </div>
         <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
         {footer}
@@ -316,25 +308,17 @@ function BottomSheet({
 /* --------------------------------------------------- C+F · the machine menu */
 
 const KEBAB = '⋯';
-const PENCIL = '✎';
 
 /**
  * C. Every machine verb, in the machine's own overflow — so "which machine?" is
  * answered by the header that was tapped and never asked again. F adds the draft
- * as a SECOND VERB, and only while `Offer drafts` is on.
+ * as a SECOND VERB, and only while `Offer drafts` is on. It is the shipped menu
+ * chrome: docked, over a scrim, its one amber spent on the band that names the
+ * machine you tapped.
  */
-function MachineMenu({
-  label,
-  withDraft = true,
-  offset,
-}: {
-  label?: string;
-  withDraft?: boolean;
-  offset?: string;
-}) {
+function MachineMenu({ label, withDraft = true }: { label: string; withDraft?: boolean }) {
   return (
-    <Popover offset={offset}>
-      {label && <p className={`${BAND} ${QUIET_BAND}`}>{label}</p>}
+    <Sheet title={label}>
       <Item title="New session" hint="in vis · ~/vis · last used 7m ago" />
       {withDraft && (
         <Item
@@ -344,7 +328,7 @@ function MachineMenu({
       )}
       <Item title="Switch project…" hint="browse this machine's files" tone="accent" />
       <Item title="Machine settings" hint="name, pairing, unpair" tone="muted" />
-    </Popover>
+    </Sheet>
   );
 }
 
@@ -370,19 +354,20 @@ const HOME_ENTRIES: Entry[] = [
 ];
 
 /**
- * The pencil is INK, not a control: a bare glyph on the header's own paper, at the
- * same 32px hit box as a kebab. A box around it would read as a second button
- * competing with the path it edits.
+ * The pencil is the app's own `PencilIcon` — a stroked 16px glyph, like every
+ * other icon here — drawn as INK on the header's own paper at a 44px tap target.
+ * A `✎` dingbat is whatever the fallback face happens to ship, and a box around
+ * it would read as a second button competing with the path it edits.
  */
 function PencilButton({ label, active = false }: { label: string; active?: boolean }) {
   return (
     <span
       aria-label={label}
-      className={`inline-flex size-8 shrink-0 items-center justify-center font-mono text-ui ${
-        active ? 'font-bold text-accent-ink' : 'text-dialog-hint'
+      className={`inline-flex size-11 shrink-0 items-center justify-center ${
+        active ? 'text-accent-ink' : 'text-dialog-hint'
       }`}
     >
-      {PENCIL}
+      <PencilIcon className="size-4" />
     </span>
   );
 }
@@ -414,11 +399,11 @@ function Crumbs({ trail, action }: { trail: string[]; action?: ReactNode }) {
   );
 }
 
-/** The pencil, taken: the crumbs are replaced by the path itself, still editable. */
+/** The pencil, taken: the crumbs are replaced by the path itself, in the app's own `Input` skin. */
 function PathField() {
   return (
-    <div className="flex items-center gap-2 border-b border-dialog-edge bg-panel px-3 py-2">
-      <span className="min-w-0 flex-1 border border-accent bg-input px-2 py-1 font-mono text-ui text-white">
+    <div className="flex items-center gap-2 border-b border-dialog-edge bg-panel px-3 py-1">
+      <span className="min-h-7 min-w-0 flex-1 border border-accent bg-input px-2.5 py-0.5 font-mono text-meta text-white ring-1 ring-accent/30">
         ~/vis/apps/vis-c
         <span className="text-dialog-hint">ompanion</span>
         <Caret />
@@ -459,9 +444,11 @@ function SheetFooter({ path, primary }: { path: string; primary: string }) {
   return (
     <div className="border-t border-dialog-edge bg-panel-2 px-3 py-2">
       <p className="truncate font-mono text-meta text-dialog-hint">{path}</p>
+      {/* `quiet` beside `solid` on purpose: two bordered boxes side by side read as
+          rivals, which is the whole reason the shipped Button has that variant. */}
       <div className="mt-1.5 flex items-center justify-between gap-2">
-        <span className={GHOST}>New folder</span>
-        <span className={PRIMARY}>{primary}</span>
+        <Button variant="quiet">New folder</Button>
+        <Button>{primary}</Button>
       </div>
     </div>
   );
@@ -476,7 +463,8 @@ function SwitchSheet({ mode }: { mode: 'browse' | 'typed' | 'new-folder' }) {
   const creating = mode === 'new-folder';
   const pencil = <PencilButton label="Type a path" />;
   return (
-    <BottomSheet
+    <Sheet
+      tone="quiet"
       title="Switch project · studio-mbp"
       footer={
         <SheetFooter
@@ -505,9 +493,9 @@ function SwitchSheet({ mode }: { mode: 'browse' | 'typed' | 'new-folder' }) {
         <>
           <Crumbs trail={creating ? ['fierycod', 'code'] : ['Users', 'fierycod']} action={pencil} />
           {creating && (
-            <div className="flex items-center gap-2 border-b border-dialog-edge bg-panel px-3 py-2">
+            <div className="flex items-center gap-2 border-b border-dialog-edge bg-panel px-3 py-1.5">
               <span className="shrink-0 font-mono text-ui text-accent-ink">+</span>
-              <span className="min-w-0 flex-1 border border-accent px-2 py-1 font-mono text-ui text-white">
+              <span className="min-h-7 min-w-0 flex-1 border border-accent bg-input px-2.5 py-0.5 font-mono text-meta text-white ring-1 ring-accent/30">
                 band-repaint
                 <Caret />
               </span>
@@ -518,7 +506,7 @@ function SwitchSheet({ mode }: { mode: 'browse' | 'typed' | 'new-folder' }) {
           ))}
         </>
       )}
-    </BottomSheet>
+    </Sheet>
   );
 }
 
@@ -543,17 +531,10 @@ function SettingsRow({ title, hint, on }: { title: string; hint: string; on?: bo
 /* ------------------------------------------------------------ the whole flow */
 
 const MACHINE_ACTION = (machine: FleetMachine) => (
-  <IconButton
-    label={`Actions for ${machine.label}`}
-    tone={machine.id === MACHINES[0].id ? 'accent' : 'plain'}
-  >
-    {KEBAB}
-  </IconButton>
+  <KebabButton label={`Actions for ${machine.label}`} open={machine.id === MACHINES[0].id} />
 );
 
-const PROJECT_ACTION = (project: string) => (
-  <IconButton label={`Actions for ${project}`}>{KEBAB}</IconButton>
-);
+const PROJECT_ACTION = (project: string) => <KebabButton label={`Actions for ${project}`} />;
 
 /** The decided product, one state per step of it. */
 export function SessionFlowVariant({ state }: { state: string }) {
@@ -586,45 +567,22 @@ export function SessionFlowVariant({ state }: { state: string }) {
   if (state === 'solo') {
     return (
       <Screen>
-        <div className="relative">
-          <FleetList
-            machines={MACHINES.slice(0, 1)}
-            withMachineHeader={false}
-            header={{ title: 'studio-mbp', subtitle: '3 projects · 214 sessions' }}
-            headerAction={
-              <IconButton label="Actions for studio-mbp" tone="accent">
-                {KEBAB}
-              </IconButton>
-            }
-            projectAction={PROJECT_ACTION}
-          />
-          <MachineMenu offset="top-[3.75rem]" />
-        </div>
-        <p className="mt-auto border-t border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-meta text-dialog-hint">
-          One machine paired: no machine header, no chips, no machine question — the fleet bar IS
-          the machine, and its ⋯ is the machine's ⋯.
-        </p>
+        <FleetList
+          machines={MACHINES.slice(0, 1)}
+          withMachineHeader={false}
+          header={{ title: 'studio-mbp', subtitle: '3 projects · 214 sessions' }}
+          headerAction={<KebabButton label="Actions for studio-mbp" open />}
+          projectAction={PROJECT_ACTION}
+        />
+        <MachineMenu label="studio-mbp" />
       </Screen>
     );
   }
   const menu = state === 'menu' || state === 'menu-off';
   const list = (
     <Screen>
-      <FleetList
-        machineAction={MACHINE_ACTION}
-        projectAction={PROJECT_ACTION}
-        underMachine={(machine) =>
-          machine.id === MACHINES[0].id && menu ? (
-            <MachineMenu label="studio-mbp" withDraft={state === 'menu'} />
-          ) : null
-        }
-      />
-      {state === 'menu-off' && (
-        <p className="mt-auto border-t border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-meta text-dialog-hint">
-          Settings › <span className="text-white">Offer drafts</span> off: the verb is not there,
-          and nothing else in the app asks about copies.
-        </p>
-      )}
+      <FleetList machineAction={MACHINE_ACTION} projectAction={PROJECT_ACTION} />
+      {menu && <MachineMenu label="studio-mbp" withDraft={state === 'menu'} />}
     </Screen>
   );
   if (menu) return list;
@@ -670,13 +628,13 @@ export const FLOW_STEPS: FlowStep[] = [
     step: '3',
     title: 'Switch project browses the machine (H)',
     caption:
-      'A bottom sheet on the machine’s own filesystem: descend, climb the path, go above ~ to /. Known projects are badged; SWITCH HERE commits the folder under the thumb.',
+      'A bottom sheet on the machine’s own filesystem: descend, climb the path, go above ~ to /. Known projects are badged; Switch here commits the folder under the thumb.',
     variant: 'session-flow',
     state: 'browse',
   },
   {
     step: '4',
-    title: 'The pencil types the path (H + ✎)',
+    title: 'The pencil types the path (H + pencil)',
     caption:
       'The same header, edited: the crumbs become the path itself, matches narrow as you type, and the pencil stays lit as the way back to browsing. A keyboard beats six taps.',
     variant: 'session-flow',
@@ -686,7 +644,7 @@ export const FLOW_STEPS: FlowStep[] = [
     step: '5',
     title: 'A folder is made in place',
     caption:
-      'NEW FOLDER inserts an editable row in the list; ⏎ creates it and switches in one breath, so a project that does not exist yet never needs a second dialog.',
+      'New folder inserts an editable row in the list; ⏎ creates it and switches in one breath, so a project that does not exist yet never needs a second dialog.',
     variant: 'session-flow',
     state: 'new-folder',
   },

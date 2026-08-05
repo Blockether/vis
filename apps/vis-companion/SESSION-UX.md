@@ -55,6 +55,16 @@ the tap already answered.
    *question* comes from this switch.
 10. **A proposal is photographed before it is built** (see `AGENTS.md` → Companion GUI
     design shots): both viewports, both palettes, plus a falsifying state.
+11. **The proposal wears the shipped chrome, or it is a proposal about another app.**
+    Every surface in `src/dev/projectVariants.tsx` is the app's own: a menu on a phone
+    is a sheet docked to the bottom edge over a scrim with the `border-t-2 border-accent`
+    lip (never a floating popover — the app has no such screen under `sm:`), a kebab is
+    frameless ink at `min-h-11`, buttons are `Button` in `solid`/`quiet` sentence case,
+    the switch is the mono `ON`/`OFF` block, the machine dot is `MachineMark` in that
+    machine's identity hue, and the pencil is `PencilIcon` rather than a `✎` from an
+    unknown fallback face. Accent is spent once per surface: a sheet whose footer
+    carries the primary gets a quiet title band. `projectVariants.test.ts` reads the
+    source and fails on each of those drifts.
 
 ## Non-negotiable states
 
