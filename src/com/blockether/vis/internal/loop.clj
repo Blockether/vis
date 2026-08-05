@@ -3105,6 +3105,27 @@
                    (string? scopes) [scopes]
                    :else nil)))
 
+     ;; An id the resolver cannot even PARSE — `t3/i89-i141`, a RANGE spelled as
+     ;; ONE token — is kept verbatim, matches no wire iteration and therefore
+     ;; collapses nothing, yet the fold was still recorded and acked. That is how
+     ;; three consecutive folds reported `saved ~0 tokens` while the window kept
+     ;; growing (session 91576db9): the model believes it compacted and stops
+     ;; trying. An id is `tN`, `tN/iM` or `tN/iM/fK`; a RANGE is a selector, so
+     ;; the spelling is refused here instead of acked as a fold of nothing.
+     scope-id?
+     (fn [s]
+       (boolean (or (ctx-engine/scope-key s) (ctx-engine/turn-key s))))
+
+     refuse-unparseable!
+     (fn [ids]
+       (when-let [bad (not-empty (into (sorted-set) (remove scope-id?) ids))]
+         (throw (ex-info (str "session_fold: unparseable scope id "
+                              (str/join ", " (map pr-str bad))
+                              " — an id is \"tN/iM\" (or a bare \"tN\" for a whole turn); a RANGE "
+                              "is a selector: {\"from\": \"tN/iA\", \"to\": \"tN/iB\"}. "
+                              "Nothing was folded.")
+                         {:type :vis/session-fold-invalid-scope :scopes bad}))))
+
      freeze
      (fn [intent]
        ;; Unbounded-above selectors (`since`, or `from` without `to`) would
@@ -3145,6 +3166,7 @@
               frm (pick "from")
               to (pick "to")]
 
+             (refuse-unparseable! (remove nil? [thr snc frm to]))
              (cond thr [{"through" thr} (str "through " thr)]
                    snc [(freeze {"since" snc}) (str "since " snc)]
                    (or frm to) [(freeze (cond-> {}
@@ -3156,6 +3178,7 @@
                                 (str "window " (or frm "start") ".." (or to "end"))]
                    :else nil))
            (let [ss (->set scopes)]
+             (refuse-unparseable! ss)
              (when (seq ss) [{"scopes" ss} (str/join ", " (sort ss))])))))
 
      exclude-protected

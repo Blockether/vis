@@ -296,6 +296,26 @@
 
         (expect (nil? (get @ca "session_summaries")))
         (expect (re-find #"nothing to fold" out))))
+  ;; Regression, session 91576db9: `session_fold("t3/i89-i141")` — a RANGE spelled
+  ;; as ONE id — was kept verbatim, matched no wire iteration, and was STILL
+  ;; recorded and acked as `folded t3/i89-i141 · saved ~0 tokens`. Three such folds
+  ;; in a row reclaimed nothing while the model believed it had compacted.
+  (it "refuses an unparseable scope id or cursor instead of acking a fold of nothing"
+      (let
+        [ca
+         (atom {"session_turn" 3 "engine_iter_universe" ["t3/i89" "t3/i90" "t3/i141"]})
+
+         sf
+         (get (compaction-verbs ca) 'session-fold)]
+
+        (doseq
+          [target ["t3/i89-i141" ["t3/i89-i141"] ["t3/i89" "t3/i89-i141"] {"through" "t3/i89-i141"}
+                   {"from" "t3/i89" "to" "i141"} {"since" "turn 3"}]]
+          (let [ex (try (sf target "ranged") nil (catch clojure.lang.ExceptionInfo e e))]
+            (expect (= :vis/session-fold-invalid-scope (:type (ex-data ex))))
+            (expect (str/includes? (ex-message ex) "unparseable scope id"))
+            (expect (str/includes? (ex-message ex) "Nothing was folded"))))
+        (expect (nil? (get @ca "session_summaries")))))
   (it "blocks only the LIVE (unsettled) iteration of the current turn and any future turn"
       (let
         [ca
