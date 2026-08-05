@@ -68,12 +68,40 @@ export function artifactHue(key: string): string {
   return ARTIFACT_HUES[hash % ARTIFACT_HUES.length];
 }
 
-const KIND_GLYPH: Record<string, string> = {
-  image: "▣",
-  video: "▶",
-  doc: "▤",
-  file: "≡",
-};
+/**
+ * The ONE glyph left. A clip has no cheap raster and `▶` is the mark that reads
+ * as "play" in every locale; every other kind now says what it actually is — a
+ * picture shows itself, a document and a file wear their own format word.
+ */
+const VIDEO_GLYPH = "▶";
+
+/**
+ * The mark of an ATTACHMENT, drawn in the app's own icon grammar (24-grid,
+ * `currentColor`, 1.8 stroke) like the camera, the picture and the microphone in
+ * the composer. `▣` was a geometric box that stood for "some object" and at
+ * `text-chip` read as a smudge; a paperclip is the mark every mail client, chat
+ * app and issue tracker already taught this user.
+ */
+function ClipIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="size-3.5 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      aria-hidden="true"
+    >
+      {/* The DIAGONAL clip, because at 14px an upright one closes up into a
+          blob: the slant keeps both openings wider than the stroke. */}
+      <path
+        d="M20 11.5l-8.2 8.2a5 5 0 0 1-7.1-7.1l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 /** `PNG · 214KB · turn 6` — the line that makes an artifact citable. */
 function Meta({ artifact }: { artifact: SessionArtifact }) {
@@ -212,7 +240,7 @@ function Thumb({
         className={`grid place-items-center bg-code font-mono text-subhead text-dialog-hint ${box}`}
         aria-hidden="true"
       >
-        {KIND_GLYPH.video}
+        {VIDEO_GLYPH}
       </span>
     );
   }
@@ -360,7 +388,7 @@ function FilterStrip({
             disabled={!count}
             aria-pressed={on}
             aria-label={`${filter.label}, ${count} artifacts`}
-            className={`inline-flex min-h-8 shrink-0 items-center gap-1.5 border px-2 font-mono text-meta focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-7 ${
+            className={`inline-flex min-h-7 shrink-0 items-center gap-1.5 border px-2 font-mono text-meta focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-6 ${
               on
                 ? "border-accent bg-accent font-bold text-accent-foreground"
                 : count
@@ -517,11 +545,12 @@ function ArtifactDetail({
  * THE REPURPOSED HEADER SLOT. It counts, so it says something true about THIS
  * session, and with nothing produced it renders nothing at all.
  *
- * On a phone the strip is too narrow for the word, so the visible chip is `▣ 12`
- * — which is why the WORD lives in `aria-label`/`title` instead of only in the
- * pixels, and `aria-expanded` says whether the surface it owns is open. It is a
- * CHIP in a row of chips: the same 32px box the settings strip uses, 24px under
- * a cursor, so it sits beside the session id instead of towering over it.
+ * On a phone the strip is too narrow for the word, so the visible chip is a
+ * paperclip and a count — which is why the WORD lives in `aria-label`/`title`
+ * instead of only in the pixels, and `aria-expanded` says whether the surface it
+ * owns is open. Its BOX is the one the Share button used to occupy and the one
+ * the session id beside it still occupies: `h-6`, the app's chip height, so the
+ * header reads as a row of chips instead of one tower with text next to it.
  */
 export function ArtifactsChip({
   count,
@@ -547,9 +576,9 @@ export function ArtifactsChip({
       aria-controls={controls}
       aria-label={label}
       title={label}
-      className={`inline-flex min-h-8 min-w-8 shrink-0 items-center gap-1 border px-2 font-mono text-chip font-bold tracking-[0.08em] uppercase focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-6 mouse:min-w-0 ${tone}`}
+      className={`inline-flex h-6 shrink-0 items-center gap-1 border px-2 font-mono text-chip font-bold tracking-[0.08em] uppercase focus-visible:outline-2 focus-visible:outline-accent ${tone}`}
     >
-      <span aria-hidden="true">▣</span>
+      <ClipIcon />
       <span aria-hidden="true" className="hidden sm:inline">
         Artifacts
       </span>
@@ -634,7 +663,7 @@ export function ArtifactsSheet({
                 type="button"
                 onClick={() => setPages((current) => current + 1)}
                 aria-label={`Load ${page.restLabel} of artifacts`}
-                className="mt-3 flex min-h-9 w-full items-center justify-center gap-1.5 border border-dialog-edge bg-panel font-mono text-meta text-dialog-hint hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-8"
+                className="mt-3 flex min-h-8 w-full items-center justify-center gap-1.5 border border-dialog-edge bg-panel font-mono text-meta text-dialog-hint hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-7"
               >
                 <span aria-hidden="true">↓</span>
                 <span>Load {page.restLabel}</span>

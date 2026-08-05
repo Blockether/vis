@@ -1,3 +1,4 @@
+import sessionScreenSource from "../screens/SessionScreen.tsx?raw";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ArtifactsChip, ArtifactsSheet } from "./ArtifactsSheet";
@@ -28,6 +29,22 @@ const canonicalBand = () =>
       </DialogFrame>,
     ),
   );
+
+/** The height the OTHER chip in the session header wears, read from its own
+ *  source. `CopyableId` is not exported and importing that screen into a unit
+ *  test would drag the whole session with it — but it is the surviving half of
+ *  the pair the deleted Share button belonged to, so "the same height as the
+ *  button that used to be there" is checked against IT and not against a number
+ *  typed into this file. */
+const sessionIdChipHeight = () => {
+  const chip =
+    /function CopyableId\([\s\S]*?\n}\n/.exec(sessionScreenSource)?.[0] ?? "";
+  return /className=\{`[^`]*?\b(h-\d+)\b/.exec(chip)?.[1] ?? "";
+};
+
+/** Every class on a rendering's first <button>. */
+const buttonClasses = (html: string) =>
+  (/<button[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "").split(" ");
 
 /** The bytes are never fetched in static markup: effects do not run. */
 const client = {
@@ -123,21 +140,36 @@ describe("the artifacts chip", () => {
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain('aria-controls="artifacts-surface"');
     expect(html).toContain('aria-label="12 artifacts produced by the model"');
-    // The word does not fit a phone header, so the pixels carry `▣ 12`.
+    // The word does not fit a phone header, so the pixels carry a clip and `12`.
     expect(text(html)).toContain("12");
     expect(html).toContain("hidden sm:inline");
   });
 
-  // Regression: the chip stood 44px tall next to a 24px session id, so the
-  // header read as one big button with some text beside it.
-  it("is a chip among chips, and shrinks only under a cursor", () => {
+  // Regression: the chip stood 44px, then 32px, tall beside a 24px session id,
+  // so the header read as one big button with some text next to it. It occupies
+  // the box the Share button used to — measured from the chip still shipping.
+  it("is exactly the chip the session id beside it is", () => {
     const html = renderToStaticMarkup(
       <ArtifactsChip count={3} open onToggle={() => {}} />,
     );
-    expect(html).toContain("min-h-8");
-    expect(html).not.toContain("min-h-11");
-    expect(html).toContain("mouse:min-h-6");
+    expect(sessionIdChipHeight()).toBe("h-6");
+    expect(buttonClasses(html)).toContain(sessionIdChipHeight());
+    // One height, in every state: no taller touch box to fall back out of.
+    expect(buttonClasses(html).join(" ")).not.toMatch(/min-h-|sm:h-|mouse:h-/);
     expect(html).toContain('aria-expanded="true"');
+  });
+
+  // Regression: the attachment mark was `▣`, a geometric box that stood for
+  // "some object" and read as a smudge at chip size.
+  it("wears a paperclip drawn like every other icon in the app", () => {
+    const html = renderToStaticMarkup(
+      <ArtifactsChip count={3} open onToggle={() => {}} />,
+    );
+    expect(html).not.toContain("▣");
+    // The composer's own icon grammar: 24-grid, currentColor, 1.8 stroke.
+    expect(html).toContain('viewBox="0 0 24 24"');
+    expect(html).toContain('stroke="currentColor"');
+    expect(html).toContain('stroke-width="1.8"');
   });
 });
 
@@ -193,6 +225,19 @@ describe("the artifacts sheet", () => {
     // The strip keeps its shape: a disabled chip is still four chips wide.
     expect(html.match(/aria-pressed=/g)).toHaveLength(4);
     expect(html).toContain('disabled=""');
+  });
+
+  // Regression: the filter chips were 32px tall, taller than a chip and taller
+  // than the app's own phone-height button, so the strip read as a row of empty
+  // boxes above the grid.
+  it("keeps the filter strip at chip height, shrinking only under a cursor", () => {
+    const strip =
+      /<button[^>]*aria-pressed="[^"]*"[^>]*class="([^"]*)"/.exec(
+        sheet([document]),
+      )?.[1] ?? "";
+    expect(strip.split(" ")).toContain("min-h-7");
+    expect(strip.split(" ")).toContain("mouse:min-h-6");
+    expect(strip).not.toMatch(/sm:min-h|sm:h-/);
   });
 
   it("opens what it can read and refuses to fake the rest", () => {
@@ -255,9 +300,18 @@ describe("the artifacts sheet, paged", () => {
     expect(text(html)).not.toContain("more");
   });
 
-  it("keeps the reveal control tappable", () => {
+  // Regression: the reveal stood 36px tall, taller than the app's own button.
+  it("keeps the reveal control tappable, at the app's button height", () => {
     const html = sheet(many(30, 64 * 1024));
-    expect(html).toContain("min-h-9");
-    expect(html).toContain("mouse:min-h-8");
+    const reveal =
+      /<button[^>]*aria-label="Load [^"]*"[^>]*class="([^"]*)"/.exec(
+        html,
+      )?.[1] ??
+      /<button[^>]*class="(mt-3[^"]*)"/.exec(html)?.[1] ??
+      "";
+    expect(reveal.split(" ")).toContain("min-h-8");
+    expect(reveal.split(" ")).toContain("mouse:min-h-7");
+    // A width query may never shrink a hit box; only a pointer may.
+    expect(reveal).not.toMatch(/sm:min-h|sm:h-/);
   });
 });
