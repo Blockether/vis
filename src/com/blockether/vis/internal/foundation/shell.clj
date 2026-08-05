@@ -43,11 +43,15 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.egress-proxy :as egress]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.gateway-sandbox :as gateway-sandbox]
             [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.runtime-settings :as rt]
+            [com.blockether.vis.internal.security-policy :as security-policy]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.pty :as pty]
             [com.blockether.vis.internal.foundation.serial-batch :as batch]
@@ -378,37 +382,57 @@
                (try (spawn)
                     (catch Throwable t2
                       (throw (ex-info fd-exhausted-message {:type ::fd-exhausted} t2)))))))))
+(defn- cleanup-jail-policy!
+  [policy]
+  (when-let [cleanup (::cleanup policy)]
+    (try (cleanup) (catch Throwable _ nil))))
+
+(defn- resolve-dir-for-policy
+  ^File [opts env policy]
+  (try (resolve-dir (assoc (or opts {}) ::environment (or (::environment policy) env)))
+       (catch Throwable t (cleanup-jail-policy! policy) (throw t))))
+
 (defn- spawn!
   ^Process [cmd ^File dir merge-err? policy]
-  (let
-    [^java.util.List args
-     ;; A STRING is ONE `bash -lc` line. A SEQUENTIAL is a literal argv run with no
-     ;; shell at all — nothing to quote, nothing to interpret — which is how `git`
-     ;; rides this same spawn/jail/capture machinery.
-     ;; The detach prefix (when the platform has one) goes OUTSIDE the jail wrapper:
-     ;; it only setpgid()s and execs, so everything that actually RUNS is still jailed.
-     (process-jail/detached-argv (process-jail/wrap-argv (if (sequential? cmd)
-                                                           (mapv str cmd)
-                                                           [(bash-command) "--noprofile" "--norc"
-                                                            "-lc" (str cmd)])
-                                                         policy))
+  (try
+    (let
+      [^java.util.List args
+       ;; A STRING is ONE `bash -lc` line. A SEQUENTIAL is a literal argv run with no
+       ;; shell at all — nothing to quote, nothing to interpret — which is how `git`
+       ;; rides this same spawn/jail/capture machinery.
+       ;; The detach prefix (when the platform has one) goes OUTSIDE the jail wrapper:
+       ;; it only setpgid()s and execs, so everything that actually RUNS is still jailed.
+       (process-jail/detached-argv (process-jail/wrap-argv (if (sequential? cmd)
+                                                             (mapv str cmd)
+                                                             [(bash-command) "--noprofile" "--norc"
+                                                              "-lc" (str cmd)])
+                                                           policy))
 
-     pb
-     (ProcessBuilder. args)]
+       pb
+       (ProcessBuilder. args)]
 
-    (.directory pb dir)
-    ;; Route the child's HTTP clients at the loopback egress proxy when the jail
-    ;; policy walls it to proxy-only egress (net-off-except-loopback).
-    (if-let [full (process-jail/jailed-child-env policy)]
-      ;; Confined child: REPLACE the inherited env with the allowlisted set so the
-      ;; operator's API keys/tokens are never handed to sandboxed code.
-      (let [^java.util.Map e (.environment pb)]
-        (.clear e)
-        (.putAll e ^java.util.Map full))
-      (let [pe (process-jail/proxy-env policy)]
-        (when (seq pe) (.putAll (.environment pb) ^java.util.Map pe))))
-    (when merge-err? (.redirectErrorStream pb true))
-    (spawn-retrying-fds #(.start pb))))
+      (.directory pb dir)
+      ;; Route the child's HTTP clients at the loopback egress proxy when the jail
+      ;; policy walls it to proxy-only egress (net-off-except-loopback).
+      (if-let [full (process-jail/jailed-child-env policy)]
+        ;; Confined child: REPLACE the inherited env with the allowlisted set so the
+        ;; operator's API keys/tokens are never handed to sandboxed code.
+        (let [^java.util.Map e (.environment pb)]
+          (.clear e)
+          (.putAll e ^java.util.Map full))
+        (let [pe (process-jail/proxy-env policy)]
+          (when (seq pe) (.putAll (.environment pb) ^java.util.Map pe))))
+      (when merge-err? (.redirectErrorStream pb true))
+      (let [^Process p (spawn-retrying-fds #(.start pb))]
+        (when (::cleanup policy)
+          (let [^java.util.concurrent.CompletableFuture done (.onExit p)]
+            (.thenRun done
+                      ^Runnable
+                      (reify
+                        Runnable
+                          (run [_] (cleanup-jail-policy! policy))))))
+        p))
+    (catch Throwable t (cleanup-jail-policy! policy) (throw t))))
 
 (defn- pty-spawn!
   "Spawn `cmd` under a REAL pseudo-terminal (internal.foundation.pty — pure Java
@@ -418,23 +442,26 @@
    pty HANDLE MAP (`:pid :in :send :wait :alive? :destroy`) that the pump /
    kill-tree! / wait path below consume. stdout+stderr share the one PTY stream
    (a real terminal has no separate error channel), so no merge-err? knob.
-   `policy` is the live per-session jail policy value (or nil) applied to the
-   spawned argv, so the OS jail confines the interactive child too."
+   `policy` is the jail policy value applied to this spawn; a fresh-config policy
+   carries an idempotent cleanup callback retained for the process lifetime."
   [cmd ^File dir policy]
-  (spawn-retrying-fds
-    (fn []
-      (pty/spawn! {:command (process-jail/wrap-argv [(bash-command) "--noprofile" "--norc" "-lc"
-                                                     (str cmd)]
-                                                    policy)
-                   :dir (.getPath ^File dir)
-                   :env (if-let [full (process-jail/jailed-child-env policy)]
-                          ;; Confined child: allowlisted env only (secrets dropped).
-                          (doto (HashMap. ^java.util.Map full) (.put "TERM" "xterm-256color"))
-                          (doto (HashMap. ^java.util.Map (System/getenv))
-                            (.put "TERM" "xterm-256color")
-                            (.putAll ^java.util.Map (process-jail/proxy-env policy))))
-                   :cols 120
-                   :rows 40}))))
+  (try (assoc (spawn-retrying-fds
+                (fn []
+                  (pty/spawn! {:command (process-jail/wrap-argv [(bash-command) "--noprofile"
+                                                                 "--norc" "-lc" (str cmd)]
+                                                                policy)
+                               :dir (.getPath ^File dir)
+                               :env (if-let [full (process-jail/jailed-child-env policy)]
+                                      ;; Confined child: allowlisted env only (secrets dropped).
+                                      (doto (HashMap. ^java.util.Map full)
+                                        (.put "TERM" "xterm-256color"))
+                                      (doto (HashMap. ^java.util.Map (System/getenv))
+                                        (.put "TERM" "xterm-256color")
+                                        (.putAll ^java.util.Map (process-jail/proxy-env policy))))
+                               :cols 120
+                               :rows 40})))
+         ::cleanup (::cleanup policy))
+       (catch Throwable t (cleanup-jail-policy! policy) (throw t))))
 
 (defn- kill-tree!
   "Destroy a spawned process + every descendant reachable via `ProcessHandle.of
@@ -625,14 +652,17 @@
        [timeout-secs
         (clamp-timeout-secs (get opts "timeout_secs"))
 
+        policy
+        (jail-policy env)
+
         dir
-        (resolve-dir (assoc (or opts {}) ::environment env))
+        (resolve-dir-for-policy opts env policy)
 
         t0
         (now-ms)
 
         p
-        (spawn! (or argv cmd) dir false (jail-policy env))
+        (spawn! (or argv cmd) dir false policy)
 
         empty-tail
         {:text "" :truncated false :omitted 0}
@@ -978,7 +1008,8 @@
                                         {:status :exited
                                          :detail
                                          (str "exit " code " — logs retained until resource_stop")})
-                     (catch Throwable _ nil))))))))
+                     (catch Throwable _ nil))))))
+        (cleanup-jail-policy! {::cleanup (::cleanup p)})))
     (.setName (str "vis-shell-bg-" id))
     (.setDaemon true)
     (.start)))
@@ -1068,11 +1099,14 @@
       (resources/unregister! session id)
       (drop-bg-entry! session id))
     (let
-      [dir
-       (resolve-dir (assoc (or opts {}) ::environment env))
+      [policy
+       (jail-policy env)
+
+       dir
+       (resolve-dir-for-policy opts env policy)
 
        p
-       (pty-spawn! script dir (jail-policy env))
+       (pty-spawn! script dir policy)
 
        buffer
        (atom {:lines [] :next-seq 1 :dropped 0})
@@ -1810,21 +1844,116 @@
 
 (defn trusted-extension-shell
   "Run a trusted Python extension's ordinary `vis.shell` request without applying
-   the invoking session's process jail. The extension context already has direct,
-   unrestricted subprocess access; this is the result-shaped convenience API for
-   the same trust boundary. Foreground calls therefore work outside a session too."
+   a process jail. The extension context already has direct, unrestricted
+   subprocess access; this is the result-shaped convenience API for the same trust
+   boundary. Foreground calls therefore work outside a session too."
   [env opts]
   (shell-dispatch (-> (or env {})
                       (assoc :jail-policy-fn (constantly {:disabled? true}))
                       (assoc-in [:security-policy :sandbox] false))
                   opts))
 
+(defn- latest-jail-policy
+  "Strictly build one process policy from the currently merged config. This is
+   called at the spawn boundary: invalid current config throws, and no session or
+   last-good snapshot is consulted."
+  [env]
+  (let
+    [base-dir
+     (or (workspace/workspace-root env) (str (workspace/cwd)))
+
+     security
+     (security-policy/snapshot (or (config/load-config-raw) {}) {:base-dir base-dir})
+
+     configured-roots
+     (security-policy/read-write-roots security)
+
+     active-workspace
+     (or (:workspace env) {:root base-dir})
+
+     latest-env
+     (assoc (or env {})
+       :security-policy security
+       :workspace active-workspace
+       :security/filesystem-roots configured-roots)
+
+     jail-config
+     (:process-jail security)]
+
+    (if (or (false? (:sandbox security)) (:disabled? jail-config))
+      {:disabled? true ::environment latest-env}
+      (let
+        [entries
+         (workspace/env-filesystem-roots latest-env)
+
+         clones
+         (into []
+               (comp (filter #(and (:clone %) (not= (:clone %) (:trunk %)))) (map :clone))
+               entries)
+
+         withheld
+         (into #{}
+               (comp (filter #(or (:denied? %) (and (:clone %) (not= (:clone %) (:trunk %)))))
+                     (map :trunk))
+               entries)
+
+         roots-fn
+         (fn []
+           (vec (distinct (concat (when-let [root (:root active-workspace)]
+                                    [(str root)])
+                                  clones
+                                  (remove #(contains? withheld (workspace/normalize-root %))
+                                    configured-roots)))))
+
+         network
+         (:network security)
+
+         compiled-network-policy
+         (some-> (egress/compile-policy network)
+                 (assoc :mitm? (boolean (seq (:rules network)))))
+
+         token
+         (str (java.util.UUID/randomUUID))
+
+         cleaned?
+         (atom false)
+
+         cleanup
+         (fn []
+           (when (compare-and-set! cleaned? false true)
+             (gateway-sandbox/unregister-session! token)))]
+
+        (gateway-sandbox/register-session! token (constantly compiled-network-policy))
+        (try (let
+               [proxy-port
+                (gateway-sandbox/ensure-proxy!)
+
+                ca-file
+                (gateway-sandbox/ensure-ca!)]
+
+               (merge jail-config
+                      {:roots-fn roots-fn
+                       :net-enabled? true
+                       :proxy-port proxy-port
+                       :proxy-token token
+                       :ca-file ca-file
+                       ::environment latest-env
+                       ::cleanup cleanup}))
+             (catch Throwable t (cleanup) (throw t)))))))
+
 (defn jailed-shell
-  "Run a Python extension's explicit `vis.jailed_shell` request through the
-   invoking session's jail. It shares the ordinary shell's one-map grammar."
+  "Run `vis.jailed_shell` through a strict policy read from the latest merged
+   on-disk configuration at every process spawn. Works with or without a session;
+   invalid current config refuses that spawn instead of using a snapshot."
+  [env opts]
+  (shell-dispatch (assoc (or env {}) :jail-policy-fn #(latest-jail-policy env)) opts))
+
+(defn session-jailed-shell
+  "Run `vis.jailed_shell_session` through the invoking session's immutable jail
+   snapshot. Requires a live session and never re-reads configuration."
   [env opts]
   (when-not (:session-id env)
-    (throw (ex-info "jailed_shell is available only while handling a session"
+    (throw (ex-info "jailed_shell_session is available only while handling a session"
                     {:type ::no-session})))
   (shell-dispatch env opts))
 

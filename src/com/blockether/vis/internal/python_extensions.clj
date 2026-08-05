@@ -277,16 +277,26 @@
                         opts)))))
     (.putMember g
                 "__vis_host_jailed_shell__"
-                ;; Public extension calls use exactly one options map, identical
-                ;; to the native shell tool: {"commands": ["…"]}. The impl hands
-                ;; back a tool ENVELOPE; Python gets the unwrapped, stringified
-                ;; `:result` (see `host-tool-result`) and a failure raises.
+                ;; Latest-config jail: the shell implementation reloads, validates,
+                ;; and freezes the merged disk policy at each process spawn. It is
+                ;; deliberately independent of the invoking session snapshot.
                 (->executable (fn [opts]
                                 (host-tool-result
                                   ((requiring-resolve
                                      'com.blockether.vis.internal.foundation.shell/jailed-shell)
                                     extension/*current-environment*
                                     opts)))))
+    (.putMember g
+                "__vis_host_jailed_shell_session__"
+                ;; Session-snapshot jail: stable for the session and unavailable
+                ;; when a process-level callback has no invoking session.
+                (->executable
+                  (fn [opts]
+                    (host-tool-result
+                      ((requiring-resolve
+                         'com.blockether.vis.internal.foundation.shell/session-jailed-shell)
+                        extension/*current-environment*
+                        opts)))))
     (.putMember
       g
       "__vis_host_request_input__"
@@ -357,8 +367,8 @@
    adding it here."
   ["__vis_host_state_get__" "__vis_host_state_put__" "__vis_host_state_del__" "__vis_host_log__"
    "__vis_host_notify__" "__vis_host_shell__" "__vis_host_jailed_shell__"
-   "__vis_host_request_input__" "__vis_host_check_input__" "__vis_host_reveal_secret__"
-   "__vis_host_forget_secret__"])
+   "__vis_host_jailed_shell_session__" "__vis_host_request_input__" "__vis_host_check_input__"
+   "__vis_host_reveal_secret__" "__vis_host_forget_secret__"])
 
 (defn ^:no-doc bind-inert-host!
   "Bind every host member as a REFUSAL, so the `vis` module can be BUILT without
@@ -409,14 +419,15 @@
 (defn- call-py-ext
   "Invoke a Python callable inside THE session context (`extension/with-context`):
    the extension identity (so `vis.state` host callbacks own their aggregate
-   rows) plus the live session env, which `vis.jailed_shell`, `vis.ask` and
-   `vis.state` read.
+   rows) plus the live session env, which `vis.jailed_shell_session`, `vis.ask`
+   and `vis.state` read.
 
-   Adapters handed a real env (activation, prompt, ctx, slash, op hooks) pass
-   it; adapters with none (symbol calls, render, provider callbacks) pass nil
-   and INHERIT the caller's session instead of running session-less. That keeps
-   explicit `vis.jailed_shell` and `vis.ask` available when a caller has a live
-   session.
+   Adapters handed a real env (activation, prompt, ctx, slash, op hooks) pass it;
+   adapters with none (symbol calls, render, provider callbacks) pass nil and
+   inherit the caller's session instead of running session-less. That keeps
+   `vis.jailed_shell_session` and `vis.ask` available when a caller has a live
+   session. `vis.jailed_shell` does not depend on this context: it reads disk at
+   each spawn.
    Returns the `->clj` view of the result."
   [ext-name env ^Context ctx ^Value f args]
   (extension/with-context {:ext (or extension/*current-extension* {:ext/name ext-name}) :env env}

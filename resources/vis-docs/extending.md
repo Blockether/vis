@@ -712,10 +712,21 @@ arbitrary host-class, native, and polyglot interop; host access is limited to th
 bound `vis` API. The model can call an exported tool but cannot evaluate code in
 the extension context. See [Process sandbox and gateway egress](sandbox.md).
 
-That boundary includes every ordinary process path: `subprocess`, `os.system`,
-`os.popen`, and `vis.shell({...})` remain unrestricted even when the invoking
-session has its jail enabled. `vis.jailed_shell({...})` is the explicit opt-in to
-that session's jail and therefore requires a live session.
+Ordinary process paths stay trusted and unrestricted: `subprocess`, `os.system`,
+`os.popen`, and `vis.shell({...})` ignore the process jail even when a session has
+one enabled. Use a jailed shell only when you want confinement:
+
+| API | Policy source | Session required? |
+| --- | --- | --- |
+| `vis.shell({...})` | None; trusted and unrestricted | No |
+| `vis.jailed_shell({...})` | Latest merged config on disk, read and validated at **each process spawn** | No |
+| `vis.jailed_shell_session({...})` | Invoking session's immutable security snapshot | Yes |
+
+`vis.jailed_shell` reads the normal merged global, state, project `vis.yml`, and
+project `.vis/config.yml` sources without requiring `/reload`. Invalid current
+config fails closed: that spawn is refused rather than falling back to an older
+policy. A background process keeps the policy captured when it started; config
+changes apply when a new process is spawned, not retroactively.
 
 Treat `.py` files in a project's `.vis/extensions/` like you treat its
 `deps.edn`: they execute with your user's permissions when Vis starts in

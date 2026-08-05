@@ -1111,14 +1111,58 @@ vis.extension(
           (binding [extension/*current-environment* env]
             (expect (= {:token "regular-shell" :source :shell} (detect))))))))
   (it
-    "keeps explicit vis.jailed_shell calls on the live session jail"
+    "reads and validates the latest merged config for every jailed_shell spawn"
+    (let
+      [latest-root
+       (temp-dir)
+
+       _
+       (spit (io/file latest-root "latest.txt") "latest")
+
+       configs
+       (atom [{"workspace" {"filesystem" [{"id" "latest-root"
+                                           "path" (.getCanonicalPath latest-root)}]}
+               "jail" {"enabled" true "filesystem" {"allow" ["latest-root"]}}}
+              {"this_key_is_invalid" true}])
+
+       loads
+       (atom 0)]
+
+      (with-redefs
+        [config/load-config-raw (fn []
+                                  (swap! loads inc)
+                                  (let [value (first @configs)]
+                                    (swap! configs subvec 1)
+                                    value))]
+        (let
+          [result (:result (shell/jailed-shell nil
+                                               {"cwd" (.getCanonicalPath latest-root)
+                                                "commands"
+                                                ["test -r latest.txt && printf latest-policy"
+                                                 "printf must-not-run"]}))
+           first-command (get-in result ["commands" 0])
+           second-command (get-in result ["commands" 1])]
+
+          (expect (= "latest-policy" (get first-command "stdout")))
+          (expect (true? (get first-command "started")))
+          (expect (false? (get second-command "started")))
+          (expect (re-find #"Invalid Vis configuration" (get second-command "note")))
+          (expect (= 2 @loads))))))
+  (it
+    "keeps the latest and session-snapshot jail APIs distinct"
     (with-loaded
       {"jail.py"
-       "import vis\ndef run():\n    \"Run through the session jail.\"\n    return vis.jailed_shell({'commands':['echo mapped']})['commands'][0]['stdout']\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+       "import vis\ndef latest():\n    \"Use the latest jail.\"\n    return vis.jailed_shell({'commands':['echo latest']})['commands'][0]['stdout']\ndef session():\n    \"Use the session jail.\"\n    return vis.jailed_shell_session({'commands':['echo session']})['commands'][0]['stdout']\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(latest), vis.symbol(session)])"}
       (fn [_ _]
         (let
-          [run
-           (symbol-fn (registered "jail") 'run)
+          [ext
+           (registered "jail")
+
+           latest
+           (symbol-fn ext 'latest)
+
+           session
+           (symbol-fn ext 'session)
 
            seen
            (atom [])
@@ -1129,10 +1173,18 @@ vis.extension(
           (with-redefs
             [shell/jailed-shell (fn [actual-env opts]
                                   (swap! seen conj [actual-env opts])
-                                  {"commands" [{"stdout" (first (get opts "commands"))}]})]
+                                  {"commands" [{"stdout" "latest"}]})]
+            (expect (= "latest" (:result (latest))))
+            (expect (try (shell/session-jailed-shell nil {"commands" ["echo refused"]})
+                         false
+                         (catch Throwable t
+                           (str/includes?
+                             (str t)
+                             "jailed_shell_session is available only while handling a session"))))
             (binding [extension/*current-environment* env]
-              (expect (= "echo mapped" (:result (run))))
-              (expect (= [[env {"commands" ["echo mapped"]}]] @seen))))))))
+              (expect (= "session\n" (:result (session)))))
+            ;; The session API did not cross the latest-config host callback.
+            (expect (= [{"commands" ["echo latest"]}] (mapv second @seen))))))))
   (it
     "unwraps the host tool ENVELOPE so a shelling extension crosses the boundary"
     ;; Regression, issue #96: `jailed-shell` returns an `extension/success`

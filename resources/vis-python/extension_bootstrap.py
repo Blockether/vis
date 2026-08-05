@@ -233,8 +233,15 @@ def shell(opts):
 
 
 def jailed_shell(opts):
-    # Explicit opt-in to the invoking session's jail policy.
+    # Strictly re-read the latest merged on-disk config at each process spawn.
     return _host['jailed_shell'](_shell_options('jailed_shell', opts))
+
+
+def jailed_shell_session(opts):
+    # Explicitly use the invoking session's immutable policy snapshot.
+    return _host['jailed_shell_session'](
+        _shell_options('jailed_shell_session', opts)
+    )
 
 class Answer:
     # The outcome of `vis.ask(...)`. Truthy only when the human submitted.
@@ -596,6 +603,7 @@ _vis_mod.__dict__["_host"] = {
     "notify": __vis_host_notify__,
     "shell": __vis_host_shell__,
     "jailed_shell": __vis_host_jailed_shell__,
+    "jailed_shell_session": __vis_host_jailed_shell_session__,
     "request_input": __vis_host_request_input__,
     "check_input": __vis_host_check_input__,
     "reveal_secret": __vis_host_reveal_secret__,
