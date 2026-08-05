@@ -1135,7 +1135,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
           </div>
         )}
 
-        <div className="flex min-h-10 items-center border-y border-dialog-edge bg-panel px-3 sm:min-h-9 sm:px-4">
+        <div className="flex min-h-10 items-center border-y border-dialog-edge bg-panel px-3 mouse:min-h-9 sm:px-4">
           <span className="shrink-0 font-mono text-ui text-accent-ink">›</span>
           <input
             value={query}
@@ -1893,7 +1893,7 @@ const SessionRow = memo(function SessionRow({
         </button>
         <button
           type="button"
-          className="group flex min-h-14 min-w-0 flex-1 items-start py-2.5 pl-2 pr-3 text-left transition-colors duration-150 hover:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:min-h-12 sm:py-2 sm:pr-4"
+          className="group flex min-h-14 min-w-0 flex-1 items-start py-2.5 pl-2 pr-3 text-left transition-colors duration-150 hover:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:min-h-12 mouse:py-2 sm:pr-4"
           data-session-id={session.id}
           onClick={() => void onOpen(conn, session.id)}
         >
@@ -2220,7 +2220,7 @@ function NavigatorSkeleton() {
               {rows.map((width, row) => (
                 <div
                   key={row}
-                  className="flex min-h-14 w-full items-start gap-2 px-3 py-2.5 [&+&]:border-t [&+&]:border-dialog-edge sm:min-h-12 sm:px-4 sm:py-2"
+                  className="flex min-h-14 w-full items-start gap-2 px-3 py-2.5 [&+&]:border-t [&+&]:border-dialog-edge mouse:min-h-12 sm:px-4 mouse:py-2"
                 >
                   <span className="mt-0.5 invisible shrink-0 font-mono text-body">›</span>
                   <span className="min-w-0 flex-1">

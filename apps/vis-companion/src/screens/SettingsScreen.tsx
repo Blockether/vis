@@ -481,7 +481,7 @@ export function GatewaySettingsDialog({
                                   key={choice}
                                   disabled={busy}
                                   onClick={() => pick(toggle, choice)}
-                                  className={`min-h-8 border px-2 py-0.5 font-mono text-chip font-bold transition-[background-color,border-color,color,transform,translate,scale,rotate] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none sm:min-h-6 ${
+                                  className={`min-h-8 border px-2 py-0.5 font-mono text-chip font-bold transition-[background-color,border-color,color,transform,translate,scale,rotate] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none mouse:min-h-6 ${
                                     selected
                                       ? "border-transparent bg-accent text-accent-foreground"
                                       : "border-transparent bg-panel-2 text-dialog-hint hover:bg-hover hover:text-white"
@@ -1238,7 +1238,7 @@ export function ApplicationSettingsDialog({
                     key={choice.id}
                     disabled={pending?.startsWith("theme:") ?? false}
                     onClick={() => void chooseTheme(choice)}
-                    className={`flex min-h-10 items-center justify-between gap-3 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-9 ${selected ? "bg-accent text-accent-foreground" : "bg-input text-white hover:bg-hover"}`}
+                    className={`flex min-h-10 items-center justify-between gap-3 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none mouse:min-h-9 ${selected ? "bg-accent text-accent-foreground" : "bg-input text-white hover:bg-hover"}`}
                     aria-pressed={selected}
                   >
                     <span className="min-w-0">
@@ -1279,7 +1279,7 @@ export function ApplicationSettingsDialog({
                     key={size}
                     disabled={pending?.startsWith("pageSize:") ?? false}
                     onClick={() => void choosePageSize(size)}
-                    className={`flex min-h-10 min-w-0 items-center justify-between gap-2 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-9 ${selected ? "bg-accent text-accent-foreground" : "bg-input text-white hover:bg-hover"}`}
+                    className={`flex min-h-10 min-w-0 items-center justify-between gap-2 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none mouse:min-h-9 ${selected ? "bg-accent text-accent-foreground" : "bg-input text-white hover:bg-hover"}`}
                     aria-pressed={selected}
                   >
                     <span className="min-w-0">
@@ -1910,7 +1910,7 @@ function Switch({
       aria-busy={busy}
       disabled={disabled}
       onClick={onClick}
-      className={`mt-0.5 inline-flex h-8 w-[3.25rem] shrink-0 items-center justify-center border font-mono text-chip font-black tracking-[0.08em] transition-colors duration-150 ease-out active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none motion-reduce:active:scale-100 sm:h-6 ${
+      className={`mt-0.5 inline-flex h-8 w-[3.25rem] shrink-0 items-center justify-center border font-mono text-chip font-black tracking-[0.08em] transition-colors duration-150 ease-out active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none motion-reduce:active:scale-100 mouse:h-6 ${
         on
           ? "border-transparent bg-accent text-accent-foreground"
           : "border-transparent bg-panel-2 text-dialog-hint hover:bg-hover hover:text-white"

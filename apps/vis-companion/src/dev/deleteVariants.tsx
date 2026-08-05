@@ -53,7 +53,7 @@ function SessionRow({ session }: { session: FleetSession }) {
       <span className="flex w-8 shrink-0 items-start justify-center pt-2.5 font-mono text-body text-accent-ink opacity-40 sm:w-9 sm:pt-2">
         {'\u203a'}
       </span>
-      <span className="flex min-h-14 min-w-0 flex-1 flex-col py-2.5 pl-2 pr-3 sm:min-h-12 sm:py-2 sm:pr-4">
+      <span className="flex min-h-14 min-w-0 flex-1 flex-col py-2.5 pl-2 pr-3 mouse:min-h-12 mouse:py-2 sm:pr-4">
         <span className="flex min-w-0 items-start justify-between gap-3">
           <span className="block min-w-0 truncate font-mono text-ui font-semibold text-white">
             {session.title}
@@ -89,7 +89,7 @@ function PanelFrame({ children }: { children: ReactNode }) {
 
 function SearchRow() {
   return (
-    <div className="flex min-h-10 items-center gap-2 border-y border-dialog-edge bg-panel px-3 sm:min-h-9 sm:px-4">
+    <div className="flex min-h-10 items-center gap-2 border-y border-dialog-edge bg-panel px-3 mouse:min-h-9 sm:px-4">
       <span className="shrink-0 font-mono text-ui text-accent-ink">›</span>
       <span className="font-mono text-meta text-dialog-hint">Filter sessions</span>
     </div>

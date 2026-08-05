@@ -70,7 +70,7 @@ function colorOf(colors: Map<string, MachineColor>, machine: FleetMachine): Mach
 /** One session, at the shipped row's weight and rhythm. */
 function SessionRow({ session }: { session: FleetSession }) {
   return (
-    <div className="flex min-h-14 items-start gap-2 px-3 py-2.5 [&+&]:border-t [&+&]:border-dialog-edge sm:min-h-12 sm:py-2 sm:pl-4 sm:pr-4">
+    <div className="flex min-h-14 items-start gap-2 px-3 py-2.5 [&+&]:border-t [&+&]:border-dialog-edge mouse:min-h-12 mouse:py-2 sm:pl-4 sm:pr-4">
       <span className="mt-0.5 shrink-0 font-mono text-body text-accent-ink opacity-40" aria-hidden="true">
         ›
       </span>
@@ -252,7 +252,7 @@ function Proposal({ state, block }: { state: string; block: MachineBlock }) {
             ))}
           </div>
         )}
-        <div className="flex min-h-10 items-center gap-2 border-y border-dialog-edge bg-panel px-3 sm:min-h-9 sm:px-4">
+        <div className="flex min-h-10 items-center gap-2 border-y border-dialog-edge bg-panel px-3 mouse:min-h-9 sm:px-4">
           <span className="shrink-0 font-mono text-ui text-accent-ink">›</span>
           <span className="font-mono text-meta text-dialog-hint">Filter title, project, session</span>
         </div>

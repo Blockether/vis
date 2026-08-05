@@ -26,6 +26,10 @@ const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const VIEWPORTS = {
   // iPhone 15/16 logical size: the width every phone rule in the app is written for.
   phone: { width: 390, height: 844 },
+  // iPad Pro 11" portrait: past `sm:`, but still driven by a finger. The third
+  // shot is not optional: the tablet is the only place a desktop-density control
+  // (or a phone layout stretched to 834px) shows itself.
+  tablet: { width: 834, height: 1194 },
   // Past the `sm:` breakpoint, where the panel detaches and the tab bar moves up.
   desktop: { width: 1280, height: 900 },
 };
@@ -52,7 +56,7 @@ function parseArgs(argv) {
   const args = {
     out: '/tmp/vis-ui',
     only: null,
-    viewports: ['phone', 'desktop'],
+    viewports: ['phone', 'tablet', 'desktop'],
     themes: ['light', 'dark'],
     keep: false,
   };

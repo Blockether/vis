@@ -129,7 +129,7 @@ function Strip({ machines, counts }: { machines: TallyMachine[]; counts: Counts 
 
 function SearchRow() {
   return (
-    <div className="flex min-h-10 items-center gap-2 border-y border-dialog-edge bg-panel px-3 sm:min-h-9 sm:px-4">
+    <div className="flex min-h-10 items-center gap-2 border-y border-dialog-edge bg-panel px-3 mouse:min-h-9 sm:px-4">
       <span className="shrink-0 font-mono text-ui text-accent-ink">›</span>
       <span className="font-mono text-meta text-dialog-hint">Filter title, project, session</span>
     </div>

@@ -7,16 +7,12 @@ import {
   useState,
   type ClipboardEvent as ReactClipboardEvent,
   type MouseEvent as ReactMouseEvent,
-} from "react";
-import {
-  AssistantMessage,
-  transcriptEnterClass,
-  UserMessage,
-} from "../components/ChatContent";
-import { ExpandableImage } from "../components/ImageViewer";
-import { Banner, Spinner } from "../components/ui";
-import { HumanInputPrompt } from "../components/HumanInputPrompt";
-import { ProviderRouterDialog } from "./RouterScreen";
+} from 'react';
+import { AssistantMessage, transcriptEnterClass, UserMessage } from '../components/ChatContent';
+import { ExpandableImage } from '../components/ImageViewer';
+import { Banner, Spinner } from '../components/ui';
+import { HumanInputPrompt } from '../components/HumanInputPrompt';
+import { ProviderRouterDialog } from './RouterScreen';
 import {
   attachmentsFromFiles,
   capturePhotoAttachment,
@@ -25,21 +21,12 @@ import {
   isVideoMediaType,
   pickMediaAttachments,
   type PendingAttachment,
-} from "../lib/attachments";
-import type { GatewayClient } from "../lib/gateway";
-import { holdKeyboardAcrossSheet } from "../lib/keyboard";
-import {
-  mergeQueueBacklog,
-  queuedTurnFromWire,
-  type QueueDelta,
-} from "../lib/gateway";
-import {
-  exactCost,
-  formatCost,
-  formatTokens,
-  sessionUsage,
-} from "../lib/usage";
-import type { SessionSubscriptionHub } from "../lib/subscriptions";
+} from '../lib/attachments';
+import type { GatewayClient } from '../lib/gateway';
+import { holdKeyboardAcrossSheet } from '../lib/keyboard';
+import { mergeQueueBacklog, queuedTurnFromWire, type QueueDelta } from '../lib/gateway';
+import { exactCost, formatCost, formatTokens, sessionUsage } from '../lib/usage';
+import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
   collapsePastePlaceholders,
   createComposerPaste,
@@ -47,7 +34,7 @@ import {
   pasteSummary,
   shouldCollapsePaste,
   type ComposerPaste,
-} from "../lib/paste";
+} from '../lib/paste';
 import {
   draftMessageKey,
   flushDraftMessages,
@@ -55,19 +42,17 @@ import {
   readDraftMessage,
   watchDraftMessageExits,
   writeDraftMessage,
-} from "../lib/draft-messages";
+} from '../lib/draft-messages';
 import {
   appendSharedText,
   hydratePendingShare,
   onSharedText,
   takePendingShare,
-} from "../lib/share-intake";
+} from '../lib/share-intake';
+import { clearPendingVoice, readPendingVoice, savePendingVoice } from '../lib/pending-voice';
 import {
-  clearPendingVoice,
-  readPendingVoice,
-  savePendingVoice,
-} from "../lib/pending-voice";
-import { readerOwnsScroll } from "../lib/reader-gesture";
+  readerOwnsScroll,
+} from '../lib/reader-gesture';
 import type {
   ContentBlock,
   IterationAttachment,
@@ -87,13 +72,9 @@ import type {
   ModelPref,
   Toggle,
   GatewayAttachment,
-} from "../lib/types";
-import {
-  startWavRecording,
-  voiceProgressLabel,
-  type WavRecording,
-} from "../lib/voice";
-import { onWake } from "../lib/wake";
+} from '../lib/types';
+import { startWavRecording, voiceProgressLabel, type WavRecording } from '../lib/voice';
+import { onWake } from '../lib/wake';
 import {
   applyScrollAnchor,
   isViewportRotating,
@@ -102,13 +83,13 @@ import {
   type ScrollAnchor,
   shellViewportHeight,
   useSafeBottomStyle,
-} from "../lib/viewport";
-import { answeredTurnCount, markSessionRead } from "../lib/unread";
-import { App } from "@capacitor/app";
-import { shareableSessionLink } from "../lib/router";
-import { Capacitor } from "@capacitor/core";
+} from '../lib/viewport';
+import { answeredTurnCount, markSessionRead } from '../lib/unread';
+import { App } from '@capacitor/app';
+import { shareableSessionLink } from '../lib/router';
+import { Capacitor } from '@capacitor/core';
 
-import { workspaceRelativePath } from "../lib/path";
+import { workspaceRelativePath } from '../lib/path';
 
 interface LiveActivity {
   kind: string;
@@ -126,7 +107,7 @@ interface LiveTurn {
   activity?: LiveActivity;
   startedAt: number;
   cancelling?: boolean;
-  status: "running" | "completed" | "failed" | "cancelled";
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
   // Bytes of the images this device just sent. The gateway's live rail carries
   // none (persisted rows own them), so the bubble would otherwise be text-only.
   attachments?: GatewayAttachment[];
@@ -138,18 +119,14 @@ interface LiveTurn {
   content?: ContentBlock[];
 }
 
-const TERMINAL_EVENTS = new Set([
-  "turn.completed",
-  "turn.failed",
-  "turn.cancelled",
-]);
+const TERMINAL_EVENTS = new Set(['turn.completed', 'turn.failed', 'turn.cancelled']);
 const LIVE_BODY_THROTTLE_MS = 150;
 
 // A body frame may wait for stable rotation geometry, but lifecycle truth may
 // not: a terminal must stop the spinner/settle immediately and a new start must
 // replace any cached bubble without being painted as the previous turn.
 function forcesLiveFlushDuringRotation(event: SseEvent): boolean {
-  return TERMINAL_EVENTS.has(event.type) || event.type === "turn.started";
+  return TERMINAL_EVENTS.has(event.type) || event.type === 'turn.started';
 }
 
 // A settle's transcript refetch only has to pick up the ONE row the finished
@@ -192,7 +169,7 @@ const TURN_STREAM_STALL_MS = 30_000;
 // itself before anything is torn down. Two agreeing probes 5s apart cost one
 // extra tick of latency and remove every single-sample false positive.
 const TURN_STALL_CONFIRMATIONS = 2;
-const TURN_TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const TURN_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const INITIAL_VISIBLE_TURNS = 8;
 // Assistant turns can contain thousands of syntax-highlighted nodes. Twenty-four
 // such turns is still enough DOM to make keyboard resize and momentum scrolling
@@ -219,12 +196,7 @@ const LOADING_VEIL_MAX_MS = 12_000;
 // gateway overlay calls the same state `streaming` (`persisted-status->wire` in
 // gateway/state.clj). Neither carries the answer, so neither may ever stand in
 // for the live bubble the user is watching.
-const IN_FLIGHT_ROW_STATUSES = new Set([
-  "running",
-  "streaming",
-  "queued",
-  "pending",
-]);
+const IN_FLIGHT_ROW_STATUSES = new Set(['running', 'streaming', 'queued', 'pending']);
 
 /**
  * Did the gateway QUEUE this submission behind a running turn instead of starting
@@ -236,22 +208,22 @@ const IN_FLIGHT_ROW_STATUSES = new Set([
  * queue tray.
  */
 function isQueuedSubmission(turn: SubmittedTurn): boolean {
-  const status = String(turn.status ?? "");
-  if (status) return status === "queued";
+  const status = String(turn.status ?? '');
+  if (status) return status === 'queued';
   return turn.queued_at != null && turn.started_at == null;
 }
 
 function isRunningRow(turn: TranscriptTurn): boolean {
-  const status = String(turn.status ?? "");
-  return status === "running" || status === "streaming";
+  const status = String(turn.status ?? '');
+  return status === 'running' || status === 'streaming';
 }
 
 function isSettledRow(turn: TranscriptTurn): boolean {
-  return !IN_FLIGHT_ROW_STATUSES.has(String(turn.status ?? ""));
+  return !IN_FLIGHT_ROW_STATUSES.has(String(turn.status ?? ''));
 }
 
 function rowId(turn: TranscriptTurn): string {
-  return String(turn.id ?? turn.turn_id ?? "");
+  return String(turn.id ?? turn.turn_id ?? '');
 }
 
 /**
@@ -273,9 +245,7 @@ function rowId(turn: TranscriptTurn): string {
  * from. Only one turn runs per session, so the LAST unsettled row — scanning
  * back over queued rows, stopping at the first settled one — is that turn.
  */
-function inFlightRow(
-  turns: readonly TranscriptTurn[] | null,
-): TranscriptTurn | null {
+function inFlightRow(turns: readonly TranscriptTurn[] | null): TranscriptTurn | null {
   if (!turns?.length) return null;
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     const turn = turns[index];
@@ -317,7 +287,7 @@ function liveTurnSettledInto(
     if (finishedId && id === finishedId) return true;
     if (before.has(id)) return false;
     const created = turn.created_at;
-    if (startedAt && typeof created === "number" && Number.isFinite(created)) {
+    if (startedAt && typeof created === 'number' && Number.isFinite(created)) {
       // One minute of slack: clock skew between the engine's row stamp and the
       // client's `Date.now()` must never disqualify this turn's own answer.
       return created >= startedAt - 60_000;
@@ -328,36 +298,36 @@ function liveTurnSettledInto(
 
 function stringField(event: SseEvent, key: string): string {
   const value = event[key];
-  return typeof value === "string" ? value : "";
+  return typeof value === 'string' ? value : '';
 }
 
 function applyText(current: string, event: SseEvent): string {
-  const cumulative = stringField(event, "cumulative");
-  return cumulative || current + stringField(event, "text");
+  const cumulative = stringField(event, 'cumulative');
+  return cumulative || current + stringField(event, 'text');
 }
 
 function eventIteration(event: SseEvent): number {
   const value = event.iteration;
-  const parsed = typeof value === "number" ? value : Number(value);
+  const parsed = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function compactLabel(value: string, fallback: string): string {
-  const label = value.split("\n", 1)[0].trim();
+  const label = value.split('\n', 1)[0].trim();
   if (!label) return fallback;
   return label.length > 64 ? `${label.slice(0, 61)}…` : label;
 }
 
 function commandPhase(request: string): string | null {
   const text = request.trim();
-  if (text.startsWith("!&")) {
-    return `Vis is starting: ${compactLabel(text.slice(2), "…")}`;
+  if (text.startsWith('!&')) {
+    return `Vis is starting: ${compactLabel(text.slice(2), '…')}`;
   }
-  if (text.startsWith("!")) {
-    return `Vis is running: ${compactLabel(text.slice(1), "…")}`;
+  if (text.startsWith('!')) {
+    return `Vis is running: ${compactLabel(text.slice(1), '…')}`;
   }
-  if (text.startsWith("/")) {
-    return `Vis is running: ${compactLabel(text.split(/\s+/, 1)[0], "command")}`;
+  if (text.startsWith('/')) {
+    return `Vis is running: ${compactLabel(text.split(/\s+/, 1)[0], 'command')}`;
   }
   return null;
 }
@@ -367,8 +337,8 @@ function liveProgressPhase(
   connected: boolean,
   workspaceRoots: readonly (string | null | undefined)[],
 ): string {
-  if (!connected) return "Reconnecting — checking turn status";
-  if (turn.cancelling) return "Vis is cancelling";
+  if (!connected) return 'Reconnecting — checking turn status';
+  if (turn.cancelling) return 'Vis is cancelling';
 
   const last = turn.iterations.at(-1);
   const activity = turn.activity;
@@ -377,26 +347,25 @@ function liveProgressPhase(
     activity?.iteration == null ? 0 : activity.iteration,
   );
 
-  if (last?.error != null) return "Vis is retrying";
-  if (iteration === 0)
-    return commandPhase(turn.request) ?? "Vis is waiting for an update";
+  if (last?.error != null) return 'Vis is retrying';
+  if (iteration === 0) return commandPhase(turn.request) ?? 'Vis is waiting for an update';
 
   const suffix = `(iter ${iteration})`;
   switch (activity?.kind) {
-    case "shell-run":
-      return `Vis is running: ${compactLabel(activity.command ?? "", "…")}`;
-    case "shell-bg":
-      return `Vis is starting: ${compactLabel(activity.command ?? "", "…")}`;
-    case "slash":
-      return `Vis is running: ${compactLabel(activity.command ?? "", "command")}`;
-    case "provider-call":
+    case 'shell-run':
+      return `Vis is running: ${compactLabel(activity.command ?? '', '…')}`;
+    case 'shell-bg':
+      return `Vis is starting: ${compactLabel(activity.command ?? '', '…')}`;
+    case 'slash':
+      return `Vis is running: ${compactLabel(activity.command ?? '', 'command')}`;
+    case 'provider-call':
       return `Vis is calling the provider ${suffix}`;
-    case "response-parse":
+    case 'response-parse':
       return `Vis is parsing model response ${suffix}`;
-    case "tool":
-    case "tool-call": {
+    case 'tool':
+    case 'tool-call': {
       const label = workspaceRelativePath(activity.label, workspaceRoots);
-      return `Vis is running: ${activity.operation || "tool"}${label ? ` ${compactLabel(label, "")}` : ""} ${suffix}`;
+      return `Vis is running: ${activity.operation || 'tool'}${label ? ` ${compactLabel(label, '')}` : ''} ${suffix}`;
     }
     default:
       break;
@@ -412,9 +381,7 @@ function updateLiveIteration(
   position: number,
   update: (iteration: TranscriptIteration) => TranscriptIteration,
 ): LiveTurn {
-  const index = turn.iterations.findIndex(
-    (iteration) => iteration.position === position,
-  );
+  const index = turn.iterations.findIndex((iteration) => iteration.position === position);
   if (index < 0) {
     return {
       ...turn,
@@ -430,35 +397,30 @@ function updateLiveIteration(
 }
 
 function formFromEvent(event: SseEvent, running = false): TranscriptForm {
-  const cards = Array.isArray(event.cards)
-    ? (event.cards as TranscriptForm[])
-    : undefined;
+  const cards = Array.isArray(event.cards) ? (event.cards as TranscriptForm[]) : undefined;
   return {
-    block_id: stringField(event, "block_id"),
-    scope: stringField(event, "scope") || undefined,
-    code: stringField(event, "code") || undefined,
-    display_code: stringField(event, "display_code") || undefined,
-    display_language: stringField(event, "display_language") || undefined,
-    comment: stringField(event, "comment") || undefined,
-    tool_name: stringField(event, "tool_name") || undefined,
-    tool_color_role: stringField(event, "tool_color_role") || undefined,
-    result_summary:
-      stringField(event, "result_summary") ||
-      (running ? "Running…" : undefined),
+    block_id: stringField(event, 'block_id'),
+    scope: stringField(event, 'scope') || undefined,
+    code: stringField(event, 'code') || undefined,
+    display_code: stringField(event, 'display_code') || undefined,
+    display_language: stringField(event, 'display_language') || undefined,
+    comment: stringField(event, 'comment') || undefined,
+    tool_name: stringField(event, 'tool_name') || undefined,
+    tool_color_role: stringField(event, 'tool_color_role') || undefined,
+    result_summary: stringField(event, 'result_summary') || (running ? 'Running…' : undefined),
     // The tool-authored headline for a call still in flight; `Running…` above stays
     // the sentinel the placeholder logic keys on, this is what the card SHOWS.
-    pending_summary: stringField(event, "pending_summary") || undefined,
+    pending_summary: stringField(event, 'pending_summary') || undefined,
     // …and the body it paints under that headline while it runs.
-    pending_render: stringField(event, "pending_render") || undefined,
-    result_render: stringField(event, "result_render") || undefined,
-    result_kind: stringField(event, "result_kind") || undefined,
-    result: event.result as TranscriptForm["result"],
-    error: event.error as TranscriptForm["error"],
-    stdout: stringField(event, "stdout") || undefined,
+    pending_render: stringField(event, 'pending_render') || undefined,
+    result_render: stringField(event, 'result_render') || undefined,
+    result_kind: stringField(event, 'result_kind') || undefined,
+    result: event.result as TranscriptForm['result'],
+    error: event.error as TranscriptForm['error'],
+    stdout: stringField(event, 'stdout') || undefined,
     cards,
     silent: event.silent === true,
-    duration_ms:
-      typeof event.duration_ms === "number" ? event.duration_ms : undefined,
+    duration_ms: typeof event.duration_ms === 'number' ? event.duration_ms : undefined,
   };
 }
 
@@ -467,7 +429,7 @@ function formIsRunningPlaceholder(form: TranscriptForm): boolean {
     form.result == null &&
     form.error == null &&
     form.duration_ms == null &&
-    (!form.result_summary || form.result_summary === "Running…")
+    (!form.result_summary || form.result_summary === 'Running…')
   );
 }
 
@@ -476,14 +438,11 @@ function formHasOutcome(form: TranscriptForm): boolean {
     form.result != null ||
     form.error != null ||
     form.duration_ms != null ||
-    (!!form.result_summary && form.result_summary !== "Running…")
+    (!!form.result_summary && form.result_summary !== 'Running…')
   );
 }
 
-function upsertLiveForm(
-  iteration: TranscriptIteration,
-  next: TranscriptForm,
-): TranscriptIteration {
+function upsertLiveForm(iteration: TranscriptIteration, next: TranscriptForm): TranscriptIteration {
   const forms = [...(iteration.forms ?? [])];
   const blockId = next.block_id;
   let index = forms.findIndex((form) => blockId && form.block_id === blockId);
@@ -495,8 +454,8 @@ function upsertLiveForm(
     index = forms.findIndex(
       (form) =>
         formIsRunningPlaceholder(form) &&
-        (form.tool_name ?? "") === (next.tool_name ?? "") &&
-        (form.scope ?? "") === (next.scope ?? ""),
+        (form.tool_name ?? '') === (next.tool_name ?? '') &&
+        (form.scope ?? '') === (next.scope ?? ''),
     );
   }
   if (index < 0) forms.push(next);
@@ -509,27 +468,20 @@ function upsertLiveForm(
   return { ...iteration, forms };
 }
 
-function reduceLiveEvent(
-  turn: LiveTurn | null,
-  event: SseEvent,
-): LiveTurn | null {
+function reduceLiveEvent(turn: LiveTurn | null, event: SseEvent): LiveTurn | null {
   const type = event.type;
-  if (type === "turn.started") {
-    const startedId = stringField(event, "turn_id");
+  if (type === 'turn.started') {
+    const startedId = stringField(event, 'turn_id');
     return {
       id: startedId,
-      request: stringField(event, "request"),
-      answer: "",
+      request: stringField(event, 'request'),
+      answer: '',
       iterations: [],
-      startedAt:
-        typeof event.started_at === "number" ? event.started_at : Date.now(),
-      status: "running",
+      startedAt: typeof event.started_at === 'number' ? event.started_at : Date.now(),
+      status: 'running',
       // `turn.started` for the turn we optimistically painted must not drop the
       // attachments we are already showing (the event has no bytes).
-      attachments:
-        turn && (!turn.id || turn.id === startedId)
-          ? turn.attachments
-          : undefined,
+      attachments: turn && (!turn.id || turn.id === startedId) ? turn.attachments : undefined,
     };
   }
   if (!turn) return turn;
@@ -538,41 +490,37 @@ function reduceLiveEvent(
   // progress frame — must never re-animate a settled bubble. Without this guard a
   // post-terminal frame put the ticker back up ("Vis is running …") and repainted
   // progress for work that had already finished.
-  if (turn.status !== "running") return turn;
+  if (turn.status !== 'running') return turn;
 
-  if (type === "content.block.delta") {
-    const field = stringField(event, "field");
-    const blockId = stringField(event, "block_id");
+  if (type === 'content.block.delta') {
+    const field = stringField(event, 'field');
+    const blockId = stringField(event, 'block_id');
     const position = eventIteration(event);
-    if (field === "text") {
+    if (field === 'text') {
       const next = updateLiveIteration(turn, position, (iteration) => ({
         ...iteration,
-        thinking: applyText(iteration.thinking ?? "", event),
+        thinking: applyText(iteration.thinking ?? '', event),
       }));
       return { ...next, activity: undefined };
     }
-    if (field === "markdown" && blockId.includes(":assistant-prose:")) {
+    if (field === 'markdown' && blockId.includes(':assistant-prose:')) {
       const next = updateLiveIteration(turn, position, (iteration) => ({
         ...iteration,
-        assistant_prose: applyText(iteration.assistant_prose ?? "", event),
+        assistant_prose: applyText(iteration.assistant_prose ?? '', event),
       }));
       // The model's prose streamed first as a live `:content` ticker (turn.answer)
       // and now lands as this iteration's canonical prose. Mirror the TUI
       // (progress.clj drops `:content-stream`): clear the live answer so the same
       // text isn't rendered twice — once above the tool and once below it.
-      return { ...next, answer: "", activity: undefined };
+      return { ...next, answer: '', activity: undefined };
     }
-    if (field === "markdown") {
-      return {
-        ...turn,
-        answer: applyText(turn.answer, event),
-        activity: undefined,
-      };
+    if (field === 'markdown') {
+      return { ...turn, answer: applyText(turn.answer, event), activity: undefined };
     }
     return turn;
   }
 
-  if (type === "iteration.completed") {
+  if (type === 'iteration.completed') {
     const position = eventIteration(event);
     // Byte-free descriptors for whatever the agent attached during this
     // iteration (`vis_attach`). The bytes come from the gateway's attachment
@@ -583,81 +531,64 @@ function reduceLiveEvent(
       : undefined;
     const next = updateLiveIteration(turn, position, (iteration) => ({
       ...iteration,
-      thinking: stringField(event, "thinking") || iteration.thinking,
-      assistant_prose:
-        stringField(event, "assistant_prose") || iteration.assistant_prose,
+      thinking: stringField(event, 'thinking') || iteration.thinking,
+      assistant_prose: stringField(event, 'assistant_prose') || iteration.assistant_prose,
       attachments: attached?.length ? attached : iteration.attachments,
       error: undefined,
     }));
     // If this iteration finalized any prose, the live `:content` ticker that fed
     // it has been promoted into the iteration — drop it so it isn't duplicated.
-    const promoted = next.iterations.find(
-      (i) => i.position === position,
-    )?.assistant_prose;
-    return {
-      ...next,
-      answer: promoted ? "" : turn.answer,
-      activity: undefined,
-    };
+    const promoted = next.iterations.find((i) => i.position === position)?.assistant_prose;
+    return { ...next, answer: promoted ? '' : turn.answer, activity: undefined };
   }
 
-  if (type === "block.preview") {
+  if (type === 'block.preview') {
     const position = eventIteration(event);
     const form = formFromEvent(event, false);
-    const next = updateLiveIteration(turn, position, (iteration) =>
-      upsertLiveForm(iteration, form),
-    );
+    const next = updateLiveIteration(turn, position, (iteration) => upsertLiveForm(iteration, form));
     return { ...next, activity: undefined };
   }
 
-  if (type === "block.started" || type === "block.output") {
+  if (type === 'block.started' || type === 'block.output') {
     const position = eventIteration(event);
-    const form = formFromEvent(event, type === "block.started");
-    const next = updateLiveIteration(turn, position, (iteration) =>
-      upsertLiveForm(iteration, form),
-    );
-    if (type === "block.output") return { ...next, activity: undefined };
+    const form = formFromEvent(event, type === 'block.started');
+    const next = updateLiveIteration(turn, position, (iteration) => upsertLiveForm(iteration, form));
+    if (type === 'block.output') return { ...next, activity: undefined };
     return {
       ...next,
       activity: {
-        kind: form.tool_name ? "tool" : "code",
+        kind: form.tool_name ? 'tool' : 'code',
         iteration: position,
         operation: form.tool_name || form.scope,
       },
     };
   }
 
-  if (type === "activity") {
-    const kind = stringField(event, "activity");
+  if (type === 'activity') {
+    const kind = stringField(event, 'activity');
     const rawIteration = event.iteration;
-    const iteration =
-      typeof rawIteration === "number"
-        ? rawIteration
-        : typeof rawIteration === "string" && rawIteration.trim()
-          ? Number(rawIteration)
-          : undefined;
+    const iteration = typeof rawIteration === 'number'
+      ? rawIteration
+      : typeof rawIteration === 'string' && rawIteration.trim()
+        ? Number(rawIteration)
+        : undefined;
     return {
       ...turn,
-      activity: kind
-        ? {
-            kind,
-            iteration: Number.isFinite(iteration) ? iteration : undefined,
-            command: stringField(event, "cmd") || undefined,
-            operation: stringField(event, "op") || undefined,
-            label: stringField(event, "label") || undefined,
-          }
-        : undefined,
+      activity: kind ? {
+        kind,
+        iteration: Number.isFinite(iteration) ? iteration : undefined,
+        command: stringField(event, 'cmd') || undefined,
+        operation: stringField(event, 'op') || undefined,
+        label: stringField(event, 'label') || undefined,
+      } : undefined,
     };
   }
 
-  if (type === "iteration.error" || type === "provider.retry") {
+  if (type === 'iteration.error' || type === 'provider.retry') {
     const position = eventIteration(event);
     const next = updateLiveIteration(turn, position, (iteration) => ({
       ...iteration,
-      error: (event.error_data ??
-        event.error ??
-        event.detail ??
-        "retrying") as TranscriptIteration["error"],
+      error: (event.error_data ?? event.error ?? event.detail ?? 'retrying') as TranscriptIteration['error'],
     }));
     return { ...next, activity: undefined };
   }
@@ -669,35 +600,34 @@ function coalesceLiveEvents(events: SseEvent[]): SseEvent[] {
   const merged: SseEvent[] = [];
   for (const event of events) {
     const previous = merged.at(-1);
-    const sameDelta =
-      previous?.type === "content.block.delta" &&
-      event.type === "content.block.delta" &&
-      stringField(previous, "field") === stringField(event, "field") &&
-      stringField(previous, "block_id") === stringField(event, "block_id") &&
-      eventIteration(previous) === eventIteration(event);
+    const sameDelta = previous?.type === 'content.block.delta'
+      && event.type === 'content.block.delta'
+      && stringField(previous, 'field') === stringField(event, 'field')
+      && stringField(previous, 'block_id') === stringField(event, 'block_id')
+      && eventIteration(previous) === eventIteration(event);
 
     if (!previous || !sameDelta) {
       merged.push(event);
       continue;
     }
 
-    const currentCumulative = stringField(event, "cumulative");
-    const previousCumulative = stringField(previous, "cumulative");
+    const currentCumulative = stringField(event, 'cumulative');
+    const previousCumulative = stringField(previous, 'cumulative');
     if (currentCumulative) {
       merged[merged.length - 1] = event;
     } else if (previousCumulative) {
       merged[merged.length - 1] = {
         ...previous,
         ...event,
-        cumulative: previousCumulative + stringField(event, "text"),
-        text: "",
+        cumulative: previousCumulative + stringField(event, 'text'),
+        text: '',
       };
     } else {
       merged[merged.length - 1] = {
         ...previous,
         ...event,
-        cumulative: "",
-        text: stringField(previous, "text") + stringField(event, "text"),
+        cumulative: '',
+        text: stringField(previous, 'text') + stringField(event, 'text'),
       };
     }
   }
@@ -705,43 +635,24 @@ function coalesceLiveEvents(events: SseEvent[]): SseEvent[] {
 }
 
 const FALLBACK_SLASHES: SlashCommand[] = [
-  { name: "/help", doc: "Show the available slash commands." },
-  {
-    name: "/new-session",
-    doc: "Create a new session. Optional text starts its first turn.",
-  },
-  { name: "/sessions", doc: "Return to the session list." },
-  {
-    name: "/clear",
-    doc: "Start a fresh session without deleting this transcript.",
-  },
-  { name: "/rename", doc: "Rename this session's title." },
-  {
-    name: "/export",
-    doc: "Export this session transcript to Markdown or HTML.",
-  },
-  {
-    name: "/export-html",
-    doc: "Export this session transcript as styled HTML.",
-  },
-  {
-    name: "/cd",
-    doc: "Show or change the session's filesystem root (the directory Vis works in).",
-  },
-  { name: "/draft new", doc: "Create an isolated draft workspace." },
-  { name: "/draft apply", doc: "Apply the active draft workspace." },
-  { name: "/draft abandon", doc: "Abandon the active draft workspace." },
-  { name: "/draft list", doc: "List draft workspaces." },
-  {
-    name: "/reload",
-    doc: "Reload extensions, skills, prompts, and context files.",
-  },
+  { name: '/help', doc: 'Show the available slash commands.' },
+  { name: '/new-session', doc: 'Create a new session. Optional text starts its first turn.' },
+  { name: '/sessions', doc: 'Return to the session list.' },
+  { name: '/clear', doc: 'Start a fresh session without deleting this transcript.' },
+  { name: '/rename', doc: "Rename this session's title." },
+  { name: '/export', doc: 'Export this session transcript to Markdown or HTML.' },
+  { name: '/export-html', doc: 'Export this session transcript as styled HTML.' },
+  { name: '/cd', doc: "Show or change the session's filesystem root (the directory Vis works in)." },
+  { name: '/draft new', doc: 'Create an isolated draft workspace.' },
+  { name: '/draft apply', doc: 'Apply the active draft workspace.' },
+  { name: '/draft abandon', doc: 'Abandon the active draft workspace.' },
+  { name: '/draft list', doc: 'List draft workspaces.' },
+  { name: '/reload', doc: 'Reload extensions, skills, prompts, and context files.' },
 ];
 
 function mergeSlashCommands(remote: SlashCommand[]): SlashCommand[] {
   const byName = new Map<string, SlashCommand>();
-  for (const command of [...FALLBACK_SLASHES, ...remote])
-    byName.set(command.name, command);
+  for (const command of [...FALLBACK_SLASHES, ...remote]) byName.set(command.name, command);
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -753,7 +664,7 @@ const FILE_MENTION_REGEX = /(?:^|\s)@(?!@)(\S*)$/;
 function fileMentionAt(head: string): { query: string; at: number } | null {
   const match = FILE_MENTION_REGEX.exec(head);
   if (!match) return null;
-  const query = match[1] ?? "";
+  const query = match[1] ?? '';
   return { query, at: head.length - query.length - 1 };
 }
 
@@ -846,15 +757,10 @@ function CopyableId({ id, className }: { id: string; className: string }) {
       onClick={copy}
       title={`Copy session id\n${id}`}
       aria-label="Copy session id"
-      className={`group inline-flex h-6 min-w-0 items-center gap-1 border border-dialog-edge px-2 font-mono text-chip transition-[background-color,color,border-color] hover:bg-hover ${copied ? "border-ok text-ok" : "text-dialog-hint"} ${className}`}
+      className={`group inline-flex h-6 min-w-0 items-center gap-1 border border-dialog-edge px-2 font-mono text-chip transition-[background-color,color,border-color] hover:bg-hover ${copied ? 'border-ok text-ok' : 'text-dialog-hint'} ${className}`}
     >
-      <span
-        aria-hidden="true"
-        className="opacity-50 transition-opacity group-hover:opacity-100"
-      >
-        #
-      </span>
-      <span className="truncate">{copied ? "Copied" : short}</span>
+      <span aria-hidden="true" className="opacity-50 transition-opacity group-hover:opacity-100">#</span>
+      <span className="truncate">{copied ? 'Copied' : short}</span>
     </button>
   );
 }
@@ -879,14 +785,14 @@ async function copyText(text: string): Promise<boolean> {
     // Untrusted webview / no permission — fall back to the legacy selection copy.
   }
   try {
-    const area = document.createElement("textarea");
+    const area = document.createElement('textarea');
     area.value = text;
-    area.setAttribute("readonly", "");
-    area.className = "fixed top-0 left-0 size-px opacity-0";
+    area.setAttribute('readonly', '');
+    area.className = 'fixed top-0 left-0 size-px opacity-0';
     document.body.appendChild(area);
     area.select();
     area.setSelectionRange(0, text.length);
-    const ok = document.execCommand("copy");
+    const ok = document.execCommand('copy');
     document.body.removeChild(area);
     return ok;
   } catch {
@@ -895,54 +801,38 @@ async function copyText(text: string): Promise<boolean> {
 }
 
 function ShareLink({ className }: { className: string }) {
-  const [state, setState] = useState<"idle" | "copied" | "shared" | "failed">(
-    "idle",
-  );
+  const [state, setState] = useState<'idle' | 'copied' | 'shared' | 'failed'>('idle');
   const flashRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  function flash(next: "copied" | "shared" | "failed") {
+  function flash(next: 'copied' | 'shared' | 'failed') {
     setState(next);
     if (flashRef.current) clearTimeout(flashRef.current);
-    flashRef.current = setTimeout(() => setState("idle"), 1_800);
+    flashRef.current = setTimeout(() => setState('idle'), 1_800);
   }
-  useEffect(
-    () => () => {
-      if (flashRef.current) clearTimeout(flashRef.current);
-    },
-    [],
-  );
+  useEffect(() => () => {
+    if (flashRef.current) clearTimeout(flashRef.current);
+  }, []);
   async function share() {
     const url = shareableSessionLink();
-    if (
-      !Capacitor.isNativePlatform() &&
-      typeof navigator.share === "function"
-    ) {
+    if (!Capacitor.isNativePlatform() && typeof navigator.share === 'function') {
       try {
-        await navigator.share({ title: "Vis session", url });
-        flash("shared");
+        await navigator.share({ title: 'Vis session', url });
+        flash('shared');
         return;
       } catch (error) {
         // A dismissed sheet is not a failure — say nothing and leave it alone.
-        if (error instanceof DOMException && error.name === "AbortError")
-          return;
+        if (error instanceof DOMException && error.name === 'AbortError') return;
         // Anything else (unsupported, blocked) falls through to the copy.
       }
     }
-    flash((await copyText(url)) ? "copied" : "failed");
+    flash((await copyText(url)) ? 'copied' : 'failed');
   }
-  const label =
-    state === "copied"
-      ? "Copied"
-      : state === "shared"
-        ? "Shared"
-        : state === "failed"
-          ? "Failed"
-          : "Share";
-  const done = state === "copied" || state === "shared";
+  const label = state === 'copied' ? 'Copied' : state === 'shared' ? 'Shared' : state === 'failed' ? 'Failed' : 'Share';
+  const done = state === 'copied' || state === 'shared';
   const tone = done
-    ? "border-ok bg-ok/15 text-ok"
-    : state === "failed"
-      ? "border-err bg-err/15 text-err"
-      : "border-dialog-title bg-dialog-title text-dialog-title-foreground hover:bg-accent-2";
+    ? 'border-ok bg-ok/15 text-ok'
+    : state === 'failed'
+      ? 'border-err bg-err/15 text-err'
+      : 'border-dialog-title bg-dialog-title text-dialog-title-foreground hover:bg-accent-2';
   return (
     <button
       type="button"
@@ -952,42 +842,18 @@ function ShareLink({ className }: { className: string }) {
       className={`group inline-flex h-6 shrink-0 items-center gap-1 border px-2 font-mono text-chip font-bold uppercase tracking-[0.08em] transition-[background-color,color,border-color,transform,translate,scale,rotate] duration-150 active:scale-[0.97] motion-reduce:transition-none ${tone} ${className}`}
     >
       {done ? (
-        <svg
-          viewBox="0 0 20 20"
-          className="size-3"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          aria-hidden="true"
-        >
-          <path
-            d="M5 10.5l3.5 3.5L15 6.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
+        <svg viewBox="0 0 20 20" className="size-3" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+          <path d="M5 10.5l3.5 3.5L15 6.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       ) : (
-        <svg
-          viewBox="0 0 20 20"
-          className="size-3"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          aria-hidden="true"
-        >
-          <path
-            d="M7.5 10.5l5-3M7.5 9.5l5 3M6 10a2 2 0 11-4 0 2 2 0 014 0zM16 5a2 2 0 11-4 0 2 2 0 014 0zM16 15a2 2 0 11-4 0 2 2 0 014 0z"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
+        <svg viewBox="0 0 20 20" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+          <path d="M7.5 10.5l5-3M7.5 9.5l5 3M6 10a2 2 0 11-4 0 2 2 0 014 0zM16 5a2 2 0 11-4 0 2 2 0 014 0zM16 15a2 2 0 11-4 0 2 2 0 014 0z" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       )}
       {/* All four labels live in the same grid cell, so the button is sized once by
          the widest of them and never resizes/jumps when the state flips. */}
       <span aria-live="polite" className="grid justify-items-center">
-        <span aria-hidden="true" className="invisible col-start-1 row-start-1">
-          Copied
-        </span>
+        <span aria-hidden="true" className="invisible col-start-1 row-start-1">Copied</span>
         <span className="col-start-1 row-start-1">{label}</span>
       </span>
     </button>
@@ -1015,7 +881,7 @@ function seedLiveTurn(
   sid: string,
 ): { turn: LiveTurn; seq: number } | null {
   const cached = client.cachedLiveTurn<LiveTurn>(sid);
-  if (!cached || cached.turn.status !== "running") return null;
+  if (!cached || cached.turn.status !== 'running') return null;
   if (subscriptions.hasEndedTurn(sid)) return null;
   return cached;
 }
@@ -1050,13 +916,10 @@ function PasteEditor({
         aria-modal="true"
         aria-labelledby="paste-editor-title"
         onKeyDown={(event) => {
-          if (event.key === "Escape") {
+          if (event.key === 'Escape') {
             event.stopPropagation();
             onClose();
-          } else if (
-            event.key === "Enter" &&
-            (event.metaKey || event.ctrlKey)
-          ) {
+          } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
             event.preventDefault();
             onSave();
           }
@@ -1101,9 +964,7 @@ function PasteEditor({
           style={safeBottomStyle}
           className="flex shrink-0 items-center justify-end gap-2 border-t border-dialog-edge bg-panel-2 px-3 py-2 pb-[max(0.5rem,var(--safe-bottom,env(safe-area-inset-bottom)))] font-mono text-meta text-dialog-hint sm:px-4"
         >
-          <span className="mr-auto hidden truncate sm:block">
-            Esc cancels · ⌘↵ saves
-          </span>
+          <span className="mr-auto hidden truncate sm:block">Esc cancels · ⌘↵ saves</span>
           <button
             type="button"
             className="min-h-9 border border-dialog-edge px-3 text-ui text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err focus-visible:outline-none"
@@ -1152,12 +1013,8 @@ export function SessionScreen({
   // Every screen-level snapshot is seeded from the client's cache: reopening a
   // session paints its last known transcript on the FIRST frame and revalidates
   // underneath, instead of holding the loading sheet over an empty view.
-  const [session, setSession] = useState<Session | null>(() =>
-    client.cachedSession(sid),
-  );
-  const [turns, setTurns] = useState<TranscriptTurn[]>(
-    () => client.cachedTranscript(sid) ?? [],
-  );
+  const [session, setSession] = useState<Session | null>(() => client.cachedSession(sid));
+  const [turns, setTurns] = useState<TranscriptTurn[]>(() => client.cachedTranscript(sid) ?? []);
   // Whether the turns on screen were confirmed against the gateway during THIS
   // visit. Cached rows paint the first frame, but a cached 'running' row is a
   // placeholder with no outcome: rendered before confirmation it spins and
@@ -1176,9 +1033,7 @@ export function SessionScreen({
   const voiceMailboxId = draftMessageId;
   // The composer footer carries `--safe-bottom` itself; see `useSafeBottomStyle`.
   const safeBottomStyle = useSafeBottomStyle();
-  const [prompt, setPrompt] = useState(
-    () => peekDraftMessage(draftMessageId).text,
-  );
+  const [prompt, setPrompt] = useState(() => peekDraftMessage(draftMessageId).text);
   const [draftMessageReady, setDraftMessageReady] = useState(false);
   // Same fact, readable SYNCHRONOUSLY: the effects below run in declaration
   // order inside ONE commit, so a session switch reaches the recording effect
@@ -1190,14 +1045,10 @@ export function SessionScreen({
   // The session's provider/model pick. Seeded from the client's snapshot so the
   // header chip names the model on the FIRST frame instead of reading "model"
   // until the gateway answers, then written through by the router dialog.
-  const [modelPref, setModelPref] = useState<ModelPref | null>(() =>
-    client.cachedSessionModel(sid),
-  );
+  const [modelPref, setModelPref] = useState<ModelPref | null>(() => client.cachedSessionModel(sid));
   // The gateway's default route, shown when this session pins nothing. Same
   // seed: resolving it costs a `/v1/router` probe on a cold daemon.
-  const [defaultPref, setDefaultPref] = useState<ModelPref | null>(() =>
-    client.cachedDefaultModel(),
-  );
+  const [defaultPref, setDefaultPref] = useState<ModelPref | null>(() => client.cachedDefaultModel());
   const [routerOpen, setRouterOpen] = useState(false);
   const [loading, setLoading] = useState(!fresh);
   // The veil outlives `loading` by one transition so it can dissolve.
@@ -1206,24 +1057,15 @@ export function SessionScreen({
   // The bubble this screen re-enters with, resolved ONCE at mount.
   const [liveSeed] = useState(() => seedLiveTurn(client, subscriptions, sid));
   const [running, setRunning] = useState(liveSeed !== null);
-  const [liveTurn, setLiveTurn] = useState<LiveTurn | null>(
-    liveSeed?.turn ?? null,
-  );
-  const [queued, setQueued] = useState<QueuedTurn[]>(
-    () => client.cachedQueuedTurns(sid) ?? [],
-  );
+  const [liveTurn, setLiveTurn] = useState<LiveTurn | null>(liveSeed?.turn ?? null);
+  const [queued, setQueued] = useState<QueuedTurn[]>(() => client.cachedQueuedTurns(sid) ?? []);
   // Turn ids with a queue mutation in flight. The gateway is the ONE writer of the
   // queue tray (rows appear on `turn.queued` and leave on `.updated`/`.deleted`/
   // `.drained`), so an edit or removal is NOT applied optimistically — it is
   // marked busy until the daemon's own event lands. Mirroring the intent locally
   // is exactly how a row could disappear while the gateway still ran it.
-  const [queueBusy, setQueueBusy] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
-  const [editingQueued, setEditingQueued] = useState<{
-    turnId: string;
-    text: string;
-  } | null>(null);
+  const [queueBusy, setQueueBusy] = useState<ReadonlySet<string>>(() => new Set());
+  const [editingQueued, setEditingQueued] = useState<{ turnId: string; text: string } | null>(null);
   // Queue truth arrives on TWO streams that can cross: live `turn.queued*` frames
   // and the `?status=queued` re-reads done on open and on every wake tick. The
   // removals exist only on the live stream (the gateway appends
@@ -1244,11 +1086,7 @@ export function SessionScreen({
   );
   const acceptQueueBacklog = useCallback(
     (rows: QueuedTurn[], readStartedAt: number) => {
-      const merged = mergeQueueBacklog(
-        rows,
-        queueDeltasRef.current,
-        readStartedAt,
-      );
+      const merged = mergeQueueBacklog(rows, queueDeltasRef.current, readStartedAt);
       // The read has just rewritten the snapshot with the stale rows in it.
       for (const tid of merged.forget) client.forgetQueuedTurn(sid, tid);
       setQueued(merged.rows);
@@ -1260,9 +1098,7 @@ export function SessionScreen({
   // because we asked. This only disables the button while the request is out.
   const [resumingQueue, setResumingQueue] = useState(false);
   const [showJump, setShowJump] = useState(false);
-  const [visibleTurnCount, setVisibleTurnCount] = useState(
-    INITIAL_VISIBLE_TURNS,
-  );
+  const [visibleTurnCount, setVisibleTurnCount] = useState(INITIAL_VISIBLE_TURNS);
   // How much of that window is actually mounted right now. Ramps to
   // `visibleTurnCount` off the critical path; never shrinks the window itself,
   // so the "load earlier" affordance and its counts stay stable while it fills.
@@ -1281,14 +1117,12 @@ export function SessionScreen({
     () =>
       Math.max(
         answeredTurnCount(session),
-        turns.filter(
-          (turn) => turn.status !== "running" && turn.status !== "pending",
-        ).length,
+        turns.filter((turn) => turn.status !== 'running' && turn.status !== 'pending').length,
       ),
     [session, turns],
   );
   useEffect(() => {
-    if (document.visibilityState !== "hidden") markSessionRead(sid, readTurns);
+    if (document.visibilityState !== 'hidden') markSessionRead(sid, readTurns);
     // Coming back to a screen that stayed mounted through a suspend is also a read.
     return onWake(() => markSessionRead(sid, readTurns));
   }, [sid, readTurns]);
@@ -1299,8 +1133,7 @@ export function SessionScreen({
     () => client.transcriptWindow(sid).offset,
   );
   const [loadingEarlier, setLoadingEarlier] = useState(false);
-  const [slashCommands, setSlashCommands] =
-    useState<SlashCommand[]>(FALLBACK_SLASHES);
+  const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(FALLBACK_SLASHES);
   const [slashIndex, setSlashIndex] = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
   const [caret, setCaret] = useState(0);
@@ -1313,8 +1146,8 @@ export function SessionScreen({
   // appeared once the round-trip landed — the icons visibly popping in on a
   // screen that otherwise restored instantly. Seed from the last payload this
   // gateway answered: same paint-then-revalidate rule as session/transcript.
-  const [capabilities, setCapabilities] = useState<GatewayCapabilities | null>(
-    () => client.cachedCapabilities(),
+  const [capabilities, setCapabilities] = useState<GatewayCapabilities | null>(() =>
+    client.cachedCapabilities(),
   );
   // Staged files are part of the unsent message, not a side effect of the screen:
   // they are seeded from the stored draft message on the FIRST frame, exactly like
@@ -1327,20 +1160,12 @@ export function SessionScreen({
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [pastes, setPastes] = useState<Map<number, ComposerPaste>>(
     () =>
-      new Map(
-        peekDraftMessage(draftMessageId).pastes.map((paste) => [
-          paste.id,
-          paste,
-        ]),
-      ),
+      new Map(peekDraftMessage(draftMessageId).pastes.map((paste) => [paste.id, paste])),
   );
   // A paste chip is a HANDLE on its payload, not a tombstone: tapping it opens the
   // content for editing (the same affordance other agent composers give a collapsed
   // paste). `draft` is the live textarea buffer — `pastes`/`prompt` only move on Save.
-  const [editingPaste, setEditingPaste] = useState<{
-    id: number;
-    draft: string;
-  } | null>(null);
+  const [editingPaste, setEditingPaste] = useState<{ id: number; draft: string } | null>(null);
   // The paste editor is absolute inside this screen's positioned root, so it
   // inherits the app shell's keyboard pin without a second viewport listener or
   // a lagging fixed WebKit layer.
@@ -1353,14 +1178,10 @@ export function SessionScreen({
   const [voiceModel, setVoiceModel] = useState<VoiceModelState | null>(
     () => client.cachedCapabilities()?.features.voice.model ?? null,
   );
-  const [voicePhase, setVoicePhase] = useState<
-    "idle" | "recording" | "transcribing"
-  >("idle");
+  const [voicePhase, setVoicePhase] = useState<'idle' | 'recording' | 'transcribing'>('idle');
   // Where the transcription IS, straight from the gateway job. Null means the
   // engine has not reported yet (the bytes are still leaving this phone).
-  const [voiceProgress, setVoiceProgress] = useState<VoiceProgress | null>(
-    null,
-  );
+  const [voiceProgress, setVoiceProgress] = useState<VoiceProgress | null>(null);
   const [voiceRequested, setVoiceRequested] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -1377,9 +1198,7 @@ export function SessionScreen({
   // The SSE effect installs its current queue drain here. Rotation invokes it one
   // paint before restoring the captured scroll anchor, so the restore targets the
   // final streamed transcript rather than the pre-rotation body.
-  const flushLiveEventsBeforeRotationRestoreRef = useRef<(() => void) | null>(
-    null,
-  );
+  const flushLiveEventsBeforeRotationRestoreRef = useRef<(() => void) | null>(null);
   // Last measured height of the scroller itself, so a box that shrinks under a
   // parked reader can hand the lost pixels back (see the ResizeObserver below).
   const viewportHeightRef = useRef<number | null>(null);
@@ -1418,22 +1237,11 @@ export function SessionScreen({
   // images would simply be gone. Keyed by turn id, so rows queued from the TUI or
   // another device are absent here and stay THEIR editor's business.
   const authoredQueueRef = useRef<
-    Map<
-      string,
-      {
-        request: string;
-        attachments: PendingAttachment[];
-        pastes: Map<number, ComposerPaste>;
-      }
-    >
+    Map<string, { request: string; attachments: PendingAttachment[]; pastes: Map<number, ComposerPaste> }>
   >(new Map());
   const rememberQueued = (
     turnId: string | undefined,
-    authored: {
-      request: string;
-      attachments: PendingAttachment[];
-      pastes: Map<number, ComposerPaste>;
-    },
+    authored: { request: string; attachments: PendingAttachment[]; pastes: Map<number, ComposerPaste> },
   ) => {
     if (!turnId) return;
     const map = authoredQueueRef.current;
@@ -1457,54 +1265,42 @@ export function SessionScreen({
   // never auto-sent. The draft is persisted per session, so leaving the screen (or
   // the app) does not lose it. Same contract the TUI honours in `:sync-queued-turn`
   // / `:restore-pending-to-input`.
-  const restoreCancelledQueued = useCallback(
-    (turnId: string | undefined, request: string) => {
-      if (!turnId) return;
-      const done = restoredQueueRef.current;
-      if (done.has(turnId)) return;
-      done.add(turnId);
-      while (done.size > 64) {
-        const oldest = done.values().next();
-        if (oldest.done) break;
-        done.delete(oldest.value);
-      }
-      // What THIS device authored wins over the wire text: only the local copy still
-      // has the pastes and the image bytes that never travel on the queue mirror.
-      const authored = authoredQueueRef.current.get(turnId);
-      authoredQueueRef.current.delete(turnId);
-      const text = (authored?.request || request || "").trim();
-      if (text) {
-        setPrompt((current) =>
-          [current.trimEnd(), text].filter(Boolean).join("\n\n"),
-        );
-      }
-      if (authored?.pastes.size) {
-        setPastes((current) => {
-          const next = new Map(current);
-          for (const [id, paste] of authored.pastes)
-            if (!next.has(id)) next.set(id, paste);
-          return next;
-        });
-      }
-      if (authored?.attachments.length) {
-        setAttachments((current) => {
-          const seen = new Set(current.map((item) => item.id));
-          return [
-            ...current,
-            ...authored.attachments.filter((item) => !seen.has(item.id)),
-          ];
-        });
-      }
-    },
-    [],
-  );
+  const restoreCancelledQueued = useCallback((turnId: string | undefined, request: string) => {
+    if (!turnId) return;
+    const done = restoredQueueRef.current;
+    if (done.has(turnId)) return;
+    done.add(turnId);
+    while (done.size > 64) {
+      const oldest = done.values().next();
+      if (oldest.done) break;
+      done.delete(oldest.value);
+    }
+    // What THIS device authored wins over the wire text: only the local copy still
+    // has the pastes and the image bytes that never travel on the queue mirror.
+    const authored = authoredQueueRef.current.get(turnId);
+    authoredQueueRef.current.delete(turnId);
+    const text = (authored?.request || request || '').trim();
+    if (text) {
+      setPrompt((current) => [current.trimEnd(), text].filter(Boolean).join('\n\n'));
+    }
+    if (authored?.pastes.size) {
+      setPastes((current) => {
+        const next = new Map(current);
+        for (const [id, paste] of authored.pastes) if (!next.has(id)) next.set(id, paste);
+        return next;
+      });
+    }
+    if (authored?.attachments.length) {
+      setAttachments((current) => {
+        const seen = new Set(current.map((item) => item.id));
+        return [...current, ...authored.attachments.filter((item) => !seen.has(item.id))];
+      });
+    }
+  }, []);
   // The bytes are kept on the CLIENT, not in this screen: leaving the session
   // unmounts `SessionScreen`, and a live turn whose images lived only in screen
   // state came back text-only until the persisted row landed on top.
-  const rememberSent = (
-    turnId: string | undefined,
-    sent: GatewayAttachment[],
-  ) => {
+  const rememberSent = (turnId: string | undefined, sent: GatewayAttachment[]) => {
     client.rememberSentAttachments(sid, turnId, sent);
   };
   const runningRef = useRef(false);
@@ -1520,9 +1316,7 @@ export function SessionScreen({
   const [preLiveTurnIdsSeed] = useState(
     () =>
       new Set(
-        (client.cachedTranscript(sid) ?? [])
-          .filter((turn) => !isRunningRow(turn))
-          .map(rowId),
+        (client.cachedTranscript(sid) ?? []).filter((turn) => !isRunningRow(turn)).map(rowId),
       ),
   );
   const preLiveTurnIdsRef = useRef<Set<string>>(preLiveTurnIdsSeed);
@@ -1591,9 +1385,7 @@ export function SessionScreen({
     lastLiveSeqRef.current = seed?.seq ?? -1;
     liveSidRef.current = sid;
     preLiveTurnIdsRef.current = new Set(
-      (client.cachedTranscript(sid) ?? [])
-        .filter((turn) => !isRunningRow(turn))
-        .map(rowId),
+      (client.cachedTranscript(sid) ?? []).filter((turn) => !isRunningRow(turn)).map(rowId),
     );
     setSession(client.cachedSession(sid));
     setAttachments([...peekDraftMessage(draftMessageId).attachments]);
@@ -1608,7 +1400,7 @@ export function SessionScreen({
     setDraftMessageReady(false);
     setPrompt(peekDraftMessage(draftMessageId).text);
     setComposerNotice(null);
-    setVoicePhase("idle");
+    setVoicePhase('idle');
     setVoiceRequested(false);
     setLoading(!fresh);
     setVeiled(!fresh);
@@ -1629,9 +1421,7 @@ export function SessionScreen({
   // control for it (the model picker deliberately has none). The gateway keeps
   // it out of `/v1/settings` (`:settings? false`) because each channel owns its
   // own control, hence the by-id read.
-  const [reasoning, setReasoning] = useState<Toggle | null>(() =>
-    client.cachedSetting("reasoning_level"),
-  );
+  const [reasoning, setReasoning] = useState<Toggle | null>(() => client.cachedSetting('reasoning_level'));
   const [reasoningBusy, setReasoningBusy] = useState(false);
   // The level the user just asked for, shown until the gateway confirms it.
   const [pendingLevel, setPendingLevel] = useState<string | null>(null);
@@ -1639,7 +1429,7 @@ export function SessionScreen({
   useEffect(() => {
     const controller = new AbortController();
     void client
-      .setting("reasoning_level", controller.signal)
+      .setting('reasoning_level', controller.signal)
       .then((toggle) => setReasoning(toggle))
       .catch(() => {
         // Optional knob: a gateway without it simply paints no chip.
@@ -1666,7 +1456,7 @@ export function SessionScreen({
     setPendingLevel(nextReasoningLevel(reasoning));
     setReasoningBusy(true);
     try {
-      setReasoning(await client.setSetting(reasoning.id, "cycle"));
+      setReasoning(await client.setSetting(reasoning.id, 'cycle'));
     } catch (e) {
       setComposerNotice((e as Error).message);
     } finally {
@@ -1678,7 +1468,7 @@ export function SessionScreen({
   // What the chip SAYS: the optimistic pick while the write is in flight, the
   // gateway's own value the rest of the time. Never empty — that is the whole
   // point of the swap.
-  const reasoningLevel = pendingLevel ?? reasoning?.value ?? "default";
+  const reasoningLevel = pendingLevel ?? reasoning?.value ?? 'default';
 
   // The header chip shows whatever model this session actually runs on, so read
   // the gateway's answer rather than assuming the global default.
@@ -1727,7 +1517,7 @@ export function SessionScreen({
     });
   }, []);
 
-  const scrollToEnd = useCallback((behavior: ScrollBehavior = "auto") => {
+  const scrollToEnd = useCallback((behavior: ScrollBehavior = 'auto') => {
     const viewport = scrollRef.current;
     if (!viewport) return;
     viewport.scrollTo({ top: viewport.scrollHeight, behavior });
@@ -1750,7 +1540,7 @@ export function SessionScreen({
     settleTimersRef.current.forEach((id) => window.clearTimeout(id));
     settleTimersRef.current = [];
     settleUntilRef.current = Date.now() + 1200;
-    scrollToEnd("auto");
+    scrollToEnd('auto');
     for (const delay of [60, 160, 320, 600, 1000]) {
       settleTimersRef.current.push(
         window.setTimeout(() => {
@@ -1763,7 +1553,7 @@ export function SessionScreen({
           // reader back to the end a beat after they had scrolled away.
           if (readerOwnsScroll()) settleUntilRef.current = 0;
           if (Date.now() > settleUntilRef.current) return;
-          scrollToEnd("auto");
+          scrollToEnd('auto');
         }, delay),
       );
     }
@@ -1813,7 +1603,7 @@ export function SessionScreen({
     const viewport = scrollRef.current;
     if (!viewport) return;
     if (applyScrollAnchor(viewport, scrollAnchorRef.current)) return;
-    if (followingRef.current) scrollToEnd("auto");
+    if (followingRef.current) scrollToEnd('auto');
   }, [scrollToEnd]);
 
   // THE one owner of "the reader keeps their line". Rows land above the fold from
@@ -1827,13 +1617,11 @@ export function SessionScreen({
   useEffect(() => {
     const viewport = scrollRef.current;
     const transcript = transcriptRef.current;
-    if (!viewport || !transcript || typeof ResizeObserver === "undefined")
-      return;
+    if (!viewport || !transcript || typeof ResizeObserver === 'undefined') return;
     let frame: number | null = null;
     // `captureScrollAnchor` already ignores the echo of our own corrections.
     // Rotation is its own transaction and owns the anchor for its duration.
-    const busy = () =>
-      isViewportRotating() || rotationRestorePendingRef.current;
+    const busy = () => isViewportRotating() || rotationRestorePendingRef.current;
     const recapture = () => {
       frame = null;
       if (!busy()) captureScrollAnchor();
@@ -1854,18 +1642,15 @@ export function SessionScreen({
       // anchor survives the whole growth window and every pixel that lands
       // above it is billed exactly once: measured, a 33 417 px "↑ Load earlier"
       // moved the scroller 33 416 px and the reader's turn 1 px.
-      if (!applyScrollAnchor(viewport, scrollAnchorRef.current))
-        captureScrollAnchor();
+      if (!applyScrollAnchor(viewport, scrollAnchorRef.current)) captureScrollAnchor();
       correctedTopRef.current = viewport.scrollTop;
     });
     observer.observe(transcript);
-    viewport.addEventListener("scroll", handleViewportScroll, {
-      passive: true,
-    });
+    viewport.addEventListener('scroll', handleViewportScroll, { passive: true });
     recapture();
     return () => {
       observer.disconnect();
-      viewport.removeEventListener("scroll", handleViewportScroll);
+      viewport.removeEventListener('scroll', handleViewportScroll);
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
   }, [captureScrollAnchor]);
@@ -1878,12 +1663,12 @@ export function SessionScreen({
     let firstFrame: number | null = null;
     let finalFrame: number | null = null;
     const stop = onViewportRotation((phase) => {
-      if (phase === "start") {
+      if (phase === 'start') {
         rotationRestorePendingRef.current = true;
         captureScrollAnchor();
         return;
       }
-      if (phase !== "end") return;
+      if (phase !== 'end') return;
       if (firstFrame !== null) window.cancelAnimationFrame(firstFrame);
       if (finalFrame !== null) window.cancelAnimationFrame(finalFrame);
       firstFrame = window.requestAnimationFrame(() => {
@@ -1979,9 +1764,8 @@ export function SessionScreen({
       rows?: readonly TranscriptTurn[] | null,
     ) => {
       if (!row) return;
-      const gatewayLive =
-        row.live !== undefined ? row.live : row.status === "running";
-      const claimed = row.current_turn_id ?? "";
+      const gatewayLive = row.live !== undefined ? row.live : row.status === 'running';
+      const claimed = row.current_turn_id ?? '';
       // The registry answers FIRST — exact, free, no round trip. But when it says
       // nothing is running, that is not taken as "nothing is running": the
       // transcript is asked instead (see `inFlightRow`). A registry that dropped
@@ -1994,9 +1778,8 @@ export function SessionScreen({
       // matching it. Only a registry that has LOST the turn hands identity to the
       // row — there is no other id left, and the reconcile tick's coverage check
       // retires it when the row finally settles.
-      const tid =
-        gatewayLive && claimed !== "" ? claimed : running ? rowId(running) : "";
-      if (tid === "") return;
+      const tid = gatewayLive && claimed !== '' ? claimed : running ? rowId(running) : '';
+      if (tid === '') return;
       // Either witness is enough, and neither cost a round trip: a turn IS running.
       // Claiming it here rather than after `turnTrace` matters — until `running`
       // is set, `turnsSettled` treats the persisted `running` placeholder as a
@@ -2007,7 +1790,7 @@ export function SessionScreen({
       // than any persisted trace, so replacing it would visibly rewind it. Only
       // a missing (or already settled) bubble is adopted into.
       const held = liveTurnRef.current;
-      if (held && (held.status === "running" || held.id === tid)) return;
+      if (held && (held.status === 'running' || held.id === tid)) return;
       // WHICH id the trace is read under is not the same question as which id this
       // bubble carries. `/turns/:tid/trace` resolves the ENGINE's turn id — the
       // persisted row's — and answers 200 with ZERO iterations for the gateway
@@ -2029,11 +1812,7 @@ export function SessionScreen({
         iterations = inlineTrace;
       } else {
         try {
-          iterations = await client.turnTrace(
-            sid,
-            running ? rowId(running) : tid,
-            signal,
-          );
+          iterations = await client.turnTrace(sid, running ? rowId(running) : tid, signal);
         } catch {
           // Older gateway, or a flaky link. The next reconcile tick retries.
           return;
@@ -2041,34 +1820,27 @@ export function SessionScreen({
       }
       if (signal?.aborted) return;
       const now = liveTurnRef.current;
-      if (now && (now.status === "running" || now.id === tid)) return;
+      if (now && (now.status === 'running' || now.id === tid)) return;
       // `running_started_at` is the GATEWAY's clock; the bubble's elapsed timer
       // reads the device's. Rebase through `server_time_ms` (shipped in the same
       // response for exactly this) so a phone minutes off UTC does not show a
       // turn that started in the future or an hour ago.
       const startedAt =
         row.running_started_at != null && row.server_time_ms != null
-          ? Date.now() -
-            Math.max(0, row.server_time_ms - row.running_started_at)
+          ? Date.now() - Math.max(0, row.server_time_ms - row.running_started_at)
           : // Adopted off the transcript there is no `running_started_at` to rebase
             // — the row's own stamp is the only start there is, and without it a
             // turn that began two hours ago would restart its clock at 0s.
-            typeof running?.created_at === "number" &&
-              Number.isFinite(running.created_at)
-            ? running.created_at -
-              (row.server_time_ms != null ? row.server_time_ms - Date.now() : 0)
+            typeof running?.created_at === 'number' && Number.isFinite(running.created_at)
+            ? running.created_at - (row.server_time_ms != null ? row.server_time_ms - Date.now() : 0)
             : Date.now();
       const adopted: LiveTurn = {
         id: tid,
-        request:
-          row.running_request ??
-          running?.user_request ??
-          running?.request ??
-          "",
-        answer: "",
+        request: row.running_request ?? running?.user_request ?? running?.request ?? '',
+        answer: '',
         iterations,
         startedAt,
-        status: "running",
+        status: 'running',
       };
       liveTurnRef.current = adopted;
       setLiveTurn(adopted);
@@ -2127,7 +1899,7 @@ export function SessionScreen({
     const STALE_RECONCILE_MS = 20_000;
     let inflightSince: number | null = null;
     const reconcileOnce = async () => {
-      if (document.visibilityState === "hidden") return;
+      if (document.visibilityState === 'hidden') return;
       // Liveness is sampled HERE but only acted on after two more round-trips
       // (transcript + queue) below. On wake we resync the stream and reconcile at
       // exactly the moment the gateway drains a queued row, so `turn.started` can
@@ -2139,7 +1911,7 @@ export function SessionScreen({
       // answer never streamed: the queue emptied and the bubble stayed blank until
       // the whole turn persisted.
       const liveBefore = liveTurnRef.current;
-      const liveIdBefore = liveBefore?.id ?? "";
+      const liveIdBefore = liveBefore?.id ?? '';
       const runningBefore = runningRef.current;
       let next: Session;
       try {
@@ -2150,14 +1922,14 @@ export function SessionScreen({
       if (cancelled) return;
       setSession(next);
       const gatewayLive =
-        next.live !== undefined ? next.live : next.status === "running";
+        next.live !== undefined ? next.live : next.status === 'running';
       // Safety net: on wake we ALWAYS refetch the transcript and check whether
       // the streamed live turn has already been persisted while we were
       // backgrounded. iOS/Android suspend fetch-body streams silently, so the
       // terminal event that would have cleared the live bubble may have been
       // dropped. If the persisted turn now exists, drop the live bubble; if
       // the gateway is idle but we still show work, do the same.
-      const liveId = liveTurnRef.current?.id ?? "";
+      const liveId = liveTurnRef.current?.id ?? '';
       const liveStartedAt = liveTurnRef.current?.startedAt;
       let nextTurns: TranscriptTurn[] | null = null;
       try {
@@ -2196,14 +1968,10 @@ export function SessionScreen({
         // The persisted row counts too: while it is still `running` the turn is
         // demonstrably alive, whatever the registry currently believes.
         const stillRunningThis =
-          liveId !== "" &&
-          ((gatewayLive && (next.current_turn_id ?? "") === liveId) ||
+          liveId !== '' &&
+          ((gatewayLive && (next.current_turn_id ?? '') === liveId) ||
             (persistedRunning !== null && rowId(persistedRunning) === liveId));
-        if (
-          covered &&
-          !stillRunningThis &&
-          (liveTurnRef.current?.id ?? "") === liveId
-        ) {
+        if (covered && !stillRunningThis && (liveTurnRef.current?.id ?? '') === liveId) {
           setRunning(false);
           setLiveTurn(null);
           liveTurnRef.current = null;
@@ -2227,9 +1995,7 @@ export function SessionScreen({
       }
       const live = liveTurnRef.current;
       const showsWork =
-        (live !== null &&
-          liveBefore !== null &&
-          (live.id ?? "") === liveIdBefore) ||
+        (live !== null && liveBefore !== null && (live.id ?? '') === liveIdBefore) ||
         (runningRef.current && runningBefore);
       // `persistedRunning` vetoes this: "idle" from a registry that lost the turn
       // is not idleness, and freezing the ticker there is the same wrong answer in
@@ -2244,13 +2010,8 @@ export function SessionScreen({
         // (`:message-received`, channel_tui/state.clj). The next covered read
         // swaps in the persisted row.
         setLiveTurn((turn) => {
-          if (!turn || turn.status !== "running") return turn;
-          const settledTurn: LiveTurn = {
-            ...turn,
-            status: "completed",
-            activity: undefined,
-            cancelling: false,
-          };
+          if (!turn || turn.status !== 'running') return turn;
+          const settledTurn: LiveTurn = { ...turn, status: 'completed', activity: undefined, cancelling: false };
           liveTurnRef.current = settledTurn;
           return settledTurn;
         });
@@ -2269,18 +2030,14 @@ export function SessionScreen({
         // the incident is exactly one of those. Letting that mismatch veto the
         // repair would leave the only case this branch exists for unhandled, so
         // the submitted text stands as the second witness when the ids differ.
-        const rowRequest = (
-          persistedRunning.user_request ??
-          persistedRunning.request ??
-          ""
-        ).trim();
+        const rowRequest = (persistedRunning.user_request ?? persistedRunning.request ?? '').trim();
         const traced = persistedRunning.iterations;
         // Never shrink: deltas that did land are newer than any persisted row, and
         // a row read before them is no evidence that they never came.
         const grown: LiveTurn | null =
-          painted?.status === "running" &&
+          painted?.status === 'running' &&
           (painted.id === rowId(persistedRunning) ||
-            (rowRequest !== "" && painted.request.trim() === rowRequest)) &&
+            (rowRequest !== '' && painted.request.trim() === rowRequest)) &&
           traced != null &&
           traced.length > painted.iterations.length
             ? { ...painted, iterations: traced }
@@ -2304,11 +2061,7 @@ export function SessionScreen({
     // transcript), so on a slow gateway a fixed 5s tick would overlap and pile
     // requests up. One in flight at a time — a skipped tick self-heals 5s later.
     const reconcile = async () => {
-      if (
-        inflightSince !== null &&
-        Date.now() - inflightSince < STALE_RECONCILE_MS
-      )
-        return;
+      if (inflightSince !== null && Date.now() - inflightSince < STALE_RECONCILE_MS) return;
       inflightSince = Date.now();
       try {
         await reconcileOnce();
@@ -2361,16 +2114,13 @@ export function SessionScreen({
     const stopReady = subscriptions.subscribeSession(
       sid,
       (event) => {
-        if (event.type !== "subscription.ready") return;
+        if (event.type !== 'subscription.ready') return;
         const live = liveTurnRef.current;
-        const painted = live?.status === "running" ? live.id : "";
-        const running =
-          typeof event.current_turn_id === "string"
-            ? event.current_turn_id
-            : "";
+        const painted = live?.status === 'running' ? live.id : '';
+        const running = typeof event.current_turn_id === 'string' ? event.current_turn_id : '';
         // An older daemon omits the state entirely; then the frame degrades to
         // "reconcile on every reconnect", which is merely one extra read.
-        if (typeof event.is_live === "boolean" && running === painted) return;
+        if (typeof event.is_live === 'boolean' && running === painted) return;
         const now = Date.now();
         if (now - lastReadyReconcileAt < READY_RECONCILE_MIN_MS) return;
         lastReadyReconcileAt = now;
@@ -2397,18 +2147,15 @@ export function SessionScreen({
     adoptRunningTurn,
   ]);
 
-  const refreshSlashCommands = useCallback(
-    (signal?: AbortSignal) => {
-      return client
-        .slashes(signal)
-        .then((commands) => setSlashCommands(mergeSlashCommands(commands)))
-        .catch(() => {
-          if (signal?.aborted) return;
-          setSlashCommands(mergeSlashCommands([]));
-        });
-    },
-    [client],
-  );
+  const refreshSlashCommands = useCallback((signal?: AbortSignal) => {
+    return client
+      .slashes(signal)
+      .then((commands) => setSlashCommands(mergeSlashCommands(commands)))
+      .catch(() => {
+        if (signal?.aborted) return;
+        setSlashCommands(mergeSlashCommands([]));
+      });
+  }, [client]);
 
   // The palette is derived on the gateway and MOVES at runtime: `/reload`
   // rescans extensions, skills, agents, harness commands and prompt templates,
@@ -2425,7 +2172,7 @@ export function SessionScreen({
     };
   }, [refreshSlashCommands]);
 
-  const slashMode = prompt.trimStart().startsWith("/");
+  const slashMode = prompt.trimStart().startsWith('/');
 
   useEffect(() => {
     if (slashMode) void refreshSlashCommands();
@@ -2451,7 +2198,7 @@ export function SessionScreen({
           if (!active) return;
           // An ANSWER of `unavailable` is the gateway saying it has no voice
           // extension — that one is authoritative and does hide the mic.
-          setVoiceSupported(model.status !== "unavailable");
+          setVoiceSupported(model.status !== 'unavailable');
           setVoiceModel(model);
         } catch {
           if (!active) return;
@@ -2460,7 +2207,7 @@ export function SessionScreen({
           // gateway actually gave instead of inventing "voice is gone".
           const cached = client.cachedCapabilities()?.features.voice;
           setVoiceSupported(cached?.enabled ?? false);
-          setVoiceModel(cached?.model ?? { status: "unavailable" });
+          setVoiceModel(cached?.model ?? { status: 'unavailable' });
         }
       }
     })();
@@ -2471,12 +2218,12 @@ export function SessionScreen({
   }, [client, sid, connected]);
 
   useEffect(() => {
-    if (!voiceSupported || voiceModel?.status !== "downloading") return;
+    if (!voiceSupported || voiceModel?.status !== 'downloading') return;
     let inflight = false;
     const timer = window.setInterval(() => {
       // Same anti-stacking rule as the reconcile poll: one request in flight,
       // and nothing at all while the app is backgrounded.
-      if (inflight || document.visibilityState === "hidden") return;
+      if (inflight || document.visibilityState === 'hidden') return;
       inflight = true;
       void client
         .voiceModel(sid)
@@ -2516,54 +2263,48 @@ export function SessionScreen({
 
   // Turn captured audio into composer text. Kept apart from the mic button
   // because the button is no longer the only thing that ends a recording.
-  const transcribeVoice = useCallback(
-    async (wav: Blob) => {
-      // Durable BEFORE the request, never only after it fails: iOS tears the
-      // webview down mid-flight (reclaim, crash, reload) and audio that lives in
-      // this closure alone dies with it. Only a transcript empties the outbox.
-      pendingVoiceRef.current = wav;
-      void savePendingVoice(voiceMailboxId, wav);
-      try {
-        const transcript = await client.transcribeVoice(sid, wav, {
+  const transcribeVoice = useCallback(async (wav: Blob) => {
+    // Durable BEFORE the request, never only after it fails: iOS tears the
+    // webview down mid-flight (reclaim, crash, reload) and audio that lives in
+    // this closure alone dies with it. Only a transcript empties the outbox.
+    pendingVoiceRef.current = wav;
+    void savePendingVoice(voiceMailboxId, wav);
+    try {
+      const transcript = await client.transcribeVoice(sid, wav, {
           onProgress: setVoiceProgress,
         });
-        pendingVoiceRef.current = null;
-        void clearPendingVoice(voiceMailboxId);
-        const text = transcript.text.trim();
-        // A transcript that comes back empty is a REAL outcome (a muted or
-        // hijacked mic records perfect silence), so it has to say so: dropping it
-        // silently is what makes the button feel dead.
-        if (text) {
-          setPrompt(
-            (current) =>
-              `${current.trimEnd()}${current.trim() ? " " : ""}${text}`,
-          );
-          // Show the TAIL of the dictation, not its opening line.
-          revealComposerEnd();
-        } else {
-          setComposerNotice("No speech recognised — nothing was captured.");
-        }
-      } catch (cause) {
-        // Offline, asleep, or a gateway that never answered. The words are NOT
-        // lost: they sit in the outbox and drain on the next wake — and `online`
-        // is one of the signals that fires a wake (lib/wake.ts).
-        const message = (cause as Error).message;
-        const unreachable =
-          message.startsWith("network error") ||
-          message.includes("did not answer") ||
-          message.includes("stopped sending");
-        setComposerNotice(
-          unreachable
-            ? "Saved what you said — it transcribes as soon as the gateway is reachable."
-            : message,
-        );
-      } finally {
-        setVoicePhase("idle");
-        setVoiceProgress(null);
+      pendingVoiceRef.current = null;
+      void clearPendingVoice(voiceMailboxId);
+      const text = transcript.text.trim();
+      // A transcript that comes back empty is a REAL outcome (a muted or
+      // hijacked mic records perfect silence), so it has to say so: dropping it
+      // silently is what makes the button feel dead.
+      if (text) {
+        setPrompt((current) => `${current.trimEnd()}${current.trim() ? ' ' : ''}${text}`);
+        // Show the TAIL of the dictation, not its opening line.
+        revealComposerEnd();
+      } else {
+        setComposerNotice('No speech recognised — nothing was captured.');
       }
-    },
-    [client, sid, revealComposerEnd, voiceMailboxId],
-  );
+    } catch (cause) {
+      // Offline, asleep, or a gateway that never answered. The words are NOT
+      // lost: they sit in the outbox and drain on the next wake — and `online`
+      // is one of the signals that fires a wake (lib/wake.ts).
+      const message = (cause as Error).message;
+      const unreachable =
+        message.startsWith('network error')
+        || message.includes('did not answer')
+        || message.includes('stopped sending');
+      setComposerNotice(
+        unreachable
+          ? 'Saved what you said — it transcribes as soon as the gateway is reachable.'
+          : message,
+      );
+    } finally {
+      setVoicePhase('idle');
+      setVoiceProgress(null);
+    }
+  }, [client, sid, revealComposerEnd, voiceMailboxId]);
 
   // End dictation and transcribe what WAS captured. Every path that takes the
   // microphone away lands here, not just the mic button: iOS suspends the
@@ -2572,25 +2313,22 @@ export function SessionScreen({
   // stopped — the words spoken up to that point are simply lost. Finishing here
   // puts them in the composer draft, which is persisted, so they survive even a
   // webview the OS kills outright.
-  const finishVoice = useCallback(
-    async (options?: { notice?: string }) => {
-      const recording = recordingRef.current;
-      if (!recording) return;
-      recordingRef.current = null;
-      setVoicePhase("transcribing");
-      if (options?.notice) setComposerNotice(options.notice);
-      let wav: Blob;
-      try {
-        wav = await recording.stop();
-      } catch (cause) {
-        setComposerNotice((cause as Error).message);
-        setVoicePhase("idle");
-        return;
-      }
-      await transcribeVoice(wav);
-    },
-    [transcribeVoice],
-  );
+  const finishVoice = useCallback(async (options?: { notice?: string }) => {
+    const recording = recordingRef.current;
+    if (!recording) return;
+    recordingRef.current = null;
+    setVoicePhase('transcribing');
+    if (options?.notice) setComposerNotice(options.notice);
+    let wav: Blob;
+    try {
+      wav = await recording.stop();
+    } catch (cause) {
+      setComposerNotice((cause as Error).message);
+      setVoicePhase('idle');
+      return;
+    }
+    await transcribeVoice(wav);
+  }, [transcribeVoice]);
 
   const finishVoiceRef = useRef(finishVoice);
   useEffect(() => {
@@ -2613,25 +2351,21 @@ export function SessionScreen({
   // took the mic anyway (a call, another app, an older iOS), finish here, in the
   // foreground, where the transcription request can complete.
   useEffect(() => {
-    if (voicePhase !== "recording") return;
+    if (voicePhase !== 'recording') return;
     const finish = (notice: string) => {
       void finishVoiceRef.current({ notice });
     };
     const onPageHide = () => {
-      finish(
-        "Dictation ended when the app closed — transcribing what was said.",
-      );
+      finish('Dictation ended when the app closed — transcribing what was said.');
     };
-    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener('pagehide', onPageHide);
     let removed = false;
     let sub: { remove: () => void } | null = null;
     try {
-      void App.addListener("appStateChange", ({ isActive }) => {
+      void App.addListener('appStateChange', ({ isActive }) => {
         if (!isActive) return;
         if (recordingRef.current && !recordingRef.current.isCapturing()) {
-          finish(
-            "Dictation stopped while the app was away — transcribing what was said.",
-          );
+          finish('Dictation stopped while the app was away — transcribing what was said.');
         }
       })
         .then((handle) => {
@@ -2643,7 +2377,7 @@ export function SessionScreen({
       /* plugin unavailable */
     }
     return () => {
-      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener('pagehide', onPageHide);
       removed = true;
       sub?.remove();
     };
@@ -2657,14 +2391,13 @@ export function SessionScreen({
     voicePhaseRef.current = voicePhase;
   });
   const retryPendingVoice = useCallback(async () => {
-    if (voicePhaseRef.current !== "idle") return;
+    if (voicePhaseRef.current !== 'idle') return;
     // The ref is only a fast path: after a cold start it is empty and the
     // outbox is the sole record that anything was ever said.
-    const wav =
-      pendingVoiceRef.current ?? (await readPendingVoice(voiceMailboxId));
-    if (!wav || voicePhaseRef.current !== "idle") return;
-    setVoicePhase("transcribing");
-    await transcribeVoice(wav);
+    const wav = pendingVoiceRef.current ?? (await readPendingVoice(voiceMailboxId));
+    if (!wav || voicePhaseRef.current !== 'idle') return;
+    setVoicePhase('transcribing');
+      await transcribeVoice(wav);
   }, [transcribeVoice, voiceMailboxId]);
   useEffect(() => onWake(() => void retryPendingVoice()), [retryPendingVoice]);
   // Cold start / session switch: adopt whatever this session still owes.
@@ -2672,13 +2405,10 @@ export function SessionScreen({
     void retryPendingVoice();
   }, [retryPendingVoice]);
 
-  useEffect(
-    () => () => {
-      void recordingRef.current?.cancel();
-      recordingRef.current = null;
-    },
-    [],
-  );
+  useEffect(() => () => {
+    void recordingRef.current?.cancel();
+    recordingRef.current = null;
+  }, []);
 
   useEffect(() => {
     async function settle(event: SseEvent) {
@@ -2693,18 +2423,16 @@ export function SessionScreen({
       // to completion into a bubble nobody was painting: an empty "Vis" until the
       // whole thing persisted. This is the same rule the reconcile tick already
       // applies before it clears a bubble.
-      const finishedId =
-        stringField(event, "turn_id") || liveTurnRef.current?.id || "";
+      const finishedId = stringField(event, 'turn_id') || liveTurnRef.current?.id || '';
       // An id-less bubble is OUR optimistic one, i.e. this very turn. Anything
       // started since carries the gateway's own id, so it can never be mistaken
       // for the turn that just ended.
       const ownsTerminal = (turn: LiveTurn | null) =>
-        !!turn && ((turn.id ?? "") === "" || turn.id === finishedId);
+        !!turn && ((turn.id ?? '') === '' || turn.id === finishedId);
       const finishedStartedAt = ownsTerminal(liveTurnRef.current)
         ? liveTurnRef.current?.startedAt
         : undefined;
-      if (!liveTurnRef.current || ownsTerminal(liveTurnRef.current))
-        setRunning(false);
+      if (!liveTurnRef.current || ownsTerminal(liveTurnRef.current)) setRunning(false);
       // Settle the live bubble ITSELF, synchronously. The transcript refetch below
       // is a network round-trip and may fail outright, and until it lands the
       // bubble still reads `status: 'running'` — spinner up, "Vis is thinking",
@@ -2712,20 +2440,15 @@ export function SessionScreen({
       // The terminal frame IS the end of the turn; that claim needs no transcript.
       // Mirrors the TUI's independent terminal path.
       setLiveTurn((turn) => {
-        if (!turn || turn.status !== "running" || !ownsTerminal(turn))
-          return turn;
-        const failedBlocks =
-          type === "turn.failed" && Array.isArray(event.content)
-            ? (event.content as ContentBlock[])
-            : undefined;
+        if (!turn || turn.status !== 'running' || !ownsTerminal(turn)) return turn;
+        const failedBlocks = type === 'turn.failed' && Array.isArray(event.content)
+          ? (event.content as ContentBlock[])
+          : undefined;
         const next: LiveTurn = {
           ...turn,
-          status:
-            type === "turn.failed"
-              ? "failed"
-              : type === "turn.cancelled"
-                ? "cancelled"
-                : "completed",
+          status: type === 'turn.failed'
+            ? 'failed'
+            : type === 'turn.cancelled' ? 'cancelled' : 'completed',
           activity: undefined,
           cancelling: false,
           content: failedBlocks?.length ? failedBlocks : turn.content,
@@ -2763,9 +2486,7 @@ export function SessionScreen({
         const cached = client.cachedTranscript(sid);
         if (!cached?.length) return undefined;
         const held = client.transcriptWindow(sid);
-        return held.offset + cached.length >= held.total
-          ? SETTLE_TAIL_TURNS
-          : undefined;
+        return held.offset + cached.length >= held.total ? SETTLE_TAIL_TURNS : undefined;
       };
       try {
         next = await client.transcript(sid, undefined, settleLimit());
@@ -2832,20 +2553,19 @@ export function SessionScreen({
           ]);
         }
       }
-      if (type === "turn.failed") {
+      if (type === 'turn.failed') {
         // The settled turn carries the gateway's OWN error card (rate limit, auth,
         // transport) and the transcript refresh above already renders it. A second
         // banner reading "The turn failed." is duplicate noise on top of it.
         const blocks = event.content;
         if (!Array.isArray(blocks) || blocks.length === 0) {
           setError(
-            stringField(event, "message") ||
-              stringField(event, "error") ||
-              "The turn failed.",
+            stringField(event, 'message') || stringField(event, 'error') || 'The turn failed.',
           );
         }
       }
     }
+
 
     // Match the TUI's 150 ms live-body throttle. One reducer pass and one React
     // state update replace hundreds of token-level updates during fast streams.
@@ -2864,21 +2584,14 @@ export function SessionScreen({
       // commit both burns the frame budget and moves the live bottom underneath
       // the frozen scroll transaction. Keep body frames queued until the final
       // viewport is known; lifecycle frames still punch through immediately.
-      if (
-        isViewportRotating() &&
-        !eventQueue.some(forcesLiveFlushDuringRotation)
-      )
-        return;
+      if (isViewportRotating() && !eventQueue.some(forcesLiveFlushDuringRotation)) return;
       const drained = eventQueue.splice(0);
       // Advance the cached cursor HERE, not on arrival: unmounting drops the
       // pending queue, and a cursor that had already counted those frames would
       // make the next visit filter them out of a bubble that never got them —
       // a hole in the answer that only the terminal frame could fill.
       for (const event of drained) {
-        if (
-          typeof event.seq === "number" &&
-          event.seq > lastLiveSeqRef.current
-        ) {
+        if (typeof event.seq === 'number' && event.seq > lastLiveSeqRef.current) {
           lastLiveSeqRef.current = event.seq;
         }
       }
@@ -2888,56 +2601,40 @@ export function SessionScreen({
       // Queue-mirror + pause control frames (channel-agnostic, same events the
       // TUI consumes). Not live-turn events, so handle them outside the reducer.
       for (const event of batch) {
-        const tid = stringField(event, "turn_id");
+        const tid = stringField(event, 'turn_id');
         switch (event.type) {
-          case "turn.queued": {
-            const row = queuedTurnFromWire(
-              event as unknown as Record<string, unknown>,
-            );
+          case 'turn.queued': {
+            const row = queuedTurnFromWire(event as unknown as Record<string, unknown>);
             noteQueueDelta(tid, row);
             setQueued((current) =>
-              current.some((item) => item.turnId === tid)
-                ? current
-                : [...current, row],
-            );
+              current.some((item) => item.turnId === tid) ? current : [...current, row]);
             break;
           }
-          case "turn.queued.updated":
+          case 'turn.queued.updated':
             setQueued((current) =>
               current.map((item) =>
                 item.turnId === tid
-                  ? {
-                      ...item,
-                      ...queuedTurnFromWire(
-                        event as unknown as Record<string, unknown>,
-                      ),
-                    }
-                  : item,
-              ),
-            );
+                  ? { ...item, ...queuedTurnFromWire(event as unknown as Record<string, unknown>) }
+                  : item));
             break;
-          case "turn.queued.deleted":
+          case 'turn.queued.deleted':
             noteQueueDelta(tid, null);
-            setQueued((current) =>
-              current.filter((item) => item.turnId !== tid),
-            );
+            setQueued((current) => current.filter((item) => item.turnId !== tid));
             // Reason `cancelled` = the gateway dropped this row WITH a user stop
             // (`drop-cancelled-backlog!`), so the text has nowhere else to live.
             // A plain delete (the user removed the row) carries no reason and
             // restores nothing.
-            if (stringField(event, "reason") === "cancelled") {
-              restoreCancelledQueued(tid, stringField(event, "request"));
+            if (stringField(event, 'reason') === 'cancelled') {
+              restoreCancelledQueued(tid, stringField(event, 'request'));
             }
             break;
-          case "turn.queued.drained":
+          case 'turn.queued.drained':
             noteQueueDelta(tid, null);
-            setQueued((current) =>
-              current.filter((item) => item.turnId !== tid),
-            );
+            setQueued((current) => current.filter((item) => item.turnId !== tid));
             break;
-          case "queue.paused":
+          case 'queue.paused':
             setQueuePaused({
-              reason: stringField(event, "reason") || "provider_unhealthy",
+              reason: stringField(event, 'reason') || 'provider_unhealthy',
               held: Number(event.held ?? 0),
               fails: Number(event.fails ?? 0),
               isTransient: event.is_transient !== false,
@@ -2945,7 +2642,7 @@ export function SessionScreen({
               retryAt: event.retry_at != null ? Number(event.retry_at) : null,
             });
             break;
-          case "queue.resumed":
+          case 'queue.resumed':
             setQueuePaused(null);
             break;
           // Someone ELSE repointed this session — the TUI picker, another
@@ -2954,11 +2651,11 @@ export function SessionScreen({
           // trusting this screen's last local pick until a reopen (the TUI
           // projects the same event onto its footer chip). Blank provider AND
           // model means the override was cleared.
-          case "session.model_updated":
+          case 'session.model_updated':
             setModelPref(
               client.noteSessionModel(sid, {
-                provider: stringField(event, "provider"),
-                model: stringField(event, "model"),
+                provider: stringField(event, 'provider'),
+                model: stringField(event, 'model'),
               }),
             );
             break;
@@ -2988,12 +2685,12 @@ export function SessionScreen({
       let lifecycle: SseEvent | undefined;
       for (let index = batch.length - 1; index >= 0; index -= 1) {
         const type = batch[index].type;
-        if (TERMINAL_EVENTS.has(type) || type === "turn.started") {
+        if (TERMINAL_EVENTS.has(type) || type === 'turn.started') {
           lifecycle = batch[index];
           break;
         }
       }
-      if (lifecycle?.type === "turn.started") setRunning(true);
+      if (lifecycle?.type === 'turn.started') setRunning(true);
     };
 
     flushLiveEventsBeforeRotationRestoreRef.current = flushEvents;
@@ -3011,7 +2708,7 @@ export function SessionScreen({
     let probing = false;
     const livenessTimer = window.setInterval(() => {
       const live = liveTurnRef.current;
-      if (probing || !live || live.status !== "running" || !live.id) return;
+      if (probing || !live || live.status !== 'running' || !live.id) return;
       const quietSince = Math.max(lastEventAt, live.startedAt ?? 0);
       const silentFor = Date.now() - quietSince;
       if (silentFor < TURN_LIVENESS_IDLE_MS) {
@@ -3025,13 +2722,8 @@ export function SessionScreen({
         .turnStatus(sid, live.id)
         .then((turn) => {
           const current = liveTurnRef.current;
-          if (
-            !current ||
-            current.status !== "running" ||
-            current.id !== live.id
-          )
-            return;
-          if (turn && !TURN_TERMINAL_STATUSES.has(String(turn.status ?? ""))) {
+          if (!current || current.status !== 'running' || current.id !== live.id) return;
+          if (turn && !TURN_TERMINAL_STATUSES.has(String(turn.status ?? ''))) {
             // The gateway CONFIRMS the turn is still working, so the transport is
             // not the suspect: a long tool call is simply quiet. Leave the stream
             // alone until the silence outlasts the stall bound — and even then,
@@ -3063,20 +2755,15 @@ export function SessionScreen({
           }
           stallStrikes = 0;
           unknownStrikes = 0;
-          const type =
-            turn.status === "failed"
-              ? "turn.failed"
-              : turn.status === "cancelled"
-                ? "turn.cancelled"
-                : "turn.completed";
+          const type = turn.status === 'failed'
+            ? 'turn.failed'
+            : turn.status === 'cancelled' ? 'turn.cancelled' : 'turn.completed';
           // A lost terminal SSE frame must settle with the registry's canonical
           // error card, not the partial streamed body that preceded the failure.
           return settle({
             type,
             turn_id: live.id,
-            ...(type === "turn.failed" && turn.content?.length
-              ? { content: turn.content }
-              : {}),
+            ...(type === 'turn.failed' && turn.content?.length ? { content: turn.content } : {}),
           } as unknown as SseEvent);
         })
         .catch(() => undefined)
@@ -3085,41 +2772,42 @@ export function SessionScreen({
         });
     }, TURN_LIVENESS_PROBE_INTERVAL_MS);
 
-    const unsubscribeConnection =
-      subscriptions.subscribeConnection(setConnected);
-    const unsubscribeEvents = subscriptions.subscribeSession(sid, (event) => {
-      // The subscribe handshake is a control frame, not transcript. It must not
-      // reach the reducer, and above all must not pass for traffic: the liveness
-      // watchdog below measures SILENCE, and a reconnect is exactly when a frozen
-      // stream has to stay visibly silent. The `subscription.ready` listener above
-      // is the one that acts on it.
-      if (event.type === "subscription.ready") return;
-      lastEventAt = Date.now();
-      // The hub replays a still-streaming turn from its `turn.started` on every
-      // (re)subscribe. When the bubble was seeded from the in-memory cache those
-      // frames are already folded in, and re-applying them would blank the
-      // bubble (`turn.started` resets it) and re-append the same prose. `seq` is
-      // the gateway's per-session journal cursor and is monotonic across stored
-      // AND live-only frames, so anything at or below what we hold is a repeat.
-      if (lastLiveSeqRef.current > enqueuedSeq)
-        enqueuedSeq = lastLiveSeqRef.current;
-      if (typeof event.seq === "number") {
-        if (event.seq <= enqueuedSeq) return;
-        enqueuedSeq = event.seq;
-      }
-      eventQueue.push(event);
-      const forceFlush = forcesLiveFlushDuringRotation(event);
-      if (forceFlush && timerId !== null) {
-        window.clearTimeout(timerId);
-        timerId = null;
-      }
-      if (timerId !== null || (isViewportRotating() && !forceFlush)) return;
-      // `turn.started` also flushes immediately: on re-entry it is the frame
-      // that replaces a cached bubble whose turn has since been superseded, and
-      // holding it for a throttle window paints the previous answer twice.
-      const delay = forceFlush ? 0 : LIVE_BODY_THROTTLE_MS;
-      timerId = window.setTimeout(flushEvents, delay);
-    });
+    const unsubscribeConnection = subscriptions.subscribeConnection(setConnected);
+    const unsubscribeEvents = subscriptions.subscribeSession(
+      sid,
+      (event) => {
+        // The subscribe handshake is a control frame, not transcript. It must not
+        // reach the reducer, and above all must not pass for traffic: the liveness
+        // watchdog below measures SILENCE, and a reconnect is exactly when a frozen
+        // stream has to stay visibly silent. The `subscription.ready` listener above
+        // is the one that acts on it.
+        if (event.type === 'subscription.ready') return;
+        lastEventAt = Date.now();
+        // The hub replays a still-streaming turn from its `turn.started` on every
+        // (re)subscribe. When the bubble was seeded from the in-memory cache those
+        // frames are already folded in, and re-applying them would blank the
+        // bubble (`turn.started` resets it) and re-append the same prose. `seq` is
+        // the gateway's per-session journal cursor and is monotonic across stored
+        // AND live-only frames, so anything at or below what we hold is a repeat.
+        if (lastLiveSeqRef.current > enqueuedSeq) enqueuedSeq = lastLiveSeqRef.current;
+        if (typeof event.seq === 'number') {
+          if (event.seq <= enqueuedSeq) return;
+          enqueuedSeq = event.seq;
+        }
+        eventQueue.push(event);
+        const forceFlush = forcesLiveFlushDuringRotation(event);
+        if (forceFlush && timerId !== null) {
+          window.clearTimeout(timerId);
+          timerId = null;
+        }
+        if (timerId !== null || (isViewportRotating() && !forceFlush)) return;
+        // `turn.started` also flushes immediately: on re-entry it is the frame
+        // that replaces a cached bubble whose turn has since been superseded, and
+        // holding it for a throttle window paints the previous answer twice.
+        const delay = forceFlush ? 0 : LIVE_BODY_THROTTLE_MS;
+        timerId = window.setTimeout(flushEvents, delay);
+      },
+    );
 
     return () => {
       if (flushLiveEventsBeforeRotationRestoreRef.current === flushEvents) {
@@ -3132,14 +2820,7 @@ export function SessionScreen({
       unsubscribeConnection();
       setConnected(false);
     };
-  }, [
-    client,
-    loadTranscript,
-    sid,
-    subscriptions,
-    noteQueueDelta,
-    restoreCancelledQueued,
-  ]);
+  }, [client, loadTranscript, sid, subscriptions, noteQueueDelta, restoreCancelledQueued]);
 
   useLayoutEffect(() => {
     if (initialScrollPendingRef.current && turns.length) {
@@ -3155,15 +2836,8 @@ export function SessionScreen({
     // frame — so catching up here would undo the drag AND re-assert following on
     // the way out, teaching the next chunk to do it again. Stand down and let
     // `handleScroll` say where the gesture actually left them.
-    if (followingRef.current && !readerOwnsScroll()) scrollToEnd("auto");
-  }, [
-    turns,
-    visibleTurnCount,
-    hydratedTurnCount,
-    liveTurn?.id,
-    scrollToEnd,
-    pinToEnd,
-  ]);
+    if (followingRef.current && !readerOwnsScroll()) scrollToEnd('auto');
+  }, [turns, visibleTurnCount, hydratedTurnCount, liveTurn?.id, scrollToEnd, pinToEnd]);
 
   // Fill the render window back up to `visibleTurnCount`, a chunk per frame,
   // once the first paint is out. Rows land ABOVE the viewport, so a reader at
@@ -3199,10 +2873,7 @@ export function SessionScreen({
   // The veil can never outlive the watchdog (see LOADING_VEIL_MAX_MS).
   useEffect(() => {
     if (!loading) return;
-    const timer = window.setTimeout(
-      () => setLoading(false),
-      LOADING_VEIL_MAX_MS,
-    );
+    const timer = window.setTimeout(() => setLoading(false), LOADING_VEIL_MAX_MS);
     return () => window.clearTimeout(timer);
   }, [loading]);
 
@@ -3220,7 +2891,7 @@ export function SessionScreen({
   useEffect(() => {
     const transcript = transcriptRef.current;
     const viewport = scrollRef.current;
-    if (!transcript || typeof ResizeObserver === "undefined") return;
+    if (!transcript || typeof ResizeObserver === 'undefined') return;
     viewportHeightRef.current = viewport?.clientHeight ?? null;
     shellHeightRef.current = shellViewportHeight();
 
@@ -3250,8 +2921,7 @@ export function SessionScreen({
         viewportHeightRef.current = height;
         const shell = shellViewportHeight();
         const shellMoved =
-          shellHeightRef.current === null ||
-          Math.abs(shell - shellHeightRef.current) > 1;
+          shellHeightRef.current === null || Math.abs(shell - shellHeightRef.current) > 1;
         shellHeightRef.current = shell;
         if (previous !== null && previous !== height) {
           // ...unless the reader is parked at the END. Those pixels come off the
@@ -3262,10 +2932,7 @@ export function SessionScreen({
           if (!shellMoved) composerOnly = !followingRef.current;
           else if (!followingRef.current) {
             const limit = Math.max(0, box.scrollHeight - height);
-            box.scrollTop = Math.max(
-              0,
-              Math.min(limit, box.scrollTop + (previous - height)),
-            );
+            box.scrollTop = Math.max(0, Math.min(limit, box.scrollTop + (previous - height)));
           }
         }
       }
@@ -3275,7 +2942,7 @@ export function SessionScreen({
         resizeScrollFrameRef.current = null;
         // Re-checked here, not just above: the finger can land in the frame this
         // catch-up was waiting for.
-        if (followingRef.current && !readerOwnsScroll()) scrollToEnd("auto");
+        if (followingRef.current && !readerOwnsScroll()) scrollToEnd('auto');
       });
     });
     observer.observe(transcript);
@@ -3318,7 +2985,7 @@ export function SessionScreen({
     // the hitch you feel on send. An empty box has exactly one height, the
     // class's own, so drop the inline override and measure nothing.
     if (!prompt) {
-      if (textarea.style.height) textarea.style.height = "";
+      if (textarea.style.height) textarea.style.height = '';
       return;
     }
     const needed = Math.min(textarea.scrollHeight, 112);
@@ -3341,13 +3008,9 @@ export function SessionScreen({
       const box = scrollRef.current;
       const parkedTop = box ? box.scrollTop : 0;
       const parkedHeight = box ? box.clientHeight : 0;
-      textarea.style.height = "auto";
+      textarea.style.height = 'auto';
       textarea.style.height = `${Math.min(textarea.scrollHeight, 112)}px`;
-      if (
-        box &&
-        box.clientHeight === parkedHeight &&
-        box.scrollTop !== parkedTop
-      ) {
+      if (box && box.clientHeight === parkedHeight && box.scrollTop !== parkedTop) {
         box.scrollTop = parkedTop;
       }
     }
@@ -3367,17 +3030,10 @@ export function SessionScreen({
       if (message.text || message.attachments.length > 0) {
         setPrompt((current) => current || message.text);
         setPastes((current) =>
-          current.size
-            ? current
-            : new Map(message.pastes.map((paste) => [paste.id, paste])),
+          current.size ? current : new Map(message.pastes.map((paste) => [paste.id, paste])),
         );
-        setAttachments((current) =>
-          current.length ? current : [...message.attachments],
-        );
-        pasteCounterRef.current = Math.max(
-          pasteCounterRef.current,
-          message.counter,
-        );
+        setAttachments((current) => (current.length ? current : [...message.attachments]));
+        pasteCounterRef.current = Math.max(pasteCounterRef.current, message.counter);
       }
       draftMessageReadyRef.current = true;
       setDraftMessageReady(true);
@@ -3458,18 +3114,10 @@ export function SessionScreen({
         maxVideoBytes: limits?.max_video_bytes,
         mediaTypes: limits?.media_types,
       });
-      setAttachments((current) =>
-        [...current, ...result.attachments].slice(0, maximum),
-      );
-      setComposerNotice(
-        result.rejected.length ? result.rejected.join(" · ") : null,
-      );
+      setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
+      setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
     } catch (cause) {
-      setComposerNotice(
-        filePickerCancelled(cause)
-          ? "No files selected."
-          : (cause as Error).message,
-      );
+      setComposerNotice(filePickerCancelled(cause) ? 'No files selected.' : (cause as Error).message);
     } finally {
       restoreKeyboard();
     }
@@ -3493,19 +3141,11 @@ export function SessionScreen({
         maxFileBytes: limits?.max_file_bytes ?? 25 * 1024 * 1024,
         mediaTypes: limits?.media_types,
       });
-      setAttachments((current) =>
-        [...current, ...result.attachments].slice(0, maximum),
-      );
-      setComposerNotice(
-        result.rejected.length ? result.rejected.join(" · ") : null,
-      );
+      setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
+      setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
     } catch (cause) {
       // A cancelled shutter is a decision, not a failure.
-      setComposerNotice(
-        filePickerCancelled(cause)
-          ? "No photo taken."
-          : (cause as Error).message,
-      );
+      setComposerNotice(filePickerCancelled(cause) ? 'No photo taken.' : (cause as Error).message);
     } finally {
       restoreKeyboard();
     }
@@ -3513,7 +3153,7 @@ export function SessionScreen({
 
   async function onFilesPicked(fileList: FileList | null) {
     const input = fileInputRef.current;
-    if (input) input.value = "";
+    if (input) input.value = '';
     const files = fileList ? Array.from(fileList) : [];
     if (!files.length) return;
 
@@ -3531,29 +3171,21 @@ export function SessionScreen({
         maxVideoBytes: limits?.max_video_bytes,
         mediaTypes: limits?.media_types,
       });
-      setAttachments((current) =>
-        [...current, ...result.attachments].slice(0, maximum),
-      );
-      setComposerNotice(
-        result.rejected.length ? result.rejected.join(" · ") : null,
-      );
+      setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
+      setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
     } catch (cause) {
       setComposerNotice((cause as Error).message);
     }
   }
   function removeAttachment(id: string) {
-    setAttachments((current) =>
-      current.filter((attachment) => attachment.id !== id),
-    );
+    setAttachments((current) => current.filter((attachment) => attachment.id !== id));
     setComposerNotice(null);
   }
 
   function removePaste(id: number) {
     const paste = pastes.get(id);
     if (!paste) return;
-    setPrompt((current) =>
-      current.replace(paste.token, "").replace(/ {2,}/g, " "),
-    );
+    setPrompt((current) => current.replace(paste.token, '').replace(/ {2,}/g, ' '));
     setPastes((current) => {
       const next = new Map(current);
       next.delete(id);
@@ -3629,12 +3261,8 @@ export function SessionScreen({
         maxVideoBytes: limits?.max_video_bytes,
         mediaTypes: limits?.media_types,
       });
-      setAttachments((current) =>
-        [...current, ...result.attachments].slice(0, maximum),
-      );
-      setComposerNotice(
-        result.rejected.length ? result.rejected.join(" · ") : null,
-      );
+      setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
+      setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
     } catch (cause) {
       setComposerNotice((cause as Error).message);
     }
@@ -3654,9 +3282,7 @@ export function SessionScreen({
         maxVideoBytes: limits?.max_video_bytes,
         mediaTypes: limits?.media_types,
       });
-      setAttachments((current) =>
-        current.map((entry) => (entry.id === id ? next : entry)),
-      );
+      setAttachments((current) => current.map((entry) => (entry.id === id ? next : entry)));
       setComposerNotice(null);
     } catch (cause) {
       setComposerNotice(`${target.filename}: ${(cause as Error).message}`);
@@ -3668,7 +3294,7 @@ export function SessionScreen({
     // the iOS/Android WKWebView, which surface pasted media as clipboard files.
     // The gateway's own list is the authority; this only keeps text out.
     const mediaFiles = Array.from(event.clipboardData.files).filter(
-      (file) => file.type.startsWith("image/") || isVideoMediaType(file.type),
+      (file) => file.type.startsWith('image/') || isVideoMediaType(file.type),
     );
     if (mediaFiles.length) {
       event.preventDefault();
@@ -3676,9 +3302,7 @@ export function SessionScreen({
       return;
     }
 
-    const content = event.clipboardData
-      .getData("text/plain")
-      .replace(/\r\n?/g, "\n");
+    const content = event.clipboardData.getData('text/plain').replace(/\r\n?/g, '\n');
     if (!content || !shouldCollapsePaste(content)) return;
     event.preventDefault();
 
@@ -3705,10 +3329,8 @@ export function SessionScreen({
       return;
     }
 
-    if (voiceModel?.status === "downloading") {
-      setComposerNotice(
-        "Voice model is still downloading — dictation starts when it lands.",
-      );
+    if (voiceModel?.status === 'downloading') {
+      setComposerNotice('Voice model is still downloading — dictation starts when it lands.');
       return;
     }
 
@@ -3725,15 +3347,14 @@ export function SessionScreen({
         // The mic can die without ending the turn: suspension, a call, another
         // app. Close the sentence on the spot instead of leaving a recorder
         // nobody will ever stop.
-        onInterrupted: (reason) =>
-          void finishVoiceRef.current({ notice: reason }),
+        onInterrupted: (reason) => void finishVoiceRef.current({ notice: reason }),
       });
       // A gateway we cannot REACH is not a reason to refuse dictation: capture,
       // resampling and WAV encoding are entirely local, and the result queues in
       // the voice outbox until the link is back. Only a gateway that ANSWERS
       // "not ready" can stop a recording.
       let model = voiceModel;
-      if (model?.status !== "ready") {
+      if (model?.status !== 'ready') {
         let reachable = true;
         try {
           model = await client.voiceModel(sid, true);
@@ -3742,63 +3363,58 @@ export function SessionScreen({
           reachable = false;
         }
         if (!reachable) {
-          setComposerNotice(
-            "Gateway unreachable — recording anyway; it transcribes once it answers.",
-          );
-        } else if (model && model.status !== "ready") {
+          setComposerNotice('Gateway unreachable — recording anyway; it transcribes once it answers.');
+        } else if (model && model.status !== 'ready') {
           await recording.cancel();
           setComposerNotice(
-            model.status === "downloading"
-              ? "Downloading the voice model — dictation starts when it lands."
-              : model.status === "failed"
-                ? `Voice model failed${model.error ? ` · ${model.error}` : ""}`
-                : "Voice model is not ready yet.",
+            model.status === 'downloading'
+              ? 'Downloading the voice model — dictation starts when it lands.'
+              : model.status === 'failed'
+                ? `Voice model failed${model.error ? ` · ${model.error}` : ''}`
+                : 'Voice model is not ready yet.',
           );
           return;
         }
       }
       recordingRef.current = recording;
-      setVoicePhase("recording");
+      setVoicePhase('recording');
     } catch (cause) {
       await recording?.cancel().catch(() => {});
-      setVoicePhase("idle");
+      setVoicePhase('idle');
       setComposerNotice((cause as Error).message);
     }
   }
 
   async function send() {
     const authoredRequest = prompt.trim();
-    const request =
-      expandFileMentions(expandPastePlaceholders(authoredRequest, pastes)) ||
-      (attachments.length ? "Please inspect the attached image(s)." : "");
-    const displayRequest =
-      collapsePastePlaceholders(authoredRequest, pastes) || request;
-    if (!request || voicePhase !== "idle") return;
+    const request = expandFileMentions(expandPastePlaceholders(authoredRequest, pastes))
+      || (attachments.length ? 'Please inspect the attached image(s).' : '');
+    const displayRequest = collapsePastePlaceholders(authoredRequest, pastes) || request;
+    if (!request || voicePhase !== 'idle') return;
 
-    const [command = "", ...argParts] = authoredRequest.split(/\s+/);
-    const args = argParts.join(" ");
+    const [command = '', ...argParts] = authoredRequest.split(/\s+/);
+    const args = argParts.join(' ');
 
-    if (command === "/help") {
-      setPrompt("/");
+    if (command === '/help') {
+      setPrompt('/');
       setSlashDismissed(false);
       setSlashIndex(0);
       return;
     }
 
-    if (command === "/sessions") {
-      setPrompt("");
+    if (command === '/sessions') {
+      setPrompt('');
       onBack();
       return;
     }
 
-    if (command === "/new-session" || command === "/clear") {
-      setPrompt("");
+    if (command === '/new-session' || command === '/clear') {
+      setPrompt('');
       setError(null);
       setRunning(true);
       try {
-        const created = await client.createSession({ channel: "web" });
-        if (command === "/new-session" && args)
-          await client.submitTurn(created.id, args);
+        const created = await client.createSession({ channel: 'web' });
+        if (command === '/new-session' && args) await client.submitTurn(created.id, args);
         onOpenSession(created.id, true);
       } catch (cause) {
         setPrompt(request);
@@ -3822,7 +3438,7 @@ export function SessionScreen({
     if (running || liveTurn || queued.length) {
       const pendingAttachments = attachments;
       const pendingPastes = pastes;
-      setPrompt("");
+      setPrompt('');
       setAttachments([]);
       setPastes(new Map());
       setComposerNotice(null);
@@ -3830,11 +3446,7 @@ export function SessionScreen({
       setError(null);
       try {
         const sent: GatewayAttachment[] = pendingAttachments.map(
-          ({ filename, media_type, base64 }) => ({
-            filename,
-            media_type,
-            base64,
-          }),
+          ({ filename, media_type, base64 }) => ({ filename, media_type, base64 }),
         );
         const submitted = await client.submitTurn(sid, request, {
           displayRequest,
@@ -3859,10 +3471,10 @@ export function SessionScreen({
           setLiveTurn({
             id: queuedId,
             request: displayRequest,
-            answer: "",
+            answer: '',
             iterations: [],
             startedAt: Date.now(),
-            status: "running",
+            status: 'running',
             attachments: sent.length ? sent : undefined,
           });
           // This bubble goes into the TRANSCRIPT, so ride it down on the settle
@@ -3875,9 +3487,7 @@ export function SessionScreen({
       } catch (cause) {
         setPrompt(authoredRequest);
         setPastes(pendingPastes);
-        setAttachments((current) =>
-          current.length ? current : pendingAttachments,
-        );
+        setAttachments((current) => current.length ? current : pendingAttachments);
         setError((cause as Error).message);
         requestAnimationFrame(() => composerRef.current?.focus());
       }
@@ -3890,7 +3500,7 @@ export function SessionScreen({
     // "queued", this submission never owned the rail and whatever was streaming
     // must come back rather than stay overwritten.
     const previousLive = liveTurn;
-    setPrompt("");
+    setPrompt('');
     setAttachments([]);
     setPastes(new Map());
     setComposerNotice(null);
@@ -3906,10 +3516,10 @@ export function SessionScreen({
     );
     setLiveTurn({
       request: displayRequest,
-      answer: "",
+      answer: '',
       iterations: [],
       startedAt: Date.now(),
-      status: "running",
+      status: 'running',
       attachments: sent.length ? sent : undefined,
     });
     // The optimistic bubble has just been added to the transcript: same settle
@@ -3943,16 +3553,14 @@ export function SessionScreen({
           return next;
         });
       } else {
-        setLiveTurn((turn) => (turn ? { ...turn, id: submittedId } : turn));
+        setLiveTurn((turn) => turn ? { ...turn, id: submittedId } : turn);
       }
     } catch (cause) {
       setRunning(false);
       setLiveTurn(null);
       setPrompt(authoredRequest);
       setPastes(pendingPastes);
-      setAttachments((current) =>
-        current.length ? current : pendingAttachments,
-      );
+      setAttachments((current) => current.length ? current : pendingAttachments);
       setError((cause as Error).message);
       requestAnimationFrame(() => composerRef.current?.focus());
     }
@@ -3974,16 +3582,13 @@ export function SessionScreen({
     // its own — stealing it into the composer would send it twice.
     const backlog = queued;
     setLiveTurn((turn) => {
-      const next = turn
-        ? { ...turn, cancelling: true, activity: undefined }
-        : turn;
+      const next = turn ? { ...turn, cancelling: true, activity: undefined } : turn;
       liveTurnRef.current = next;
       return next;
     });
     try {
       await client.cancelCurrentTurn(sid);
-      for (const row of backlog)
-        restoreCancelledQueued(row.turnId, row.request);
+      for (const row of backlog) restoreCancelledQueued(row.turnId, row.request);
       requestAnimationFrame(() => composerRef.current?.focus());
     } catch (cause) {
       // The stop never landed, so the affordance has to come back.
@@ -4001,7 +3606,7 @@ export function SessionScreen({
     const viewport = scrollRef.current;
     if (!(target instanceof Element) || !viewport) return;
 
-    const disclosure = target.closest("summary, [data-disclosure-toggle]");
+    const disclosure = target.closest('summary, [data-disclosure-toggle]');
     if (!disclosure || !viewport.contains(disclosure)) return;
 
     const anchorTop = disclosure.getBoundingClientRect().top;
@@ -4025,9 +3630,7 @@ export function SessionScreen({
         const activeViewport = scrollRef.current;
         if (!activeViewport) return;
         const distance =
-          activeViewport.scrollHeight -
-          activeViewport.scrollTop -
-          activeViewport.clientHeight;
+          activeViewport.scrollHeight - activeViewport.scrollTop - activeViewport.clientHeight;
         const following = distance < 64;
         followingRef.current = following;
         if (showJumpRef.current !== !following) {
@@ -4074,8 +3677,7 @@ export function SessionScreen({
         }
         return;
       }
-      const distance =
-        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+      const distance = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
       const following = distance < 64;
       followingRef.current = following;
       if (showJumpRef.current !== !following) {
@@ -4092,32 +3694,29 @@ export function SessionScreen({
   useEffect(() => {
     if (!running) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== 'Escape') return;
       event.preventDefault();
       cancelRef.current();
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, [running]);
 
   const slashText = prompt.trimStart();
   const slashOpen =
     !slashDismissed &&
-    slashText.startsWith("/") &&
-    !slashText.startsWith("//") &&
-    !slashText.includes("\n");
+    slashText.startsWith('/') &&
+    !slashText.startsWith('//') &&
+    !slashText.includes('\n');
   const slashQuery = slashText.toLowerCase();
   const slashMatches = slashOpen
-    ? slashCommands.filter((command) =>
-        command.name.toLowerCase().startsWith(slashQuery),
-      )
+    ? slashCommands.filter((command) => command.name.toLowerCase().startsWith(slashQuery))
     : [];
-  const selectedSlash =
-    slashMatches[Math.min(slashIndex, Math.max(0, slashMatches.length - 1))];
+  const selectedSlash = slashMatches[Math.min(slashIndex, Math.max(0, slashMatches.length - 1))];
 
   function completeSlash(command: SlashCommand) {
-    const noArgs = new Set(["/help", "/sessions", "/clear"]);
-    setPrompt(command.name + (noArgs.has(command.name) ? "" : " "));
+    const noArgs = new Set(['/help', '/sessions', '/clear']);
+    setPrompt(command.name + (noArgs.has(command.name) ? '' : ' '));
     setSlashIndex(0);
     setSlashDismissed(noArgs.has(command.name));
     requestAnimationFrame(() => composerRef.current?.focus());
@@ -4127,14 +3726,11 @@ export function SessionScreen({
   // served by GET /v1/sessions/:sid/suggest. The trigger smarts live here (never
   // the gateway), so a literal `@@` is never endangered.
   const caretPos = Math.min(caret, prompt.length);
-  const fileMention = !slashOpen
-    ? fileMentionAt(prompt.slice(0, caretPos))
-    : null;
+  const fileMention = !slashOpen ? fileMentionAt(prompt.slice(0, caretPos)) : null;
   const fileOpen = fileMention !== null && !fileDismissed;
-  const fileQuery = fileMention?.query ?? "";
+  const fileQuery = fileMention?.query ?? '';
   const fileMatches = fileOpen ? fileSuggestions : [];
-  const selectedFile =
-    fileMatches[Math.min(fileIndex, Math.max(0, fileMatches.length - 1))];
+  const selectedFile = fileMatches[Math.min(fileIndex, Math.max(0, fileMatches.length - 1))];
 
   useEffect(() => {
     // `fileMatches` above already renders nothing while the menu is closed, so
@@ -4169,10 +3765,8 @@ export function SessionScreen({
     });
   }
 
-  const activePastes = Array.from(pastes.values()).filter((paste) =>
-    prompt.includes(paste.token),
-  );
-  const title = session?.title?.trim() || "Chat";
+  const activePastes = Array.from(pastes.values()).filter((paste) => prompt.includes(paste.token));
+  const title = session?.title?.trim() || 'Chat';
   // Cumulative session usage — the SAME fold the TUI footer runs over its message
   // vector (`footer/session-usage`), so both surfaces read one number. Memoized on
   // the transcript identity: it only moves when a turn lands, never per keystroke.
@@ -4184,10 +3778,10 @@ export function SessionScreen({
     `${usage.output.toLocaleString()} output`,
     usage.cached > 0 ? `${usage.cached.toLocaleString()} cached` : null,
     usage.cost > 0 ? exactCost(usage.cost) : null,
-    `${usage.turns} turn${usage.turns === 1 ? "" : "s"}`,
+    `${usage.turns} turn${usage.turns === 1 ? '' : 's'}`,
   ]
     .filter((part): part is string => Boolean(part))
-    .join(" · ");
+    .join(' · ');
   const visibleStart = Math.max(0, turns.length - visibleTurnCount);
   // What is mounted this frame: the window, clamped by the hydration ramp.
   const renderStart = Math.max(visibleStart, turns.length - hydratedTurnCount);
@@ -4231,12 +3825,12 @@ export function SessionScreen({
   // A live bubble that ALREADY settled (terminal frame in, persisted row not yet
   // fetched) is not work in flight: treating it as such kept every persisted
   // 'running' row spinning with its elapsed clock until the refetch landed.
-  const turnsSettled = !running && (!liveTurn || liveTurn.status !== "running");
+  const turnsSettled = !running && (!liveTurn || liveTurn.status !== 'running');
   // What the composer may advertise as in-flight. `running` on its own is a latch:
   // set optimistically at submit, cleared by the terminal frame or the 5s
   // reconcile. Pairing it with the bubble's own status means a settled turn can
   // never leave a spinner and a growing elapsed counter in the footer.
-  const activeWork = running && (!liveTurn || liveTurn.status === "running");
+  const activeWork = running && (!liveTurn || liveTurn.status === 'running');
   // Only ONE turn can be in flight per session, and when a live bubble exists it
   // owns it. With a queue draining, the gateway starts the next turn while the
   // persisted row of the PREVIOUS one still reads `running` — rendered naively
@@ -4249,7 +3843,7 @@ export function SessionScreen({
   const turnRows = useMemo(
     () =>
       visibleTurns.map((turn, index) => {
-        const request = turn.user_request ?? turn.request ?? "";
+        const request = turn.user_request ?? turn.request ?? '';
         // No content-visibility deferral: the DOM is already bounded to
         // INITIAL_VISIBLE_TURNS by pagination, and deferred turns rendered
         // white placeholder bands (plus a synchronous render hitch) when
@@ -4257,19 +3851,15 @@ export function SessionScreen({
         // never matched the real height, so the scroll position shifted too.
         return (
           <div
-            className={index === 0 ? "" : "mt-10"}
+            className={index === 0 ? '' : 'mt-10'}
             key={turn.id ?? turn.turn_id}
           >
             {(request || (turn.attachments?.length ?? 0) > 0) && (
-              <UserMessage attachments={turn.attachments}>
-                {request}
-              </UserMessage>
+              <UserMessage attachments={turn.attachments}>{request}</UserMessage>
             )}
             <AssistantMessage
               turn={turn}
-              settled={
-                turnsSettled || hasLiveBubble || index < visibleTurns.length - 1
-              }
+              settled={turnsSettled || hasLiveBubble || index < visibleTurns.length - 1}
               client={client}
               sid={sid}
             />
@@ -4294,8 +3884,7 @@ export function SessionScreen({
     void client
       .fetchTurnAttachments(sid, liveTurnId, controller.signal)
       .then((rows) => {
-        if (!cancelled && rows.length)
-          setFetchedLiveAttachments({ id: liveTurnId, rows });
+        if (!cancelled && rows.length) setFetchedLiveAttachments({ id: liveTurnId, rows });
       })
       .catch(() => {});
     return () => {
@@ -4304,65 +3893,56 @@ export function SessionScreen({
     };
   }, [client, sid, liveTurnId, liveTurnAttachments]);
 
-  const liveRow = useMemo(() => {
-    if (!liveTurn) return null;
-    // A screenshot just sent lives only in this device's memory until the turn
-    // is persisted: the live rail and the queue tray ship no attachment bytes.
-    const liveAttachments =
-      liveTurn.attachments ??
-      client.cachedSentAttachments(sid, liveTurn.id) ??
-      (fetchedLiveAttachments?.id === liveTurn.id
-        ? fetchedLiveAttachments?.rows
-        : undefined);
-    return (
-      <div
-        className={`${turns.length ? "mt-10 " : ""}${transcriptEnterClass}`}
-        data-live="true"
-      >
-        {(liveTurn.request || (liveAttachments?.length ?? 0) > 0) && (
-          <UserMessage attachments={liveAttachments}>
-            {liveTurn.request}
-          </UserMessage>
-        )}
-        <AssistantMessage
-          turn={{
-            id: liveTurn.id ?? "live",
-            request: liveTurn.request,
-            status: liveTurn.status,
-            iterations: liveTurn.iterations,
-            content:
-              liveTurn.content ??
-              (liveTurn.answer
-                ? [
-                    {
-                      id: "live-answer",
-                      type: "prose",
-                      markdown: liveTurn.answer,
-                    },
-                  ]
-                : []),
-          }}
-          streaming={liveTurn.status === "running"}
-          activity={liveProgressPhase(liveTurn, connected, [
-            session?.workspace?.root,
-            session?.workspace?.repo_root,
-          ])}
-          startedAt={liveTurn.startedAt}
-          client={client}
-          sid={sid}
-        />
-      </div>
-    );
-  }, [
-    liveTurn,
-    turns.length,
-    client,
-    sid,
-    connected,
-    fetchedLiveAttachments,
-    session?.workspace?.root,
-    session?.workspace?.repo_root,
-  ]);
+  const liveRow = useMemo(
+    () => {
+      if (!liveTurn) return null;
+      // A screenshot just sent lives only in this device's memory until the turn
+      // is persisted: the live rail and the queue tray ship no attachment bytes.
+      const liveAttachments = liveTurn.attachments
+        ?? client.cachedSentAttachments(sid, liveTurn.id)
+        ?? (fetchedLiveAttachments?.id === liveTurn.id ? fetchedLiveAttachments?.rows : undefined);
+      return (
+        <div
+          className={`${turns.length ? 'mt-10 ' : ''}${transcriptEnterClass}`}
+          data-live="true"
+        >
+          {(liveTurn.request || (liveAttachments?.length ?? 0) > 0) && (
+            <UserMessage attachments={liveAttachments}>{liveTurn.request}</UserMessage>
+          )}
+          <AssistantMessage
+            turn={{
+              id: liveTurn.id ?? 'live',
+              request: liveTurn.request,
+              status: liveTurn.status,
+              iterations: liveTurn.iterations,
+              content: liveTurn.content
+                ?? (liveTurn.answer
+                  ? [{ id: 'live-answer', type: 'prose', markdown: liveTurn.answer }]
+                  : []),
+            }}
+            streaming={liveTurn.status === 'running'}
+            activity={liveProgressPhase(liveTurn, connected, [
+              session?.workspace?.root,
+              session?.workspace?.repo_root,
+            ])}
+            startedAt={liveTurn.startedAt}
+            client={client}
+            sid={sid}
+          />
+        </div>
+      );
+    },
+    [
+      liveTurn,
+      turns.length,
+      client,
+      sid,
+      connected,
+      fetchedLiveAttachments,
+      session?.workspace?.root,
+      session?.workspace?.repo_root,
+    ],
+  );
   // Rows are about to land ABOVE the viewport. Stopping the follow is all this
   // has to do: the anchor observer holds the reader's line for every mutation.
   const anchorPrepend = () => {
@@ -4375,9 +3955,7 @@ export function SessionScreen({
   const loadEarlierTurns = () => {
     if (visibleStart > 0) {
       anchorPrepend();
-      setVisibleTurnCount((count) =>
-        Math.min(turns.length, count + INITIAL_VISIBLE_TURNS),
-      );
+      setVisibleTurnCount((count) => Math.min(turns.length, count + INITIAL_VISIBLE_TURNS));
       return;
     }
     if (loadingEarlier || earlierRemaining <= 0) return;
@@ -4389,9 +3967,7 @@ export function SessionScreen({
         if (!older) return;
         anchorPrepend();
         // Keep every bubble that was on screen, plus the page that just landed.
-        setVisibleTurnCount(
-          (count) => count + Math.max(0, older.length - held),
-        );
+        setVisibleTurnCount((count) => count + Math.max(0, older.length - held));
         setTurns(older);
         setEarlierRemaining(client.transcriptWindow(sid).offset);
       })
@@ -4404,11 +3980,7 @@ export function SessionScreen({
       {/* A run BLOCKED on the operator (`vis.request_human_input`) parks until it
          is answered. The prompt portals its own overlay, so it sits here purely
          to be mounted for this session — the TUI shows the same form. */}
-      <HumanInputPrompt
-        client={client}
-        subscriptions={subscriptions}
-        sid={sid}
-      />
+      <HumanInputPrompt client={client} subscriptions={subscriptions} sid={sid} />
       {/* In landscape on a notched phone the horizontal safe-area insets are the
          ones that bite (the notch on one side, the rounded corner on the other),
          and this header used to pad only the TOP — so the back button and the
@@ -4426,14 +3998,12 @@ export function SessionScreen({
           <span aria-hidden="true">‹</span>
         </button>
         <div className="min-w-0 flex-1 self-center px-3 py-1.5">
-          <h1 className="truncate font-mono text-body font-bold text-white">
-            {title}
-          </h1>
+          <h1 className="truncate font-mono text-body font-bold text-white">{title}</h1>
           <div className="flex items-center gap-1.5 font-mono text-meta text-dialog-hint">
             <span
-              className={`size-1.5 ${connected ? "bg-ok" : "animate-pulse bg-turn-edge motion-reduce:animate-none"}`}
+              className={`size-1.5 ${connected ? 'bg-ok' : 'animate-pulse bg-turn-edge motion-reduce:animate-none'}`}
             />
-            {connected ? "Connected" : "Reconnecting"}
+            {connected ? 'Connected' : 'Reconnecting'}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1 self-center pl-1 pr-[max(0.5rem,env(safe-area-inset-right))] sm:pr-[max(0.75rem,env(safe-area-inset-right))]">
@@ -4455,16 +4025,14 @@ export function SessionScreen({
       {editingPaste && (
         <PasteEditor
           editingPaste={editingPaste}
-          onDraftChange={(draft) =>
-            setEditingPaste({ id: editingPaste.id, draft })
-          }
+          onDraftChange={(draft) => setEditingPaste({ id: editingPaste.id, draft })}
           onClose={closePasteEditor}
           onSave={savePasteEdit}
         />
       )}
 
       <div className="relative flex min-h-0 flex-1 flex-col">
-        {/* The scroller is deliberately NOT a live region. role="log" implies
+      {/* The scroller is deliberately NOT a live region. role="log" implies
           aria-live="polite", and WebKit answers that by keeping an AXLiveRegionNode
           set for the subtree and re-diffing it on every mutation: with a whole
           transcript inside, a streaming turn pegged the WebContent process at ~100%
@@ -4473,83 +4041,78 @@ export function SessionScreen({
           -[AXLiveRegionNode isEqual:]). Streaming is announced instead by the small
           sr-only role="status" node each turn renders, which is what a screen reader
           actually wants: one short phase message, not the entire log re-scanned. */}
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 bg-ink [overflow-anchor:none]"
+        onClickCapture={handleDisclosureClick}
+        onScroll={handleScroll}
+        onPointerDown={releasePin}
+        onWheel={releasePin}
+        onTouchMove={releasePin}
+        role="region"
+        aria-label="Transcript"
+      >
         <div
-          ref={scrollRef}
-          className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 bg-ink [overflow-anchor:none]"
-          onClickCapture={handleDisclosureClick}
-          onScroll={handleScroll}
-          onPointerDown={releasePin}
-          onWheel={releasePin}
-          onTouchMove={releasePin}
-          role="region"
-          aria-label="Transcript"
+          ref={transcriptRef}
+          className={`mx-auto min-h-full w-full max-w-3xl pl-[max(0.875rem,env(safe-area-inset-left))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-4 sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))] sm:pt-6 ${
+            !turns.length && !liveTurn ? 'flex flex-col pb-4 sm:pb-6' : 'pb-10'
+          }`}
         >
-          <div
-            ref={transcriptRef}
-            className={`mx-auto min-h-full w-full max-w-3xl pl-[max(0.875rem,env(safe-area-inset-left))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-4 sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))] sm:pt-6 ${
-              !turns.length && !liveTurn
-                ? "flex flex-col pb-4 sm:pb-6"
-                : "pb-10"
-            }`}
-          >
-            {error && <Banner kind="err">{error}</Banner>}
+          {error && <Banner kind="err">{error}</Banner>}
 
-            <>
-              {/* Keep the new-session cue fluid: it shares the scroller's available
+          <>
+          {/* Keep the new-session cue fluid: it shares the scroller's available
               height, including when a software keyboard changes it. The mark is
               intentionally unframed so the brand feels like part of the canvas,
               not a small dialog inside it. */}
-              {!turns.length && !liveTurn ? (
-                <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-3 text-center transition-[opacity,transform,translate,scale,rotate] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
-                  <img
-                    src="/vis-logo.png"
-                    alt=""
-                    className="w-14 max-w-full object-contain sm:w-16"
-                    aria-hidden="true"
-                  />
-                  <div className="mt-4 max-w-md">
-                    <h2 className="text-head font-semibold text-dialog-foreground">
-                      What would you like to work on?
-                    </h2>
-                    <p className="mt-1 text-body text-dialog-hint">
-                      Describe a task, ask a question, or add a screenshot to
-                      get started.
-                    </p>
-                  </div>
-                </div>
-              ) : null}
+          {!turns.length && !liveTurn ? (
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-3 text-center transition-[opacity,transform,translate,scale,rotate] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
+              <img
+                src="/vis-logo.png"
+                alt=""
+                className="w-14 max-w-full object-contain sm:w-16"
+                aria-hidden="true"
+              />
+              <div className="mt-4 max-w-md">
+                <h2 className="text-head font-semibold text-dialog-foreground">What would you like to work on?</h2>
+                <p className="mt-1 text-body text-dialog-hint">
+                  Describe a task, ask a question, or add a screenshot to get started.
+                </p>
+              </div>
+            </div>
+          ) : null}
 
-              {earlierTotal > 0 && (
-                // Not anchorable: this row is pinned above the history it loads, so
-                // its own top never moves and anchoring on it would hold nothing
-                // while 40 000 px lands underneath it.
-                <div className="mb-5 flex justify-center" data-anchor="skip">
-                  <button
-                    type="button"
-                    className="border border-dialog-edge bg-panel px-3 py-1.5 font-mono text-chip font-bold text-dialog-hint transition-colors hover:border-accent hover:text-dialog-hint-key"
-                    onClick={loadEarlierTurns}
-                    disabled={loadingEarlier}
-                  >
-                    {loadingEarlier
-                      ? "Loading earlier…"
-                      : visibleStart > 0
-                        ? `↑ Load ${Math.min(INITIAL_VISIBLE_TURNS, earlierTotal)} earlier · ${earlierTotal} remaining`
-                        : `↑ Load earlier · ${earlierTotal} remaining`}
-                  </button>
-                </div>
-              )}
+          {earlierTotal > 0 && (
+            // Not anchorable: this row is pinned above the history it loads, so
+            // its own top never moves and anchoring on it would hold nothing
+            // while 40 000 px lands underneath it.
+            <div className="mb-5 flex justify-center" data-anchor="skip">
+              <button
+                type="button"
+                className="border border-dialog-edge bg-panel px-3 py-1.5 font-mono text-chip font-bold text-dialog-hint transition-colors hover:border-accent hover:text-dialog-hint-key"
+                onClick={loadEarlierTurns}
+                disabled={loadingEarlier}
+              >
+                {loadingEarlier
+                  ? 'Loading earlier…'
+                  : visibleStart > 0
+                    ? `↑ Load ${Math.min(INITIAL_VISIBLE_TURNS, earlierTotal)} earlier · ${earlierTotal} remaining`
+                    : `↑ Load earlier · ${earlierTotal} remaining`}
+              </button>
+            </div>
+          )}
 
-              {turnRows}
+          {turnRows}
 
-              {liveRow}
-            </>
-          </div>
+          {liveRow}
+          </>
         </div>
+      </div>
         {veiled && (
           <div
             aria-hidden={!loading}
             className={`absolute inset-0 z-10 flex items-center justify-center bg-ink transition-opacity duration-200 motion-reduce:transition-none ${
-              loading ? "opacity-100" : "pointer-events-none opacity-0"
+              loading ? 'opacity-100' : 'pointer-events-none opacity-0'
             }`}
           >
             <LoadingSession />
@@ -4572,7 +4135,7 @@ export function SessionScreen({
           <button
             type="button"
             className="absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2 border border-dialog-edge bg-button px-3 py-1.5 font-mono text-meta font-bold text-button-foreground shadow-[4px_4px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate,background-color] duration-150 starting:translate-y-2 starting:opacity-0 active:scale-[0.97] motion-reduce:transition-none"
-            onClick={() => scrollToEnd("smooth")}
+            onClick={() => scrollToEnd('smooth')}
           >
             ↓ Latest
           </button>
@@ -4596,8 +4159,8 @@ export function SessionScreen({
                 aria-selected={index === fileIndex}
                 className={`grid min-h-9 w-full grid-cols-[1fr_auto] items-center gap-3 border-t border-dialog-edge px-3 py-1.5 text-left transition-colors ${
                   index === fileIndex
-                    ? "bg-accent text-accent-foreground"
-                    : "text-dialog-foreground hover:bg-hover"
+                    ? 'bg-accent text-accent-foreground'
+                    : 'text-dialog-foreground hover:bg-hover'
                 }`}
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={() => completeFile(file.name)}
@@ -4606,13 +4169,9 @@ export function SessionScreen({
                   {file.name}
                 </code>
                 <span className="shrink-0 font-mono text-chip text-dialog-hint">
-                  {[
-                    file.size,
-                    file.age,
-                    file.status && file.status !== "clean" ? file.status : "",
-                  ]
+                  {[file.size, file.age, file.status && file.status !== 'clean' ? file.status : '']
                     .filter(Boolean)
-                    .join(" · ")}
+                    .join(' · ')}
                 </span>
               </button>
             ))}
@@ -4637,8 +4196,8 @@ export function SessionScreen({
                 aria-selected={index === slashIndex}
                 className={`grid min-h-9 w-full grid-cols-[7.5rem_1fr] items-start gap-3 border-t border-dialog-edge px-3 py-1.5 text-left transition-colors sm:grid-cols-[10rem_1fr] ${
                   index === slashIndex
-                    ? "bg-accent text-accent-foreground"
-                    : "text-dialog-foreground hover:bg-hover"
+                    ? 'bg-accent text-accent-foreground'
+                    : 'text-dialog-foreground hover:bg-hover'
                 }`}
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={() => completeSlash(command)}
@@ -4646,9 +4205,7 @@ export function SessionScreen({
                 <code className="break-words font-mono text-ui font-semibold text-accent-ink">
                   {command.name}
                 </code>
-                <span className="line-clamp-2 text-meta text-dialog-hint">
-                  {command.doc}
-                </span>
+                <span className="line-clamp-2 text-meta text-dialog-hint">{command.doc}</span>
               </button>
             ))}
           </div>
@@ -4656,20 +4213,13 @@ export function SessionScreen({
 
         {queuePaused && (
           <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 border border-warn-strong bg-warn-surface px-2.5 py-1.5 font-mono text-meta text-warn-strong">
-            <span
-              className="size-1.5 shrink-0 bg-warn-strong"
-              aria-hidden="true"
-            />
+            <span className="size-1.5 shrink-0 bg-warn-strong" aria-hidden="true" />
             <span className="font-bold text-warn-strong">
-              {queuePaused.isBreakerOpen
-                ? "Provider unhealthy"
-                : "Queue paused"}
+              {queuePaused.isBreakerOpen ? 'Provider unhealthy' : 'Queue paused'}
             </span>
             <span className="min-w-0 flex-1 truncate">
-              {queuePaused.held} held · {queuePaused.reason.replace(/_/g, " ")}
-              {queuePaused.fails > 0
-                ? ` · ${queuePaused.fails} fail${queuePaused.fails > 1 ? "s" : ""}`
-                : ""}
+              {queuePaused.held} held · {queuePaused.reason.replace(/_/g, ' ')}
+              {queuePaused.fails > 0 ? ` · ${queuePaused.fails} fail${queuePaused.fails > 1 ? 's' : ''}` : ''}
             </span>
             <button
               type="button"
@@ -4683,7 +4233,7 @@ export function SessionScreen({
                   .finally(() => setResumingQueue(false));
               }}
             >
-              {resumingQueue ? "Retrying…" : "Retry now"}
+              {resumingQueue ? 'Retrying…' : 'Retry now'}
             </button>
           </div>
         )}
@@ -4698,103 +4248,82 @@ export function SessionScreen({
               const editing = editingQueued?.turnId === item.turnId;
               const busy = queueBusy.has(item.turnId);
               return (
-                <div
-                  key={item.turnId}
-                  className={`flex items-center gap-2 border-t border-dialog-edge px-2.5 py-1 first:border-t-0 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none${busy ? " opacity-50" : ""}`}
-                >
-                  <span className="shrink-0 font-mono text-meta font-bold text-accent-ink">
-                    #{index + 1}
-                  </span>
-                  {editing ? (
-                    <input
-                      autoFocus
-                      value={editingQueued.text}
-                      onChange={(event) =>
-                        setEditingQueued({
-                          turnId: item.turnId,
-                          text: event.target.value,
-                        })
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          const text = editingQueued.text.trim();
-                          if (text && text !== item.request) {
-                            // The gateway owns the row: it is rewritten here only when
-                            // the daemon confirms with `turn.queued.updated`.
-                            markQueueBusy(item.turnId, true);
-                            void client
-                              .updateQueuedTurn(sid, item.turnId, text)
-                              .catch((cause) =>
-                                setError((cause as Error).message),
-                              )
-                              .finally(() => markQueueBusy(item.turnId, false));
-                          }
-                          setEditingQueued(null);
-                        } else if (event.key === "Escape") {
-                          event.preventDefault();
-                          setEditingQueued(null);
+              <div
+                key={item.turnId}
+                className={`flex items-center gap-2 border-t border-dialog-edge px-2.5 py-1 first:border-t-0 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none${busy ? ' opacity-50' : ''}`}
+              >
+                <span className="shrink-0 font-mono text-meta font-bold text-accent-ink">#{index + 1}</span>
+                {editing ? (
+                  <input
+                    autoFocus
+                    value={editingQueued.text}
+                    onChange={(event) => setEditingQueued({ turnId: item.turnId, text: event.target.value })}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        const text = editingQueued.text.trim();
+                        if (text && text !== item.request) {
+                          // The gateway owns the row: it is rewritten here only when
+                          // the daemon confirms with `turn.queued.updated`.
+                          markQueueBusy(item.turnId, true);
+                          void client.updateQueuedTurn(sid, item.turnId, text)
+                            .catch((cause) => setError((cause as Error).message))
+                            .finally(() => markQueueBusy(item.turnId, false));
                         }
-                      }}
-                      onBlur={() => setEditingQueued(null)}
-                      className="min-w-0 flex-1 border border-accent bg-input px-1 py-0.5 font-mono text-ui text-dialog-foreground outline-none"
-                      aria-label={`Edit queued message ${index + 1}`}
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() =>
-                        setEditingQueued({
-                          turnId: item.turnId,
-                          text: item.request,
-                        })
+                        setEditingQueued(null);
+                      } else if (event.key === 'Escape') {
+                        event.preventDefault();
+                        setEditingQueued(null);
                       }
-                      className="flex min-w-0 flex-1 items-center gap-1 text-left font-mono text-ui text-dialog-foreground transition-colors hover:text-accent-ink disabled:cursor-not-allowed"
-                      title="Tap to edit"
-                    >
-                      {/* Image chips first: a queued screenshot reads as its filename,
-                        never as the raw /var/folders path the OS pasted. */}
-                      {item.attachments.map((attachment) => (
-                        <span
-                          key={attachment.filename}
-                          className="inline-flex shrink-0 items-center gap-1 border border-dialog-edge bg-input px-1 text-chip text-dialog-hint"
-                          title={`${attachment.filename}${attachment.sizeLabel ? ` · ${attachment.sizeLabel}` : ""}`}
-                        >
-                          <span className="max-w-[7rem] truncate">
-                            {attachment.filename}
-                          </span>
-                        </span>
-                      ))}
-                      <span className="min-w-0 flex-1 truncate">
-                        {item.preview ||
-                          (item.attachments.length ? "" : "(empty)")}
-                      </span>
-                    </button>
-                  )}
+                    }}
+                    onBlur={() => setEditingQueued(null)}
+                    className="min-w-0 flex-1 border border-accent bg-input px-1 py-0.5 font-mono text-ui text-dialog-foreground outline-none"
+                    aria-label={`Edit queued message ${index + 1}`}
+                  />
+                ) : (
                   <button
                     type="button"
                     disabled={busy}
-                    className="grid size-6 shrink-0 place-items-center text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-dialog-hint"
-                    onClick={() => {
-                      setEditingQueued((current) =>
-                        current?.turnId === item.turnId ? null : current,
-                      );
-                      // Removal is the gateway's to make: the row leaves the tray on
-                      // `turn.queued.deleted`. A rejected delete (already started)
-                      // therefore keeps showing the truth instead of hiding a turn
-                      // that still runs.
-                      markQueueBusy(item.turnId, true);
-                      void client
-                        .deleteQueuedTurn(sid, item.turnId)
-                        .catch((cause) => setError((cause as Error).message))
-                        .finally(() => markQueueBusy(item.turnId, false));
-                    }}
-                    aria-label={`Remove queued message ${index + 1}`}
+                    onClick={() => setEditingQueued({ turnId: item.turnId, text: item.request })}
+                    className="flex min-w-0 flex-1 items-center gap-1 text-left font-mono text-ui text-dialog-foreground transition-colors hover:text-accent-ink disabled:cursor-not-allowed"
+                    title="Tap to edit"
                   >
-                    ×
+                    {/* Image chips first: a queued screenshot reads as its filename,
+                        never as the raw /var/folders path the OS pasted. */}
+                    {item.attachments.map((attachment) => (
+                      <span
+                        key={attachment.filename}
+                        className="inline-flex shrink-0 items-center gap-1 border border-dialog-edge bg-input px-1 text-chip text-dialog-hint"
+                        title={`${attachment.filename}${attachment.sizeLabel ? ` · ${attachment.sizeLabel}` : ''}`}
+                      >
+                        <span className="max-w-[7rem] truncate">{attachment.filename}</span>
+                      </span>
+                    ))}
+                    <span className="min-w-0 flex-1 truncate">
+                      {item.preview || (item.attachments.length ? '' : '(empty)')}
+                    </span>
                   </button>
-                </div>
+                )}
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="grid size-6 shrink-0 place-items-center text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-dialog-hint"
+                  onClick={() => {
+                    setEditingQueued((current) => (current?.turnId === item.turnId ? null : current));
+                    // Removal is the gateway's to make: the row leaves the tray on
+                    // `turn.queued.deleted`. A rejected delete (already started)
+                    // therefore keeps showing the truth instead of hiding a turn
+                    // that still runs.
+                    markQueueBusy(item.turnId, true);
+                    void client.deleteQueuedTurn(sid, item.turnId)
+                      .catch((cause) => setError((cause as Error).message))
+                      .finally(() => markQueueBusy(item.turnId, false));
+                  }}
+                  aria-label={`Remove queued message ${index + 1}`}
+                >
+                  ×
+                </button>
+              </div>
               );
             })}
           </div>
@@ -4804,10 +4333,7 @@ export function SessionScreen({
           {activePastes.length > 0 && (
             <div className="flex gap-1 overflow-x-auto overscroll-x-contain border-b border-dialog-edge px-1.5 py-1 [scrollbar-width:thin]">
               {activePastes.map((paste) => (
-                <span
-                  key={paste.id}
-                  className="inline-flex min-h-7 shrink-0 items-center border border-code-edge bg-code font-mono text-chip text-accent-ink"
-                >
+                <span key={paste.id} className="inline-flex min-h-7 shrink-0 items-center border border-code-edge bg-code font-mono text-chip text-accent-ink">
                   <button
                     type="button"
                     className="max-w-56 truncate px-2 text-left underline decoration-dotted underline-offset-2 transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none"
@@ -4853,9 +4379,7 @@ export function SessionScreen({
                       loading="eager"
                       className="size-8 object-cover"
                       frameClassName="shrink-0"
-                      onApply={(edited) =>
-                        applyAttachmentEdit(attachment.id, edited)
-                      }
+                      onApply={(edited) => applyAttachmentEdit(attachment.id, edited)}
                     />
                   )}
                   <span className="truncate font-mono text-chip text-dialog-hint-key">
@@ -4875,38 +4399,18 @@ export function SessionScreen({
             </div>
           )}
 
-          {(composerNotice ||
-            voicePhase !== "idle" ||
-            voiceModel?.status === "downloading" ||
-            (voiceRequested && voiceModel?.status !== "ready")) && (
+          {(composerNotice || voicePhase !== 'idle' || voiceModel?.status === 'downloading'
+            || (voiceRequested && voiceModel?.status !== 'ready')) && (
             <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex max-w-full items-center gap-1.5 border border-dialog-edge bg-panel px-2 py-1 font-mono text-chip text-dialog-hint shadow-[3px_3px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
-              {voicePhase === "recording" ? (
-                <>
-                  <span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" />{" "}
-                  Listening · tap the microphone to finish
-                </>
-              ) : voicePhase === "transcribing" ? (
-                <>
-                  <span className="size-1.5 animate-pulse bg-accent motion-reduce:animate-none" />{" "}
-                  {voiceProgressLabel(voiceProgress)}
-                </>
-              ) : composerNotice ? (
-                composerNotice
-              ) : voiceModel?.status === "downloading" ? (
-                <>
-                  {voiceModel.phase === "extracting"
-                    ? "Unpacking voice model"
-                    : "Downloading voice model"}
-                  {voiceModel.progress == null
-                    ? "…"
-                    : ` · ${Math.round(voiceModel.progress)}%`}
-                </>
-              ) : voiceModel?.status === "failed" ? (
-                <>
-                  Voice model failed
-                  {voiceModel.error ? ` · ${voiceModel.error}` : ""}
-                </>
-              ) : voiceModel?.status === "absent" ? (
+              {voicePhase === 'recording' ? (
+                <><span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" /> Listening · tap the microphone to finish</>
+              ) : voicePhase === 'transcribing' ? (
+                <><span className="size-1.5 animate-pulse bg-accent motion-reduce:animate-none" /> {voiceProgressLabel(voiceProgress)}</>
+              ) : composerNotice ? composerNotice : voiceModel?.status === 'downloading' ? (
+                <>{voiceModel.phase === 'extracting' ? 'Unpacking voice model' : 'Downloading voice model'}{voiceModel.progress == null ? '…' : ` · ${Math.round(voiceModel.progress)}%`}</>
+              ) : voiceModel?.status === 'failed' ? (
+                <>Voice model failed{voiceModel.error ? ` · ${voiceModel.error}` : ''}</>
+              ) : voiceModel?.status === 'absent' ? (
                 <>Tap the microphone to install the local voice model</>
               ) : null}
             </div>
@@ -4916,12 +4420,7 @@ export function SessionScreen({
             <input
               ref={fileInputRef}
               type="file"
-              accept={(
-                capabilities?.features.attachments.media_types ?? [
-                  "image/*",
-                  "video/*",
-                ]
-              ).join(",")}
+              accept={(capabilities?.features.attachments.media_types ?? ['image/*', 'video/*']).join(',')}
               multiple
               className="hidden"
               onChange={(event) => void onFilesPicked(event.target.files)}
@@ -4937,7 +4436,7 @@ export function SessionScreen({
             <div
               className="relative shrink-0"
               onKeyDown={(event) => {
-                if (event.key === "Escape" && attachMenuOpen) {
+                if (event.key === 'Escape' && attachMenuOpen) {
                   event.stopPropagation();
                   setAttachMenuOpen(false);
                 }
@@ -4968,18 +4467,8 @@ export function SessionScreen({
                         void takePhoto();
                       }}
                     >
-                      <svg
-                        viewBox="0 0 24 24"
-                        className="size-3.5 shrink-0"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        aria-hidden="true"
-                      >
-                        <path
-                          d="M3 8h4l1.5-2h7L17 8h4v11H3z"
-                          strokeLinecap="square"
-                        />
+                      <svg viewBox="0 0 24 24" className="size-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                        <path d="M3 8h4l1.5-2h7L17 8h4v11H3z" strokeLinecap="square" />
                         <circle cx="12" cy="13" r="3.2" />
                       </svg>
                       Take a photo
@@ -4994,19 +4483,9 @@ export function SessionScreen({
                         void addAttachments();
                       }}
                     >
-                      <svg
-                        viewBox="0 0 24 24"
-                        className="size-3.5 shrink-0"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        aria-hidden="true"
-                      >
+                      <svg viewBox="0 0 24 24" className="size-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
                         <path d="M4 6h16v12H4z" strokeLinecap="square" />
-                        <path
-                          d="M4 15l4.5-4.5 3 3 3.5-3.5L20 15"
-                          strokeLinecap="square"
-                        />
+                        <path d="M4 15l4.5-4.5 3 3 3.5-3.5L20 15" strokeLinecap="square" />
                         <circle cx="9" cy="9.5" r="1.2" />
                       </svg>
                       Photos or videos
@@ -5026,30 +4505,15 @@ export function SessionScreen({
                   }
                   setAttachMenuOpen((open) => !open);
                 }}
-                disabled={
-                  attachments.length >=
-                  (capabilities?.features.attachments.max_files ?? 8)
-                }
-                aria-haspopup={
-                  Capacitor.isNativePlatform() ? "menu" : undefined
-                }
-                aria-expanded={
-                  Capacitor.isNativePlatform() ? attachMenuOpen : undefined
-                }
-                aria-label={
-                  Capacitor.isNativePlatform()
-                    ? "Attach a photo or video"
-                    : "Choose photos or videos"
-                }
-                title={
-                  Capacitor.isNativePlatform()
-                    ? "Attach a photo or video"
-                    : "Choose photos or videos"
-                }
+                disabled={attachments.length >= (capabilities?.features.attachments.max_files ?? 8)}
+                aria-haspopup={Capacitor.isNativePlatform() ? 'menu' : undefined}
+                aria-expanded={Capacitor.isNativePlatform() ? attachMenuOpen : undefined}
+                aria-label={Capacitor.isNativePlatform() ? 'Attach a photo or video' : 'Choose photos or videos'}
+                title={Capacitor.isNativePlatform() ? 'Attach a photo or video' : 'Choose photos or videos'}
               >
                 <svg
                   viewBox="0 0 24 24"
-                  className={`size-3.5 transition-transform duration-150 motion-reduce:transition-none ${attachMenuOpen ? "rotate-45" : ""}`}
+                  className={`size-3.5 transition-transform duration-150 motion-reduce:transition-none ${attachMenuOpen ? 'rotate-45' : ''}`}
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="1.8"
@@ -5065,39 +4529,18 @@ export function SessionScreen({
                 type="button"
                 onMouseDown={keepKeyboard}
                 className={`grid h-8 w-7 shrink-0 place-items-center transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.94] disabled:text-muted motion-reduce:transition-none mouse:h-7 mouse:w-6 ${
-                  voicePhase === "recording"
-                    ? "animate-pulse bg-warn-surface text-err motion-reduce:animate-none"
-                    : "text-dialog-hint hover:bg-hover hover:text-dialog-hint-key"
+                  voicePhase === 'recording'
+                    ? 'animate-pulse bg-warn-surface text-err motion-reduce:animate-none'
+                    : 'text-dialog-hint hover:bg-hover hover:text-dialog-hint-key'
                 }`}
                 onClick={() => void toggleVoice()}
-                disabled={
-                  voicePhase === "transcribing" ||
-                  voiceModel?.status === "downloading"
-                }
-                aria-label={
-                  voicePhase === "recording"
-                    ? "Finish dictation"
-                    : "Dictate message"
-                }
-                title={
-                  voicePhase === "recording"
-                    ? "Finish dictation"
-                    : "Dictate message"
-                }
+                disabled={voicePhase === 'transcribing' || voiceModel?.status === 'downloading'}
+                aria-label={voicePhase === 'recording' ? 'Finish dictation' : 'Dictate message'}
+                title={voicePhase === 'recording' ? 'Finish dictation' : 'Dictate message'}
               >
-                <svg
-                  viewBox="0 0 24 24"
-                  className="size-3.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  aria-hidden="true"
-                >
+                <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
                   <rect x="9" y="3" width="6" height="11" rx="3" />
-                  <path
-                    d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7"
-                    strokeLinecap="square"
-                  />
+                  <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7" strokeLinecap="square" />
                 </svg>
               </button>
             )}
@@ -5106,23 +4549,17 @@ export function SessionScreen({
               ref={composerRef}
               rows={1}
               value={prompt}
-              disabled={voicePhase === "recording"}
-              placeholder={
-                voicePhase === "recording"
-                  ? "Listening…"
-                  : running
-                    ? "Message Vis — queues behind the running turn"
-                    : "Message Vis or type / or @"
-              }
+              disabled={voicePhase === 'recording'}
+              placeholder={voicePhase === 'recording' ? 'Listening…' : running ? 'Message Vis — queues behind the running turn' : 'Message Vis or type / or @'}
               aria-label="Message Vis"
               // Both completion menus are anchored to this textarea and are mutually
               // exclusive (`fileMention` is only computed while the slash menu is shut),
               // so the announced popup must name whichever one is actually open.
               aria-controls={
                 fileMatches.length
-                  ? "file-mention-list"
+                  ? 'file-mention-list'
                   : slashMatches.length
-                    ? "slash-command-list"
+                    ? 'slash-command-list'
                     : undefined
               }
               aria-expanded={slashMatches.length > 0 || fileMatches.length > 0}
@@ -5130,15 +4567,11 @@ export function SessionScreen({
               onPaste={handlePaste}
               onFocus={handleComposerFocus}
               onSelect={(event) =>
-                setCaret(
-                  (event.target as HTMLTextAreaElement).selectionStart ?? 0,
-                )
+                setCaret((event.target as HTMLTextAreaElement).selectionStart ?? 0)
               }
               onChange={(event) => {
                 setPrompt(event.target.value);
-                setCaret(
-                  event.target.selectionStart ?? event.target.value.length,
-                );
+                setCaret(event.target.selectionStart ?? event.target.value.length);
                 setSlashIndex(0);
                 setSlashDismissed(false);
                 setFileIndex(0);
@@ -5146,67 +4579,44 @@ export function SessionScreen({
               }}
               onKeyDown={(event) => {
                 if (fileMatches.length) {
-                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                     event.preventDefault();
-                    const delta = event.key === "ArrowDown" ? 1 : -1;
+                    const delta = event.key === 'ArrowDown' ? 1 : -1;
                     setFileIndex(
-                      (current) =>
-                        (current + delta + fileMatches.length) %
-                        fileMatches.length,
+                      (current) => (current + delta + fileMatches.length) % fileMatches.length,
                     );
                     return;
                   }
-                  if (
-                    (event.key === "Tab" || event.key === "Enter") &&
-                    selectedFile
-                  ) {
+                  if ((event.key === 'Tab' || event.key === 'Enter') && selectedFile) {
                     event.preventDefault();
                     completeFile(selectedFile.name);
                     return;
                   }
-                  if (event.key === "Escape") {
+                  if (event.key === 'Escape') {
                     event.preventDefault();
                     setFileDismissed(true);
                     return;
                   }
                 }
-                if (
-                  slashMatches.length &&
-                  (event.key === "ArrowDown" || event.key === "ArrowUp")
-                ) {
+                if (slashMatches.length && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
                   event.preventDefault();
-                  const delta = event.key === "ArrowDown" ? 1 : -1;
-                  setSlashIndex(
-                    (current) =>
-                      (current + delta + slashMatches.length) %
-                      slashMatches.length,
-                  );
+                  const delta = event.key === 'ArrowDown' ? 1 : -1;
+                  setSlashIndex((current) => (current + delta + slashMatches.length) % slashMatches.length);
                   return;
                 }
-                if (
-                  slashMatches.length &&
-                  event.key === "Tab" &&
-                  selectedSlash
-                ) {
+                if (slashMatches.length && event.key === 'Tab' && selectedSlash) {
                   event.preventDefault();
                   completeSlash(selectedSlash);
                   return;
                 }
-                if (slashMatches.length && event.key === "Escape") {
+                if (slashMatches.length && event.key === 'Escape') {
                   event.preventDefault();
                   setSlashDismissed(true);
                   return;
                 }
-                if (
-                  event.key === "Enter" &&
-                  !event.shiftKey &&
-                  !event.nativeEvent.isComposing
-                ) {
+                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                   event.preventDefault();
-                  if (
-                    selectedSlash &&
-                    slashText.toLowerCase() !== selectedSlash.name.toLowerCase()
-                  ) {
+                  if (selectedSlash && slashText.toLowerCase() !== selectedSlash.name.toLowerCase()) {
                     completeSlash(selectedSlash);
                   } else {
                     void send();
@@ -5244,13 +4654,11 @@ export function SessionScreen({
               onMouseDown={keepKeyboard}
               className="grid size-8 shrink-0 place-items-center border border-dialog-edge bg-dialog-title text-ui font-bold text-dialog-title-foreground transition-[background-color,color,transform,translate,scale,rotate] duration-150 hover:bg-accent-2 active:scale-[0.94] disabled:scale-100 disabled:bg-button disabled:text-dialog-hint motion-reduce:transition-none mouse:size-7"
               onClick={send}
-              disabled={
-                (!prompt.trim() && !attachments.length) || voicePhase !== "idle"
-              }
-              aria-label={running ? "Queue message" : "Send message"}
-              title={running ? "Queue behind the running turn" : "Send"}
+              disabled={(!prompt.trim() && !attachments.length) || voicePhase !== 'idle'}
+              aria-label={running ? 'Queue message' : 'Send message'}
+              title={running ? 'Queue behind the running turn' : 'Send'}
             >
-              {"↑"}
+              {'↑'}
             </button>
           </div>
         </div>
@@ -5275,12 +4683,12 @@ export function SessionScreen({
             onClick={() => setRouterOpen(true)}
             aria-label="Change provider and model"
             title={
-              (modelPref?.model ?? defaultPref?.model)
-                ? `${modelPref?.provider ?? defaultPref?.provider ?? ""}/${modelPref?.model ?? defaultPref?.model ?? ""}`
-                : "Change provider and model"
+              modelPref?.model ?? defaultPref?.model
+                ? `${modelPref?.provider ?? defaultPref?.provider ?? ''}/${modelPref?.model ?? defaultPref?.model ?? ''}`
+                : 'Change provider and model'
             }
           >
-            {modelPref?.model ?? defaultPref?.model ?? "model"}
+            {modelPref?.model ?? defaultPref?.model ?? 'model'}
           </button>
 
           {reasoning && (reasoning.choices?.length ?? 0) > 0 && (
@@ -5318,14 +4726,8 @@ export function SessionScreen({
               className="ml-auto flex shrink-0 items-center gap-2 py-1 pl-1 font-mono text-chip font-semibold uppercase tracking-[0.08em] tabular-nums text-dialog-hint"
               title={`Session usage — ${usageTitle}`}
             >
-              {usageTokens && (
-                <span className="whitespace-nowrap">{usageTokens}</span>
-              )}
-              {usageCost && (
-                <span className="whitespace-nowrap text-accent-ink">
-                  {usageCost}
-                </span>
-              )}
+              {usageTokens && <span className="whitespace-nowrap">{usageTokens}</span>}
+              {usageCost && <span className="whitespace-nowrap text-accent-ink">{usageCost}</span>}
             </span>
           )}
         </div>

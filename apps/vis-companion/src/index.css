@@ -2,6 +2,18 @@
 @import '@fontsource-variable/jetbrains-mono';
 @import 'tailwindcss';
 
+/* `sm:` answers "is there room"; `mouse:` answers "is there room AND a cursor".
+   Only the second one may make a control SMALLER. An iPad is a >=640px screen
+   driven by a finger, so every `sm:`-gated shrink used to fire on it: the
+   session rows went 56px -> 48px, the composer buttons 32x28 -> 28x24, a
+   settings toggle 32px -> 24px, and the composer's own text dropped a step —
+   the tablet got the mouse layout while the hand stayed a hand. Density now
+   follows the POINTER, so the phone's touch sizes survive on iPad and a
+   trackpad (`pointer: fine`, Magic Keyboard included) still gets the tight
+   desktop rhythm. Layout — which columns exist, how wide the paper is — stays
+   on `sm:`, because that really is a question about room. */
+@custom-variant mouse (@media (width >= 40rem) and (pointer: fine));
+
 /* Exact blockether-light fallback (app default = light). /v1/theme may replace every variable below. */
 :root {
   color-scheme: light;

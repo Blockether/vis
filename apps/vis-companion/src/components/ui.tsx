@@ -117,7 +117,7 @@ export function DialogFrame({
       aria-modal="true"
       aria-label={title}
     >
-      <header className="relative flex min-h-9 items-center justify-center bg-dialog-title px-12 py-1.5 text-dialog-title-foreground sm:min-h-8">
+      <header className="relative flex min-h-9 items-center justify-center bg-dialog-title px-12 py-1.5 text-dialog-title-foreground mouse:min-h-8">
         {/* A dialog title can be a whole question from `vis.ask`; wrap it (bounded) instead of eating it. */}
         <h2
           className="line-clamp-3 text-center font-mono text-body font-bold tracking-wide"
@@ -128,7 +128,7 @@ export function DialogFrame({
         {onClose && (
           <button
             type="button"
-            className="absolute inset-y-0 right-0 grid min-w-9 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none sm:min-w-8"
+            className="absolute inset-y-0 right-0 grid min-w-9 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-w-8"
             onClick={onClose}
             aria-label="Close dialog"
           >
