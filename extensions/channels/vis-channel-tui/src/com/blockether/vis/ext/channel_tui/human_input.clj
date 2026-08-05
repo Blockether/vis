@@ -202,6 +202,24 @@
 
 (defn request-id "The engine request id this form answers." [form] (get-in form [:request :id]))
 
+(defn request<-wire
+  "Rehydrate a request VIEW from the canonical snake_case wire map a
+   `human_input.request` SESSION event carries — the only shape a request takes
+   when the parked run lives in the serve daemon instead of this process. The
+   ENGINE owns that inverse (`view<-wire`); the terminal never keeps a second
+   field vocabulary."
+  [wire]
+  (engine/view<-wire wire))
+
+(defn session-id
+  "The gateway session whose run this form parks, or nil. A form built from a
+   session event must be answered over the gateway that owns it."
+  [form]
+  (some-> (get-in form [:request :session-id])
+          str
+          str/trim
+          not-empty))
+
 (defn submit-values
   "The values map handed to `submit-human-input!` — keyed by field id."
   [form]
@@ -1298,7 +1316,7 @@
       inner-w
       (long inner-w)
 
-      bar
+      baz
       (hint form)
 
       actions
@@ -1372,6 +1390,6 @@
                            :inner-h body-visible
                            :scroll start}))
        (when actions (paint-row! g left (+ (long body-top) (long body-visible)) inner-w actions))
-       (dialogs/draw-hint-bar! g left foot-row inner-w bar)
+       (dialogs/draw-hint-bar! g left foot-row inner-w baz)
        (p/clear-styles! g)
        cursor))))

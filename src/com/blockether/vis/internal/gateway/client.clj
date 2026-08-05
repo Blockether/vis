@@ -1070,6 +1070,48 @@
 
 (defn drain-idle! [sid] (send-json! "POST" (str "/v1/sessions/" (enc sid) "/drain-queue")))
 
+;; --- Human-input requests (a run in the DAEMON blocked on the operator) ---
+;;
+;; `internal/human-input` parks the extension thread that raised the request and
+;; publishes it on the in-process channel bus. That bus never leaves the JVM, so
+;; a client process — the TUI attached to a serve daemon — can only reach the
+;; request over these routes.
+
+(defn human-input-requests
+  "Pending human-input request views for `sid` IN THE DAEMON, oldest first, in
+   canonical wire shape. The live `human_input.request` event is the fast path;
+   this is how a client that attached LATER still finds the open form instead of
+   watching a turn that never moves."
+  [sid]
+  (vec (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/human-input")) "requests")))
+
+(defn submit-human-input!
+  "Answer the DAEMON-side request `request-id` of `sid` with a raw
+   `field id -> value` map. Same verdict shape as the in-process
+   `human-input/submit!`, because the daemon runs the engine's own validation:
+   `{:is-accepted true}`, or `{:is-accepted false :errors {field-id message}}`
+   with the request still pending so the operator can fix it."
+  [sid request-id values]
+  (let
+    [res (send-json!
+           "POST"
+           (str "/v1/sessions/" (enc sid) "/human-input/" (enc request-id) "/actions/submit")
+           {:values (or values {})})]
+    (cond-> {:is-accepted (boolean (get res "is_accepted"))}
+      (seq (get res "errors"))
+      (assoc :errors (get res "errors")))))
+
+(defn cancel-human-input!
+  "Dismiss the DAEMON-side request `request-id` of `sid`, releasing the parked
+   run with `is_submitted false`. Returns whether it was still pending and
+   dismissable."
+  [sid request-id]
+  (boolean (get
+             (send-json!
+               "POST"
+               (str "/v1/sessions/" (enc sid) "/human-input/" (enc request-id) "/actions/cancel"))
+             "is_cancelled")))
+
 (defn reconcile-running-turns!
   "Clients do not sweep. Only the daemon may reconcile its own startup orphans."
   []

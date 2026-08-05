@@ -133,6 +133,14 @@
    `:is-secret` follows from the type, so a caller offering it is refused."
   #{:is-secret})
 
+(def request-stamp-keys
+  "Keys the ENGINE stamps on a pending REQUEST, so every channel sees them on the
+   projected view although no spec may write one: the registry's arrival time.
+   Same category as [[derived-keys]] one level up — `request-keys` deliberately
+   refuses them on the way in, so a reader rebuilding a view that crossed a
+   process boundary lifts them across instead of re-parsing them."
+  #{:created-at})
+
 (def value-keys
   "Every key an answerable field may carry, whatever its type."
   #{:id :name :type :label :description :placeholder :is-required :is-secret :default :validate})

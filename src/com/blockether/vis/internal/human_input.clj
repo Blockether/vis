@@ -1038,6 +1038,30 @@
       (dissoc :promise :channel-ids)
       (assoc :fields (map-fields #(dissoc % :is-secret :validate) (:fields request)))))
 
+(def ^:private request-stamps
+  "The engine's own request stamps, wire spelling -> normalized key."
+  (into {} (map (juxt snake-key identity)) hi-spec/request-stamp-keys))
+
+(defn view<-wire
+  "Inverse of [[request->view]] for a view that CROSSED A PROCESS BOUNDARY — the
+   canonical snake_case map a `human_input.request` session event carries.
+
+   A run parked inside `vis serve` publishes on an in-process channel bus that
+   never leaves that JVM, so for every other process the session event IS the
+   request. Rebuilding the view goes back through the engine's own parser rather
+   than through a second field vocabulary; only the stamps of [[request!]],
+   which `normalize-request` refuses by contract, are lifted across unchanged."
+  [wire]
+  (when (map? wire)
+    (let
+      [stamps (into {}
+                    (keep (fn [[wire-key k]]
+                            (when-some [v (get wire wire-key)]
+                              [k v])))
+                    request-stamps)]
+      (merge (request->view (normalize-request (apply dissoc wire (keys request-stamps))))
+             stamps))))
+
 (defn- publish!
   "Publish `event` on every channel in `channel-ids` and return how many
    listeners it actually reached across all of them."

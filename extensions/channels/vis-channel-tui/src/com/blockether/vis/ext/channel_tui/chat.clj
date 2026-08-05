@@ -1124,6 +1124,23 @@
       "session.model_updated"
       {:phase :model-sync :provider (event-get event :provider) :model (event-get event :model)}
 
+      ;; A run is BLOCKED on the operator. `internal/human-input` publishes the
+      ;; request on the IN-PROCESS `:tui` channel bus, which never leaves the
+      ;; JVM that raised it — so a request parked in the serve daemon reached no
+      ;; terminal at all and the tab just sat there (issue #122). This is the
+      ;; cross-process projection: the request rides SSE live AND sits in the
+      ;; replay ring, so a TUI that attached later still finds the open form.
+      "human_input.request"
+      {:phase :human-input-open :request (event-get event :request)}
+
+      ;; Close arrives for EVERY settle — another surface answered, a timeout,
+      ;; an interrupt — so the dialog can never outlive its request.
+      "human_input.close"
+      {:phase :human-input-close
+       :request-id (some-> (event-get event :request-id)
+                           str)
+       :reason (event-get event :reason)}
+
       ;; The mux's synthetic `gateway.connected` / `gateway.disconnected` transport
       ;; edges are deliberately NOT projected: the edge alone is no evidence of a
       ;; gap (the mux resubscribes at this client's cursor, so the ordinary

@@ -14,7 +14,9 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
+            [com.blockether.vis.ext.channel-tui.human-input :as hi]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.screen :as screen]
             [com.blockether.vis.internal.gateway.human-input :as gw]
@@ -593,3 +595,130 @@
       (testing "and the sheet paints them from that table rather than its own"
         (is (not (str/includes? sheet "'[x]'")))
         (is (str/includes? sheet "HUMAN_INPUT_CHOICE_MARKS"))))))
+
+;; =============================================================================
+;; A request parked in the SERVE DAEMON (issue #122)
+;;
+;; `internal/human-input` publishes on the IN-PROCESS channel bus. That bus does
+;; not cross a JVM, so when the extension parks inside `vis serve` the terminal
+;; is a different process entirely and the `:tui` publication reaches nobody.
+;; The gateway bridge above still turns the request into a `human_input.request`
+;; SESSION event — which the TUI simply dropped: `chat/gateway-event->chunk`,
+;; the ONE projection of that stream into the terminal, had no case for it. The
+;; operator watched a turn that never moved, and `publish!` counting the gateway
+;; listener meant the engine's "undeliverable" escape hatch never fired either.
+;; =============================================================================
+
+(defn- daemon-view
+  "A request VIEW built the way the engine builds one, without parking a thread."
+  [rid]
+  (engine/request->view (engine/normalize-request
+                          {:id rid
+                           :session-id "s1"
+                           :title "Deploy?"
+                           :fields [{:id "note" :type "plaintext" :label "Note"}]})))
+
+;; Regression, issue #122: a run parked by an extension running in the serve
+;; daemon never surfaced in the terminal at all — the persisted
+;; `human_input.request` / `human_input.close` session events projected to nil,
+;; so the tab sat on a turn that never moved and no dialog was ever drawn.
+(deftest a-daemon-side-request-reaches-the-terminal-test
+  (with-surfaces!
+    (fn [seen]
+      (let
+        [sid
+         (str (random-uuid))
+
+         rid
+         (str "req-" (random-uuid))
+
+         answer
+         (ask! sid
+               rid
+               [{:id "note" :type "plaintext" :label "Note" :is-required true}
+                {:id "env"
+                 :type "select"
+                 :label "Env"
+                 :options [{:value "prod" :label "prod"} {:value "dev" :label "dev"}]}])]
+
+        (try (is (await-true #(seq (events-of seen "human_input.request" rid))))
+             (testing "the session event PROJECTS — the only route out of the daemon"
+               (let
+                 [[_ event]
+                  (first (events-of seen "human_input.request" rid))
+
+                  chunk
+                  (#'chat/gateway-event->chunk event)]
+
+                 (is (= :human-input-open (:phase chunk)))
+                 (is (= rid (get-in chunk [:request "id"])))
+                 (testing "and rehydrates the ENGINE's own view, not a second field table"
+                   (let [view (hi/request<-wire (:request chunk))]
+                     (is (= sid (hi/session-id {:request view})))
+                     ;; Byte-for-byte the view the in-process `:tui` channel
+                     ;; event carried, so the same dialog is drawn either way.
+                     (is (= (get-in @state/app-db [:human-input :request]) view))
+                     (is (= (:human-input @state/app-db) (hi/init-form view)))))))
+             (testing "the APP answering it closes every terminal's form too"
+               (is (= {:is-accepted true} (gw/submit! rid {"note" "ship it" "env" "prod"})))
+               (is (true? (:is-submitted (deref answer 2000 ::timeout))))
+               (is (await-true #(seq (events-of seen "human_input.close" rid))))
+               (let
+                 [[_ event]
+                  (first (events-of seen "human_input.close" rid))
+
+                  chunk
+                  (#'chat/gateway-event->chunk event)]
+
+                 (is (= :human-input-close (:phase chunk)))
+                 (is (= rid (:request-id chunk)))
+                 (is (= "submitted" (:reason chunk)))))
+             (finally (engine/cancel! rid "cleanup")))))))
+
+;; Regression, issue #122: with the daemon route wired, a request parked in THIS
+;; process arrives twice — once on the in-process `:tui` channel bus and once as
+;; the gateway's own session event — and the second arrival queued a duplicate
+;; dialog behind the first, leaving a zombie form open after the answer.
+(deftest a-request-that-arrives-on-both-routes-opens-one-dialog-test
+  (reset! state/app-db {:render-version 0})
+  (try (let [form (hi/init-form (daemon-view "req-dup"))]
+         (state/dispatch [:human-input-open form])
+         (state/dispatch [:human-input-open form])
+         (is (= form (:human-input @state/app-db)))
+         (is (empty? (:human-input-queue @state/app-db)))
+         (testing "a DIFFERENT request still queues behind it"
+           (let [other (hi/init-form (daemon-view "req-other"))]
+             (state/dispatch [:human-input-open other])
+             (is (= [other] (vec (:human-input-queue @state/app-db))))
+             (testing "and answering the first promotes exactly that one"
+               (state/dispatch [:human-input-close "req-dup"])
+               (is (= "req-other" (get-in @state/app-db [:human-input :request :id])))
+               (is (empty? (:human-input-queue @state/app-db)))))))
+       (finally (reset! state/app-db {:render-version 0}))))
+
+;; Regression, issue #122: the terminal answered every request through the
+;; in-process registry, so a request parked in the daemon could not be answered
+;; at all — its id resolves to nothing here, and the parked run stayed blocked
+;; whatever the operator typed.
+(deftest a-daemon-side-answer-goes-over-the-gateway-test
+  (let
+    [calls
+     (atom [])
+
+     form
+     (hi/init-form (daemon-view "req-remote"))]
+
+    (with-redefs
+      [vis/gateway-submit-human-input!
+       (fn [sid rid values]
+         (swap! calls conj [:submit sid rid values])
+         {:is-accepted true})
+
+       vis/gateway-cancel-human-input!
+       (fn [sid rid]
+         (swap! calls conj [:cancel sid rid])
+         true)]
+
+      (is (= {:is-accepted true} (#'screen/human-input-answer! form :submit {"note" "hi"})))
+      (is (true? (#'screen/human-input-answer! form :cancel nil)))
+      (is (= [[:submit "s1" "req-remote" {"note" "hi"}] [:cancel "s1" "req-remote"]] @calls)))))

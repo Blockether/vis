@@ -540,12 +540,39 @@
 
     nil))
 
+(defn- human-input-answer!
+  "Answer one open request WHEREVER it is parked.
+
+   A request raised in this process sits in the engine's own registry and is
+   answered in-process. A request raised in the serve daemon exists only there
+   — its id resolves to nothing locally, so the in-process call could never
+   release the parked run (issue #122). That one is answered over the gateway
+   that owns its session, through exactly the same engine validation."
+  [form op values]
+  (let
+    [request-id
+     (hi/request-id form)
+
+     session-id
+     (hi/session-id form)
+
+     local?
+     (or (nil? session-id) (some? (vis/pending-human-input-request request-id)))]
+
+    (case op
+      :submit (if local?
+                (vis/submit-human-input! request-id values)
+                (vis/gateway-submit-human-input! session-id request-id values))
+      :cancel (if local?
+                (vis/cancel-human-input! request-id)
+                (vis/gateway-cancel-human-input! session-id request-id)))))
+
 (defn- human-input-key!
   "Feed one keystroke to the open human-input dialog and act on its verdict.
 
    While a request is open this is the ONLY consumer of keys, so nothing
    leaks into the chat editor. Submitting round-trips through
-   `vis/submit-human-input!`, which re-validates: a rejected answer keeps
+   [[human-input-answer!]], which re-validates: a rejected answer keeps
    the dialog open with per-field errors, an accepted one closes it and
    releases the waiting extension."
   [db ^KeyStroke key]
@@ -559,13 +586,18 @@
 
     (case action
       :submit
-      (let [outcome (vis/submit-human-input! request-id (hi/submit-values form))]
+      (let [outcome (try (human-input-answer! form :submit (hi/submit-values form))
+                         (catch Throwable t
+                           (vis/notify! (str "Could not submit: " (ex-message t)) :level :error)
+                           {:is-accepted false}))]
         (if (:is-accepted outcome)
           (state/dispatch [:human-input-close request-id])
           (state/dispatch [:human-input-form (hi/set-errors form (:errors outcome))])))
 
       :cancel
-      (do (vis/cancel-human-input! request-id)
+      (do (try (human-input-answer! form :cancel nil)
+               (catch Throwable t
+                 (vis/notify! (str "Could not cancel: " (ex-message t)) :level :error)))
           (state/dispatch [:human-input-close request-id]))
 
       (state/dispatch [:human-input-form form]))))
@@ -4022,6 +4054,22 @@
                   :model-sync
                   (state/dispatch [:sync-session-model tab-id chunk])
 
+                  ;; A run is BLOCKED on the operator in a process that is NOT
+                  ;; this one — typically the serve daemon. The in-process `:tui`
+                  ;; channel bus never crosses a JVM, so this stream is the only
+                  ;; way that request reaches a terminal at all (issue #122).
+                  ;; `hi/request<-wire` rehydrates the ENGINE's own view, and
+                  ;; `:human-input-open` is idempotent by request id, so a
+                  ;; request parked locally — which arrives on both routes —
+                  ;; still opens exactly one dialog.
+                  :human-input-open
+                  (when-let [request (hi/request<-wire (:request chunk))]
+                    (state/dispatch [:human-input-open (hi/init-form request)]))
+
+                  ;; ANY surface answered it, or it timed out.
+                  :human-input-close
+                  (state/dispatch [:human-input-close (:request-id chunk)])
+
                   ;; The server's `subscription.ready` verdict: it names the turn the
                   ;; DAEMON is running for this session right now, before any replay.
                   ;; Disagreement with the turn painted here is proof of a gap.
@@ -4031,6 +4079,19 @@
                   nil))))
           (catch Throwable _
             (fn [])))
+
+     ;; REPLAY. A request can be parked BEFORE this tab ever attaches — the
+     ;; daemon blocked while no TUI was running, or the stream's replay ring
+     ;; already rolled past the event. Ask the gateway what this session is
+     ;; blocked on right now, so the form is surfaced instead of a turn that
+     ;; never moves. Deduped by `:human-input-open` against the live event.
+     _
+     (vis/worker-future "tui-human-input-replay"
+                        (fn []
+                          (try (doseq [wire (vis/gateway-human-input-requests session-id)]
+                                 (when-let [request (hi/request<-wire wire)]
+                                   (state/dispatch [:human-input-open (hi/init-form request)])))
+                               (catch Throwable _ nil))))
 
      cleanup
      #(do (vis/remove-title-listener! session-id listener)

@@ -2598,9 +2598,23 @@
 
 (reg-event-db :human-input-open
               (fn [db [_ form]]
-                (if (:human-input db)
-                  (update db :human-input-queue (fnil conj []) form)
-                  (assoc db :human-input form))))
+                ;; IDEMPOTENT BY REQUEST ID. One request reaches this tab twice
+                ;; whenever the run parks in THIS process: once on the in-process
+                ;; `:tui` channel bus, once as the gateway's `human_input.request`
+                ;; session event (which is the only route when the run parks in
+                ;; the serve daemon). Opening the same form twice would leave a
+                ;; zombie behind the answered one.
+                (let
+                  [rid
+                   (get-in form [:request :id])
+
+                   same?
+                   #(and rid (= rid (get-in % [:request :id])))]
+
+                  (cond (same? (:human-input db)) db
+                        (some same? (:human-input-queue db)) db
+                        (:human-input db) (update db :human-input-queue (fnil conj []) form)
+                        :else (assoc db :human-input form)))))
 
 (reg-event-db :human-input-form
               (fn [db [_ form]]
