@@ -5159,15 +5159,28 @@
    "doc" {:pos ["name"]}
    "session_fold" {:pos ["target"] :opt-pos ["gist"]}})
 
+(defn- request-api-style
+  "svar `:api-style` the NEXT request will actually be built for: the resolved
+   model's own overlay first, then its provider's (svar reads
+   `(or (:api-style model-map) (:api-style provider))` at request build). nil when
+   neither declares one — svar then defaults to the OpenAI-compatible chat wire,
+   which is exactly how `extension/strict-tools-for-wire` treats nil."
+  [environment resolved-model]
+  (or (:api-style resolved-model)
+      (some (fn [p]
+              (when (= (:provider resolved-model) (:id p)) (:api-style p)))
+            (:providers (:router environment)))))
+
 (defn- native-tools
   "The complete provider-visible native surface. Extension tools arrive finalized
    by `native-tool-schemas`; every engine-owned tool is finalized here, so no tool
    can be advertised without an explicit raw-result contract.
 
-   `budget-strict-tools` runs LAST, over both halves at once: the provider's
-   strict grammar is compiled per request, so only the assembled surface knows
-   how much of it can stay constrained."
-  [active-extensions caps env]
+   The two `:strict` gates run LAST, over both halves at once: the WIRE's strict
+   subset differs per api-style, and the provider's strict grammar is compiled per
+   request — so only the assembled surface knows how much of it can stay
+   constrained."
+  [active-extensions caps env api-style]
   (let
     [engine-tools (cond-> [(apropos-tool) (doc-tool)]
                     (seq (extension/native-tool-replay-policies active-extensions env))
@@ -5175,9 +5188,11 @@
 
                     true
                     (conj (session-fold-tool) (python-execution-tool caps)))]
-    (extension/budget-strict-tools (into (extension/native-tool-schemas active-extensions env)
-                                         (map finalize-engine-native-tool)
-                                         engine-tools))))
+    (extension/budget-strict-tools (extension/strict-tools-for-wire
+                                     api-style
+                                     (into (extension/native-tool-schemas active-extensions env)
+                                           (map finalize-engine-native-tool)
+                                           engine-tools)))))
 
 (defn- advertised-native-capability-names
   "Provider-visible names plus Python compatibility names for active extension
@@ -5691,7 +5706,10 @@
        ;; a typed routing-trace event so the UI shows what the heal cost
        ;; instead of silence.
        empty-reply-resend-events (atom [])
-       provider-tools (native-tools active-extensions (:sandbox-caps environment) environment)
+       provider-tools (native-tools active-extensions
+                                    (:sandbox-caps environment)
+                                    environment
+                                    (request-api-style environment resolved-model))
        _ (env/set-advertised-native-tools!
            (:python-context environment)
            (advertised-native-capability-names active-extensions environment provider-tools))

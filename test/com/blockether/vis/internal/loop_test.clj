@@ -4027,7 +4027,7 @@
        {:ext/name "foundation.editing" :ext/engine {:ext.engine/symbols @ed/editing-symbols}}
 
        tools
-       (@#'lp/native-tools [editing-ext] nil nil)
+       (@#'lp/native-tools [editing-ext] nil nil :anthropic)
 
        by-name
        (into {} (map (juxt :name identity)) tools)]
@@ -4091,14 +4091,14 @@
           (expect (= expected-type (:type (ex-data err)))))))
   (it "does not advertise retry_native when no active tool owns a replay policy"
       (expect (= ["apropos" "doc" "session_fold" "python_execution"]
-                 (mapv :name (@#'lp/native-tools [] nil nil)))))
+                 (mapv :name (@#'lp/native-tools [] nil nil :anthropic)))))
   (it "deduplicates provider names and Python compatibility aliases from native apropos"
       (let
         [editing-ext
          {:ext/name "foundation.editing" :ext/engine {:ext.engine/symbols @ed/editing-symbols}}
 
          tools
-         (@#'lp/native-tools [editing-ext] nil nil)
+         (@#'lp/native-tools [editing-ext] nil nil :anthropic)
 
          names
          (@#'lp/advertised-native-capability-names [editing-ext] nil tools)]

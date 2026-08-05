@@ -829,6 +829,73 @@
                    (long (#'extension/schema-grammar-cost
                           (assoc-in terse [:properties "q"] {:type "string"}))))))))
 
+(defn- openai-refused-tool
+  "The exact shape an OpenAI-compatible wire refuses: a batch whose item is either
+   a bare string or an object with an OPTIONAL key, carrying a real `minItems`
+   bound — i.e. `struct_index`'s `paths`."
+  [name]
+  (extension/advertise-tool
+    {:name name
+     :description "d"
+     :schema {:type "object"
+              :properties {"paths" {:type "array"
+                                    :minItems 1
+                                    :items {:anyOf [{:type "string"}
+                                                    {:type "object"
+                                                     :properties {"path" {:type "string"}
+                                                                  "ranges" {:type "array"
+                                                                            :items {:type
+                                                                                    "integer"}}}
+                                                     :required ["path"]
+                                                     :additionalProperties false}]}}}
+              :required ["paths"]
+              :additionalProperties false}}))
+
+;; Regression: switching to `github-copilot`/`gpt-5.6-terra` (an
+;; OpenAI-compatible chat wire) made EVERY turn fail before a single token, with
+;; no provider information in the TUI beyond "turn failed" — the provider 400ed
+;; the whole request: `Invalid schema for function 'struct_index': In
+;; context=('properties', 'paths', 'items', 'anyOf', '1'), 'required' is required
+;; to be supplied and to be an array including every key in properties. Missing
+;; 'ranges'.` `advertise-tool` had stamped `:strict true` on it because it
+;; measures the ANTHROPIC subset, which permits an optional property and a
+;; `minItems` bound.
+(defdescribe
+  strict-wire-subset-test
+  (it "the schema OpenAI refuses keeps :strict on Anthropic and loses it elsewhere"
+      (let [tool (openai-refused-tool "struct_index")]
+        ;; The Anthropic-calibrated gate says yes, which is how this shipped.
+        (expect (true? (:strict tool)))
+        (expect (= [true] (mapv :strict (extension/strict-tools-for-wire :anthropic [tool]))))
+        (expect (= [nil] (mapv :strict (extension/strict-tools-for-wire :openai [tool]))))
+        (expect (= [nil] (mapv :strict (extension/strict-tools-for-wire :openai-responses [tool]))))
+        ;; svar builds an OpenAI-compatible chat body when nothing declares a
+        ;; style, so an unknown/absent api-style takes the harsher subset too.
+        (expect (= [nil] (mapv :strict (extension/strict-tools-for-wire nil [tool]))))
+        (expect (= [nil]
+                   (mapv :strict (extension/strict-tools-for-wire "github-copilot" [tool]))))))
+  (it "an all-required, bound-free schema stays strict on every wire"
+      (let [tool (scalar-tool "scalars")]
+        (expect (true? (:strict tool)))
+        (expect (= [true] (mapv :strict (extension/strict-tools-for-wire :anthropic [tool]))))
+        (expect (= [true] (mapv :strict (extension/strict-tools-for-wire :openai [tool]))))))
+  (it "a bound alone disqualifies a schema that is otherwise fully required"
+      (let [tool (assoc-in (flat-tool "flat") [:schema :properties "paths" :minItems] 1)]
+        (expect (true? (:strict (flat-tool "flat"))))
+        (expect (= [true] (mapv :strict (extension/strict-tools-for-wire :anthropic [tool]))))
+        (expect (= [nil] (mapv :strict (extension/strict-tools-for-wire :openai [tool]))))))
+  (it "the surface is otherwise untouched, order included"
+      (let
+        [tools
+         [(openai-refused-tool "a") (scalar-tool "b") (flat-tool "c")]
+
+         wire
+         (extension/strict-tools-for-wire :openai tools)]
+
+        (expect (= (mapv :name tools) (mapv :name wire)))
+        (expect (= (mapv #(dissoc % :strict) tools) (mapv #(dissoc % :strict) wire)))
+        (expect (= [nil true true] (mapv :strict wire))))))
+
 ;; ── ONE context for the extension and the session (issue #104) ────────────────
 ;;
 ;; Regression, issue #104: each callback site installed its OWN SUBSET of the

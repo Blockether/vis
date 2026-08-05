@@ -1167,6 +1167,49 @@
   [schema]
   (and (map? schema) (= "object" (:type schema)) (strict-samplable-node? schema)))
 
+(defn- schema-child-nodes
+  "Every nested schema node of ONE wire-schema node: its properties, `$defs`
+   entries, array item schema(s) and union branches."
+  [node]
+  (let [items (:items node)]
+    (concat (vals (:properties node))
+            (vals (:$defs node))
+            (if (sequential? items) items (when items [items]))
+            (:anyOf node)
+            (:allOf node))))
+
+(def ^:private openai-strict-unsupported-keys
+  "JSON-Schema keywords the OpenAI strict subset refuses OUTRIGHT.
+
+   `wire-schema` already proses most of them into their node's description, but
+   `minItems` is the one it deliberately KEEPS as a real bound: Anthropic
+   enforces `0`/`1`, and that bound is exactly what makes a batch argument
+   unsamplable as a bare string. On an OpenAI wire the very same bound is a hard
+   rejection, so a schema carrying one can never be strict there."
+  [:minItems :maxItems :minLength :maxLength :pattern :format :uniqueItems :minimum :maximum
+   :multipleOf :minProperties :maxProperties])
+
+(defn- openai-strict-node?
+  "True when ONE wire-schema node is inside the OpenAI strict subset, which is
+   harsher than Anthropic's in two ways, both measured live:
+
+   - every `object` must list EVERY property in `required` (`'required' is
+     required to be supplied and to be an array including every key in
+     properties`); an optional argument has to be modelled as nullable instead,
+   - no type-specific bound may appear at all."
+  [node]
+  (or (not (map? node))
+      (and (not-any? #(contains? node %) openai-strict-unsupported-keys)
+           (if (= "object" (:type node))
+             (= (set (keys (:properties node))) (set (:required node)))
+             true)
+           (every? openai-strict-node? (schema-child-nodes node)))))
+
+(defn- openai-strict-samplable-schema?
+  "`strict-samplable-schema?` for an OpenAI-compatible wire (chat or responses)."
+  [schema]
+  (and (strict-samplable-schema? schema) (openai-strict-node? schema)))
+
 (defn advertise-tool
   "Project ONE finalized tool def `{:name :description :schema}` onto the
    model-facing wire: schema through `wire-schema`, plus `:strict true` when the
@@ -1397,6 +1440,41 @@
     (into []
           (map-indexed (fn [i t]
                          (if (or (not (:strict t)) (contains? affordable i)) t (dissoc t :strict))))
+          tools)))
+
+(def ^:private lenient-strict-api-styles
+  "svar `:api-style`s whose strict mode accepts an OPTIONAL property and a real
+   `minItems 0/1` — the subset every budget in this namespace was measured
+   against. Everything else, INCLUDING an undeclared api-style, is the harsher
+   OpenAI wire: svar's `tool-def->wire` defaults to OpenAI-compatible chat."
+  #{:anthropic})
+
+(defn strict-tools-for-wire
+  "Drop `:strict` from every advertised tool whose schema is outside the strict
+   subset of THIS request's wire.
+
+   `advertise-tool` decides whether a schema is grammar-samplable at all against
+   the Anthropic subset, which allows optional properties. The OpenAI-compatible
+   wires enforce a harsher one and refuse the ENTIRE request when one strict tool
+   misses it — measured live on `github-copilot`/`gpt-5.6-terra`: `Invalid schema
+   for function 'struct_index': In context=('properties', 'paths', 'items',
+   'anyOf', '1'), 'required' is required to be supplied and to be an array
+   including every key in properties. Missing 'ranges'.`
+
+   Every batch tool here declares optional keys and `minItems 1` on purpose, so
+   on that wire the flag simply comes off: the tool is sampled unconstrained,
+   exactly as before strict existed, and its own coercion stays the gate. This
+   runs BEFORE `budget-strict-tools` so the request's grammar budget is spent
+   only on tools that will really carry the flag."
+  [api-style tools]
+  (if (contains? lenient-strict-api-styles
+                 (some-> api-style
+                         keyword))
+    (vec tools)
+    (mapv (fn [t]
+            (if (and (:strict t) (not (openai-strict-samplable-schema? (:schema t))))
+              (dissoc t :strict)
+              t))
           tools)))
 
 (defn native-tool-schemas
