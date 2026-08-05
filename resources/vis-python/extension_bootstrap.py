@@ -219,15 +219,22 @@ def log(level, msg):
 def notify(text, level='info'):
     _host['notify'](str(text), str(level))
 
-def shell(opts):
-    # The public extension shell has exactly one call shape: one options map.
-    # Process commands live in {'commands': ['...']}; lifecycle-only calls use
-    # the same map, e.g. shell({'op': 'logs', 'id': 'dev'}).
+def _shell_options(name, opts):
     if not isinstance(opts, dict):
         raise TypeError(
-            "shell takes one options map — use shell({'commands': ['ls']})"
+            f"{name} takes one options map — use {name}({{'commands': ['ls']}})"
         )
-    return _host['jailed_shell'](opts)
+    return opts
+
+
+def shell(opts):
+    # Trusted extensions get the same unrestricted process boundary as subprocess.
+    return _host['shell'](_shell_options('shell', opts))
+
+
+def jailed_shell(opts):
+    # Explicit opt-in to the invoking session's jail policy.
+    return _host['jailed_shell'](_shell_options('jailed_shell', opts))
 
 class Answer:
     # The outcome of `vis.ask(...)`. Truthy only when the human submitted.
@@ -578,8 +585,6 @@ def forget(handle):
         return False
     return bool(_host['forget_secret'](str(handle)))
 
-# Compatibility for extensions written before the public `vis.shell` spelling.
-jailed_shell = shell
 """
 
 _vis_mod = _vis_types.ModuleType("vis")
@@ -589,6 +594,7 @@ _vis_mod.__dict__["_host"] = {
     "state_del": __vis_host_state_del__,
     "log": __vis_host_log__,
     "notify": __vis_host_notify__,
+    "shell": __vis_host_shell__,
     "jailed_shell": __vis_host_jailed_shell__,
     "request_input": __vis_host_request_input__,
     "check_input": __vis_host_check_input__,

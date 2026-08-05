@@ -143,7 +143,7 @@
 (defn- host-tool-result
   "Unwrap a HOST tool envelope into the payload Python asked for.
 
-   Host tool impls (`vis.shell` -> `foundation.shell/jailed-shell`) return an
+   Host shell impls return either a plain result map or an
    `extension/success`/`failure` ENVELOPE — `{:result … :success? … :error …
    :metadata …}` — whose keyword keys `->py` rejects outright. Handing that
    straight back therefore killed every extension that shells out with
@@ -264,6 +264,18 @@
                     (notifications/notify! (str text) :level (get notify-levels (str level) :info))
                     nil)))
     (.putMember g
+                "__vis_host_shell__"
+                ;; `vis.shell` follows the extension's trusted process boundary,
+                ;; even when its caller has an enabled session jail. It keeps the
+                ;; native shell tool's one-options-map result grammar.
+                (->executable
+                  (fn [opts]
+                    (host-tool-result
+                      ((requiring-resolve
+                         'com.blockether.vis.internal.foundation.shell/trusted-extension-shell)
+                        extension/*current-environment*
+                        opts)))))
+    (.putMember g
                 "__vis_host_jailed_shell__"
                 ;; Public extension calls use exactly one options map, identical
                 ;; to the native shell tool: {"commands": ["…"]}. The impl hands
@@ -344,8 +356,9 @@
    are checked against this list by a test, which is why adding a host call means
    adding it here."
   ["__vis_host_state_get__" "__vis_host_state_put__" "__vis_host_state_del__" "__vis_host_log__"
-   "__vis_host_notify__" "__vis_host_jailed_shell__" "__vis_host_request_input__"
-   "__vis_host_check_input__" "__vis_host_reveal_secret__" "__vis_host_forget_secret__"])
+   "__vis_host_notify__" "__vis_host_shell__" "__vis_host_jailed_shell__"
+   "__vis_host_request_input__" "__vis_host_check_input__" "__vis_host_reveal_secret__"
+   "__vis_host_forget_secret__"])
 
 (defn ^:no-doc bind-inert-host!
   "Bind every host member as a REFUSAL, so the `vis` module can be BUILT without
@@ -396,14 +409,14 @@
 (defn- call-py-ext
   "Invoke a Python callable inside THE session context (`extension/with-context`):
    the extension identity (so `vis.state` host callbacks own their aggregate
-   rows) plus the live session env, which is what `vis.shell`, `vis.ask` and
+   rows) plus the live session env, which `vis.jailed_shell`, `vis.ask` and
    `vis.state` read.
 
    Adapters handed a real env (activation, prompt, ctx, slash, op hooks) pass
    it; adapters with none (symbol calls, render, provider callbacks) pass nil
-   and INHERIT the caller's session instead of running session-less — without
-   that, `vis.shell` threw \"available only while handling a session\" and
-   `vis.ask` requests were dropped by the gateway bridge.
+   and INHERIT the caller's session instead of running session-less. That keeps
+   explicit `vis.jailed_shell` and `vis.ask` available when a caller has a live
+   session.
    Returns the `->clj` view of the result."
   [ext-name env ^Context ctx ^Value f args]
   (extension/with-context {:ext (or extension/*current-extension* {:ext/name ext-name}) :env env}

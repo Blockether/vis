@@ -712,6 +712,11 @@ arbitrary host-class, native, and polyglot interop; host access is limited to th
 bound `vis` API. The model can call an exported tool but cannot evaluate code in
 the extension context. See [Process sandbox and gateway egress](sandbox.md).
 
+That boundary includes every ordinary process path: `subprocess`, `os.system`,
+`os.popen`, and `vis.shell({...})` remain unrestricted even when the invoking
+session has its jail enabled. `vis.jailed_shell({...})` is the explicit opt-in to
+that session's jail and therefore requires a live session.
+
 Treat `.py` files in a project's `.vis/extensions/` like you treat its
 `deps.edn`: they execute with your user's permissions when Vis starts in
 that checkout — review before running Vis in untrusted repositories.

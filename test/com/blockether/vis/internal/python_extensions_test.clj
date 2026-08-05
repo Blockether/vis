@@ -1079,8 +1079,8 @@ vis.extension(
           (let [seen (symbol-fn ext (clojure.core/symbol "seen_selected"))]
             (expect (= {"source" "tui" "provider_id" "acme"} (get-in (seen) [:result])))))))))
 
-;; Regression, issue #113: ordinary subprocess calls in process-level provider
-;; callbacks were redirected into the session-only jailed shell and returned nil.
+;; Regression, issue #113: ordinary extension process calls from process-level
+;; provider callbacks were redirected into the session-only jail and returned nil.
 (defdescribe
   python-extension-process-boundary-test
   (it
@@ -1091,6 +1091,25 @@ vis.extension(
       (fn [_ _]
         (expect (= {:token "extension-native" :source :subprocess}
                    ((:provider/detect-fn (registry/provider-by-id :process-provider))))))))
+  (it
+    "keeps vis.shell unrestricted even while the invoking session jail is enabled"
+    (with-loaded
+      {"shell_provider.py"
+       "import vis\ndef detect():\n    result = vis.shell({'commands': ['printf regular-shell']})\n    return {'token': result['commands'][0]['stdout'], 'source': 'shell'}\nvis.extension(name='shell-provider', description='shell provider', providers=[vis.provider(id='shell-provider', label='Shell provider', detect_fn=detect)])"}
+      (fn [_ _]
+        (let
+          [detect
+           (:provider/detect-fn (registry/provider-by-id :shell-provider))
+
+           env
+           {:session-id "jailed-session"
+            :security-policy {:sandbox true}
+            :jail-policy-fn (fn []
+                              (throw (ex-info "the regular extension shell touched the jail" {})))}]
+
+          (expect (= {:token "regular-shell" :source :shell} (detect)))
+          (binding [extension/*current-environment* env]
+            (expect (= {:token "regular-shell" :source :shell} (detect))))))))
   (it
     "keeps explicit vis.jailed_shell calls on the live session jail"
     (with-loaded
@@ -1122,7 +1141,7 @@ vis.extension(
     ;; :result" — blaming the extension for the framework's own payload.
     (with-loaded
       {"jail.py"
-       "import vis\ndef run():\n    \"Shell out.\"\n    r = vis.shell({'commands': ['echo hi']})\n    return [r['commands'][0]['stdout'], r['stage'], sorted(r.keys())]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+       "import vis\ndef run():\n    \"Shell out.\"\n    r = vis.jailed_shell({'commands': ['echo hi']})\n    return [r['commands'][0]['stdout'], r['stage'], sorted(r.keys())]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
       (fn [_ _]
         (let
           [run
@@ -1145,7 +1164,7 @@ vis.extension(
     "raises a failing host tool envelope instead of handing Python the envelope"
     (with-loaded
       {"jail.py"
-       "import vis\ndef run():\n    \"Shell out.\"\n    return vis.shell({'commands': ['nope']})\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+       "import vis\ndef run():\n    \"Shell out.\"\n    return vis.jailed_shell({'commands': ['nope']})\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
       (fn [_ _]
         (let
           [run
@@ -1170,7 +1189,7 @@ vis.extension(
   "rejects a Python set so serial command ordering cannot be lost"
   (with-loaded
     {"jail.py"
-     "import vis\ndef run():\n    return vis.shell({'echo first', 'echo second'})\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+     "import vis\ndef run():\n    return vis.jailed_shell({'echo first', 'echo second'})\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
     (fn [_ _]
       (let
         [run

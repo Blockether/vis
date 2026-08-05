@@ -1808,10 +1808,20 @@
   ([env argv] (run-argv env argv nil))
   ([env argv opts] (shell-run-impl env (vec argv) opts)))
 
+(defn trusted-extension-shell
+  "Run a trusted Python extension's ordinary `vis.shell` request without applying
+   the invoking session's process jail. The extension context already has direct,
+   unrestricted subprocess access; this is the result-shaped convenience API for
+   the same trust boundary. Foreground calls therefore work outside a session too."
+  [env opts]
+  (shell-dispatch (-> (or env {})
+                      (assoc :jail-policy-fn (constantly {:disabled? true}))
+                      (assoc-in [:security-policy :sandbox] false))
+                  opts))
+
 (defn jailed-shell
-  "Run a Python extension's shell request through the invoking session's jail.
-   The only public form is `vis.shell({\"commands\": [\"ls\"]})`; it shares
-   the same one-map grammar as the native shell tool."
+  "Run a Python extension's explicit `vis.jailed_shell` request through the
+   invoking session's jail. It shares the ordinary shell's one-map grammar."
   [env opts]
   (when-not (:session-id env)
     (throw (ex-info "jailed_shell is available only while handling a session"
