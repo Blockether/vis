@@ -318,3 +318,19 @@ export function AlertIcon({ className }: { className?: string }) {
     </Icon>
   );
 }
+
+/**
+ * Overflow — "more actions." Three filled dots on the baseline, so a menu
+ * trigger reads the same weight at every size the way a strip of stroked icons
+ * does. The ⋯ glyph this replaces is a MATH symbol (U+22EF): it sits on the
+ * cap-height line, never the optical centre, and at small sizes it is a dash.
+ */
+export function DotsIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <circle cx="7" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="17" cy="12" r="1.5" fill="currentColor" stroke="none" />
+    </Icon>
+  );
+}

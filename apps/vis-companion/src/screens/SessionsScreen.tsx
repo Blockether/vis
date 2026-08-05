@@ -33,7 +33,7 @@ import {
 } from '../lib/list-scroll';
 import { SwipeActions } from '../components/SwipeActions';
 import { SwitchProjectSheet } from '../components/SwitchProjectSheet';
-import { ChevronIcon, PencilIcon, StarIcon, TrashIcon } from '../components/icons';
+import { ChevronIcon, DotsIcon, PencilIcon, StarIcon, TrashIcon } from '../components/icons';
 import { DEFAULT_SESSION_PAGE_SIZE, getOfferDrafts, getSessionsPerPage, subscribeOfferDrafts, subscribeSessionsPerPage } from '../lib/storage';
 import { hostOf } from '../lib/endpoints';
 import {
@@ -1863,9 +1863,9 @@ const ProjectGroup = memo(function ProjectGroup({
             aria-haspopup="menu"
             aria-expanded={menu !== null}
             aria-label="Project actions"
-            className="flex min-h-11 shrink-0 items-center justify-center px-3 font-mono text-ui text-dialog-hint transition-colors duration-150 hover:bg-hover hover:text-white focus-visible:bg-hover focus-visible:text-white focus-visible:outline-none motion-reduce:transition-none sm:px-4"
+            className="flex min-h-11 shrink-0 items-center justify-center px-3 text-ui text-dialog-hint transition-colors duration-150 hover:bg-hover hover:text-white focus-visible:bg-hover focus-visible:text-white focus-visible:outline-none motion-reduce:transition-none sm:px-4"
           >
-            <span aria-hidden="true">⋯</span>
+            <DotsIcon className="size-4" />
           </button>
         )}
       </header>
@@ -2636,12 +2636,12 @@ function MachineKebab({
       aria-expanded={open}
       aria-label={`Actions for ${label}`}
       title={`Actions for ${label}`}
-      className={`-mr-1 flex min-h-11 shrink-0 items-center justify-center px-3 font-mono text-ui transition-colors duration-150 disabled:opacity-40 motion-reduce:transition-none ${
+      className={`-mr-1 flex min-h-11 shrink-0 items-center justify-center px-3 text-ui transition-colors duration-150 disabled:opacity-40 motion-reduce:transition-none ${
         open ? 'bg-hover text-white' : 'text-dialog-hint hover:text-white'
       }`}
       onClick={(event) => onOpen(event.currentTarget)}
     >
-      <span aria-hidden>⋯</span>
+      <DotsIcon className="size-4" />
     </button>
   );
 }

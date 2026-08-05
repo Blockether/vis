@@ -8,6 +8,7 @@ import {
   ChevronIcon,
   ClipIcon,
   CloseIcon,
+  DotsIcon,
   ImageIcon,
   MachinesIcon,
   MicIcon,
@@ -29,6 +30,7 @@ const ICONS = {
   ChevronIcon: <ChevronIcon />,
   ClipIcon: <ClipIcon />,
   CloseIcon: <CloseIcon />,
+  DotsIcon: <DotsIcon />,
   ImageIcon: <ImageIcon />,
   MachinesIcon: <MachinesIcon />,
   MicIcon: <MicIcon />,
@@ -271,7 +273,7 @@ describe("the icon set", () => {
  * marks the TUI paints too, and the spinner's Braille cadence is deliberate as
  * well. Only marks that stand in for an icon are refused.
  */
-const GLYPHS_AS_ICONS = ["✕", "✖", "✗", "▾", "▶", "◀", "▲", "↓", "↗", "▣", "≡"];
+const GLYPHS_AS_ICONS = ["✕", "✖", "✗", "▾", "▶", "◀", "▲", "↓", "↗", "▣", "≡", "⋯"];
 
 /**
  * Two of them have an honest job in TEXT: `×` multiplies (`retried 3×`, `3 rows
