@@ -6368,6 +6368,43 @@
    picture the user has actually scrolled INTO."
   40)
 
+(defn image-cell-box
+  "The cell box `{:cols :rows}` the transcript RESERVES for a picture of
+   intrinsic `width`x`height` pixels laid out in `content-w` columns:
+   aspect-preserving, width-filling, capped at [[image-max-rows]] rows.
+
+   The ONE place that geometry is decided. The painter pre-allocates it and
+   the height estimator charges the very same rows for a picture it has not
+   painted yet, so a transcript full of screenshots never GROWS under a reader
+   who is scrolling through it."
+  [width height content-w]
+  (timg/cell-size {:w width :h height} (max 1 (long content-w)) image-max-rows))
+
+(def ^:private vis-image-dims-re
+  ;; A `vis-image` fence's 4th body line is the picture's intrinsic `WxH` (see
+  ;; `image-block-parts`); raw markdown is all the height estimator ever has.
+  #"(?m)^````vis-image[ \t]*\n[^\n]*\n[^\n]*\n[^\n]*\n[ \t]*(\d+)x(\d+)")
+
+(defn image-fence-rows
+  "Rows every `vis-image` fence in raw markdown `md` reserves at `content-w`
+   columns - the picture boxes [[image-disclosure-entries]] pre-allocates,
+   counted without parsing the markdown or reading a single pixel.
+
+   0 on a terminal that cannot draw pictures (the fence paints as a text card
+   there, which the prose estimate already covers) and 0 for a fence whose
+   dimensions are missing."
+  ^long [md ^long content-w]
+  (if (and (string? md) (str/includes? md "````vis-image") (timg/graphical-terminal?))
+    (long (reduce (fn [^long acc m]
+                    (+ acc
+                       (long (max 1
+                                  (long (:rows (image-cell-box (parse-long (nth m 1))
+                                                               (parse-long (nth m 2))
+                                                               content-w)))))))
+                  0
+                  (re-seq vis-image-dims-re md)))
+    0))
+
 (defn- image-disclosure-entries
   "Render one `vis-image` block with its box PRE-ALLOCATED — NOT collapsible.
 
@@ -6408,13 +6445,10 @@
      (if can-draw?
        (let
          [box
-          (timg/cell-size {:w width :h height}
-                          (max 1 (long content-w))
-                          ;; Height ceiling in cells (see `image-max-rows`):
-                          ;; large enough that a width-filled portrait fills
-                          ;; the width cap, while an over-tall box is clamped
-                          ;; to the viewport by `fitting-image-placements`.
-                          image-max-rows)
+          ;; Height ceiling in cells (see `image-max-rows`): large enough that
+          ;; a width-filled portrait fills the width cap, while an over-tall
+          ;; box is clamped to the viewport by `fitting-image-placements`.
+          (image-cell-box width height content-w)
 
           rows
           (max 1 (long (:rows box)))

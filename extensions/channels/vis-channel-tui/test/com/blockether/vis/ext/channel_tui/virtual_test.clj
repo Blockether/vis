@@ -15,6 +15,7 @@
       visible bubbles' `:top + :height` fits inside the viewport's
       forward extent, even when estimates differ from real heights."
   (:require [com.blockether.vis.ext.channel-tui.render :as render]
+            [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe describe expect it]]
             [clojure.string :as str]))
@@ -695,6 +696,98 @@
 
             (let [[est real] (est->real m w)]
               (expect (>= (long est) (long real)) (str "w=" w " est=" est " real=" real))))))))
+
+;; Regression (user report, same bug the companion had on iOS): a transcript
+;; picture painted a reserved CELL BOX the estimator knew nothing about — it
+;; charged the `vis-image` fence as a handful of prose rows (14) while the
+;; painter drew the box (46). Every screenshot therefore UNDERSHOT, so
+;; `total-h` GREW as the reader scrolled up into never-measured shots
+;; (measured 190 → 400 over 8 messages) and the viewport/thumb lurched.
+(defdescribe
+  image-fence-overshoot-test
+  (let
+    [fence
+     (fn [i w h]
+       (str "````vis-image\n[Image #"
+            i
+            ": shot-"
+            i
+            ".png]\n/tmp/shot-"
+            i
+            ".png\nimage/png\n"
+            w
+            "x"
+            h
+            "\n1.2 MB\n````"))
+
+     shot-msg
+     (fn [i]
+       (user-msg (str "look at this\n\n" (fence i 1320 2868))))
+
+     graphical
+     (fn [f]
+       ;; The picture box only exists on a terminal that can draw;
+       ;; the caches are keyed on text+width, not on that fact.
+       (with-redefs [timg/graphical-terminal? (constantly true)]
+         (virtual/invalidate-heights!)
+         (render/invalidate-cache!)
+         (let [v (f)]
+           (virtual/invalidate-heights!)
+           (render/invalidate-cache!)
+           v)))]
+
+    (describe
+      "a pasted screenshot"
+      (it "estimates at least the rows its picture box paints, across widths"
+          (doseq [w [84 154 254]]
+            (let
+              [m (shot-msg 1)
+               [est real] (graphical (fn []
+                                       [(estimated-height m w)
+                                        (render/bubble-height (project-message m w settings) w)]))]
+
+              (expect (>= (long est) (long real)) (str "w=" w " est=" est " real=" real)))))
+      (it
+        "never grows total-h while the reader scrolls up through screenshots"
+        (let
+          [msgs
+           (mapv shot-msg (range 8))
+
+           inner-h
+           40
+
+           totals
+           (graphical
+             (fn []
+               (loop
+                 [base
+                  (:eff-scroll (virtual/layout msgs bubble-w settings nil inner-h {}))
+
+                  prev
+                  nil
+
+                  out
+                  []
+
+                  k
+                  0]
+
+                 (if (>= k 14)
+                   out
+                   (let
+                     [ly (virtual/layout msgs
+                                         bubble-w
+                                         settings
+                                         (max 0 (- (long base) 8))
+                                         inner-h
+                                         {}
+                                         (when prev {:prev-offsets prev}))]
+                     (recur (long (or (:anchored-scroll ly) (:eff-scroll ly)))
+                            (:offsets ly)
+                            (conj out (long (:total-h ly)))
+                            (inc k)))))))]
+
+          (expect (apply >= totals) (str "total-h grew while scrolling up: " (vec totals))))))))
 
 (defdescribe
   overshoot-drift-tripwire-test

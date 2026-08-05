@@ -416,6 +416,41 @@
                                                :else false))
                                        k))))))))
 
+(defn- image-rows-est
+  "Rows the RESERVED picture boxes inside `message` add on top of its prose
+   estimate, at `content-w` columns.
+
+   A `vis-image` fence paints a cell box (`render/image-fence-rows`), never the
+   handful of fence rows the prose walker counts, so a transcript of
+   screenshots used to UNDERSHOOT by ~30 rows apiece and `total-h` GREW under a
+   reader scrolling up into them. Charged at the widest content width, and for
+   every string that can carry a fence - collapsed sections included, since
+   overshoot is the invariant and a hidden picture simply costs nothing."
+  ^long [message ^long content-w]
+  (let
+    [rows (fn ^long [s]
+            (render/image-fence-rows s content-w))]
+    (long
+      (+ (rows (:text message))
+         (long
+           (reduce (fn [^long acc it]
+                     (+ acc
+                        (rows (:thinking it))
+                        (rows (:content-stream it))
+                        (rows (:assistant-prose it))
+                        (long (reduce (fn [^long a f]
+                                        (+ a
+                                           (rows (or (:result-render f) (:result f)))
+                                           (rows (:comment f))
+                                           (long (reduce (fn [^long c card]
+                                                           (+ c (rows (:body card))))
+                                                         0
+                                                         (:cards f)))))
+                                      0
+                                      (:forms it)))))
+                   0
+                   (:traces message)))))))
+
 (defn estimated-height
   "Cheap estimate of how many rows a message will paint at width
    `bubble-w`. Order of magnitude only - the full painter is
@@ -465,14 +500,20 @@
       (:traces message)
 
       text
-      (:text message)]
+      (:text message)
+
+      ;; Pictures are laid out by the PAINTER, not by the markdown walker:
+      ;; every `vis-image` fence reserves a cell box whose rows the prose
+      ;; estimate cannot see. Charge them separately, at `content-w`.
+      img-rows
+      (image-rows-est message content-w)]
 
      (cond
        (= role :user)
        ;; label + top/bottom pad + gap (see bubble-height*) + 2 rows of
        ;; markdown block-gap slack — pasted JSON/log blobs grow a couple of
        ;; walker-inserted blank rows that per-line math can't see.
-       (long (+ 6 (prose-rows-est text prose-w)))
+       (long (+ 6 img-rows (prose-rows-est text prose-w)))
        (and (= role :assistant) trace)
        (let
          [n-iter
@@ -599,6 +640,7 @@
                         trace))]
 
          (long (+ 5          ;; label + footer + note + gap
+                  img-rows   ;; reserved picture boxes
                   n-iter     ;; iteration headers
                   form-rows  ;; code + result (+ error) rows
                   think-rows ;; per-iteration reasoning + band
@@ -606,8 +648,8 @@
                   (prose-rows-est text (max 1 (min 60 fold-w))))))
        (= role :assistant)
        ;; label + footer + gap chrome for a plain answer bubble.
-       (long (+ 5 (prose-rows-est text prose-w)))
-       :else (long (+ 6 (prose-rows-est text prose-w)))))))
+       (long (+ 5 img-rows (prose-rows-est text prose-w)))
+       :else (long (+ 6 img-rows (prose-rows-est text prose-w)))))))
 
 (defn- estimated-height-with-turn-separator
   [_messages _settings bubble-w _idx message detail-expansions session-id]
