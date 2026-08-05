@@ -233,6 +233,16 @@
                         (expect (false? (activation-fn {})))
                         (finally (vis/toggle-set-enabled! "bridge" original))))))
 
+;; Regression, issue: bridge silently fell back to `(System/getProperty "user.dir")`
+;; when `:workspace/root` was missing from env, instead of failing loud like every
+;; other extension (clj/py/ts). A host bug that forgot to thread :workspace/root
+;; would silently operate against the JVM process cwd.
+(defdescribe bridge-missing-workspace-root-test
+             (it "throws instead of falling back to the process cwd"
+                 (let [ex (try (bridge/check {}) nil (catch clojure.lang.ExceptionInfo e e))]
+                   (expect (some? ex))
+                   (expect (= :vis.bridge/missing-workspace-root (:type (ex-data ex)))))))
+
 (defdescribe
   bridge-session-projects-test
   (it "omits the Bridge session slice when no configured project is known"

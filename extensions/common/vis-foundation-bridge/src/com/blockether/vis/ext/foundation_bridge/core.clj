@@ -19,7 +19,11 @@
 
 (defn- now-ms ^long [] (System/currentTimeMillis))
 
-(defn- workspace-root [env] (or (:workspace/root env) (System/getProperty "user.dir")))
+(defn- workspace-root
+  [env]
+  (or (:workspace/root env)
+      (throw (ex-info "bridge tool fired without :workspace/root in env"
+                      {:type :vis.bridge/missing-workspace-root}))))
 
 (defn- kw->snake
   "Keyword -> snake_case string, mirroring the Clojure->Python boundary
@@ -676,7 +680,7 @@
 ;; Mirrors the `br/` tool alias (`br/init`, `br/check`, ...) so the binary
 ;; reflects the same operations the model sees inside iterations.
 ;; Every subcommand thin-wraps the matching tool fn with an empty
-;; env (workspace-root defaults to `user.dir`), prints the resulting
+;; env (workspace-root throws if :workspace/root is missing), prints the resulting
 ;; map as EDN, and exits non-zero on tool failure or open Bridge
 ;; obligations.
 ;; =============================================================================
@@ -761,7 +765,7 @@
                                                                {:flag head}))
             :else (throw (ex-info (str "Unexpected positional argument: " head) {:arg head}))))))
 
-(defn- cli-env [] {})
+(defn- cli-env [] {:workspace/root (System/getProperty "user.dir")})
 
 (defn- cli-init!
   [_parsed residual]
