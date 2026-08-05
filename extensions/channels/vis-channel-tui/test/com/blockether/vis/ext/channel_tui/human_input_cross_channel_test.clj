@@ -20,6 +20,7 @@
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.screen :as screen]
             [com.blockether.vis.internal.gateway.human-input :as gw]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.gateway.state :as gw-state]
             [com.blockether.vis.internal.human-input :as engine]
             [com.blockether.vis.internal.human-input.spec :as hi-spec]
@@ -611,12 +612,13 @@
 
 (defn- daemon-view
   "A request VIEW built the way the engine builds one, without parking a thread."
-  [rid]
-  (engine/request->view (engine/normalize-request
-                          {:id rid
-                           :session-id "s1"
-                           :title "Deploy?"
-                           :fields [{:id "note" :type "plaintext" :label "Note"}]})))
+  ([rid] (daemon-view rid "s1"))
+  ([rid sid]
+   (engine/request->view (engine/normalize-request
+                           {:id rid
+                            :session-id sid
+                            :title "Deploy?"
+                            :fields [{:id "note" :type "plaintext" :label "Note"}]}))))
 
 ;; Regression, issue #122: a run parked by an extension running in the serve
 ;; daemon never surfaced in the terminal at all — the persisted
@@ -722,3 +724,55 @@
       (is (= {:is-accepted true} (#'screen/human-input-answer! form :submit {"note" "hi"})))
       (is (true? (#'screen/human-input-answer! form :cancel nil)))
       (is (= [[:submit "s1" "req-remote" {"note" "hi"}] [:cancel "s1" "req-remote"]] @calls)))))
+
+;; Regression, issue #122: a session can be blocked on MORE than one request at
+;; a time — several extensions parked in the daemon, or one that asks again
+;; while an earlier form is still unanswered. A tab that attaches late saw NONE
+;; of them; it must now surface EVERY one, in the daemon's own order, and every
+;; answer must name its own request over the gateway that owns it.
+(deftest every-daemon-side-request-is-replayed-on-attach-test
+  (reset! state/app-db {:render-version 0})
+  (let
+    [sid
+     (str "s-" (random-uuid))
+
+     rids
+     ["replay-one" "replay-two" "replay-three"]
+
+     calls
+     (atom [])]
+
+    (try
+      (with-redefs
+        [vis/gateway-human-input-requests
+         (fn [asked]
+           (is (= sid asked))
+           (mapv #(wire/->wire (daemon-view % sid)) rids))
+
+         vis/gateway-submit-human-input!
+         (fn [answered-sid rid values]
+           (swap! calls conj [answered-sid rid values])
+           {:is-accepted true})]
+
+        (#'screen/replay-human-input! sid)
+        (testing "all of them, oldest first: one open dialog and the rest queued"
+          (is (= "replay-one" (get-in @state/app-db [:human-input :request :id])))
+          (is (= ["replay-two" "replay-three"]
+                 (mapv #(get-in % [:request :id]) (:human-input-queue @state/app-db)))))
+        (testing "attaching twice does not stack a second copy of any of them"
+          (#'screen/replay-human-input! sid)
+          (is (= "replay-one" (get-in @state/app-db [:human-input :request :id])))
+          (is (= 2 (count (:human-input-queue @state/app-db)))))
+        (testing "and each one is answered over the gateway, against its OWN id"
+          (doseq [rid rids]
+            (let [form (:human-input @state/app-db)]
+              (is (= rid (hi/request-id form)))
+              (is (= {:is-accepted true} (#'screen/human-input-answer! form :submit {"note" rid})))
+              (state/dispatch [:human-input-close rid])))
+          (is (= (mapv (fn [rid]
+                         [sid rid {"note" rid}])
+                       rids)
+                 @calls))
+          (is (nil? (:human-input @state/app-db)))
+          (is (empty? (:human-input-queue @state/app-db)))))
+      (finally (reset! state/app-db {:render-version 0})))))

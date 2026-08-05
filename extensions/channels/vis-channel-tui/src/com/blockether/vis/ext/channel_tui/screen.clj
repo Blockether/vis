@@ -567,6 +567,22 @@
                 (vis/cancel-human-input! request-id)
                 (vis/gateway-cancel-human-input! session-id request-id)))))
 
+(defn- replay-human-input!
+  "Open EVERY request `session-id` is blocked on right now, oldest first.
+
+   A request can be parked BEFORE this tab attaches — the daemon blocked while
+   no TUI was running, or the stream's replay ring already rolled past the
+   event — and a session can be blocked on MORE than one at a time. The gateway
+   answers with all of them, so all of them are surfaced: the first becomes the
+   open dialog and the rest queue behind it in the daemon's own order. Deduped
+   by `:human-input-open` against the live event, so a request that also arrives
+   on the stream still opens exactly one dialog."
+  [session-id]
+  (try (doseq [wire (vis/gateway-human-input-requests session-id)]
+         (when-let [request (hi/request<-wire wire)]
+           (state/dispatch [:human-input-open (hi/init-form request)])))
+       (catch Throwable _ nil)))
+
 (defn- human-input-key!
   "Feed one keystroke to the open human-input dialog and act on its verdict.
 
@@ -4080,18 +4096,11 @@
           (catch Throwable _
             (fn [])))
 
-     ;; REPLAY. A request can be parked BEFORE this tab ever attaches — the
-     ;; daemon blocked while no TUI was running, or the stream's replay ring
-     ;; already rolled past the event. Ask the gateway what this session is
-     ;; blocked on right now, so the form is surfaced instead of a turn that
-     ;; never moves. Deduped by `:human-input-open` against the live event.
+     ;; REPLAY. Ask the gateway what this session is blocked on right now and
+     ;; surface ALL of it, so a form is drawn instead of a turn that never
+     ;; moves. See [[replay-human-input!]].
      _
-     (vis/worker-future "tui-human-input-replay"
-                        (fn []
-                          (try (doseq [wire (vis/gateway-human-input-requests session-id)]
-                                 (when-let [request (hi/request<-wire wire)]
-                                   (state/dispatch [:human-input-open (hi/init-form request)])))
-                               (catch Throwable _ nil))))
+     (vis/worker-future "tui-human-input-replay" #(replay-human-input! session-id))
 
      cleanup
      #(do (vis/remove-title-listener! session-id listener)
