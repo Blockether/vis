@@ -475,6 +475,11 @@
 (defn- format-status-value
   [v]
   (cond (keyword? v) (name v)
+        (map? v) (str/join ", "
+                           (map (fn [[k2 v2]]
+                                  (str (name k2) ": " (format-status-value v2)))
+                                (sort-by (comp str key) v)))
+        (sequential? v) (str/join ", " (map format-status-value v))
         :else (str v)))
 
 (defn- format-limit-window

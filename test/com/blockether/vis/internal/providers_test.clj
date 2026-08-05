@@ -592,3 +592,20 @@
     (is (= "s-probe" (:session seen)))
     (is (= (workspace/workspace-root env) (:root seen)))
     (is (true? (:is-authenticated detected)))))
+
+;; Regression, issue #118: format-status-value fell back to `(str v)` for a
+;; nested map status_fn value, so `status-text`/`status-md` printed a raw
+;; Clojure map literal (`{"max_budget" 100.0, "spend" 25.49}`) instead of a
+;; readable "key: value" line.
+(deftest status-text-formats-nested-usage-map-readably
+  (let
+    [status
+     {"is_authenticated" true "usage" {"max_budget" 100.0 "spend" 25.49 "remaining_requests" 42}}
+
+     text
+     (providers/status-text {:id :anthropic-coding-plan}
+                            status
+                            {:status :ok :dynamic {:limits []}})]
+
+    (is (str/includes? text "Usage: max_budget: 100.0, remaining_requests: 42, spend: 25.49"))
+    (is (not (str/includes? text "{\"max_budget\"")))))
