@@ -1997,3 +1997,60 @@
                                 :query-params {"is_recursive" "true"}})]
             (is (= 404 (:status response)))
             (is (empty? @calls))))))))
+
+;; Regression: the live `iteration.completed` descriptors DROP model-only
+;; artifacts and then RE-NUMBER what survives, while the byte endpoint indexed
+;; the UNFILTERED row list. On any iteration whose first artifact was
+;; `audience="model"` every index was off by one — the companion's artifacts
+;; sheet fetched the wrong bytes for every tile, and the artifact deliberately
+;; hidden from the human was handed to it at index 0.
+(deftest attachment-byte-endpoint-indexes-the-list-the-descriptors-number
+  (let
+    [b64
+     #(.encodeToString (java.util.Base64/getEncoder) (.getBytes ^String % "UTF-8"))
+
+     iid
+     "00000000-0000-0000-0000-0000000000ab"
+
+     rows
+     [{:kind "image"
+       :media-type "image/png"
+       :filename "for-the-model.png"
+       :audience "model"
+       :size 10
+       :base64 (b64 "MODEL-ONLY")}
+      {:kind "image"
+       :media-type "image/png"
+       :filename "for-the-human.png"
+       :audience "both"
+       :size 5
+       :base64 (b64 "SHOWN")}]
+
+     fetch
+     (fn [idx]
+       ((rv 'attachment-bytes-handler)
+         {:path-params {:sid (str (random-uuid)) :iid iid :idx (str idx)}}))]
+
+    (with-redefs-fn {#'state/iteration-attachments (constantly rows)}
+      (fn []
+        (let
+          [descriptors ((ns-resolve 'com.blockether.vis.internal.gateway.state
+                                    'live-attachment-descriptors)
+                         iid)]
+          (testing "the human is offered exactly the artifacts meant for them"
+            (is (= [{:index 0 :filename "for-the-human.png"}]
+                   (mapv #(select-keys % [:index :filename]) descriptors))))
+          (testing "descriptor index 0 serves THAT artifact's bytes"
+            (let [response (fetch 0)]
+              (is (= 200 (:status response)))
+              (is (= "SHOWN" (slurp (:body response))))))
+          (testing "nothing past the last descriptor resolves" (is (= 404 (:status (fetch 1)))))
+          (testing "a model-only artifact is never served, at any index"
+            (is (= []
+                   (vec (for
+                          [idx (range 4)
+                           :let [response (fetch idx)]
+                           :when (and (= 200 (:status response))
+                                      (= "MODEL-ONLY" (slurp (:body response))))]
+
+                          idx))))))))))

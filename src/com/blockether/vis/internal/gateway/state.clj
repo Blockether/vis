@@ -920,9 +920,9 @@
   "Ordered OUTBOUND artifacts (matplotlib figures / produced images) a tool call
    persisted under iteration `iid`, in the `db-list-iteration-attachments` shape
    (each hydrated with inline `:base64` or an external `:storage-uri`), or `[]`.
-   THE canonical, ordered list the attachment byte endpoint indexes AND the live
-   `iteration.completed` descriptors mirror — so index N always names the same
-   artifact live, on re-fetch, and across a restart. nil/unparsable id -> `[]`."
+   THE canonical, ordered, UNFILTERED list. Everything a client sees is derived
+   from it by [[user-iteration-attachments]], which is what both the descriptors
+   and the byte endpoint go through. nil/unparsable id -> `[]`."
   [iid]
   (try (if-let
          [iid (some-> iid
@@ -933,6 +933,19 @@
        (catch Throwable t
          (tel/log! :warn ["gateway: iteration-attachments read failed" (str iid) (ex-message t)])
          [])))
+
+(defn user-iteration-attachments
+  "[[iteration-attachments]] minus the rows a human is never shown (audience
+   `model`) — THE list index N addresses.
+
+   One list, filtered ONCE, is the whole contract: the descriptors number this
+   seq and `GET /v1/sessions/:sid/iterations/:iid/attachments/:idx` serves from
+   it. Filtering on the descriptor side alone re-numbered what survived while
+   the byte endpoint still indexed the raw rows, so an iteration whose first
+   artifact was model-only handed every later index the wrong bytes — and handed
+   the human the artifact that was hidden from it."
+  [iid]
+  (into [] (remove attachments/hidden-from-user?) (iteration-attachments iid)))
 
 (defn attachment-bytes
   "Raw bytes for ONE attachment map (an [[iteration-attachments]] element): its
@@ -954,22 +967,21 @@
    verbatim, so a remote client (iOS/Android/web) renders a produced image with
    one code path instead of two.
 
-   Model-only rows (audience `model`) are DROPPED: an artifact attached for the
-   model's own
-   eyes is never offered to the human, so the gallery a person scrolls stays the
-   one the agent meant them to review."
+   `rows` is ALREADY the human's own list ([[user-iteration-attachments]]): a
+   model-only artifact is dropped there, by the very call the byte endpoint
+   indexes, so the gallery a person scrolls stays the one the agent meant them
+   to review AND index N names the same artifact on both sides."
   [iteration-id rows]
   (into []
-        (comp (remove attachments/hidden-from-user?)
-              (map-indexed (fn [idx {:keys [tool-call-id kind media-type filename size audience]}]
-                             {:index idx
-                              :iteration_id (str iteration-id)
-                              :tool_call_id tool-call-id
-                              :kind (or kind "image")
-                              :media_type (str (or media-type "application/octet-stream"))
-                              :filename filename
-                              :audience (attachments/normalize-audience audience)
-                              :size (long (or size 0))})))
+        (map-indexed (fn [idx {:keys [tool-call-id kind media-type filename size audience]}]
+                       {:index idx
+                        :iteration_id (str iteration-id)
+                        :tool_call_id tool-call-id
+                        :kind (or kind "image")
+                        :media_type (str (or media-type "application/octet-stream"))
+                        :filename filename
+                        :audience (attachments/normalize-audience audience)
+                        :size (long (or size 0))}))
         rows))
 
 (defn- live-attachment-descriptors
@@ -979,7 +991,7 @@
    `GET /v1/sessions/:sid/iterations/:iid/attachments/:idx` rather than bloating
    every SSE frame with 100s of KB. `[]` on any read failure."
   [iteration-id]
-  (attachment-descriptors iteration-id (iteration-attachments iteration-id)))
+  (attachment-descriptors iteration-id (user-iteration-attachments iteration-id)))
 
 (def ^:private activity-phases
   "Coarse 'Vis is doing X' phases surfaced to the LIVE ticker but never pinned

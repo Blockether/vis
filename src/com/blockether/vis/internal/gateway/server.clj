@@ -2327,7 +2327,7 @@
        (path-idx request)
 
        atts
-       (state/iteration-attachments (path-iid request))
+       (state/user-iteration-attachments (path-iid request))
 
        att
        (when (and idx (nat-int? idx)) (nth atts idx nil))
