@@ -1,12 +1,12 @@
 ---
-name: release-companion
+name: release-companion-hotfix
 description: Ship the Vis Companion app to TestFlight and Google Play under the CURRENT VIS_VERSION — an app-only rebuild, no product release and no local store build. Use when asked to publish or tag the app, get a companion fix to testers, or push an app-only build: verify the app, commit and push it to main, then let `npm run release:mobile` create the immutable companion-vX.Y.Z-build.N tag that CI builds.
 version: "1.0.0"
 license: Apache-2.0
 compatibility: agents
 ---
 
-# release-companion — app-only rebuild under the same version
+# release-companion-hotfix — app-only rebuild under the same version
 
 Ships `apps/vis-companion` to both public beta channels **without touching
 `VIS_VERSION`**: iOS → TestFlight (plus the public-link group after Beta App
