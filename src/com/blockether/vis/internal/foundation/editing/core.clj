@@ -6946,6 +6946,12 @@
      ;; Same drift as `patch` `replace`: decode `\uXXXX` before the code is parsed.
      (if delete? "" (patch/decode-unicode-escapes (get args "code")))
 
+     match-arg
+     ;; A drifted `match` has to find the character it MEANS: decode it exactly
+     ;; like `code`, or the locator hunts for six characters no file contains.
+     (when-let [m (get args "match")]
+       (patch/decode-unicode-escapes (str m)))
+
      new-content
      (if path-locator?
        ;; PATH-based (the zipper): locate by named-child index path + moves.
@@ -6983,7 +6989,7 @@
                              :reason (get-in nav [:error :reason])})))
 
           match
-          (str (get args "match"))
+          (str match-arg)
 
           code
           ;; `match` means ONE thing under BOTH locators: the unique sub-expression
@@ -7033,7 +7039,7 @@
                                 :target (get args "target")
                                 :kind (get args "kind")
                                 :code code
-                                :match (get args "match")
+                                :match match-arg
                                 :anchor (get args "anchor")}))
 
      ;; is_dirty_ok: a re-parsed structural edit is SAFE on a file with
@@ -7079,7 +7085,8 @@
      (str (get args "target"))
 
      new-name
-     (str (get args "code"))
+     ;; Same drift as every other `code`: the new name is decoded on the way in.
+     (patch/decode-unicode-escapes (str (get args "code")))
 
      paths
      (let [p (get args "paths")]

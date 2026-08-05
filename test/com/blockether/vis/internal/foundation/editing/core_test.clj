@@ -2782,6 +2782,232 @@
           (expect (string/includes? src "a \u2014 b"))
           (expect (not (string/includes? src "\\u2014")))))))
 
+;; Regression: the decoder's first cut judged an escape with a hand-written
+;; range test -- "printable non-ASCII BMP" -- so it decoded escapes no edit can
+;; ever mean. A surrogate PAIR was decoded without once looking at the code
+;; point it built, so U+E0020 (an invisible tag character) and plane-15 private
+;; use reached disk as real characters; on the BMP an unassigned point, a bidi
+;; override, a zero-width joiner, a soft hyphen and a non-breaking space all
+;; became silent invisible ink where six visible characters used to sit. And a
+;; drifted `match` was never decoded at all, so `struct_patch` could not locate
+;; the em dash the model was pointing at.
+(defdescribe
+  editing-unicode-escape-hostile-test
+  "Hostile escapes. An escape is decoded only when it names a VISIBLE assigned
+   character -- alone or as a surrogate pair -- and every other escape survives
+   as the six characters a human can see and fix."
+  (it "never decodes invisible or unassigned BMP ink"
+      (doseq
+        [s ["\\u202e"                               ;; RIGHT-TO-LEFT OVERRIDE: Trojan Source
+            "\\u202d" "\\u2066" "\\u2069"           ;; bidi overrides and isolates
+            "\\u200b" "\\u200c" "\\u200d"           ;; zero-width space, non-joiner, joiner
+            "\\u200e" "\\u2060" "\\u00ad"           ;; LRM, word joiner, soft hyphen
+            "\\u00a0" "\\u2007" "\\u202f" "\\u3000" ;; spaces that do not look like spaces
+            "\\u0378" "\\u0e00"                     ;; unassigned
+            "\\ufffe" "\\uffff"]] ;; noncharacters
+        (expect (= s (patch/decode-unicode-escapes s)) (pr-str s))))
+  (it "never builds an invisible or private character out of a surrogate pair"
+      (doseq
+        [s ["\\udb40\\udc20" ;; U+E0020 TAG SPACE: invisible
+            "\\udb40\\udc01" ;; U+E0001 LANGUAGE TAG: deprecated format
+            "\\udb80\\udc00" ;; U+F0000 plane-15 private use
+            "\\udbc0\\udc00" ;; U+100000 plane-16 private use
+            "\\ud8c0\\udc00" ;; U+40000 unassigned
+            "\\udbff\\udffe"]] ;; U+10FFFE noncharacter
+        (expect (= s (patch/decode-unicode-escapes s)) (pr-str s))))
+  (it "still decodes a pair that names a real character"
+      (expect (= "😀" (patch/decode-unicode-escapes "\\ud83d\\ude00")))
+      (expect (= "🎉" (patch/decode-unicode-escapes "\\ud83c\\udf89")))
+      ;; U+10000: a plain assigned letter outside the BMP.
+      (expect (= "𐀀" (patch/decode-unicode-escapes "\\ud800\\udc00"))))
+  (it "leaves ASCII and control escapes alone, where the escape is load-bearing"
+      (doseq
+        [s ["\\u0022"                                                   ;; a JSON string's own quote
+            "\\u005c" "\\u0027" "\\u007b" "\\u0009" "\\u000a" "\\u001b" ;; ESC, as written inside an ANSI sequence
+            "\\u009f"]] ;; a C1 control
+        (expect (= s (patch/decode-unicode-escapes s)) (pr-str s))))
+  (it "decodes from U+00A1, the first visible non-ASCII character"
+      (expect (= "¡" (patch/decode-unicode-escapes "\\u00a1")))
+      (expect (= "\\u00a0" (patch/decode-unicode-escapes "\\u00a0"))))
+  (it "survives adversarial backslash runs"
+      (doseq
+        [[in out] [["\\u2014" "—"] ["\\\\u2014" "\\\\u2014"] ;; even run: text ABOUT an escape
+                   ["\\\\\\u2014" "\\\\—"] ;; odd run: escaped backslash, then drift
+                   ["\\\\\\\\u2014" "\\\\\\\\u2014"] ["\\\\\\\\\\u2014" "\\\\\\\\—"]
+                   ["\\u2014\\u2014" "——"] ["\\u2014x\\u2026" "—x…"]
+                   ["ends in a backslash \\" "ends in a backslash \\"] ["\\\\" "\\\\"]
+                   ["\\u20" "\\u20"] ;; truncated
+                   ["\\u201" "\\u201"] ["\\uXYZW" "\\uXYZW"] ["\\U2014" "\\U2014"] ;; uppercase U is not an escape
+                   ["\\ud83d\\\\ude42" "\\ud83d\\\\ude42"] ;; pair split by a doubled backslash
+                   ["\\ud83d\\ud83d" "\\ud83d\\ud83d"] ;; two high halves
+                   ["\\udc00\\udc00" "\\udc00\\udc00"]]] ;; two low halves
+        (expect (= out (patch/decode-unicode-escapes in)) (pr-str in))))
+  (it "is idempotent, and leaves a string with nothing to decode untouched"
+      (doseq [s ["a \\u2014 b" "\\\\u2014" "\\ud83d\\ude00" "\\u202e" "plain" ""]]
+        (expect (= (patch/decode-unicode-escapes s)
+                   (patch/decode-unicode-escapes (patch/decode-unicode-escapes s)))
+                (pr-str s)))
+      (let [s "no escape in here at all"]
+        (expect (identical? s (patch/decode-unicode-escapes s))))
+      ;; Total: a non-string is returned as it came.
+      (expect (= 42 (patch/decode-unicode-escapes 42))))
+  (it "patch decodes each edit of a batch, and only the drift"
+      (let
+        [visible
+         (write-temp! "escape/batch-a.txt" "one\n")
+
+         hidden
+         (write-temp! "escape/batch-b.txt" "two\n")
+
+         patch-safe
+         (private-fn "patch-safe")
+
+         r
+         (patch-safe
+           [{"path" visible "from_anchor" (patch/line-anchor 1 "one") "replace" "a \\u2014 b"}
+            {"path" hidden
+             "from_anchor" (patch/line-anchor 1 "two")
+             "replace" "keep \\u202e and \\\\u2014"}])]
+
+        (expect (true? (:success? r)))
+        (expect (= "a — b\n" (slurp visible)))
+        ;; Invisible ink and an escaped escape reach disk exactly as written.
+        (expect (= "keep \\u202e and \\\\u2014\n" (slurp hidden)))))
+  (it "struct_patch decodes a drifted `match` under both locators"
+      (let
+        [sp
+         (private-fn "struct-patch-tool")
+
+         _
+         (temp-dir-path "spmatch")
+
+         by-name
+         (str (temp-root) "/spmatch/name.clj")
+
+         by-at
+         (str (temp-root) "/spmatch/at.clj")]
+
+        (spit (fs/file by-name) "(def note \"a — b\")\n")
+        (spit (fs/file by-at) "(def note \"a — b\")\n")
+        ;; Name-based: `match` names a whole sub-NODE of the definition, here the
+        ;; string carrying the dash.
+        (expect (:success? (sp {"path" by-name
+                                "op" "replace_node"
+                                "target" "note"
+                                "match" "\"a \\u2014 b\""
+                                "code" "\"a - b\""})))
+        (expect (= "(def note \"a - b\")\n" (slurp (fs/file by-name))))
+        (expect (:success?
+                  (sp {"path" by-at "op" "replace_node" "at" [0] "match" "\\u2014" "code" "-"})))
+        (expect (= "(def note \"a - b\")\n" (slurp (fs/file by-at))))))
+  (it "struct_patch decodes every edit of a batch, and no invisible ink"
+      (let
+        [sp
+         (private-fn "struct-patch-tool")
+
+         _
+         (temp-dir-path "spescbatch")
+
+         f
+         (str (temp-root) "/spescbatch/m.clj")]
+
+        (spit (fs/file f) "(def a \"1\")\n(def b \"2\")\n")
+        (let
+          [r
+           (sp {"path" f
+                "edits" [{"op" "replace" "target" "a" "code" "(def a \"x \\u2014 y\")"}
+                         {"op" "replace" "target" "b" "code" "(def b \"p \\u2026 q\")"}
+                         {"op" "append" "code" "(def c \"\\u202e\")"}]})
+
+           src
+           (slurp (fs/file f))]
+
+          (expect (:success? r))
+          (expect (string/includes? src "x — y"))
+          (expect (string/includes? src "p … q"))
+          (expect (string/includes? src "(def c \"\\u202e\")")))))
+  (it "struct_patch `paths` rename decodes the new name"
+      (let
+        [sp
+         (private-fn "struct-patch-tool")
+
+         _
+         (temp-dir-path "spescrename")
+
+         f
+         (str (temp-root) "/spescrename/m.clj")]
+
+        (spit (fs/file f) "(defn widget [] 1)\n(widget)\n")
+        (with-redefs [editing/rg-search (constantly {:files [f]})]
+          (let
+            [r (sp {"paths" [(str (temp-root) "/spescrename")]
+                    "op" "rename"
+                    "target" "widget"
+                    "code" "caf\\u00e9"})]
+            (expect (:success? r))
+            (expect (string/includes? (slurp (fs/file f)) "(defn caf\u00e9 []"))))))
+  (it "a decoded `code` still faces the re-parse gate"
+      ;; Decoding happens BEFORE the file is parsed, so drift can never smuggle a
+      ;; broken form past the structural guard.
+      (let
+        [sp
+         (private-fn "struct-patch-tool")
+
+         _
+         (temp-dir-path "spescparse")
+
+         f
+         (str (temp-root) "/spescparse/m.clj")]
+
+        (spit (fs/file f) "(def x 1)\n")
+        (expect (throws? clojure.lang.ExceptionInfo
+                         #(sp {"path" f "op" "replace" "target" "x" "code" "(def x \\u2014"})))
+        (expect (= "(def x 1)\n" (slurp (fs/file f))))))
+  (it "is total, idempotent and line-preserving on random escape soup"
+      ;; A seeded walk over backslash/hex soup. Whatever arrives, the decoder may
+      ;; not throw, may not invent a line under a line-addressed patch, may not
+      ;; grow the text, and may not introduce a character that is not both
+      ;; visible and assigned.
+      (let
+        [rng
+         (java.util.Random. 20250929)
+
+         alphabet
+         (into (vec (seq "\\uu0123456789abcdefxyz \n\t\""))
+               ["d83d" "de00" "db40" "dc20" "2014" "202e" "00a0"])
+
+         soup
+         (fn []
+           (apply str
+             (repeatedly (inc (long (.nextInt rng 24)))
+                         #(nth alphabet (.nextInt rng (count alphabet))))))
+
+         code-points
+         (fn [^String s]
+           (set (.toArray (.codePoints s))))
+
+         invisible-or-unreal?
+         (fn [cp]
+           (or (< (long cp) 0xA0)
+               (not (Character/isDefined (int cp)))
+               (contains? #{(int Character/UNASSIGNED) (int Character/PRIVATE_USE)
+                            (int Character/SURROGATE) (int Character/CONTROL) (int Character/FORMAT)
+                            (int Character/LINE_SEPARATOR) (int Character/PARAGRAPH_SEPARATOR)
+                            (int Character/SPACE_SEPARATOR)}
+                          (Character/getType (int cp)))))]
+
+        (dotimes [_ 2000]
+          (let
+            [in (soup)
+             out (patch/decode-unicode-escapes in)
+             invented (remove (code-points in) (code-points out))]
+
+            (expect (= out (patch/decode-unicode-escapes out)) (pr-str in))
+            (expect (= (count (re-seq #"\n" in)) (count (re-seq #"\n" out))) (pr-str in))
+            (expect (<= (count out) (count in)) (pr-str in))
+            (expect (not-any? invisible-or-unreal? invented) (pr-str in)))))))
+
+
 (defdescribe
   vis-patch-hashline-test
   ;; End-to-end content-addressed editing: read hashes from cat, then
