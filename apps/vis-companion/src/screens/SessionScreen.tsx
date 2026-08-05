@@ -9,6 +9,8 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { AssistantMessage, transcriptEnterClass, UserMessage } from '../components/ChatContent';
+import { ArtifactsChip, ArtifactsSheet } from '../components/ArtifactsSheet';
+import { collectArtifacts } from '../lib/artifacts';
 import { ExpandableImage } from '../components/ImageViewer';
 import { Banner, Spinner } from '../components/ui';
 import { HumanInputPrompt } from '../components/HumanInputPrompt';
@@ -1132,6 +1134,14 @@ export function SessionScreen({
   // "earlier" can mean rows we have but hide, or rows we have not read yet.
   const [earlierRemaining, setEarlierRemaining] = useState(
     () => client.transcriptWindow(sid).offset,
+  );
+  const [artifactsOpen, setArtifactsOpen] = useState(false);
+  // Everything this session PRODUCED, flattened out of the turns that made it.
+  // The transcript paints each artifact where it was made, which is right and is
+  // also why "show me that chart again" is otherwise a scroll hunt.
+  const artifacts = useMemo(
+    () => collectArtifacts(turns, earlierRemaining),
+    [turns, earlierRemaining],
   );
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(FALLBACK_SLASHES);
@@ -4039,6 +4049,11 @@ export function SessionScreen({
         </div>
         <div className="flex shrink-0 items-center gap-1 self-center pl-1 pr-[max(0.5rem,env(safe-area-inset-right))] sm:pr-[max(0.75rem,env(safe-area-inset-right))]">
           <CopyableId id={sid} className="hidden max-w-[9rem] sm:inline-flex" />
+          <ArtifactsChip
+            count={artifacts.length}
+            open={artifactsOpen}
+            onToggle={() => setArtifactsOpen((was) => !was)}
+          />
           <ShareLink className="" />
         </div>
       </header>
@@ -4063,6 +4078,16 @@ export function SessionScreen({
       )}
 
       <div className="relative flex min-h-0 flex-1 flex-col">
+      {/* Layered over the transcript it indexes, INSIDE the same box: the
+          artifacts are the session's own output, not another screen. */}
+      {artifactsOpen && (
+        <ArtifactsSheet
+          client={client}
+          sid={sid}
+          artifacts={artifacts}
+          onClose={() => setArtifactsOpen(false)}
+        />
+      )}
       {/* The scroller is deliberately NOT a live region. role="log" implies
           aria-live="polite", and WebKit answers that by keeping an AXLiveRegionNode
           set for the subtree and re-diffing it on every mutation: with a whole

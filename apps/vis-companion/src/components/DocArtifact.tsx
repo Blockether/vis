@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { captureHtmlDocument } from '../lib/doc-capture';
 import { pageCaptureFilename, viewCaptureFilename } from '../lib/image-file';
 import { openPdfPages, type PdfPages } from '../lib/pdf-pages';
+import { docKindLabel, isPdfMedia } from '../lib/artifacts';
 import { useAttachImage } from '../lib/attach-image';
 import { ImageViewer } from './ImageViewer';
 
@@ -25,28 +26,6 @@ export type DocArtifact = {
   name: string;
   sizeLabel: string;
 };
-
-/** Media types that ride the transcript as a document, never as model input. */
-const DOC_MEDIA = new Set([
-  'application/pdf',
-  'text/html',
-  'application/xhtml+xml',
-]);
-
-export function isDocMedia(mime: string | undefined): boolean {
-  return DOC_MEDIA.has((mime ?? '').split(';')[0].trim().toLowerCase());
-}
-
-export function isPdfMedia(mime: string | undefined): boolean {
-  return (mime ?? '').toLowerCase().includes('pdf');
-}
-
-/** The chip beside the name: what KIND of document this is. */
-export function docKindLabel(mime: string | undefined): string {
-  if (isPdfMedia(mime)) return 'PDF';
-  if (isDocMedia(mime)) return 'HTML';
-  return 'DOC';
-}
 
 /**
  * An attached page is UNTRUSTED markup, so it is never mounted in the app's own

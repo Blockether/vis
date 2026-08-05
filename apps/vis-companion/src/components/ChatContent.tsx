@@ -12,7 +12,14 @@ import {
 } from 'react';
 import Prism from 'prismjs';
 import { DataTable } from './DataTable';
-import { DocCard, DocPreview, isDocMedia } from './DocArtifact';
+import { DocCard, DocPreview } from './DocArtifact';
+import {
+  attachmentBytes,
+  attachmentIsDoc,
+  attachmentIsImage,
+  attachmentIsPlayable,
+  attachmentIsVideo,
+} from '../lib/artifacts';
 import { Spinner } from './ui';
 import 'prismjs/components/prism-bash';
 import 'prismjs/components/prism-clojure';
@@ -1290,27 +1297,6 @@ export const ThinkingBand = memo(function ThinkingBand({ children }: { children:
   );
 });
 
-function attachmentIsImage(attachment: IterationAttachment): boolean {
-  const media = attachment.media_type ?? '';
-  return media ? media.startsWith('image/') : attachment.kind === 'image';
-}
-
-function attachmentIsVideo(attachment: IterationAttachment): boolean {
-  return (attachment.media_type ?? '').startsWith('video/');
-}
-
-// A PDF or an HTML page is a DOCUMENT: `vis_attach` clamps it to
-// `audience: "user"`, so its bytes never reach the model and the app owes the
-// human a reader for them instead of one more line in the recorded-files row.
-function attachmentIsDoc(attachment: IterationAttachment): boolean {
-  return isDocMedia(attachment.media_type) || attachment.kind === 'doc';
-}
-
-// A still and a clip belong to the SAME rail: both are something the user asked
-// to SEE, so both paint where they were made. Everything else is a recorded file.
-function attachmentIsPlayable(attachment: IterationAttachment): boolean {
-  return attachmentIsImage(attachment) || attachmentIsVideo(attachment);
-}
 
 // ONE artifact a tool call produced (a matplotlib figure, a `vis_attach`ed
 // image). The gateway ships descriptors only, never bytes, so the picture is
@@ -1437,12 +1423,6 @@ type RecordedFile = {
   count: number;
 };
 
-function attachmentBytes(bytes?: number): string {
-  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return '';
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-}
 
 // Same file written by three attempts of the same block is ONE recorded thing
 // with a count, not three identical rows.

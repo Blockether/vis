@@ -4,10 +4,7 @@ import {
   DocAnnotateBar,
   DocCard,
   DocFrame,
-  docKindLabel,
   docSandbox,
-  isDocMedia,
-  isPdfMedia,
   parseDocBlock,
 } from './DocArtifact';
 
@@ -42,7 +39,9 @@ describe('vis-doc fence', () => {
 
   it('falls back to the path basename when the name line is missing', () => {
     const artifact = parseDocBlock(
-      ['[Document: page.html HTML, 2 KB]', '/tmp/page.html', 'text/html'].join('\n'),
+      ['[Document: page.html HTML, 2 KB]', '/tmp/page.html', 'text/html'].join(
+        '\n',
+      ),
     );
     expect(artifact.name).toBe('page.html');
     expect(artifact.sizeLabel).toBe('');
@@ -52,25 +51,6 @@ describe('vis-doc fence', () => {
     const artifact = parseDocBlock('');
     expect(artifact.path).toBe('');
     expect(artifact.name).toBe('document');
-  });
-});
-
-describe('document media types', () => {
-  it('recognises the three types the engine keeps off the wire', () => {
-    expect(isDocMedia('application/pdf')).toBe(true);
-    expect(isDocMedia('text/html')).toBe(true);
-    expect(isDocMedia('application/xhtml+xml')).toBe(true);
-    expect(isDocMedia('TEXT/HTML; charset=utf-8')).toBe(true);
-    expect(isDocMedia('image/png')).toBe(false);
-    expect(isDocMedia('text/csv')).toBe(false);
-    expect(isDocMedia(undefined)).toBe(false);
-  });
-
-  it('labels the kind the way the fence summary does', () => {
-    expect(docKindLabel('application/pdf')).toBe('PDF');
-    expect(docKindLabel('text/html')).toBe('HTML');
-    expect(isPdfMedia('application/pdf')).toBe(true);
-    expect(isPdfMedia('text/html')).toBe(false);
   });
 });
 
@@ -113,13 +93,17 @@ describe('DocCard', () => {
 
   it('carries no frame of its own when a card already draws one', () => {
     const framed = renderToStaticMarkup(<DocCard body={fence} compact />);
-    const bare = renderToStaticMarkup(<DocCard body={fence} compact frameless />);
+    const bare = renderToStaticMarkup(
+      <DocCard body={fence} compact frameless />,
+    );
     expect(framed).toContain('border border-code-edge');
     expect(bare.startsWith('<div class="my-2 flex w-full')).toBe(true);
   });
 
   it('never embeds the artifact itself — the transcript ships descriptors only', () => {
-    expect(renderToStaticMarkup(<DocCard body={fence} compact />)).not.toContain('<iframe');
+    expect(
+      renderToStaticMarkup(<DocCard body={fence} compact />),
+    ).not.toContain('<iframe');
   });
 });
 // Rasterising a document is the only way its content ever reaches a model: the
@@ -164,8 +148,9 @@ describe('DocAnnotateBar', () => {
   it('reports the render in progress and what came of it', () => {
     expect(text(bar({ busy: true }))).toContain('Rendering');
     expect(bar({ busy: true })).toContain('disabled=""');
-    expect(text(bar({ notice: 'Attached report-p3.png to your message.' })))
-      .toContain('Attached report-p3.png to your message.');
+    expect(
+      text(bar({ notice: 'Attached report-p3.png to your message.' })),
+    ).toContain('Attached report-p3.png to your message.');
   });
 
   // A document whose page count is not known yet cannot be captured by page.
@@ -176,6 +161,8 @@ describe('DocAnnotateBar', () => {
   // Density follows the pointer, not the width: these are the same touch-sized
   // hit boxes as every other control in the rail.
   it('keeps a touch-sized hit box', () => {
-    expect(bar({ page: 2, pageCount: 4 }).match(/min-h-11/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(
+      bar({ page: 2, pageCount: 4 }).match(/min-h-11/g)?.length,
+    ).toBeGreaterThanOrEqual(3);
   });
 });
