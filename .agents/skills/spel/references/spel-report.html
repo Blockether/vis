@@ -1,0 +1,2300 @@
+<!-- spel-reference-version: 0.9.25 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>spel Report — {APP_NAME}</title>
+  <!-- Fonts are BUNDLED, never linked from a CDN: a report is an offline
+       artifact. Inline one @font-face per family/weight actually used, with
+       src:url(data:font/woff2;base64,…) format('woff2'). Until the faces are
+       inlined, the stacks below fall back to system fonts and still read
+       correctly. See references/CSS_PATTERNS.md → "Fonts — bundle them,
+       never link a CDN". -->
+  <style>
+    :root {
+      --mc-bg: #f6f1e8;
+      --mc-bg-secondary: rgba(255, 251, 245, 0.88);
+      --mc-bg-tertiary: #ebe3d7;
+      --mc-bg-elevated: rgba(255, 255, 255, 0.94);
+      --mc-border: rgba(125, 99, 68, 0.18);
+      --mc-border-strong: rgba(125, 99, 68, 0.34);
+      --mc-text: #1f2933;
+      --mc-text-secondary: #55606e;
+      --mc-accent: #b2652a;
+      --mc-accent-green: #1f8a5c;
+      --mc-accent-yellow: #b7791f;
+      --mc-accent-red: #c44536;
+      --mc-accent-purple: #8b5cf6;
+      --mc-accent-cyan: #0f766e;
+      --mc-shadow: 0 18px 42px rgba(43, 33, 22, 0.08);
+      --mc-shadow-soft: 0 10px 24px rgba(43, 33, 22, 0.05);
+      --mc-radius-lg: 24px;
+      --mc-radius-md: 18px;
+      --sidebar-width: 260px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Atkinson Hyperlegible', 'Segoe UI', sans-serif;
+      font-size: 15px;
+      line-height: 1.7;
+      color: var(--mc-text);
+      background:
+        radial-gradient(circle at top left, rgba(178, 101, 42, 0.12), transparent 30%),
+        radial-gradient(circle at top right, rgba(15, 118, 110, 0.10), transparent 28%),
+        linear-gradient(180deg, #fbf7f1 0%, var(--mc-bg) 48%, #efe7dc 100%);
+      min-height: 100vh;
+    }
+    h1, h2, h3, h4 {
+      font-family: 'Manrope', 'Atkinson Hyperlegible', sans-serif;
+      font-weight: 800;
+      color: var(--mc-text);
+      line-height: 1.15;
+    }
+    h2 { font-size: 1.6rem; margin-bottom: 1rem; letter-spacing: -0.03em; }
+    h3 { font-size: 1.15rem; margin-bottom: 0.75rem; letter-spacing: -0.02em; }
+    h4 { font-size: 1rem; margin-bottom: 0.5rem; }
+    a {
+      color: var(--mc-accent);
+      text-decoration: none;
+      text-decoration-thickness: 2px;
+      text-underline-offset: 0.18em;
+      transition: color 0.2s ease, text-decoration-color 0.2s ease;
+    }
+    a:hover { color: #8f4e20; text-decoration: underline; }
+    a:focus-visible {
+      outline: 3px solid rgba(178, 101, 42, 0.32);
+      outline-offset: 3px;
+      border-radius: 6px;
+    }
+    p { margin-bottom: 0.9rem; }
+    code, pre, .metric-value, .summary-label, .tag, .pill, .console, .appendix-content, .sidebar-footer {
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    }
+    .skip-link {
+      position: absolute;
+      left: 1rem;
+      top: -3rem;
+      z-index: 10;
+      padding: 0.75rem 1rem;
+      border-radius: 999px;
+      background: var(--mc-text);
+      color: #fff;
+      box-shadow: var(--mc-shadow-soft);
+    }
+    .skip-link:focus { top: 1rem; }
+
+    /* Layout with sidebar */
+    .layout { display: flex; min-height: 100vh; gap: 1.5rem; padding: 1.25rem; }
+
+    /* Sidebar */
+    .sidebar {
+      position: sticky;
+      top: 1.25rem;
+      width: var(--sidebar-width);
+      min-width: var(--sidebar-width);
+      background: linear-gradient(180deg, rgba(255, 252, 247, 0.96), rgba(248, 241, 231, 0.92));
+      border: 1px solid var(--mc-border);
+      border-radius: var(--mc-radius-lg);
+      padding: 1.5rem 1rem;
+      height: calc(100vh - 2.5rem);
+      overflow-y: auto;
+      align-self: flex-start;
+      box-shadow: var(--mc-shadow-soft);
+      backdrop-filter: blur(12px);
+      scrollbar-width: thin;
+      scrollbar-color: rgba(125, 99, 68, 0.45) transparent;
+    }
+    .sidebar-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--mc-accent);
+      font-weight: 800;
+      font-size: 0.9rem;
+      margin-bottom: 0.75rem;
+      font-family: 'Manrope', 'Atkinson Hyperlegible', sans-serif;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .sidebar-product {
+      font-size: 0.78rem;
+      color: var(--mc-text-secondary);
+      margin-bottom: 1.5rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--mc-border);
+    }
+    .sidebar-nav { list-style: none; }
+    .sidebar-nav li { margin-bottom: 0.25rem; }
+    .sidebar-nav a {
+      display: block;
+      padding: 0.65rem 0.8rem;
+      color: var(--mc-text-secondary);
+      font-size: 0.8rem;
+      border-radius: 999px;
+      border-left: 4px solid transparent;
+      transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+    }
+    .sidebar-nav a:hover {
+      background: rgba(178, 101, 42, 0.1);
+      color: var(--mc-text);
+      text-decoration: none;
+      transform: translateX(2px);
+    }
+    .sidebar-nav a.active {
+      background: linear-gradient(90deg, rgba(178, 101, 42, 0.14), rgba(178, 101, 42, 0.05));
+      color: var(--mc-accent);
+      border-left-color: var(--mc-accent);
+      font-weight: 700;
+    }
+    .sidebar-footer {
+      margin-top: auto;
+      padding-top: 1rem;
+      border-top: 1px solid var(--mc-border);
+      font-size: 10px;
+      color: var(--mc-text-secondary);
+    }
+
+    /* Main content */
+    .main-content {
+      flex: 1;
+      max-width: calc(100% - var(--sidebar-width));
+      padding: 0.25rem 0 2.5rem;
+    }
+
+    /* Report header */
+    .report-header {
+      margin-bottom: 2rem;
+      padding: 1.6rem;
+      border: 1px solid var(--mc-border);
+      border-radius: var(--mc-radius-lg);
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(246, 238, 226, 0.88)),
+        linear-gradient(180deg, rgba(178, 101, 42, 0.06), rgba(15, 118, 110, 0.04));
+      box-shadow: var(--mc-shadow);
+    }
+    .report-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.7rem;
+      margin-bottom: 0.9rem;
+      border-radius: 999px;
+      background: rgba(178, 101, 42, 0.12);
+      color: var(--mc-accent);
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-size: 0.74rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .report-title {
+      font-size: clamp(2rem, 5vw, 3.35rem);
+      margin-bottom: 0.65rem;
+      max-width: 12ch;
+    }
+    .report-subtitle {
+      max-width: 70ch;
+      font-size: 1rem;
+      color: var(--mc-text-secondary);
+      margin-bottom: 1rem;
+    }
+    .report-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.85rem;
+      font-size: 0.8rem;
+      color: var(--mc-text-secondary);
+      margin-bottom: 0.9rem;
+    }
+    .report-meta span {
+      padding: 0.55rem 0.75rem;
+      border: 1px solid var(--mc-border);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.55);
+    }
+    .report-meta strong { color: var(--mc-text); }
+    .report-description {
+      margin-top: 1rem;
+      padding: 0.75rem 1rem;
+      background: var(--mc-bg-secondary);
+      border: 1px solid var(--mc-border);
+      border-radius: 0.5rem;
+      font-size: 13px;
+    }
+
+    /* Sections */
+    .section {
+      margin-bottom: 2rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--mc-border);
+    }
+    .section:last-child { border-bottom: none; }
+
+    /* Cards */
+    .card {
+      background: var(--mc-bg-elevated);
+      border: 1px solid var(--mc-border);
+      border-radius: var(--mc-radius-md);
+      padding: 1.3rem;
+      box-shadow: var(--mc-shadow-soft);
+      margin-bottom: 1rem;
+      backdrop-filter: blur(10px);
+      transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+    }
+    .card:hover { transform: translateY(-2px); box-shadow: var(--mc-shadow); border-color: var(--mc-border-strong); }
+
+    .guide-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.8rem;
+      margin-bottom: 1rem;
+    }
+    .guide-card {
+      border: 1px solid var(--mc-border);
+      border-radius: 14px;
+      padding: 0.85rem 0.9rem;
+      background: rgba(255, 255, 255, 0.62);
+    }
+    .guide-title {
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-size: 0.66rem;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: var(--mc-accent);
+      margin-bottom: 0.35rem;
+    }
+    .guide-text {
+      font-size: 0.81rem;
+      color: var(--mc-text-secondary);
+      margin: 0;
+    }
+    .guide-list {
+      list-style: none;
+      display: grid;
+      gap: 0.32rem;
+      font-size: 0.8rem;
+      color: var(--mc-text-secondary);
+      margin: 0;
+    }
+    .guide-list li {
+      display: flex;
+      gap: 0.45rem;
+      align-items: center;
+    }
+    .guide-list code {
+      font-size: 0.68rem;
+      padding: 0.12rem 0.35rem;
+      background: rgba(178, 101, 42, 0.1);
+      border: 1px solid var(--mc-border);
+      border-radius: 999px;
+      color: var(--mc-text);
+    }
+    .decision-flow {
+      display: grid;
+      gap: 0.55rem;
+      margin-top: 0.75rem;
+    }
+    .decision-step {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 0.55rem;
+      align-items: start;
+      font-size: 0.8rem;
+      color: var(--mc-text-secondary);
+    }
+    .decision-step strong {
+      display: inline-grid;
+      place-items: center;
+      width: 1.3rem;
+      height: 1.3rem;
+      border-radius: 999px;
+      background: rgba(178, 101, 42, 0.14);
+      color: var(--mc-accent);
+      font-size: 0.72rem;
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    }
+
+    /* Summary grid */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .summary-card {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(251, 246, 239, 0.96));
+      border: 1px solid var(--mc-border);
+      border-radius: var(--mc-radius-md);
+      padding: 1rem;
+      text-align: left;
+      border-top: 4px solid var(--mc-border);
+      box-shadow: var(--mc-shadow-soft);
+    }
+    .summary-card-highlight { border-top-color: var(--mc-accent); }
+    .summary-card-success { border-top-color: var(--mc-accent-green); }
+    .summary-card-warning { border-top-color: var(--mc-accent-yellow); }
+    .summary-card-neutral { border-top-color: var(--mc-text); }
+    .summary-card-critical { border-top-color: var(--mc-accent-red); }
+    .summary-card-high { border-top-color: var(--mc-accent-yellow); }
+    .summary-card-medium { border-top-color: var(--mc-accent); }
+    .summary-card-low { border-top-color: var(--mc-accent-green); }
+    .summary-card-total { border-top-color: var(--mc-text); }
+    .summary-count {
+      font-size: clamp(1.8rem, 4vw, 2.6rem);
+      font-weight: 800;
+      line-height: 1.2;
+      letter-spacing: -0.04em;
+    }
+    .summary-label {
+      font-size: 0.72rem;
+      color: var(--mc-text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-top: 0.35rem;
+    }
+
+    /* Metrics */
+    .metrics {
+      display: flex;
+      gap: 2rem;
+      flex-wrap: wrap;
+      font-size: 0.8rem;
+      color: var(--mc-text-secondary);
+      margin: 0.75rem 0;
+    }
+    .metric-value { font-weight: 700; color: var(--mc-accent); }
+
+    .summary-visuals {
+      display: grid;
+      grid-template-columns: 1.3fr 1fr;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    .chart-card {
+      background: var(--mc-bg-elevated);
+      border: 1px solid var(--mc-border);
+      border-radius: var(--mc-radius-md);
+      padding: 1.1rem;
+      box-shadow: var(--mc-shadow-soft);
+    }
+    .chart-title {
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-size: 0.72rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--mc-text-secondary);
+      margin-bottom: 0.85rem;
+    }
+    .severity-chart {
+      display: grid;
+      gap: 0.62rem;
+    }
+    .severity-bars {
+      display: grid;
+      gap: 0.58rem;
+    }
+    .severity-row {
+      display: grid;
+      grid-template-columns: auto minmax(84px, auto) minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 0.55rem;
+      font-size: 0.78rem;
+    }
+    .severity-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+    }
+    .severity-label { color: var(--mc-text-secondary); }
+    .severity-track {
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(125, 99, 68, 0.14);
+      border: 1px solid rgba(125, 99, 68, 0.12);
+      overflow: hidden;
+    }
+    .severity-fill {
+      height: 100%;
+      width: calc(clamp(0, var(--value), 12) / 12 * 100%);
+      border-radius: 999px;
+    }
+    .severity-value { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-weight: 700; color: var(--mc-text); min-width: 2ch; text-align: right; }
+    .dot-critical { background: var(--mc-accent-red); }
+    .dot-high { background: var(--mc-accent-yellow); }
+    .dot-medium { background: var(--mc-accent); }
+    .dot-low { background: var(--mc-accent-green); }
+    .severity-fill-critical { background: linear-gradient(90deg, #df5e4f, var(--mc-accent-red)); }
+    .severity-fill-high { background: linear-gradient(90deg, #d9962e, var(--mc-accent-yellow)); }
+    .severity-fill-medium { background: linear-gradient(90deg, #d28a49, var(--mc-accent)); }
+    .severity-fill-low { background: linear-gradient(90deg, #2aa975, var(--mc-accent-green)); }
+
+    .coverage-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.65rem;
+      margin-bottom: 0.9rem;
+    }
+    .coverage-stat {
+      border: 1px solid var(--mc-border);
+      border-radius: 14px;
+      padding: 0.8rem 0.85rem;
+      background: rgba(255, 255, 255, 0.58);
+    }
+    .coverage-label {
+      display: block;
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-size: 0.62rem;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      color: var(--mc-text-secondary);
+      margin-bottom: 0.28rem;
+    }
+    .coverage-value {
+      display: block;
+      font-family: 'Manrope', 'Atkinson Hyperlegible', sans-serif;
+      font-size: 1.15rem;
+      font-weight: 800;
+      color: var(--mc-text);
+      letter-spacing: -0.03em;
+    }
+    .confidence-strip {
+      display: grid;
+      gap: 0.5rem;
+      margin-top: 0.2rem;
+    }
+    .strip-row {
+      display: grid;
+      grid-template-columns: 128px 1fr auto;
+      align-items: center;
+      gap: 0.7rem;
+      font-size: 0.76rem;
+    }
+    .strip-row strong { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.68rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--mc-text-secondary); }
+    .strip-track {
+      height: 8px;
+      background: rgba(125, 99, 68, 0.14);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .strip-fill {
+      height: 100%;
+      width: calc(clamp(0, var(--value), 100) * 1%);
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--mc-accent), var(--mc-accent-cyan));
+    }
+    .strip-value { font-family: 'IBM Plex Mono', ui-monospace, monospace; color: var(--mc-text); }
+
+    .section-overview {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.7rem;
+      margin-bottom: 1rem;
+    }
+    .overview-pill {
+      border: 1px solid var(--mc-border);
+      border-radius: 14px;
+      padding: 0.65rem 0.75rem;
+      background: rgba(255, 255, 255, 0.52);
+    }
+    .overview-label {
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-size: 0.62rem;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      color: var(--mc-text-secondary);
+      margin-bottom: 0.24rem;
+    }
+    .overview-value { font-family: 'Manrope', 'Atkinson Hyperlegible', sans-serif; font-size: 1.05rem; font-weight: 700; color: var(--mc-text); }
+
+    .coherence-hero {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 1rem;
+      align-items: center;
+      margin-bottom: 1rem;
+      padding: 1rem;
+      border: 1px solid var(--mc-border);
+      border-radius: var(--mc-radius-md);
+      background: linear-gradient(140deg, rgba(255,255,255,0.7), rgba(239, 248, 245, 0.72));
+      box-shadow: var(--mc-shadow-soft);
+    }
+    .coherence-ring {
+      position: relative;
+      width: 124px;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: conic-gradient(var(--mc-accent-cyan) 0 calc(clamp(0, var(--value), 100) * 1%), rgba(125, 99, 68, 0.16) 0 100%);
+    }
+    .coherence-ring::before {
+      content: "";
+      position: absolute;
+      inset: 16px;
+      border-radius: 50%;
+      background: var(--mc-bg-elevated);
+      border: 1px solid var(--mc-border);
+    }
+    .coherence-value {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      font-family: 'Manrope', 'Atkinson Hyperlegible', sans-serif;
+      font-size: 1.6rem;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      color: var(--mc-text);
+    }
+    .coherence-value span {
+      display: block;
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      color: var(--mc-text-secondary);
+      margin-top: 0.2rem;
+      text-align: center;
+    }
+    .coherence-copy h3 { margin-bottom: 0.35rem; }
+    .coherence-copy p { margin: 0; font-size: 0.86rem; color: var(--mc-text-secondary); }
+
+    .mobile-nav {
+      display: none;
+      margin-bottom: 1rem;
+      padding: 0.85rem 1rem;
+    }
+    .mobile-nav summary {
+      list-style: none;
+      cursor: pointer;
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-size: 0.72rem;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: var(--mc-text-secondary);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .mobile-nav summary::-webkit-details-marker { display: none; }
+    .mobile-nav-list {
+      margin-top: 0.8rem;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.4rem;
+    }
+    .mobile-nav-list a {
+      display: block;
+      padding: 0.48rem 0.58rem;
+      border: 1px solid var(--mc-border);
+      border-radius: 10px;
+      font-size: 0.75rem;
+      color: var(--mc-text);
+      background: rgba(255,255,255,0.5);
+    }
+    .mobile-nav-list a.active {
+      background: linear-gradient(90deg, rgba(178, 101, 42, 0.14), rgba(178, 101, 42, 0.05));
+      border-color: rgba(178, 101, 42, 0.24);
+      color: var(--mc-accent);
+      font-weight: 700;
+    }
+
+    /* Pills and Tags */
+    .pill {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 0.375rem;
+      font-size: 11px;
+      font-weight: 600;
+      color: #fff;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .pill-critical { background: var(--mc-accent-red); }
+    .pill-high { background: var(--mc-accent-yellow); }
+    .pill-medium { background: var(--mc-accent); }
+    .pill-low { background: var(--mc-accent-green); }
+    .pill-info { background: var(--mc-accent-cyan); }
+
+    .tag {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 0.375rem;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border: 1px solid;
+    }
+    .tag-dev { color: var(--mc-accent-cyan); border-color: var(--mc-accent-cyan); }
+    .tag-design { color: var(--mc-accent-purple); border-color: var(--mc-accent-purple); }
+    .tag-pm { color: var(--mc-accent); border-color: var(--mc-accent); }
+    .tag-qa { color: var(--mc-accent-green); border-color: var(--mc-accent-green); }
+    .tag-category { color: var(--mc-text-secondary); border-color: var(--mc-border); background: var(--mc-bg-tertiary); }
+    .tag-functional { color: var(--mc-accent); border-color: rgba(178, 101, 42, 0.38); background: rgba(178, 101, 42, 0.08); }
+    .tag-visual { color: var(--mc-accent-purple); border-color: rgba(139, 92, 246, 0.34); background: rgba(139, 92, 246, 0.08); }
+    .tag-accessibility { color: var(--mc-accent-cyan); border-color: rgba(15, 118, 110, 0.34); background: rgba(15, 118, 110, 0.08); }
+    .tag-ux { color: #8f4e20; border-color: rgba(178, 101, 42, 0.34); background: rgba(255, 241, 227, 0.9); }
+    .tag-performance { color: var(--mc-accent-yellow); border-color: rgba(183, 121, 31, 0.34); background: rgba(183, 121, 31, 0.08); }
+    .tag-api { color: #2b6cb0; border-color: rgba(43, 108, 176, 0.34); background: rgba(43, 108, 176, 0.08); }
+    .tag-security { color: #9b2c2c; border-color: rgba(155, 44, 44, 0.34); background: rgba(196, 69, 54, 0.08); }
+    .tag-core { color: var(--mc-text); border-color: rgba(31, 41, 51, 0.2); background: rgba(31, 41, 51, 0.06); }
+    .tag-navigation { color: #805ad5; border-color: rgba(128, 90, 213, 0.34); background: rgba(128, 90, 213, 0.08); }
+    .tag-status-verified { color: var(--mc-accent-green); border-color: rgba(31, 138, 92, 0.36); background: rgba(31, 138, 92, 0.08); }
+    .tag-status-broken { color: var(--mc-accent-red); border-color: rgba(196, 69, 54, 0.36); background: rgba(196, 69, 54, 0.08); }
+    .tag-status-untested { color: var(--mc-accent-yellow); border-color: rgba(183, 121, 31, 0.36); background: rgba(183, 121, 31, 0.08); }
+    .tag-status-inferred { color: var(--mc-accent-purple); border-color: rgba(139, 92, 246, 0.34); background: rgba(139, 92, 246, 0.08); }
+    .tag-status-gated { color: var(--mc-accent-cyan); border-color: rgba(15, 118, 110, 0.34); background: rgba(15, 118, 110, 0.08); }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 0.84rem;
+      overflow: hidden;
+      border: 1px solid var(--mc-border);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.72);
+    }
+    th {
+      text-align: left;
+      padding: 0.85rem 0.9rem;
+      color: var(--mc-accent);
+      font-weight: 700;
+      border-bottom: 1px solid var(--mc-border-strong);
+      background: rgba(178, 101, 42, 0.08);
+    }
+    td {
+      padding: 0.8rem 0.9rem;
+      border-bottom: 1px solid var(--mc-border);
+      vertical-align: top;
+    }
+    td + td, th + th { border-left: 1px solid rgba(125, 99, 68, 0.08); }
+    tr:nth-child(even) td { background: rgba(235, 227, 215, 0.36); }
+    tr:hover td { background: rgba(15, 118, 110, 0.06); }
+    tr.summary-row td { font-weight: 700; background: var(--mc-bg-secondary); border-top: 2px solid var(--mc-border); }
+
+    /* Feature matrix specific */
+    .matrix-cell { text-align: center; }
+    .matrix-check { color: var(--mc-accent-green); font-weight: 700; }
+    .matrix-cross { color: var(--mc-accent-red); font-weight: 700; }
+    .matrix-partial { color: var(--mc-accent-yellow); font-weight: 700; }
+
+    /* Progress bars */
+    .score-bar { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
+    .score-label { min-width: 120px; font-size: 12px; font-weight: 500; }
+    .score-track { flex: 1; height: 8px; background: var(--mc-bg-tertiary); border-radius: 4px; overflow: hidden; }
+    .score-fill { height: 100%; border-radius: 4px; transition: width 0.3s ease; }
+    .score-fill-high { background: var(--mc-accent-green); }
+    .score-fill-medium { background: var(--mc-accent); }
+    .score-fill-low { background: var(--mc-accent-red); }
+    .score-value { min-width: 40px; text-align: right; font-size: 12px; font-weight: 600; }
+
+    /* Coherence dimension cards */
+    .dimension-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+    .dimension-card {
+      background: var(--mc-bg-elevated);
+      border: 1px solid var(--mc-border);
+      border-radius: var(--mc-radius-md);
+      padding: 1rem;
+      box-shadow: var(--mc-shadow-soft);
+    }
+    .dimension-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--mc-border); }
+    .dimension-name { font-weight: 600; font-size: 13px; }
+    .dimension-score { font-weight: 700; font-size: 14px; }
+    .dimension-issues { list-style: none; font-size: 11px; margin-bottom: 0.5rem; }
+    .dimension-issues li { padding: 0.25rem 0; padding-left: 1rem; position: relative; color: var(--mc-text-secondary); }
+    .dimension-issues li::before { content: "•"; position: absolute; left: 0; color: var(--mc-accent); }
+    .dimension-refs { font-size: 10px; color: var(--mc-accent); padding-top: 0.5rem; border-top: 1px solid var(--mc-border); }
+
+    /* Role cards */
+    .role-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+    .role-card {
+      background: var(--mc-bg-elevated);
+      border: 1px solid var(--mc-border);
+      border-radius: var(--mc-radius-md);
+      padding: 1rem;
+      border-left: 4px solid var(--mc-accent);
+      box-shadow: var(--mc-shadow-soft);
+    }
+    .role-card-inferred { border-left-color: var(--mc-accent-purple); }
+    .role-name { font-weight: 700; font-size: 14px; margin-bottom: 0.5rem; font-family: 'Atkinson Hyperlegible', Georgia, serif; }
+    .role-meta { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .role-description { font-size: 12px; color: var(--mc-text-secondary); margin-bottom: 0.5rem; }
+    .role-tasks { list-style: none; font-size: 11px; }
+    .role-tasks li { padding: 0.25rem 0; padding-left: 1rem; position: relative; }
+    .role-tasks li::before { content: "→"; position: absolute; left: 0; color: var(--mc-accent); }
+
+    /* FAQ */
+    .faq-item { margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--mc-border); }
+    .faq-item:last-child { border-bottom: none; padding-bottom: 0; }
+    .faq-question { font-weight: 700; font-size: 13px; margin-bottom: 0.5rem; font-family: 'Atkinson Hyperlegible', Georgia, serif; color: var(--mc-text); }
+    .faq-answer { font-size: 12px; color: var(--mc-text-secondary); padding-left: 1rem; border-left: 3px solid var(--mc-accent); }
+
+    /* Navigation map */
+    .nav-tree { list-style: none; padding-left: 0; }
+    .nav-tree ul { list-style: none; padding-left: 1.5rem; margin-top: 0.5rem; }
+    .nav-tree li { padding: 0.25rem 0; }
+    .nav-page { display: flex; align-items: center; gap: 0.5rem; font-size: 12px; }
+    .nav-page a { color: var(--mc-text); }
+    .nav-page a:hover { color: var(--mc-accent); }
+    .nav-icon { color: var(--mc-text-secondary); font-size: 10px; }
+
+    /* Recommendations */
+    .recommendation {
+      display: flex;
+      gap: 1rem;
+      padding: 1rem;
+      background: var(--mc-bg-elevated);
+      border: 1px solid var(--mc-border);
+      border-radius: var(--mc-radius-md);
+      margin-bottom: 0.75rem;
+      box-shadow: var(--mc-shadow-soft);
+    }
+    .rec-priority {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      font-weight: 700;
+      font-size: 12px;
+      color: #fff;
+    }
+    .rec-priority-critical { background: var(--mc-accent-red); }
+    .rec-priority-high { background: var(--mc-accent-yellow); }
+    .rec-priority-medium { background: var(--mc-accent); }
+    .rec-priority-low { background: var(--mc-accent-green); }
+    .rec-body { flex: 1; }
+    .rec-title { font-weight: 600; font-size: 13px; margin-bottom: 0.25rem; }
+    .rec-desc { font-size: 12px; color: var(--mc-text-secondary); }
+
+    /* Visual checks grid */
+    .checks-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.75rem; }
+    .check-item { display: flex; align-items: flex-start; gap: 0.75rem; padding: 0.75rem; border: 1px solid var(--mc-border); border-radius: 0.375rem; background: var(--mc-bg-secondary); }
+    .check-icon { font-size: 1.25rem; flex-shrink: 0; line-height: 1; margin-top: 1px; }
+    .check-pass .check-icon { color: var(--mc-accent-green); }
+    .check-fail .check-icon { color: var(--mc-accent-red); }
+    .check-body { flex: 1; min-width: 0; }
+    .check-name { font-weight: 600; font-size: 12px; margin-bottom: 2px; }
+    .check-desc { font-size: 11px; color: var(--mc-text-secondary); }
+    .check-evidence { margin-top: 0.5rem; }
+    .check-evidence img { max-width: 100%; border: 1px solid var(--mc-border); border-radius: 0.25rem; }
+    .check-refs { font-size: 11px; color: var(--mc-accent); margin-top: 0.25rem; }
+
+    /* Viewport audit grid */
+    .viewport-page { margin-bottom: 1.5rem; }
+    .viewport-page-title { font-size: 13px; font-weight: 600; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem; }
+    .viewport-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; }
+    .viewport-card { border: 1px solid var(--mc-border); border-radius: 0.5rem; overflow: hidden; background: var(--mc-bg-secondary); }
+    .viewport-card-header { padding: 0.5rem 0.75rem; background: var(--mc-bg-tertiary); border-bottom: 1px solid var(--mc-border); display: flex; justify-content: space-between; align-items: center; font-size: 11px; }
+    .viewport-label { font-weight: 600; }
+    .viewport-size { color: var(--mc-text-secondary); }
+    .viewport-card img { width: 100%; display: block; }
+    .viewport-meta { padding: 0.5rem 0.75rem; font-size: 11px; display: flex; gap: 1rem; }
+    .viewport-overflow-ok { color: var(--mc-accent-green); }
+    .viewport-overflow-bad { color: var(--mc-accent-red); font-weight: 600; }
+    .viewport-bugs { color: var(--mc-accent-red); }
+
+    /* Heatmap dots */
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+    .dot-none { background: var(--mc-border); }
+
+    /* Timeline */
+    .timeline { max-height: 300px; overflow-y: auto; }
+    .timeline-entry { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--mc-border); display: flex; gap: 0.75rem; align-items: flex-start; }
+    .timeline-entry.issue { background: rgba(200, 50, 50, 0.08); }
+    .timeline-ts { color: var(--mc-accent); font-weight: 500; white-space: nowrap; min-width: 90px; }
+    .timeline-desc { flex: 1; }
+    .issue-tag { display: inline-block; background: var(--mc-accent-red); color: #fff; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; margin-right: 4px; }
+
+    /* Findings */
+    .finding { margin-bottom: 1.5rem; }
+    .finding-header { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--mc-border); }
+    .finding-id { color: var(--mc-accent); font-weight: 700; font-size: 14px; }
+    .finding-url { color: var(--mc-text-secondary); font-size: 11px; margin-left: auto; }
+    .finding-provenance { font-size: 11px; color: var(--mc-text-secondary); margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; background: var(--mc-bg-tertiary); border-radius: 0.375rem; }
+    .finding-tags { display: flex; gap: 0.375rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+    .finding-footer { display: flex; gap: 1.5rem; margin-top: 0.75rem; font-size: 12px; flex-wrap: wrap; }
+
+    /* Steps */
+    .steps { margin: 0.75rem 0; padding-left: 1.5rem; }
+    .steps li { margin-bottom: 0.25rem; }
+
+    /* Analysis narrative */
+    .analysis-block { border-left: 3px solid var(--mc-accent); padding: 0.75rem 1rem; margin: 0.75rem 0; background: var(--mc-bg-secondary); }
+    .analysis-label { font-size: 11px; font-weight: 600; color: var(--mc-accent); text-transform: uppercase; margin-bottom: 0.25rem; }
+
+    /* Evidence figure */
+    figure { margin: 0.75rem 0; }
+    figure img { max-width: 100%; border: 1px solid var(--mc-border); border-radius: 0.375rem; display: block; }
+    figcaption { font-size: 11px; color: var(--mc-text-secondary); margin-top: 0.25rem; }
+    .empty-state {
+      border-style: dashed;
+      color: var(--mc-text-secondary);
+      background: rgba(255, 255, 255, 0.42);
+    }
+    .empty-state p:last-child { margin-bottom: 0; }
+
+    /* Console output */
+    .console { background: var(--mc-bg-tertiary); padding: 0.75rem; border-radius: 0.375rem; overflow-x: auto; font-size: 12px; white-space: pre-wrap; margin: 0.75rem 0; }
+    .console .error { color: var(--mc-accent-red); }
+
+    /* Confidence */
+    .confidence { display: inline-flex; align-items: center; gap: 0.375rem; font-size: 12px; }
+    .conf-bar { display: inline-block; width: 60px; height: 6px; background: var(--mc-border); border-radius: 3px; overflow: hidden; }
+    .conf-fill { display: block; height: 100%; border-radius: 3px; }
+    .conf-high .conf-fill { width: 100%; background: var(--mc-accent-green); }
+    .conf-medium .conf-fill { width: 66%; background: var(--mc-accent); }
+    .conf-low .conf-fill { width: 33%; background: var(--mc-accent-red); }
+
+    /* Disputed bugs */
+    .dispute-flow { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 12px; margin: 0.5rem 0; }
+    .dispute-arrow { color: var(--mc-text-secondary); }
+    .verdict-confirmed { color: var(--mc-accent-green); font-weight: 700; }
+    .verdict-dismissed { color: var(--mc-accent-red); font-weight: 700; }
+
+    /* Pipeline info */
+    .pipeline-info { font-size: 12px; color: var(--mc-text-secondary); padding: 0.5rem 0.75rem; background: var(--mc-bg-tertiary); border-radius: 0.375rem; margin-top: 0.5rem; }
+
+    /* Appendix */
+    .appendix-section {
+      margin-bottom: 1.5rem;
+      padding: 1rem;
+      background: var(--mc-bg-secondary);
+      border: 1px solid var(--mc-border);
+      border-radius: 0.5rem;
+    }
+    .appendix-section h4 {
+      margin-bottom: 0.75rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--mc-border);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--mc-accent);
+    }
+    .appendix-content {
+      font-size: 11px;
+      color: var(--mc-text-secondary);
+      font-family: 'IBM Plex Mono', monospace;
+      white-space: pre-wrap;
+      background: var(--mc-bg-tertiary);
+      padding: 0.75rem;
+      border-radius: 0.375rem;
+      overflow-x: auto;
+    }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: var(--mc-bg); }
+    ::-webkit-scrollbar-thumb { background: var(--mc-border); border-radius: 4px; }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --mc-bg: #151a20;
+        --mc-bg-secondary: rgba(26, 32, 40, 0.88);
+        --mc-bg-tertiary: #1d2530;
+        --mc-bg-elevated: rgba(24, 30, 38, 0.96);
+        --mc-border: rgba(255, 255, 255, 0.1);
+        --mc-border-strong: rgba(255, 255, 255, 0.18);
+        --mc-text: #ecf1f7;
+        --mc-text-secondary: #a9b7c8;
+        --mc-shadow: 0 22px 48px rgba(0, 0, 0, 0.32);
+        --mc-shadow-soft: 0 12px 28px rgba(0, 0, 0, 0.24);
+      }
+      body {
+        background:
+          radial-gradient(circle at top left, rgba(178, 101, 42, 0.14), transparent 24%),
+          radial-gradient(circle at top right, rgba(15, 118, 110, 0.15), transparent 22%),
+          linear-gradient(180deg, #12171d 0%, #151a20 52%, #1a212a 100%);
+      }
+      /* Sidebar */
+      .sidebar {
+        background: linear-gradient(180deg, rgba(26, 32, 40, 0.96), rgba(20, 25, 32, 0.92));
+      }
+      /* Header and cards */
+      .report-header {
+        background:
+          linear-gradient(135deg, rgba(24, 30, 38, 0.95), rgba(20, 25, 32, 0.92)),
+          linear-gradient(180deg, rgba(178, 101, 42, 0.08), rgba(15, 118, 110, 0.06));
+      }
+      .report-meta span {
+        background: rgba(255, 255, 255, 0.04);
+        border-color: var(--mc-border);
+      }
+      /* Summary and guide cards */
+      .summary-card {
+        background: linear-gradient(180deg, rgba(24, 30, 38, 0.98), rgba(20, 26, 33, 0.96));
+      }
+      .guide-card,
+      .coverage-stat,
+      .overview-pill {
+        background: rgba(255, 255, 255, 0.03);
+      }
+      /* Coherence hero */
+      .coherence-hero {
+        background: linear-gradient(140deg, rgba(24, 30, 38, 0.95), rgba(20, 35, 32, 0.92));
+      }
+      .coherence-ring::before {
+        background: var(--mc-bg-elevated);
+      }
+      /* Main card types */
+      .card,
+      .dimension-card,
+      .role-card,
+      .recommendation {
+        background-color: var(--mc-bg-elevated);
+      }
+      .chart-card {
+        background: var(--mc-bg-elevated);
+      }
+      /* Tables */
+      table {
+        background: rgba(0, 0, 0, 0.2);
+      }
+      th {
+        background: rgba(178, 101, 42, 0.12);
+      }
+      tr:nth-child(even) td { background: rgba(255, 255, 255, 0.02); }
+      tr:hover td { background: rgba(15, 118, 110, 0.12); }
+      tr.summary-row td { background: rgba(255, 255, 255, 0.04); }
+      /* Mobile nav */
+      .mobile-nav-list a {
+        background: rgba(255, 255, 255, 0.03);
+      }
+      .mobile-nav-list a.active {
+        background: linear-gradient(90deg, rgba(178, 101, 42, 0.18), rgba(178, 101, 42, 0.08));
+        border-color: rgba(178, 101, 42, 0.35);
+      }
+      /* Empty state */
+      .empty-state {
+        background: rgba(255, 255, 255, 0.02);
+      }
+      /* Console and appendix */
+      .console,
+      .appendix-content {
+        background: var(--mc-bg-tertiary);
+      }
+      /* Check items and viewport cards */
+      .check-item,
+      .viewport-card {
+        background: var(--mc-bg-secondary);
+      }
+      .viewport-card-header {
+        background: rgba(255, 255, 255, 0.03);
+      }
+      /* Finding provenance */
+      .finding-provenance {
+        background: rgba(255, 255, 255, 0.03);
+      }
+      /* Pipeline info */
+      .pipeline-info {
+        background: rgba(255, 255, 255, 0.03);
+      }
+      /* Severity track */
+      .severity-track,
+      .strip-track {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.06);
+      }
+    }
+
+    /* Animations */
+    @media (prefers-reduced-motion: no-preference) {
+      @keyframes fadeInUp {
+        from { opacity: 0; transform: translateY(16px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .section { animation: fadeInUp 0.4s ease both; }
+      .section:nth-child(1) { animation-delay: 0s; }
+      .section:nth-child(2) { animation-delay: 0.05s; }
+      .section:nth-child(3) { animation-delay: 0.1s; }
+      .section:nth-child(4) { animation-delay: 0.15s; }
+      .section:nth-child(5) { animation-delay: 0.2s; }
+      .section:nth-child(6) { animation-delay: 0.25s; }
+      .section:nth-child(7) { animation-delay: 0.3s; }
+      .section:nth-child(8) { animation-delay: 0.35s; }
+      .section:nth-child(9) { animation-delay: 0.4s; }
+      .section:nth-child(10) { animation-delay: 0.45s; }
+      .section:nth-child(11) { animation-delay: 0.5s; }
+      .section:nth-child(12) { animation-delay: 0.55s; }
+      .section:nth-child(13) { animation-delay: 0.6s; }
+      .section:nth-child(14) { animation-delay: 0.65s; }
+      .section:nth-child(15) { animation-delay: 0.7s; }
+      .section:nth-child(16) { animation-delay: 0.75s; }
+    }
+
+    /* Print styles */
+    @media print {
+      .sidebar { display: none; }
+      .main-content { width: 100%; max-width: 100%; margin: 0; padding: 0; }
+      .layout { display: block; }
+      .section { animation: none; break-inside: avoid; }
+      .card { box-shadow: none; break-inside: avoid; }
+      body { font-size: 11px; background: #fff; }
+      a { color: var(--mc-text); }
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .layout { flex-direction: column; padding: 0.75rem; gap: 0.9rem; }
+      .sidebar {
+        display: none;
+      }
+      .main-content { max-width: 100%; padding: 1rem; }
+      .mobile-nav { display: block; }
+      .mobile-nav-list { grid-template-columns: 1fr; }
+      .summary-visuals { grid-template-columns: 1fr; }
+      .coverage-grid { grid-template-columns: 1fr; }
+      .severity-chart { grid-template-columns: 1fr; justify-items: stretch; }
+      .guide-grid { grid-template-columns: 1fr; }
+      .section-overview { grid-template-columns: 1fr; }
+      .coherence-hero { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+      .summary-grid { grid-template-columns: repeat(2, 1fr); }
+      .metrics { flex-direction: column; gap: 0.5rem; }
+      .dimension-grid { grid-template-columns: 1fr; }
+      .role-grid { grid-template-columns: 1fr; }
+      .viewport-grid { grid-template-columns: 1fr; }
+      .checks-grid { grid-template-columns: 1fr; }
+      .finding-url { margin-left: 0; width: 100%; }
+      .report-title { max-width: none; }
+      th, td { padding: 0.7rem; }
+    }
+
+    /* Footer */
+    .report-footer {
+      margin-top: 2rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--mc-border);
+      text-align: center;
+      color: var(--mc-text-secondary);
+      font-size: 12px;
+    }
+    .footer-pipeline { max-width: 600px; margin: 0 auto 1rem; font-size: 11px; }
+
+    /* Collapsible details sections */
+    details.collapsible {
+      border: 1px solid var(--mc-border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    details.collapsible summary {
+      padding: 14px 20px;
+      background: var(--mc-bg-elevated);
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--mc-text);
+    }
+    details.collapsible summary::-webkit-details-marker { display: none; }
+    details.collapsible summary::before {
+      content: '▸';
+      font-size: 11px;
+      color: var(--mc-text-secondary);
+      transition: transform 0.15s ease;
+    }
+    details.collapsible[open] summary::before { transform: rotate(90deg); }
+    details.collapsible .collapsible__body {
+      padding: 16px 20px;
+      border-top: 1px solid var(--mc-border);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+
+<a class="skip-link" href="#main-report">Skip to report content</a>
+
+<div class="layout">
+  <!-- ===== SIDEBAR ===== -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">spel Report</div>
+    <div class="sidebar-product">
+      <strong>{APP_NAME}</strong><br>
+      {APP_URL}
+    </div>
+    <ul class="sidebar-nav">
+      <li><a href="#executive-summary">Executive Summary</a></li>
+      <li><a href="#reading-guide">How To Read</a></li>
+      <!-- PRODUCER: product-discovery -->
+      <li><a href="#product-overview">Product Overview</a></li>
+      <li><a href="#feature-inventory">Feature Inventory</a></li>
+      <li><a href="#user-roles">User Roles</a></li>
+      <li><a href="#feature-matrix">Feature Matrix</a></li>
+      <li><a href="#coherence-audit">Coherence Audit</a></li>
+      <li><a href="#faq">FAQ</a></li>
+      <li><a href="#navigation-map">Navigation Map</a></li>
+      <!-- PRODUCER: spel audit (CLI) -->
+      <li><a href="#automated-audit">Automated Audit</a></li>
+      <!-- PRODUCER: qa-validation -->
+      <li><a href="#visual-checks">Visual Checks</a></li>
+      <li><a href="#viewports">Viewport Audit</a></li>
+      <li><a href="#heatmap">Heatmap</a></li>
+      <li><a href="#timeline">Timeline</a></li>
+      <li><a href="#findings">Findings</a></li>
+      <li><a href="#disputed">Disputed</a></li>
+      <li><a href="#coverage">Coverage</a></li>
+      <!-- PRODUCER: product-discovery -->
+      <li><a href="#recommendations">Recommendations</a></li>
+      <li><a href="#appendix">Appendix</a></li>
+    </ul>
+    <div class="sidebar-footer">
+      Generated {DATE}<br>
+      spel Unified Report
+    </div>
+  </aside>
+
+  <!-- ===== MAIN CONTENT ===== -->
+  <main id="main-report" class="main-content">
+
+    <details class="mobile-nav card">
+      <summary>Jump To Section <span>+</span></summary>
+      <div class="mobile-nav-list">
+        <a href="#executive-summary">Summary</a>
+        <a href="#reading-guide">How to Read</a>
+        <a href="#product-overview">Overview</a>
+        <a href="#feature-inventory">Features</a>
+        <a href="#user-roles">Roles</a>
+        <a href="#feature-matrix">Matrix</a>
+        <a href="#coherence-audit">Coherence</a>
+        <a href="#faq">FAQ</a>
+        <a href="#navigation-map">Navigation</a>
+        <a href="#automated-audit">Audit</a>
+        <a href="#visual-checks">Visual Checks</a>
+        <a href="#viewports">Viewports</a>
+        <a href="#heatmap">Heatmap</a>
+        <a href="#timeline">Timeline</a>
+        <a href="#findings">Findings</a>
+        <a href="#disputed">Disputed</a>
+        <a href="#coverage">Coverage</a>
+        <a href="#recommendations">Recommendations</a>
+        <a href="#appendix">Appendix</a>
+      </div>
+    </details>
+
+    <!-- ===== SECTION 1: REPORT HEADER ===== -->
+    <header class="report-header">
+      <div class="report-kicker">Unified Product + QA Report</div>
+      <h1 class="report-title">spel Report — {APP_NAME}</h1>
+      <p class="report-subtitle">A structured view of product coverage, visual quality, interaction coherence, and verified issues across the audited experience.</p>
+      <div class="report-meta">
+        <span><strong>URL:</strong> <a href="{APP_URL}">{APP_URL}</a></span>
+        <span><strong>Date:</strong> {DATE}</span>
+        <span><strong>Scope:</strong> {SCOPE}</span>
+        <span><strong>Session:</strong> {SESSION_ID}</span>
+      </div>
+      <div class="pipeline-info">
+        <strong>Pipeline:</strong> {PIPELINE_STAGES}
+      </div>
+    </header>
+
+    <!-- ===== SECTION 2: EXECUTIVE SUMMARY ===== -->
+    <section id="executive-summary" class="section">
+      <h2>Executive Summary</h2>
+      <div class="summary-grid">
+        <div class="summary-card summary-card-highlight">
+          <div class="summary-count" style="color: var(--mc-accent)">{FEATURE_COUNT}</div>
+          <div class="summary-label">Features</div>
+        </div>
+        <div class="summary-card summary-card-success">
+          <div class="summary-count" style="color: var(--mc-accent-green)">{USER_ROLES_COUNT}</div>
+          <div class="summary-label">User Roles</div>
+        </div>
+        <div class="summary-card summary-card-warning">
+          <div class="summary-count" style="color: var(--mc-accent-yellow)">{PAGES_DISCOVERED}</div>
+          <div class="summary-label">Pages</div>
+        </div>
+        <div class="summary-card summary-card-neutral">
+          <div class="summary-count">{COHERENCE_SCORE}</div>
+          <div class="summary-label">Coherence</div>
+        </div>
+        <div class="summary-card summary-card-critical">
+          <div class="summary-count" style="color: var(--mc-accent-red)">{CRITICAL_COUNT}</div>
+          <div class="summary-label">Critical</div>
+        </div>
+        <div class="summary-card summary-card-high">
+          <div class="summary-count" style="color: var(--mc-accent-yellow)">{HIGH_COUNT}</div>
+          <div class="summary-label">High</div>
+        </div>
+        <div class="summary-card summary-card-medium">
+          <div class="summary-count" style="color: var(--mc-accent)">{MEDIUM_COUNT}</div>
+          <div class="summary-label">Medium</div>
+        </div>
+        <div class="summary-card summary-card-low">
+          <div class="summary-count" style="color: var(--mc-accent-green)">{LOW_COUNT}</div>
+          <div class="summary-label">Low</div>
+        </div>
+        <div class="summary-card summary-card-total">
+          <div class="summary-count">{TOTAL_COUNT}</div>
+          <div class="summary-label">Total Issues</div>
+        </div>
+      </div>
+      <div class="summary-visuals">
+        <div class="chart-card">
+          <div class="chart-title">Severity Distribution</div>
+          <div class="severity-chart">
+            <div class="severity-bars">
+              <div class="severity-row"><span class="severity-dot dot-critical"></span><span class="severity-label">Critical</span><div class="severity-track"><div class="severity-fill severity-fill-critical" style="--value: {CRITICAL_COUNT};"></div></div><span class="severity-value">{CRITICAL_COUNT}</span></div>
+              <div class="severity-row"><span class="severity-dot dot-high"></span><span class="severity-label">High</span><div class="severity-track"><div class="severity-fill severity-fill-high" style="--value: {HIGH_COUNT};"></div></div><span class="severity-value">{HIGH_COUNT}</span></div>
+              <div class="severity-row"><span class="severity-dot dot-medium"></span><span class="severity-label">Medium</span><div class="severity-track"><div class="severity-fill severity-fill-medium" style="--value: {MEDIUM_COUNT};"></div></div><span class="severity-value">{MEDIUM_COUNT}</span></div>
+              <div class="severity-row"><span class="severity-dot dot-low"></span><span class="severity-label">Low</span><div class="severity-track"><div class="severity-fill severity-fill-low" style="--value: {LOW_COUNT};"></div></div><span class="severity-value">{LOW_COUNT}</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Audit Coverage</div>
+          <div class="coverage-grid">
+            <div class="coverage-stat"><span class="coverage-label">Pages Audited</span><span class="coverage-value">{PAGES_AUDITED}</span></div>
+            <div class="coverage-stat"><span class="coverage-label">Categories Audited</span><span class="coverage-value">{CATEGORIES_CHECKED}</span></div>
+            <div class="coverage-stat"><span class="coverage-label">Viewports Tested</span><span class="coverage-value">{VIEWPORTS_TESTED}</span></div>
+            <div class="coverage-stat"><span class="coverage-label">Screenshots Captured</span><span class="coverage-value">{TOTAL_SCREENSHOTS}</span></div>
+          </div>
+          <div class="confidence-strip">
+            <div class="strip-row"><strong>Verified</strong><div class="strip-track"><div class="strip-fill" style="--value: {VERIFIED_COUNT};"></div></div><span class="strip-value">{VERIFIED_COUNT}</span></div>
+            <div class="strip-row"><strong>Reported</strong><div class="strip-track"><div class="strip-fill" style="--value: {REPORTED_COUNT};"></div></div><span class="strip-value">{REPORTED_COUNT}</span></div>
+            <div class="strip-row"><strong>Checks Passed</strong><div class="strip-track"><div class="strip-fill" style="--value: {CHECKS_PASSED};"></div></div><span class="strip-value">{CHECKS_PASSED}</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <p><strong>Verdict:</strong> {VERDICT_SUMMARY}</p>
+        <div class="metrics">
+          <span>Pages audited: <span class="metric-value">{PAGES_AUDITED}</span></span>
+          <span>Categories audited: <span class="metric-value">{CATEGORIES_CHECKED}</span></span>
+          <span>Viewports: <span class="metric-value">{VIEWPORTS_TESTED}</span></span>
+        </div>
+        <div class="metrics">
+          <span>Checks passed: <span class="metric-value">{CHECKS_PASSED}</span></span>
+          <span>Checks failed: <span class="metric-value">{CHECKS_FAILED}</span></span>
+          <span>Checks skipped: <span class="metric-value">{CHECKS_SKIPPED}</span></span>
+        </div>
+      </div>
+    </section>
+
+    <section id="reading-guide" class="section">
+      <h2>How To Read This Report</h2>
+      <div class="card">
+        <div class="guide-grid">
+          <div class="guide-card">
+            <div class="guide-title">Score Labels</div>
+            <p class="guide-text">Coherence scores use a 0-100 scale: 80-100 = stable and consistent, 60-79 = usable with notable friction, below 60 = corrective design work should be prioritized.</p>
+          </div>
+          <div class="guide-card">
+            <div class="guide-title">Severity Labels</div>
+            <ul class="guide-list">
+              <li><code>Critical</code> blocks core tasks or causes data/security risk</li>
+              <li><code>High</code> strongly degrades key user flows</li>
+              <li><code>Medium</code> creates repeated friction or confusion</li>
+              <li><code>Low</code> cosmetic or edge-case quality issues</li>
+            </ul>
+          </div>
+          <div class="guide-card">
+            <div class="guide-title">Evidence Rule</div>
+            <p class="guide-text">A finding is considered verified only when both reproduction steps and concrete evidence (snapshot refs, screenshots, logs, or transcript traces) are present.</p>
+          </div>
+        </div>
+        <div class="chart-title" style="margin-bottom: 0.55rem;">Decision Logic</div>
+        <div class="decision-flow">
+          <div class="decision-step"><strong>1</strong><span>Discovery maps pages, roles, and feature intent so issues are judged against expected product behavior.</span></div>
+          <div class="decision-step"><strong>2</strong><span>Hunter proposes potential bugs and attaches first-pass evidence from real interactions.</span></div>
+          <div class="decision-step"><strong>3</strong><span>Skeptic challenges weak claims, attempts counter-evidence, and filters false positives.</span></div>
+          <div class="decision-step"><strong>4</strong><span>Referee confirms only issues with reproducible proof and assigns final severity for prioritization.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PRODUCER: product-discovery — sections: Product Overview, Feature Inventory, User Roles, Feature Matrix, Coherence Audit, FAQ, Navigation Map, Recommendations, Appendix -->
+
+    <!-- ===== SECTION 3: PRODUCT OVERVIEW ===== -->
+    <section id="product-overview" class="section">
+      <h2>Product Overview</h2>
+      <div class="card">
+        <h3>Metadata</h3>
+        <table>
+          <tbody>
+            <tr>
+              <td><strong>Product Name</strong></td>
+              <td>{APP_NAME}</td>
+            </tr>
+            <tr>
+              <td><strong>URL</strong></td>
+              <td><a href="{APP_URL}">{APP_URL}</a></td>
+            </tr>
+            <tr>
+              <td><strong>Category</strong></td>
+              <td>{PRODUCT_CATEGORY}</td>
+            </tr>
+            <tr>
+              <td><strong>Industry</strong></td>
+              <td>{PRODUCT_INDUSTRY}</td>
+            </tr>
+            <tr>
+              <td><strong>Target Audience</strong></td>
+              <td>{TARGET_AUDIENCE}</td>
+            </tr>
+            <tr>
+              <td><strong>Discovery Date</strong></td>
+              <td>{DISCOVERY_DATE}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h3>Description</h3>
+        <p>{PRODUCT_DESCRIPTION}</p>
+      </div>
+      <div class="card">
+        <h3>Value Proposition</h3>
+        <p>{VALUE_PROPOSITION}</p>
+      </div>
+    </section>
+
+    <!-- ===== SECTION 4: FEATURE INVENTORY ===== -->
+    <section id="feature-inventory" class="section">
+      <h2>Feature Inventory</h2>
+      <p style="margin-bottom: 1rem;">Complete list of discovered features organized by category.</p>
+      <div class="section-overview">
+        <div class="overview-pill"><div class="overview-label">Mapped Features</div><div class="overview-value">{FEATURE_COUNT}</div></div>
+        <div class="overview-pill"><div class="overview-label">Pages Supporting Features</div><div class="overview-value">{PAGES_DISCOVERED}</div></div>
+        <div class="overview-pill"><div class="overview-label">Role Touchpoints</div><div class="overview-value">{USER_ROLES_COUNT}</div></div>
+      </div>
+      <div class="card" style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Feature</th>
+              <th>Category</th>
+              <th>Location</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- SAMPLE FEATURE ROW (remove and replace with generated rows) -->
+            <tr>
+              <td>F-001</td>
+              <td>User authentication</td>
+              <td><span class="tag tag-category tag-security">Security</span></td>
+              <td>/login</td>
+              <td><span class="tag tag-status-verified">Verified</span></td>
+            </tr>
+            <tr>
+              <td>F-002</td>
+              <td>Dashboard overview</td>
+              <td><span class="tag tag-category tag-core">Core</span></td>
+              <td>/dashboard</td>
+              <td><span class="tag tag-status-gated">Gated</span></td>
+            </tr>
+            <tr>
+              <td>F-003</td>
+              <td>Search functionality</td>
+              <td><span class="tag tag-category tag-navigation">Navigation</span></td>
+              <td>/search</td>
+              <td><span class="tag tag-status-untested">Untested</span></td>
+            </tr>
+            <!-- END SAMPLE -->
+            <!-- {FEATURE_ROWS} -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== SECTION 5: USER ROLES ===== -->
+    <section id="user-roles" class="section">
+      <h2>User Roles</h2>
+      <p style="margin-bottom: 1rem;">Identified user personas and their primary tasks.</p>
+      <div class="role-grid">
+        <!-- SAMPLE ROLE CARD (remove and replace with generated cards) -->
+        <div class="role-card">
+          <div class="role-name">Administrator</div>
+          <div class="role-meta">
+            <span class="tag tag-status-verified">Verified</span>
+          </div>
+          <div class="role-description">
+            Full system access with configuration and user management capabilities.
+          </div>
+          <ul class="role-tasks">
+            <li>Manage user accounts</li>
+            <li>Configure system settings</li>
+            <li>View audit logs</li>
+            <li>Access all features</li>
+          </ul>
+        </div>
+        <div class="role-card">
+          <div class="role-name">Standard User</div>
+          <div class="role-meta">
+            <span class="tag tag-status-verified">Verified</span>
+          </div>
+          <div class="role-description">
+            Regular user with access to core features based on permissions.
+          </div>
+          <ul class="role-tasks">
+            <li>Create and edit content</li>
+            <li>View dashboard</li>
+            <li>Use search features</li>
+            <li>Manage personal settings</li>
+          </ul>
+        </div>
+        <div class="role-card role-card-inferred">
+          <div class="role-name">Guest</div>
+          <div class="role-meta">
+            <span class="tag tag-status-inferred">Inferred</span>
+          </div>
+          <div class="role-description">
+            Limited read-only access for unauthenticated visitors.
+          </div>
+          <ul class="role-tasks">
+            <li>View public content</li>
+            <li>Search public resources</li>
+            <li>Register for account</li>
+          </ul>
+        </div>
+        <!-- END SAMPLE -->
+        <!-- {ROLE_CARDS} -->
+      </div>
+    </section>
+
+    <!-- ===== SECTION 6: FEATURE MATRIX ===== -->
+    <section id="feature-matrix" class="section">
+      <h2>Feature Matrix</h2>
+      <p style="margin-bottom: 1rem;">Cross-reference of user roles and feature availability.</p>
+      <div class="card" style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Role / Feature</th>
+              <th>Auth</th>
+              <th>Dashboard</th>
+              <th>Search</th>
+              <th>Settings</th>
+              <th>Admin</th>
+              <th>Reports</th>
+              <th>API</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- SAMPLE MATRIX ROWS (remove and replace with generated rows) -->
+            <tr>
+              <td><strong>Administrator</strong></td>
+              <td class="matrix-cell"><span class="matrix-check">✓</span></td>
+              <td class="matrix-cell"><span class="matrix-check">✓</span></td>
+              <td class="matrix-cell"><span class="matrix-check">✓</span></td>
+              <td class="matrix-cell"><span class="matrix-check">✓</span></td>
+              <td class="matrix-cell"><span class="matrix-check">✓</span></td>
+              <td class="matrix-cell"><span class="matrix-check">✓</span></td>
+              <td class="matrix-cell"><span class="matrix-check">✓</span></td>
+            </tr>
+            <tr>
+              <td><strong>Standard User</strong></td>
+              <td class="matrix-cell"><span class="matrix-check">✓</span></td>
+              <td class="matrix-cell"><span class="matrix-check">✓</span></td>
+              <td class="matrix-cell"><span class="matrix-check">✓</span></td>
+              <td class="matrix-cell"><span class="matrix-check">✓</span></td>
+              <td class="matrix-cell"><span class="matrix-cross">✗</span></td>
+              <td class="matrix-cell"><span class="matrix-partial">◐</span></td>
+              <td class="matrix-cell"><span class="matrix-cross">✗</span></td>
+            </tr>
+            <tr>
+              <td><strong>Guest</strong></td>
+              <td class="matrix-cell"><span class="matrix-cross">✗</span></td>
+              <td class="matrix-cell"><span class="matrix-cross">✗</span></td>
+              <td class="matrix-cell"><span class="matrix-partial">◐</span></td>
+              <td class="matrix-cell"><span class="matrix-cross">✗</span></td>
+              <td class="matrix-cell"><span class="matrix-cross">✗</span></td>
+              <td class="matrix-cell"><span class="matrix-cross">✗</span></td>
+              <td class="matrix-cell"><span class="matrix-cross">✗</span></td>
+            </tr>
+            <!-- END SAMPLE -->
+            <!-- {MATRIX_ROWS} -->
+          </tbody>
+        </table>
+      </div>
+      <div class="metrics" style="margin-top: 1rem;">
+        <span><span class="matrix-check">✓</span> = Full access</span>
+        <span><span class="matrix-partial">◐</span> = Partial access</span>
+        <span><span class="matrix-cross">✗</span> = No access</span>
+      </div>
+    </section>
+
+    <!-- ===== SECTION 7: COHERENCE AUDIT ===== -->
+    <section id="coherence-audit" class="section">
+      <h2>Coherence Audit</h2>
+      <p style="margin-bottom: 1rem;">Evaluation across 8 coherence dimensions.</p>
+      <div class="coherence-hero">
+        <div class="coherence-ring" style="--value: {COHERENCE_SCORE};">
+          <div class="coherence-value">{COHERENCE_SCORE}<span>Overall Coherence</span></div>
+        </div>
+        <div class="coherence-copy">
+          <h3>Signal, Not Noise</h3>
+          <p>The score summarizes consistency across visual language, interaction behavior, and recovery quality. Use low-scoring dimensions below as the immediate design and QA backlog.</p>
+        </div>
+      </div>
+      <div class="dimension-grid">
+        <!-- SAMPLE DIMENSION CARDS (remove and replace with generated cards) -->
+        <div class="dimension-card">
+          <div class="dimension-header">
+            <span class="dimension-name">Visual Consistency</span>
+            <span class="dimension-score" style="color: var(--mc-accent-green)">85</span>
+          </div>
+          <div class="score-bar">
+            <div class="score-track">
+              <div class="score-fill score-fill-high" style="width: 85%"></div>
+            </div>
+            <span class="score-value">85%</span>
+          </div>
+          <ul class="dimension-issues">
+            <li>Minor color variation in secondary buttons</li>
+          </ul>
+          <div class="dimension-refs">Refs: @e1a, @e2b</div>
+        </div>
+
+        <div class="dimension-card">
+          <div class="dimension-header">
+            <span class="dimension-name">Interaction Patterns</span>
+            <span class="dimension-score" style="color: var(--mc-accent-green)">92</span>
+          </div>
+          <div class="score-bar">
+            <div class="score-track">
+              <div class="score-fill score-fill-high" style="width: 92%"></div>
+            </div>
+            <span class="score-value">92%</span>
+          </div>
+          <ul class="dimension-issues">
+            <li>No issues found</li>
+          </ul>
+          <div class="dimension-refs">Refs: @e3c</div>
+        </div>
+
+        <div class="dimension-card">
+          <div class="dimension-header">
+            <span class="dimension-name">Navigation Flow</span>
+            <span class="dimension-score" style="color: var(--mc-accent)">74</span>
+          </div>
+          <div class="score-bar">
+            <div class="score-track">
+              <div class="score-fill score-fill-medium" style="width: 74%"></div>
+            </div>
+            <span class="score-value">74%</span>
+          </div>
+          <ul class="dimension-issues">
+            <li>Deep menu hierarchy (4+ levels)</li>
+            <li>Missing breadcrumb on settings pages</li>
+          </ul>
+          <div class="dimension-refs">Refs: @e4d, @e5e</div>
+        </div>
+
+        <div class="dimension-card">
+          <div class="dimension-header">
+            <span class="dimension-name">Terminology</span>
+            <span class="dimension-score" style="color: var(--mc-accent-green)">88</span>
+          </div>
+          <div class="score-bar">
+            <div class="score-track">
+              <div class="score-fill score-fill-high" style="width: 88%"></div>
+            </div>
+            <span class="score-value">88%</span>
+          </div>
+          <ul class="dimension-issues">
+            <li>Some pages have inconsistent heading hierarchy</li>
+          </ul>
+          <div class="dimension-refs">Refs: @e6f</div>
+        </div>
+
+        <div class="dimension-card">
+          <div class="dimension-header">
+            <span class="dimension-name">responsive_behavior</span>
+            <span class="dimension-score" style="color: var(--mc-accent-red)">58</span>
+          </div>
+          <div class="score-bar">
+            <div class="score-track">
+              <div class="score-fill score-fill-low" style="width: 58%"></div>
+            </div>
+            <span class="score-value">58%</span>
+          </div>
+          <ul class="dimension-issues">
+            <li>Tables overflow on mobile</li>
+            <li>Modal dialogs cut off at 320px</li>
+            <li>Navigation collapses poorly</li>
+          </ul>
+          <div class="dimension-refs">Refs: @e7g, @e8h, @e9i</div>
+        </div>
+
+        <div class="dimension-card">
+          <div class="dimension-header">
+            <span class="dimension-name">Accessibility Baseline</span>
+            <span class="dimension-score" style="color: var(--mc-accent)">71</span>
+          </div>
+          <div class="score-bar">
+            <div class="score-track">
+              <div class="score-fill score-fill-medium" style="width: 71%"></div>
+            </div>
+            <span class="score-value">71%</span>
+          </div>
+          <ul class="dimension-issues">
+            <li>Missing alt text on 12 images</li>
+            <li>Focus indicators inconsistent</li>
+          </ul>
+          <div class="dimension-refs">Refs: @e10j, @e11k</div>
+        </div>
+
+        <div class="dimension-card">
+          <div class="dimension-header">
+            <span class="dimension-name">Loading States</span>
+            <span class="dimension-score" style="color: var(--mc-accent-green)">82</span>
+          </div>
+          <div class="score-bar">
+            <div class="score-track">
+              <div class="score-fill score-fill-high" style="width: 82%"></div>
+            </div>
+            <span class="score-value">82%</span>
+          </div>
+          <ul class="dimension-issues">
+            <li>Large bundle on initial load</li>
+          </ul>
+          <div class="dimension-refs">Refs: @e12l</div>
+        </div>
+
+        <div class="dimension-card">
+          <div class="dimension-header">
+            <span class="dimension-name">Error Handling</span>
+            <span class="dimension-score" style="color: var(--mc-accent)">65</span>
+          </div>
+          <div class="score-bar">
+            <div class="score-track">
+              <div class="score-fill score-fill-medium" style="width: 65%"></div>
+            </div>
+            <span class="score-value">65%</span>
+          </div>
+          <ul class="dimension-issues">
+            <li>Generic error messages</li>
+            <li>No retry mechanism for failed requests</li>
+            <li>Form validation feedback delayed</li>
+          </ul>
+          <div class="dimension-refs">Refs: @e13m, @e14n, @e15o</div>
+        </div>
+        <!-- END SAMPLE -->
+        <!-- {DIMENSION_CARDS} -->
+      </div>
+    </section>
+
+    <!-- ===== SECTION 8: FAQ ===== -->
+    <section id="faq" class="section">
+      <h2>FAQ</h2>
+      <p style="margin-bottom: 1rem;">Common questions and answers about the product.</p>
+      <div class="card">
+        <!-- SAMPLE FAQ ITEMS (remove and replace with generated items) -->
+        <div class="faq-item">
+          <div class="faq-question">How do I reset my password?</div>
+          <div class="faq-answer">
+            Navigate to the login page and click "Forgot Password". Enter your email address and follow the instructions sent to your inbox. The reset link expires after 24 hours.
+          </div>
+        </div>
+        <div class="faq-item">
+          <div class="faq-question">What browsers are supported?</div>
+          <div class="faq-answer">
+            The application supports Chrome 90+, Firefox 88+, Safari 14+, and Edge 90+. Internet Explorer is not supported.
+          </div>
+        </div>
+        <div class="faq-item">
+          <div class="faq-question">How do I export my data?</div>
+          <div class="faq-answer">
+            Go to Settings → Data Management → Export. You can choose between JSON, CSV, or PDF formats. Large exports may take several minutes to process.
+          </div>
+        </div>
+        <!-- END SAMPLE -->
+        <!-- {FAQ_ITEMS} -->
+      </div>
+    </section>
+
+    <!-- ===== SECTION 9: NAVIGATION MAP ===== -->
+    <section id="navigation-map" class="section">
+      <h2>Navigation Map</h2>
+      <p style="margin-bottom: 1rem;">Site structure and page hierarchy.</p>
+      <div class="card">
+        <ul class="nav-tree">
+          <!-- SAMPLE NAV TREE (remove and replace with generated tree) -->
+          <li>
+            <div class="nav-page">
+              <span class="nav-icon">◈</span>
+              <a href="/">Home</a>
+            </div>
+          </li>
+          <li>
+            <div class="nav-page">
+              <span class="nav-icon">◈</span>
+              <a href="/dashboard">Dashboard</a>
+            </div>
+            <ul>
+              <li>
+                <div class="nav-page">
+                  <span class="nav-icon">◦</span>
+                  <a href="/dashboard/analytics">Analytics</a>
+                </div>
+              </li>
+              <li>
+                <div class="nav-page">
+                  <span class="nav-icon">◦</span>
+                  <a href="/dashboard/reports">Reports</a>
+                </div>
+              </li>
+            </ul>
+          </li>
+          <li>
+            <div class="nav-page">
+              <span class="nav-icon">◈</span>
+              <a href="/settings">Settings</a>
+            </div>
+            <ul>
+              <li>
+                <div class="nav-page">
+                  <span class="nav-icon">◦</span>
+                  <a href="/settings/profile">Profile</a>
+                </div>
+              </li>
+              <li>
+                <div class="nav-page">
+                  <span class="nav-icon">◦</span>
+                  <a href="/settings/security">Security</a>
+                </div>
+              </li>
+              <li>
+                <div class="nav-page">
+                  <span class="nav-icon">◦</span>
+                  <a href="/settings/notifications">Notifications</a>
+                </div>
+              </li>
+            </ul>
+          </li>
+          <li>
+            <div class="nav-page">
+              <span class="nav-icon">◈</span>
+              <a href="/login">Login</a>
+            </div>
+          </li>
+          <li>
+            <div class="nav-page">
+              <span class="nav-icon">◈</span>
+              <a href="/register">Register</a>
+            </div>
+          </li>
+          <!-- END SAMPLE -->
+          <!-- {NAV_TREE} -->
+        </ul>
+      </div>
+    </section>
+
+    <!-- ===== SECTION 9B: AUTOMATED AUDIT ===== -->
+    <section id="automated-audit" class="section">
+      <h2>Automated Audit</h2>
+      <p style="margin-bottom: 1rem;">Machine-verified quality checks from <code>spel audit</code>.</p>
+
+      <div class="summary-grid" style="margin-bottom: 2rem;">
+        <div class="summary-card summary-card-highlight">
+          <div class="summary-count" style="color: var(--mc-accent)">{AUDIT_STRUCTURE_SECTIONS}</div>
+          <div class="summary-label">Structure</div>
+        </div>
+        <div class="summary-card summary-card-critical">
+          <div class="summary-count" style="color: var(--mc-accent-red)">{AUDIT_CONTRAST_FAILING}</div>
+          <div class="summary-label">Contrast Fails</div>
+        </div>
+        <div class="summary-card summary-card-highlight">
+          <div class="summary-count" style="color: var(--mc-accent)">{AUDIT_COLORS_COUNT}</div>
+          <div class="summary-label">Colors</div>
+        </div>
+        <div class="summary-card summary-card-warning">
+          <div class="summary-count" style="color: var(--mc-accent-yellow)">{AUDIT_LAYOUT_COUNT}</div>
+          <div class="summary-label">Layout Issues</div>
+        </div>
+        <div class="summary-card summary-card-highlight">
+          <div class="summary-count" style="color: var(--mc-accent)">{AUDIT_FONTS_COUNT}</div>
+          <div class="summary-label">Fonts</div>
+        </div>
+        <div class="summary-card summary-card-critical">
+          <div class="summary-count" style="color: var(--mc-accent-red)">{AUDIT_LINKS_BROKEN}</div>
+          <div class="summary-label">Broken Links</div>
+        </div>
+        <div class="summary-card summary-card-success">
+          <div class="summary-count" style="color: var(--mc-accent-green)">{AUDIT_HEADINGS_VALID}</div>
+          <div class="summary-label">Headings</div>
+        </div>
+      </div>
+
+      <details class="collapsible" style="margin-bottom: 1rem;">
+        <summary>Text Contrast ({AUDIT_CONTRAST_FAILING} failing)</summary>
+        <div class="collapsible__body">{AUDIT_CONTRAST_DETAILS}</div>
+      </details>
+
+      <details class="collapsible" style="margin-bottom: 1rem;">
+        <summary>Layout Issues ({AUDIT_LAYOUT_COUNT} issues)</summary>
+        <div class="collapsible__body">{AUDIT_LAYOUT_DETAILS}</div>
+      </details>
+
+      <details class="collapsible" style="margin-bottom: 1rem;">
+        <summary>Font Audit ({AUDIT_FONTS_COUNT} fonts)</summary>
+        <div class="collapsible__body">{AUDIT_FONTS_DETAILS}</div>
+      </details>
+
+      <details class="collapsible" style="margin-bottom: 1rem;">
+        <summary>Link Health ({AUDIT_LINKS_BROKEN} broken)</summary>
+        <div class="collapsible__body">{AUDIT_LINKS_DETAILS}</div>
+      </details>
+
+      <details class="collapsible" style="margin-bottom: 1rem;">
+        <summary>Heading Structure ({AUDIT_HEADINGS_VALID})</summary>
+        <div class="collapsible__body">{AUDIT_HEADINGS_DETAILS}</div>
+      </details>
+
+      <details class="collapsible" style="margin-bottom: 1rem;">
+        <summary>Color Palette ({AUDIT_COLORS_COUNT} unique colors)</summary>
+        <div class="collapsible__body">{AUDIT_COLORS_DETAILS}</div>
+      </details>
+
+      <details class="collapsible" style="margin-bottom: 1rem;">
+        <summary>Page Structure ({AUDIT_STRUCTURE_SECTIONS} sections)</summary>
+        <div class="collapsible__body">{AUDIT_STRUCTURE_DETAILS}</div>
+      </details>
+    </section>
+
+    <!-- PRODUCER: qa-validation — sections: Visual Checks, Viewport Comparison, Heatmap, Timeline, Findings, Disputed Findings, Coverage Matrix -->
+
+    <!-- ===== SECTION 10: VISUAL CHECKS ===== -->
+    <section id="visual-checks" class="section">
+      <h2>Visual Checks</h2>
+      <div class="checks-grid">
+        <!-- SAMPLE VISUAL CHECK — PASS -->
+        <div class="check-item check-pass">
+          <span class="check-icon">&#10003;</span>
+          <div class="check-body">
+            <div class="check-name">Duplicate Elements</div>
+            <div class="check-desc">No duplicate logos, headings, or nav blocks found</div>
+          </div>
+        </div>
+        <!-- SAMPLE VISUAL CHECK — FAIL (with evidence) -->
+        <div class="check-item check-fail">
+          <span class="check-icon">&#10007;</span>
+          <div class="check-body">
+            <div class="check-name">Visual Coherence</div>
+            <div class="check-desc">Badge placement in task list rows is inconsistent — badges shift horizontally based on title length</div>
+            <div class="check-refs">Refs: @e4kqmn, @e7xrtw, @e9bnnq</div>
+            <div class="check-evidence">
+              <img src="evidence/visual-coherence-badges.png" alt="Annotated screenshot showing inconsistent badge placement">
+            </div>
+          </div>
+        </div>
+        <!-- END SAMPLES -->
+        <!-- {VISUAL_CHECKS} -->
+      </div>
+    </section>
+
+    <!-- ===== SECTION 11: VIEWPORT AUDIT ===== -->
+    <section id="viewports" class="section">
+      <h2>Viewport Audit</h2>
+
+      <!-- SAMPLE VIEWPORT PAGE -->
+      <div class="viewport-page">
+        <div class="viewport-page-title">
+          <span>/homepage</span>
+        </div>
+        <div class="viewport-grid">
+          <div class="viewport-card">
+            <div class="viewport-card-header">
+              <span class="viewport-label">Desktop</span>
+              <span class="viewport-size">1280×720</span>
+            </div>
+            <img src="evidence/homepage-desktop.png" alt="Homepage at desktop viewport">
+            <div class="viewport-meta">
+              <span class="viewport-overflow-ok">&#10003; No overflow</span>
+              <span>0 bugs</span>
+            </div>
+          </div>
+          <div class="viewport-card">
+            <div class="viewport-card-header">
+              <span class="viewport-label">Tablet</span>
+              <span class="viewport-size">768×1024</span>
+            </div>
+            <img src="evidence/homepage-tablet.png" alt="Homepage at tablet viewport">
+            <div class="viewport-meta">
+              <span class="viewport-overflow-ok">&#10003; No overflow</span>
+              <span class="viewport-bugs">1 bug</span>
+            </div>
+          </div>
+          <div class="viewport-card">
+            <div class="viewport-card-header">
+              <span class="viewport-label">Mobile</span>
+              <span class="viewport-size">375×667</span>
+            </div>
+            <img src="evidence/homepage-mobile.png" alt="Homepage at mobile viewport">
+            <div class="viewport-meta">
+              <span class="viewport-overflow-bad">&#10007; Overflow</span>
+              <span class="viewport-bugs">2 bugs</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- END SAMPLE -->
+      <!-- {VIEWPORT_PAGES} -->
+    </section>
+
+    <!-- ===== SECTION 12: SEVERITY HEATMAP ===== -->
+    <section id="heatmap" class="section">
+      <h2>Severity Heatmap</h2>
+      <div class="section-overview">
+        <div class="overview-pill"><div class="overview-label">Verified Findings</div><div class="overview-value">{VERIFIED_COUNT}</div></div>
+        <div class="overview-pill"><div class="overview-label">Reported Findings</div><div class="overview-value">{REPORTED_COUNT}</div></div>
+        <div class="overview-pill"><div class="overview-label">Disputed Findings</div><div class="overview-value">{DISPUTED_COUNT}</div></div>
+      </div>
+      <div class="card" style="overflow-x: auto">
+        <table>
+          <thead>
+            <tr>
+              <th>Page / Feature</th>
+              <th>Functional</th>
+              <th>Visual</th>
+              <th>A11y</th>
+              <th>UX</th>
+              <th>Perf</th>
+              <th>API</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- SAMPLE HEATMAP ROW (remove and replace with generated rows) -->
+            <tr>
+              <td>/login</td>
+              <td><span class="dot dot-critical"></span> 1</td>
+              <td><span class="dot dot-none"></span> 0</td>
+              <td><span class="dot dot-medium"></span> 1</td>
+              <td><span class="dot dot-low"></span> 1</td>
+              <td><span class="dot dot-none"></span> 0</td>
+              <td><span class="dot dot-none"></span> 0</td>
+            </tr>
+            <!-- END SAMPLE -->
+            <!-- {HEATMAP_ROWS} -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== SECTION 13: ACTIVITY TIMELINE ===== -->
+    <section id="timeline" class="section">
+      <h2>Activity Timeline</h2>
+      <div class="card">
+        <div class="timeline">
+          <!-- SAMPLE TRANSCRIPT ENTRY (remove and replace with generated entries) -->
+          <div class="timeline-entry">
+            <span class="timeline-ts">00:00:01</span>
+            <span class="timeline-desc">[Hunter] Navigating to {APP_URL}</span>
+          </div>
+          <div class="timeline-entry">
+            <span class="timeline-ts">00:00:04</span>
+            <span class="timeline-desc">[Hunter] Taking snapshot — found 24 interactive elements</span>
+          </div>
+          <div class="timeline-entry issue">
+            <span class="timeline-ts">00:00:12</span>
+            <span class="timeline-desc"><span class="issue-tag">ISSUE-001</span> Submit button not keyboard-accessible</span>
+          </div>
+          <!-- END SAMPLE -->
+          <!-- {TIMELINE_ENTRIES} -->
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== SECTION 14: FINDINGS ===== -->
+    <section id="findings" class="section">
+      <h2>Findings</h2>
+
+      <!-- SAMPLE FINDING (remove and replace with generated findings) -->
+      <div class="card finding">
+        <div class="finding-header">
+          <span class="finding-id">ISSUE-001</span>
+          <span class="pill pill-critical">Critical</span>
+          <span class="tag tag-category tag-accessibility">accessibility</span>
+          <span class="finding-url">/login</span>
+        </div>
+        <div class="finding-tags">
+          <span class="tag tag-dev">DEV</span>
+          <span class="tag tag-qa">QA</span>
+          <span class="tag tag-status-verified">Verified</span>
+        </div>
+        <div class="finding-provenance">
+          Found by: <strong>Hunter</strong> &middot; Challenged by: <strong>Skeptic</strong> &middot; Verdict: <strong>Referee CONFIRMED</strong>
+        </div>
+        <h3>Submit button not keyboard-accessible</h3>
+        <p style="margin-bottom: 0.75rem">The login form's submit button cannot be reached via Tab key navigation. Users relying on keyboard-only input cannot submit the form.</p>
+        <h3>Steps to Reproduce</h3>
+        <ol class="steps">
+          <li>Navigate to /login</li>
+          <li>Click the email input field</li>
+          <li>Press Tab to move through form elements</li>
+          <li>Observe: focus skips the Submit button entirely</li>
+        </ol>
+        <figure>
+          <img src="evidence/login-focus-order.png" alt="Screenshot showing focus order skipping Submit button">
+          <figcaption>Focus indicator jumps from password field to footer link, skipping Submit</figcaption>
+        </figure>
+        <div class="analysis-block">
+          <div class="analysis-label">Analysis</div>
+          <p>The submit button uses a &lt;div&gt; with an onclick handler instead of a native &lt;button&gt; element. It has no tabindex attribute and no role="button" ARIA role, making it invisible to keyboard navigation and screen readers.</p>
+        </div>
+        <pre class="console"><span class="error">[a11y] Element div.submit-btn is not focusable — missing tabindex or native interactive element</span></pre>
+        <div class="finding-footer">
+          <span class="confidence conf-high">Confidence: <span class="conf-bar"><span class="conf-fill"></span></span> High</span>
+          <span><strong>Impact:</strong> Blocks keyboard-only and screen reader users from logging in</span>
+        </div>
+      </div>
+      <!-- END SAMPLE -->
+      <!-- {FINDINGS} -->
+    </section>
+
+    <!-- ===== SECTION 15: DISPUTED BUGS ===== -->
+    <section id="disputed" class="section">
+      <h2>Disputed Bugs</h2>
+
+      <!-- SAMPLE DISPUTED BUG (remove and replace with generated entries) -->
+      <div class="card" style="margin-bottom: 1rem">
+        <div class="finding-header">
+          <span class="finding-id">ISSUE-002</span>
+          <span class="pill pill-medium">Medium</span>
+          <span class="tag tag-category tag-visual">visual</span>
+        </div>
+        <p style="margin-bottom: 0.5rem"><strong>Button text truncated on mobile viewport</strong></p>
+        <div class="dispute-flow">
+          <span><strong>Hunter:</strong> Button text clips at 375px width</span>
+          <span class="dispute-arrow">&rarr;</span>
+          <span><strong>Skeptic:</strong> Text wraps correctly — tested on iPhone 14 emulation</span>
+          <span class="dispute-arrow">&rarr;</span>
+          <span class="verdict-dismissed">&#10007; DISMISSED</span>
+        </div>
+        <div class="finding-provenance" style="margin-top: 0.5rem">
+          Referee note: Skeptic provided counter-evidence at exact viewport. Hunter's screenshot was at 320px, not 375px. Bug is device-specific edge case, downgraded from Medium to Low risk.
+        </div>
+      </div>
+      <!-- END SAMPLE -->
+      <!-- {DISPUTED_BUGS} -->
+    </section>
+
+    <!-- ===== SECTION 16: COVERAGE REPORT ===== -->
+    <section id="coverage" class="section">
+      <h2>Coverage Report</h2>
+      <div class="card" style="overflow-x: auto">
+        <table>
+          <thead>
+            <tr>
+              <th>URL</th>
+              <th>Pages Visited</th>
+              <th>Elements Tested</th>
+              <th>Console Errors</th>
+              <th>Screenshots</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- SAMPLE COVERAGE ROW (remove and replace with generated rows) -->
+            <tr>
+              <td>/login</td>
+              <td>1</td>
+              <td>24</td>
+              <td>0</td>
+              <td>3</td>
+            </tr>
+            <!-- END SAMPLE -->
+            <!-- {COVERAGE_ROWS} -->
+            <tr class="summary-row">
+              <td><strong>Total</strong></td>
+              <td>{TOTAL_PAGES_VISITED}</td>
+              <td>{TOTAL_ELEMENTS_TESTED}</td>
+              <td>{TOTAL_CONSOLE_ERRORS}</td>
+              <td>{TOTAL_SCREENSHOTS}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== SECTION 17: RECOMMENDATIONS ===== -->
+    <section id="recommendations" class="section">
+      <h2>Recommendations</h2>
+      <p style="margin-bottom: 1rem;">Actionable items to improve the product.</p>
+
+      <!-- SAMPLE RECOMMENDATIONS (remove and replace with generated items) -->
+      <div class="recommendation">
+        <div class="rec-priority rec-priority-high">1</div>
+        <div class="rec-body">
+          <div class="rec-title">Fix Mobile Responsiveness Issues</div>
+          <div class="rec-desc">
+            Address table overflow, modal cutoff, and navigation collapse problems identified in the responsiveness audit. Consider implementing a mobile-first approach for critical user flows.
+          </div>
+        </div>
+      </div>
+
+      <div class="recommendation">
+        <div class="rec-priority rec-priority-high">2</div>
+        <div class="rec-body">
+          <div class="rec-title">Improve Error Handling UX</div>
+          <div class="rec-desc">
+            Replace generic error messages with specific, actionable guidance. Add retry mechanisms for failed requests and improve form validation timing.
+          </div>
+        </div>
+      </div>
+
+      <div class="recommendation">
+        <div class="rec-priority rec-priority-medium">3</div>
+        <div class="rec-body">
+          <div class="rec-title">Enhance Navigation Structure</div>
+          <div class="rec-desc">
+            Add breadcrumb navigation to settings pages and consider flattening the menu hierarchy to reduce cognitive load.
+          </div>
+        </div>
+      </div>
+
+      <div class="recommendation">
+        <div class="rec-priority rec-priority-medium">4</div>
+        <div class="rec-body">
+          <div class="rec-title">Address Accessibility Gaps</div>
+          <div class="rec-desc">
+            Add descriptive alt text to all images and standardize focus indicator styling across all interactive elements.
+          </div>
+        </div>
+      </div>
+
+      <div class="recommendation">
+        <div class="rec-priority rec-priority-low">5</div>
+        <div class="rec-body">
+          <div class="rec-title">Optimize Bundle Size</div>
+          <div class="rec-desc">
+            Implement code splitting and lazy loading to reduce initial bundle size and improve time-to-interactive metrics.
+          </div>
+        </div>
+      </div>
+      <!-- END SAMPLE -->
+      <!-- {RECOMMENDATIONS} -->
+    </section>
+
+    <!-- ===== SECTION 18: APPENDIX ===== -->
+    <section id="appendix" class="section">
+      <h2>Appendix</h2>
+      <p style="margin-bottom: 1rem;">Raw data and methodology notes.</p>
+
+      <div class="appendix-section">
+        <h4>Discovery Methodology</h4>
+        <div class="appendix-content">This product discovery was performed using automated browser exploration with the following approach:
+
+1. Initial page load and snapshot at {APP_URL}
+2. Recursive link discovery within same origin
+3. Interactive element enumeration per page
+4. Feature identification through DOM analysis
+5. Role inference from navigation patterns
+6. Coherence scoring via heuristics
+
+Checks used: discovery, analysis, cataloging
+Session duration: {SESSION_DURATION}
+Pages crawled: {PAGES_CRAWLED}
+Elements analyzed: {ELEMENTS_ANALYZED}</div>
+      </div>
+
+      <div class="appendix-section">
+        <h4>Coherence Scoring Criteria</h4>
+        <div class="appendix-content">Visual Consistency (85): Color palette, typography, spacing uniformity
+Interaction Patterns (92): Consistent hover/focus states, button styles
+Navigation Flow (74): Menu depth, breadcrumb presence, URL structure
+Terminology (88): Heading hierarchy, list formatting, whitespace
+responsive_behavior (58): Mobile layout, touch targets, overflow handling
+Accessibility Baseline (71): Alt text, focus indicators, ARIA labels
+Loading States (82): Load time, bundle size, lazy loading
+Error Handling (65): Error message clarity, recovery options, validation
+
+Overall coherence: {OVERALL_COHERENCE_SCORE}</div>
+      </div>
+
+      <div class="appendix-section">
+        <h4>Session Metadata</h4>
+        <div class="appendix-content">Session ID: {SESSION_ID}
+Started: {SESSION_START}
+Ended: {SESSION_END}
+Duration: {SESSION_DURATION}
+User Agent: {USER_AGENT}
+Viewport: {VIEWPORT_SIZE}
+Screenshots: {TOTAL_SCREENSHOTS}
+Network requests: {NETWORK_REQUESTS}</div>
+      </div>
+
+      <!-- {APPENDIX_SECTIONS} -->
+    </section>
+
+    <!-- ===== FOOTER ===== -->
+    <footer class="report-footer">
+      <div class="footer-pipeline">
+        <strong>Unified Report Pipeline</strong><br>
+        Product discovery and QA are consolidated into one evidence-driven workflow.
+        Only findings with evidence are retained.
+      </div>
+      <div class="metrics" style="justify-content: center; margin-bottom: 0.75rem">
+        <span>Quality score: <span class="metric-value">{QUALITY_SCORE}</span></span>
+        <span>Verified bugs: <span class="metric-value">{VERIFIED_COUNT}</span> / {REPORTED_COUNT}</span>
+        <span>Disputed: <span class="metric-value">{DISPUTED_COUNT}</span></span>
+      </div>
+      <p>Generated by spel &bull; {DATE}</p>
+    </footer>
+
+  </main>
+</div>
+
+<script>
+  (() => {
+    const sections = Array.from(document.querySelectorAll("section[id]"));
+    const navLinks = Array.from(document.querySelectorAll(".sidebar-nav a, .mobile-nav-list a"));
+
+    if (!sections.length || !navLinks.length) {
+      return;
+    }
+
+    const setActive = id => {
+      navLinks.forEach(link => {
+        link.classList.toggle("active", link.getAttribute("href") === `#${id}`);
+      });
+    };
+
+    const initialId = window.location.hash ? window.location.hash.slice(1) : sections[0].id;
+    setActive(initialId);
+
+    if ("IntersectionObserver" in window) {
+      const observer = new IntersectionObserver(entries => {
+        const visible = entries
+          .filter(entry => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+
+        if (visible) {
+          setActive(visible.target.id);
+        }
+      }, {
+        rootMargin: "-35% 0px -55% 0px",
+        threshold: [0.2, 0.45, 0.7]
+      });
+
+      sections.forEach(section => observer.observe(section));
+    }
+
+    window.addEventListener("hashchange", () => {
+      setActive(window.location.hash ? window.location.hash.slice(1) : sections[0].id);
+    });
+
+    navLinks.forEach(link => {
+      link.addEventListener("click", () => {
+        const mobileNav = link.closest("details.mobile-nav");
+        if (mobileNav) {
+          mobileNav.removeAttribute("open");
+        }
+      });
+    });
+  })();
+</script>
+
+</body>
+</html>
