@@ -4032,10 +4032,21 @@ export function SessionScreen({
 
   function completeSlash(command: SlashCommand) {
     const noArgs = new Set(["/help", "/sessions", "/clear"]);
-    setPrompt(command.name + (noArgs.has(command.name) ? "" : " "));
+    const completed = command.name + (noArgs.has(command.name) ? "" : " ");
+    setPrompt(completed);
     setSlashIndex(0);
     setSlashDismissed(noArgs.has(command.name));
-    requestAnimationFrame(() => composerRef.current?.focus());
+    requestAnimationFrame(() => {
+      const element = composerRef.current;
+      if (!element) return;
+      element.focus();
+      // Park the caret at the end of the completed command. Mirrors completeFile:
+      // without this, iOS keeps the native selection where "/" was (inside the
+      // freshly written word), so the virtual keyboard fires autocorrect and
+      // inserts at the wrong spot when a command is tapped rather than Enter-ed.
+      element.setSelectionRange(completed.length, completed.length);
+      setCaret(completed.length);
+    });
   }
 
   // `@` file-mention picker — the SAME fuzzy index the TUI composer uses,
