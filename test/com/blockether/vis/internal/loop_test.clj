@@ -6281,3 +6281,27 @@
                                                           "please refactor the loop"
                                                           :deep
                                                           {})))))
+
+;; Regression, issue #112: the `:provider-call` lifecycle marker carried only the iteration
+;; and a start timestamp, so a stalled stream had nothing to name — the gateway failed the
+;; turn without ever telling the human which provider and model went silent.
+(defdescribe
+  provider-call-chunk-test
+  (it "names the provider and model the call is dispatched to"
+      (expect (= {:phase :provider-call
+                  :iteration 3
+                  :started-at-ms 42
+                  :provider "github-copilot-enterprise"
+                  :model "claude-opus-5"}
+                 (#'lp/provider-call-chunk
+                  3
+                  {:provider :github-copilot-enterprise :name "claude-opus-5"}
+                  42))))
+
+  (it "leaves out what the router could not resolve"
+      (expect (= {:phase :provider-call
+                  :iteration 0
+                  :started-at-ms 1
+                  :provider nil
+                  :model nil}
+                 (#'lp/provider-call-chunk 0 {} 1)))))

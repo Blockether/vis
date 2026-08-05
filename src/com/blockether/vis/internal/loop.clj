@@ -5570,6 +5570,22 @@
       (not resolution-error)
       (assoc :vis/native-input (:input effective-tc)))))
 
+(defn- provider-call-chunk
+  "The lifecycle marker that opens ONE provider call.
+
+   It names the provider and the model the request is dispatched to: when the
+   stream then goes silent, that marker is the only thing the gateway watchdog
+   has left to attribute the stall to, and a failure card that cannot say WHICH
+   provider went quiet tells the human nothing."
+  [iteration-position resolved-model started-at-ms]
+  {:phase :provider-call
+   :iteration iteration-position
+   :started-at-ms started-at-ms
+   :provider (some-> (:provider resolved-model)
+                     name)
+   :model (some-> (:name resolved-model)
+                  str)})
+
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
@@ -5674,9 +5690,8 @@
        (not-empty (merge (copilot-llm-headers resolved-model copilot-initiator) llm-headers))
        provider-started-at-ms (System/currentTimeMillis)
        _ (when on-chunk
-           (on-chunk {:phase :provider-call
-                      :iteration iteration-position
-                      :started-at-ms provider-started-at-ms}))
+           (on-chunk
+             (provider-call-chunk iteration-position resolved-model provider-started-at-ms)))
        provider-start-ns (System/nanoTime)
        ;; Phase C: per-session cache-key for OpenAI / Codex / Z.ai
        ;; sticky routing. svar 0.6.x auto-generates a key from the

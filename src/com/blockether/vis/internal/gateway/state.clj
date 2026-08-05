@@ -2090,6 +2090,41 @@
                              deref))
       (str "no output for " TURN_STALL_TIMEOUT_MS "ms")))
 
+(defn- stall-attribution
+  "WHO went quiet: the provider and model named by the live `:provider-call`
+   marker, as `\"<provider> / <model>\"`. nil when the turn died before reaching a
+   provider at all — attribution is stamped BY that marker, so there is nothing
+   truthful to say before it."
+  [stall]
+  (let
+    [{:keys [provider model]}
+     (some-> stall
+             deref)
+
+     p
+     (some-> provider
+             name
+             str/trim
+             not-empty)
+
+     m
+     (some-> model
+             str
+             str/trim
+             not-empty)]
+
+    (cond (and p m) (str p " / " m)
+          :else (or p m))))
+
+(defn- stall-failure-text
+  "The stall failure a human reads. `Provider stream stalled: no output for
+   362142ms in phase :provider-call` named the symptom and nothing else, so the
+   card could not say that it was github-copilot-enterprise / claude-opus-5 whose
+   connection died — the log knew, the turn did not."
+  [stall]
+  (let [who (stall-attribution stall)]
+    (str "Provider stream stalled" (when who (str " (" who ")")) ": " (stall-detail-text stall))))
+
 (def ^:private stall-exempt-phases
   "Phases where a running turn may legitimately produce NO chunk for a long time
    — a slow shell-run / Python-eval / native tool. The stall watchdog NEVER
@@ -2125,6 +2160,15 @@
      (and meaningful? (not (contains? stall-lifecycle-phases (:phase chunk))))]
 
     (cond-> (assoc state :phase (:phase chunk))
+      ;; Attribution is stamped by the `:provider-call` marker and kept: the
+      ;; streaming chunks that follow carry none of their own, and the failure
+      ;; card must still be able to name the connection that went silent.
+      (:provider chunk)
+      (assoc :provider (:provider chunk))
+
+      (:model chunk)
+      (assoc :model (:model chunk))
+
       meaningful?
       (assoc :last-ms now)
 
@@ -2379,13 +2423,13 @@
                                     silent? (str "no output at all for " idle-ms
                                                  "ms since the turn started, in phase " phase)
                                     :else (str "no output for " idle-ms "ms in phase " phase))
+                       _ (swap! stall assoc :stalled? true :stall-detail detail)
                        reason (if started?
-                                (str "provider stream stalled: " detail)
+                                (stall-failure-text stall)
                                 (str "turn never started running: " detail))]
 
                       (tel/log! :warn
                                 ["gateway: turn made no progress — force-cancelling" tid reason])
-                      (swap! stall assoc :stalled? true :stall-detail detail)
                       (cancellation/cancel! cancel-token
                                             (if started? :stall-watchdog :launch-watchdog))
                       ;; Last line of defence: the cancel normally makes the
@@ -2567,7 +2611,7 @@
                (and (= "failed" status) (empty? content-blocks)) "turn_failed")
 
          failure-text
-         (cond stalled? (str "Provider stream stalled: " (stall-detail-text stall))
+         (cond stalled? (stall-failure-text stall)
                failure-code (or (some-> (:error result)
                                         str
                                         str/trim
@@ -2589,8 +2633,17 @@
           ;; DB hydration against it (the gateway tid differs).
           :engine_turn_id (some-> (:session-turn-id result)
                                   str)
-          :model (or (get-in result [:cost "model"]) (:model result))
-          :provider (or (get-in result [:cost "provider"]) (:provider result))
+          :model (or (get-in result [:cost "model"])
+                     (:model result)
+                     (some-> stall
+                             deref
+                             :model))
+          :provider (or (get-in result [:cost "provider"])
+                        (:provider result)
+                        (some-> stall
+                                deref
+                                :provider
+                                name))
           :llm_selected (:llm-selected result)
           :llm_actual (:llm-actual result)
           :is_llm_fallback (:llm-fallback? result)
@@ -2674,8 +2727,7 @@
 
            err
            (cond user-cancel? nil
-                 stalled?
-                 (str "provider stream stalled: " (stall-detail-text stall) " (force-cancelled)")
+                 stalled? (str (stall-failure-text stall) " (force-cancelled)")
                  :else (ex-message t))]
 
           (if user-cancel?

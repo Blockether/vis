@@ -3555,3 +3555,46 @@
             ;; never a decoder exception thrown out of the byte endpoint.
             (expect (nil? (state/attachment-bytes {:base64 "!!! not base64 !!!"})))
             (expect (nil? (state/attachment-bytes {})))))))))
+
+;; Regression, issue #112: a GitHub-Copilot stream went silent and the turn failed with
+;; "Provider stream stalled: no output for 362142ms in phase :provider-call" — the error
+;; block never said WHICH provider or model had gone quiet, so the TUI could only paint a
+;; bare failed card while the log knew it was github-copilot-enterprise / claude-opus-5.
+(defdescribe
+  stalled-turn-names-its-provider-test
+  (let
+    [advance
+     @#'state/advance-turn-stall-state
+
+     failure-text
+     @#'state/stall-failure-text]
+
+    (it "remembers the provider and model the call was dispatched to"
+        (let
+          [dispatched
+           (advance {}
+                    {:phase :provider-call
+                     :iteration 0
+                     :started-at-ms 1
+                     :provider "github-copilot-enterprise"
+                     :model "claude-opus-5"}
+                    100)
+
+           ;; later chunks carry no attribution of their own and must not erase it
+           streaming
+           (advance dispatched {:phase :content :delta "hi"} 200)]
+
+          (expect (= "github-copilot-enterprise" (:provider dispatched)))
+          (expect (= "claude-opus-5" (:model dispatched)))
+          (expect (= "github-copilot-enterprise" (:provider streaming)))
+          (expect (= "claude-opus-5" (:model streaming)))))
+    (it "names them in the failure a human reads"
+        (expect (= (str "Provider stream stalled (github-copilot-enterprise / claude-opus-5): "
+                        "no output for 362142ms in phase :provider-call")
+                   (failure-text (atom {:stall-detail
+                                        "no output for 362142ms in phase :provider-call"
+                                        :provider :github-copilot-enterprise
+                                        :model "claude-opus-5"})))))
+    (it "still reads as a sentence when the turn never reached a provider"
+        (expect (= "Provider stream stalled: no worker activity for 5ms"
+                   (failure-text (atom {:stall-detail "no worker activity for 5ms"})))))))
