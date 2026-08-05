@@ -674,6 +674,24 @@
 
                    (expect (= draft-root (.getCanonicalPath (deref observed 100 (io/file ""))))))))
 
+;; Regression, same issue: the fix lives in `run-native-handler` itself (the ONE
+;; generic seam for every native `:handler` tool), not in a per-tool patch — so it
+;; must hold for `repl` (start), `repl_connect`, and `repl_eval` exactly as for
+;; `git`/`shell`, since those are dispatched through the identical code path.
+(defdescribe native-handler-workspace-root-repl-tools-test
+  (for [tool ["repl" "repl_connect" "repl_eval"]]
+    (it (str "binds workspace/*workspace-root* for the \"" tool "\" native tool")
+        (let [draft-root (.getCanonicalPath (io/file "/tmp"))
+              observed (promise)
+              handler (fn [_env _input]
+                        (deliver observed (workspace/cwd))
+                        {:ok true})
+              _ ((deref #'lp/run-native-handler) handler
+                 {:workspace/root draft-root}
+                 {}
+                 tool)]
+          (expect (= draft-root (.getCanonicalPath (deref observed 100 (io/file "")))))))))
+
 (defdescribe guest-interrupt-on-eval-timeout-test
              ;; REGRESSION: an eval timeout (and Esc cancel) only did `Future.cancel(true)`.
              ;; GraalPy does NOT observe `Thread.interrupt` inside guest code, so a model
