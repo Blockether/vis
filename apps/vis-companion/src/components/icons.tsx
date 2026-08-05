@@ -14,7 +14,19 @@
  * ONE grammar, so a strip of them looks like a set: a 24-unit grid, `size-3.5`
  * (the composer's own size — pass `className` for a bigger one), `none` fill,
  * `currentColor` stroke at 1.8, rounded joins, and `aria-hidden` because an icon
- * inside a labelled control is decoration. `fill`/`stroke` are presentation
+ * inside a labelled control is decoration.
+ *
+ * ONE SIZE, and the viewBox is not it. `0 0 24 24` sizes the CANVAS: a paperclip
+ * drawn corner to corner and a cross drawn across the middle third are the same
+ * box and two visibly different icons in the same row — which is exactly how the
+ * clip ended up half again as big as the `✕` beside it. So every mark here is
+ * measured and drawn to the same INK: centred on (12, 12), inside a live area of
+ * 4–20, at an optical size of 13.5 units — by AREA, so a wide camera and a tall
+ * microphone weigh the same; by its long axis for a thin mark like the chevron,
+ * which can only be as big as it is tall. Solid and diagonal marks (play, clip,
+ * pencil) are drawn a touch smaller because they read heavier at the same box,
+ * and no mark's longest side passes 15. `icons.test.tsx` walks every path and
+ * fails on a mark that drifts out of that band. `fill`/`stroke` are presentation
  * ATTRIBUTES, so a Tailwind class on the same element (`fill-accent`) still
  * wins — that is how the starred star wears the brand yellow.
  *
@@ -54,7 +66,7 @@ function Icon({
 export function ClipIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
-      <path d="M20 11.5l-8.2 8.2a5 5 0 0 1-7.1-7.1l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9" />
+      <path d="M18.42 11.71l-6.88 6.88a4.19 4.19 0 0 1 -5.96 -5.96l7.21 -7.21a2.77 2.77 0 0 1 3.94 3.94l-7.21 7.21a1.43 1.43 0 0 1 -2.01 -2.01l6.63 -6.63" />
     </Icon>
   );
 }
@@ -63,7 +75,7 @@ export function ClipIcon({ className }: { className?: string }) {
 export function CloseIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
-      <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />
+      <path d="M5.25 5.25l13.5 13.5M18.75 5.25l-13.5 13.5" />
     </Icon>
   );
 }
@@ -86,7 +98,7 @@ export function ChevronIcon({
         open ? "rotate-90" : ""
       } ${className}`}
     >
-      <path d="M9.5 5.5l6.5 6.5-6.5 6.5" />
+      <path d="M8.62 5.25l6.75 6.75l-6.75 6.75" />
     </Icon>
   );
 }
@@ -95,7 +107,7 @@ export function ChevronIcon({
 export function PlayIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
-      <path d="M8.5 5.2l10 6.8-10 6.8z" fill="currentColor" />
+      <path d="M7.04 4.71l10.72 7.29l-10.72 7.29z" fill="currentColor" />
     </Icon>
   );
 }
@@ -104,7 +116,7 @@ export function PlayIcon({ className }: { className?: string }) {
 export function ArrowDownIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
-      <path d="M12 5v13M6 12.5l6 6 6-6" />
+      <path d="M12 4.84v13.79M5.64 12.8l6.36 6.36l6.36 -6.36" />
     </Icon>
   );
 }
@@ -113,7 +125,7 @@ export function ArrowDownIcon({ className }: { className?: string }) {
 export function ArrowOutIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
-      <path d="M8 16l8-8M9.5 8H16v6.5" />
+      <path d="M5.5 18.5l13 -13M7.94 5.5H18.5v10.56" />
     </Icon>
   );
 }
@@ -122,7 +134,7 @@ export function ArrowOutIcon({ className }: { className?: string }) {
 export function PlusIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
-      <path d="M12 5v14M5 12h14" strokeLinecap="square" />
+      <path d="M12 5.25v13.5M5.25 12h13.5" strokeLinecap="square" />
     </Icon>
   );
 }
@@ -131,8 +143,11 @@ export function PlusIcon({ className }: { className?: string }) {
 export function CameraIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
-      <path d="M3 8h4l1.5-2h7L17 8h4v11H3z" strokeLinecap="square" />
-      <circle cx="12" cy="13" r="3.2" />
+      <path
+        d="M4.5 8.25h3.33l1.25 -1.67h5.83L16.17 8.25h3.33v9.17H4.5z"
+        strokeLinecap="square"
+      />
+      <circle cx="12" cy="12.42" r="2.67" />
     </Icon>
   );
 }
@@ -141,9 +156,12 @@ export function CameraIcon({ className }: { className?: string }) {
 export function ImageIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
-      <path d="M4 6h16v12H4z" strokeLinecap="square" />
-      <path d="M4 15l4.5-4.5 3 3 3.5-3.5L20 15" strokeLinecap="square" />
-      <circle cx="9" cy="9.5" r="1.2" />
+      <path d="M4.5 6.38h15v11.25H4.5z" strokeLinecap="square" />
+      <path
+        d="M4.5 14.81l4.22 -4.22l2.81 2.81l3.28 -3.28L19.5 14.81"
+        strokeLinecap="square"
+      />
+      <circle cx="9.19" cy="9.66" r="1.12" />
     </Icon>
   );
 }
@@ -152,9 +170,9 @@ export function ImageIcon({ className }: { className?: string }) {
 export function MicIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
-      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <rect x="9.5" y="4.5" width="5" height="9.17" rx="2.5" />
       <path
-        d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7"
+        d="M6.58 11.58a5.42 5.42 0 0 0 10.83 0M12 17v2.5M9.08 19.5h5.83"
         strokeLinecap="square"
       />
     </Icon>
@@ -162,21 +180,21 @@ export function MicIcon({ className }: { className?: string }) {
 }
 
 /** Rename. */
-export function PencilIcon({ className = "size-4" }: { className?: string }) {
+export function PencilIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
-      <path d="M15.9 3.6l4.5 4.5L8.85 19.65 3.6 20.4l.75-5.25z" />
-      <path d="M13.8 5.7l4.5 4.5" />
+      <path d="M15.02 5.5l3.48 3.48L9.56 17.92L5.5 18.5l0.58 -4.06z" />
+      <path d="M13.39 7.12l3.48 3.48" />
     </Icon>
   );
 }
 
 /** Delete. The row swipe's own mark, and the only way "delete" is ever drawn. */
-export function TrashIcon({ className = "size-4" }: { className?: string }) {
+export function TrashIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
-      <path d="M4.2 6.45h15.6M9.45 6.45V3.9h5.1v2.55M6.3 6.45l1.05 13.5h9.3l1.05-13.5" />
-      <path d="M9.9 9.9v6.6M14.1 9.9v6.6" />
+      <path d="M5.35 7.33h13.31M9.82 7.33V5.15h4.35v2.18M7.14 7.33l0.9 11.52h7.93l0.9 -11.52" />
+      <path d="M10.21 10.27v5.63M13.79 10.27v5.63" />
     </Icon>
   );
 }
@@ -190,7 +208,7 @@ export function TrashIcon({ className = "size-4" }: { className?: string }) {
  */
 export function StarIcon({
   filled = false,
-  className = "size-4",
+  className = "size-3.5",
 }: {
   filled?: boolean;
   className?: string;
@@ -201,7 +219,7 @@ export function StarIcon({
         filled ? "fill-accent stroke-accent" : "fill-none stroke-current"
       } ${className}`}
     >
-      <path d="M12 2.85l2.85 5.85 6.45.9-4.65 4.5 1.05 6.45L12 17.55l-5.7 3 1.05-6.45-4.65-4.5 6.45-.9z" />
+      <path d="M12 5.17l2.2 4.51l4.98 0.69l-3.59 3.47l0.81 4.98L12 16.51l-4.4 2.31l0.81 -4.98l-3.59 -3.47l4.98 -0.69z" />
     </Icon>
   );
 }
@@ -217,20 +235,20 @@ export function SortIcon({
   if (dir === "asc") {
     return (
       <Icon className={className}>
-        <path d="M12 19V6M6 12l6-6 6 6" />
+        <path d="M12 19.03V4.97M5.51 11.46l6.49 -6.49l6.49 6.49" />
       </Icon>
     );
   }
   if (dir === "desc") {
     return (
       <Icon className={className}>
-        <path d="M12 5v13M6 12l6 6 6-6" />
+        <path d="M12 4.97v14.05M5.51 12.54l6.49 6.49l6.49 -6.49" />
       </Icon>
     );
   }
   return (
     <Icon className={className}>
-      <path d="M8 9.5l2.5-3 2.5 3M8 14.5l2.5 3 2.5-3" />
+      <path d="M8.93 8.93l3.07 -3.68l3.07 3.68M8.93 15.07l3.07 3.68l3.07 -3.68" />
     </Icon>
   );
 }
@@ -240,32 +258,28 @@ export function SortIcon({
  * above: the nav used to keep its own 20-unit set, which meant the app had two
  * icon grammars and a control could only match one of them.
  */
-export function TranscriptsIcon({
-  className = "size-4",
-}: {
-  className?: string;
-}) {
+export function TranscriptsIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
-      <path d="M4.2 5.4h15.6v13.2H4.2zM7.8 9h8.4M7.8 12h8.4M7.8 15h4.8" />
+      <path d="M4.66 5.79h14.68v12.42H4.66zM8.05 9.18h7.9M8.05 12h7.9M8.05 14.82h4.52" />
     </Icon>
   );
 }
 
-export function MachinesIcon({ className = "size-4" }: { className?: string }) {
+export function MachinesIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
-      <path d="M4.8 5.4h14.4v4.8H4.8zM4.8 13.8h14.4v4.8H4.8z" />
-      <path d="M7.8 7.8h.01M7.8 16.2h.01" />
+      <path d="M4.95 5.54h14.1v4.7H4.95zM4.95 13.76h14.1v4.7H4.95z" />
+      <path d="M7.89 7.89h0.01M7.89 16.11h0.01" />
     </Icon>
   );
 }
 
-export function SettingsIcon({ className = "size-4" }: { className?: string }) {
+export function SettingsIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
-      <path d="M10.02 5.08 L10.46 2.28 A9.84 9.84 0 0 1 13.54 2.28 L13.98 5.08 A7.2 7.2 0 0 1 17 6.82 L19.64 5.81 A9.84 9.84 0 0 1 21.19 8.47 L18.98 10.26 A7.2 7.2 0 0 1 18.98 13.74 L21.19 15.53 A9.84 9.84 0 0 1 19.64 18.19 L17 17.18 A7.2 7.2 0 0 1 13.98 18.92 L13.54 21.72 A9.84 9.84 0 0 1 10.46 21.72 L10.02 18.92 A7.2 7.2 0 0 1 7 17.18 L4.36 18.19 A9.84 9.84 0 0 1 2.81 15.53 L5.02 13.74 A7.2 7.2 0 0 1 5.02 10.26 L2.81 8.47 A9.84 9.84 0 0 1 4.36 5.81 L7 6.82 A7.2 7.2 0 0 1 10.02 5.08 Z" />
-      <circle cx="12" cy="12" r="2.88" />
+      <path d="M10.59 7.06L10.9 5.06A7.03 7.03 0 0 1 13.1 5.06L13.41 7.06A5.14 5.14 0 0 1 15.57 8.3L17.46 7.58A7.03 7.03 0 0 1 18.56 9.48L16.99 10.76A5.14 5.14 0 0 1 16.99 13.24L18.56 14.52A7.03 7.03 0 0 1 17.46 16.42L15.57 15.7A5.14 5.14 0 0 1 13.41 16.94L13.1 18.94A7.03 7.03 0 0 1 10.9 18.94L10.59 16.94A5.14 5.14 0 0 1 8.43 15.7L6.54 16.42A7.03 7.03 0 0 1 5.44 14.52L7.01 13.24A5.14 5.14 0 0 1 7.01 10.76L5.44 9.48A7.03 7.03 0 0 1 6.54 7.58L8.43 8.3A5.14 5.14 0 0 1 10.59 7.06Z" />
+      <circle cx="12" cy="12" r="2.06" />
     </Icon>
   );
 }
@@ -278,9 +292,9 @@ export function SettingsIcon({ className = "size-4" }: { className?: string }) {
 export function AlertIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
-      <path d="M12 4.5L3 19.5h18L12 4.5z" />
-      <path d="M12 10v4" />
-      <path d="M12 17h.01" />
+      <path d="M12 5.84L4.61 18.16h14.79L12 5.84z" />
+      <path d="M12 10.36v3.29" />
+      <path d="M12 16.11h0.01" />
     </Icon>
   );
 }

@@ -9,11 +9,15 @@ import {
   ClipIcon,
   CloseIcon,
   ImageIcon,
+  MachinesIcon,
   MicIcon,
   PencilIcon,
   PlayIcon,
   PlusIcon,
+  SettingsIcon,
+  SortIcon,
   StarIcon,
+  TranscriptsIcon,
   TrashIcon,
 } from "./icons";
 
@@ -26,13 +30,122 @@ const ICONS = {
   ClipIcon: <ClipIcon />,
   CloseIcon: <CloseIcon />,
   ImageIcon: <ImageIcon />,
+  MachinesIcon: <MachinesIcon />,
   MicIcon: <MicIcon />,
   PencilIcon: <PencilIcon />,
   PlayIcon: <PlayIcon />,
   PlusIcon: <PlusIcon />,
+  SettingsIcon: <SettingsIcon />,
+  SortIcon: <SortIcon />,
+  "SortIcon asc": <SortIcon dir="asc" />,
+  "SortIcon desc": <SortIcon dir="desc" />,
   StarIcon: <StarIcon />,
+  TranscriptsIcon: <TranscriptsIcon />,
   TrashIcon: <TrashIcon />,
 };
+
+/**
+ * WHAT THE MARK ACTUALLY MEASURES.
+ *
+ * `viewBox="0 0 24 24"` and `size-3.5` pin the CANVAS, not the drawing on it: a
+ * paperclip drawn corner to corner and an `✕` drawn across the middle third are
+ * the same box and two different sizes on screen. So the box is walked — every
+ * command of every `d`, absolute and relative, plus circles and rects — and the
+ * INK is measured.
+ */
+const ARGS: Record<string, number> = {
+  M: 2,
+  L: 2,
+  H: 1,
+  V: 1,
+  C: 6,
+  S: 4,
+  Q: 4,
+  T: 2,
+  A: 7,
+  Z: 0,
+};
+
+function markBox(html: string) {
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const add = (x: number, y: number) => {
+    xs.push(x);
+    ys.push(y);
+  };
+
+  for (const m of html.matchAll(/\sd="([^"]+)"/g)) {
+    const tokens = m[1].match(/[A-Za-z]|-?\d*\.?\d+/g) ?? [];
+    let cmd = "M";
+    let x = 0;
+    let y = 0;
+    let i = 0;
+    while (i < tokens.length) {
+      const token = tokens[i];
+      if (/[A-Za-z]/.test(token)) {
+        cmd = token;
+        i += 1;
+        continue;
+      }
+      const up = cmd.toUpperCase();
+      const count = ARGS[up] ?? 0;
+      if (count === 0) {
+        i += 1;
+        continue;
+      }
+      const values = tokens.slice(i, i + count).map(Number);
+      i += count;
+      const rel = cmd === cmd.toLowerCase();
+      if (up === "H") x = rel ? x + values[0] : values[0];
+      else if (up === "V") y = rel ? y + values[0] : values[0];
+      else {
+        const [ex, ey] = values.slice(-2);
+        x = rel ? x + ex : ex;
+        y = rel ? y + ey : ey;
+      }
+      add(x, y);
+      // An implicit repeat of `M` is a line, and it keeps the same case.
+      if (up === "M") cmd = rel ? "l" : "L";
+    }
+  }
+
+  for (const tag of html.match(/<(circle|rect)[^>]*>/g) ?? []) {
+    const at = (key: string) =>
+      Number(new RegExp(`${key}="(-?[\\d.]+)"`).exec(tag)?.[1] ?? Number.NaN);
+    if (tag.startsWith("<circle")) {
+      const [cx, cy, r] = [at("cx"), at("cy"), at("r")];
+      add(cx - r, cy - r);
+      add(cx + r, cy + r);
+    } else {
+      const [x, y, w, h] = [at("x"), at("y"), at("width"), at("height")];
+      add(x, y);
+      add(x + w, y + h);
+    }
+  }
+
+  const x0 = Math.min(...xs);
+  const y0 = Math.min(...ys);
+  const x1 = Math.max(...xs);
+  const y1 = Math.max(...ys);
+  const width = x1 - x0;
+  const height = y1 - y0;
+  const aspect = Math.max(width, height) / Math.min(width, height);
+  return {
+    x0,
+    y0,
+    x1,
+    y1,
+    width,
+    height,
+    // A chevron is a thin mark: it can only be as big as it is TALL, so
+    // matching it by area would tower over the square icons beside it.
+    // Everything else is measured by area, so a wide camera and a tall
+    // microphone still weigh the same.
+    size: aspect >= 1.8 ? Math.max(width, height) : Math.sqrt(width * height),
+  };
+}
+
+const round = (n: number) => Math.round(n * 100) / 100;
 
 describe("the icon set", () => {
   it("draws every icon in ONE grammar", () => {
@@ -43,7 +156,7 @@ describe("the icon set", () => {
       expect(html, name).toContain('viewBox="0 0 24 24"');
       expect(html, name).toContain('stroke="currentColor"');
       expect(html, name).toContain('stroke-width="1.8"');
-      expect(html, name).toMatch(/class="[^"]*\bsize-(3\.5|4)\b/);
+      expect(html, name).toMatch(/class="[^"]*\bsize-3\.5\b/);
       // Decoration inside an already-labelled control.
       expect(html, name).toContain('aria-hidden="true"');
       // It is a drawing, not a character.
@@ -71,6 +184,57 @@ describe("the icon set", () => {
     expect(renderToStaticMarkup(<StarIcon />)).toContain(
       "fill-none stroke-current",
     );
+  });
+
+  // Regression: every icon was drawn to its own extent inside the shared
+  // viewBox, so the paperclip (corner to corner) came out half again as big as
+  // the close cross (the middle third) at the very same `size-3.5`, and the
+  // gear and the star were bigger still.
+  it("draws every mark at the same optical size", () => {
+    const measured = Object.entries(ICONS).map(([name, icon]) => {
+      const box = markBox(renderToStaticMarkup(icon));
+      return { name, size: round(box.size) };
+    });
+    const off = measured.filter(({ size }) => size < 12.5 || size > 14.5);
+
+    expect(off).toEqual([]);
+  });
+
+  it("keeps every mark inside one live area", () => {
+    // 4–20 of the 24 grid. The padding is what lets a control put an icon
+    // against a label without the icon deciding the row's height.
+    const off = Object.entries(ICONS)
+      .map(([name, icon]) => ({
+        name,
+        box: markBox(renderToStaticMarkup(icon)),
+      }))
+      .filter(
+        ({ box }) => box.x0 < 4 || box.y0 < 4 || box.x1 > 20 || box.y1 > 20,
+      )
+      .map(({ name, box }) => ({
+        name,
+        box: [round(box.x0), round(box.y0), round(box.x1), round(box.y1)],
+      }));
+
+    expect(off).toEqual([]);
+  });
+
+  it("centres every mark on the grid", () => {
+    const off = Object.entries(ICONS)
+      .map(([name, icon]) => ({
+        name,
+        box: markBox(renderToStaticMarkup(icon)),
+      }))
+      .map(({ name, box }) => ({
+        name,
+        centre: [round((box.x0 + box.x1) / 2), round((box.y0 + box.y1) / 2)],
+      }))
+      .filter(
+        ({ centre }) =>
+          Math.abs(centre[0] - 12) > 0.5 || Math.abs(centre[1] - 12) > 0.5,
+      );
+
+    expect(off).toEqual([]);
   });
 });
 
@@ -128,6 +292,34 @@ const glyphsAsIcons = (source: string) => {
   return [...marks];
 };
 
+/**
+ * An icon rides a LINE OF TYPE, and that line says how big it is: `text-chip` is
+ * 9px on a 12px box (`index.css`), so the 14px default stands a head taller than
+ * every word beside it. A chip line takes `size-3`; `text-meta` and up keep the
+ * default. The type is read off the element the icon SITS IN — the nearest one
+ * above it that names a size — and an icon nobody put on a line of type is left
+ * alone.
+ */
+const TYPE_SCALE = /\btext-(chip|meta|ui|body|title|subhead|head|display)\b/g;
+
+const oversizedOnChipLines = (source: string) => {
+  const lines = source.split("\n");
+  const offenders: string[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const icon = /<([A-Z]\w*Icon)\b/.exec(lines[i]);
+    if (!icon) continue;
+    const above = lines.slice(Math.max(0, i - 12), i + 1).join("\n");
+    const type = [...above.matchAll(TYPE_SCALE)].pop();
+    if (type?.[1] !== "chip") continue;
+    const props = lines
+      .slice(i, i + 6)
+      .join("\n")
+      .split("/>")[0];
+    if (!/size-3(?![\d.])/.test(props)) offenders.push(icon[1]);
+  }
+  return offenders;
+};
+
 // Regression, reported as "INSTEAD OF THOSE GLYPHS PLEASE USE REAL ICONS!": the
 // artifacts sheet shipped a `▶` for video, `✕` for close and `↓` for load-more,
 // and the same characters stood in for icons across the dialogs, the session
@@ -172,5 +364,39 @@ describe("the shipped screens", () => {
         /<svg/.test(source),
     );
     expect(drawn.map(([path]) => path)).toEqual([]);
+  });
+
+  // Regression, reported as "the paperclip is too big now": the artifacts chip
+  // is a 9px `text-chip` line and the icon beside those words was the 14px
+  // default, so the clip read as a sticker pasted onto the label.
+  it("size an icon to the line of type it rides", () => {
+    const offenders = Object.entries(sources).flatMap(([path, source]) =>
+      path.includes("/dev/") || path.includes(".test.")
+        ? []
+        : oversizedOnChipLines(source).map((mark) => `${path}: ${mark}`),
+    );
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("reads the type off the element the icon sits in", () => {
+    const chip =
+      '<span className="font-mono text-chip">\n  <CloseIcon />\n</span>';
+    expect(oversizedOnChipLines(chip)).toEqual(["CloseIcon"]);
+    expect(
+      oversizedOnChipLines(
+        chip.replace("<CloseIcon />", '<CloseIcon className="size-3" />'),
+      ),
+    ).toEqual([]);
+    // `size-3.5` is the default, not a chip size.
+    expect(
+      oversizedOnChipLines(
+        chip.replace("<CloseIcon />", '<CloseIcon className="size-3.5" />'),
+      ),
+    ).toEqual(["CloseIcon"]);
+    // A `text-meta` row keeps the default.
+    expect(
+      oversizedOnChipLines(chip.replace("text-chip", "text-meta")),
+    ).toEqual([]);
   });
 });

@@ -1064,7 +1064,7 @@ export function Header({
           onClick={onAppSettings}
           aria-label="Open application settings"
         >
-          <SettingsIcon />
+          <SettingsIcon className="size-4" />
         </button>
       </div>
     </header>
@@ -1109,7 +1109,11 @@ export function TabBar({
 }
 
 function NavIcon({ id }: { id: Tab }) {
-  return id === "sessions" ? <TranscriptsIcon /> : <MachinesIcon />;
+  return id === "sessions" ? (
+    <TranscriptsIcon className="size-4" />
+  ) : (
+    <MachinesIcon className="size-4" />
+  );
 }
 
 function Splash() {

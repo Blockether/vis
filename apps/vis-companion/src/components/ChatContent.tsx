@@ -1286,7 +1286,7 @@ export const ThinkingBand = memo(function ThinkingBand({ children }: { children:
           aria-expanded={expanded}
           onClick={() => setExpandRequested((value) => !value)}
         >
-          <ChevronIcon open={expanded} />
+          <ChevronIcon open={expanded} className="size-3" />
           <span>{expanded ? 'THINKING' : `THINKING +${hiddenRows} more`}</span>
         </button>
       )}
@@ -1358,7 +1358,7 @@ const AttachmentTile = memo(function AttachmentTile({
   if (!isPlayable || !iterationId) {
     return (
       <div className="mt-2 flex min-w-0 items-center gap-1.5 font-mono text-chip text-footer-muted">
-        <ArrowOutIcon />
+        <ArrowOutIcon className="size-3" />
         <span className="min-w-0 truncate">{name}</span>
       </div>
     );
@@ -1375,7 +1375,7 @@ const AttachmentTile = memo(function AttachmentTile({
       <div className={mediaSlotFrame(slot)}>
         {failed ? (
           <div className="flex h-full w-full items-center gap-1.5 bg-thinking-surface px-2 font-mono text-chip text-footer-muted">
-            <AlertIcon />
+            <AlertIcon className="size-3" />
             <span className="min-w-0 truncate">{name}</span>
           </div>
         ) : !url ? (
@@ -1561,7 +1561,7 @@ export const AttachmentRail = memo(function AttachmentRail({
           aria-label={`Load ${page.restLabel} of attachments`}
           className="mt-2 flex min-h-11 w-full min-w-0 items-center gap-1.5 border border-dialog-edge px-2 text-left font-mono text-chip text-footer-muted hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-8"
         >
-          <ArrowDownIcon className="size-3.5 opacity-70" />
+          <ArrowDownIcon className="size-3 opacity-70" />
           <span className="min-w-0 truncate">Load {page.restLabel}</span>
         </button>
       )}
@@ -1573,8 +1573,8 @@ export const AttachmentRail = memo(function AttachmentRail({
             onClick={() => setOpen((current) => !current)}
             className="flex min-h-8 w-full min-w-0 items-center gap-1.5 text-left font-mono text-chip text-footer-muted"
           >
-            <ChevronIcon open={open} className="size-3.5 opacity-70" />
-            <ArrowOutIcon className="size-3.5 opacity-70" />
+            <ChevronIcon open={open} className="size-3 opacity-70" />
+            <ArrowOutIcon className="size-3 opacity-70" />
             <span className="min-w-0 truncate">
               {head.name}
               {head.count > 1 ? ` ×${head.count}` : ''}

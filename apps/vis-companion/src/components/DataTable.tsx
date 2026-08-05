@@ -449,7 +449,7 @@ export const DataTable = memo(function DataTable({
                       <span className="truncate">{cellLabel || ' '}</span>
                       <SortIcon
                         dir={sort?.index === index ? sort.dir : undefined}
-                        className={sort?.index === index ? 'size-3.5' : 'size-3.5 opacity-50'}
+                        className={sort?.index === index ? 'size-3' : 'size-3 opacity-50'}
                       />
                     </button>
                   </th>

@@ -550,7 +550,7 @@ export function ArtifactsChip({
       title={label}
       className={`inline-flex h-6 shrink-0 items-center gap-1 border px-2 font-mono text-chip font-bold tracking-[0.08em] uppercase focus-visible:outline-2 focus-visible:outline-accent ${tone}`}
     >
-      <ClipIcon />
+      <ClipIcon className="size-3" />
       <span aria-hidden="true" className="hidden sm:inline">
         Artifacts
       </span>

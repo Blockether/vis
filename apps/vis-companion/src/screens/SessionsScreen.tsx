@@ -1092,7 +1092,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                 title={scopeTarget ? 'Start in a draft' : 'Choose a machine'}
                 onClick={() => (startMenu ? leaveStart() : openStartMenu())}
               >
-                <ChevronIcon open />
+                <ChevronIcon open className="size-3" />
               </Button>
             </div>
           </div>
@@ -1786,7 +1786,7 @@ const ProjectGroup = memo(function ProjectGroup({
               className="flex w-full items-center gap-3 px-3 py-3 text-left transition-colors duration-150 hover:bg-err/15 focus-visible:bg-err/15 focus-visible:outline-none motion-reduce:transition-none"
             >
               <span className="shrink-0 text-err">
-                <TrashIcon />
+                <TrashIcon className="size-4" />
               </span>
               <span className="min-w-0">
                 <span className="block font-mono text-ui font-bold text-err">
@@ -1882,19 +1882,19 @@ const SessionRow = memo(function SessionRow({
           {
             key: 'favorite',
             label: isStarred ? 'Unstar' : 'Star',
-            icon: <StarIcon filled={isStarred} />,
+            icon: <StarIcon filled={isStarred} className="size-4" />,
             onSelect: () => toggleFavorite(starKey),
           },
           {
             key: 'rename',
             label: 'Rename',
-            icon: <PencilIcon />,
+            icon: <PencilIcon className="size-4" />,
             onSelect: () => onRename(session),
           },
           {
             key: 'delete',
             label: 'Delete',
-            icon: <TrashIcon />,
+            icon: <TrashIcon className="size-4" />,
             tone: 'danger',
             onSelect: () => onDelete(session),
           },
