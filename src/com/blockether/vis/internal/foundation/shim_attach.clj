@@ -235,16 +235,16 @@
        :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_read_attachment"
                       "vis_reinspect_attachment" "vis_attachment_versions" "vis_attachment_version"]
        :shim/description
-       (str "`vis_attach`/`vis_attach_bytes`: persist artifacts (images, CSV/TSV tables, JSON, "
-            "PDF, audio) as durable DB-owned iteration attachments with sniffed media types. "
-            "SAME DOCUMENT, SAME NAME — a new revision of an artifact you already attached goes "
-            "back under its OWN filename and is stored as that artifact's next VERSION, never "
-            "`report_v2.png` beside `report.png`; a fresh name is for a genuinely different "
-            "document, so `vis_attachment_versions(name)` walks the whole thread and "
-            "`vis_attachment_version(name, n)` picks one cut. "
-            "ATTACH ONE OR TWO ARTIFACTS PER TURN — compose many images into ONE sheet; "
-            "`audience='both'|'user'|'model'` decides who sees it, `in_answer=True` paints it "
-            "once in the FINAL ANSWER's gallery. Vis-native; no upstream library.")
+       (str "`vis_attach`/`vis_attach_bytes` persist artifacts (images, CSV/TSV tables, JSON, "
+            "PDF, audio) as durable DB-owned iteration attachments with sniffed media types, "
+            "surviving restarts. SAME DOCUMENT, SAME NAME — a new revision of an artifact you "
+            "already attached goes back under its OWN filename and becomes that artifact's next "
+            "VERSION, never `report_v2.png` beside `report.png`; a fresh name starts a genuinely "
+            "different document, and `vis_attachment_versions(name)` / "
+            "`vis_attachment_version(name, n)` walk that thread. Multiple images compose into "
+            "one sheet (a matplotlib grid, one montage) for a single call; "
+            "`audience='both'|'user'|'model'` routes who sees it, and `in_answer=True` places it "
+            "in the FINAL ANSWER's gallery. Vis-native; no upstream library.")
        :shim/bindings attach-bridge-bindings
        :shim/source "vis-shims/attach.py"}]}))
 
