@@ -129,7 +129,7 @@
               (< (- (long now) (long ms)) (long DELTA_TIME_CAP_MS))
               (not (sentence-closed-in-suffix? (delta-text chunk) len))))))
 
-;; sid (UUID) -> {:next-seq long
+;; sid (string, see `sid-key`) -> {:next-seq long
 ;;                :events [event ...]          ; ring, ascending :seq
 ;;                :subscribers {sub-id fn}     ; SSE sinks
 ;;                :turns {tid turn-record}     ; :cancel-token stripped on wire
@@ -138,6 +138,99 @@
 ;;                :idempotency {key tid}
 ;;                :last-active epoch-ms}
 (defonce ^:private registry (atom {}))
+
+(defn- sid-key
+  "THE key one session has in the registry, whatever spelling the caller holds.
+
+   Every HTTP route parses its sid into a `java.util.UUID` (`path-sid`,
+   `parse-multi-sids`) while a producer holds the id as a STRING (an event
+   payload's `session_id`, a human-input request). Two spellings of one session
+   used to be two ENTRIES: the second one had
+   used to open a SECOND entry under that spelling: its own `:next-seq` counter,
+   its own replay ring, and NO subscribers. Those events reached the
+   cross-process journal and never the SSE fan-out, which is exactly how a
+   `human_input.request` sat in the journal while the TUI never drew the form.
+
+   Normalizing lives HERE and nowhere else: nothing below touches `registry`
+   directly, every read and write goes through one of the accessors under this
+   one, so a new call site cannot forget the conversion. The canonical spelling
+   is the STRING one, because that is the spelling everything OUTSIDE this atom
+   already uses: the `session_id` on the wire, the `<sid>.ndjson` journal the bus
+   tails, and the keys handed to `bus/set-relevant-sids-fn!`."
+  [sid]
+  (str sid))
+
+(defn- session-entry
+  "`sid`'s registry record, or nil when this process never touched the session."
+  [sid]
+  (get @registry (sid-key sid)))
+
+(defn- session-known?
+  "True when this process holds a registry entry for `sid`."
+  [sid]
+  (contains? @registry (sid-key sid)))
+
+(defn- known-sid
+  "`sid` as the key it actually has HERE, or nil when this process is not
+   tracking that session."
+  [sid]
+  (let [k (sid-key sid)]
+    (when (contains? @registry k) k)))
+
+(defn- other-session-ids
+  "Every session this process tracks EXCEPT `sid`, in registry-key form — a
+   broadcast must not hand a session its own event back because the caller
+   happened to hold the id in the other spelling."
+  [sid]
+  (let [k (sid-key sid)]
+    (remove #(= % k) (keys @registry))))
+
+(defn- turn-record
+  "One turn's internal, keyword-keyed record."
+  [sid tid]
+  (get-in @registry [(sid-key sid) :turns tid]))
+
+(defn- update-session!
+  "THE write path: apply `f` to `sid`'s entry (nil when it has none yet), so a
+   caller that means to CREATE the entry says so with `(or entry ...)`. `f` runs
+   inside the `swap!` and is retried on contention, so it must be pure."
+  [sid f]
+  (swap! registry update (sid-key sid) f)
+  nil)
+
+(defn- update-existing-session!
+  "Apply `f` to `sid`'s entry only when it HAS one. `update-session!` would
+   otherwise leave a nil entry under a live key, and a key is all it takes for
+   the journal tailer to start draining a stranger's session."
+  [sid f]
+  (swap! registry (fn [reg]
+                    (let [k (sid-key sid)]
+                      (if (contains? reg k) (update reg k f) reg))))
+  nil)
+
+(defn- update-turn!
+  "Apply `f` to one turn record in place."
+  [sid tid f]
+  (swap! registry update-in [(sid-key sid) :turns tid] f)
+  nil)
+
+(defn- put-session!
+  "Install `entry` as `sid`'s whole registry record."
+  [sid entry]
+  (swap! registry assoc (sid-key sid) entry)
+  nil)
+
+(defn- drop-session!
+  "Forget `sid`'s registry record entirely."
+  [sid]
+  (swap! registry dissoc (sid-key sid))
+  nil)
+
+(defn- drop-subscriber!
+  "Unregister one SSE sink."
+  [sid sub-id]
+  (swap! registry update-in [(sid-key sid) :subscribers] dissoc sub-id)
+  nil)
 
 (defonce ^:private metrics
   (atom {:turns-total 0
@@ -214,10 +307,10 @@
    throws is dropped - one dead connection must never poison the appender or
    siblings."
   [sid event]
-  (doseq [[sub-id sink] (get-in @registry [sid :subscribers])]
+  (doseq [[sub-id sink] (:subscribers (session-entry sid))]
     (try (sink event)
          (catch Throwable t
-           (swap! registry update-in [sid :subscribers] dissoc sub-id)
+           (drop-subscriber! sid sub-id)
            (tel/log! :debug ["gateway: dropped dead subscriber" sub-id (ex-message t)])))))
 
 (defn- fresh-entry
@@ -304,7 +397,7 @@
       stamp-type
       (wire/->wire type)]
 
-     (swap! registry update
+     (update-session!
        sid
        (fn [entry]
          (let
@@ -390,7 +483,7 @@
    Ignores sessions this process has never touched (no local registry entry), so
    no state accrues for conversations nobody here is watching."
   [sid store? event]
-  (when (contains? @registry sid)
+  (when (session-known? sid)
     (let
       [type
        (get event "type")
@@ -415,7 +508,7 @@
        captured
        (volatile! nil)]
 
-      (swap! registry update
+      (update-session!
         sid
         (fn [entry]
           (if entry
@@ -462,18 +555,49 @@
         (fan-out! sid ev))))
   nil)
 
-(defonce ^:private hydrate-monitors (atom {}))
+(defn- ensure-session-entry!
+  "Make sure `sid` HAS a registry entry, so a mirror path that no-ops on an
+   unknown session (`ingest-mirrored-event!`) can deliver into it."
+  [sid]
+  (update-session! sid
+                   (fn [entry]
+                     (or entry (fresh-entry sid)))))
 
-(defn- hydrate-monitor
-  "Per-sid lock object serializing `subscribe!`'s hydrate of a sibling's
-   in-flight turn."
-  ^Object [sid]
-  (let [k (str sid)]
-    (or (get @hydrate-monitors k)
-        (get (swap! hydrate-monitors (fn [m]
-                                       (if (get m k) m (assoc m k (Object.)))))
-             k))))
+(defn- claim-hydrate!
+  "Win the right to hydrate `sid`'s foreign turn — or don't, and move on.
 
+   ONE hydrate at a time per session: concurrent SSE subscribers otherwise both
+   read `:current-turn` unset and both mirror the sibling's turn, so every event
+   lands in the ring twice (re-sequenced, so no dedup catches it). The claim is
+   a flag on the session's OWN entry, taken in the SAME `swap!` that reads
+   `:current-turn`, so that decision is one atomic step. The `locking` this
+   replaces parked a request thread for the whole length of a journal read, and
+   needed a side map of per-sid monitor objects that had to be allocated, looked
+   up and disposed along with the session.
+
+   The subscriber that loses the claim never waits and never duplicates:
+   `subscribe!` snapshots its replay and registers its sink in a SINGLE swap, so
+   whatever the winner hydrates after that reaches it live rather than twice."
+  [sid]
+  (let [claimed (volatile! false)]
+    (update-session! sid
+                     (fn [entry]
+                       (let [entry (or entry (fresh-entry sid))]
+                         (if (or (:current-turn entry) (:is-hydrating entry))
+                           (do (vreset! claimed false) entry)
+                           (do (vreset! claimed true) (assoc entry :is-hydrating true))))))
+    @claimed))
+
+(defn- hydrate-foreign-turn!
+  "Mirror a turn running in a SIBLING process into this registry: at most one
+   hydrate in flight per session, and none at all while this process is already
+   tracking a live turn."
+  [sid]
+  (when (claim-hydrate! sid)
+    (try (bus/hydrate! sid)
+         (finally (update-existing-session! sid
+                                            (fn [entry]
+                                              (dissoc entry :is-hydrating)))))))
 (defn subscribe!
   "Register an SSE sink and return the replay vector (canonical string-keyed
    events with `\"seq\"` > `cursor`) ATOMICALLY with the registration, so no
@@ -493,18 +617,10 @@
   ;; ensure an entry exists so `ingest-mirrored-event!` (called by hydrate)
   ;; doesn't no-op, then hydrate the in-flight foreign turn INTO the ring
   ;; before we snapshot replay from it.
-  (swap! registry update
-    sid
-    (fn [entry]
-      (or entry (fresh-entry sid))))
-  ;; ONE hydrate at a time per session: the `:current-turn` check and the
-  ;; hydrate are a single atomic step here. Concurrent SSE subscribers otherwise
-  ;; both read `:current-turn` unset and both mirror the sibling's turn, so every
-  ;; event lands in the ring twice (re-sequenced, so no dedup catches it).
-  #_{:clj-kondo/ignore [:locking-suspicious-lock]}
-  (locking (hydrate-monitor sid) (when-not (:current-turn (get @registry sid)) (bus/hydrate! sid)))
+  (ensure-session-entry! sid)
+  (hydrate-foreign-turn! sid)
   (let [replay (volatile! [])]
-    (swap! registry update
+    (update-session!
       sid
       (fn [entry]
         (let [entry (or entry (fresh-entry sid))]
@@ -512,13 +628,13 @@
           (assoc-in entry [:subscribers sub-id] sink))))
     @replay))
 
-(defn unsubscribe! [sid sub-id] (swap! registry update-in [sid :subscribers] dissoc sub-id) nil)
+(defn unsubscribe! [sid sub-id] (drop-subscriber! sid sub-id) nil)
 
 (defn current-seq
   "Highest event `:seq` assigned for `sid` so far. Subscribing with this
    as the cursor yields a live-only stream (empty replay)."
   [sid]
-  (get-in @registry [sid :next-seq] 0))
+  (:next-seq (session-entry sid) 0))
 
 (defn running-turn-start-cursor
   "For a live-only subscriber joining a session mid-turn: the cursor (one below
@@ -532,7 +648,7 @@
   [sid]
   (let
     [entry
-     (get @registry sid)
+     (session-entry sid)
 
      tid
      (:current-turn entry)
@@ -553,7 +669,7 @@
    running. `sse-ready!` ships it with every subscription so the answer costs no
    round trip."
   [sid]
-  (:current-turn (get @registry sid)))
+  (:current-turn (session-entry sid)))
 
 (defn events-since
   "Read-only peek at the replay ring: stored canonical (string-keyed) events
@@ -561,7 +677,7 @@
    running turn's `turn.started` seq so its SSE reconnect can replay the WHOLE
    in-flight turn instead of only what happens after connect."
   [sid cursor]
-  (filterv #(> (long (get % "seq")) (long (or cursor 0))) (get-in @registry [sid :events] [])))
+  (filterv #(> (long (get % "seq")) (long (or cursor 0))) (:events (session-entry sid) [])))
 
 (defn running-turn-count
   "Number of live turns currently owned by this gateway process. Used by the
@@ -579,7 +695,7 @@
    another channel (companion app, web, a second TUI) may be attached to and
    streaming that very turn."
   [sid]
-  (let [entry (get @registry sid)]
+  (let [entry (session-entry sid)]
     (boolean (or (:current-turn entry)
                  (some (fn [turn]
                          (contains? #{"running" "queued"}
@@ -604,9 +720,7 @@
   [sid provider model]
   ;; `fresh-entry`, never a bare zero: an entry seeded at 0 restarts the seq
   ;; counter below a live client's cursor and silently kills its stream.
-  (swap! registry update
-    sid
-    #(assoc (or % (fresh-entry sid)) :last-active (System/currentTimeMillis)))
+  (update-session! sid #(assoc (or % (fresh-entry sid)) :last-active (System/currentTimeMillis)))
   (let
     [label
      #(cond (nil? %) nil
@@ -1364,7 +1478,7 @@
 (defn get-turn
   "Canonical (string-keyed) wire view of one turn record, or nil."
   [sid tid]
-  (some-> (wire-turn (get-in @registry [sid :turns tid]))
+  (some-> (wire-turn (turn-record sid tid))
           wire/canonical))
 
 (defn turn-attachments
@@ -1383,7 +1497,7 @@
    images."
   [sid tid]
   (when (and sid tid)
-    (or (seq (wire/canonical (vec (get-in @registry [sid :turns tid :attachments]))))
+    (or (seq (wire/canonical (vec (:attachments (turn-record sid tid)))))
         (try (seq (wire/canonical (vec (get (persistance/db-list-turns-attachments (lp/db-info)
                                                                                    [tid])
                                             (str tid)))))
@@ -1457,7 +1571,7 @@
   [sid]
   (let
     [{:keys [turns turn-order]}
-     (get @registry sid)
+     (session-entry sid)
 
      live0
      (->> (or turn-order [])
@@ -1542,7 +1656,7 @@
    5s was pulling the session's ENTIRE turn history — 600KB of completed
    `:content` for a long session — just to learn the queue is empty."
   [sid]
-  (let [{:keys [turns turn-order]} (get @registry sid)]
+  (let [{:keys [turns turn-order]} (session-entry sid)]
     (->> (or turn-order [])
          (keep #(some-> (get turns %)
                         wire-turn))
@@ -1888,12 +2002,11 @@
 
 (defn- finish-turn!
   [sid tid patch]
-  (swap! registry update
-    sid
-    (fn [entry]
-      (cond-> (update-in entry [:turns tid] merge patch)
-        (= tid (:current-turn entry))
-        (assoc :current-turn nil)))))
+  (update-session! sid
+                   (fn [entry]
+                     (cond-> (update-in entry [:turns tid] merge patch)
+                       (= tid (:current-turn entry))
+                       (assoc :current-turn nil)))))
 
 (defn- turn-terminal-payload
   "Payload for a TERMINAL turn event (`turn.completed` / `turn.failed` /
@@ -1910,7 +2023,7 @@
   [sid tid status]
   (let
     [turn
-     (get-in @registry [sid :turns tid])
+     (turn-record sid tid)
 
      key
      (:idempotency_key turn)
@@ -1950,7 +2063,7 @@
    notification that only says \"turn finished\" makes you open the app to learn
    anything at all."
   [sid tid]
-  (try (some-> (get-in @registry [sid :turns tid :content])
+  (try (some-> (:content (turn-record sid tid))
                content/text-projection
                str/trim
                not-empty)
@@ -2201,7 +2314,7 @@
    terminal over the run that replaced it. A turn that is no longer in the
    registry cannot pin a session, so it is treated as live."
   [sid tid cancel-token]
-  (if-let [turn (get-in @registry [sid :turns tid])]
+  (if-let [turn (turn-record sid tid)]
     (= (turn-terminal-claim-key cancel-token) (turn-terminal-claim-key (:cancel-token turn)))
     true))
 
@@ -2290,7 +2403,7 @@
   (doto (Thread. ^Runnable
                  (fn []
                    (try (Thread/sleep (long grace-ms))
-                        (when (= tid (:current-turn (get @registry sid)))
+                        (when (= tid (:current-turn (session-entry sid)))
                           (tel/log!
                             :warn
                             ["gateway: cancelled turn never landed a terminal — backstopping" tid
@@ -2328,7 +2441,7 @@
   [sid tid cancel-token]
   (let
     [entry
-     (get @registry sid)
+     (session-entry sid)
 
      turn
      (get-in entry [:turns tid])]
@@ -2705,7 +2818,7 @@
            user-cancel?
            (boolean (and (not stalled?)
                          (cancellation/cancelled? cancel-token)
-                         (some? (get-in @registry [sid :turns tid :cancelling_at]))))
+                         (some? (:cancelling_at (turn-record sid tid)))))
 
            status
            (if user-cancel? "cancelled" "failed")
@@ -2847,14 +2960,13 @@
                         {:turn_id tid
                          :request (or display-request request)
                          :display_request display-request
-                         :started_at (or (get-in @registry [sid :turns tid :started_at])
+                         :started_at (or (:started_at (turn-record sid tid))
                                          (System/currentTimeMillis))}
                         queued?
                         (assoc :queued? true)
 
-                        (get-in @registry [sid :turns tid :idempotency_key])
-                        (assoc :idempotency_key
-                          (get-in @registry [sid :turns tid :idempotency_key]))
+                        (:idempotency_key (turn-record sid tid))
+                        (assoc :idempotency_key (:idempotency_key (turn-record sid tid)))
 
                         (seq attachments)
                         (assoc :attachments attachments)))
@@ -3017,7 +3129,7 @@
       pinned-model
       (:model (session-model sid))]
 
-     (swap! registry update
+     (update-session!
        sid
        (fn [entry]
          (if (or (nil? entry) (:current-turn entry))
@@ -3163,7 +3275,7 @@
   ;; The retry is a NEW run of this tid and must be able to land its own
   ;; terminal; the previous run's claim would otherwise gag it forever.
   (release-turn-terminal-claim! sid tid)
-  (swap! registry update
+  (update-session!
     sid
     (fn [entry]
       (if (and entry (get-in entry [:turns tid]))
@@ -3185,7 +3297,7 @@
   [sid gen delay-ms]
   (future (let [d (long delay-ms)]
             (try (Thread/sleep (max 0 d)) (catch InterruptedException _ nil)))
-          (when (= gen (get-in @registry [sid :queue-paused :gen]))
+          (when (= gen (get-in (session-entry sid) [:queue-paused :gen]))
             (resume-queue! sid {:auto? true}))))
 
 (defn- pause-queue!
@@ -3199,24 +3311,23 @@
    without a human. A TERMINAL failure schedules nothing — it waits for a resume."
   [sid {:keys [reason transient? retry-after-ms]}]
   (let [captured (volatile! nil)]
-    (swap! registry update
-      sid
-      (fn [entry]
-        (when entry
-          (let
-            [held (count-queued entry)
-             fails (inc (long (:queue-fails entry 0)))
-             gen (inc (long (get-in entry [:queue-paused :gen] 0)))]
+    (update-session! sid
+                     (fn [entry]
+                       (when entry
+                         (let
+                           [held (count-queued entry)
+                            fails (inc (long (:queue-fails entry 0)))
+                            gen (inc (long (get-in entry [:queue-paused :gen] 0)))]
 
-            (vreset! captured {:held held :fails fails :gen gen})
-            (-> entry
-                (assoc :queue-fails fails)
-                (assoc :queue-paused {:reason reason
-                                      :is_transient (boolean transient?)
-                                      :held held
-                                      :fails fails
-                                      :gen gen
-                                      :at (System/currentTimeMillis)}))))))
+                           (vreset! captured {:held held :fails fails :gen gen})
+                           (-> entry
+                               (assoc :queue-fails fails)
+                               (assoc :queue-paused {:reason reason
+                                                     :is_transient (boolean transient?)
+                                                     :held held
+                                                     :fails fails
+                                                     :gen gen
+                                                     :at (System/currentTimeMillis)}))))))
     (when-let [{:keys [held fails gen]} @captured]
       (when (pos? (long held))
         (let
@@ -3246,17 +3357,16 @@
    the started turn, or nil."
   [sid {:keys [auto?]}]
   (let [was (volatile! false)]
-    (swap! registry update
-      sid
-      (fn [entry]
-        (when entry
-          (when (:queue-paused entry) (vreset! was true))
-          (cond-> (dissoc entry :queue-paused)
-            ;; explicit = the user says "go": re-arm the breaker AND lift the
-            ;; cancel floor, so the whole remaining backlog may drain, not just
-            ;; the forced head.
-            (not auto?)
-            (dissoc :queue-fails :cancel-floor)))))
+    (update-session! sid
+                     (fn [entry]
+                       (when entry
+                         (when (:queue-paused entry) (vreset! was true))
+                         (cond-> (dissoc entry :queue-paused)
+                           ;; explicit = the user says "go": re-arm the breaker AND lift the
+                           ;; cancel floor, so the whole remaining backlog may drain, not just
+                           ;; the forced head.
+                           (not auto?)
+                           (dissoc :queue-fails :cancel-floor)))))
     (when @was
       (append-event! sid "queue.resumed" {:is_auto (boolean auto?)})
       ;; An EXPLICIT (user) resume is deliberate intent, so it overrides the
@@ -3268,7 +3378,7 @@
   "The live `:queue-paused` marker for `sid` (`{:reason :held :fails :gen …}`),
    or nil when the queue is running."
   [sid]
-  (get-in @registry [sid :queue-paused]))
+  (:queue-paused (session-entry sid)))
 
 (defn- drop-cancelled-backlog!
   "Terminally drop every turn still QUEUED for `sid` that was submitted BEFORE
@@ -3292,33 +3402,33 @@
    mirrors. Returns the dropped turn records."
   [sid tid]
   (let [dropped (volatile! [])]
-    (swap! registry update
-      sid
-      (fn [entry]
-        (if-let [cancelling-at (get-in entry [:turns tid :cancelling_at])]
-          (let
-            [stale (filterv (fn [[_ turn]]
-                              (and (= "queued" (:status turn))
-                                   (< (long (or (:queued_at turn) 0)) (long cancelling-at))))
-                     (:turns entry))]
-            (vreset! dropped (mapv second stale))
-            (reduce (fn [e [stale-tid _]]
-                      (-> e
-                          (update :turns dissoc stale-tid)
-                          (update :turn-order
-                                  (fn [order]
-                                    (vec (remove #{stale-tid} order))))
-                          (update :idempotency
-                                  (fn [m]
-                                    (into {} (remove (comp #{stale-tid} val) m))))))
-                    ;; The cancel FLOOR: one entry-level stamp marking "everything
-                    ;; submitted before this instant was stopped". Set only here,
-                    ;; on a real user cancel, so [[left-queued-by-cancel?]] can
-                    ;; refuse a straggler (a re-queue, a racing submit that landed
-                    ;; mid-cancel) long after this sweep.
-                    (assoc entry :cancel-floor (long cancelling-at))
-                    stale))
-          entry)))
+    (update-session! sid
+                     (fn [entry]
+                       (if-let [cancelling-at (get-in entry [:turns tid :cancelling_at])]
+                         (let
+                           [stale (filterv (fn [[_ turn]]
+                                             (and (= "queued" (:status turn))
+                                                  (< (long (or (:queued_at turn) 0))
+                                                     (long cancelling-at))))
+                                    (:turns entry))]
+                           (vreset! dropped (mapv second stale))
+                           (reduce (fn [e [stale-tid _]]
+                                     (-> e
+                                         (update :turns dissoc stale-tid)
+                                         (update :turn-order
+                                                 (fn [order]
+                                                   (vec (remove #{stale-tid} order))))
+                                         (update :idempotency
+                                                 (fn [m]
+                                                   (into {} (remove (comp #{stale-tid} val) m))))))
+                                   ;; The cancel FLOOR: one entry-level stamp marking "everything
+                                   ;; submitted before this instant was stopped". Set only here,
+                                   ;; on a real user cancel, so [[left-queued-by-cancel?]] can
+                                   ;; refuse a straggler (a re-queue, a racing submit that landed
+                                   ;; mid-cancel) long after this sweep.
+                                   (assoc entry :cancel-floor (long cancelling-at))
+                                   stale))
+                         entry)))
     (doseq [turn @dropped]
       (append-event! sid
                      "turn.queued.deleted"
@@ -3348,7 +3458,7 @@
      (cancellation/cancelled? cancel-token)
 
      user-cancel?
-     (and cancelled? (not stalled?) (some? (get-in @registry [sid :turns tid :cancelling_at])))
+     (and cancelled? (not stalled?) (some? (:cancelling_at (turn-record sid tid))))
 
      ;; A user stop is NEVER a provider failure. The worker unwinds a cancel by
      ;; throwing, so a caller can still hand us `:failed? true`; taking that at
@@ -3363,17 +3473,17 @@
      drain?
      (cond (not cancelled?) true
            stalled? true
-           user-cancel? (boolean (next-drainable-turn (get @registry sid) false))
+           user-cancel? (boolean (next-drainable-turn (session-entry sid) false))
            :else false)]
 
     (cond (not drain?) nil
           (not failed?) (let [was-paused (volatile! false)]
-                          (swap! registry update
-                            sid
-                            (fn [entry]
-                              (when entry
-                                (when (:queue-paused entry) (vreset! was-paused true))
-                                (dissoc entry :queue-fails :queue-paused))))
+                          (update-session! sid
+                                           (fn [entry]
+                                             (when entry
+                                               (when (:queue-paused entry)
+                                                 (vreset! was-paused true))
+                                               (dissoc entry :queue-fails :queue-paused))))
                           (when @was-paused (append-event! sid "queue.resumed" {:is_auto true}))
                           (drain-next-queued! sid))
           transient? (do (re-queue-turn! sid tid)
@@ -3381,7 +3491,7 @@
                                        {:reason "provider_unhealthy"
                                         :transient? true
                                         :retry-after-ms retry-after-ms}))
-          (next-drainable-turn (get @registry sid) false)
+          (next-drainable-turn (session-entry sid) false)
           (pause-queue! sid {:reason "provider_error" :transient? false})
           :else nil)))
 
@@ -3426,7 +3536,7 @@
        decision
        (volatile! nil)]
 
-      (swap! registry update
+      (update-session!
         sid
         (fn [entry]
           ;; Seed via `fresh-entry` (journal high-water), never `{:next-seq 0}`:
@@ -3571,7 +3681,7 @@
                                  {:messages messages
                                   :model model
                                   :reasoning-default reasoning-default
-                                  :cancel-token (:cancel-token (get-in @registry [sid :turns tid]))
+                                  :cancel-token (:cancel-token (turn-record sid tid))
                                   :extra-body extra-body
                                   :turn-features turn-features
                                   :workspace workspace
@@ -3607,7 +3717,7 @@
      (get event "session_id")
 
      sid
-     (some #(when (= (str %) sid-string) %) (keys @registry))
+     (known-sid sid-string)
 
      turn-id
      (or (get event "turn_id") fallback-turn-id)
@@ -3780,7 +3890,7 @@
      ;; to live-only: hydration appends the whole foreign turn ABOVE the
      ;; current cursor, so the replay still carries it.
      started-cursor
-     (let [start-seq (get-in @registry [sid :turns tid :event_start_seq])]
+     (let [start-seq (:event_start_seq (turn-record sid tid))]
        (if (pos-int? start-seq) (dec (long start-seq)) (current-seq sid)))
 
      terminal
@@ -3840,7 +3950,7 @@
                  (volatile! nil)
 
                  existing
-                 (get-in @registry [sid :turns tid])
+                 (turn-record sid tid)
 
                  previews
                  (attachment-previews request (:attachments existing) (:workspace existing))
@@ -3848,7 +3958,7 @@
                  request-preview
                  (request-preview-text request previews)]
 
-                (swap! registry update
+                (update-session!
                   sid
                   (fn [entry]
                     (let [turn (get-in entry [:turns tid])]
@@ -3896,22 +4006,22 @@
   "Remove a queued turn before it starts. Returns deleted status or an error."
   [sid tid]
   (let [decision (volatile! nil)]
-    (swap! registry update
-      sid
-      (fn [entry]
-        (let [turn (get-in entry [:turns tid])]
-          (cond (nil? turn) (do (vreset! decision [:missing]) entry)
-                (not= "queued" (:status turn)) (do (vreset! decision [:not-queued (:status turn)])
-                                                   entry)
-                :else (do (vreset! decision [:deleted])
-                          (-> entry
-                              (update :turns dissoc tid)
-                              (update :turn-order
-                                      (fn [order]
-                                        (vec (remove #{tid} order))))
-                              (update :idempotency
-                                      (fn [m]
-                                        (into {} (remove (comp #{tid} val) m))))))))))
+    (update-session! sid
+                     (fn [entry]
+                       (let [turn (get-in entry [:turns tid])]
+                         (cond (nil? turn) (do (vreset! decision [:missing]) entry)
+                               (not= "queued" (:status turn))
+                               (do (vreset! decision [:not-queued (:status turn)]) entry)
+                               :else (do (vreset! decision [:deleted])
+                                         (-> entry
+                                             (update :turns dissoc tid)
+                                             (update :turn-order
+                                                     (fn [order]
+                                                       (vec (remove #{tid} order))))
+                                             (update :idempotency
+                                                     (fn [m]
+                                                       (into {}
+                                                             (remove (comp #{tid} val) m))))))))))
     (let [[kind status] @decision]
       (case kind
         :deleted
@@ -3934,31 +4044,30 @@
    only durable record of WHO stopped it."
   ([sid tid] (cancel-turn! sid tid :client-cancel-turn))
   ([sid tid source]
-   (let [turn (get-in @registry [sid :turns tid])]
+   (let [turn (turn-record sid tid)]
      (cond (nil? turn) {:error :turn-not-found}
            (not= "running" (:status turn)) {:error :not-running :status (:status turn)}
-           :else
-           (do (tel/log! :info ["gateway: cancelling turn" tid (str "source=" (name source))])
-               ;; Stamp the cancel wall-clock BEFORE firing the token so the
-               ;; unwinding worker can tell post-cancel submissions (drain
-               ;; them: "stop that, run THIS") from the pre-cancel backlog
-               ;; (dropped) — see `drop-cancelled-backlog!`.
-               (swap! registry assoc-in [sid :turns tid :cancelling_at] (System/currentTimeMillis))
-               (some-> (:cancel-token turn)
-                       (cancellation/cancel! source))
-               ;; A stop must ALWAYS resolve. Firing the token only unwinds a
-               ;; worker that EXISTS and registered its hook — a turn whose launch
-               ;; never got that far, or whose worker is parked in uninterruptible
-               ;; code, ignored the cancel completely and kept `:current-turn`
-               ;; forever, so Esc did nothing at all and every later message piled
-               ;; up behind a turn nobody was running. Claim-guarded: a no-op the
-               ;; instant a real terminal lands.
-               (start-cancel-terminal-backstop! sid
-                                                tid
-                                                (:cancel-token turn)
-                                                CANCEL_TERMINAL_GRACE_MS
-                                                cancel-waiting-turn!)
-               {:status "cancelling"})))))
+           :else (do (tel/log! :info ["gateway: cancelling turn" tid (str "source=" (name source))])
+                     ;; Stamp the cancel wall-clock BEFORE firing the token so the
+                     ;; unwinding worker can tell post-cancel submissions (drain
+                     ;; them: "stop that, run THIS") from the pre-cancel backlog
+                     ;; (dropped) — see `drop-cancelled-backlog!`.
+                     (update-turn! sid tid #(assoc % :cancelling_at (System/currentTimeMillis)))
+                     (some-> (:cancel-token turn)
+                             (cancellation/cancel! source))
+                     ;; A stop must ALWAYS resolve. Firing the token only unwinds a
+                     ;; worker that EXISTS and registered its hook — a turn whose launch
+                     ;; never got that far, or whose worker is parked in uninterruptible
+                     ;; code, ignored the cancel completely and kept `:current-turn`
+                     ;; forever, so Esc did nothing at all and every later message piled
+                     ;; up behind a turn nobody was running. Claim-guarded: a no-op the
+                     ;; instant a real terminal lands.
+                     (start-cancel-terminal-backstop! sid
+                                                      tid
+                                                      (:cancel-token turn)
+                                                      CANCEL_TERMINAL_GRACE_MS
+                                                      cancel-waiting-turn!)
+                     {:status "cancelling"})))))
 
 (defn cancel-current-turn!
   "Tid-less twin of `cancel-turn!`: fire the cancellation token of WHATEVER
@@ -3970,7 +4079,7 @@
    behind it. Returns `{:status \"cancelling\" :turn_id tid}` or
    `{:error :no-running-turn}`."
   [sid]
-  (if-let [tid (get-in @registry [sid :current-turn])]
+  (if-let [tid (:current-turn (session-entry sid))]
     (let [res (cancel-turn! sid tid :client-cancel-current)]
       (if (:error res) res (assoc res :turn_id tid)))
     {:error :no-running-turn}))
@@ -4040,7 +4149,7 @@
                    prewarm?
                    (assoc :prewarm? true)))]
 
-    (swap! registry assoc (:id created) {:next-seq 0 :last-active (System/currentTimeMillis)})
+    (put-session! (:id created) {:next-seq 0 :last-active (System/currentTimeMillis)})
     created))
 
 (defn- pop-prewarmed!
@@ -4083,7 +4192,7 @@
                              (update-in pool [:ready channel] (fnil conj []) session)
                              pool)))]
     (when-not (:accepting? old)
-      (swap! registry dissoc (:id session))
+      (drop-session! (:id session))
       (try (lp/delete! (:id session)) (catch Throwable _ nil)))))
 
 (defn- kick-prewarm!
@@ -4169,7 +4278,7 @@
            (session->wire created))
          (catch Throwable e
            (if pooled
-             (do (swap! registry dissoc (:id pooled))
+             (do (drop-session! (:id pooled))
                  (try (lp/delete! (:id pooled)) (catch Throwable _ nil))
                  (let [created (create-session-cold! opts)]
                    (when pool-eligible? (request-prewarm! channel))
@@ -4190,7 +4299,7 @@
      (mapcat val (:ready (first (reset-vals! prewarm-pool stopped))))]
 
     (doseq [{:keys [id]} ready]
-      (swap! registry dissoc id)
+      (drop-session! id)
       (try (lp/delete! id)
            (catch Throwable e
              (tel/log! :warn
@@ -4212,7 +4321,7 @@
   [sid]
   (when-let [session (lp/by-id sid)]
     (let
-      [entry (get @registry sid)
+      [entry (session-entry sid)
        current-turn-id (:current-turn entry)
        current-turn (get-in entry [:turns current-turn-id])
        last-turn (some->> (:turn-order entry)
@@ -4352,7 +4461,7 @@
                      (:id record)
 
                      entry
-                     (get @registry id)]
+                     (session-entry id)]
 
                     [(if (:current-turn entry) 0 1)
                      (unchecked-negate (record-recency-ms record entry (get stats (str id))))
@@ -4630,9 +4739,8 @@
   ;; still resolvable; draft-only, so this can never delete a real directory.
   (try (workspace/discard-session-clones! (lp/db-info) sid) (catch Throwable _ nil))
   (try (persistance/db-delete-session-tree! (lp/db-info) sid) (catch Throwable _ nil))
-  (swap! registry dissoc sid)
+  (drop-session! sid)
   (bus/forget! sid)
-  (swap! hydrate-monitors dissoc (str sid))
   (teardown-session-async! sid))
 
 (defn set-title! [sid title] (when (lp/by-id sid) (lp/set-title! sid title) (soul sid)))
@@ -4663,12 +4771,7 @@
    below the cursor)."
   [sid title]
   (append-event! sid "session.title_updated" {:title (str title)})
-  (doseq
-    [other
-     (keys @registry)
-
-     :when (not= other sid)]
-
+  (doseq [other (other-session-ids sid)]
     (append-event! other
                    "session.title_updated"
                    {:titled_session_id (str sid) :title (str title)})))
@@ -4685,7 +4788,7 @@
     ;; process tracks. `ingest-mirrored-event!` already no-ops on an unknown sid,
     ;; so draining the rest just burns CPU stat'ing every sibling's journal.
     (bus/set-relevant-sid-fn! (fn [sid]
-                                (contains? @registry sid)))
+                                (session-known? sid)))
     ;; And the SET of those sids, so the tailer drains only their journals
     ;; directly instead of listing/stat'ing every sibling's file each poll.
     (bus/set-relevant-sids-fn! (fn []

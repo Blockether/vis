@@ -473,7 +473,9 @@
 
       (try
         ;; b carries no :subscribers — exactly a client on the /poll fallback
-        (reset! registry {a {:next-seq 0} b {:next-seq 0}})
+        ;; keyed the way `sid-key` spells a session: one entry per session, whatever
+        ;; spelling the caller holds
+        (reset! registry {(str a) {:next-seq 0} (str b) {:next-seq 0}})
         (#'state/broadcast-title-event! a "Tidal Forces")
         (let
           [a-events
@@ -642,20 +644,20 @@
        saved
        @registry]
 
-      (try (reset! registry {sid {:next-seq 0
-                                  :turn-order ["done" "waiting"]
-                                  :turns {"done" {:turn_id "done"
-                                                  :session_id (str sid)
-                                                  :status "completed"
-                                                  :request "already answered"
-                                                  :content
-                                                  [{"id" "b1" "type" "prose" "markdown" "hi"}]
-                                                  :started_at 1000}
-                                          "waiting" {:turn_id "waiting"
-                                                     :session_id (str sid)
-                                                     :status "queued"
-                                                     :request "next please"
-                                                     :queued_at 2000}}}})
+      (try (reset! registry {(str sid) {:next-seq 0
+                                        :turn-order ["done" "waiting"]
+                                        :turns {"done" {:turn_id "done"
+                                                        :session_id (str sid)
+                                                        :status "completed"
+                                                        :request "already answered"
+                                                        :content
+                                                        [{"id" "b1" "type" "prose" "markdown" "hi"}]
+                                                        :started_at 1000}
+                                                "waiting" {:turn_id "waiting"
+                                                           :session_id (str sid)
+                                                           :status "queued"
+                                                           :request "next please"
+                                                           :queued_at 2000}}}})
            (with-redefs
              [persistance/db-list-session-turns
               (fn [_ _]
@@ -3011,10 +3013,10 @@
               :content [{"id" "b1" "type" "prose" "markdown" "hi"}]
               :created-at (java.util.Date. 1500)})]
 
-      (try (reset! registry {sid {:next-seq 0
-                                  :turn-order ["gateway-dup" "gateway-own"]
-                                  :turns {"gateway-dup" (live "gateway-dup" dup-engine)
-                                          "gateway-own" (live "gateway-own" own-engine)}}})
+      (try (reset! registry {(str sid) {:next-seq 0
+                                        :turn-order ["gateway-dup" "gateway-own"]
+                                        :turns {"gateway-dup" (live "gateway-dup" dup-engine)
+                                                "gateway-own" (live "gateway-own" own-engine)}}})
            (with-redefs
              [persistance/db-list-session-turns
               (fn [_ _]
@@ -3604,3 +3606,39 @@
     (it "still reads as a sentence when the turn never reached a provider"
         (expect (= "Provider stream stalled: no worker activity for 5ms"
                    (failure-text (atom {:stall-detail "no worker activity for 5ms"})))))))
+
+;; Regression, issue #128: a session was keyed by whatever spelling the caller
+;; held, so a producer with the id as a STRING (gateway.human-input reads it off
+;; the request map)
+;; appended under that spelling and opened a GHOST entry — its own seq counter,
+;; its own replay ring and NO subscribers. `human_input.request` reached the
+;; journal and never the SSE fan-out, so the OTP form was never drawn.
+(defdescribe registry-sid-spelling-test
+             (it "delivers an event appended under the STRING sid to a UUID subscriber"
+                 (let
+                   [sid
+                    (random-uuid)
+
+                    seen
+                    (atom [])]
+
+                   (state/subscribe! sid "sub-1" #(swap! seen conj %) 0)
+                   (try (state/append-event! (str sid) "human_input.request" {:request {:id "r1"}})
+                        (expect (= ["human_input.request"] (mapv #(get % "type") @seen)))
+                        (expect (= ["human_input.request"]
+                                   (mapv #(get % "type") (state/events-since sid 0))))
+                        (finally (state/unsubscribe! sid "sub-1")))))
+             (it "reads one session's state under either spelling"
+                 (let
+                   [sid
+                    (random-uuid)
+
+                    seen
+                    (atom [])]
+
+                   (state/subscribe! (str sid) "sub-2" #(swap! seen conj %) 0)
+                   (try (state/append-event! sid "human_input.request" {:request {:id "r2"}})
+                        (expect (= ["human_input.request"] (mapv #(get % "type") @seen)))
+                        (expect (= (state/current-seq sid) (state/current-seq (str sid))))
+                        (expect (= 1 (count (state/events-since (str sid) 0))))
+                        (finally (state/unsubscribe! (str sid) "sub-2"))))))

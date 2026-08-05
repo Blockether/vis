@@ -511,6 +511,21 @@
                    (expect (true? (hi/forget-secret! handle)))
                    (expect (nil? (hi/reveal-secret handle)))
                    (expect (false? (hi/forget-secret! handle)))))
+             ;; Regression, issue #128: an `:otp` answered with the digits the human
+             ;; typed, so a one-time code travelled as plaintext through the answer
+             ;; map, the transcript and the logs.
+             (it "hands a one-time code back as a handle too"
+                 (let
+                   [fields
+                    (normalized-fields {:id "code" :type "otp" :is-required true})
+
+                    handle
+                    (get-in (hi/coerce-values fields {"code" "123456"}) [:values "code"])]
+
+                   (expect (hs/secret-handle? handle))
+                   (expect (not (str/includes? (pr-str handle) "123456")))
+                   (expect (= "123456" (hi/reveal-secret handle)))
+                   (expect (true? (hi/forget-secret! handle)))))
              (it "does not mint a handle for an absent optional password"
                  (let [fields (normalized-fields {:id "token" :type "password"})]
                    (expect (nil? (get-in (hi/coerce-values fields {}) [:values "token"])))))

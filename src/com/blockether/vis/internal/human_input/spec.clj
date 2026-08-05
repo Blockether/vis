@@ -53,8 +53,10 @@
   #{:select :multiselect})
 
 (def secret-types
-  "Field types whose value must never reach a log, an event or a transcript."
-  #{:password})
+  "Field types whose value must never reach a log, an event or a transcript. A
+   one-time code is as much a credential as a password — it opens the account
+   once — so both answer with a vault handle instead of what the human typed."
+  #{:password :otp})
 
 (def group-type
   "The type of a layout GROUP: the one node of a request's field tree that holds
@@ -108,14 +110,14 @@
   {:min 0 :max 100 :step 1})
 
 (def secret-handle-prefix
-  "What a submitted `:password` becomes before its answer leaves the engine. The
-   plaintext stays in a process-local vault; this prefix is the whole difference
-   between an answer that is harmless in a log and a leaked credential, so the
-   answer contract is declared in terms of it."
+  "What a submitted secret — a `:password` or an `:otp` — becomes before its
+   answer leaves the engine. The plaintext stays in a process-local vault; this
+   prefix is the whole difference between an answer that is harmless in a log
+   and a leaked credential, so the answer contract is declared in terms of it."
   "vis-secret:")
 
 (defn secret-handle?
-  "True when `value` is an opaque handle minted for a `:password` field."
+  "True when `value` is an opaque handle minted for a `secret-types` field."
   [value]
   (and (string? value) (str/starts-with? value secret-handle-prefix)))
 
@@ -203,8 +205,8 @@
   (= id name))
 
 (defn- secret-marked?
-  "`:is-secret` is derived from the type, never guessed per field: a password is
-   secret and nothing else is silently promoted or demoted."
+  "`:is-secret` is derived from the type, never guessed per field: a password and
+   a one-time code are secret and nothing else is silently promoted or demoted."
   [{:keys [type is-secret]}]
   (= is-secret (contains? secret-types type)))
 
@@ -479,9 +481,10 @@
                    (or (nil? max-length) (<= (count value) (long max-length))))))
 
 (defn- secret-in-domain?
-  "A `:password` answers with a vault HANDLE. The plaintext has no business in an
-   answer map at all, and the length bounds describe what the human typed rather
-   than the handle it became."
+  "A `:password` and an `:otp` both answer with a vault HANDLE. The plaintext has
+   no business in an answer map at all, and the length bounds — or the digit
+   width of a code — describe what the human typed rather than the handle it
+   became."
   [{:keys [is-required]} value]
   (if (nil? value) (not is-required) (secret-handle? value)))
 
@@ -504,12 +507,6 @@
   (or (true? value) (not is-required)))
 
 (defn- slid-in-domain? [{lo :min hi :max} value] (<= (double lo) (double value) (double hi)))
-
-(defn- coded-in-domain?
-  [{:keys [is-required min-length max-length]} value]
-  (if (nil? value)
-    (not is-required)
-    (and (some? (re-matches #"\d+" value)) (<= (long min-length) (count value) (long max-length)))))
 
 (defmulti ^:private answer-form
   "The form ONE answered value must take, derived from the very field that asked
@@ -540,7 +537,7 @@
 
 (defmethod answer-form :range [field] (s/and number? (partial slid-in-domain? field)))
 
-(defmethod answer-form :otp [field] (s/and (s/nilable string?) (partial coded-in-domain? field)))
+(defmethod answer-form :otp [field] (s/and (s/nilable string?) (partial secret-in-domain? field)))
 
 (defn- answerable
   "Every field that holds an ANSWER. A group is control flow: it never appears in

@@ -1613,13 +1613,13 @@
      sid
      (java.util.UUID/randomUUID)]
 
-    (swap! registry assoc sid {:next-seq 12})
+    (swap! registry assoc (str sid) {:next-seq 12})
     (try (testing "a cursor past the high-water resolves to the live tail"
            (is (= 12 (resolve-cursor sid 5000))))
          (testing "an in-range cursor is honoured verbatim" (is (= 5 (resolve-cursor sid 5))))
          (testing "the negative live-only sentinel is unchanged"
            (is (= 12 (resolve-cursor sid -1))))
-         (finally (swap! registry dissoc sid)))))
+         (finally (swap! registry dissoc (str sid))))))
 
 (deftest mcp-kill-start-and-oauth-routes-test
   (testing "runtime kill/start and every headless OAuth leg answer through the ring layer"

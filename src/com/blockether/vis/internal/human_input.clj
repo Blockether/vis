@@ -30,7 +30,8 @@
    type: a `:checkbox` yields a boolean, a `:multiselect` a vector of declared
    option values, a `:select` one declared option value.
 
-   Secrets never travel as plaintext. A `:password` field resolves to an opaque
+   Secrets never travel as plaintext. A `:password` and an `:otp` field both
+   resolve to an opaque
    `vis-secret:<uuid>` handle; the plaintext stays in a process-local vault and
    is readable only through [[reveal-secret]] from the trusted extension side.
    Handles are what land in logs, transcripts and wire payloads, so a leaked
@@ -75,7 +76,7 @@
 ;; =============================================================================
 
 (def ^:private max-secrets
-  "The vault only has to bridge a submitted password to the extension that asked
+  "The vault only has to bridge a submitted secret to the extension that asked
    for it. Keeping it bounded means a long session cannot accumulate plaintext
    forever when an extension forgets to call [[forget-secret!]]."
   128)
@@ -198,8 +199,8 @@
 
    `fields` are the fields of the request being answered, so a submitted answer
    is also checked against the questions it answers: no field invented, none
-   dropped, every value inside its own field's domain, and a `:password` as the
-   vault HANDLE rather than the plaintext."
+   dropped, every value inside its own field's domain, and a `:password` or an
+   `:otp` as the vault HANDLE rather than the plaintext."
   [request-id fields answer]
   (if-let [why (hi-spec/answer-error fields answer)]
     (invalid-answer! request-id why)
@@ -1005,7 +1006,7 @@
 
 (defn coerce-values
   "[[validate-values]] for a SUBMISSION: identical answer, except that accepted
-   `:password` values are replaced with opaque vault handles."
+   `:password` and `:otp` values are replaced with opaque vault handles."
   [fields values]
   (let [result (validate-values fields values)]
     (if-not (:is-accepted result)
@@ -1194,7 +1195,8 @@
    indefinite wait never gives up on the human: only an answer, a cancel or an
    interrupt releases it.
 
-   `:password` values in `:values` are opaque handles — see [[reveal-secret]].
+   `:password` and `:otp` values in `:values` are opaque handles — see
+   [[reveal-secret]].
 
    A request MUST name the session it parks — `:session-id`, or the session of
    the extension environment currently executing. A run nobody can attribute is
@@ -1279,7 +1281,7 @@
 
 (defn answer->wire
   "Wire projection of a [[request!]] answer: snake_case string keys, JSON-safe
-   values. `:password` values stay opaque handles."
+   values. `:password` and `:otp` values stay opaque handles."
   [answer]
   {"is_submitted" (boolean (:is-submitted answer))
    "reason" (:reason answer)

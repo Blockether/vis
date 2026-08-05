@@ -109,19 +109,21 @@
 
 (def ^:private otp-cell-w "`[7] ` — one box, its digit, and the gap to the next box." 4)
 
+(def ^:private mask-char "Secret fields never render their plaintext." (char 0x2022))
+
 (defn- otp-text
-  "`[1] [2] [3] [ ] [ ] [ ]` — one box per digit the field takes, filled left to
-   right. A field that accepts a RANGE of lengths says so after the boxes: eight
-   empty boxes cannot show that six of them are already enough."
+  "`[•] [•] [•] [ ] [ ] [ ]` — one box per digit the field takes, filled left to
+   right. A one-time code is a credential, so the boxes report HOW MANY digits
+   landed and never which ones. A field that accepts a RANGE of lengths says so
+   after the boxes: eight empty boxes cannot show that six of them are already
+   enough."
   [{:keys [lo hi]} value]
   (let [digits (str value)]
     (str (str/join " "
                    (map (fn [i]
-                          (str "[" (if (< (long i) (count digits)) (nth digits i) \space) "]"))
+                          (str "[" (if (< (long i) (count digits)) mask-char \space) "]"))
                         (range hi)))
          (when (not= (long lo) (long hi)) (str "  (" lo "–" hi " digits)")))))
-
-(def ^:private mask-char "Password fields never render their plaintext." \u2022)
 
 ;; =============================================================================
 ;; Form model

@@ -383,8 +383,9 @@ slider.
 An `otp` is a one-time code, entered as one box per digit. `min_length` and
 `max_length` say how many (default 6, at most 12; give only `max_length` for a
 fixed length). Only digits get in — typing a letter does nothing, and pasting
-`123 456` fills the boxes instead of dropping six characters into one. The answer
-is the digit string.
+`123 456` fills the boxes instead of dropping six characters into one. A code is
+a credential, so — like a `password` — it answers with a `vis-secret:` handle,
+and the terminal fills its boxes with `•` rather than the digits.
 
 ### Laying fields out: `group`
 
@@ -628,7 +629,8 @@ included. A run with no surface mounted to show the dialog answers
 `undeliverable` immediately — and logs an error naming the request — instead of
 parking your extension until the timeout.
 
-**Secrets never round-trip as plaintext.** A `password` field answers with an
+**Secrets never round-trip as plaintext.** A `password` and an `otp` field both
+answer with an
 opaque `vis-secret:` handle; `answer.reveal("token")` (or `vis.reveal(handle)`)
 resolves it inside the process, and `vis.forget(handle)` drops it. Handles are
 what the transcript, logs, and the model see — so pass the handle around and

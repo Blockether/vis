@@ -496,7 +496,10 @@
                        (KeyStroke. KeyType/Enter))
                (let [result (deref answer 2000 ::timeout)]
                  (is (true? (:is-submitted result)))
-                 (is (= "1234" (get-in result [:values "code"])))
+                 ;; Issue #128: a one-time code is a credential, so the answer
+                 ;; carries a vault HANDLE and only the extension can read it.
+                 (is (not= "1234" (get-in result [:values "code"])))
+                 (is (= "1234" (engine/reveal-secret (get-in result [:values "code"]))))
                  (is (= "ops@example.com" (get-in result [:values "notify"])))))
              (finally (engine/cancel! rid "cleanup")))))))
 

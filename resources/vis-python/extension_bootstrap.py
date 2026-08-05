@@ -521,7 +521,8 @@ def slider(name, **spec):
 
 def otp(name, **spec):
     # A one-time code in digit boxes: min_length / max_length say how many
-    # (6 by default, 12 at most), digits only, paste fills the boxes.
+    # (6 by default, 12 at most), digits only, paste fills the boxes. A code is a
+    # credential, so it answers with a `vis-secret:` handle like a password.
     return _node('otp', name, spec)
 
 

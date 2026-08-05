@@ -1367,7 +1367,7 @@
          row
          (screen-row screen (.getRow pos))]
 
-        (expect (str/includes? row "[3] [1] [ ]"))
+        (expect (str/includes? row "[•] [•] [ ]"))
         ;; Inside the THIRD box: its own bracket one column to the left.
         (expect (= \[ (.charAt row (dec (.getColumn pos)))))
         (expect (= \space (.charAt row (.getColumn pos))))))
@@ -1405,15 +1405,19 @@
 
 (defdescribe
   otp-field-test
-  (it "draws one box per digit and fills them left to right"
+  ;; Regression, issue #128: the boxes painted the digits themselves, so a
+  ;; one-time code sat in plaintext on the screen, in a screenshot and in a
+  ;; screencast of the session.
+  (it "masks every digit it took — a code is a credential, like a password"
       (expect (= "[ ] [ ] [ ] [ ] [ ] [ ]" (:text (otp-row (otp-form)))))
-      (expect (= "[1] [2] [ ] [ ] [ ] [ ]" (:text (otp-row (feed (otp-form) [(ch \1) (ch \2)]))))))
+      (expect (= "[•] [•] [ ] [ ] [ ] [ ]" (:text (otp-row (feed (otp-form) [(ch \1) (ch \2)])))))
+      (expect (not (str/includes? (:text (otp-row (feed (otp-form) (map ch "123456")))) "1"))))
   (it "takes digits only, so a pasted `123-456` arrives as the code"
       ;; A paste reaches the dialog as its characters; dropping everything that
       ;; is not a digit IS the paste handler.
       (let [form (feed (otp-form) (map ch "123-456"))]
         (expect (= "123456" (get-in form [:values "code"])))
-        (expect (= "[1] [2] [3] [4] [5] [6]" (:text (otp-row form))))))
+        (expect (= "[•] [•] [•] [•] [•] [•]" (:text (otp-row form))))))
   (it "refuses a seventh digit instead of scrolling the boxes"
       (expect (= "123456" (get-in (feed (otp-form) (map ch "1234567")) [:values "code"]))))
   (it "parks the cursor in the box the next digit lands in"
@@ -1432,7 +1436,7 @@
   (it "says so when it accepts a RANGE of lengths"
       ;; Eight empty boxes cannot show that four of them are already enough.
       (expect (= "[ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ]  (4–8 digits)" (:text (otp-row (otp-form 4 8)))))
-      (expect (= "[1] [2] [3] [4] [ ] [ ] [ ] [ ]  (4–8 digits)"
+      (expect (= "[•] [•] [•] [•] [ ] [ ] [ ] [ ]  (4–8 digits)"
                  (:text (otp-row (feed (otp-form 4 8) (map ch "1234")))))))
   (it "offers the digits in the hint bar"
       (expect (some #{["0–9" "fill"]} (hi/hint (otp-form))))

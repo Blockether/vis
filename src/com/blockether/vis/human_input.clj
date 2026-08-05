@@ -119,8 +119,9 @@
   ([field-name opts] (field "range" field-name opts)))
 
 (defn otp
-  "A one-time code in digit boxes, answered as the digits typed.
-   `:min-length` / `:max-length` say how many (6 by default, 12 at most)."
+  "A one-time code in digit boxes, answered as an opaque `vis-secret:` handle —
+   a code opens the account once, so it is a secret exactly like a password.
+   `:min-length` / `:max-length` say how many digits (6 by default, 12 at most)."
   ([field-name] (otp field-name nil))
   ([field-name opts] (field "otp" field-name opts)))
 
