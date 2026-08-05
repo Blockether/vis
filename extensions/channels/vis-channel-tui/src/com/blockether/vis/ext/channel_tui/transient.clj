@@ -64,6 +64,17 @@
             (some #(when (= k (:key %)) %) items))
           (:groups spec))))
 
+(defn item-by-id
+  "PURE: the spec item carrying `id`, scanning every group in order. nil when
+   the band does not offer that command right now — which is how a caller that
+   fires a command WITHOUT a keystroke (a slash that names it) finds out the
+   band never showed it."
+  [spec id]
+  (when (some? id)
+    (some (fn [{:keys [items]}]
+            (some #(when (= id (:id %)) %) items))
+          (:groups spec))))
+
 (defn toggle
   "PURE reducer for ONE keystroke against a transient `state`
    (`{:switches #{ids} :options {id val}}`). Returns a map whose `:kind` tells

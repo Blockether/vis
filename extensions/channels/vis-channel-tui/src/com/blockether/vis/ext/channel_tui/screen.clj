@@ -5,6 +5,7 @@
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.command-suggest :as slash]
             [com.blockether.vis.ext.channel-tui.components :as components]
+            [com.blockether.vis.ext.channel-tui.drafts :as drafts]
             [com.blockether.vis.ext.channel-tui.file-suggest :as file-suggest]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.header :as header]
@@ -788,8 +789,9 @@
   "When the typed text is EXACTLY a registered slash that declares
    `:slash/prompt-arg` and carries NO argument, return {:slash-text :prompt}
    so the channel can pop a text-input for the missing argument instead of
-   running the slash blank. A trailing argument (`/draft new x`) returns nil —
-   that runs normally."
+   running the slash blank. A trailing argument (`/session-title Foo`) returns
+   nil — that runs normally. The `/draft …` lines never reach here: they are
+   answered by the draft BAND above, on the session's own frame."
   [input-state]
   (let [text (str/trim (input/input->text input-state))]
     (some (fn [s]
@@ -797,6 +799,15 @@
               (let [full (str "/" (str/join " " (concat (:slash/parent s) [(:slash/name s)])))]
                 (when (= text full) {:slash-text full :prompt prompt}))))
           (vis/registered-slashes))))
+
+(defn- draft-slash-for-input
+  "The draft BAND a typed `/draft …` line opens — `{:pressed id-or-nil}`, the
+   command the slash already named. nil when the line is not a question the band
+   answers (`/draft apply`, `/draft stash`, or any of them with its argument
+   already typed): that reaches the engine as the slash it is."
+  [input-state]
+  (when-let [{:keys [path]} (vis/slash-parse (input/input->text input-state))]
+    (drafts/slash-band path)))
 
 (defn- slash-suggestions-for-input
   ([screen input-state] (slash-suggestions-for-input screen input-state 0))
@@ -5526,8 +5537,12 @@
               ;; the gateway's non-destructive stash-then-resume switch. Never switch
               ;; roots under an in-flight turn.
               show-drafts!
-              (fn show-drafts! []
-                (let [db @state/app-db]
+              (fn show-drafts!
+                ;; `pressed` is a band command a `/draft …` slash already named;
+                ;; nil opens the band itself (C-x e, the palette).
+                ([] (show-drafts! nil))
+                ([pressed]
+                 (let [db @state/app-db]
                   (cond
                     (or (:loading? db) (seq (:pending-sends db)))
                     (vis/notify!
@@ -5551,7 +5566,7 @@
                            (or (get-in @state/app-db [:layout :messages-top]) 1)
 
                            choice
-                           (with-dialog-lock #(dlg/draft-transient! screen content-top drafts))]
+                           (with-dialog-lock #(dlg/draft-transient! screen content-top drafts pressed))]
 
                           (when choice
                             ;; A queued or externally-started turn can become active while a
@@ -5583,7 +5598,7 @@
                                        :ttl-ms status-error-ttl-ms)))
                       (vis/notify! "No current session for draft management"
                                    :level :warn
-                                   :ttl-ms status-error-ttl-ms)))))
+                                   :ttl-ms status-error-ttl-ms))))))
               show-sessions!
               (fn show-sessions! []
                 (when-not (:dialog-open? @state/app-db)
@@ -7323,10 +7338,19 @@
                                                         "Transcript"
                                                         (export-dialog-md))))
                                  (state/dispatch [:reset-input]))
+                             ;; A `/draft …` line that asks what the draft band
+                             ;; already asks IS that band: `/draft new` is its
+                             ;; `d` key, pre-pressed. Typing the command and
+                             ;; pressing it on the band reach the same question,
+                             ;; on the same row, instead of a modal text prompt.
+                             (draft-slash-for-input state)
+                             (do (show-drafts! (:pressed (draft-slash-for-input state)))
+                                 (state/dispatch [:reset-input]))
+
                              ;; A slash that requires an argument typed with
-                             ;; none (e.g. `/draft new`): pop a text-input for
-                             ;; it, then run the slash with the value. Cancel
-                             ;; (Esc) just clears the editor.
+                             ;; none: pop a text-input for it, then run the
+                             ;; slash with the value. Cancel (Esc) just clears
+                             ;; the editor.
                              (prompt-arg-slash-for-input state)
                              (let [{:keys [slash-text prompt]} (prompt-arg-slash-for-input state)]
                                (when-not (:dialog-open? @state/app-db)

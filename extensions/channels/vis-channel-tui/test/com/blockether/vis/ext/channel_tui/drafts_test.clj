@@ -106,4 +106,23 @@
       (expect (= {:label "wire-rework" :clean? true}
                  (drafts/draft-spec {:start-in :draft :clean? true} "wire-rework")))
       (expect (nil? (drafts/draft-spec {:start-in :draft} "   ")))
-      (expect (nil? (drafts/draft-spec {:start-in :draft} nil)))))
+      (expect (nil? (drafts/draft-spec {:start-in :draft} nil))))
+  (it "every `/draft …` question is answered by the band, not by a modal prompt"
+      ;; `/draft new` popped a text-input window for the label; it IS the band's
+      ;; own `d` key now, pre-pressed, and `/draft` itself is the band.
+      (expect (= {:pressed nil} (drafts/slash-band ["draft"])))
+      (expect (= {:pressed :new-dirty} (drafts/slash-band ["draft" "new"])))
+      (expect (= {:pressed :new-clean} (drafts/slash-band ["draft" "clean"])))
+      (expect (= {:pressed :switch} (drafts/slash-band ["draft" "resume"])))
+      (expect (= {:pressed :switch} (drafts/slash-band ["draft" "list"])))
+      (expect (= {:pressed :abandon} (drafts/slash-band ["draft" "abandon"])))
+      ;; A line that already carries its own answer runs as the engine slash it
+      ;; is, and so do the two verbs with nothing to ask.
+      (expect (nil? (drafts/slash-band ["draft" "new" "wire-rework"])))
+      (expect (nil? (drafts/slash-band ["draft" "resume" "wire-rework"])))
+      (expect (nil? (drafts/slash-band ["draft" "apply"])))
+      (expect (nil? (drafts/slash-band ["draft" "stash"])))
+      (expect (nil? (drafts/slash-band ["export"])))
+      ;; Every command a slash names is a command the band actually offers.
+      (expect (every? #(tr/item-by-id (drafts/spec sample) (:pressed (drafts/slash-band %)))
+                      [["draft" "new"] ["draft" "clean"] ["draft" "resume"] ["draft" "abandon"]]))))

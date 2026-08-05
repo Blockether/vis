@@ -1037,7 +1037,7 @@
       (expect (str/includes? inactive-label "-"))
       (expect (str/includes? inactive-label "Untitled session"))))
   (it
-    "the draft band is a TRANSIENT: one key per verb, the name typed on its own hint row"
+    "the draft band is a TRANSIENT: one key per verb, and a `/draft …` slash is one of them already pressed"
     ;; Drafts used to be a modal picker, then a text-input modal, then a confirm
     ;; modal — three windows stacked over the very session the draft belongs to.
     ;; It is one band inside the session's frame now, exactly like the HITL form.
@@ -1051,27 +1051,50 @@
          (KeyStroke. (Character/valueOf (char c)) false false false))
 
        band!
-       (fn [keys]
+       ;; `pressed` is the band command a slash already named; nil is the band
+       ;; opening as itself and reading every key from the human.
+       (fn [rows pressed keys]
          (let
            [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
            (try (doseq [k keys]
                   (.addInput terminal k))
-                (dlg/draft-transient! screen 1 drafts)
+                (dlg/draft-transient! screen 1 rows pressed)
                 (finally (.stopScreen screen)))))]
 
       ;; Switching is its OWN command: `s` opens a second band over the same
       ;; rows, where a parked draft carries its own key — no cursor, no Enter.
       (expect (= {:action :draft :workspace-id "ws-b" :label "feature-b" :current? false}
-                 (band! [(ch \s) (ch \b)])))
+                 (band! drafts nil [(ch \s) (ch \b)])))
       ;; `t` is always trunk, and it knows that is not where we are.
-      (expect (= {:action :trunk :label "Trunk" :current? false} (band! [(ch \s) (ch \t)])))
+      (expect (= {:action :trunk :label "Trunk" :current? false}
+                 (band! drafts nil [(ch \s) (ch \t)])))
       ;; Creating is two commands rather than a command plus an armed flag:
       ;; `c` forks the committed HEAD, `d` carries the working tree along, and
       ;; either way the name is read INLINE on the hint row.
       (expect (= {:action :new :clean? true :label "wire-rework"}
-                 (band! (concat [(ch \c)] (map ch "wire-rework") [(KeyStroke. KeyType/Enter)]))))
+                 (band! drafts
+                        nil
+                        (concat [(ch \c)] (map ch "wire-rework") [(KeyStroke. KeyType/Enter)]))))
       (expect (= {:action :new :clean? false :label "wire-rework"}
-                 (band! (concat [(ch \d)] (map ch "wire-rework") [(KeyStroke. KeyType/Enter)]))))))
+                 (band! drafts
+                        nil
+                        (concat [(ch \d)] (map ch "wire-rework") [(KeyStroke. KeyType/Enter)]))))
+      ;; `/draft new` used to pop a text-input WINDOW for the label. It is the
+      ;; band's own `d`, already pressed: same band, same inline question, no
+      ;; keystroke to repeat.
+      (expect
+        (= {:action :new :clean? false :label "wire-rework"}
+           (band! drafts :new-dirty (concat (map ch "wire-rework") [(KeyStroke. KeyType/Enter)]))))
+      (expect
+        (= {:action :new :clean? true :label "wire-rework"}
+           (band! drafts :new-clean (concat (map ch "wire-rework") [(KeyStroke. KeyType/Enter)]))))
+      (expect (= {:action :draft :workspace-id "ws-b" :label "feature-b" :current? false}
+                 (band! drafts :switch [(ch \b)])))
+      ;; A command the band does not offer right now (`/draft resume` with no
+      ;; drafts) opens the band itself rather than firing something the human
+      ;; was never shown — `c` still means `c`.
+      (expect (= {:action :new :clean? true :label "x"}
+                 (band! [] :switch (concat [(ch \c)] (map ch "x") [(KeyStroke. KeyType/Enter)]))))))
   (it "command palette exposes the frequent app verbs; Providers is the provider/settings hub"
       (let
         [palette-commands

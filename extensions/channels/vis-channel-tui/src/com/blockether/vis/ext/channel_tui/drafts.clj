@@ -212,3 +212,35 @@
                      str/trim
                      not-empty)]
       {:label label :clean? (boolean (:clean? choice))})))
+
+;;; ── The `/draft …` slashes are the same band ────────────────────────────────
+
+(def ^:private slash-bands
+  "PURE: which band command each `/draft …` line already named. A slash that
+   asks a question the band asks is answered BY the band, inside the session's
+   own frame, instead of by a modal text prompt: `new` carries the working tree
+   in (`d`), `clean` forks the committed HEAD (`c`), `resume` and `list` are the
+   switch band, `abandon` is the abandon flow, and a bare `/draft` is the band
+   itself.
+
+   `/draft apply` and `/draft stash` are deliberately absent: they are verbs
+   with nothing to ask, so they stay engine slashes and run as typed."
+  {["draft"] nil
+   ["draft" "new"] :new-dirty
+   ["draft" "clean"] :new-clean
+   ["draft" "resume"] :switch
+   ["draft" "list"] :switch
+   ["draft" "abandon"] :abandon})
+
+(defn slash-band
+  "PURE: `{:pressed id-or-nil}` when the typed slash `path` is a question this
+   band answers — `:pressed` is the band command the slash already named (the
+   key the human would otherwise have pressed), nil the band itself.
+
+   nil when the line is not one of those: anything that is not `/draft`, and
+   every `/draft <cmd> <arg>` — slash tokenising keeps the argument in the path,
+   so a line that already carries its own answer runs as the engine slash it
+   is."
+  [path]
+  (when-let [entry (find slash-bands (vec path))]
+    {:pressed (val entry)}))

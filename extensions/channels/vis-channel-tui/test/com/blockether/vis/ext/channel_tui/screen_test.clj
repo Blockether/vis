@@ -1781,3 +1781,36 @@
       (expect (= [node-id node-id] [(hit-at first-body-row) (hit-at last-body-row)]))
       ;; And the fix did not slide the targets down onto the summary row.
       (expect (nil? (hit-at summary-row))))))
+
+;; ---------------------------------------------------------------------------
+;; A `/draft …` line asks exactly what the draft band asks, so the BAND answers
+;; it — inside the session's own frame, with the command the slash named already
+;; pressed. Typing `/draft new` and pressing `d` on the band are one path now;
+;; the modal text-input window that used to read the label is gone.
+;; ---------------------------------------------------------------------------
+
+(defdescribe draft-slash-band-test
+             (it "a `/draft …` line opens the band, on the command it already named"
+                 (let
+                   [band
+                    (var-get #'screen/draft-slash-for-input)
+
+                    typed
+                    #(band (reduce input/insert-char (input/empty-input) (seq %)))]
+
+                   (expect (= {:pressed nil} (typed "/draft")))
+                   (expect (= {:pressed :new-dirty} (typed "/draft new")))
+                   ;; Completing the slash from the overlay leaves a trailing space.
+                   (expect (= {:pressed :new-dirty} (typed "/draft new ")))
+                   (expect (= {:pressed :new-clean} (typed "/draft clean")))
+                   (expect (= {:pressed :switch} (typed "/draft resume")))
+                   (expect (= {:pressed :switch} (typed "/draft list")))
+                   (expect (= {:pressed :abandon} (typed "/draft abandon")))
+                   ;; A line that carries its own answer, and the two verbs with nothing
+                   ;; to ask, run as the engine slashes they are — the band would have no
+                   ;; question left to put.
+                   (expect (nil? (typed "/draft new feature-x")))
+                   (expect (nil? (typed "/draft apply")))
+                   (expect (nil? (typed "/draft stash")))
+                   (expect (nil? (typed "/export")))
+                   (expect (nil? (typed "hello"))))))

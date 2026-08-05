@@ -6261,6 +6261,15 @@
 
 ;;; ── Command palette ─────────────────────────────────────────────────────────
 
+(defn- band-frame!
+  "Paint ONE frame of a band that will never read a key. A slash already said
+   which command it is, so the band is the FRAME its follow-up question is asked
+   in — the title, the rows and the hint bar the human would have seen — and not
+   a menu to pick from."
+  [{:keys [refresh!] :as host} region spec]
+  (tr/paint! host region spec {:switches #{} :options {}})
+  (refresh!))
+
 (defn session-band!
   "Run ONE transient as a magit BAND inside the LIVE SESSION frame — the same
    in-frame band the human-input form and the magit status buffer use, painted
@@ -6276,35 +6285,45 @@
    produced an action, on the band's own rows: that is where an inline
    minibuffer (`magit-mini-read!`, `magit-mini-choose!`, `magit-mini-confirm!`)
    asks its follow-up question, on the hint row, instead of opening a modal.
-   Returns `f`'s value, or nil on Esc."
-  [^TerminalScreen screen content-top spec f]
-  (let
-    [size
-     (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+   Returns `f`'s value, or nil on Esc.
 
-     cols
-     (.getColumns size)
+   `pressed` is that action ALREADY chosen — a slash that names one command of
+   this band (`/draft new`) is exactly that key, pre-pressed, so the band paints
+   itself and goes straight to the question instead of waiting for a keystroke
+   the human already typed."
+  ([^TerminalScreen screen content-top spec f] (session-band! screen content-top spec f nil))
+  ([^TerminalScreen screen content-top spec f pressed]
+   (let
+     [size
+      (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-     rows
-     (.getRows size)
+      cols
+      (.getColumns size)
 
-     g
-     (.newTextGraphics screen)
+      rows
+      (.getRows size)
 
-     restore!
-     (frame-restorer screen)
+      g
+      (.newTextGraphics screen)
 
-     region
-     (assoc (tr/band-region cols rows (or content-top 1)) :restore! restore!)
+      restore!
+      (frame-restorer screen)
 
-     host
-     (transient-host screen g)]
+      region
+      (assoc (tr/band-region cols rows (or content-top 1)) :restore! restore!)
 
-    (try (when-let [result (tr/run! host region spec)]
-           (f {:screen screen :g g :region region :result result}))
-         (finally (when restore! (restore!))
-                  (.setCursorPosition screen nil)
-                  (.refresh screen Screen$RefreshType/DELTA)))))
+      host
+      (transient-host screen g)]
+
+     (try (when-let
+            [result (if pressed
+                      (do (band-frame! host region spec)
+                          {:action pressed :switches #{} :options {}})
+                      (tr/run! host region spec))]
+            (f {:screen screen :g g :region region :result result}))
+          (finally (when restore! (restore!))
+                   (.setCursorPosition screen nil)
+                   (.refresh screen Screen$RefreshType/DELTA))))))
 
 ;;; ── Questions a band asks on its OWN hint row ───────────────────────────────
 ;; `ctx` is what `session-band!` hands its `f`: the screen, its graphics and the
@@ -6411,9 +6430,21 @@
 
    Creating, switching and abandoning are three separate keys: `c`/`d` fork a
    draft and name it inline, `s` opens the switch band, `k` abandons one. No
-   step opens a window."
-  [^TerminalScreen screen content-top draft-rows]
-  (session-band! screen content-top (drafts/spec draft-rows) #(draft-band-choice % draft-rows)))
+   step opens a window.
+
+   `pressed` is one of those commands named by a SLASH instead of by a key
+   (`drafts/slash-band`): `/draft new` IS `d`, already pressed. A command this
+   band does not offer right now (`/draft resume` with no drafts) opens the band
+   itself rather than firing something the human was never shown."
+  ([^TerminalScreen screen content-top draft-rows]
+   (draft-transient! screen content-top draft-rows nil))
+  ([^TerminalScreen screen content-top draft-rows pressed]
+   (let [spec (drafts/spec draft-rows)]
+     (session-band! screen
+                    content-top
+                    spec
+                    #(draft-band-choice % draft-rows)
+                    (when (tr/item-by-id spec pressed) pressed)))))
 
 ;;; ── Where a NEW session starts ──────────────────────────────────────────────
 
