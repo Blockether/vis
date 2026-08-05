@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   creatableMachines,
-  dirtyFirst,
+  pageSessions,
   draftsRead,
   draftsReadKey,
   fleetError,
@@ -20,6 +20,7 @@ import {
   sessionIsEmpty,
   sessionIsListed,
   sessionIsPeeked,
+  sessionOrder,
   showsScopeStrip,
   startAsk,
   START_IDLE,
@@ -246,9 +247,12 @@ describe('dirty sessions', () => {
   });
 
   it('lists a dirty session and keeps hiding the abandoned taps', () => {
-    expect(sessionIsListed(fresh(), true)).toBe(true);
-    expect(sessionIsListed(fresh(), false)).toBe(false);
-    expect(sessionIsListed(fresh({ title: 'Named' }), false)).toBe(true);
+    expect(sessionIsListed(fresh(), { hasDraftMessage: true, isFavorite: false })).toBe(true);
+    expect(sessionIsListed(fresh(), { hasDraftMessage: false, isFavorite: false })).toBe(false);
+    expect(sessionIsListed(fresh(), { hasDraftMessage: false, isFavorite: true })).toBe(true);
+    expect(
+      sessionIsListed(fresh({ title: 'Named' }), { hasDraftMessage: false, isFavorite: false }),
+    ).toBe(true);
   });
 });
 
@@ -267,8 +271,19 @@ describe('sessionIsPeeked', () => {
     session('s1', { modified_at: new Date(now - ms).toISOString(), ...extra });
   const peek = (
     row: Session,
-    flags: Partial<{ isUnread: boolean; hasUnsentDraft: boolean }> = {},
-  ): boolean => sessionIsPeeked(row, now, { isUnread: false, hasUnsentDraft: false, ...flags });
+    flags: Partial<{ isUnread: boolean; hasUnsentDraft: boolean; isFavorite: boolean }> = {},
+  ): boolean =>
+    sessionIsPeeked(row, now, {
+      isUnread: false,
+      hasUnsentDraft: false,
+      isFavorite: false,
+      ...flags,
+    });
+
+  it('never hides a session the human starred, however old it is', () => {
+    expect(peek(aged(400 * 24 * HOUR))).toBe(false);
+    expect(peek(aged(400 * 24 * HOUR), { isFavorite: true })).toBe(true);
+  });
 
   it('never hides an unread answer, however old the session is', () => {
     expect(peek(aged(5 * HOUR), { isUnread: true })).toBe(true);
@@ -313,23 +328,90 @@ describe('showsScopeStrip', () => {
 });
 
 // Unsent work lives on THIS device only, and the session holding it is usually
-// empty — bottom of every timestamp order there is. So it is pinned to the top
-// of the list instead, or you never see it again.
-describe('dirtyFirst', () => {
+// empty, so it sorts below everything else there is. So it is pinned to the top
+// of the list instead, or you never see it again. A STAR is stronger still: it is
+// the one piece of ordering the human typed in themselves, so it outranks live,
+// unread, unsent and age, and the starred band must come out the same way
+// however many stars there are, however the gateway happened to list them, and
+// whether or not the engine's sort is stable.
+describe('sessionOrder', () => {
+  const order = (
+    rows: Session[],
+    stars: Record<string, number> = {},
+    dirty: Set<string> = new Set<string>(),
+  ): string[] =>
+    sessionOrder(rows, {
+      favoriteRank: (row) => stars[row.id] ?? null,
+      hasDraftMessage: (row) => dirty.has(row.id),
+    }).map((row) => row.id);
+
   it('floats the rows holding unsent work, keeping the gateway order inside each half', () => {
     const rows = [session('a'), session('b'), session('c'), session('d')];
-    const holding = new Set(['b', 'd']);
-    expect(dirtyFirst(rows, (row) => holding.has(row.id)).map((row) => row.id)).toEqual([
-      'b',
-      'd',
-      'a',
-      'c',
+    expect(order(rows, {}, new Set(['b', 'd']))).toEqual(['b', 'd', 'a', 'c']);
+  });
+
+  it('leaves a list with nothing starred and nothing unsent exactly as it came', () => {
+    const rows = [session('a'), session('b')];
+    expect(
+      sessionOrder(rows, { favoriteRank: () => null, hasDraftMessage: () => false }),
+    ).toBe(rows);
+  });
+
+  it('pins the stars above unsent work, in the order they were starred', () => {
+    const rows = [session('a'), session('b'), session('c'), session('d')];
+    expect(order(rows, { d: 1, b: 2 }, new Set(['c']))).toEqual(['d', 'b', 'c', 'a']);
+  });
+
+  it('orders the starred band identically however the gateway listed it', () => {
+    const rows = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => session(id));
+    const stars = { e: 3, a: 1, c: 2 };
+    expect(order(rows, stars)).toEqual(['a', 'c', 'e', 'b', 'd', 'f']);
+    expect(order([...rows].reverse(), stars).slice(0, 3)).toEqual(['a', 'c', 'e']);
+  });
+
+  it('never reshuffles the stars already there when one more is added', () => {
+    const rows = Array.from({ length: 12 }, (_, i) => session(`s${i}`));
+    const stars: Record<string, number> = {};
+    const bands: string[][] = [];
+    for (const [rank, id] of ['s7', 's2', 's9', 's0', 's5'].entries()) {
+      stars[id] = rank + 1;
+      bands.push(order(rows, stars).slice(0, rank + 1));
+    }
+    expect(bands).toEqual([
+      ['s7'],
+      ['s7', 's2'],
+      ['s7', 's2', 's9'],
+      ['s7', 's2', 's9', 's0'],
+      ['s7', 's2', 's9', 's0', 's5'],
     ]);
   });
 
-  it('leaves a list with nothing unsent exactly as it came', () => {
-    const rows = [session('a'), session('b')];
-    expect(dirtyFirst(rows, () => false)).toBe(rows);
+  it('breaks a shared rank by id, so two runs can never disagree', () => {
+    const rows = [session('b'), session('a')];
+    expect(order(rows, { a: 4, b: 4 })).toEqual(['a', 'b']);
+  });
+});
+
+// Paging shortens a long list, and "show more" must never be the thing that hides
+// a favorite: stars sort to the front of their own machine, but a project group
+// concatenates machines, so a star CAN land past the page boundary.
+describe('pageSessions', () => {
+  const rows = ['a', 'b', 'c', 'd', 'e'].map((id) => session(id));
+
+  it('returns the list untouched when it fits', () => {
+    expect(pageSessions(rows, 5, () => false)).toBe(rows);
+  });
+
+  it('cuts to the page when nothing starred is below it', () => {
+    expect(pageSessions(rows, 2, () => false).map((row) => row.id)).toEqual(['a', 'b']);
+  });
+
+  it('keeps the stars the cut would have eaten, after the page', () => {
+    expect(pageSessions(rows, 2, (row) => row.id === 'e').map((row) => row.id)).toEqual([
+      'a',
+      'b',
+      'e',
+    ]);
   });
 });
 
@@ -452,7 +534,9 @@ describe('projectDelete', () => {
       session('named', { project_id: 'p1' }),
       { id: 'hidden', title: '', project_id: 'p1' } as Session,
     ];
-    expect(rows.filter((row) => sessionIsListed(row, false))).toHaveLength(1);
+    expect(
+      rows.filter((row) => sessionIsListed(row, { hasDraftMessage: false, isFavorite: false })),
+    ).toHaveLength(1);
     expect(projectDelete(rows).sessionIds).toEqual(['named', 'hidden']);
   });
 });

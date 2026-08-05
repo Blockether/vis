@@ -123,3 +123,22 @@ export function TrashIcon() {
     </svg>
   );
 }
+
+/**
+ * The favorite mark. Filled is "starred": the outline alone is too quiet to
+ * read at a glance in a list, and the swipe action needs to show both states.
+ */
+export function StarIcon({ filled = false }: { filled?: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      className={`size-4 stroke-current stroke-[1.4] ${filled ? 'fill-current' : 'fill-none'}`}
+    >
+      <path
+        d="M8 1.9l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.7l-3.8 2 .7-4.3-3.1-3 4.3-.6z"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

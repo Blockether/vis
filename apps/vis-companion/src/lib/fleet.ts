@@ -206,17 +206,19 @@ export const RECENT_WINDOW_MS = 60 * 60 * 1000;
  *
  * Collapsing is a way to shorten HISTORY, so age may only ever hide a session
  * that is finished, answered and READ. Anything else stays, whatever its clock
- * says: a session with a turn running, a session suspended waiting for the human
- * to answer, an unread answer that landed while the app was shut — that badge is
- * what the notification was about, and hiding the only row carrying it an hour
- * later loses the work — and unsent words, which exist on THIS device alone and
- * cannot be recovered from any other machine.
+ * says: a STARRED session, which is a human's own decision and outranks every
+ * heuristic here; a session with a turn running, a session suspended waiting
+ * for the human to answer, an unread answer that landed while the app was shut
+ * — that badge is what the notification was about, and hiding the only row
+ * carrying it an hour later loses the work — and unsent words, which exist on
+ * THIS device alone and cannot be recovered from any other machine.
  */
 export function sessionIsPeeked(
   session: Session,
   now: number,
-  flags: { isUnread: boolean; hasUnsentDraft: boolean },
+  flags: { isUnread: boolean; hasUnsentDraft: boolean; isFavorite: boolean },
 ): boolean {
+  if (flags.isFavorite) return true;
   if (sessionIsLive(session) || session.status === 'suspended') return true;
   if (flags.isUnread || flags.hasUnsentDraft) return true;
   const millis = sessionActivityMillis(session);
@@ -244,34 +246,87 @@ export function sessionIsEmpty(session: Session): boolean {
   );
 }
 
+/** Bands of the list order, best first. Every row is in exactly one. */
+const FAVORITE_BAND = 0;
+const DIRTY_BAND = 1;
+const REST_BAND = 2;
+
 /**
- * Unsent work FIRST, everything else in the order the gateway sent.
+ * Starred work FIRST, then unsent work, then the order the gateway sent.
+ *
+ * A star is the one piece of ordering the human typed in themselves, so it wins
+ * outright: a favorite sits on top whether it is live, unread, or a year cold.
  *
  * A draft message lives on THIS device only: the fleet cannot remind you about
  * it from another machine, and the session holding it is usually empty, so it
- * sorts to the bottom of every timestamp order there is. So it goes on top —
- * stably, so the canonical live-first order survives inside each half.
+ * sorts to the bottom of every timestamp order there is. So it goes above the
+ * rest.
+ *
+ * The order is TOTAL and does not lean on `Array#sort` being stable: favorites
+ * compare by the rank they were starred with, then by id, and everything else
+ * by its incoming position. So the same sessions always paint in the same
+ * order, however many stars there are, whatever order the gateway listed them
+ * in, and whichever engine runs the sort.
  */
-export function dirtyFirst(
+export function sessionOrder(
   sessions: Session[],
-  hasDraftMessage: (session: Session) => boolean,
+  rank: {
+    favoriteRank: (session: Session) => number | null;
+    hasDraftMessage: (session: Session) => boolean;
+  },
 ): Session[] {
-  const dirty: Session[] = [];
-  const rest: Session[] = [];
-  for (const session of sessions) {
-    (hasDraftMessage(session) ? dirty : rest).push(session);
-  }
-  return dirty.length === 0 ? sessions : [...dirty, ...rest];
+  const rows = sessions.map((session, index) => {
+    const pin = rank.favoriteRank(session);
+    const band = pin !== null
+      ? FAVORITE_BAND
+      : rank.hasDraftMessage(session)
+        ? DIRTY_BAND
+        : REST_BAND;
+    return { session, index, band, pin: pin ?? 0 };
+  });
+  if (rows.every((row) => row.band === REST_BAND)) return sessions;
+  rows.sort((a, b) => {
+    if (a.band !== b.band) return a.band - b.band;
+    if (a.band === FAVORITE_BAND) {
+      if (a.pin !== b.pin) return a.pin - b.pin;
+      if (a.session.id !== b.session.id) return a.session.id < b.session.id ? -1 : 1;
+    }
+    return a.index - b.index;
+  });
+  return rows.map((row) => row.session);
+}
+
+/**
+ * The first `size` rows, plus every starred row the cut would have eaten.
+ *
+ * Paging shortens a long list, and "show more" must never be the thing that
+ * hides a favorite. Starred rows sort to the front of their own machine, but a
+ * project group concatenates machines, so a star on a second gateway can still
+ * land past the page boundary.
+ */
+export function pageSessions(
+  sessions: Session[],
+  size: number,
+  isFavorite: (session: Session) => boolean,
+): Session[] {
+  if (sessions.length <= size) return sessions;
+  const kept = sessions.slice(size).filter(isFavorite);
+  const head = sessions.slice(0, size);
+  return kept.length === 0 ? head : [...head, ...kept];
 }
 
 /**
  * Rows the list paints. An empty session earns its place only by holding unsent
- * work: that keeps abandoned "New session" taps out of the list without stranding
- * what you typed — hiding those rows left no way back to the words and no way to
- * delete the session holding them.
+ * work or a star: that keeps abandoned "New session" taps out of the list
+ * without stranding what you typed — hiding those rows left no way back to the
+ * words and no way to delete the session holding them — and a session you
+ * starred yourself is never hidden for being quiet.
  */
-export function sessionIsListed(session: Session, hasDraftMessage: boolean): boolean {
-  return !sessionIsEmpty(session) || hasDraftMessage;
+export function sessionIsListed(
+  session: Session,
+  flags: { hasDraftMessage: boolean; isFavorite: boolean },
+): boolean {
+  return !sessionIsEmpty(session) || flags.hasDraftMessage || flags.isFavorite;
 }
 
 /**

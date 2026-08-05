@@ -31,7 +31,7 @@ import {
   topVisibleRow,
   type ListAnchor,
 } from '../lib/list-scroll';
-import { PencilIcon, SwipeActions, TrashIcon } from '../components/SwipeActions';
+import { PencilIcon, StarIcon, SwipeActions, TrashIcon } from '../components/SwipeActions';
 import { DEFAULT_SESSION_PAGE_SIZE, getSessionsPerPage, subscribeSessionsPerPage } from '../lib/storage';
 import { hostOf } from '../lib/endpoints';
 import {
@@ -45,8 +45,9 @@ import {
   type DraftMessageStore,
 } from '../lib/draft-messages';
 import type { PendingAttachment } from '../lib/attachments';
+import { favoriteKey, forgetFavorites, toggleFavorite, useFavorites } from '../lib/favorites';
 import {
-  dirtyFirst,
+  pageSessions,
   draftsRead,
   draftsReadKey,
   fleetError,
@@ -64,6 +65,7 @@ import {
   sessionIsListed,
   sessionIsLive,
   sessionIsPeeked,
+  sessionOrder,
   RECENT_WINDOW_MS,
   showsScopeStrip,
   isDraftWorkspace,
@@ -274,6 +276,8 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   // what you wrote, and a way to throw it away — instead of being hidden with
   // the words locked inside it.
   const draftMessages = useDraftMessages();
+  // Stars outrank every heuristic below, so the list repaints when one moves.
+  const favorites = useFavorites();
 
   // A session this device has never met is NOT unread: seed it at the turn count
   // it arrived with, so only answers that land AFTER this point raise a badge.
@@ -501,9 +505,14 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
     return inScope.map((machine) => {
       const base = clientFor(machine.conn).base;
       const draftFor = (session: Session) => draftMessages[draftMessageKey(base, session.id)];
+      const rankFor = (session: Session) => favorites[favoriteKey(base, session.id)] ?? null;
       const sessions = (machine.sessions ?? []).filter((session) => {
         const draft = draftFor(session);
-        if (!sessionIsListed(session, draftMessageHasUnsent(draft))) return false;
+        const listed = sessionIsListed(session, {
+          hasDraftMessage: draftMessageHasUnsent(draft),
+          isFavorite: rankFor(session) !== null,
+        });
+        if (!listed) return false;
         return (
           !needle ||
           sessionSearchText(session).includes(needle) ||
@@ -514,14 +523,17 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
           matches?.has(session.id) === true
         );
       });
-      // Unsent work floats to the top of its machine, and with it the project
-      // group that owns it: see `dirtyFirst`.
+      // Starred rows first, then unsent work, and with them the project group that
+      // owns them: see `sessionOrder`.
       return {
         machine,
-        sessions: dirtyFirst(sessions, (session) => draftMessageHasUnsent(draftFor(session))),
+        sessions: sessionOrder(sessions, {
+          favoriteRank: rankFor,
+          hasDraftMessage: (session) => draftMessageHasUnsent(draftFor(session)),
+        }),
       };
     });
-  }, [inScope, deferredQuery, matches, draftMessages]);
+  }, [inScope, deferredQuery, matches, draftMessages, favorites]);
 
   // A filter is a FLEET question: it runs on every machine in scope, so the header
   // reports what came back and from how many of them.
@@ -819,9 +831,11 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
     if (!rowAction) return;
     const api = clientFor(rowAction.conn);
     // The words that made a row dirty die with it: a draft message kept under a
-    // session id that no longer exists is unreachable forever.
+    // session id that no longer exists is unreachable forever, and a star on a
+    // session nobody can open is the same litter.
     const forgetDrafts = (ids: string[]) => {
       for (const sid of ids) clearDraftMessage(draftMessageKey(api.base, sid));
+      forgetFavorites(ids.map((sid) => favoriteKey(api.base, sid)));
       if (ids.length > 0) void flushDraftMessages();
     };
     const title = renameDraft.trim();
@@ -1638,18 +1652,24 @@ const ProjectGroup = memo(function ProjectGroup({
   // that is idle, answered and read leaves the collapsed peek on its own, no refresh
   // needed.
   const now = useNow(RECENT_WINDOW_MS / 60);
+  const favorites = useFavorites();
+  const isFavorite = useCallback(
+    (session: Session) => favoriteKey(base, session.id) in favorites,
+    [base, favorites],
+  );
   const collapsedSessions = useMemo(
     () =>
       sessions.filter((session) =>
         sessionIsPeeked(session, now, {
           isUnread: unreadTurnCount(session) > 0,
           hasUnsentDraft: draftMessageHasUnsent(drafts[draftMessageKey(base, session.id)]),
+          isFavorite: isFavorite(session),
         }),
       ),
     // `readMarks` is the store version: marks move outside React, and a row that
     // survives collapsing only because it is UNREAD has to leave the peek on the
     // paint that reads it.
-    [sessions, now, drafts, base, readMarks],
+    [sessions, now, drafts, base, readMarks, isFavorite],
   );
 
   // Expanded pages its own history in place; collapsing exposes the live few plus
@@ -1659,8 +1679,11 @@ const ProjectGroup = memo(function ProjectGroup({
     setShown(pageSize);
   }, [pageSize]);
 
-  const rows = isOpen ? sessions.slice(0, shown) : collapsedSessions.slice(0, pageSize);
-  const remaining = isOpen ? Math.max(0, sessions.length - shown) : 0;
+  // A star is never paged away: whichever page it fell on, `pageSessions` keeps it.
+  const rows = isOpen
+    ? pageSessions(sessions, shown, isFavorite)
+    : pageSessions(collapsedSessions, pageSize, isFavorite);
+  const remaining = isOpen ? Math.max(0, sessions.length - rows.length) : 0;
 
   return (
     <>
@@ -1845,6 +1868,9 @@ const SessionRow = memo(function SessionRow({
     setStatsMounted(true);
     setStatsOpen((open) => !open);
   }, []);
+  const favorites = useFavorites();
+  const starKey = favoriteKey(clientFor(conn).base, session.id);
+  const isStarred = starKey in favorites;
   // A draft is a per-session clone of the project; the row says so instead of
   // the list inventing a project for it.
   const draftName = isDraftWorkspace(session) ? session.workspace?.label?.trim() : '';
@@ -1854,6 +1880,12 @@ const SessionRow = memo(function SessionRow({
       <SwipeActions
         label={title}
         actions={[
+          {
+            key: 'favorite',
+            label: isStarred ? 'Unstar' : 'Star',
+            icon: <StarIcon filled={isStarred} />,
+            onSelect: () => toggleFavorite(starKey),
+          },
           {
             key: 'rename',
             label: 'Rename',
@@ -1899,6 +1931,12 @@ const SessionRow = memo(function SessionRow({
         >
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-start justify-between gap-3">
+            {isStarred && (
+              <span className="mt-px shrink-0 text-accent-ink">
+                <StarIcon filled />
+                <span className="sr-only">Favorite</span>
+              </span>
+            )}
             <span
               className={`block min-w-0 truncate font-mono text-ui font-semibold ${
                 session.title?.trim() ? 'text-white' : 'text-white/45'
