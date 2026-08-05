@@ -2054,3 +2054,115 @@
                                       (= "MODEL-ONLY" (slurp (:body response))))]
 
                           idx))))))))))
+
+;; The session-creation UX picks a workspace root by RECOGNITION, so the gateway
+;; has to be able to show the machine's own folders. `/v1/fs` is that surface and
+;; nothing more: directories only, the two facts a chooser reads (how much is in
+;; it, which branch it has out), and `~` meaning the GATEWAY user's home.
+(defn- fs-child
+  ^java.io.File [^java.io.File dir & segments]
+  (reduce (fn [^java.io.File f seg]
+            (java.io.File. f (str seg)))
+          dir
+          segments))
+
+(defn- fs-temp-root
+  ^java.io.File []
+  (let
+    [dir (.toFile (java.nio.file.Files/createTempDirectory
+                    "vis-fs-test"
+                    (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (.deleteOnExit dir)
+    dir))
+
+(deftest browse-fs-shows-only-folders-and-names-the-repos
+  (let
+    [root
+     (fs-temp-root)
+
+     _
+     (run! #(.mkdir (fs-child root %)) ["beta" "alpha" ".hidden"])
+
+     _
+     (spit (fs-child root "readme.txt") "a file is not a folder")
+
+     _
+     (.mkdir (fs-child root "alpha" ".git"))
+
+     _
+     (spit (fs-child root "alpha" ".git" "HEAD") "ref: refs/heads/main\n")
+
+     listing
+     (wire/parse-json (:body ((rv 'browse-fs-handler)
+                               {:query-params {"path" (.getAbsolutePath root)}})))
+
+     entries
+     (get listing "entries")]
+
+    (testing
+      "a listing is the directories inside the path, alphabetical, dotfolders and files dropped"
+      (is (= ["alpha" "beta"] (mapv #(get % "name") entries)))
+      (is (= (.getAbsolutePath root) (get listing "path")))
+      (is (= (.getAbsolutePath (.getParentFile root)) (get listing "parent")))
+      (is (= (System/getProperty "user.home") (get listing "home")))
+      (is (false? (get listing "is_truncated"))))
+    (testing "a worktree carries its branch, a plain folder carries none"
+      (let
+        [alpha
+         (first entries)
+
+         beta
+         (second entries)]
+
+        (is (true? (get alpha "is_repo")))
+        (is (= "main" (get alpha "branch")))
+        (is (= 1 (get alpha "entry_count")))
+        (is (false? (get beta "is_repo")))
+        (is (nil? (get beta "branch")))))
+    (testing "`~` and a blank path both mean the gateway user's home, never the phone's"
+      (is (= (System/getProperty "user.home")
+             (get (wire/parse-json (:body ((rv 'browse-fs-handler) {:query-params {"path" "~"}})))
+                  "path")))
+      (is (= (System/getProperty "user.home")
+             (get (wire/parse-json (:body ((rv 'browse-fs-handler) {:query-params {}}))) "path"))))
+    (testing "a path that is not a directory is refused by name"
+      (let
+        [response ((rv 'browse-fs-handler)
+                    {:query-params {"path" (.getAbsolutePath (fs-child root "readme.txt"))}})]
+        (is (= 404 (:status response)))
+        (is (= "not-a-directory" (get-in (wire/parse-json (:body response)) ["error" "type"])))))))
+
+(deftest mkdir-creates-one-folder-where-the-picker-is-standing
+  (let
+    [root
+     (fs-temp-root)
+
+     made
+     ((rv 'create-directory-handler) (json-body {:path (.getAbsolutePath root) :name "gamma"}))
+
+     body
+     (wire/parse-json (:body made))]
+
+    (testing "the new folder answers as a listing row, so the picker can select it immediately"
+      (is (= 201 (:status made)))
+      (is (= "gamma" (get body "name")))
+      (is (= (.getAbsolutePath (fs-child root "gamma")) (get body "path")))
+      (is (false? (get body "is_repo")))
+      (is (.isDirectory (fs-child root "gamma"))))
+    (testing "creating it twice is not an error: the folder asked for exists"
+      (is (= 201
+             (:status ((rv 'create-directory-handler)
+                        (json-body {:path (.getAbsolutePath root) :name "gamma"}))))))
+    (testing "a name is ONE segment — a picker that accepts `a/../b` writes outside what it showed"
+      (doseq [name ["a/b" ".." "." "  " "x\\y"]]
+        (let
+          [response ((rv 'create-directory-handler)
+                      (json-body {:path (.getAbsolutePath root) :name name}))]
+          (is (= 400 (:status response)) (str "refuses " (pr-str name)))
+          (is (= "invalid-request" (get-in (wire/parse-json (:body response)) ["error" "type"]))))))
+    (testing "a parent that does not exist is a 404, not a silent mkdir -p"
+      (let
+        [response ((rv 'create-directory-handler)
+                    (json-body {:path (.getAbsolutePath (fs-child root "nowhere")) :name "delta"}))]
+        (is (= 404 (:status response)))
+        (is (= "not-a-directory" (get-in (wire/parse-json (:body response)) ["error" "type"])))))))

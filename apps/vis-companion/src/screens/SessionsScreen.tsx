@@ -32,8 +32,9 @@ import {
   type ListAnchor,
 } from '../lib/list-scroll';
 import { SwipeActions } from '../components/SwipeActions';
+import { SwitchProjectSheet } from '../components/SwitchProjectSheet';
 import { ChevronIcon, PencilIcon, StarIcon, TrashIcon } from '../components/icons';
-import { DEFAULT_SESSION_PAGE_SIZE, getSessionsPerPage, subscribeSessionsPerPage } from '../lib/storage';
+import { DEFAULT_SESSION_PAGE_SIZE, getOfferDrafts, getSessionsPerPage, subscribeOfferDrafts, subscribeSessionsPerPage } from '../lib/storage';
 import { hostOf } from '../lib/endpoints';
 import {
   clearDraftMessage,
@@ -78,6 +79,9 @@ import {
   startFlowName,
   startFlowOn,
   startFlowOpen,
+  startFlowStep,
+  startFlowBack,
+  machineProject,
   startFlowPick,
   type StartFlow,
   type FleetMachine,
@@ -190,6 +194,13 @@ function useNow(intervalMs: number): number {
  */
 const START_MENU_WIDTH = 320;
 
+/**
+ * The one question you cannot skip wears the Blockether yellow, and the menu spends
+ * that colour exactly once — every other band in it is quiet.
+ */
+const LOUD_BAND =
+  'border-b-2 border-warn-strong bg-accent px-3 py-2 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground';
+
 /** Width of the project-group kebab menu — must match the `sm:w-64` it paints itself at. */
 const PROJECT_MENU_WIDTH = 256;
 
@@ -212,9 +223,11 @@ interface Props {
   /** No machine is answering at all — the shell decides what to show instead. */
   onUnreachable?: (message: string | null) => void;
   onOpen: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
+  /** Open that machine's own settings — the last verb in its `⋯` menu. */
+  onMachineSettings?: (conn: GatewayConn) => void;
 }
 
-export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: Props) {
+export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, onMachineSettings }: Props) {
   // A machine OWNS its projects: every row belongs to exactly one gateway, and a
   // project only exists inside the machine it lives on. The fleet is therefore
   // one entry per paired machine, seeded from that machine's last known list so
@@ -242,11 +255,20 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   // forgets every answer in it. Portalled and viewport-anchored because the header
   // panel clips its overflow.
   const [startFlow, setStartFlow] = useState<StartFlow>(START_IDLE);
-  const startMenu = startFlow.step === 'menu' ? startFlow.at : null;
+  // The menu and its draft sub-question share one surface, so both anchor from the
+  // control the order started at. Browsing is NOT that surface: it takes the screen.
+  const startMenu =
+    startFlow.step === 'menu' || startFlow.step === 'drafts' ? startFlow.at : null;
+  const browseAt = startFlow.step === 'browse' ? startFlow.at : null;
   // Forking asks for the draft's name first: the gateway rejects a blank label, and
   // the name is what `/draft list` and every later resume will show.
   const namePrompt = startFlow.step === 'name' ? startFlow : null;
-  const startAnchorRef = useRef<HTMLButtonElement>(null);
+  // The control the open order hangs from — the fleet bar's `⋯` or one machine's own.
+  // It is an element and not a ref, because every machine header carries the control.
+  const startAnchorEl = useRef<HTMLElement | null>(null);
+  // Drafts are an expert move, off by default: with the switch off "New session" is
+  // one verb and the private-copy question is never asked. See Settings.
+  const [offerDrafts, setOfferDrafts] = useState(false);
   // One entry per machine+repo, kept across openings; see `forgetParkedDrafts`.
   const [draftsCache, setDraftsCache] = useState<
     Record<string, { rows: WorkspaceDraft[]; error: string | null }>
@@ -674,9 +696,28 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
     [targetMachine],
   );
   const draftRepo = draftProbe ? projectLabel(draftProbe) : '';
+  // Where that machine is working RIGHT NOW: the root of its most recent session.
+  // "New session" needs no question because of this — the machine has been somewhere.
+  const project = useMemo(() => machineProject(targetMachine), [targetMachine]);
+  // Every root that machine already runs sessions in, so the browse sheet can badge
+  // a folder the user has been in instead of making them recognise the path.
+  const knownRoots = useMemo(() => {
+    const roots = new Set<string>();
+    for (const session of targetMachine?.sessions ?? []) {
+      const root = projectPath(session);
+      if (root) roots.add(root);
+    }
+    return roots;
+  }, [targetMachine]);
 
-  // The read cares only WHETHER the menu is open, never where it is anchored.
-  const isStartMenuOpen = startMenu !== null;
+  useEffect(() => {
+    void getOfferDrafts().then(setOfferDrafts);
+    return subscribeOfferDrafts(setOfferDrafts);
+  }, []);
+
+  // The parked drafts are read for the question that OFFERS them, and for nothing
+  // else: the verb menu never waits on a list it does not show.
+  const isDraftsOpen = startFlow.step === 'drafts';
   // WHAT the picker reads, as a value with a string identity. The effect below
   // depends on that identity and reaches the value through a ref, so the objects
   // changing underneath it — a background poll replacing the machine and its
@@ -709,12 +750,26 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
     });
   }, []);
 
-  const openStartMenu = useCallback(() => {
-    const at = menuPosition(startAnchorRef.current?.getBoundingClientRect(), START_MENU_WIDTH);
-    // Re-anchoring an OPEN menu keeps the machine already picked: a resize is not an
-    // answer, and on a phone the keyboard fires one in the very tap that opens it.
-    setStartFlow((flow) => startFlowOpen(flow, at));
-  }, []);
+  /**
+   * Open the machine's menu under the control that was tapped — the fleet bar's `⋯`
+   * or one machine header's own. Passing `on` ANSWERS which machine at the same time,
+   * because a header can only ever mean its own gateway.
+   */
+  const openStartMenuAt = useCallback(
+    (anchor: HTMLElement | null, on: GatewayConn | null = null) => {
+      if (anchor) startAnchorEl.current = anchor;
+      const at = menuPosition(startAnchorEl.current?.getBoundingClientRect(), START_MENU_WIDTH);
+      setStartFlow((flow) => {
+        const opened = startFlowOpen(flow, at);
+        return on && opened.step === 'menu' ? startFlowPick(opened, on) : opened;
+      });
+    },
+    [],
+  );
+
+  // Re-anchoring an OPEN menu keeps every answer in it: a resize is not an answer, and
+  // on a phone the keyboard fires one in the very tap that opens it.
+  const openStartMenu = useCallback(() => openStartMenuAt(null), [openStartMenuAt]);
 
   // Leaving the order — tap outside, Escape, Cancel, or a session actually created
   // — forgets every answer in it, INCLUDING which machine. That machine used to
@@ -722,7 +777,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   // already set and created a session on it without asking a single question.
   const leaveStart = useCallback((restoreFocus = false) => {
     setStartFlow(START_IDLE);
-    if (restoreFocus) startAnchorRef.current?.focus();
+    if (restoreFocus) startAnchorEl.current?.focus();
   }, []);
 
   // Read the parked drafts ONCE per machine+repo, and again only after a fork or a
@@ -735,7 +790,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
   // the machine every few seconds. Depending on either aborted this request on the
   // frame it started, over and over, and the menu never left "Reading drafts...".
   useEffect(() => {
-    if (!isStartMenuOpen || isDraftsRead) return;
+    if (!isDraftsOpen || isDraftsRead) return;
     const source = draftsSourceRef.current;
     // That machine's first session list has not landed: keep reading, do not
     // answer "nothing parked" on behalf of a project we have not seen yet.
@@ -756,7 +811,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
         remember([], (cause as Error).message);
       });
     return () => controller.abort();
-  }, [isStartMenuOpen, isDraftsRead, draftsSourceKey]);
+  }, [isDraftsOpen, isDraftsRead, draftsSourceKey]);
 
   // An anchored popover whose anchor moved is a lie, so a resize RE-ANCHORS it to
   // the live caret; only a caret that has left the document closes it. Closing on
@@ -783,7 +838,11 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
    * the draft), so a failed fork must not leave a session sitting on trunk — the one
    * place the user said not to work. It has no turns yet, so it is taken back out.
    */
-  async function createSession(startIn: StartIn = { kind: 'trunk' }, on: GatewayConn | null = target) {
+  async function createSession(
+    startIn: StartIn = { kind: 'trunk' },
+    on: GatewayConn | null = target,
+    root?: string,
+  ) {
     // Several machines in scope: the app cannot guess which one should run this
     // session, so it asks instead of creating one somewhere arbitrary.
     if (!on) {
@@ -798,7 +857,9 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
     leaveStart();
     try {
       const api = clientFor(on);
-      const session = await api.createSession({});
+      // The machine's CURRENT project, or the one just browsed to. Absent only for a
+      // machine that has never run a session: the gateway then picks its own default.
+      const session = await api.createSession(root ? { root } : {});
       if (startIn.kind !== 'trunk') {
         try {
           if (startIn.kind === 'fork')
@@ -1077,63 +1138,26 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                 the session there. Scope one machine in the strip and the tap goes
                 straight through again.
 
-                ONE colour, both halves. The caret used to be painted in the dark
-                title-bar ink, and a dark slab bolted to an amber primary reads as
-                chrome that is switched off — people asked why the app ships a caret
-                it will not let them press. It is the same button, so it is the same
-                amber; only a hairline in the button's own ink says where the second
-                hit target starts. */}
-            <div className="flex shrink-0 items-stretch">
-              <Button
-                variant="solid"
-                pressEffect="none"
-                className="min-h-6 border-r-0 px-2 py-0.5 font-mono text-chip sm:min-h-6"
-                disabled={createBusy || machines.length === 0 || !!scopeMachine?.error}
-                aria-haspopup={scopeTarget ? undefined : 'menu'}
-                aria-label={
-                  scopeTarget && machines.length > 1
-                    ? `New session on ${machineLabel(scopeTarget)}`
-                    : 'New session'
-                }
-                title={
-                  scopeTarget && machines.length > 1 ? `New session on ${machineLabel(scopeTarget)}` : undefined
-                }
-                onClick={() => void createSession()}
-              >
-                {/* Same fixed-width stack as Refresh: "Creating..." is wider than
-                    "New" on a narrow phone, and this grid column is content-sized,
-                    so the busy state would otherwise shove the header text left. */}
-                <span className="grid justify-items-center">
-                  <span aria-hidden className="invisible col-start-1 row-start-1">Creating...</span>
-                  <span aria-live="polite" className="col-start-1 row-start-1">
-                    {createBusy ? (
-                      createBusyLabel
-                    ) : (
-                      <>
-                        New<span className="hidden min-[390px]:inline"> session</span>
-                      </>
-                    )}
-                  </span>
+                Everything a machine can do lives behind ONE control, so the bar does
+                not grow a verb per feature: `⋯` opens it, and with several machines
+                paired it asks WHICH machine before it offers anything at all.
+
+                Two kebabs can be on screen at once, so only the one the menu is
+                actually hanging from may report itself expanded: this one owns it
+                while the machine question is still open, and whenever the machine
+                headers (and their own kebabs) are absent. */}
+            <div className="flex shrink-0 items-center gap-2">
+              {createBusy && (
+                <span aria-live="polite" className="font-mono text-chip text-dialog-hint">
+                  {createBusyLabel}
                 </span>
-              </Button>
-              <Button
-                ref={startAnchorRef}
-                variant="solid"
-                pressEffect="none"
-                className="min-h-6 border-l-accent-foreground/30 px-2 py-0.5 font-mono text-chip sm:min-h-6"
+              )}
+              <MachineKebab
+                label={scopeTarget ? machineLabel(scopeTarget) : 'this fleet'}
+                open={startMenu !== null && (!target || !showMachineHeaders)}
                 disabled={createBusy || machines.length === 0 || !!scopeMachine?.error}
-                aria-haspopup="menu"
-                aria-expanded={startMenu !== null}
-                aria-label={
-                  scopeTarget
-                    ? 'Choose where the new session starts'
-                    : 'Choose which machine the new session runs on'
-                }
-                title={scopeTarget ? 'Start in a draft' : 'Choose a machine'}
-                onClick={() => (startMenu ? leaveStart() : openStartMenu())}
-              >
-                <ChevronIcon open className="size-3" />
-              </Button>
+                onOpen={(anchor) => (startMenu ? leaveStart(true) : openStartMenuAt(anchor))}
+              />
             </div>
           </div>
           {createError && (
@@ -1222,7 +1246,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
               {query ? 'No matching sessions' : 'No sessions yet'}
             </p>
             <p className="mt-2 font-mono text-ui text-dialog-hint">
-              {query ? 'Clear the filter to see all sessions.' : 'Use New session to get started.'}
+              {query ? 'Clear the filter to see all sessions.' : 'Open the ⋯ menu to start one.'}
             </p>
           </div>
         ) : (
@@ -1284,6 +1308,16 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                                 only printed the same two numbers a second
                                 time. */}
                           </>
+                        )}
+                        {/* A machine's own verbs, on the machine's own header — the
+                            same control the solo fleet bar carries, and the only
+                            place "New session" names WHICH machine without asking. */}
+                        {!machine.error && (
+                          <MachineKebab
+                            label={machineLabel(machine.conn)}
+                            open={startMenu !== null && !!target && machineKey(target) === key}
+                            onOpen={(anchor) => openStartMenuAt(anchor, machine.conn)}
+                          />
                         )}
                       </span>
                     </MachineBanner>
@@ -1411,25 +1445,83 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
               from `sm` up it becomes a popover pinned under the caret it came from. */}
           <div
             role="menu"
-            aria-label={target ? 'Start the new session in' : 'Create the new session on'}
+            aria-label={
+              target
+                ? isDraftsOpen
+                  ? 'Start the new session in'
+                  : `Actions for ${machineLabel(target)}`
+                : 'Create the new session on'
+            }
             className="absolute inset-x-0 bottom-0 max-h-[70vh] touch-pan-y overflow-y-auto overscroll-contain border-t-2 border-accent bg-panel pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-auto sm:bottom-auto sm:left-[var(--menu-left)] sm:top-[var(--menu-top)] sm:w-80 sm:border sm:border-dialog-edge sm:pb-0 sm:shadow-[8px_8px_0_var(--line2)]"
             style={{ '--menu-top': `${startMenu.top}px`, '--menu-left': `${startMenu.left}px` } as CSSProperties}
             onClick={(event) => event.stopPropagation()}
           >
-            {target ? (
+            {target && !isDraftsOpen ? (
+              /* The machine's own verbs. "New session" is the whole answer for the
+                 common case — it starts in the project this machine is already in and
+                 SAYS which — so nothing below it has to be read to get to work. */
               <>
-                {/* The one question you cannot skip wears the Blockether yellow, at
-                    the TOP, filled — and the menu spends that colour exactly once:
-                    the drop shadow underneath went neutral for it. */}
-                <p className="border-b-2 border-warn-strong bg-accent px-3 py-2 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
+                <p className={LOUD_BAND}>{machineLabel(target)}</p>
+                <StartOption
+                  title="New session"
+                  hint={
+                    project
+                      ? `in ${project.label} · ${homeifyPath(project.path)}${project.when ? ` · last used ${timeLabel(project.when)}` : ''}`
+                      : 'this machine has no project yet — pick a folder first'
+                  }
+                  badge="Default"
+                  onSelect={() => {
+                    if (!project) {
+                      setStartFlow((flow) => startFlowStep(flow, 'browse', target));
+                      return;
+                    }
+                    void createSession({ kind: 'trunk' }, target, project.path);
+                  }}
+                />
+                {/* A draft is an expert move and costs everyone else a question, so it
+                    is a SECOND verb and only when the app was told to offer it. */}
+                {offerDrafts && (
+                  <StartOption
+                    title="New session in a draft…"
+                    hint={`a private copy of ${project?.label ?? 'this project'}, uncommitted work included`}
+                    onSelect={() => setStartFlow((flow) => startFlowStep(flow, 'drafts', target))}
+                  />
+                )}
+                <StartOption
+                  title="Switch project…"
+                  hint="browse this machine's files"
+                  onSelect={() => setStartFlow((flow) => startFlowStep(flow, 'browse', target))}
+                />
+                {onMachineSettings && (
+                  <StartOption
+                    title="Machine settings"
+                    hint="name, pairing, unpair"
+                    onSelect={() => {
+                      leaveStart();
+                      onMachineSettings(target);
+                    }}
+                  />
+                )}
+              </>
+            ) : target ? (
+              <>
+                {/* A step INSIDE the same order, so it is left the way it was entered:
+                    back to the machine's verbs, never out to a blank screen. */}
+                <button
+                  type="button"
+                  className={`${LOUD_BAND} flex min-h-11 w-full items-center gap-2 text-left`}
+                  aria-label={`Back to actions for ${machineLabel(target)}`}
+                  onClick={() => setStartFlow(startFlowBack)}
+                >
+                  <span aria-hidden>‹</span>
                   Start the session in
                   {machines.length > 1 ? ` · ${machineLabel(target)}` : ''}
-                </p>
+                </button>
                 <StartOption
                   title="The project itself"
                   hint="Edits land straight in the repo — no isolated copy."
                   badge="Default"
-                  onSelect={() => void createSession()}
+                  onSelect={() => void createSession({ kind: 'trunk' }, target, project?.path)}
                 />
                 <StartOption
                   title="A new draft, with my uncommitted changes"
@@ -1507,6 +1599,21 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
           </div>
         </div>,
         document.body,
+      )}
+
+      {/* "Switch project…": the machine's own filesystem, as a breadcrumb browser. It
+          is a surface of its own rather than another band in the menu, because picking
+          a folder is a walk and a walk needs the whole phone. */}
+      {target && browseAt && (
+        <SwitchProjectSheet
+          label={machineLabel(target)}
+          client={clientFor(target)}
+          startAt={project?.path ?? null}
+          knownRoots={knownRoots}
+          at={browseAt}
+          onCancel={() => setStartFlow(startFlowBack)}
+          onChoose={(root) => void createSession({ kind: 'trunk' }, target, root)}
+        />
       )}
 
       {namePrompt && createPortal(
@@ -2515,6 +2622,42 @@ function escapeRegExp(value: string): string {
 // consequence — a workspace decision is unrecoverable-ish once the agent starts
 // writing, so no row is allowed to be a bare noun. `min-h-11` keeps every row a
 // real thumb target on a phone sheet.
+
+/**
+ * Every verb one machine has, behind ONE control. It is the only thing this screen
+ * grew: the fleet bar carries it while a solo machine IS the fleet, and each machine
+ * header carries its own once there are several — so "New session" never has to ask
+ * which computer it meant. `min-h-11` keeps it a real thumb target.
+ */
+function MachineKebab({
+  label,
+  open,
+  disabled,
+  onOpen,
+}: {
+  label: string;
+  open: boolean;
+  disabled?: boolean;
+  onOpen: (anchor: HTMLElement) => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      aria-haspopup="menu"
+      aria-expanded={open}
+      aria-label={`Actions for ${label}`}
+      title={`Actions for ${label}`}
+      className={`-mr-1 flex min-h-11 shrink-0 items-center justify-center px-3 font-mono text-ui transition-colors duration-150 disabled:opacity-40 motion-reduce:transition-none ${
+        open ? 'bg-hover text-white' : 'text-dialog-hint hover:text-white'
+      }`}
+      onClick={(event) => onOpen(event.currentTarget)}
+    >
+      <span aria-hidden>⋯</span>
+    </button>
+  );
+}
+
 function StartOption({
   title,
   hint,

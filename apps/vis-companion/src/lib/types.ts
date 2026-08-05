@@ -92,6 +92,33 @@ export interface WorkspaceDraft {
 }
 
 /**
+ * One FOLDER on a machine's own disk, straight off `GET /v1/fs`. Directories only:
+ * a session runs IN a folder, so a file is never an answer to "which project".
+ */
+export interface BrowseEntry {
+  name: string;
+  path: string;
+  /** Visible children — enough to tell a full project from an empty shell. */
+  entry_count: number;
+  /** It is a git working tree, so it is a project and not a place that holds them. */
+  is_repo: boolean;
+  /** The checked-out branch, when it has one. */
+  branch?: string | null;
+}
+
+/** One directory of a machine's filesystem, as the browse sheet reads it. */
+export interface BrowseListing {
+  path: string;
+  /** `null` at the filesystem root — the crumb trail simply stops. */
+  parent: string | null;
+  /** That machine's home, so the trail can show `~` instead of `/Users/someone`. */
+  home: string;
+  /** The listing was capped; what is shown is a prefix of what is there. */
+  is_truncated: boolean;
+  entries: BrowseEntry[];
+}
+
+/**
  * GET /v1/sessions/:sid/usage — the whole-life rollup for one session. Fetched
  * on demand only and deliberately absent from the session list; the gateway
  * memoizes each decoded iteration's tool-call tally.

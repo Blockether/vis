@@ -54,6 +54,8 @@ import type {
   McpServersResponse,
   McpTestResult,
   WorkspaceDraft,
+  BrowseEntry,
+  BrowseListing,
 } from "./types";
 import { PROTOCOL_HEADERS } from "./compat";
 import {
@@ -2114,6 +2116,29 @@ export class GatewayClient {
       title: opts.title,
       channel: opts.channel ?? "web",
       root: opts.root,
+    });
+  }
+
+  /**
+   * The FOLDERS under `path` on this machine — the browse behind "Switch project…".
+   * `path` is optional (the machine's own home answers) and understands a leading
+   * `~`, so the app never has to know where a machine keeps its home.
+   */
+  browse(path?: string, signal?: AbortSignal): Promise<BrowseListing> {
+    const query = path ? `?path=${encodeURIComponent(path)}` : "";
+    return this.request<BrowseListing>(
+      "GET",
+      `/v1/fs${query}`,
+      undefined,
+      signal,
+    );
+  }
+
+  /** Create ONE folder inside `path`, and answer with the folder itself. */
+  createDirectory(path: string, name: string): Promise<BrowseEntry> {
+    return this.request<BrowseEntry>("POST", "/v1/fs/actions/mkdir", {
+      path,
+      name,
     });
   }
 

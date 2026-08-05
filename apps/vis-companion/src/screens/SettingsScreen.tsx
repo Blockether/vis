@@ -47,10 +47,12 @@ import {
 import {
   DEFAULT_SESSION_PAGE_SIZE,
   getGatewayNotify,
+  getOfferDrafts,
   getSessionsPerPage,
   getThemePalette,
   getThemePref,
   loadConnections,
+  setOfferDrafts as setOfferDraftsPref,
   setSessionsPerPage,
   setThemePalette,
   setThemePref,
@@ -1106,6 +1108,12 @@ export function ApplicationSettingsDialog({
     dedupeThemes(...cachedThemeCatalogs(), BUNDLED_THEMES),
   );
   const [pageSize, setPageSize] = useState(DEFAULT_SESSION_PAGE_SIZE);
+  // A draft is an expert move, so the sessions list only asks about one when it was
+  // told to. Off, "New session" is a single verb that starts in the project itself.
+  const [offerDrafts, setOfferDrafts] = useState(false);
+  useEffect(() => {
+    void getOfferDrafts().then(setOfferDrafts);
+  }, []);
   const [pending, setPending] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -1177,6 +1185,18 @@ export function ApplicationSettingsDialog({
     try {
       await setSessionsPerPage(next);
       setPageSize(next);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function chooseOfferDrafts(next: boolean) {
+    setPending("offerDrafts");
+    try {
+      await setOfferDraftsPref(next);
+      setOfferDrafts(next);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -1302,6 +1322,34 @@ export function ApplicationSettingsDialog({
                 );
               })}
             </div>
+          </SettingsPanel>
+
+          <SettingsPanel
+            title="Offer drafts"
+            description="A draft is a private copy of a project, so an agent can work without touching the repo. With this off, a new session always starts in the project itself and the question is never asked."
+            meta={offerDrafts ? "on" : "off"}
+          >
+            <button
+              type="button"
+              aria-pressed={offerDrafts}
+              disabled={pending === "offerDrafts"}
+              onClick={() => void chooseOfferDrafts(!offerDrafts)}
+              className={`flex min-h-11 w-full items-center justify-between gap-3 px-3 py-1.5 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none ${offerDrafts ? "bg-accent text-accent-foreground" : "bg-input text-white hover:bg-hover"}`}
+            >
+              <span className="min-w-0">
+                <span className="block truncate font-mono text-ui font-bold">
+                  Ask where a session starts
+                </span>
+                <span className="block font-mono text-chip uppercase tracking-wider opacity-65">
+                  {offerDrafts
+                    ? "a machine's menu offers a draft too"
+                    : "a machine's menu starts in the project"}
+                </span>
+              </span>
+              <span className="shrink-0 font-mono text-chip uppercase tracking-wider">
+                {offerDrafts ? "on" : "off"}
+              </span>
+            </button>
           </SettingsPanel>
         </div>
       </section>

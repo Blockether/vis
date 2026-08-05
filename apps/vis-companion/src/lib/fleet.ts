@@ -480,6 +480,46 @@ export function projectPath(session: Session): string {
   return path?.replace(/\/+$/, '') || '';
 }
 
+/** Where a machine is working right now, as the menu says it out loud. */
+export interface MachineProject {
+  /** The repo root a new session starts in. */
+  path: string;
+  /** Its last segment — the name a human uses for the project. */
+  label: string;
+  /** When that project last moved, or `null` when nothing is recorded. */
+  when: string | null;
+}
+
+/**
+ * The project a machine is CURRENTLY in: the root of its most recently touched
+ * session. "New session" needs no question because of this — the machine has been
+ * somewhere, and that somewhere is the answer until the user switches it.
+ *
+ * `null` only for a machine that has never run a session (or has not loaded yet);
+ * then the menu offers browsing instead of naming a project that does not exist.
+ */
+export function machineProject(machine: FleetMachine | null): MachineProject | null {
+  const sessions = machine?.sessions ?? [];
+  let best: { path: string; whenMs: number; when: string | null } | null = null;
+  for (const session of sessions) {
+    const path = projectPath(session);
+    if (!path) continue;
+    const whenMs = sessionMillis(session);
+    if (!best || whenMs > best.whenMs)
+      best = {
+        path,
+        whenMs,
+        when: session.modified_at ?? session.last_active_at ?? session.created_at ?? null,
+      };
+  }
+  if (!best) return null;
+  return {
+    path: best.path,
+    label: best.path.split('/').filter(Boolean).pop() ?? best.path,
+    when: best.when,
+  };
+}
+
 /**
  * The whole "New session" order, as ONE value.
  *
@@ -497,6 +537,10 @@ export function projectPath(session: Session): string {
 export type StartFlow =
   | { step: 'idle' }
   | { step: 'menu'; at: MenuPosition; on: GatewayConn | null }
+  /** The draft question, reached from the menu — a second verb, never the first. */
+  | { step: 'drafts'; at: MenuPosition; on: GatewayConn }
+  /** Browsing that machine's own files for the project to switch to. */
+  | { step: 'browse'; at: MenuPosition; on: GatewayConn }
   | { step: 'name'; on: GatewayConn; clean: boolean };
 
 /** No order in progress — and therefore no answers lying around. */
@@ -508,6 +552,9 @@ export const START_IDLE: StartFlow = { step: 'idle' };
  */
 export function startFlowOpen(flow: StartFlow, at: MenuPosition | null): StartFlow {
   if (!at) return START_IDLE;
+  // A sub-question is still the same order: re-anchoring must not walk it back to
+  // the verbs it was opened from.
+  if (flow.step === 'drafts' || flow.step === 'browse') return { ...flow, at };
   return { step: 'menu', at, on: flow.step === 'menu' ? flow.on : null };
 }
 
@@ -519,6 +566,27 @@ export function startFlowPick(flow: StartFlow, on: GatewayConn): StartFlow {
 /** Hand the order to the name dialog, WITH the machine the fork happens on. */
 export function startFlowName(on: GatewayConn, clean: boolean): StartFlow {
   return { step: 'name', on, clean };
+}
+
+/**
+ * Walk the open menu to one of its own sub-questions, keeping the anchor it hangs
+ * from: a step is still the SAME order, so leaving it forgets everything at once.
+ */
+export function startFlowStep(
+  flow: StartFlow,
+  step: 'drafts' | 'browse',
+  on: GatewayConn,
+): StartFlow {
+  return flow.step === 'menu' || flow.step === 'drafts' || flow.step === 'browse'
+    ? { step, at: flow.at, on }
+    : flow;
+}
+
+/** Back out of a sub-question to the machine's own menu, without ending the order. */
+export function startFlowBack(flow: StartFlow): StartFlow {
+  return flow.step === 'drafts' || flow.step === 'browse'
+    ? { step: 'menu', at: flow.at, on: flow.on }
+    : flow;
 }
 
 /** The machine this order aims at so far, or `null` while nothing has answered. */

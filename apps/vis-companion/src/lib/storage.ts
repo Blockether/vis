@@ -236,6 +236,36 @@ export function subscribeSessionsPerPage(
     pageSizeListeners.delete(listener);
   };
 }
+
+const OFFER_DRAFTS_KEY = "vis.offerDrafts";
+
+// App-local only — never sent to the gateway. A draft is an expert move, so it is
+// OFF by default: "New session" is then one verb that starts in the project, and
+// the private-copy question is never asked. Turned on, it becomes a second verb.
+let offerDraftsCache: boolean | null = null;
+const offerDraftsListeners = new Set<(value: boolean) => void>();
+
+export async function getOfferDrafts(): Promise<boolean> {
+  if (offerDraftsCache !== null) return offerDraftsCache;
+  const raw = await getRaw(OFFER_DRAFTS_KEY);
+  offerDraftsCache = raw === "true";
+  return offerDraftsCache;
+}
+
+export async function setOfferDrafts(value: boolean): Promise<void> {
+  await setRaw(OFFER_DRAFTS_KEY, value ? "true" : "false");
+  offerDraftsCache = value;
+  for (const listener of offerDraftsListeners) listener(value);
+}
+
+export function subscribeOfferDrafts(
+  listener: (value: boolean) => void,
+): () => void {
+  offerDraftsListeners.add(listener);
+  return () => {
+    offerDraftsListeners.delete(listener);
+  };
+}
 const SUBSCRIPTIONS_KEY = "vis.sessionSubscriptions";
 const MAX_SUBSCRIBED_SESSIONS = 24;
 
