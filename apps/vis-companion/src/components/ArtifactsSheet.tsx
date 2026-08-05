@@ -446,7 +446,7 @@ function DetailOverlay({
       role="dialog"
       aria-modal="true"
       aria-label={name}
-      className="absolute inset-0 z-20 flex flex-col bg-ink"
+      className="absolute inset-0 z-40 flex flex-col bg-ink"
     >
       <header className="relative flex min-h-9 shrink-0 items-center justify-center border-t border-dialog-title-foreground/20 bg-dialog-title px-12 py-1.5 text-dialog-title-foreground mouse:min-h-8">
         <h2
@@ -702,7 +702,7 @@ export function ArtifactsSheet({
       id="artifacts-surface"
       role="region"
       aria-label="Artifacts produced by the model"
-      className="absolute inset-0 z-10 flex flex-col bg-ink"
+      className="absolute inset-0 z-30 flex flex-col bg-ink"
     >
       <SurfaceHeader list={artifacts} onClose={onClose} />
       <FilterStrip
