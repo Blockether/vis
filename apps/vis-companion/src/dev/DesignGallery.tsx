@@ -55,14 +55,7 @@ import {
   StartSheetVariant,
   StartShippedVariant,
 } from './startVariants';
-import {
-  DraftOfferVariant,
-  DraftsToggleVariant,
-  PROJECT_STATES,
-  PlaceNewSessionVariant,
-  SessionUxBoardVariant,
-  SwitchProjectVariant,
-} from './projectVariants';
+import { PROJECT_STATES, SessionFlowVariant, SessionUxBoardVariant } from './projectVariants';
 
 // Registered last so the four machine-separation proposals sit together in the index.
 
@@ -150,7 +143,8 @@ export const DESIGN_VARIANTS: DesignVariant[] = [
   {
     id: 'c-machine-first',
     title: 'C · Machine first',
-    blurb: 'Machine › Project › Session. The fleet is legible at a glance, at the cost of one more level.',
+    blurb:
+      'Machine › Project › Session. The fleet is legible at a glance, at the cost of one more level.',
     states: ['default'],
     render: () => <MachineFirstVariant />,
   },
@@ -165,21 +159,24 @@ export const DESIGN_VARIANTS: DesignVariant[] = [
   {
     id: 'tally-header',
     title: 'Tally A · Header says it',
-    blurb: 'Live and unread are stated three times: the fleet line, the chip strip, and every machine header.',
+    blurb:
+      'Live and unread are stated three times: the fleet line, the chip strip, and every machine header.',
     states: ['default', 'solo'],
     render: (state) => <TallyHeaderVariant state={state} />,
   },
   {
     id: 'tally-badges',
     title: 'Tally B · Two badges everywhere',
-    blurb: 'The shipped pair of filled blocks, repeated in every machine header, with the fleet line always silent.',
+    blurb:
+      'The shipped pair of filled blocks, repeated in every machine header, with the fleet line always silent.',
     states: ['default', 'solo'],
     render: (state) => <TallyBadgesVariant state={state} />,
   },
   {
     id: 'tally-strip',
     title: 'Tally C · The strip is the tally (shipped)',
-    blurb: 'Chips own both counts as filled blocks while the strip exists; with one machine paired the header line takes them back.',
+    blurb:
+      'Chips own both counts as filled blocks while the strip exists; with one machine paired the header line takes them back.',
     states: ['default', 'solo'],
     render: (state) => <TallyStripVariant state={state} />,
   },
@@ -345,44 +342,20 @@ export const DESIGN_VARIANTS: DesignVariant[] = [
   },
   {
     id: 'session-ux-board',
-    title: 'Board · Machine, project, draft — every open question at once',
+    title: 'Board · Machine, project, draft — the chosen flow',
     blurb:
-      'The deliverable: A–D where New session lives, E–G how a draft is offered, H–J the Switch-project sheet, K–L where the drafts switch belongs. One picture, one letter per answer.',
+      'The deliverable, answered: 1C the machine ⋯ owns every verb, 2F the draft is a second one, 3H Switch project browses (or types) the filesystem, 4K one app switch — plus the solo falsifier.',
     states: PROJECT_STATES['session-ux-board'],
-    viewport: '1728x3720',
+    viewport: '1728x1840',
     render: () => <SessionUxBoardVariant />,
   },
   {
-    id: 'place-new-session',
-    title: 'Machine · Where “New session” lives',
+    id: 'session-flow',
+    title: 'Machine · The chosen flow, step by step',
     blurb:
-      'A machine owns its projects, so the machine header — not a dialog — is where a session on that machine begins: a labelled button, an overflow entry, or a + on every row.',
-    states: PROJECT_STATES['place-new-session'],
-    render: (state) => <PlaceNewSessionVariant state={state} />,
-  },
-  {
-    id: 'draft-offer',
-    title: 'Machine · How a draft is offered',
-    blurb:
-      'With “Offer drafts” off the fork is never a question; with it on it is one chip row inside the destination sheet, or a second verb in the machine menu.',
-    states: PROJECT_STATES['draft-offer'],
-    render: (state) => <DraftOfferVariant state={state} />,
-  },
-  {
-    id: 'switch-project',
-    title: 'Machine · Switch project (bottom sheet)',
-    blurb:
-      'A real browser of that machine’s filesystem: down into any folder, back up through the path, above ~ to /, and a new folder created and chosen without a second dialog.',
-    states: PROJECT_STATES['switch-project'],
-    render: (state) => <SwitchProjectVariant state={state} />,
-  },
-  {
-    id: 'drafts-toggle',
-    title: 'Settings · Where “Offer drafts” belongs',
-    blurb:
-      'One switch for this device and every machine on it, or one per gateway that travels with the machine and can disagree with the machine beside it.',
-    states: PROJECT_STATES['drafts-toggle'],
-    render: (state) => <DraftsToggleVariant state={state} />,
+      'Every machine verb in the machine’s own ⋯, the draft as a second verb there, Switch project as a filesystem sheet you can also type a path into, and one app switch behind all of it.',
+    states: PROJECT_STATES['session-flow'],
+    render: (state) => <SessionFlowVariant state={state} />,
   },
 ];
 
@@ -498,7 +471,9 @@ function VariantIndex() {
                   {entry.title}
                   {state === 'default' ? '' : ` — ${state}`}
                 </span>
-                <span className="mt-0.5 block font-mono text-chip text-dialog-hint">{entry.blurb}</span>
+                <span className="mt-0.5 block font-mono text-chip text-dialog-hint">
+                  {entry.blurb}
+                </span>
               </span>
               <span className="shrink-0 font-mono text-chip text-accent-ink">open ›</span>
             </a>

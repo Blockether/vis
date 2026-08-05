@@ -1,17 +1,17 @@
 /**
- * WHOSE ACTION IS IT? — the machine's own row, drafts, and Switch project.
+ * THE CHOSEN FLOW — machine ⋯, Switch project, drafts.
  *
- * The settled part of this question lives in `apps/vis-companion/SESSION-UX.md`:
- * a machine owns projects, a project owns sessions, and an action belongs to the
- * row that owns the noun it acts on. What is NOT settled is photographed here,
- * one letter per proposal, and assembled into a single comparison board
- * (`#/__design?v=session-ux-board`) so the options are judged side by side
- * instead of one memory at a time.
+ * The comparison board (A–L) did its job and was answered: **1C · 2F · 3H+pencil ·
+ * 4K**. What is photographed here is no longer a menu of options but the decided
+ * product, one screenshot per step of it, assembled into a single sheet
+ * (`#/__design?v=session-ux-board`) so the flow is judged as a flow. The reasons
+ * live in `apps/vis-companion/SESSION-UX.md`; this file is what they look like.
  *
- *   A–D  where "New session" lives, now that "which machine?" should not be a step
- *   E–G  how a draft is offered, once `Offer drafts` decides whether it is offered
- *   H–J  the Switch-project sheet: a real browser of the machine's filesystem
- *   K–L  where the `Offer drafts` switch itself belongs
+ *   C  every machine verb lives in the machine's own ⋯ — nothing new on the list
+ *   F  `New session in a draft…` is a second verb there, only when drafts are on
+ *   H  Switch project is a breadcrumb browser of the machine's filesystem, and a
+ *      pencil turns that same header into a path you type yourself
+ *   K  `Offer drafts` is one app switch, this device, every machine
  *
  * Written phone-first on purpose: every card on the board is a 390px column, and
  * a `sm:` rule inside one would answer to the BOARD's width, not the card's.
@@ -30,10 +30,7 @@ import {
 
 /** The states each proposal is photographed in; the gallery registers these. */
 export const PROJECT_STATES: Record<string, string[]> = {
-  'place-new-session': ['shipped', 'machine-button', 'machine-dots', 'row-plus'],
-  'draft-offer': ['off', 'verb', 'chip'],
-  'switch-project': ['breadcrumb', 'path', 'new-folder'],
-  'drafts-toggle': ['app', 'machine'],
+  'session-flow': ['menu', 'menu-off', 'browse', 'typed', 'new-folder', 'settings', 'solo'],
   'session-ux-board': ['default'],
 };
 
@@ -138,21 +135,6 @@ function Item({
     </div>
   );
 }
-
-function Chip({ children, selected = false }: { children: ReactNode; selected?: boolean }) {
-  return (
-    <span
-      className={`inline-flex min-h-7 items-center gap-1.5 border px-2 py-0.5 font-mono text-chip ${
-        selected
-          ? 'border-accent bg-accent font-bold text-accent-foreground'
-          : 'border-edge text-white'
-      }`}
-    >
-      {children}
-    </span>
-  );
-}
-
 /* ------------------------------------------------------------- the list */
 
 function Screen({ children }: { children: ReactNode }) {
@@ -163,14 +145,20 @@ function Screen({ children }: { children: ReactNode }) {
   );
 }
 
-function FleetBar({ action }: { action?: ReactNode }) {
+function FleetBar({
+  action,
+  title = 'Fleet',
+  subtitle = '3 machines · 5 projects · 813 sessions',
+}: {
+  action?: ReactNode;
+  title?: string;
+  subtitle?: string;
+}) {
   return (
     <div className="flex items-center justify-between gap-3 border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
       <span className="min-w-0">
-        <span className="block font-mono text-body font-bold text-white">Fleet</span>
-        <span className="mt-0.5 block font-mono text-chip text-dialog-hint">
-          3 machines · 5 projects · 813 sessions
-        </span>
+        <span className="block font-mono text-body font-bold text-white">{title}</span>
+        <span className="mt-0.5 block font-mono text-chip text-dialog-hint">{subtitle}</span>
       </span>
       {action}
     </div>
@@ -215,43 +203,52 @@ function SessionRow({ session }: { session: FleetSession }) {
  * reviewable next to the machine it cannot start a session on.
  */
 function FleetList({
+  header,
   headerAction,
   machineAction,
   projectAction,
   underMachine,
+  machines = MACHINES,
+  withMachineHeader = true,
 }: {
+  header?: { title: string; subtitle: string };
   headerAction?: ReactNode;
   machineAction?: (machine: FleetMachine) => ReactNode;
   projectAction?: (project: string) => ReactNode;
   underMachine?: (machine: FleetMachine) => ReactNode;
+  /** Solo is the falsifier: one machine paired must cost no machine chrome at all. */
+  machines?: FleetMachine[];
+  withMachineHeader?: boolean;
 }) {
   return (
     <>
-      <FleetBar action={headerAction} />
+      <FleetBar action={headerAction} title={header?.title} subtitle={header?.subtitle} />
       <FilterBar />
-      {MACHINES.map((machine) => {
+      {machines.map((machine) => {
         const projects = byProject(sessionsOf(machine.id));
         const dead = machine.state !== 'online';
         return (
           <div key={machine.id} className="relative">
-            <div
-              className={`flex items-center justify-between gap-2 border-b border-dialog-edge bg-panel-2 pl-3 pr-2 ${
-                machineAction ? 'py-1' : 'py-1.5'
-              }`}
-            >
-              <MachineName
-                machine={machine}
-                className={`font-mono text-chip font-bold uppercase tracking-[0.08em] ${
-                  dead ? 'text-dialog-hint' : 'text-white'
+            {withMachineHeader && (
+              <div
+                className={`flex items-center justify-between gap-2 border-b border-dialog-edge bg-panel-2 pl-3 pr-2 ${
+                  machineAction ? 'py-1' : 'py-1.5'
                 }`}
-              />
-              <span className="flex items-center gap-2">
-                <span className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-                  {dead ? 'not answering' : `${projects.length} projects`}
+              >
+                <MachineName
+                  machine={machine}
+                  className={`font-mono text-chip font-bold uppercase tracking-[0.08em] ${
+                    dead ? 'text-dialog-hint' : 'text-white'
+                  }`}
+                />
+                <span className="flex items-center gap-2">
+                  <span className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+                    {dead ? 'not answering' : `${projects.length} projects`}
+                  </span>
+                  {machineAction?.(machine)}
                 </span>
-                {machineAction?.(machine)}
-              </span>
-            </div>
+              </div>
+            )}
             {dead
               ? null
               : projects.map(([project, sessions]) => (
@@ -281,9 +278,11 @@ function FleetList({
 }
 
 /** A menu hung under the row that opened it — never over the whole screen. */
-function Popover({ children }: { children: ReactNode }) {
+function Popover({ children, offset = 'top-full' }: { children: ReactNode; offset?: string }) {
   return (
-    <div className="absolute right-2 top-full z-10 w-72 border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)]">
+    <div
+      className={`absolute right-2 ${offset} z-10 w-72 border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)]`}
+    >
       {children}
     </div>
   );
@@ -314,204 +313,42 @@ function BottomSheet({
   );
 }
 
-/* ------------------------------------------------- A–D · where it lives */
-
-function SplitButton() {
-  return (
-    <span className="flex shrink-0 items-stretch">
-      <span className="inline-flex min-h-7 items-center border border-accent bg-accent px-2 font-mono text-chip font-bold text-accent-foreground">
-        New session
-      </span>
-      <span className="inline-flex min-h-7 items-center border border-l-accent-foreground/30 border-accent bg-accent px-1.5 font-mono text-chip font-bold text-accent-foreground">
-        ▾
-      </span>
-    </span>
-  );
-}
+/* --------------------------------------------------- C+F · the machine menu */
 
 const KEBAB = '⋯';
+const PENCIL = '✎';
 
 /**
- * A–D. The machine question is the first tap of every session started today; each
- * proposal deletes it from a different place.
+ * C. Every machine verb, in the machine's own overflow — so "which machine?" is
+ * answered by the header that was tapped and never asked again. F adds the draft
+ * as a SECOND VERB, and only while `Offer drafts` is on.
  */
-export function PlaceNewSessionVariant({ state }: { state: string }) {
-  if (state === 'shipped') {
-    return (
-      <Screen>
-        <FleetList headerAction={<SplitButton />} />
-        <BottomSheet title="Create the session on">
-          <Item title="studio-mbp" hint="~/vis · ~/tree-sitter-clojure" badge="8ms" />
-          <Item title="tower" hint="~/vis · ~/infrastructure" badge="12ms" />
-          <Item title="vps-eu" hint="not answering" tone="muted" />
-        </BottomSheet>
-      </Screen>
-    );
-  }
-  if (state === 'machine-button') {
-    return (
-      <Screen>
-        <FleetList
-          machineAction={(machine) =>
-            machine.state === 'online' ? (
-              <span className="flex items-center gap-1.5">
-                <span className={PRIMARY}>New session</span>
-                <IconButton label={`Actions for ${machine.label}`}>{KEBAB}</IconButton>
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5 opacity-40">
-                <span className={GHOST}>New session</span>
-                <IconButton label={`Actions for ${machine.label}`}>{KEBAB}</IconButton>
-              </span>
-            )
-          }
-        />
-      </Screen>
-    );
-  }
-  if (state === 'machine-dots') {
-    return (
-      <Screen>
-        <FleetList
-          machineAction={(machine) => (
-            <IconButton
-              label={`Actions for ${machine.label}`}
-              tone={machine.id === MACHINES[0].id ? 'accent' : 'plain'}
-            >
-              {KEBAB}
-            </IconButton>
-          )}
-          underMachine={(machine) =>
-            machine.id === MACHINES[0].id ? (
-              <Popover>
-                <p className={`${BAND} ${QUIET_BAND}`}>studio-mbp</p>
-                <Item title="New session" hint="choose the project" />
-                <Item title="New session in a draft…" hint="a private copy of the project" />
-                <Item title="Switch project…" hint="browse this machine's files" />
-                <Item title="Machine settings" hint="name, pairing, drafts" tone="muted" />
-              </Popover>
-            ) : null
-          }
-        />
-      </Screen>
-    );
-  }
+function MachineMenu({
+  label,
+  withDraft = true,
+  offset,
+}: {
+  label?: string;
+  withDraft?: boolean;
+  offset?: string;
+}) {
   return (
-    <Screen>
-      <FleetList
-        machineAction={(machine) => (
-          <span className="flex items-center gap-1.5">
-            {machine.state === 'online' && (
-              <IconButton label={`New session on ${machine.label}`} tone="accent">
-                +
-              </IconButton>
-            )}
-            <IconButton label={`Actions for ${machine.label}`}>{KEBAB}</IconButton>
-          </span>
-        )}
-        projectAction={(project) => (
-          <span className="flex items-center gap-1.5">
-            <IconButton label={`New session in ${project}`}>+</IconButton>
-            <IconButton label={`Actions for ${project}`}>{KEBAB}</IconButton>
-          </span>
-        )}
-      />
-    </Screen>
-  );
-}
-
-/* ---------------------------------------------------- E–G · the draft */
-
-/** The destination sheet a machine-level start opens: which project, and how. */
-function DestinationSheet({ withDraft }: { withDraft: boolean }) {
-  return (
-    <BottomSheet
-      title="New session on studio-mbp"
-      footer={
-        withDraft ? (
-          <div className="flex items-start gap-2 border-t border-dialog-edge bg-panel-2 px-3 py-2">
-            <span className="w-8 shrink-0 pt-1 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-              as
-            </span>
-            <span className="flex min-w-0 flex-1 flex-wrap gap-1.5">
-              <Chip selected>the project</Chip>
-              <Chip>a new draft</Chip>
-              <Chip>wire-rework</Chip>
-            </span>
-          </div>
-        ) : null
-      }
-    >
-      <Item title="vis" hint="~/vis · 16 sessions" badge="7m ago" />
-      <Item title="tree-sitter-clojure" hint="~/tree-sitter-clojure · 8 sessions" badge="3h ago" />
-      <Item title="Switch project…" hint="browse this machine's files" tone="accent" />
-    </BottomSheet>
-  );
-}
-
-/**
- * E–G. `Offer drafts` decides whether the fork is a question at all; these three
- * are what "on" can look like, and what "off" buys.
- */
-export function DraftOfferVariant({ state }: { state: string }) {
-  if (state === 'chip') {
-    return (
-      <Screen>
-        <FleetList
-          machineAction={(machine) => (
-            <IconButton
-              label={`New session on ${machine.label}`}
-              tone={machine.id === MACHINES[0].id ? 'accent' : 'plain'}
-            >
-              +
-            </IconButton>
-          )}
+    <Popover offset={offset}>
+      {label && <p className={`${BAND} ${QUIET_BAND}`}>{label}</p>}
+      <Item title="New session" hint="in vis · ~/vis · last used 7m ago" />
+      {withDraft && (
+        <Item
+          title="New session in a draft…"
+          hint="a private copy of vis, uncommitted work included"
         />
-        <DestinationSheet withDraft />
-      </Screen>
-    );
-  }
-  const off = state === 'off';
-  return (
-    <Screen>
-      <FleetList
-        machineAction={(machine) => (
-          <IconButton
-            label={`Actions for ${machine.label}`}
-            tone={machine.id === MACHINES[0].id ? 'accent' : 'plain'}
-          >
-            {KEBAB}
-          </IconButton>
-        )}
-        underMachine={(machine) =>
-          machine.id === MACHINES[0].id ? (
-            <Popover>
-              <p className={`${BAND} ${QUIET_BAND}`}>studio-mbp</p>
-              <Item title="New session" hint={off ? 'in vis · ~/vis' : 'choose the project'} />
-              {!off && (
-                <Item
-                  title="New session in a draft…"
-                  hint="a private copy, uncommitted work included"
-                />
-              )}
-              <Item title="Switch project…" hint="browse this machine's files" />
-            </Popover>
-          ) : null
-        }
-      />
-      {off && (
-        <div className="mt-auto border-t border-dialog-edge bg-panel-2 px-3 py-2">
-          <p className="font-mono text-meta text-dialog-hint">
-            Settings › <span className="text-white">Offer drafts</span> off: nothing asks about
-            copies.
-          </p>
-        </div>
       )}
-    </Screen>
+      <Item title="Switch project…" hint="browse this machine's files" tone="accent" />
+      <Item title="Machine settings" hint="name, pairing, unpair" tone="muted" />
+    </Popover>
   );
 }
 
-/* ------------------------------------------- H–J · the Switch project sheet */
+/* ------------------------------------------- H · the Switch project sheet */
 
 interface Entry {
   name: string;
@@ -532,22 +369,45 @@ const HOME_ENTRIES: Entry[] = [
   { name: 'Downloads', meta: '412 entries' },
 ];
 
-function Crumbs({ trail }: { trail: string[] }) {
+/**
+ * The path IS the control: an ancestor is a tap back up, and the pencil on its
+ * right turns the very same header into a field you type into.
+ */
+function Crumbs({ trail, action }: { trail: string[]; action?: ReactNode }) {
   return (
-    <div className="flex items-center gap-1 overflow-hidden border-b border-dialog-edge bg-panel-2 px-3 py-2">
+    <div className="flex items-center gap-1 border-b border-dialog-edge bg-panel-2 px-3 py-2">
       <span className="shrink-0 font-mono text-meta text-dialog-hint">…</span>
-      {trail.map((crumb, index) => (
-        <span key={crumb} className="flex min-w-0 items-center gap-1">
-          <span className="shrink-0 font-mono text-meta text-dialog-hint">›</span>
-          <span
-            className={`truncate font-mono text-meta ${
-              index === trail.length - 1 ? 'font-bold text-white' : 'text-accent-ink'
-            }`}
-          >
-            {crumb}
+      <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+        {trail.map((crumb, index) => (
+          <span key={crumb} className="flex min-w-0 items-center gap-1">
+            <span className="shrink-0 font-mono text-meta text-dialog-hint">›</span>
+            <span
+              className={`truncate font-mono text-meta ${
+                index === trail.length - 1 ? 'font-bold text-white' : 'text-accent-ink'
+              }`}
+            >
+              {crumb}
+            </span>
           </span>
-        </span>
-      ))}
+        ))}
+      </span>
+      {action}
+    </div>
+  );
+}
+
+/** The pencil, taken: the crumbs are replaced by the path itself, still editable. */
+function PathField() {
+  return (
+    <div className="flex items-center gap-2 border-b border-dialog-edge bg-panel px-3 py-2">
+      <span className="min-w-0 flex-1 border border-accent bg-input px-2 py-1 font-mono text-ui text-white">
+        ~/vis/apps/vis-c
+        <span className="text-dialog-hint">ompanion</span>
+        <Caret />
+      </span>
+      <IconButton label="Back to browsing" tone="accent">
+        {PENCIL}
+      </IconButton>
     </div>
   );
 }
@@ -592,87 +452,61 @@ function SheetFooter({ path, primary }: { path: string; primary: string }) {
 }
 
 /**
- * H–J. The sheet behind `Switch project`. It commits a FOLDER; whether that folder
- * is a repo is the gateway's answer, not a question asked here.
+ * H. One sheet, three moments: browsing the machine's filesystem, typing the path
+ * instead, and making the folder that does not exist yet. It commits a FOLDER —
+ * whether that folder is a repo is the gateway's answer, not a question asked here.
  */
-export function SwitchProjectVariant({ state }: { state: string }) {
-  const list = (
-    <Screen>
-      <FleetList
-        machineAction={(machine) => (
-          <IconButton
-            label={`Actions for ${machine.label}`}
-            tone={machine.id === MACHINES[0].id ? 'accent' : 'plain'}
-          >
-            {KEBAB}
-          </IconButton>
-        )}
-      />
-    </Screen>
-  );
-  if (state === 'path') {
-    return (
-      <div className="relative h-full">
-        {list}
-        <BottomSheet
-          title="Switch project · studio-mbp"
-          footer={
-            <SheetFooter path="/Users/fierycod/vis/apps/vis-companion" primary="Switch here" />
+function SwitchSheet({ mode }: { mode: 'browse' | 'typed' | 'new-folder' }) {
+  const creating = mode === 'new-folder';
+  const pencil = <IconButton label="Type a path">{PENCIL}</IconButton>;
+  return (
+    <BottomSheet
+      title="Switch project · studio-mbp"
+      footer={
+        <SheetFooter
+          path={
+            mode === 'typed'
+              ? '/Users/fierycod/vis/apps/vis-companion'
+              : creating
+                ? '/Users/fierycod/code/band-repaint'
+                : '/Users/fierycod'
           }
-        >
-          <div className="flex items-center gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2">
-            <span className="shrink-0 font-mono text-ui text-accent-ink">/</span>
-            <span className="min-w-0 flex-1 truncate font-mono text-ui text-white">
-              ~/vis/apps/vis-c
-              <span className="text-dialog-hint">ompanion</span>
-              <Caret />
-            </span>
-            <span className="shrink-0 border border-edge px-1 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-              tab
-            </span>
-          </div>
+          primary={creating ? 'Create & switch' : 'Switch here'}
+        />
+      }
+    >
+      {mode === 'typed' ? (
+        <>
+          <PathField />
           <p className={`${BAND} ${QUIET_BAND}`}>2 matches</p>
           <Item title="~/vis/apps/vis-companion" hint="128 entries · main" badge="git" />
           <Item title="~/vis/apps/vis-companion/ios" hint="generated · not a repo" tone="muted" />
           <p className={`${BAND} ${QUIET_BAND}`}>already known here</p>
           <Item title="~/vis" hint="128 sessions" badge="project" />
           <Item title="~/tree-sitter-clojure" hint="8 sessions" badge="project" />
-        </BottomSheet>
-      </div>
-    );
-  }
-  const creating = state === 'new-folder';
-  return (
-    <div className="relative h-full">
-      {list}
-      <BottomSheet
-        title="Switch project · studio-mbp"
-        footer={
-          <SheetFooter
-            path={creating ? '/Users/fierycod/code/band-repaint' : '/Users/fierycod'}
-            primary={creating ? 'Create & switch' : 'Switch here'}
-          />
-        }
-      >
-        <Crumbs trail={creating ? ['fierycod', 'code'] : ['Users', 'fierycod']} />
-        {creating && (
-          <div className="flex items-center gap-2 border-b border-dialog-edge bg-panel px-3 py-2">
-            <span className="shrink-0 font-mono text-ui text-accent-ink">+</span>
-            <span className="min-w-0 flex-1 border border-accent px-2 py-1 font-mono text-ui text-white">
-              band-repaint
-              <Caret />
-            </span>
-          </div>
-        )}
-        {(creating ? HOME_ENTRIES.slice(0, 4) : HOME_ENTRIES).map((entry) => (
-          <FolderRow key={entry.name} entry={entry} dim={creating} />
-        ))}
-      </BottomSheet>
-    </div>
+        </>
+      ) : (
+        <>
+          <Crumbs trail={creating ? ['fierycod', 'code'] : ['Users', 'fierycod']} action={pencil} />
+          {creating && (
+            <div className="flex items-center gap-2 border-b border-dialog-edge bg-panel px-3 py-2">
+              <span className="shrink-0 font-mono text-ui text-accent-ink">+</span>
+              <span className="min-w-0 flex-1 border border-accent px-2 py-1 font-mono text-ui text-white">
+                band-repaint
+                <Caret />
+              </span>
+            </div>
+          )}
+          {(creating ? HOME_ENTRIES.slice(0, 4) : HOME_ENTRIES).map((entry) => (
+            <FolderRow key={entry.name} entry={entry} dim={creating} />
+          ))}
+        </>
+      )}
+    </BottomSheet>
   );
 }
 
-/* --------------------------------------------------- K–L · the switch itself */
+/* ------------------------------------------------------- K · the switch itself */
 
 function SettingsRow({ title, hint, on }: { title: string; hint: string; on?: boolean }) {
   return (
@@ -690,266 +524,218 @@ function SettingsRow({ title, hint, on }: { title: string; hint: string; on?: bo
   );
 }
 
-/** K–L. One switch for the account, or one switch per machine. */
-export function DraftsToggleVariant({ state }: { state: string }) {
-  if (state === 'machine') {
+/* ------------------------------------------------------------ the whole flow */
+
+const MACHINE_ACTION = (machine: FleetMachine) => (
+  <IconButton
+    label={`Actions for ${machine.label}`}
+    tone={machine.id === MACHINES[0].id ? 'accent' : 'plain'}
+  >
+    {KEBAB}
+  </IconButton>
+);
+
+const PROJECT_ACTION = (project: string) => (
+  <IconButton label={`Actions for ${project}`}>{KEBAB}</IconButton>
+);
+
+/** The decided product, one state per step of it. */
+export function SessionFlowVariant({ state }: { state: string }) {
+  if (state === 'settings') {
     return (
       <Screen>
-        <div className={`${BAND} ${QUIET_BAND}`}>machines</div>
-        <div className="flex items-center justify-between gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2">
-          <MachineName machine={MACHINES[0]} className="font-mono text-ui font-bold text-white" />
-          <span className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-            8ms · paired
-          </span>
-        </div>
+        <div className={`${BAND} ${QUIET_BAND}`}>settings</div>
+        <div className={`${BAND} ${QUIET_BAND}`}>sessions</div>
         <SettingsRow
           title="Offer drafts"
-          hint="Sessions on studio-mbp may run in a private copy of the project."
+          hint="Ask whether a session runs in the project or in a private copy of it."
           on
         />
-        <SettingsRow title="Machine name" hint="studio-mbp" />
-        <SettingsRow title="Unpair" hint="Sessions stay on the machine." />
-        <div className="flex items-center justify-between gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2">
-          <MachineName machine={MACHINES[1]} className="font-mono text-ui font-bold text-white" />
-          <span className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-            drafts off
-          </span>
-        </div>
-        <div className="flex items-center justify-between gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2">
-          <MachineName
-            machine={MACHINES[2]}
-            className="font-mono text-ui font-bold text-dialog-hint"
-          />
-          <span className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-            not answering
-          </span>
-        </div>
+        <SettingsRow
+          title="Start in the last project"
+          hint="A new session skips the picker when the machine has an obvious answer."
+          on={false}
+        />
+        <div className={`${BAND} ${QUIET_BAND}`}>appearance</div>
+        <SettingsRow title="Theme" hint="Follow the system" />
+        <SettingsRow title="Notifications" hint="A turn finished while the app was closed" />
         <p className="px-3 py-2 font-mono text-meta text-dialog-hint">
-          Three machines, three answers — and the one that is down cannot be asked.
+          One answer for the whole fleet, on this device. Off, the second verb simply is not in the
+          menu; a machine that cannot fork a folder still refuses — the switch decides the question,
+          not the capability.
         </p>
       </Screen>
     );
   }
-  return (
+  if (state === 'solo') {
+    return (
+      <Screen>
+        <div className="relative">
+          <FleetList
+            machines={MACHINES.slice(0, 1)}
+            withMachineHeader={false}
+            header={{ title: 'studio-mbp', subtitle: '3 projects · 214 sessions' }}
+            headerAction={
+              <IconButton label="Actions for studio-mbp" tone="accent">
+                {KEBAB}
+              </IconButton>
+            }
+            projectAction={PROJECT_ACTION}
+          />
+          <MachineMenu offset="top-[3.75rem]" />
+        </div>
+        <p className="mt-auto border-t border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-meta text-dialog-hint">
+          One machine paired: no machine header, no chips, no machine question — the fleet bar IS
+          the machine, and its ⋯ is the machine's ⋯.
+        </p>
+      </Screen>
+    );
+  }
+  const menu = state === 'menu' || state === 'menu-off';
+  const list = (
     <Screen>
-      <div className={`${BAND} ${QUIET_BAND}`}>settings</div>
-      <div className={`${BAND} ${QUIET_BAND}`}>sessions</div>
-      <SettingsRow
-        title="Offer drafts"
-        hint="Ask whether a session runs in the project or in a private copy of it."
-        on
+      <FleetList
+        machineAction={MACHINE_ACTION}
+        projectAction={PROJECT_ACTION}
+        underMachine={(machine) =>
+          machine.id === MACHINES[0].id && menu ? (
+            <MachineMenu label="studio-mbp" withDraft={state === 'menu'} />
+          ) : null
+        }
       />
-      <SettingsRow
-        title="Start in the last project"
-        hint="A new session skips the picker when the machine has an obvious answer."
-        on={false}
-      />
-      <div className={`${BAND} ${QUIET_BAND}`}>appearance</div>
-      <SettingsRow title="Theme" hint="Follow the system" />
-      <SettingsRow title="Notifications" hint="A turn finished while the app was closed" />
-      <p className="px-3 py-2 font-mono text-meta text-dialog-hint">
-        One answer for the whole fleet, on this device. A machine that cannot fork a folder still
-        refuses — the switch decides the question, not the capability.
-      </p>
+      {state === 'menu-off' && (
+        <p className="mt-auto border-t border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-meta text-dialog-hint">
+          Settings › <span className="text-white">Offer drafts</span> off: the verb is not there,
+          and nothing else in the app asks about copies.
+        </p>
+      )}
     </Screen>
+  );
+  if (menu) return list;
+  return (
+    <div className="relative h-full">
+      {list}
+      <SwitchSheet
+        mode={state === 'typed' ? 'typed' : state === 'new-folder' ? 'new-folder' : 'browse'}
+      />
+    </div>
   );
 }
 
 /* ------------------------------------------------------------------- board */
 
-export interface BoardOption {
-  letter: string;
+export interface FlowStep {
+  step: string;
   title: string;
-  /** What it costs and what it costs you — the sentence the choice is made on. */
+  /** What this step costs and what it buys — the sentence the design is read on. */
   caption: string;
   variant: string;
   state: string;
 }
 
-export interface BoardSection {
-  question: string;
-  note: string;
-  options: BoardOption[];
-}
-
-export const BOARD_SECTIONS: BoardSection[] = [
+export const FLOW_STEPS: FlowStep[] = [
   {
-    question: '1 · Where does "New session" live?',
-    note: 'Solo (one machine paired) hides every machine header, so in B–D the button returns to the fleet bar — the fleet IS the machine.',
-    options: [
-      {
-        letter: 'A',
-        title: 'Shipped: one button, then "which machine?"',
-        caption:
-          'Today. Every session, on every machine, pays the same first tap — including the machine that is not answering.',
-        variant: 'place-new-session',
-        state: 'shipped',
-      },
-      {
-        letter: 'B',
-        title: 'A labelled button on each machine',
-        caption:
-          'Where you tap IS the machine. Costs one button per header; a dead machine wears a disabled one instead of lying.',
-        variant: 'place-new-session',
-        state: 'machine-button',
-      },
-      {
-        letter: 'C',
-        title: 'Everything inside the machine ⋯',
-        caption:
-          'Nothing new on screen and one home for machine actions — but starting is never fewer than two taps.',
-        variant: 'place-new-session',
-        state: 'machine-dots',
-      },
-      {
-        letter: 'D',
-        title: '+ on the machine and on the project',
-        caption:
-          'Machine + asks which project; project + starts there at once. Fastest, four glyphs per screen, and hidden on a machine collapsed shut.',
-        variant: 'place-new-session',
-        state: 'row-plus',
-      },
-    ],
+    step: '1',
+    title: 'The machine ⋯ is the whole menu (C)',
+    caption:
+      'Nothing new on the list. The header you tapped is the machine, so no surface ever asks again; the project ⋯ still only deletes that project’s sessions.',
+    variant: 'session-flow',
+    state: 'menu',
   },
   {
-    question: '2 · How is a draft offered?',
-    note: '`Offer drafts` off is the baseline: nothing below appears at all.',
-    options: [
-      {
-        letter: 'E',
-        title: 'Off: never asked',
-        caption:
-          'What the switch buys. One verb, no fork, no second dialog — and the whole menu is three lines.',
-        variant: 'draft-offer',
-        state: 'off',
-      },
-      {
-        letter: 'F',
-        title: 'A second verb in the menu',
-        caption:
-          'The fork is a choice of VERB, made before anything opens. Two entries that differ by four words, forever.',
-        variant: 'draft-offer',
-        state: 'verb',
-      },
-      {
-        letter: 'G',
-        title: 'A chip row in the destination sheet',
-        caption:
-          'One surface answers project and workspace; the parked draft is offered by name. Disappears whole when drafts are off.',
-        variant: 'draft-offer',
-        state: 'chip',
-      },
-    ],
+    step: '2',
+    title: 'Drafts off: the verb is gone (F)',
+    caption:
+      'The same menu with the switch off — three entries, no fork, nothing anywhere else in the app asking "the project or a copy?". That absence is what the toggle buys.',
+    variant: 'session-flow',
+    state: 'menu-off',
   },
   {
-    question: '3 · What does Switch project look like?',
-    note: "A bottom sheet on the machine you tapped, browsing that machine's filesystem — down, back up the path, above ~ to /.",
-    options: [
-      {
-        letter: 'H',
-        title: 'Breadcrumb browser',
-        caption:
-          'The path is the control: tap an ancestor to climb, a folder to descend, and the footer commits where you stand.',
-        variant: 'switch-project',
-        state: 'breadcrumb',
-      },
-      {
-        letter: 'I',
-        title: 'Path field with completion',
-        caption:
-          'Type the destination; the list is a completion plus what this machine already knows. Instant on a keyboard, fiddly under a thumb.',
-        variant: 'switch-project',
-        state: 'path',
-      },
-      {
-        letter: 'J',
-        title: 'Creating a folder, inline',
-        caption:
-          'H, mid-creation: the new folder is a row in the list it will join, not a second dialog. Create & switch is one press.',
-        variant: 'switch-project',
-        state: 'new-folder',
-      },
-    ],
+    step: '3',
+    title: 'Switch project browses the machine (H)',
+    caption:
+      'A bottom sheet on the machine’s own filesystem: descend, climb the path, go above ~ to /. Known projects are badged; SWITCH HERE commits the folder under the thumb.',
+    variant: 'session-flow',
+    state: 'browse',
   },
   {
-    question: '4 · Where does the "Offer drafts" switch live?',
-    note: "The capability is always the gateway's (no repo, no draft). Only the QUESTION is being placed.",
-    options: [
-      {
-        letter: 'K',
-        title: 'App settings',
-        caption:
-          'One answer for the fleet, on this device. Found where every other preference is; a phone and a laptop can disagree.',
-        variant: 'drafts-toggle',
-        state: 'app',
-      },
-      {
-        letter: 'L',
-        title: 'Per machine',
-        caption:
-          'Travels with the gateway and matches how the work differs per box — at the price of a screen per machine and a fleet that disagrees with itself.',
-        variant: 'drafts-toggle',
-        state: 'machine',
-      },
-    ],
+    step: '4',
+    title: 'The pencil types the path (H + ✎)',
+    caption:
+      'The same header, edited: the crumbs become the path itself, matches narrow as you type, and the pencil stays lit as the way back to browsing. A keyboard beats six taps.',
+    variant: 'session-flow',
+    state: 'typed',
+  },
+  {
+    step: '5',
+    title: 'A folder is made in place',
+    caption:
+      'NEW FOLDER inserts an editable row in the list; ⏎ creates it and switches in one breath, so a project that does not exist yet never needs a second dialog.',
+    variant: 'session-flow',
+    state: 'new-folder',
+  },
+  {
+    step: '6',
+    title: 'Offer drafts is one app switch (K)',
+    caption:
+      'This device, every machine. It decides the QUESTION; a gateway that cannot fork a folder still refuses, which is a capability and not a preference.',
+    variant: 'session-flow',
+    state: 'settings',
+  },
+  {
+    step: '7',
+    title: 'Solo pays nothing (falsifier)',
+    caption:
+      'One machine paired: no machine header, no chips, no machine question. The fleet bar IS the machine and carries the same ⋯ — the feature costs a solo user one glyph.',
+    variant: 'session-flow',
+    state: 'solo',
   },
 ];
 
-function renderOption(option: BoardOption) {
-  if (option.variant === 'place-new-session')
-    return <PlaceNewSessionVariant state={option.state} />;
-  if (option.variant === 'draft-offer') return <DraftOfferVariant state={option.state} />;
-  if (option.variant === 'switch-project') return <SwitchProjectVariant state={option.state} />;
-  return <DraftsToggleVariant state={option.state} />;
+function renderStep(step: FlowStep) {
+  return <SessionFlowVariant state={step.state} />;
 }
 
-function BoardCard({ option }: { option: BoardOption }) {
+function StepCard({ step }: { step: FlowStep }) {
   return (
     <figure className="flex w-[390px] flex-col border border-dialog-edge bg-panel-2">
-      <figcaption className="flex min-h-[6.5rem] flex-col border-b border-dialog-edge px-3 py-2">
+      <figcaption className="flex min-h-[7rem] flex-col border-b border-dialog-edge px-3 py-2">
         <p className="flex items-baseline gap-2">
           <span className="shrink-0 bg-accent px-1.5 font-mono text-ui font-bold text-accent-foreground">
-            {option.letter}
+            {step.step}
           </span>
-          <span className="min-w-0 font-mono text-ui font-bold text-white">{option.title}</span>
+          <span className="min-w-0 font-mono text-ui font-bold text-white">{step.title}</span>
         </p>
-        <p className="mt-1 font-mono text-meta text-dialog-hint">{option.caption}</p>
+        <p className="mt-1 font-mono text-meta text-dialog-hint">{step.caption}</p>
       </figcaption>
-      <div className="h-[42rem] w-full overflow-hidden">{renderOption(option)}</div>
+      <div className="h-[42rem] w-full overflow-hidden">{renderStep(step)}</div>
     </figure>
   );
 }
 
 /**
- * Every open question on one sheet of paper. The board is the deliverable: a
- * proposal compared against a memory of another proposal is not compared at all.
+ * The answered board: one sheet of paper showing the flow that was chosen, in the
+ * order a person walks it. A decision recorded only in prose is a decision nobody
+ * can see was wrong.
  */
 export function SessionUxBoardVariant() {
   return (
     <section className="mx-auto flex w-full max-w-[1680px] flex-col gap-6 p-6">
       <header>
         <h1 className="font-mono text-head font-bold text-white">
-          Machine, project, draft — the open questions
+          Machine, project, draft — the chosen flow
         </h1>
         <p className="mt-1 font-mono text-meta text-dialog-hint">
-          Settled already: the project ⋯ is unchanged, the machine gets its own ⋯, Switch project is
-          its name, and it opens a bottom sheet over the machine's own filesystem.
-          (`apps/vis-companion/SESSION-UX.md`)
+          1C · 2F · 3H with a path pencil · 4K. Every machine verb lives in the machine’s ⋯, the
+          draft is a second verb there, Switch project is a filesystem sheet you can also type into,
+          and Offer drafts is one app switch. (`apps/vis-companion/SESSION-UX.md`)
         </p>
       </header>
-      {BOARD_SECTIONS.map((section) => (
-        <section key={section.question} className="flex flex-col gap-3">
-          <div className="border-l-4 border-accent bg-panel-2 px-3 py-2">
-            <p className="font-mono text-subhead font-bold text-white">{section.question}</p>
-            <p className="mt-0.5 font-mono text-meta text-dialog-hint">{section.note}</p>
-          </div>
-          <div className="flex flex-wrap items-start gap-4">
-            {section.options.map((option) => (
-              <BoardCard key={option.letter} option={option} />
-            ))}
-          </div>
-        </section>
-      ))}
+      <div className="flex flex-wrap items-start gap-4">
+        {FLOW_STEPS.map((step) => (
+          <StepCard key={step.step} step={step} />
+        ))}
+      </div>
     </section>
   );
 }
