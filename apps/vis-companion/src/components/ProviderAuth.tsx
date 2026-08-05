@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
 import type { AuthFlow, ProviderLimitRow, ProviderPreset, RouterProvider } from '../lib/types';
-import { Button, Input } from './ui';
+import { Banner, Button, Input } from './ui';
 
 /** How long to keep polling a device flow before giving up on our side. */
 const DEVICE_POLL_CEILING_MS = 15 * 60 * 1000;
@@ -162,15 +162,47 @@ export function providerLimitsLine(provider: RouterProvider): string | null {
   return text || null;
 }
 
+/**
+ * A banner and WHOSE it is.
+ *
+ * `providerId` names the provider whose card the message belongs INSIDE: the
+ * status of a provider is part of that provider, never a line floating above
+ * the list. `null` is fleet-wide — a reload that failed, presets that could not
+ * be read, a provider that no longer exists.
+ */
+export interface ProviderMessage {
+  text: string;
+  providerId: string | null;
+}
+
+/**
+ * The part of a message that has nowhere else to live: fleet-wide, or scoped to
+ * a provider these rows do not contain (an add that failed, a provider that was
+ * just removed). Everything else is painted by `ProviderNotice` inside its own
+ * provider card, so nothing is ever silently swallowed.
+ */
+export function unscopedMessage(
+  message: ProviderMessage | null,
+  providers: RouterProvider[] | null,
+): ProviderMessage | null {
+  if (!message) return null;
+  if (message.providerId === null) return message;
+  return (providers ?? []).some((row) => row.id === message.providerId) ? null : message;
+}
+
 export interface ProviderFleet {
   providers: RouterProvider[] | null;
   /** Patch one row in place (a live status re-check) without a refetch. */
   setProviders: (update: (rows: RouterProvider[] | null) => RouterProvider[] | null) => void;
-  err: string | null;
-  note: string | null;
-  /** Surface a caller-side failure (a model pick, say) in the same banner. */
-  setErr: (value: string | null) => void;
-  setNote: (value: string | null) => void;
+  err: ProviderMessage | null;
+  note: ProviderMessage | null;
+  /**
+   * Surface a caller-side failure (a model pick, say) in the same banner.
+   * `providerId` scopes it to that provider's own card; omitting it makes the
+   * message the fleet's.
+   */
+  setErr: (text: string | null, providerId?: string | null) => void;
+  setNote: (text: string | null, providerId?: string | null) => void;
   /** `auth:<id>` · `logout:<id>` · `status:<id>` · `auth:complete` · `reload`. */
   pending: string | null;
   setPending: (value: string | null) => void;
@@ -211,9 +243,20 @@ export function useProviderFleet(client: GatewayClient): ProviderFleet {
   // Paint whatever the shared router cache already holds (prefetched at
   // connect time) so a screen opens instantly; `reload` revalidates under it.
   const [providers, setProviders] = useState<RouterProvider[] | null>(() => client.cachedRouter());
-  const [err, setErr] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
+  const [err, setErrMessage] = useState<ProviderMessage | null>(null);
+  const [note, setNoteMessage] = useState<ProviderMessage | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+
+  const setErr = useCallback(
+    (text: string | null, providerId: string | null = null) =>
+      setErrMessage(text === null ? null : { text, providerId }),
+    [],
+  );
+  const setNote = useCallback(
+    (text: string | null, providerId: string | null = null) =>
+      setNoteMessage(text === null ? null : { text, providerId }),
+    [],
+  );
 
   const reload = useCallback(
     async (signal?: AbortSignal, opts?: { force?: boolean }) => {
@@ -228,7 +271,7 @@ export function useProviderFleet(client: GatewayClient): ProviderFleet {
         setProviders([]);
       }
     },
-    [client],
+    [client, setErr, setProviders],
   );
 
   const refresh = useCallback(async () => {
@@ -239,7 +282,7 @@ export function useProviderFleet(client: GatewayClient): ProviderFleet {
     } finally {
       setPending(null);
     }
-  }, [reload]);
+  }, [reload, setNote, setPending]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -308,7 +351,7 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
             if (Date.now() > deadline) {
               stopPolling();
               setFlow(null);
-              setErr('Authorization timed out. Start again when ready.');
+              setErr('Authorization timed out. Start again when ready.', started.provider_id);
               return;
             }
             try {
@@ -321,15 +364,15 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
               stopPolling();
               setFlow(null);
               if (verdict.status === 'ok') {
-                setNote(`Signed in to ${started.provider_id}.`);
+                setNote(`Signed in to ${started.provider_id}.`, started.provider_id);
                 await reload(undefined, { force: true });
               } else {
-                setErr(verdict.message ?? 'Authorization failed.');
+                setErr(verdict.message ?? 'Authorization failed.', started.provider_id);
               }
             } catch (e) {
               stopPolling();
               setFlow(null);
-              setErr((e as Error).message);
+              setErr((e as Error).message, started.provider_id);
             }
           })();
         }, every);
@@ -352,7 +395,7 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
         if (started.url) openProviderUrl(started.url);
         if (started.kind === 'device') watchDeviceFlow(started);
       } catch (e) {
-        setErr((e as Error).message);
+        setErr((e as Error).message, provider.id);
       } finally {
         setPending(null);
       }
@@ -373,13 +416,13 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
       try {
         const verdict = await client.logoutProvider(provider.id);
         if (verdict.status === 'error') {
-          setErr(verdict.message ?? 'Sign-out failed.');
+          setErr(verdict.message ?? 'Sign-out failed.', provider.id);
         } else {
-          setNote(`Signed out of ${provider.label}.`);
+          setNote(`Signed out of ${provider.label}.`, provider.id);
         }
         await reload(undefined, { force: true });
       } catch (e) {
-        setErr((e as Error).message);
+        setErr((e as Error).message, provider.id);
       } finally {
         setPending(null);
       }
@@ -404,9 +447,12 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
               row.id === provider.id ? { ...row, status, ...(limits ? { limits } : {}) } : row,
             ) ?? rows,
         );
-        setNote(`${provider.label}: ${status.is_authenticated ? 'signed in' : 'signed out'}.`);
+        setNote(
+          `${provider.label}: ${status.is_authenticated ? 'signed in' : 'signed out'}.`,
+          provider.id,
+        );
       } catch (e) {
-        setErr((e as Error).message);
+        setErr((e as Error).message, provider.id);
       } finally {
         setPending(null);
       }
@@ -424,15 +470,15 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
         redirectUrl.trim(),
       );
       if (verdict.status === 'ok') {
-        setNote(`Signed in to ${flow.provider_id}.`);
+        setNote(`Signed in to ${flow.provider_id}.`, flow.provider_id);
         setFlow(null);
         setRedirectUrl('');
         await reload(undefined, { force: true });
       } else {
-        setErr(verdict.message ?? 'Authorization failed.');
+        setErr(verdict.message ?? 'Authorization failed.', flow.provider_id);
       }
     } catch (e) {
-      setErr((e as Error).message);
+      setErr((e as Error).message, flow.provider_id);
     } finally {
       setPending(null);
     }
@@ -448,15 +494,15 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
     try {
       const verdict = await client.submitProviderKey(flow.provider_id, flow.flow_id, apiKey.trim());
       if (verdict.status === 'ok') {
-        setNote(`Signed in to ${flow.provider_id}.`);
+        setNote(`Signed in to ${flow.provider_id}.`, flow.provider_id);
         setFlow(null);
         setApiKey('');
         await reload(undefined, { force: true });
       } else {
-        setErr(verdict.message ?? 'Authorization failed.');
+        setErr(verdict.message ?? 'Authorization failed.', flow.provider_id);
       }
     } catch (e) {
-      setErr((e as Error).message);
+      setErr((e as Error).message, flow.provider_id);
     } finally {
       setPending(null);
     }
@@ -513,14 +559,14 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
         const rows = await client.addProvider(preset.id, baseUrl);
         setProviders(() => rows);
         setPresets((current) => current?.filter((row) => row.id !== preset.id) ?? null);
-        setNote(`Added ${preset.label}.`);
+        setNote(`Added ${preset.label}.`, preset.id);
         const added = rows.find((row) => row.id === preset.id);
         if (added && preset.auth_kind !== 'none') {
           await signIn(added);
           return;
         }
       } catch (e) {
-        setErr((e as Error).message);
+        setErr((e as Error).message, preset.id);
       } finally {
         setPending(null);
       }
@@ -542,9 +588,9 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
         const rows = await client.removeProvider(provider.id);
         setProviders(() => rows);
         setPresets(null);
-        setNote(`Removed ${provider.label}.`);
+        setNote(`Removed ${provider.label}.`, provider.id);
       } catch (e) {
-        setErr((e as Error).message);
+        setErr((e as Error).message, provider.id);
       } finally {
         setPending(null);
       }
@@ -573,11 +619,11 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
 }
 
 /**
- * The live sign-in step: a device code to type into the browser, a redirect
- * URL to paste back, or an API key to enter. Rendered identically wherever a
- * flow is running so the phone and the router dialog never drift.
+ * The live sign-in step: a device code to type into the browser, a redirect URL
+ * to paste back, or an API key to enter. Only ever rendered by
+ * `ProviderNotice`, INSIDE the card of the provider the flow belongs to.
  */
-export function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
+function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
   const { flow } = auth;
   if (!flow) return null;
   const busy = auth.pending === 'auth:complete';
@@ -677,6 +723,40 @@ export function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
           Cancel
         </Button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Everything the gateway has to SAY about one provider, painted inside that
+ * provider's own card: its last verdict and the sign-in step it is in the
+ * middle of.
+ *
+ * This is the whole point of scoping a `ProviderMessage`. A banner at the top
+ * of the panel announced "Z.ai (Coding Plan): signed out." above a list where
+ * that provider already carries its own red dot, and the API-key form for ONE
+ * provider sat above EVERY provider's row — so the screen asked for a key
+ * without saying whose. It sits outside the collapsible body on purpose: a
+ * running sign-in must not be hideable, and a verdict must be readable without
+ * expanding anything.
+ */
+export function ProviderNotice({
+  auth,
+  provider,
+}: {
+  auth: ProviderAuth;
+  provider: RouterProvider;
+}) {
+  const err = auth.err?.providerId === provider.id ? auth.err : null;
+  const note = auth.note?.providerId === provider.id ? auth.note : null;
+  const isFlowing = auth.flow?.provider_id === provider.id;
+  if (!err && !note && !isFlowing) return null;
+
+  return (
+    <div className="space-y-2 border-t border-dialog-edge p-3">
+      {err && <Banner kind="err">{err.text}</Banner>}
+      {note && <Banner kind="ok">{note.text}</Banner>}
+      {isFlowing && <ProviderFlowPanel auth={auth} />}
     </div>
   );
 }

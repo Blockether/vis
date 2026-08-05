@@ -66,7 +66,7 @@ import {
 } from "../lib/endpoints";
 import { onWake } from "../lib/wake";
 import {
-  ProviderFlowPanel,
+  ProviderNotice,
   ProviderSignOutButton,
   ProviderRemoveButton,
   AddProviderPanel,
@@ -76,6 +76,7 @@ import {
   providerLimitsLine,
   providerStatusDot,
   providerStatusLine,
+  unscopedMessage,
   useProviderAuth,
 } from "../components/ProviderAuth";
 
@@ -1322,6 +1323,10 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({});
   const signedIn = providers?.filter(isProviderAuthed).length ?? 0;
+  // A message that names a provider is painted inside THAT provider's card by
+  // `ProviderNotice`; only what has no card left to live in surfaces here.
+  const fleetErr = unscopedMessage(err, providers);
+  const fleetNote = unscopedMessage(note, providers);
 
   const tagModel = async (
     role: "default" | "fallback",
@@ -1341,9 +1346,13 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
       await auth.reload(undefined, { force: true });
       auth.setNote(
         `${role === "fallback" ? "Fallback" : "Default"} set to ${providerId} / ${model}.`,
+        providerId,
       );
     } catch (e) {
-      auth.setErr(e instanceof GatewayError ? e.message : String(e));
+      auth.setErr(
+        e instanceof GatewayError ? e.message : String(e),
+        providerId,
+      );
     } finally {
       auth.setPending(null);
     }
@@ -1361,9 +1370,12 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
     try {
       await client.clearFallbackModel();
       await auth.reload(undefined, { force: true });
-      auth.setNote("Fallback cleared.");
+      auth.setNote("Fallback cleared.", providerId);
     } catch (e) {
-      auth.setErr(e instanceof GatewayError ? e.message : String(e));
+      auth.setErr(
+        e instanceof GatewayError ? e.message : String(e),
+        providerId,
+      );
     } finally {
       auth.setPending(null);
     }
@@ -1378,9 +1390,8 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
       }
     >
       <div className="space-y-2 p-3">
-        {err && <Banner kind="err">{err}</Banner>}
-        {note && <Banner kind="ok">{note}</Banner>}
-        <ProviderFlowPanel auth={auth} />
+        {fleetErr && <Banner kind="err">{fleetErr.text}</Banner>}
+        {fleetNote && <Banner kind="ok">{fleetNote.text}</Banner>}
 
         {providers === null && (
           <p className="py-4 text-center font-mono text-meta text-dialog-hint">
@@ -1455,6 +1466,8 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                   {open ? "▾" : "▸"}
                 </span>
               </button>
+
+              <ProviderNotice auth={auth} provider={provider} />
 
               {open && (
                 <div className="space-y-3 border-t border-dialog-edge p-3">

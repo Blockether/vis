@@ -123,8 +123,8 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
         </header>
 
         <div className="flex-1 touch-pan-y space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain border-t border-dialog-edge p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4">
-          {err && <Banner kind="err">{err}</Banner>}
-          {note && <Banner kind="ok">{note}</Banner>}
+          {err && <Banner kind="err">{err.text}</Banner>}
+          {note && <Banner kind="ok">{note.text}</Banner>}
 
           {providers === null && (
             <p className="py-8 text-center font-mono text-body text-dialog-hint">Loading models…</p>
