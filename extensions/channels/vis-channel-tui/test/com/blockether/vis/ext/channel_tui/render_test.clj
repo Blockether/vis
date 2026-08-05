@@ -4527,9 +4527,33 @@
      (into [] (comp (mapcat band) (remove #(= " " (:ch %)))) card-rows)]
 
     (it "paints the whole card on the warning surface, never on the answer's"
-        ;; label gap + the two wrapped sentence rows
-        (expect (= 3 (count card-rows)))
+        ;; top padding + the two wrapped sentence rows + bottom padding
+        (expect (= 4 (count card-rows)))
         (expect (= #{(rgb t/warning-bg)} (into #{} (comp (mapcat band) (map :bg)) card-rows))))
+    ;; ... and it is a CARD, not a stripe: one margin row of plain terminal
+    ;; paper between the band and its own `Vis` label, one padding row of the
+    ;; card's own surface under the last sentence, and the edge bar down all of
+    ;; it. The band used to hug the role banner and end flush with the final
+    ;; sentence.
+    (it "keeps a margin row above the band and a padding row inside it"
+        (let
+          [card-top
+           (first (keep-indexed (fn [i row]
+                                  (when (some #(= "│" (:ch %)) row) i))
+                                grid))
+
+           text-of
+           (fn [row]
+             (str/trim (apply str (map :ch (band row)))))]
+
+          (expect (= "Vis" (text-of (nth grid (- (long card-top) 2)))))
+          (expect (= "" (text-of (nth grid (dec (long card-top))))))
+          (expect (= #{(rgb t/terminal-bg)}
+                     (into #{} (map :bg) (band (nth grid (dec (long card-top)))))))
+          ;; the card's own first and last rows are pure surface + edge bar
+          (expect (= ["│" "│"] [(text-of (first card-rows)) (text-of (last card-rows))]))
+          ;; label(1) + margin(1) + 3 content rows + padding(1) + gap(1)
+          (expect (= 7 (render/bubble-height* message 76)))))
     (it "leads with the bold machine code in error ink behind an amber edge bar"
         (expect (= "turn_failed" (apply str (map :ch (filter :bold ink)))))
         (expect (= #{(rgb t/warning-border)}

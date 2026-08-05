@@ -2105,13 +2105,18 @@
     ;; padding above the typed text (otherwise the yellow band
     ;; hugs the first character and reads as a single-row strip).
     ;; User bubbles also keep one breathing row BELOW the typed text.
+    ;; An ERROR card wants BOTH, for the same reason the companion's card has a
+    ;; margin and a padding: the top row is a MARGIN that stays on terminal-bg,
+    ;; so the amber band starts one row below its own `Vis` label instead of
+    ;; hugging it, and the bottom row is PADDING inside the fill, so the last
+    ;; sentence does not sit on the card's own edge.
     ;; Mirror this in `bubble-height*` so the math stays in sync.
     (let
       [top-pad
-       (if user? 1 0)
+       (if (or user? error?) 1 0)
 
        bottom-pad
-       (if user? 1 0)
+       (if (or user? error?) 1 0)
 
        btop
        (+ (long start-row) (long top-sep-h) 1 (long top-pad))]
@@ -2132,7 +2137,18 @@
       ;; reads as the message itself, no extra chrome.
       (when (or warning? error?)
         (p/set-bg! g bg-color)
-        (p/fill-rect! g bx btop bubble-w (max 1 bubble-h)))
+        ;; `bottom-pad` is part of the card's SURFACE (error only): the fill
+        ;; runs one row past the last sentence so the card breathes at the
+        ;; bottom the way the answer zone's leading blank makes it breathe at
+        ;; the top.
+        (p/fill-rect! g bx btop bubble-w (+ (max 1 bubble-h) (long bottom-pad)))
+        ;; ... and the left edge bar runs the full height of that surface. A
+        ;; bar that stops one row short of the fill reads as a broken rule
+        ;; rather than as the card's own border.
+        (when (and error? (pos? (long bottom-pad)))
+          (p/clear-styles! g)
+          (p/set-colors! g t/warning-border bg-color)
+          (p/put-str! g bx (+ (long btop) bubble-h) "│")))
       ;;
       ;; Cancelled: NO bubble-wide fill. The muted italic fg
       ;; (`cancelled-fg`) + dimmed role label + plain status footer
@@ -3308,8 +3324,8 @@
 
 (defn bubble-height*
   "Uncached calculation: rows a chat message will consume without drawing.
-   label(1) + optional top-pad(1, user only) + wrapped-lines
-   + optional bottom-pad(1, user only) + optional meta top margin/footer(0|2)
+   label(1) + optional top-pad(1, user + error card) + wrapped-lines
+   + optional bottom-pad(1, user + error card) + optional meta top margin/footer(0|2)
    + gap(1).
    Mirrors `draw-chat-bubble!`'s wrap width (`bubble-w - 2*h-pad`) so
    layout math stays consistent across the height calc and the draw."
@@ -3339,11 +3355,17 @@
      lines
      (clipped-lines raw-lines content-w bubble-w)
 
+     ;; An error card takes the same margin row above and padding row below
+     ;; that a user block takes - see `draw-chat-bubble!`, which is the one
+     ;; place that decides what those two rows are painted with.
+     error?
+     (and (not= :queued status) (not= :cancelled status) (error-message? message))
+
      top-pad
-     (if (= role :user) 1 0)
+     (if (or (= role :user) error?) 1 0)
 
      bottom-pad
-     (if (= role :user) 1 0)
+     (if (or (= role :user) error?) 1 0)
 
      cancelled?
      (= :cancelled status)
