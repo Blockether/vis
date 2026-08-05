@@ -1881,7 +1881,7 @@ function SettingsPanel({
             {title}
           </h3>
           {description && (
-            <p className="mt-0.5 pl-2 text-pretty font-mono text-chip leading-snug text-dialog-hint">
+            <p className="mt-0.5 pl-2 text-pretty font-mono text-chip text-dialog-hint">
               {description}
             </p>
           )}

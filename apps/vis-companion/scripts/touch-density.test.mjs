@@ -122,3 +122,70 @@ describe('touch density', () => {
     expect(shrinksAtSm('<i className="min-h-10 mouse:min-h-9 sm:px-2 sm:min-h-12" />')).toEqual([]);
   });
 });
+
+// The type step owns its line-height (`index.css`): a `leading-*` utility or an
+// ad-hoc `text-[Npx]` is exactly how the rhythm drifts — a 9px chip wearing
+// `leading-snug` is a 12.375px line box, off the whole-pixel 2px grid. And the
+// scale itself has to loosen as the text SHRINKS: 10px prose on a 14px line box
+// reads as a block, which is what a 9px/12px chip and a 10px/14px meta step did
+// to every wrapped description in the app.
+
+/** Every hardcoded line-height or ad-hoc text size in one source file. */
+export function overridesLeading(source) {
+  return literals(source)
+    .flatMap((literal) => literal.split(/\s+/).filter(Boolean))
+    .filter((token) => /^(?:[a-z-]+:)*(?:leading-|text-\[)/.test(token));
+}
+
+/** `{size, lineHeight}` in px for every step of the scale, smallest first. */
+export function typeSteps(css) {
+  return textScale.map((name) => {
+    const px = (suffix) =>
+      Number(new RegExp(`--${name}${suffix}:\\s*(\\d+)px`).exec(css)?.[1] ?? NaN);
+    return { name, size: px(''), lineHeight: px('--line-height') };
+  });
+}
+
+describe('type scale', () => {
+  it('never overrides a step line-height in the component tree', () => {
+    const offenders = sourceFiles(src).flatMap((file) =>
+      overridesLeading(readFileSync(file, 'utf8')).map(
+        (token) => `${file.slice(src.length + 1)}: ${token} (the type step owns the line-height)`,
+      ),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('keeps every line box on whole even pixels', () => {
+    const offenders = typeSteps(readFileSync(join(src, 'index.css'), 'utf8')).filter(
+      ({ size, lineHeight }) =>
+        !Number.isInteger(size) || !Number.isInteger(lineHeight) || lineHeight % 2 !== 0,
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('loosens the leading as the text gets smaller', () => {
+    const steps = typeSteps(readFileSync(join(src, 'index.css'), 'utf8'));
+    const tight = steps.filter(({ size, lineHeight }) => lineHeight / size < 1.4);
+    expect(tight.map(({ name }) => name)).toEqual(['text-display']);
+    // The two smallest steps carry every wrapped description in the app.
+    expect(steps.slice(0, 2).map(({ size, lineHeight }) => lineHeight / size >= 1.5)).toEqual([
+      true,
+      true,
+    ]);
+  });
+
+  it('reads the scale and the overrides it refuses', () => {
+    expect(typeSteps('--text-chip: 9px;\n--text-chip--line-height: 14px;')[0]).toEqual({
+      name: 'text-chip',
+      size: 9,
+      lineHeight: 14,
+    });
+    expect(overridesLeading('<p className="text-chip leading-snug" />')).toEqual(['leading-snug']);
+    expect(overridesLeading('<p className="sm:leading-5 text-[13px]" />')).toEqual([
+      'sm:leading-5',
+      'text-[13px]',
+    ]);
+    expect(overridesLeading('<p className="text-chip tracking-wider" />')).toEqual([]);
+  });
+});

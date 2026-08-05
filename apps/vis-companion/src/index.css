@@ -112,18 +112,20 @@
 /* Canonical type scale — the ONLY font sizes AND line-heights in the app.
    Tailwind's default text-xs / text-sm / text-base scale is cleared so an
    uncanonical size cannot be typed by accident; arbitrary text-[Npx] is
-   banned. Every step carries its own line-height in WHOLE PIXELS, so a
+   banned. Every step carries its own line-height in WHOLE, EVEN PIXELS, so a
    line box never lands on a half pixel and baselines stay on one 2px
    rhythm across every screen. Never write a `leading-*` utility: the type
    step owns the line-height, and an override is exactly how vertical
-   rhythm drifts. */
+   rhythm drifts. The leading LOOSENS as the text shrinks — the small steps
+   carry every wrapped description in the app, and 10px prose on a 14px line
+   box reads as one block; only `text-display` is set tight. */
 @theme {
   --text-*: initial;
 
   --text-chip: 9px;
-  --text-chip--line-height: 12px;
+  --text-chip--line-height: 14px;
   --text-meta: 10px;
-  --text-meta--line-height: 14px;
+  --text-meta--line-height: 16px;
   --text-ui: 11px;
   --text-ui--line-height: 16px;
   --text-body: 12px;
