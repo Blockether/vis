@@ -1854,6 +1854,13 @@
                               :image
                               (opener/open-local! url)
 
+                              ;; A `vis-doc` card: the PDF/HTML the sandbox
+                              ;; produced lives in the display cache outside the
+                              ;; workspace, so it takes the same local-file
+                              ;; opener the inline images use.
+                              :doc
+                              (opener/open-local! url)
+
                               (opener/open! url))
                             (catch Throwable _ nil))))
   ([^TerminalScreen _screen ref] (open-click-target! ref)))

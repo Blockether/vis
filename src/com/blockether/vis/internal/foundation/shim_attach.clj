@@ -37,53 +37,59 @@
   [f]
   (try [true (f)] (catch Throwable t [false (str (or (.getMessage t) t))])))
 
-(defn- image-display-info
-  "For an image attachment, write the decoded bytes to a HOST temp file and read
-   back its pixel dimensions, returning `[abs-path width height]` — the attach
-   shim prints these as a `vis-image` display fence so a graphical TUI/web paints
-   the picture inline (the same fence matplotlib's `plt.show()` emits). The bytes
-   are written HOST-side (like `__vis_mpl_render_file__`), so inline display works
-   even when the sandbox's own Python filesystem is denied. Returns nil for a
-   non-image media-type, or when the bytes can't be decoded as an image (e.g. an
-   SVG or a format `com.blockether/imaging` cannot probe) — the caller then records the
-   attachment with no inline fence and the renderer keeps its text placeholder.
-   Never throws: a temp-file/decoding hiccup must not break `vis_attach`."
+(defn- display-info
+  "Write an attachment's decoded bytes to a HOST temp file and describe what a
+   surface needs in order to SHOW it: `[abs-path width height]`.
+
+   For an image the pixel dimensions are probed and the attach shim prints a
+   `vis-image` display fence so a graphical TUI/web paints the picture inline
+   (the same fence matplotlib's `plt.show()` emits). For a PDF or an HTML page
+   ([[attachments/human-only-media-type?]]) there are no pixels to probe: the
+   dimensions are 0 and the shim prints a `vis-doc` fence instead, which the TUI
+   hands to the system viewer and the companion renders inside a sandboxed
+   frame. Either way the bytes are written HOST-side (like
+   `__vis_mpl_render_file__`), so display works even when the sandbox's own
+   Python filesystem is denied.
+
+   Returns nil for any other media-type, and for bytes that cannot be decoded as
+   an image (an SVG, or a format `com.blockether/imaging` cannot probe) — the
+   caller then records the attachment with no inline fence and the renderer
+   keeps its text placeholder. Never throws: a temp-file/decoding hiccup must
+   not break `vis_attach`."
   [^String media-type ^String b64]
-  (try
-    (when (str/starts-with? (str media-type) "image/")
-      (let
-        [bytes
-         (.decode (java.util.Base64/getDecoder) b64)
+  (try (let [mt (str/lower-case (str/trim (str media-type)))]
+         (cond (attachments/human-only-media-type? mt)
+               (let
+                 [bytes (.decode (java.util.Base64/getDecoder) b64)
+                  ext (if (str/includes? mt "pdf") "pdf" "html")
+                  f (mpl-capture/display-cache-file "doc-" ext bytes)]
 
-         info
-         ;; imaging probes SVG too, but the inline fence is for RASTER bytes a
-         ;; viewer can paint as-is — an SVG stays a text placeholder.
-         (let [i (imaging/probe bytes)]
-           (when-not (= "svg"
-                        (some-> (:format i)
-                                name))
-             i))]
+                 [(.getAbsolutePath f) 0 0])
+               (str/starts-with? mt "image/")
+               (let
+                 [bytes (.decode (java.util.Base64/getDecoder) b64)
+                  info
+                  ;; imaging probes SVG too, but the inline fence is for RASTER bytes a
+                  ;; viewer can paint as-is — an SVG stays a text placeholder.
+                  (let [i (imaging/probe bytes)]
+                    (when-not (= "svg"
+                                 (some-> (:format i)
+                                         name))
+                      i))]
 
-        (when info
-          (let
-            [w
-             (:width info)
+                 (when info
+                   (let
+                     [w (:width info)
+                      h (:height info)
+                      ext (or (some-> mt
+                                      (str/split #"/")
+                                      second
+                                      (str/replace #"[^a-z0-9]" ""))
+                              "img")
+                      f (mpl-capture/display-cache-file "att-" ext bytes)]
 
-             h
-             (:height info)
-
-             ext
-             (or (some-> media-type
-                         (str/split #"/")
-                         second
-                         (str/replace #"[^a-z0-9]" ""))
-                 "img")
-
-             f
-             (mpl-capture/display-cache-file "att-" ext bytes)]
-
-            [(.getAbsolutePath f) w h]))))
-    (catch Throwable _ nil)))
+                     [(.getAbsolutePath f) w h])))))
+       (catch Throwable _ nil)))
 
 (defn- truthy-flag?
   "Tolerant reading of a boolean argument crossing the shim bridge: Python hands
@@ -119,7 +125,7 @@
                            {}))
            :else (let
                    [info
-                    (image-display-info (str media-type) (str b64))
+                    (display-info (str media-type) (str b64))
 
                     answer?
                     (truthy-flag? in-answer)]
@@ -130,7 +136,11 @@
                         :media-type (str media-type)
                         :base64 (str b64)
                         :size (long (or size 0))
-                        :audience (attachments/normalize-audience audience)}
+                        ;; One funnel: a PDF/HTML document is clamped to "user" by
+                        ;; `attachment-audience` itself, so no caller can put a
+                        ;; document on the wire as an image block.
+                        :audience (attachments/attachment-audience {:media-type (str media-type)
+                                                                    :audience audience})}
                        (not (str/blank? (str filename)))
                        (assoc :filename (str filename))
 

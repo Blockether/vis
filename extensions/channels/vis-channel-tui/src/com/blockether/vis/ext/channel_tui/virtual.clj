@@ -831,13 +831,14 @@
       ;; for the visible window; no renderer tree is stored on the message.
       ;; It carries no line meta either, so every clickable block inside the
       ;; window is inert — a `vis-table` grid exists to be clicked (the click
-      ;; opens the whole sheet), so a message holding one keeps the full
-      ;; projection.
+      ;; opens the whole sheet), and so does a `vis-doc` card (the click opens
+      ;; the document), so a message holding one keeps the full projection.
       windowed?
       (and window-start
            window-num
            (not (:traces message))
            (not (str/includes? (str (:text message)) "````vis-table"))
+           (not (str/includes? (str (:text message)) "````vis-doc"))
            (#{:assistant :user} (:role message))
            (not (str/blank? (:text message))))]
 

@@ -2276,6 +2276,14 @@
                     (cr/register! {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
                                    :kind :table
                                    :table tbl}))
+                  ;; Every painted row of a `vis-doc` card is a click target: a
+                  ;; PDF/HTML document has nothing a terminal can paint, so the
+                  ;; card is a HANDLE and the click hands the host file to the
+                  ;; system viewer (`:doc` branch of `open-click-target!`).
+                  (when-let [doc (:doc meta)]
+                    (cr/register! {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                                   :kind :doc
+                                   :url (:path doc)}))
                   (cond
                     ;; ── Iteration header - right-aligned, subtle ──
                     (str/starts-with? line iteration-hdr-marker)
@@ -6263,9 +6271,19 @@
   [node]
   (and (vector? node) (= :code (first node)) (= "vis-table" (:lang (second node)))))
 
+(defn- doc-code-block?
+  "True for a `vis-doc` code node — the fence `vis_attach` emits for a PDF or an
+   HTML page. Body lines: summary, absolute host path, mime, file name,
+   size-label. There is no payload: a document is opened, not inlined."
+  [node]
+  (and (vector? node) (= :code (first node)) (= "vis-doc" (:lang (second node)))))
+
 (defn- disclosure-code-block?
   [node]
-  (or (paste-code-block? node) (image-code-block? node) (table-code-block? node)))
+  (or (paste-code-block? node)
+      (image-code-block? node)
+      (table-code-block? node)
+      (doc-code-block? node)))
 
 (defn- image-block-parts
   "Parse a `vis-image` node body into `{:summary :path :mime :width :height
@@ -6610,6 +6628,48 @@
           (tag-table-grid-lines
             (layout/ast->entries [:ast {} [:code {} (str/join "\n" lines)]] content-w {})))))
 
+(defn- doc-block-parts
+  "Parse a `vis-doc` node body — the header lines `vis_attach` writes for a PDF or
+   an HTML page — into `{:summary :path :mime :name :size-label}`. Missing fields
+   come back nil."
+  [node]
+  (let
+    [lines
+     (str/split (str (nth node 2 "")) #"\n" -1)
+
+     [summary path mime name size-label]
+     lines]
+
+    {:summary (str/trim (str summary))
+     :path (str/trim (str path))
+     :mime (not-empty (str/trim (str mime)))
+     :name (not-empty (str/trim (str name)))
+     :size-label (not-empty (str/trim (str size-label)))}))
+
+(defn- doc-disclosure-entries
+  "Render one `vis-doc` block as a single card: the `[Document: …]` headline and
+   one hint line.
+
+   A PDF is pages and an HTML page is markup — neither has pixels a terminal
+   could paint, and neither is ever handed to the model as an image. So the card
+   is deliberately just a HANDLE: every painted row carries the document in
+   `:meta :doc`, the paint loop turns each into a click region, and clicking it
+   opens the host file in the system viewer (the companion renders the same
+   artifact inline, inside a sandboxed frame)."
+  [node content-w _opts]
+  (let
+    [{:keys [summary path mime name size-label]}
+     (doc-block-parts node)
+
+     lines
+     [(if (str/blank? summary) "[Document]" summary) "↗ click to open in the system viewer"]
+
+     doc
+     {:path path :mime mime :name name :size-label size-label :title (or name summary)}]
+
+    (mapv #(assoc-in % [:meta :doc] doc)
+          (layout/ast->entries [:ast {} [:code {} (str/join "\n" lines)]] content-w {}))))
+
 (defn- paste-aware-ast->entries
   "`layout/ast->entries`, but each top-level `vis-paste` code block becomes
    a collapsible paste disclosure instead of an inline code chip. Falls
@@ -6626,6 +6686,8 @@
                                        (image-disclosure-entries node content-w opts)
                                        (table-code-block? node)
                                        (table-disclosure-entries node content-w opts)
+                                       (doc-code-block? node)
+                                       (doc-disclosure-entries node content-w opts)
                                        :else (paste-disclosure-entries node content-w opts)))
                                run)
                        (layout/ast->entries (into [:ast {}] run) content-w opts))))

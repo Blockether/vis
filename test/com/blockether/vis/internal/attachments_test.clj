@@ -877,3 +877,47 @@
       (let [bad {:base64 (b64 (corrupt-png)) :media-type "image/png"}]
         (expect (nil? (:base64 (attachments/wire-image bad))))
         (expect (= :refused (decoded-size (assoc bad :base64 (:base64 bad))))))))
+
+;; A PDF and an HTML page are DOCUMENTS: pages and markup, not pixels. A
+;; multimodal request replays every image block forever, so shipping one would
+;; both lie about the bytes and re-bill the report on every later turn. The
+;; clamp lives in `attachment-audience`, the one funnel every gate reads.
+(defdescribe
+  human-only-documents-test
+  "PDF/HTML attachments are for the human, whatever audience was asked for."
+  (it "names the document media types and ignores charset parameters"
+      (expect (attachments/human-only-media-type? "application/pdf"))
+      (expect (attachments/human-only-media-type? "text/html"))
+      (expect (attachments/human-only-media-type? "application/xhtml+xml"))
+      (expect (attachments/human-only-media-type? "TEXT/HTML; charset=utf-8"))
+      (expect (not (attachments/human-only-media-type? "image/png")))
+      (expect (not (attachments/human-only-media-type? "text/csv")))
+      (expect (not (attachments/human-only-media-type? nil))))
+  (it
+    "clamps a document's audience to the human, even when 'model' was asked for"
+    (expect (= "user"
+               (attachments/attachment-audience {:media-type "application/pdf" :audience "model"})))
+    (expect (= "user" (attachments/attachment-audience {:media-type "text/html" :audience "both"})))
+    (expect (= "model"
+               (attachments/attachment-audience {:media-type "image/png" :audience "model"})))
+    (expect (= "both" (attachments/attachment-audience {:media-type "image/png"}))))
+  (it "hides a document from the model and still paints it for the human"
+      (expect (attachments/hidden-from-model? {:media-type "application/pdf" :audience "both"}))
+      (expect (attachments/hidden-from-model? {:media-type "text/html" :audience "model"}))
+      (expect (not (attachments/hidden-from-user? {:media-type "application/pdf"
+                                                   :audience "model"}))))
+  (it "names the document to the model instead of sending it, even with vision"
+      (let
+        [{:keys [attached skipped]}
+         (attachments/wire-images
+           [{:path "/tmp/report.pdf" :media-type "application/pdf" :audience "both"}]
+           {:vision? true})
+
+         entry
+         (first skipped)]
+
+        (expect (empty? attached))
+        (expect (= 1 (count skipped)))
+        (expect (= "/tmp/report.pdf" (:path entry)))
+        (expect (:readable-blind? entry))
+        (expect (str/includes? (:reason entry) "document for the human")))))

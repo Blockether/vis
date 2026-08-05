@@ -11,8 +11,25 @@ def __vis_install_attach__():
     import os as _os
     import base64 as _b64
 
+    # A PDF and an HTML page are DOCUMENTS: bytes a HUMAN reads, never an image
+    # block on the model's wire. The engine clamps their audience to "user" in
+    # `attachments/attachment-audience`; this is that same closed table on the
+    # sandbox side, so audience='model' is refused at the call site instead of
+    # quietly attaching something nobody will ever see.
+    __vis_doc_media_types = (
+        "application/pdf",
+        "text/html",
+        "application/xhtml+xml",
+    )
+
+    def __vis_is_doc(mt):
+        head = str(mt or "").split(";")[0].strip().lower()
+        return head in __vis_doc_media_types
+
     def __vis_kind_for(mt):
-        return "image" if str(mt or "").startswith("image/") else "file"
+        if str(mt or "").startswith("image/"):
+            return "image"
+        return "doc" if __vis_is_doc(mt) else "file"
 
     def __vis_guess_media_type(name, data):
         head = bytes(data[:16])
@@ -47,6 +64,12 @@ def __vis_install_attach__():
             return "audio/ogg"
         if starts([0x49, 0x44, 0x33]) or starts([0xFF, 0xFB]):
             return "audio/mpeg"
+        try:
+            probe = bytes(data[:256]).lstrip().lower()
+            if probe.startswith(b"<!doctype html") or probe.startswith(b"<html"):
+                return "text/html"
+        except Exception:
+            pass
         import mimetypes
 
         mt = mimetypes.guess_type(str(name))[0]
@@ -101,6 +124,38 @@ def __vis_install_attach__():
             fence,
         ]
         print(chr(10).join(lines))
+
+    def __vis_emit_doc_fence(disp, name, mt, nbytes, label=None):
+        # A `vis-doc` fence: a PDF or an HTML page is a DOCUMENT, so it rides
+        # the transcript as 5 header lines (summary / host path / mime / name /
+        # size) and NO payload. The TUI opens the host file in the system
+        # viewer; the companion renders it inside a sandboxed frame that cannot
+        # reach the app's own DOM or styles. The model only ever sees the
+        # headline - the bytes are one vis_read_attachment away.
+        # Returns True when a fence was printed.
+        try:
+            path = str(disp[0])
+        except Exception:
+            return False
+        if not path:
+            return False
+        size = __vis_human_bytes(nbytes)
+        doc = "PDF" if "pdf" in str(mt).lower() else "HTML"
+        summary = "[Document: " + str(name) + " " + doc + ", " + size + "]"
+        if label:
+            summary = summary + " " + str(label)
+        fence = "`" * 4
+        lines = [
+            fence + "vis-doc",
+            summary,
+            path,
+            str(mt),
+            str(name),
+            size,
+            fence,
+        ]
+        print(chr(10).join(lines))
+        return True
 
     # A table fence carries at most this many DATA rows: enough to explore a
     # result set inline, small enough that a 100k-row export cannot flood the
@@ -171,7 +226,7 @@ def __vis_install_attach__():
         print(chr(10).join(lines))
         return True
 
-    def __vis_audience(audience, in_answer):
+    def __vis_audience(audience, in_answer, mt=None):
         aud = str(audience if audience is not None else "both").strip().lower()
         if aud not in ("both", "user", "model"):
             raise ValueError(
@@ -183,6 +238,21 @@ def __vis_install_attach__():
                 "vis_attach: in_answer=True needs a human-visible audience "
                 "('both' or 'user'), not 'model'"
             )
+        if __vis_is_doc(mt):
+            # A document can never be an image block, so 'model' would mean
+            # "send it to nobody". Refuse that outright; every other spelling
+            # settles on 'user' - the human reads the document and the model is
+            # told the file exists.
+            if aud == "model":
+                raise ValueError(
+                    "vis_attach: "
+                    + str(mt)
+                    + " is a document for the human, so audience='model' is "
+                    "impossible - it is never sent as an image. Attach it with "
+                    "audience='user'; the model is told the file exists and "
+                    "opens it with vis_read_attachment(id)."
+                )
+            return "user"
         return aud
 
     def vis_attach_bytes(
@@ -201,7 +271,7 @@ def __vis_install_attach__():
         mt = media_type or __vis_guess_media_type(name, data)
         knd = kind or __vis_kind_for(mt)
         cap = __vis_caption(label)
-        aud = __vis_audience(audience, in_answer)
+        aud = __vis_audience(audience, in_answer, mt)
         b64 = _b64.b64encode(data).decode("ascii")
         rec = globals().get("__vis_record_attachment__")
         if rec is None:
@@ -219,7 +289,10 @@ def __vis_install_attach__():
             print("[Answer gallery: " + name + "]" + ((" " + cap) if cap else ""))
             return None
         disp = env[1] if len(env) > 1 else None
-        if disp:
+        if __vis_is_doc(mt):
+            if not __vis_emit_doc_fence(disp, name, mt, len(data), cap):
+                print("[Attached: " + name + "]" + ((" " + cap) if cap else ""))
+        elif disp:
             __vis_emit_image_fence(disp, name, mt, len(data), cap)
         elif not __vis_emit_table_fence(name, mt, data, len(data), cap):
             if cap:
@@ -339,6 +412,10 @@ def __vis_install_attach__():
         "replay to vision models. A CSV/TSV file attaches as a live TABLE: the "
         "transcript paints it as a sortable, pageable grid, and its rows never "
         "enter the model's context - vis_read_attachment(id) reads them back. "
+        "A *.pdf or *.html file attaches as a DOCUMENT for the HUMAN only: the "
+        "transcript shows a card that opens it (the app renders HTML inside a "
+        "sandboxed frame), it is never sent as an image, and audience='model' "
+        "is refused. "
         "kind, media_type and filename override inference. label is a one-line "
         "caption printed with the artifact, so a series of shots says which shot "
         "is which. Returns None: call directly, do not print. Use "
@@ -354,7 +431,10 @@ def __vis_install_attach__():
         "nothing painted for the human); in_answer=True defers it to the gallery "
         "under the final answer. Name it *.csv/*.tsv and it attaches as a live "
         "TABLE the transcript paints as a grid, with the rows kept out of the "
-        "model's context. label is a one-line caption printed with the artifact. "
+        "model's context; name it *.pdf/*.html and it attaches as a DOCUMENT "
+        "for the HUMAN only (a card that opens it; HTML renders in a sandboxed "
+        "frame), never as an image, and audience='model' is refused. "
+        "label is a one-line caption printed with the artifact. "
         "Returns None: call directly, do not print. Use vis_attachments() for "
         "metadata."
     )
@@ -383,7 +463,10 @@ def __vis_install_attach__():
         "for the one or two figures that make your point. Images replay to vision "
         "models; a CSV/TSV attaches as a live TABLE the transcript paints as a "
         "sortable, pageable grid whose rows stay OUT of the model's context "
-        "(vis_read_attachment(id) reads them back). label is a one-line caption "
+        "(vis_read_attachment(id) reads them back); a *.pdf/*.html attaches as "
+        "a DOCUMENT for the HUMAN only - a card that opens it, HTML rendered in "
+        "a sandboxed frame, never an image, and audience='model' is refused. "
+        "label is a one-line caption "
         "printed with the artifact. Returns None; call, do not print. Use "
         "vis_attachments() for metadata."
     )
@@ -395,7 +478,9 @@ def __vis_install_attach__():
         "'both', 'user' (human only, out of the model's context) or 'model' "
         "(model only, nothing painted for the human); in_answer=True defers it to "
         "the gallery under the FINAL ANSWER. A *.csv/*.tsv filename attaches as a "
-        "live TABLE in the transcript with its rows out of context. label is a "
+        "live TABLE in the transcript with its rows out of context; a *.pdf or "
+        "*.html filename attaches as a DOCUMENT for the HUMAN only, never an "
+        "image, and audience='model' is refused. label is a "
         "one-line caption printed with the artifact. Returns None; call, do not "
         "print. Use vis_attachments() for metadata."
     )

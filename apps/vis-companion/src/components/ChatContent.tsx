@@ -12,6 +12,7 @@ import {
 } from 'react';
 import Prism from 'prismjs';
 import { DataTable } from './DataTable';
+import { DocCard, DocPreview, isDocMedia } from './DocArtifact';
 import { Spinner } from './ui';
 import 'prismjs/components/prism-bash';
 import 'prismjs/components/prism-clojure';
@@ -580,6 +581,12 @@ export const Markdown = memo(function Markdown({
             // both surfaces paint a real grid — the TUI's table dialog, this table.
             if (language === 'vis-table') {
               return <DataTable body={stripMarks(raw)} compact={compact} frameless={nested} />;
+            }
+            // A PDF or an HTML page is a DOCUMENT: it never reaches the model, and
+            // the fence carries a descriptor only. The card says what was produced;
+            // the attachment rail below opens the bytes in a sandboxed frame.
+            if (language === 'vis-doc') {
+              return <DocCard body={stripMarks(raw)} compact={compact} frameless={nested} />;
             }
             return <SyntaxCodeBlock value={raw} language={language} compact={compact} frameless={nested} />;
           },
@@ -1292,6 +1299,13 @@ function attachmentIsVideo(attachment: IterationAttachment): boolean {
   return (attachment.media_type ?? '').startsWith('video/');
 }
 
+// A PDF or an HTML page is a DOCUMENT: `vis_attach` clamps it to
+// `audience: "user"`, so its bytes never reach the model and the app owes the
+// human a reader for them instead of one more line in the recorded-files row.
+function attachmentIsDoc(attachment: IterationAttachment): boolean {
+  return isDocMedia(attachment.media_type) || attachment.kind === 'doc';
+}
+
 // A still and a clip belong to the SAME rail: both are something the user asked
 // to SEE, so both paint where they were made. Everything else is a recorded file.
 function attachmentIsPlayable(attachment: IterationAttachment): boolean {
@@ -1452,6 +1466,61 @@ function recordedFiles(attachments: IterationAttachment[]): RecordedFile[] {
   return [...byIdentity.values()];
 }
 
+// The reader for a document artifact. Nothing is fetched until it is asked for:
+// a transcript holding a dozen reports must not download and decode a dozen PDFs
+// to paint. The bytes then land inside `DocPreview`'s sandboxed frame, which is
+// a separate document with its own CSS scope and an opaque origin — untrusted
+// markup can neither restyle the app nor read its storage. See `DocArtifact`.
+const AttachmentDocTile = memo(function AttachmentDocTile({
+  client,
+  sid,
+  attachment,
+}: {
+  client: GatewayClient;
+  sid: string;
+  attachment: IterationAttachment;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [wanted, setWanted] = useState(false);
+  const iterationId = attachment.iteration_id ?? '';
+  const index = attachment.index ?? 0;
+  const name = attachment.filename || 'document';
+
+  useEffect(() => {
+    if (!wanted || !iterationId || !sid) return;
+    let alive = true;
+    const release = client.retainAttachment(sid, iterationId, index);
+    client
+      .attachmentUrl(sid, iterationId, index)
+      .then((next) => {
+        if (alive) setUrl(next);
+      })
+      .catch(() => {
+        if (alive) setFailed(true);
+      });
+    return () => {
+      alive = false;
+      release();
+    };
+  }, [client, sid, iterationId, index, wanted]);
+
+  if (!iterationId) return null;
+
+  return (
+    <DocPreview
+      name={name}
+      mime={attachment.media_type ?? ''}
+      sizeLabel={attachmentBytes(attachment.size)}
+      url={url}
+      failed={failed}
+      onOpen={(open) => {
+        if (open) setWanted(true);
+      }}
+    />
+  );
+});
+
 export const AttachmentRail = memo(function AttachmentRail({
   client,
   sid,
@@ -1463,7 +1532,10 @@ export const AttachmentRail = memo(function AttachmentRail({
 }) {
   const [open, setOpen] = useState(false);
   const playable = attachments.filter(attachmentIsPlayable);
-  const files = recordedFiles(attachments.filter((entry) => !attachmentIsPlayable(entry)));
+  const docs = attachments.filter(attachmentIsDoc);
+  const files = recordedFiles(
+    attachments.filter((entry) => !attachmentIsPlayable(entry) && !attachmentIsDoc(entry)),
+  );
   const total = files.reduce((sum, file) => sum + file.count, 0);
   const head = files[0];
   const rest = head ? total - head.count : 0;
@@ -1473,6 +1545,14 @@ export const AttachmentRail = memo(function AttachmentRail({
       {playable.map((attachment) => (
         <AttachmentTile
           key={`${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
+          client={client}
+          sid={sid}
+          attachment={attachment}
+        />
+      ))}
+      {docs.map((attachment) => (
+        <AttachmentDocTile
+          key={`doc-${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
           client={client}
           sid={sid}
           attachment={attachment}

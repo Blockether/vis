@@ -661,6 +661,10 @@
   "Why an image that decoded perfectly is nevertheless not on the wire."
   "attached for the human only — image kept on disk, not sent to the model")
 
+(def ^:private human-only-doc-reason
+  "Why a PDF or an HTML page is named to the model instead of shown to it."
+  "a document for the human — open the file to read it, it is never an image block")
+
 (def audiences
   "The CLOSED vocabulary of an attachment's AUDIENCE — who the artifact is for:
 
@@ -672,6 +676,33 @@
    One word, three routes; there is no fourth and no second copy of this table."
   #{"both" "user" "model"})
 
+(def human-only-media-types
+  "Media types a model must NEVER be handed as an image block, no matter what
+   audience the caller asked for: a PDF and an HTML page are DOCUMENTS, made of
+   pages and markup rather than pixels, and the only honest thing to do with one
+   is put it in front of the human and TELL the model the file is on disk.
+
+   Sending them would be a lie twice over — the bytes are not an image, and a
+   multimodal request replays every block forever, so one report would be
+   re-billed on every later turn of the session. `vis_attach` of a `.pdf` or an
+   `.html` is therefore clamped to `audience=\"user\"` at [[attachment-audience]],
+   the one funnel every route already reads."
+  #{"application/pdf" "text/html" "application/xhtml+xml"})
+
+(defn human-only-media-type?
+  "True when `media-type` names a document from [[human-only-media-types]].
+   Parameters (`text/html; charset=utf-8`) are dropped before the lookup."
+  [media-type]
+  (let
+    [mt (-> (str media-type)
+            (str/trim)
+            (str/lower-case)
+            (str/split #";")
+            (first)
+            (str)
+            (str/trim))]
+    (contains? human-only-media-types mt)))
+
 (defn normalize-audience
   "Coerce whatever the shim bridge, a wire payload or a DB row carries into a
    member of [[audiences]], defaulting to `\"both\"`. An unknown word falls back
@@ -681,9 +712,16 @@
     (if (contains? audiences s) s "both")))
 
 (defn attachment-audience
-  "This attachment's audience word, normalized — `\"both\"` when unstamped."
+  "This attachment's audience word, normalized — `\"both\"` when unstamped.
+
+   A [[human-only-media-type?]] artifact is CLAMPED to `\"user\"` here rather than
+   at each call site: the PDF or HTML page is for the human, and every gate that
+   already asks this question ([[hidden-from-model?]], the send-time image path,
+   the wire manifest) inherits the refusal from one place."
   [attachment]
-  (normalize-audience (:audience attachment)))
+  (if (human-only-media-type? (:media-type attachment))
+    "user"
+    (normalize-audience (:audience attachment))))
 
 (defn hidden-from-model?
   "True when this attachment is for the HUMAN only (`audience=\"user\"`): shown in
@@ -972,8 +1010,14 @@
      (fn [acc {:keys [path filename media-type] :as att}]
        (let [label (or (not-empty (str path)) (not-empty (str filename)) "image")]
          (cond
-           (hidden-from-model? att)
-           (update acc :skipped conj {:path label :reason user-only-reason :readable-blind? true})
+           (hidden-from-model? att) (update acc
+                                            :skipped
+                                            conj
+                                            {:path label
+                                             :reason (if (human-only-media-type? media-type)
+                                                       human-only-doc-reason
+                                                       user-only-reason)
+                                             :readable-blind? true})
            (not vision?)
            (update acc :skipped conj {:path label :reason no-vision-reason :readable-blind? true})
            :else

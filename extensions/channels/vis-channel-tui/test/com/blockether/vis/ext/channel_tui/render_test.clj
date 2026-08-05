@@ -4425,3 +4425,43 @@
         (expect (= ["phase one ok" "" "phase two ok"] (subvec lines (inc out-idx) (+ out-idx 4))))
         (expect (= "" (nth lines (dec out-idx))))
         (expect (not= "" (nth lines (- out-idx 2)))))))
+
+;; A PDF is pages and an HTML page is markup: neither has pixels a terminal can
+;; paint, and neither is ever handed to the model as an image block. The card is
+;; therefore a HANDLE — headline plus one hint — and every row of it carries the
+;; document, so the paint loop can turn the whole card into one click region
+;; that opens the host file in the system viewer.
+(defdescribe
+  tool-card-doc-block-test
+  (let
+    [ast
+     [:ast {}
+      [:code {:lang "vis-doc"}
+       (str "[Document: report.pdf PDF, 1.2 MB]\n/tmp/vis-python/report.pdf\n"
+            "application/pdf\nreport.pdf\n1.2 MB")]]
+
+     data
+     (render/format-answer-markdown-data* ast 76 {})
+
+     lines
+     (vec (:lines data))
+
+     docs
+     (into #{} (keep :doc) (:line-meta data))]
+
+    (it "paints the headline and the open hint, not the raw fence"
+        (expect (some #(str/includes? % "[Document: report.pdf PDF, 1.2 MB]") lines))
+        (expect (some #(str/includes? % "click to open in the system viewer") lines))
+        (expect (not-any? #(str/includes? % "application/pdf") lines))
+        (expect (not-any? #(str/includes? % "/tmp/vis-python/report.pdf") lines)))
+    (it "carries one and the same host file on every row of the card"
+        (expect (= 1 (count docs)))
+        (expect (= {:path "/tmp/vis-python/report.pdf"
+                    :mime "application/pdf"
+                    :name "report.pdf"
+                    :size-label "1.2 MB"
+                    :title "report.pdf"}
+                   (first docs)))
+        ;; every painted row of the card is clickable, blanks included: a card
+        ;; whose middle row does nothing is a card that swallows a click.
+        (expect (= (count (filter :doc (:line-meta data))) (dec (count lines)))))))
