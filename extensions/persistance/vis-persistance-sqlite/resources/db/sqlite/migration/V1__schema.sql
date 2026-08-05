@@ -661,6 +661,15 @@ CREATE TABLE session_attachment (
   kind                      TEXT NOT NULL DEFAULT 'image',
   media_type                TEXT NOT NULL,
   filename                  TEXT,
+
+  -- VERSION: artifacts with the SAME `filename` inside one session are ONE
+  -- artifact iterated over time, not N loose files. The writer allocates
+  -- `1 + max(version)` over the session's own rows for that name, so a rail of
+  -- hundreds of attachments collapses into a handful of version chains and the
+  -- gallery can show "latest, with history". Anonymous rows (NULL filename) have
+  -- nothing to chain to and stay at 1.
+  version                   INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+
   size_bytes                INTEGER NOT NULL CHECK (size_bytes >= 0),
   audience                  TEXT NOT NULL DEFAULT 'both'
                             CHECK (audience IN ('both', 'user', 'model')),
@@ -690,6 +699,11 @@ CREATE INDEX idx_attachment_soul
 -- Per-iteration roll-up (tool artifacts), ordered by (call, position).
 CREATE INDEX idx_attachment_iteration
   ON session_attachment(session_turn_iteration_id, tool_call_id, position);
+
+-- Version chain per named artifact: the writer's `max(version)` probe and the
+-- gallery's "previous versions" read are the same indexed walk.
+CREATE INDEX idx_attachment_version
+  ON session_attachment(filename, version);
 
 -- =============================================================================
 -- transcript full-text search (FTS5)

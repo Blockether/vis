@@ -14,7 +14,7 @@ import {
   UserMessage,
 } from "../components/ChatContent";
 import { ArtifactsChip, ArtifactsSheet } from "../components/ArtifactsSheet";
-import { collectArtifacts } from "../lib/artifacts";
+import { collapseArtifactVersions, collectArtifacts } from "../lib/artifacts";
 import { ExpandableImage } from "../components/ImageViewer";
 import { Banner, Spinner } from "../components/ui";
 import {
@@ -1171,11 +1171,13 @@ export function SessionScreen({
     () => client.transcriptWindow(sid).offset,
   );
   const [artifactsOpen, setArtifactsOpen] = useState(false);
-  // Everything this session PRODUCED, flattened out of the turns that made it.
-  // The transcript paints each artifact where it was made, which is right and is
-  // also why "show me that chart again" is otherwise a scroll hunt.
+  // Everything this session PRODUCED, flattened out of the turns that made it,
+  // then collapsed so a NAME is one artifact with a version history rather than
+  // one row per file written. The transcript paints each artifact where it was
+  // made, which is right and is also why "show me that chart again" is otherwise
+  // a scroll hunt.
   const artifacts = useMemo(
-    () => collectArtifacts(turns, earlierRemaining),
+    () => collapseArtifactVersions(collectArtifacts(turns, earlierRemaining)),
     [turns, earlierRemaining],
   );
   const [loadingEarlier, setLoadingEarlier] = useState(false);

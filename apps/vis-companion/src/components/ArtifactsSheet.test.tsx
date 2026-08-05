@@ -65,6 +65,7 @@ const artifact = (over: Partial<SessionArtifact>): SessionArtifact => ({
   tool: "python_execution",
   iterationId: "i1",
   index: 0,
+  version: 1,
   ...over,
 });
 
@@ -331,5 +332,45 @@ describe("the artifacts sheet, paged", () => {
     expect(reveal.split(" ")).toContain("mouse:min-h-7");
     // A width query may never shrink a hit box; only a pointer may.
     expect(reveal).not.toMatch(/sm:min-h|sm:h-/);
+  });
+});
+
+describe("an artifact with a history", () => {
+  const cut = (version: number) =>
+    artifact({
+      key: `i${version}:0`,
+      name: "chart.png",
+      iterationId: `i${version}`,
+      turn: version,
+      version,
+    });
+  const threaded = { ...cut(3), versions: [cut(3), cut(2), cut(1)] };
+
+  it("is ONE tile — the latest cut — not one tile per rewrite", () => {
+    const html = sheet([threaded]);
+    expect(html.match(/aria-label="Open /g)).toHaveLength(1);
+    expect(html).toContain("produced in turn 3");
+    expect(text(html)).toContain("chart.png");
+  });
+
+  it("wears its version and offers the thread behind it", () => {
+    const html = sheet([threaded]);
+    expect(text(html)).toContain("v3 · PNG");
+    expect(html).toContain('aria-label="Show 3 versions of chart.png"');
+  });
+
+  it("offers no history to an artifact that has none", () => {
+    const html = sheet([{ ...cut(1), versions: [cut(1)] }]);
+    expect(html).not.toContain("versions of");
+    // A single cut is not labelled `v1`: the number only means something
+    // once there is a second one.
+    expect(text(html)).not.toContain("v1");
+  });
+
+  // The dot cannot live INSIDE the tile: a button inside a button is invalid
+  // HTML and the browser hands the inner clicks to the outer control.
+  it("keeps the history control a sibling of the tile it belongs to", () => {
+    const html = sheet([threaded]);
+    expect(html).not.toMatch(/<button(?:(?!<\/button>)[\s\S])*<button/);
   });
 });

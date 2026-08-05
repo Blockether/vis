@@ -181,6 +181,14 @@ export interface SessionArtifact {
   tool: string;
   iterationId: string;
   index: number;
+  /** Which cut of this NAME it is, 1-based; 1 when the row carries no version. */
+  version: number;
+  /**
+   * Every cut of this artifact, NEWEST FIRST and including this one — present
+   * only on a collapsed list (`collapseArtifactVersions`). The primary view is
+   * always the head; the rest is the history behind it.
+   */
+  versions?: SessionArtifact[];
 }
 
 /**
@@ -218,11 +226,41 @@ export function collectArtifacts(
           tool,
           iterationId,
           index,
+          version: attachment.version ?? 1,
         });
       }
     }
   });
   return list.reverse();
+}
+
+/**
+ * ONE ROW PER ARTIFACT, NOT PER FILE WRITTEN.
+ *
+ * Work is continuous: a chart redrawn six times is one artifact with six cuts,
+ * not six strangers that happen to share a name. The engine already says so —
+ * re-attaching a filename bumps `version` — so the gallery collapses a flat
+ * newest-first list into one entry per NAME, keeps the newest as the entry
+ * itself, and hangs the whole thread off `versions` (newest first, the head
+ * included) for the dropdown to open.
+ *
+ * Everything else about the entry stays the LATEST cut's: its size, its turn,
+ * its bytes. An artifact with a single cut is unchanged apart from carrying a
+ * one-element `versions`, so nothing downstream needs to ask which case it is.
+ */
+export function collapseArtifactVersions(
+  list: SessionArtifact[],
+): SessionArtifact[] {
+  const threads = new Map<string, SessionArtifact[]>();
+  for (const entry of list) {
+    const thread = threads.get(entry.name);
+    if (thread) thread.push(entry);
+    else threads.set(entry.name, [entry]);
+  }
+  return [...threads.values()].map((thread) => {
+    const versions = [...thread].sort((a, b) => b.version - a.version);
+    return { ...versions[0], versions };
+  });
 }
 
 /**

@@ -847,22 +847,27 @@
        (when (and d sid)
          {:list (fn []
                   (try (->> (persistance/db-list-session-attachments d sid)
-                            (mapv (fn [a]
-                                    (cond->
-                                      {:id (:id a)
-                                       :source (:source a)
-                                       :filename (:filename a)
-                                       :media-type (:media-type a)
-                                       :kind (:kind a)
-                                       :size (:size a)
-                                       :position (:position a)
-                                       :tool-call-id (:tool-call-id a)
-                                       :audience (attachments/attachment-audience a)}
-                                      (= :tool (:source a))
-                                      (assoc :iteration-id (:iteration-id a))
+                            (mapv
+                              (fn [a]
+                                (cond->
+                                  {:id (:id a)
+                                   :source (:source a)
+                                   :filename (:filename a)
+                                   ;; VERSION: same filename in this session =
+                                   ;; one artifact iterated. The rail is a set
+                                   ;; of version CHAINS, not loose files.
+                                   :version (:version a)
+                                   :media-type (:media-type a)
+                                   :kind (:kind a)
+                                   :size (:size a)
+                                   :position (:position a)
+                                   :tool-call-id (:tool-call-id a)
+                                   :audience (attachments/attachment-audience a)}
+                                  (= :tool (:source a))
+                                  (assoc :iteration-id (:iteration-id a))
 
-                                      (= :user (:source a))
-                                      (assoc :turn-id (:turn-soul-id a))))))
+                                  (= :user (:source a))
+                                  (assoc :turn-id (:turn-soul-id a))))))
                        (catch Throwable _ [])))
           :read (fn [id]
                   ;; Never turn a UUID into cross-session read authority: prove it

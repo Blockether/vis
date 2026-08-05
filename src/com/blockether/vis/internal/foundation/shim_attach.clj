@@ -224,9 +224,9 @@
      :ext/sandbox-shims
      [{:shim/name "attach"
        :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_read_attachment"
-                      "vis_reinspect_attachment"]
+                      "vis_reinspect_attachment" "vis_attachment_versions" "vis_attachment_version"]
        :shim/description
-       "`vis_attach`/`vis_attach_bytes`: persist artifacts (images, CSV/TSV tables, JSON, PDF, audio) as durable DB-owned iteration attachments with sniffed media types. ATTACH ONE OR TWO ARTIFACTS PER TURN — compose many images into ONE sheet; `audience='both'|'user'|'model'` decides who sees it, `in_answer=True` paints it once in the FINAL ANSWER's gallery. Vis-native; no upstream library."
+       "`vis_attach`/`vis_attach_bytes`: persist artifacts (images, CSV/TSV tables, JSON, PDF, audio) as durable DB-owned iteration attachments with sniffed media types. Re-attaching the SAME filename bumps that artifact's VERSION instead of making a second artifact, so `vis_attachment_versions(name)` walks the whole thread and `vis_attachment_version(name, n)` picks one cut. ATTACH ONE OR TWO ARTIFACTS PER TURN — compose many images into ONE sheet; `audience='both'|'user'|'model'` decides who sees it, `in_answer=True` paints it once in the FINAL ANSWER's gallery. Vis-native; no upstream library."
        :shim/bindings attach-bridge-bindings
        :shim/source "vis-shims/attach.py"}]}))
 

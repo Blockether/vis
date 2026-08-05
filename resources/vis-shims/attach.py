@@ -361,6 +361,40 @@ def __vis_install_attach__():
 
         return [{str(k).replace("-", "_"): v for k, v in r.items()} for r in rows]
 
+    def vis_attachment_versions(name):
+        target = str(name)
+        rows = [r for r in vis_attachments() if r.get("filename") == target]
+        rows.sort(key=lambda r: int(r.get("version") or 1))
+        return rows
+
+    def vis_attachment_version(name, version=None):
+        rows = vis_attachment_versions(name)
+        if not rows:
+            raise LookupError(
+                "vis_attachment_version: no artifact named "
+                + repr(str(name))
+                + " in this session"
+            )
+        if version is None:
+            return rows[-1]
+        want = int(version)
+        # -1 is the latest cut, -2 the one before it: the walk backwards a Python
+        # list already means.
+        if -len(rows) <= want < 0:
+            return rows[want]
+        for r in rows:
+            if int(r.get("version") or 1) == want:
+                return r
+        raise LookupError(
+            "vis_attachment_version: "
+            + repr(str(name))
+            + " has no version "
+            + str(version)
+            + " (versions: "
+            + ", ".join(str(int(r.get("version") or 1)) for r in rows)
+            + ")"
+        )
+
     def vis_reinspect_attachment(attachment_id, detail="auto"):
         if detail not in ("auto", "low", "high"):
             raise ValueError("detail must be auto, low, or high")
@@ -438,11 +472,27 @@ def __vis_install_attach__():
         "Returns None: call directly, do not print. Use vis_attachments() for "
         "metadata."
     )
+    vis_attachment_versions.__doc__ = (
+        "Every VERSION of one artifact, oldest first. Attaching the same "
+        "filename again does not make a second artifact - it makes the next "
+        "version of this one - so a name is a CONTINUOUS thread of work and "
+        "this is how you walk it. Each row is a vis_attachments() descriptor "
+        "with its own id and version; [] when the name was never attached."
+    )
+    vis_attachment_version.__doc__ = (
+        "ONE version of an artifact: the latest cut by default, or the exact "
+        "version number you ask for (negative counts back from the latest). "
+        "Returns a vis_attachments() descriptor - pass its id to "
+        "vis_read_attachment() for the bytes. Raises LookupError when the name "
+        "or the version does not exist."
+    )
 
     g = globals()
     g["vis_attach"] = vis_attach
     g["vis_attach_bytes"] = vis_attach_bytes
     g["vis_attachments"] = vis_attachments
+    g["vis_attachment_versions"] = vis_attachment_versions
+    g["vis_attachment_version"] = vis_attachment_version
     g["vis_read_attachment"] = vis_read_attachment
     g["vis_reinspect_attachment"] = vis_reinspect_attachment
     g["__vis_guess_media_type"] = __vis_guess_media_type
@@ -491,8 +541,21 @@ def __vis_install_attach__():
     )
     docs["vis_attachments"] = (
         "vis_attachments(): list THIS session's persisted artifact metadata: id, "
-        "filename, media_type, kind, size, position, tool_call_id, iteration_id. "
-        "Pass an id to vis_read_attachment()."
+        "filename, version, media_type, kind, size, position, tool_call_id, "
+        "iteration_id. Attaching the same filename again bumps version instead "
+        "of creating a second artifact. Pass an id to vis_read_attachment()."
+    )
+    docs["vis_attachment_versions"] = (
+        "vis_attachment_versions(name): every version of ONE artifact, oldest "
+        "first, as vis_attachments() descriptors; [] when that name was never "
+        "attached. Re-attaching a filename is a new VERSION of that artifact, "
+        "never a new artifact."
+    )
+    docs["vis_attachment_version"] = (
+        "vis_attachment_version(name, version=None): one version of an artifact "
+        "- the latest by default, an exact version number otherwise (negative "
+        "counts back from the latest). Returns a vis_attachments() descriptor; "
+        "read its bytes with vis_read_attachment(id)."
     )
     docs["vis_read_attachment"] = (
         "vis_read_attachment(id): fetch persisted artifact bytes and metadata as "

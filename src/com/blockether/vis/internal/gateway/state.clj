@@ -1103,13 +1103,17 @@
    to review AND index N names the same artifact on both sides."
   [iteration-id rows]
   (into []
-        (map-indexed (fn [idx {:keys [tool-call-id kind media-type filename size audience]}]
+        (map-indexed (fn [idx {:keys [tool-call-id kind media-type filename size audience version]}]
                        {:index idx
                         :iteration_id (str iteration-id)
                         :tool_call_id tool-call-id
                         :kind (or kind "image")
                         :media_type (str (or media-type "application/octet-stream"))
                         :filename filename
+                        ;; VERSION: re-attaching a filename is the next cut of THAT
+                        ;; artifact, so a client groups the gallery by name and
+                        ;; shows the newest version with its history behind it.
+                        :version (long (or version 1))
                         :audience (attachments/normalize-audience audience)
                         :size (long (or size 0))}))
         rows))

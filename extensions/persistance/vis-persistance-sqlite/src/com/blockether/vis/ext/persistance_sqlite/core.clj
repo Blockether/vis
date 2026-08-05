@@ -2516,6 +2516,69 @@
                         (catch Throwable _ nil))]
       {:bytes data :storage_uri nil :size_bytes (long (or (:size att) (alength data)))})))
 
+(defn- turn-session-soul-id
+  "The SESSION soul a turn belongs to, resolved `session_turn_soul -> session_state
+   -> session_soul_id`. Versioning is a SESSION-wide question - a re-attached name
+   is the next cut of that artifact no matter which turn, iteration or branch
+   emitted it - and the turn row only knows its state, so the writer takes this
+   one hop before allocating. nil when the turn is unknown (no scope, version 1)."
+  [db-info soul-id-s]
+  (:session_soul_id (first (query! db-info
+                                   {:select [:ss.session_soul_id]
+                                    :from [[:session_turn_soul :ts]]
+                                    :join [[:session_state :ss] [:= :ts.session_state_id :ss.id]]
+                                    :where [:= :ts.id soul-id-s]
+                                    :limit 1}))))
+
+(defn- max-attachment-version
+  "Highest `version` already stored for `filename` anywhere in the session owning
+   `session-soul-id`, or 0 when that name is new. One indexed probe against
+   `idx_attachment_version`, narrowed by the same soul join the session-wide
+   lister uses."
+  [db-info session-soul-id filename]
+  (or (some-> (first (query! db-info
+                             {:select [[[:max :a.version] :v]]
+                              :from [[:session_attachment :a]]
+                              :join [[:session_turn_soul :ts] [:= :a.session_turn_soul_id :ts.id]
+                                     [:session_state :ss] [:= :ts.session_state_id :ss.id]]
+                              :where [:and [:= :ss.session_soul_id session-soul-id]
+                                      [:= :a.filename filename]]}))
+              :v
+              long)
+      0))
+
+(defn- version-allocator
+  "A stateful `filename -> version` allocator for ONE insert batch.
+
+   THE rule the whole feature rests on: attaching the SAME name again is the next
+   VERSION of that artifact, never a new artifact. The first cut of a name is 1;
+   every later cut is `1 + max` over the session. The batch remembers what it
+   just handed out, so two same-named artifacts inside a single tool call become
+   version N and N+1 rather than colliding on the stale database maximum.
+
+   An anonymous attachment (no filename) has no identity to chain to and is
+   always version 1."
+  [db-info soul-id-s]
+  (let
+    [session-soul-id
+     (turn-session-soul-id db-info soul-id-s)
+
+     handed-out
+     (volatile! {})]
+
+    (fn [filename]
+      (if (or (nil? session-soul-id) (nil? filename) (= "" filename))
+        1
+        (let
+          [prev
+           (or (get @handed-out filename) (max-attachment-version db-info session-soul-id filename))
+
+           v
+           (inc (long prev))]
+
+          (vswap! handed-out assoc filename v)
+          v)))))
+
 (defn- store-turn-attachments!
   "Insert one `session_attachment` row per validated INBOUND user image attached
    to the turn - INLINE web/API uploads AND terminal-drop disk images alike.
@@ -2526,23 +2589,25 @@
    marks their `source` as `user`. Skips any inline entry whose base64 fails to
    decode - never aborts the enclosing turn insert."
   [tx-info soul-id-s attachments now]
-  (doseq [[position att] (map-indexed vector (or attachments []))]
-    (when-let [payload (attachment-payload-cols att)]
-      (execute! tx-info
-                {:insert-into :session_attachment
-                 :values [(merge {:id (str (new-uuid))
-                                  :session_turn_soul_id soul-id-s
-                                  :session_turn_iteration_id nil
-                                  :tool_call_id nil
-                                  :position position
-                                  :kind (or (some-> (:kind att)
-                                                    name)
-                                            "image")
-                                  :media_type (str (:media-type att))
-                                  :filename (:filename att)
-                                  :audience (attachments/normalize-audience (:audience att))
-                                  :created_at now}
-                                 payload)]}))))
+  (let [next-version (version-allocator tx-info soul-id-s)]
+    (doseq [[position att] (map-indexed vector (or attachments []))]
+      (when-let [payload (attachment-payload-cols att)]
+        (execute! tx-info
+                  {:insert-into :session_attachment
+                   :values [(merge {:id (str (new-uuid))
+                                    :session_turn_soul_id soul-id-s
+                                    :session_turn_iteration_id nil
+                                    :tool_call_id nil
+                                    :position position
+                                    :kind (or (some-> (:kind att)
+                                                      name)
+                                              "image")
+                                    :media_type (str (:media-type att))
+                                    :filename (:filename att)
+                                    :version (next-version (:filename att))
+                                    :audience (attachments/normalize-audience (:audience att))
+                                    :created_at now}
+                                   payload)]})))))
 
 (defn db-store-session-turn!
   "Create session_turn_soul + initial session_turn_state (version 0).
@@ -2626,6 +2691,10 @@
      :kind (:kind row)
      :media-type (:media_type row)
      :filename (:filename row)
+     ;; VERSION: same `:filename` inside a session = ONE artifact, iterated. 1 is
+     ;; the first cut and the floor for anonymous rows, so a caller never has to
+     ;; branch on nil to compare two versions of the same name.
+     :version (long (or (:version row) 1))
      ;; AUDIENCE: who the artifact was attached FOR. "user" is stored + rendered
      ;; but never a wire image block; "model" is sent and never shown. Normalized
      ;; on read so the send-time gate never sees a legacy or NULL value.
@@ -2733,7 +2802,8 @@
    payload: `SELECT *` over a 20-figure iteration reads megabytes off disk and
    then base64-ENCODES every one of them into a String the caller throws away."
   [:id :session_turn_soul_id :session_turn_iteration_id :tool_call_id :position :kind :media_type
-   :filename :audience :storage_uri :size_bytes [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
+   :filename :version :audience :storage_uri :size_bytes
+   [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
 
 (defn- row->attachment-meta
   "[[row->attachment]] for a bytes-free row: the same envelope minus `:base64`,
@@ -3134,25 +3204,27 @@
    group. Skips any inline entry whose base64 fails to decode - never aborts the
    enclosing iteration insert."
   [tx-info soul-id-s iteration-id-s attachments now]
-  (doseq [[_call-id group] (group-by :tool-call-id (or attachments []))]
-    (doseq [[position att] (map-indexed vector group)]
-      (when-let [payload (attachment-payload-cols att)]
-        (execute! tx-info
-                  {:insert-into :session_attachment
-                   :values [(merge {:id (str (new-uuid))
-                                    :session_turn_soul_id soul-id-s
-                                    :session_turn_iteration_id iteration-id-s
-                                    :tool_call_id (some-> (:tool-call-id att)
-                                                          str)
-                                    :position position
-                                    :kind (or (some-> (:kind att)
-                                                      name)
-                                              "image")
-                                    :media_type (str (:media-type att))
-                                    :filename (:filename att)
-                                    :audience (attachments/normalize-audience (:audience att))
-                                    :created_at now}
-                                   payload)]})))))
+  (let [next-version (version-allocator tx-info soul-id-s)]
+    (doseq [[_call-id group] (group-by :tool-call-id (or attachments []))]
+      (doseq [[position att] (map-indexed vector group)]
+        (when-let [payload (attachment-payload-cols att)]
+          (execute! tx-info
+                    {:insert-into :session_attachment
+                     :values [(merge {:id (str (new-uuid))
+                                      :session_turn_soul_id soul-id-s
+                                      :session_turn_iteration_id iteration-id-s
+                                      :tool_call_id (some-> (:tool-call-id att)
+                                                            str)
+                                      :position position
+                                      :kind (or (some-> (:kind att)
+                                                        name)
+                                                "image")
+                                      :media_type (str (:media-type att))
+                                      :filename (:filename att)
+                                      :version (next-version (:filename att))
+                                      :audience (attachments/normalize-audience (:audience att))
+                                      :created_at now}
+                                     payload)]}))))))
 
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 

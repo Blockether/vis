@@ -46,6 +46,7 @@ import {
   ArrowDownIcon,
   ClipIcon,
   CloseIcon,
+  DotsIcon,
   PlayIcon,
 } from "./icons";
 
@@ -75,11 +76,22 @@ export function artifactHue(key: string): string {
   return ARTIFACT_HUES[hash % ARTIFACT_HUES.length];
 }
 
-/** `PNG · 214KB · turn 6` — the line that makes an artifact citable. */
+/**
+ * `v3 · PNG · 214KB · turn 6` — the line that makes an artifact citable.
+ *
+ * The version LEADS, because on a collapsed tile the first question is which cut
+ * of the artifact is on screen. A single-cut artifact says nothing: `v1` on
+ * everything would be noise on a session that never re-attached anything.
+ */
 function Meta({ artifact }: { artifact: SessionArtifact }) {
   return (
     <span className="block truncate font-mono text-chip text-dialog-hint">
-      {[artifact.media, artifact.sizeLabel, `turn ${artifact.turn}`]
+      {[
+        artifact.version > 1 ? `v${artifact.version}` : "",
+        artifact.media,
+        artifact.sizeLabel,
+        `turn ${artifact.turn}`,
+      ]
         .filter(Boolean)
         .join(" · ")}
     </span>
@@ -95,6 +107,7 @@ function Meta({ artifact }: { artifact: SessionArtifact }) {
 export function describeArtifact(artifact: SessionArtifact): string {
   return [
     artifact.name,
+    artifact.version > 1 ? `version ${artifact.version}` : "",
     artifact.media,
     artifact.sizeLabel,
     artifact.tool
@@ -249,14 +262,17 @@ function Tile({
   sid,
   artifact,
   onOpen,
+  onVersions,
 }: {
   client: GatewayClient;
   sid: string;
   artifact: SessionArtifact;
   onOpen: (artifact: SessionArtifact) => void;
+  onVersions: (artifact: SessionArtifact) => void;
 }) {
   const shell =
     "flex min-h-11 w-full min-w-0 flex-col border border-dialog-edge bg-panel text-left";
+  const versions = artifact.versions ?? [];
   const body = (
     <>
       <Thumb client={client} sid={sid} artifact={artifact} />
@@ -268,24 +284,43 @@ function Tile({
       </span>
     </>
   );
+  // THE DOT. Only an artifact that HAS a history offers to open one, and it is a
+  // sibling of the tile rather than a child: a button inside a button is invalid
+  // HTML, and the browser would hand the version menu's clicks to the tile.
+  const dots = versions.length > 1 && (
+    <button
+      type="button"
+      onClick={() => onVersions(artifact)}
+      aria-label={`Show ${versions.length} versions of ${artifact.name}`}
+      className="absolute right-1 top-1 flex size-8 items-center justify-center border border-dialog-edge bg-ink/80 text-dialog-hint hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent mouse:size-7"
+    >
+      <DotsIcon />
+    </button>
+  );
 
   if (artifact.kind === "file") {
     return (
       // No `aria-label`: a plain <div> has no role to carry one, and the name
       // and meta line inside it are already the whole announcement.
-      <div className={shell}>{body}</div>
+      <div className="relative min-w-0">
+        <div className={shell}>{body}</div>
+        {dots}
+      </div>
     );
   }
 
   return (
-    <button
-      type="button"
-      onClick={() => onOpen(artifact)}
-      aria-label={`Open ${describeArtifact(artifact)}`}
-      className={`${shell} transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent`}
-    >
-      {body}
-    </button>
+    <div className="relative min-w-0">
+      <button
+        type="button"
+        onClick={() => onOpen(artifact)}
+        aria-label={`Open ${describeArtifact(artifact)}`}
+        className={`${shell} transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent`}
+      >
+        {body}
+      </button>
+      {dots}
+    </div>
   );
 }
 
@@ -517,6 +552,56 @@ function ArtifactDetail({
 }
 
 /**
+ * THE HISTORY BEHIND ONE NAME.
+ *
+ * The tile is always the LATEST cut, because that is the answer to "show me the
+ * chart" ninety-nine times out of a hundred. This is the hundredth: the whole
+ * thread, newest first, each row opening that exact cut in the same detail
+ * overlay the tile opens. Nothing here re-downloads a thumbnail — a row is its
+ * meta line, and the bytes are fetched only once a cut is actually opened.
+ */
+function ArtifactVersions({
+  artifact,
+  onOpen,
+  onClose,
+}: {
+  artifact: SessionArtifact;
+  onOpen: (artifact: SessionArtifact) => void;
+  onClose: () => void;
+}) {
+  const versions = artifact.versions ?? [artifact];
+  return (
+    <DetailOverlay name={artifact.name} onClose={onClose}>
+      <ul
+        aria-label={`Versions of ${artifact.name}`}
+        className="flex flex-col gap-2 p-3 sm:p-4"
+      >
+        {versions.map((version, position) => (
+          <li key={version.key}>
+            <button
+              type="button"
+              onClick={() => onOpen(version)}
+              aria-label={`Open ${describeArtifact(version)}`}
+              className="flex min-h-11 w-full items-center gap-3 border border-dialog-edge bg-panel px-3 py-2 text-left transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              <span className="font-mono text-meta font-bold text-white">
+                v{version.version}
+              </span>
+              <span className="min-w-0 flex-1">
+                <Meta artifact={version} />
+              </span>
+              {position === 0 && (
+                <span className="font-mono text-chip text-accent">latest</span>
+              )}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </DetailOverlay>
+  );
+}
+
+/**
  * THE REPURPOSED HEADER SLOT. It counts, so it says something true about THIS
  * session, and with nothing produced it renders nothing at all.
  *
@@ -580,6 +665,9 @@ export function ArtifactsSheet({
 }) {
   const [filter, setFilter] = useState("All");
   const [opened, setOpened] = useState<SessionArtifact | null>(null);
+  // The version list is its own surface, opened from the tile's dot and layered
+  // UNDER the detail: opening a cut from it must return here, not to the grid.
+  const [versionsOf, setVersionsOf] = useState<SessionArtifact | null>(null);
   // A thumbnail is a DOWNLOAD, so a session with two hundred artifacts in it is
   // two hundred requests the moment this sheet opens. One page at a time, by
   // count AND by weight, and a new filter starts its own first page.
@@ -593,15 +681,21 @@ export function ArtifactsSheet({
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.stopPropagation();
-      setOpened((current) => {
-        if (current) return null;
-        onClose();
-        return null;
-      });
+      // Innermost surface first: the opened cut, then the version list it was
+      // opened from, then the sheet itself.
+      if (opened) {
+        setOpened(null);
+        return;
+      }
+      if (versionsOf) {
+        setVersionsOf(null);
+        return;
+      }
+      onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, opened, versionsOf]);
 
   return (
     <div
@@ -630,6 +724,7 @@ export function ArtifactsSheet({
                   sid={sid}
                   artifact={artifact}
                   onOpen={setOpened}
+                  onVersions={setVersionsOf}
                 />
               ))}
             </div>
@@ -652,6 +747,13 @@ export function ArtifactsSheet({
         )}
       </div>
       <SurfaceFooter />
+      {versionsOf && (
+        <ArtifactVersions
+          artifact={versionsOf}
+          onOpen={setOpened}
+          onClose={() => setVersionsOf(null)}
+        />
+      )}
       {opened && (
         <ArtifactDetail
           client={client}

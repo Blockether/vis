@@ -908,7 +908,10 @@ every `sub_loop` fork) and loaded lazily on first import:
 - Time — `zoneinfo` (604+ zones from `java.time`), `dateutil`.
 - Ops / testing — `paramiko`, `pytest` (the same shim the test runner installs).
 - Globals, no import needed — `vis_attach` / `vis_attachments` /
-  `vis_read_attachment` and `nippy_encode` / `nippy_decode`.
+  `vis_read_attachment` and `nippy_encode` / `nippy_decode`. Re-attaching a
+  filename does not make a second artifact: it makes the next **version** of
+  that one, walked with `vis_attachment_versions(name)` and picked with
+  `vis_attachment_version(name, n)`.
 
 `matplotlib` renders through a native `imaging` PNG backend: `plt.show()` paints the
 figure inline in a graphics-capable terminal (Kitty/iTerm2, e.g. Ghostty) and

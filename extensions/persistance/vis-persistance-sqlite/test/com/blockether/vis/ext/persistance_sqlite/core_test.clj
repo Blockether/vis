@@ -3437,3 +3437,93 @@
         (expect (= {"cat" 2 "patch" 1 "shell" 1} (by-name (:top-tools u))))
         (expect (= 2 (:error-count u)))
         (expect (= 3 @decodes))))))
+
+(defdescribe
+  attachment-version-chain-test
+  "An artifact is a NAME with a history, not a pile of unrelated files. Re-attaching
+   the same filename anywhere in the session is the next VERSION of that artifact,
+   so a gallery can show one entry with its previous cuts behind it."
+  (it
+    "chains re-attached names across turns and iterations, per session"
+    (let
+      [s
+       (h/store)
+
+       png
+       (byte-array (map unchecked-byte [0x89 0x50 0x4e 0x47 1 2 3]))
+
+       b64
+       (.encodeToString (java.util.Base64/getEncoder) png)
+
+       att
+       (fn [filename]
+         {:media-type "image/png" :base64 b64 :filename filename :size (alength png)})
+
+       tool-att
+       (fn [call filename]
+         (assoc (att filename) :tool-call-id call))
+
+       cid
+       (h/store-session! s {:channel :cli})
+
+       ;; Turn 1: two distinct names, plus the SAME name twice inside one batch.
+       tid
+       (vis/db-store-session-turn! s
+                                   {:parent-session-id cid
+                                    :user-request "first cut"
+                                    :attachments [(att "chart.png") (att "notes.txt")
+                                                  (att "chart.png")]})
+
+       iid
+       (h/store-iteration! s
+                           {:session-turn-id tid
+                            :status :done
+                            :code "vis_attach('/tmp/chart.png')"
+                            :attachments [(tool-att "call_A" "chart.png")
+                                          (tool-att "call_A" "fresh.png")]})
+
+       ;; A later turn keeps chaining the same artifact.
+       tid2
+       (vis/db-store-session-turn!
+         s
+         {:parent-session-id cid :user-request "second cut" :attachments [(att "chart.png")]})
+
+       by-name
+       (fn [rows]
+         (reduce (fn [m r]
+                   (update m (:filename r) (fnil conj []) (:version r)))
+                 {}
+                 rows))
+
+       session-rows
+       (vis/db-list-session-attachments s cid)]
+
+      ;; Version 1 is the first cut; every later cut of the SAME name is 1 + max,
+      ;; including two same-named artifacts inside a single insert batch.
+      (expect (= {"chart.png" [1 2 3 4] "notes.txt" [1] "fresh.png" [1]}
+                 (update-vals (by-name session-rows) sort)))
+      ;; Each surface reports the same number for the same row.
+      (expect (= {"chart.png" [1 2] "notes.txt" [1]}
+                 (update-vals (by-name (vis/db-list-turn-attachments s tid)) sort)))
+      (expect (= {"chart.png" [3] "fresh.png" [1]}
+                 (by-name (vis/db-list-iteration-attachments s iid))))
+      (expect (= {"chart.png" [3] "fresh.png" [1]}
+                 (by-name (vis/db-list-iteration-attachments-meta s iid))))
+      (expect (= {"chart.png" [4]} (by-name (vis/db-list-turn-attachments s tid2))))
+      ;; The bare-id read-back (vis_reinspect_attachment) carries it too.
+      (expect (= 3
+                 (:version (vis/db-read-attachment
+                             s
+                             (:id (first (filter #(= "chart.png" (:filename %))
+                                                 (vis/db-list-iteration-attachments s iid))))))))
+      ;; Versioning is scoped to ONE session: another session's chart.png starts over.
+      (let
+        [cid2
+         (h/store-session! s {:channel :cli})
+
+         other
+         (vis/db-store-session-turn!
+           s
+           {:parent-session-id cid2 :user-request "elsewhere" :attachments [(att "chart.png")]})]
+
+        (expect (= {"chart.png" [1]} (by-name (vis/db-list-turn-attachments s other))))))))

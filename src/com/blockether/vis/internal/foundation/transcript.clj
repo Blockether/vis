@@ -47,7 +47,7 @@
             [{:name :code :value :version}]
             :attachments
             [{:id :source :tool-call-id :position :kind
-              :media-type :filename :size :stored}]
+              :media-type :filename :version :size :stored}]
             :blocks
             [{:position :code :comment :result :stdout :error
               :duration-ms :timeout? :repaired?}]}]}]}
@@ -156,7 +156,8 @@
    `:stored` records where the bytes live (`:inline` DB blob, `:external` storage
    backend, or `:none`) without carrying them."
   [att]
-  (-> (select-keys att [:id :source :tool-call-id :position :kind :media-type :filename :size])
+  (-> (select-keys att
+                   [:id :source :tool-call-id :position :kind :media-type :filename :version :size])
       (assoc :stored (cond (or (:has-bytes att) (:base64 att)) :inline
                            (:storage-uri att) :external
                            :else :none))))

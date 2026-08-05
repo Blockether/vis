@@ -9,6 +9,7 @@ import {
   attachmentIsImage,
   attachmentIsPlayable,
   attachmentIsVideo,
+  collapseArtifactVersions,
   collectArtifacts,
   docKindLabel,
   isDocMedia,
@@ -19,6 +20,7 @@ import {
   SHEET_PAGE,
   isPdfMedia,
 } from "./artifacts";
+import type { SessionArtifact } from "./artifacts";
 import type { IterationAttachment, TranscriptTurn } from "./types";
 
 describe("document media types", () => {
@@ -245,6 +247,80 @@ describe("collecting what a session produced", () => {
       "doc",
       "file",
     ]);
+  });
+});
+
+describe("collapsing an artifact into its versions", () => {
+  const cut = (name: string, version: number): SessionArtifact => ({
+    key: `${name}:${version}`,
+    kind: "image",
+    name,
+    media: "PNG",
+    mediaType: "image/png",
+    size: version * 1024,
+    sizeLabel: `${version}.0KB`,
+    turn: version,
+    tool: "python_execution",
+    iterationId: `i${version}`,
+    index: 0,
+    version,
+  });
+
+  it("reads the version the engine stamped, defaulting to the first cut", () => {
+    const list = collectArtifacts([
+      {
+        iterations: [
+          {
+            id: "i1",
+            attachments: [
+              { index: 0, filename: "chart.png", media_type: "image/png" },
+              {
+                index: 1,
+                filename: "chart.png",
+                media_type: "image/png",
+                version: 4,
+              },
+            ],
+          },
+        ],
+      } as unknown as TranscriptTurn,
+    ]);
+    expect(list.map((entry) => entry.version)).toEqual([4, 1]);
+  });
+
+  it("keeps ONE row per name, the newest cut, with the thread behind it", () => {
+    const collapsed = collapseArtifactVersions([
+      cut("chart.png", 2),
+      cut("notes.md", 1),
+      cut("chart.png", 3),
+      cut("chart.png", 1),
+    ]);
+    expect(collapsed.map((entry) => entry.name)).toEqual([
+      "chart.png",
+      "notes.md",
+    ]);
+    const [chart] = collapsed;
+    // The primary view is the LATEST cut: its size, its turn, its bytes.
+    expect(chart.version).toBe(3);
+    expect(chart.turn).toBe(3);
+    expect(chart.key).toBe("chart.png:3");
+    // Newest first, the head included, so the dropdown is the whole thread.
+    expect(chart.versions?.map((entry) => entry.version)).toEqual([3, 2, 1]);
+  });
+
+  it("gives a lone artifact a one-element thread, so nothing branches", () => {
+    const [only] = collapseArtifactVersions([cut("solo.png", 1)]);
+    expect(only.versions).toHaveLength(1);
+    expect(only.versions?.[0].name).toBe("solo.png");
+  });
+
+  it("never merges two different names into one artifact", () => {
+    const collapsed = collapseArtifactVersions([
+      cut("a.png", 1),
+      cut("b.png", 1),
+    ]);
+    expect(collapsed).toHaveLength(2);
+    expect(collapsed.every((entry) => entry.versions?.length === 1)).toBe(true);
   });
 });
 

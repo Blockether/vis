@@ -424,6 +424,12 @@ export interface IterationAttachment {
   kind?: string;
   media_type?: string;
   filename?: string;
+  /**
+   * Which cut of THIS name it is, 1-based. Re-attaching a filename is the next
+   * version of that artifact rather than a second artifact, so a gallery groups
+   * by `filename` and shows the highest version with the rest behind it.
+   */
+  version?: number;
   size?: number;
 }
 

@@ -289,7 +289,8 @@
   vis-attach-discovery-test
   (it "surfaces vis_attach / vis_attach_bytes / vis_attachments via apropos and doc"
       (let [pctx (ctx-with-root (temp-root))]
-        (expect (= ["vis_attach" "vis_attach_bytes" "vis_attachments"]
+        (expect (= ["vis_attach" "vis_attach_bytes" "vis_attachment_version"
+                    "vis_attachment_versions" "vis_attachments"]
                    (vec (ev pctx "sorted(apropos('vis_attach'))"))))
         (expect (false? (ev pctx "'attach' in apropos('attach')")))
         (expect (true? (ev pctx "'callable' in doc('vis_attach')")))
@@ -629,3 +630,61 @@
                               "    print('RAISED', 'human-visible' in str(e))\n"))]
         (expect (empty? (:attachments out)))
         (expect (re-find #"RAISED True" (str (:stdout out)))))))
+
+(defn- versioned-reader
+  "Reader holding ONE artifact under three names' worth of history: `chart.png`
+   at versions 1..3 plus an unrelated `notes.txt`, listed out of order so the
+   shim's own sort is what puts the thread back together."
+  []
+  {:list
+   (fn []
+     [{:id "v2" :filename "chart.png" :version 2 :media-type "image/png" :kind "image" :size 7}
+      {:id "n1" :filename "notes.txt" :version 1 :media-type "text/plain" :kind "table" :size 3}
+      {:id "v3" :filename "chart.png" :version 3 :media-type "image/png" :kind "image" :size 9}
+      {:id "v1" :filename "chart.png" :version 1 :media-type "image/png" :kind "image" :size 5}])
+   :read (constantly nil)
+   :reinspect (constantly nil)})
+
+(defdescribe
+  vis-attachment-versions-test
+  "An artifact is a NAME with a history. `vis_attachment_versions(name)` hands back
+   that whole thread oldest-first and `vis_attachment_version(name)` the latest cut,
+   so a block can pick up where the previous iteration left off instead of attaching
+   a fourth unrelated chart."
+  (it
+    "walks one artifact's versions, defaults to the latest, and indexes backwards"
+    (let
+      [pctx
+       (ctx-with-root (temp-root))
+
+       out
+       (binding [mpl-capture/*attachment-reader* (versioned-reader)]
+         (block pctx
+                (str "vs = vis_attachment_versions('chart.png')\n"
+                     "print([v['version'] for v in vs], [v['id'] for v in vs])\n"
+                     "print(vis_attachment_version('chart.png')['id'])\n"
+                     "print(vis_attachment_version('chart.png', 1)['id'])\n"
+                     "print(vis_attachment_version('chart.png', -2)['id'])\n"
+                     "print(vis_attachment_versions('nope.png'))\n"
+                     "try:\n" "    vis_attachment_version('chart.png', 9)\n"
+                     "except LookupError as e:\n"
+                     "    print('RAISED', 'versions: 1, 2, 3' in str(e))\n"
+                     "try:\n" "    vis_attachment_version('nope.png')\n"
+                     "except LookupError:\n" "    print('MISSING')\n")))
+
+       so
+       (str (:stdout out))]
+
+      (expect (nil? (:error out)))
+      ;; Oldest-first, and only THIS artifact's cuts — notes.txt is its own thread.
+      (expect (re-find #"\[1, 2, 3\] \['v1', 'v2', 'v3'\]" so))
+      ;; No version asked for means the newest one: the primary view is the latest.
+      (expect (re-find #"(?m)^v3$" so))
+      (expect (re-find #"(?m)^v1$" so))
+      ;; -1 is the latest, so -2 is the cut before it.
+      (expect (re-find #"(?m)^v2$" so))
+      ;; An unknown name is an empty thread, never an error.
+      (expect (re-find #"(?m)^\[\]$" so))
+      ;; A version that never existed says which ones did.
+      (expect (re-find #"RAISED True" so))
+      (expect (re-find #"MISSING" so)))))
