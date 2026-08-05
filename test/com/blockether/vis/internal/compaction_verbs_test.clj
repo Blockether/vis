@@ -93,7 +93,7 @@
         (expect
           (= [{"scopes" #{"t1/i2" "t1/i3"} "issued_turn" 99 "at_turn" 99 "gist" "encoded target"}]
              (get @ca "session_summaries")))
-        (expect (str/includes? out "folded t1/i2, t1/i3"))))
+        (expect (str/includes? out "folded t1/i2-i3"))))
   (it "session_fold excludes an active skill scope and folds the remaining target"
       (let
         [[ca ev]
@@ -296,11 +296,42 @@
 
         (expect (nil? (get @ca "session_summaries")))
         (expect (re-find #"nothing to fold" out))))
-  ;; Regression, session 91576db9: `session_fold("t3/i89-i141")` — a RANGE spelled
-  ;; as ONE id — was kept verbatim, matched no wire iteration, and was STILL
-  ;; recorded and acked as `folded t3/i89-i141 · saved ~0 tokens`. Three such folds
-  ;; in a row reclaimed nothing while the model believed it had compacted.
-  (it "refuses an unparseable scope id or cursor instead of acking a fold of nothing"
+  ;; Regression, session 91576db9: `session_fold("t3/i89-i141")` — the ledger's OWN
+  ;; compact anchor grammar handed straight back — was kept verbatim as one id,
+  ;; matched no wire iteration and was STILL recorded and acked as
+  ;; `folded t3/i89-i141 · saved ~0 tokens`. Three such folds in a row reclaimed
+  ;; nothing while the model believed it had compacted.
+  (it
+    "coerces the ledger's own anchor grammar (a range, a turn, a bare iter) into the scopes it names"
+    (let
+      [mk
+       (fn []
+         (atom {"session_turn" 3
+                "engine_iter_universe" ["t3/i1" "t3/i2" "t3/i89" "t3/i90" "t3/i141"]}))
+
+       folded
+       (fn [target]
+         (let [ca (mk)]
+           ((get (compaction-verbs ca) 'session-fold) target "ranged")
+           (dissoc (last (get @ca "session_summaries")) "issued_turn" "at_turn" "gist")))]
+
+      ;; A RANGE is the scopes it names, however it is spelled or wrapped.
+      (doseq [target ["t3/i89-i141" ["t3/i89-i141"] ["t3/i89" "t3/i89-i141"] "T3/I89 .. i141"]]
+        (expect (= {"scopes" #{"t3/i89" "t3/i90" "t3/i141"}} (folded target)) (pr-str target)))
+      (expect (= {"scopes" #{"t3/i1" "t3/i2" "t3/i89"}} (folded "t3/i1-i2,i89")))
+      (expect (= {"scopes" #{"t3/i1" "t3/i2" "t3/i89" "t3/i90" "t3/i141"}} (folded "t3/*")))
+      ;; A CURSOR is one point: a span collapses to its own edge, and a bound
+      ;; that dropped its turn borrows the window's.
+      (expect (= {"through" "t3/i141"} (folded {"through" "t3/i89-i141"})))
+      (expect (= {"from" "t3/i89" "to" "t3/i141"} (folded {"from" "t3/i89" "to" "i141"})))
+      ;; `since` freezes its ceiling, so "turn 3" resolves to turn 3 entire.
+      (expect (= {"scopes" #{"t3/i1" "t3/i2" "t3/i89" "t3/i90" "t3/i141"} "turns" #{3}}
+                 (folded {"since" "turn 3"})))
+      ;; The ack speaks that same grammar back — and names what it ACTUALLY
+      ;; folded: the universe holds no i91..i140, so the run is `i89-i90,i141`.
+      (expect (= "folded t3/i89-i90,i141 → ranged"
+                 ((get (compaction-verbs (mk)) 'session-fold) "t3/i89-i141" "ranged")))))
+  (it "refuses a target that names NO scope instead of acking a fold of nothing"
       (let
         [ca
          (atom {"session_turn" 3 "engine_iter_universe" ["t3/i89" "t3/i90" "t3/i141"]})
@@ -309,11 +340,11 @@
          (get (compaction-verbs ca) 'session-fold)]
 
         (doseq
-          [target ["t3/i89-i141" ["t3/i89-i141"] ["t3/i89" "t3/i89-i141"] {"through" "t3/i89-i141"}
-                   {"from" "t3/i89" "to" "i141"} {"since" "turn 3"}]]
-          (let [ex (try (sf target "ranged") nil (catch clojure.lang.ExceptionInfo e e))]
-            (expect (= :vis/session-fold-invalid-scope (:type (ex-data ex))))
-            (expect (str/includes? (ex-message ex) "unparseable scope id"))
+          [target ["banana" ["t3/i89" "kaboom"] {"through" "later"} {"since" "yesterday"}
+                   {"from" "t3/i89" "to" "the end"}]]
+          (let [ex (try (sf target "nope") nil (catch clojure.lang.ExceptionInfo e e))]
+            (expect (= :vis/session-fold-invalid-scope (:type (ex-data ex))) (pr-str target))
+            (expect (str/includes? (ex-message ex) "cannot resolve scope"))
             (expect (str/includes? (ex-message ex) "Nothing was folded"))))
         (expect (nil? (get @ca "session_summaries")))))
   (it "blocks only the LIVE (unsettled) iteration of the current turn and any future turn"
@@ -1090,12 +1121,12 @@
                                          "model_input_limit" 100000}}))]
       ;; The #88 shape: 3 enumerated iteration ids, 2 of them weightless.
       (expect
-        (= (str "folded t1/i1, t1/i2, t2/i1 · saved ~8k tokens · ~13% of budget"
+        (= (str "folded t1/i1-i2 t2/i1 · saved ~8k tokens · ~13% of budget"
                 " · context 30%→~22% (30k→22k tokens)"
                 " · 2/3 scopes already off-wire — fold t1 to drop their recaps → enumerated")
            ((get (compaction-verbs (mk)) 'session-fold) ["t1/i1" "t1/i2" "t2/i1"] "enumerated")))
       ;; A fold that frees nothing at all still names the shape that would.
-      (expect (= (str "folded t1/i1, t1/i2 · saved ~0 tokens · context 30% (30k/100k tokens)"
+      (expect (= (str "folded t1/i1-i2 · saved ~0 tokens · context 30% (30k/100k tokens)"
                       " · 2/2 scopes already off-wire — fold t1 to drop their recaps → nothing")
                  ((get (compaction-verbs (mk)) 'session-fold) ["t1/i1" "t1/i2"] "nothing")))
       ;; The whole-turn shape DOES charge and remove the recap, so it needs no nudge.

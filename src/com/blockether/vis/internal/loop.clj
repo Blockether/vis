@@ -5251,7 +5251,9 @@
                (str
                  "List of ids [\"t2/i3\",\"t2/i4\"] (bare \"t2\" = whole turn), or ONE selector: "
                  "{\"through\":\"tN/iN\"}; {\"from\":\"tA/iA\",\"to\":\"tB/iB\"} inclusive window "
-                 "(either bound optional); {\"since\":\"tN/iN\"} through newest.")}
+                 "(either bound optional); {\"since\":\"tN/iN\"} through newest. An id may also "
+                 "be a compact anchor, exactly as the fold ledger prints it: \"t3/i89-i141\", "
+                 "\"t3/i1-i2,i5\", \"t2-t4/*\", \"t*\".")}
      "gist" {:type "string"
              :description (str "Durable one-line takeaway: finding, consequence, and a useful "
                                "path:line/symbol/anchor. Omit when none.")}}
