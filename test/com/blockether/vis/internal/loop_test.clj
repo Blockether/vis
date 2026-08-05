@@ -20,6 +20,7 @@
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.persistance :as persistance]
+            [taoensso.telemere :as tel]
             [com.blockether.vis.internal.session-model :as session-model]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.toggles :as toggles]
@@ -6186,7 +6187,22 @@
     (it "keeps a value that merely MENTIONS the tag"
       (let [[tc] (#'lp/normalize-tool-calls
                    [{:id "g" :name "grep" :input {"query" "who writes </parameter> here"}}])]
-        (expect (= {"query" "who writes </parameter> here"} (:input tc))))))
+        (expect (= {"query" "who writes </parameter> here"} (:input tc)))))
+    ;; The drop is the right repair, but it also ERASES the evidence: the second
+    ;; instance of this fault was only ever found because the mangled tag had
+    ;; been persisted in `session_turn_iteration.tool_calls`. Nothing corrupt
+    ;; reaches engine data now, so the log line is the only trace left of a
+    ;; provider that mangled its own tool-call encoding.
+    (it "records the argument it dropped"
+      (let [{:keys [signals]} (tel/with-signals
+                                (#'lp/normalize-tool-calls
+                                  [{:id "a" :name "apropos"
+                                    :input {"query" "</antmlutparameter>\n"}}]))
+            leak (first (filter #(= ::lp/tool-protocol-leak (:id %)) signals))]
+        (expect (some? leak))
+        (expect (= :warn (:level leak)))
+        (expect (= "query" (-> leak :data :argument)))
+        (expect (= "</antmlutparameter>\n" (-> leak :data :value))))))
   ;; The same wreckage one level up: the corrupted `arguments` payload never
   ;; decoded to an OBJECT at all. svar's tool-argument decode is strict and
   ;; FAITHFUL — it hands whatever JSON value it read straight back, so
@@ -6204,7 +6220,15 @@
         (expect (= {} (:input tc)))))
     (it "drops a scalar payload"
       (let [[tc] (#'lp/normalize-tool-calls [{:id "a" :name "apropos" :input 42}])]
-        (expect (= {} (:input tc)))))))
+        (expect (= {} (:input tc)))))
+    (it "records the payload it refused"
+      (let [{:keys [signals]} (tel/with-signals
+                                (#'lp/normalize-tool-calls
+                                  [{:id "a" :name "apropos" :input "</invoke>"}]))
+            leak (first (filter #(= ::lp/tool-input-not-an-object (:id %)) signals))]
+        (expect (some? leak))
+        (expect (= :warn (:level leak)))
+        (expect (str/includes? (str (-> leak :data :value)) "</invoke>"))))))
 
 ;; GitHub Copilot bills a request as a FULL premium interaction unless the
 ;; caller marks it `X-Initiator: agent` (a MISSING header means `user`), and

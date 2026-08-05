@@ -5030,7 +5030,7 @@
   "Require and project the raw-result contract for one engine-owned native tool,
    then put its schema through the SAME wire projection extension natives get
    (`extension/advertise-tool`) so the engine surface carries identical
-   constraint prose and the same derived `:strict` opt-in."
+   constraint prose."
   [{:keys [name description result] :as tool}]
   (when-not (and (string? description) (not (str/blank? description)))
     (throw (ex-info
@@ -5159,28 +5159,14 @@
    "doc" {:pos ["name"]}
    "session_fold" {:pos ["target"] :opt-pos ["gist"]}})
 
-(defn- request-api-style
-  "svar `:api-style` the NEXT request will actually be built for: the resolved
-   model's own overlay first, then its provider's (svar reads
-   `(or (:api-style model-map) (:api-style provider))` at request build). nil when
-   neither declares one — svar then defaults to the OpenAI-compatible chat wire,
-   which is exactly how `extension/strict-tools-for-wire` treats nil."
-  [environment resolved-model]
-  (or (:api-style resolved-model)
-      (some (fn [p]
-              (when (= (:provider resolved-model) (:id p)) (:api-style p)))
-            (:providers (:router environment)))))
-
 (defn- native-tools
   "The complete provider-visible native surface. Extension tools arrive finalized
    by `native-tool-schemas`; every engine-owned tool is finalized here, so no tool
    can be advertised without an explicit raw-result contract.
 
-   The two `:strict` gates run LAST, over both halves at once: the WIRE's strict
-   subset differs per api-style, and the provider's strict grammar is compiled per
-   request — so only the assembled surface knows how much of it can stay
-   constrained."
-  [active-extensions caps env api-style]
+   Nothing here is advertised `strict`: `advertise-tool` explains why a per-wire
+   grammar opt-in has no place on a surface that must reach every provider."
+  [active-extensions caps env]
   (let
     [engine-tools (cond-> [(apropos-tool) (doc-tool)]
                     (seq (extension/native-tool-replay-policies active-extensions env))
@@ -5188,11 +5174,9 @@
 
                     true
                     (conj (session-fold-tool) (python-execution-tool caps)))]
-    (extension/budget-strict-tools (extension/strict-tools-for-wire
-                                     api-style
-                                     (into (extension/native-tool-schemas active-extensions env)
-                                           (map finalize-engine-native-tool)
-                                           engine-tools)))))
+    (into (extension/native-tool-schemas active-extensions env)
+          (map finalize-engine-native-tool)
+          engine-tools)))
 
 (defn- advertised-native-capability-names
   "Provider-visible names plus Python compatibility names for active extension
@@ -5252,6 +5236,18 @@
   [v]
   (and (string? v) (some? (re-matches tool-protocol-leak-re v))))
 
+(defn- report-tool-protocol-leak!
+  "Record the wreckage `normalize-tool-input` is about to drop; always nil.
+
+   Dropping it is the right repair, but the drop is also what ERASES the fault:
+   the second instance of it was found solely because the mangled tag had been
+   persisted in `session_turn_iteration.tool_calls`. Nothing corrupt reaches
+   engine data any more, so this warning is the only trace left of a provider
+   that mangled its own tool-call encoding."
+  [id data]
+  (tel/log! {:level :warn :id id :data data} "Dropped provider tool-call transport wreckage")
+  nil)
+
 (defn- normalize-tool-input
   "MODEL-DRIFT + EXTENSION-EDN adapter for ONE tool call's arguments.
 
@@ -5296,13 +5292,20 @@
           (walk [x]
             (cond (map? x) (into {}
                                  (keep (fn [[k v]]
-                                         (when-not (tool-protocol-leak? v) [(nk k) (walk v)])))
+                                         (if (tool-protocol-leak? v)
+                                           (report-tool-protocol-leak! ::tool-protocol-leak
+                                                                       {:argument (str k) :value v})
+                                           [(nk k) (walk v)])))
                                  x)
                   (or (vector? x) (seq? x) (set? x)) (mapv walk x)
                   (or (keyword? x) (symbol? x)) (nv x)
                   :else x))]
     (let [normalized (walk (or input {}))]
-      (if (map? normalized) normalized {}))))
+      (if (map? normalized)
+        normalized
+        (do (report-tool-protocol-leak! ::tool-input-not-an-object
+                                        {:type (str (type normalized)) :value (pr-str normalized)})
+            {})))))
 
 (defn- normalize-tool-calls
   "THE DOOR: every native tool call svar returns enters the engine HERE.
@@ -5706,10 +5709,7 @@
        ;; a typed routing-trace event so the UI shows what the heal cost
        ;; instead of silence.
        empty-reply-resend-events (atom [])
-       provider-tools (native-tools active-extensions
-                                    (:sandbox-caps environment)
-                                    environment
-                                    (request-api-style environment resolved-model))
+       provider-tools (native-tools active-extensions (:sandbox-caps environment) environment)
        _ (env/set-advertised-native-tools!
            (:python-context environment)
            (advertised-native-capability-names active-extensions environment provider-tools))
