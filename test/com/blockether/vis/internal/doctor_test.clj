@@ -2,6 +2,8 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.doctor :as doctor]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.providers :as providers]
+            [com.blockether.vis.internal.registry :as registry]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
@@ -140,3 +142,89 @@
                               (#'doctor/workspace-mount-messages
                                {:config {"workspace" {"filesystem" [{"id" "root" "path" "/"}]}}})))
                    (expect (= [] (#'doctor/workspace-mount-messages {:config {}}))))))
+
+;; Regression, issue #111: a provider registered by an extension without
+;; `:provider/detect-fn` is dropped from `providers/picker-fleet`, so
+;; `default_provider` in vis.yml was ignored, the provider was absent from the
+;; model picker and the router silently fell back — with no diagnostic anywhere.
+(defdescribe
+  doctor-provider-selection-test
+  (it "errors when default_provider is registered without a detect-fn"
+      (with-redefs
+        [providers/picker-fleet
+         (constantly [{:id "github-copilot" :models [{:name "gpt-5"}]}])
+
+         registry/registered-providers
+         (constantly [{:provider/id "acme_genai" :provider/label "Acme GenAI"}])]
+
+        (let
+          [msgs
+           (#'doctor/provider-selection-messages
+            {:config {"default_provider" "acme_genai" "default_model" "acme-large"}})
+
+           m
+           (first msgs)]
+
+          (expect (= 1 (count msgs)))
+          (expect (= :error (:level m)))
+          (expect (= ::doctor/providers (:check-id m)))
+          (expect (str/includes? (:message m) ":provider/detect-fn"))
+          (expect (str/includes? (:remediation m) "providers:"))
+          (expect (= 2 (doctor/exit-code msgs))))))
+  (it "warns when a registered provider's detect-fn finds no credential"
+      (with-redefs
+        [providers/picker-fleet
+         (constantly [])
+
+         registry/registered-providers
+         (constantly [{:provider/id "acme_genai"
+                       :provider/label "Acme GenAI"
+                       :provider/detect-fn (constantly nil)}])]
+
+        (let
+          [m (first (#'doctor/provider-selection-messages
+                     {:config {"default_provider" "acme_genai"}}))]
+          (expect (= :warn (:level m)))
+          (expect (str/includes? (:message m) "no credential")))))
+  (it "errors on an unknown provider id, and covers the fallback root too"
+      (with-redefs
+        [providers/picker-fleet
+         (constantly [])
+
+         registry/registered-providers
+         (constantly [])]
+
+        (let
+          [msgs (#'doctor/provider-selection-messages
+                 {:config {"default_provider" "ghost" "fallback_provider" "phantom"}})]
+          (expect (= [:error :error] (mapv :level msgs)))
+          (expect (str/includes? (:message (first msgs)) "unknown"))
+          (expect (str/includes? (:message (second msgs)) "fallback provider 'phantom'")))))
+  (it "warns when the default model is absent from the provider catalog"
+      (with-redefs
+        [providers/picker-fleet
+         (constantly [{:id "acme_genai" :models [{:name "gpt-5"}]}])
+
+         registry/registered-providers
+         (constantly [])]
+
+        (let
+          [m (first (#'doctor/provider-selection-messages
+                     {:config {"default_provider" "acme_genai" "default_model" "acme-large"}}))]
+          (expect (= :warn (:level m)))
+          (expect (str/includes? (:message m) "acme-large")))))
+  (it "stays informational when provider and model both resolve"
+      (with-redefs
+        [providers/picker-fleet
+         (constantly [{:id "acme_genai" :models [{:name "acme-large"}]}])
+
+         registry/registered-providers
+         (constantly [])]
+
+        (let
+          [m (first (#'doctor/provider-selection-messages
+                     {:config {"default_provider" "acme_genai" "default_model" "acme-large"}}))]
+          (expect (= :info (:level m)))
+          (expect (= 0 (doctor/exit-code [m]))))))
+  (it "reports nothing when config names no router roots"
+      (expect (empty? (#'doctor/provider-selection-messages {:config {}})))))

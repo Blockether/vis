@@ -289,6 +289,150 @@
           (try (when config (config-spec/workspace-mount-diagnostics config))
                (catch Throwable _ nil)))))
 
+(defn- resolve-fn
+  "Late-resolve a fully qualified fn, nil when its namespace cannot load. Keeps
+   doctor free of a load-order edge on the provider/registry stack — and because
+   the VAR is what gets invoked, a test can `with-redefs` the target."
+  [sym]
+  (try (requiring-resolve sym) (catch Throwable _ nil)))
+
+(defn- safe-call
+  [sym fallback]
+  (if-let [f (resolve-fn sym)]
+    (try (f) (catch Throwable _ fallback))
+    fallback))
+
+(defn- provider-id-str
+  [value]
+  (some-> value
+          (as-> v (if (keyword? v) (name v) (str v)))
+          string/trim
+          not-empty))
+
+(defn- fleet-model-names
+  [provider]
+  (let [model-name (resolve-fn 'com.blockether.vis.internal.config/model-name)]
+    (into #{}
+          (keep #(some-> (if model-name (model-name %) (or (:name %) (get % "name")))
+                         str
+                         not-empty))
+          (:models provider))))
+
+(defn- selection-message
+  "Diagnose ONE router root: the `role` label plus the provider/model ids config
+   named for it. `fleet` is what a model picker actually renders, so a provider
+   missing from it is invisible to the TUI no matter what config says."
+  [{:keys [role provider-id model-id fleet registered configured-ids]}]
+  (let
+    [row
+     (first (filter #(= provider-id (provider-id-str (:id %))) fleet))
+
+     models
+     (when row (fleet-model-names row))
+
+     reg
+     (get registered provider-id)
+
+     base
+     {:ext "vis" :check-id ::providers}]
+
+    (cond (and row model-id (seq models) (not (contains? models model-id)))
+          (assoc base
+            :level :warn
+            :message (str role " model '" model-id "' is not in provider '" provider-id "' catalog")
+            :remediation (str "Known models: "
+                              (string/join ", " (sort models))
+                              ". Declare the model under providers -> "
+                              provider-id
+                              " -> models."))
+          row (assoc base
+                :level :info
+                :message (str role
+                              " provider '" provider-id
+                              "' resolves" (when model-id (str " (model '" model-id "')"))))
+          (and reg (not (:provider/detect-fn reg)))
+          (assoc base
+            :level :error
+            :message (str role
+                          " provider '" provider-id
+                          "' is registered by an extension but has no :provider/detect-fn,"
+                          " so it never enters the picker fleet and cannot be selected")
+            :remediation (str
+                           "Add a non-interactive detect-fn (Python: detect_fn=...) that returns a"
+                           " credential or None, or declare '"
+                           provider-id
+                           "' under providers: in vis.yml."))
+          reg (assoc base
+                :level :warn
+                :message (str
+                           role
+                           " provider '" provider-id
+                           "' is registered but its detect-fn found no credential, so it is hidden"
+                           " from the picker")
+                :remediation (str "Authenticate it (vis-agent auth / provider login) or declare '"
+                                  provider-id
+                                  "' under providers: in vis.yml."))
+          :else (assoc base
+                  :level :error
+                  :message (str role
+                                " provider '" provider-id
+                                "' is unknown: not in providers:, no preset,"
+                                " no extension registered it")
+                  :remediation (let
+                                 [known (sort (into (into (set configured-ids) (keys registered))
+                                                    (keep #(provider-id-str (:id %)))
+                                                    fleet))]
+                                 (str (if (seq known)
+                                        (str "Available: " (string/join ", " known) ". ")
+                                        "No provider is currently available. ")
+                                      "Fix default_provider / fallback_provider in vis.yml."))))))
+
+(defn- provider-selection-messages
+  "Validate that every router root config names (`default_provider` /
+   `default_model`, `fallback_provider` / `fallback_model`) actually resolves to
+   a provider the pickers render. Silent misrouting was the failure mode: a
+   provider registered by an extension WITHOUT `:provider/detect-fn` is dropped
+   from `providers/picker-fleet`, so `default_provider` is ignored and the router
+   silently falls back to another provider. Doctor now names that gap."
+  [environment]
+  (let
+    [config
+     (live-config environment)
+
+     cget
+     (fn [k1 k2]
+       (or (get config k1) (get config k2)))]
+
+    (when config
+      (let
+        [fleet
+         (or (safe-call 'com.blockether.vis.internal.providers/picker-fleet nil) [])
+
+         registered
+         (into {}
+               (keep (fn [p]
+                       (when-let [id (provider-id-str (:provider/id p))]
+                         [id p])))
+               (or (safe-call 'com.blockether.vis.internal.registry/registered-providers nil) []))
+
+         configured-ids
+         (into #{}
+               (keep #(provider-id-str (or (:id %) (get % "id"))))
+               (cget :providers "providers"))]
+
+        (into []
+              (keep (fn [[role pkey mkey pkey* mkey*]]
+                      (when-let [pid (provider-id-str (cget pkey pkey*))]
+                        (selection-message {:role role
+                                            :provider-id pid
+                                            :model-id (provider-id-str (cget mkey mkey*))
+                                            :fleet fleet
+                                            :registered registered
+                                            :configured-ids configured-ids}))))
+              [["default" :default-provider :default-model "default_provider" "default_model"]
+               ["fallback" :fallback-provider :fallback-model "fallback_provider"
+                "fallback_model"]])))))
+
 (defn run-checks
   "Walk every registered extension, invoke its `:ext/doctor-fn`,
    return a vec of message maps with `:ext` auto-injected. The
@@ -300,6 +444,7 @@
   [environment]
   (vec (concat (host-system-messages environment)
                (workspace-mount-messages environment)
+               (provider-selection-messages environment)
                (sandbox-shim-messages environment)
                (mapcat (fn [ext]
                          (when-let [doctor-fn (:ext/doctor-fn ext)]
