@@ -5258,7 +5258,11 @@
         (`tool-protocol-leak?`), which is what the model meant: an optional
         argument disappears and `apropos()` runs, a required one is missing and
         the tool says so, instead of the call silently answering a question
-        nobody asked.
+        nobody asked. The same wreckage can miss the object shape entirely:
+        svar's decode is strict and FAITHFUL, so an `arguments` payload that
+        parsed to a JSON string/array/number comes back as a String, a vector,
+        a number. Engine data is a string-keyed MAP, so a non-map lands as `{}`
+        rather than travelling on to call synthesis, receipts and persistence.
 
    DEEP: keys are normalized at EVERY depth, not just the top level. Tools like
    `patch` carry NESTED dicts (`edits [{\":from_anchor\" …}]`); a shallow pass
@@ -5282,7 +5286,8 @@
                   (or (vector? x) (seq? x) (set? x)) (mapv walk x)
                   (or (keyword? x) (symbol? x)) (nv x)
                   :else x))]
-    (walk (or input {}))))
+    (let [normalized (walk (or input {}))]
+      (if (map? normalized) normalized {}))))
 
 (defn- normalize-tool-calls
   "THE DOOR: every native tool call svar returns enters the engine HERE.

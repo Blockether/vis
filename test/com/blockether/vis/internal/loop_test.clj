@@ -6186,7 +6186,25 @@
     (it "keeps a value that merely MENTIONS the tag"
       (let [[tc] (#'lp/normalize-tool-calls
                    [{:id "g" :name "grep" :input {"query" "who writes </parameter> here"}}])]
-        (expect (= {"query" "who writes </parameter> here"} (:input tc)))))))
+        (expect (= {"query" "who writes </parameter> here"} (:input tc))))))
+  ;; The same wreckage one level up: the corrupted `arguments` payload never
+  ;; decoded to an OBJECT at all. svar's tool-argument decode is strict and
+  ;; FAITHFUL — it hands whatever JSON value it read straight back, so
+  ;; `"\"</invoke>\""` arrives as a String and `"[1,2]"` as a vector — while
+  ;; every consumer past this door (call synthesis, oversized-arg receipts,
+  ;; persistence, `retry_native`) reads a string-keyed map.
+  (describe "an arguments payload that is not an object at all"
+    (it "drops a bare string payload and runs the call the model meant"
+      (let [[tc] (#'lp/normalize-tool-calls [{:id "a" :name "apropos" :input "</invoke>"}])]
+        (expect (= {} (:input tc)))
+        (expect (= "__vis_apropos_table__()"
+                   (#'lp/tool-call->python-source @#'lp/engine-native-tool-call-shapes tc)))))
+    (it "drops a vector payload"
+      (let [[tc] (#'lp/normalize-tool-calls [{:id "a" :name "apropos" :input [1 2]}])]
+        (expect (= {} (:input tc)))))
+    (it "drops a scalar payload"
+      (let [[tc] (#'lp/normalize-tool-calls [{:id "a" :name "apropos" :input 42}])]
+        (expect (= {} (:input tc)))))))
 
 ;; GitHub Copilot bills a request as a FULL premium interaction unless the
 ;; caller marks it `X-Initiator: agent` (a MISSING header means `user`), and
