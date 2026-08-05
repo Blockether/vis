@@ -1170,7 +1170,14 @@
    indefinite wait never gives up on the human: only an answer, a cancel or an
    interrupt releases it.
 
-   `:password` values in `:values` are opaque handles — see [[reveal-secret]]."
+   `:password` values in `:values` are opaque handles — see [[reveal-secret]].
+
+   A request MUST name the session it parks — `:session-id`, or the session of
+   the extension environment currently executing. A run nobody can attribute is
+   a run the companion app is never told about: the gateway bridge turns the
+   request into a session event, and a session event with no session has nowhere
+   to go, so only a surface mounted in this very process could ever answer it.
+   That is refused here, before anything blocks."
   [request]
   (let
     [entry
@@ -1181,6 +1188,10 @@
      request-id
      (:id entry)]
 
+    (when-not (trimmed (:session-id entry))
+      (invalid-request! (str "request " request-id
+                             " names no session — set :session-id, or raise it "
+                             "from an extension environment that carries one")))
     (when (contains? @pending request-id)
       (invalid-request! (str "request id " request-id " is already pending")))
     (swap! pending assoc request-id entry)

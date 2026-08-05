@@ -15,15 +15,12 @@
      - [[pending]] / [[submit!]] / [[cancel!]] back the REST routes so the app
        can answer a request it finds already open.
 
-   A request raised outside a gateway session carries no `:session-id`. It is
-   still published (the TUI shows it), but it cannot become a session event —
-   that drop is LOGGED here rather than silent, because it means an app operator
-   never learns the run is waiting."
+   Every request names the session it parks — `human-input/request!` refuses one
+   that does not — so a run waiting on a human is always a run the app can see."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as channel-events]
             [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.internal.human-input :as human-input]
-            [taoensso.telemere :as tel]))
+            [com.blockether.vis.internal.human-input :as human-input]))
 
 (set! *warn-on-reflection* true)
 
@@ -73,20 +70,13 @@
   "Translate one `:app` channel event into a session event. Unknown ops are
    ignored — the channel bus is shared.
 
-   A request that names no session cannot become a session event, so the app can
-   never show it. That is a real hole in a run, not a routine skip: it is logged
-   at `:warn` naming the request, instead of vanishing here in silence."
+   Every request names a session: `human-input/request!` refuses one that does
+   not, so the app is always told which run is parked."
   [event]
   (case (:op event)
     :human-input/request
-    (if-let [sid (session-of (:request event))]
-      (state/append-event! sid "human_input.request" {:request (:request event)})
-      (tel/log! {:level :warn
-                 :id ::request-without-session
-                 :data {:request-id (or (:request-id event) (:id (:request event)))
-                        :title (:title (:request event))}
-                 :msg (str "Human-input request names no session — the companion app cannot be "
-                           "told this run is parked")}))
+    (when-let [sid (session-of (:request event))]
+      (state/append-event! sid "human_input.request" {:request (:request event)}))
 
     :human-input/close
     ;; `:session-id` rides on the close event itself: by the time it is

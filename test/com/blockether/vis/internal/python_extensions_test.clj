@@ -1589,7 +1589,8 @@ vis.extension(name='asker', description='asker', alias='a',
                               (human-input/submit! id {"env" "prod" "token" "hunter2"})))
 
            result
-           (:result (ask-key))]
+           (:result (binding [extension/*current-environment* {:session-id "sess-ask"}]
+                      (ask-key)))]
 
           (expect (= {:is-accepted true} @answered))
           ;; The snake_case string spec a Python extension writes is
@@ -1634,7 +1635,8 @@ vis.extension(name='asker', description='asker', alias='a',
                               (human-input/submit! id {"email" "a@b.c" "again" "a@b.c"})))
 
            result
-           (:result (ask-validated))]
+           (:result (binding [extension/*current-environment* {:session-id "sess-ask"}]
+                      (ask-validated)))]
 
           ;; The validator is a Python callable, invoked by the engine from the
           ;; submitting thread while `vis.ask` parks the extension's own thread
@@ -1694,7 +1696,8 @@ vis.extension(name='asker', description='asker', alias='a',
                         (answer-pending! "Confirm" #(human-input/cancel! % "dismissed"))
 
                         result
-                        (:result (ask-cancelled))]
+                        (:result (binding [extension/*current-environment* {:session-id "sess-ask"}]
+                                   (ask-cancelled)))]
 
                        (expect (true? @answered))
                        (expect (= {"ok" false "reason" "dismissed" "values" {}} result))))))

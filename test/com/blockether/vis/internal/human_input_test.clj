@@ -50,7 +50,9 @@
      (atom [])]
 
     (ce/add-channel-event-listener! chan ::collector #(swap! events conj %))
-    (let [fut (future (hi/request! (assoc request :channel-ids [chan])))]
+    (let
+      [fut (future (hi/request! (merge {:session-id "test-session"}
+                                       (assoc request :channel-ids [chan]))))]
       {:future fut
        :events events
        :request-id (await-request-id events)
@@ -324,15 +326,13 @@
       (let [message (refusal #(normalized-fields {"name" "env" "help" "prose"}))]
         (expect (some? message))
         (expect (str/includes? message "unknown field key"))))
-  (it
-    "calls no key of the spec's own vocabulary unknown"
-    ;; The parser derives the snake_case keys it accepts from the spec's key
-    ;; sets, so nothing declared there can come back as an unknown key here.
+  (it "calls no key of the spec's own vocabulary unknown"
+      ;; The parser derives the snake_case keys it accepts from the spec's key
+      ;; sets, so nothing declared there can come back as an unknown key here.
       (expect (= #{} (unknown-keys hs/field-keys {"name" "env"} normalized-fields)))
-      (expect (= #{}
-                 (unknown-keys hs/group-keys
-                               {"type" "group" "fields" [{"name" "a"}]}
-                               normalized-fields)))
+      (expect
+        (= #{}
+           (unknown-keys hs/group-keys {"type" "group" "fields" [{"name" "a"}]} normalized-fields)))
       (expect (= #{} (unknown-keys hs/decor-keys {"type" "heading"} normalized-fields)))
       (expect (= #{}
                  (unknown-keys hs/option-keys
@@ -359,6 +359,7 @@
 
            answer-json
            (future (hi/request-json! (json/write-json-str {"title" title
+                                                           "session_id" "test-session"
                                                            "description" "Pick a target"
                                                            ;; Channel routing is host-side — a guest cannot aim the
                                                            ;; dialog anywhere, so this key is dropped, not honoured.
@@ -620,7 +621,17 @@
              (expect (= "shutting down" (:reason (deref (:future b) 5000 ::blocked))))
              (finally ((:detach! a)) ((:detach! b))))))
   (it "rejects an invalid spec before anything blocks"
-      (expect (throws? clojure.lang.ExceptionInfo #(hi/request! {:title "t" :fields []})))))
+      (expect (throws? clojure.lang.ExceptionInfo #(hi/request! {:title "t" :fields []}))))
+  ;; Regression, issue #113: a request raised outside a session parked its caller
+  ;; anyway — the gateway bridge dropped it with a `request-without-session`
+  ;; warning, so the companion app never learned the run was blocked and only a
+  ;; TUI mounted in this very process could release it.
+  (it "refuses a request that names no session"
+      (let
+        [ex (try (hi/request! {:title "Deploy" :fields [{:id "env"}]})
+                 nil
+                 (catch clojure.lang.ExceptionInfo e e))]
+        (expect (= :vis/human-input-invalid-request (:type (ex-data ex)))))))
 
 (defdescribe
   non-cancellable-request-test
@@ -642,6 +653,7 @@
 
          answer
          (future (hi/request! {:id rid
+                               :session-id "test-session"
                                :title "Deploy"
                                :is-cancellable false
                                :timeout-ms 3000
@@ -707,6 +719,7 @@
                         [fut
                          (future (binding [rt/*blocking-wall-park* park]
                                    (hi/request! {:title "Login"
+                                                 :session-id "test-session"
                                                  :fields [{:id "otp" :label "OTP"}]
                                                  :timeout-ms 5000
                                                  :channel-ids [chan]})))
@@ -755,6 +768,7 @@
 
                     {answer :value signals :signals}
                     (tel/with-signals (hi/request! {:id rid
+                                                    :session-id "test-session"
                                                     :title "Deploy"
                                                     :timeout-ms 2000
                                                     :fields [{:id "env"}]
@@ -1260,6 +1274,7 @@
                    #(#'hi/checked-answer "r1" nil {:is-submitted false :reason "cancelled"}))))
       (let
         [answer (hi/request! {:title "unmounted"
+                              :session-id "test-session"
                               :fields [{:id "a"}]
                               :channel-ids [(fresh-channel)]
                               :timeout-ms 1000})]

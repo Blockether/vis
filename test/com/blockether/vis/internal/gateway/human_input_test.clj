@@ -19,8 +19,7 @@
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.human-input :as hi]
             [com.blockether.vis.internal.human-input.spec :as hi-spec]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
-            [taoensso.telemere :as tel]))
+            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
 
 (defn- spec
   [& {:as overrides}]
@@ -140,39 +139,21 @@
            (is (nil? (gw-hi/request-of sid rid))))
          (finally (hi/cancel! rid "cleanup")))))
 
-(deftest sessionless-request-is-not-appended-test
+(deftest sessionless-request-is-refused-test
+  ;; Regression, issue #104: a request that named no session was dropped here in
+  ;; silence — the companion app never learned the run was parked and nothing in
+  ;; the logs said a request had been thrown away. Issue #113: it is refused at
+  ;; the source now, so no caller ever parks on a dialog only this process could
+  ;; answer.
   (gw-hi/install!)
   (let [rid (str "req-" (random-uuid))]
-    (with-events (fn [seen]
-                   (let [answer (future (hi/request! (spec :id rid)))]
-                     (try (testing "a request outside a gateway session has nowhere to land"
-                            (is (await-true #(some? (hi/pending-request rid))))
-                            (is (empty? (gw-hi/pending (str (random-uuid)))))
-                            (is (true? (hi/cancel! rid)))
-                            (is (false? (:is-submitted (deref answer 2000 ::timeout))))
-                            (is (empty? (events-of seen "human_input.request" rid)))
-                            (is (empty? (events-of seen "human_input.close" rid))))
-                          (finally (hi/cancel! rid "cleanup"))))))))
-
-(deftest sessionless-request-is-logged-test
-  ;; Regression, issue #104: a request that named no session was dropped here in
-  ;; silence. The companion app never learned the run was parked, and nothing in
-  ;; the logs said a request had been thrown away — the operator saw a run that
-  ;; simply stopped.
-  (let
-    [rid
-     (str "req-" (random-uuid))
-
-     {signals :signals}
-     (tel/with-signals (gw-hi/on-channel-event! {:op :human-input/request
-                                                 :request-id rid
-                                                 :request {:id rid :title "Key?"}}))]
-
-    (is (some (fn [signal]
-                (and (= :warn (:level signal))
-                     (= ::gw-hi/request-without-session (:id signal))
-                     (= rid (:request-id (:data signal)))))
-              signals))))
+    (with-events
+      (fn [seen]
+        (let [ex (try (hi/request! (spec :id rid)) nil (catch clojure.lang.ExceptionInfo e e))]
+          (testing "the engine refuses it before anything blocks"
+            (is (= :vis/human-input-invalid-request (:type (ex-data ex))))
+            (is (nil? (hi/pending-request rid)))
+            (is (empty? (events-of seen "human_input.request" rid)))))))))
 
 (deftest push-alerts-a-parked-run-test
   (testing "a blocked run pushes on its own collapse lane"

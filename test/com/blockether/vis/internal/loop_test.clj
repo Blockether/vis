@@ -6096,6 +6096,7 @@
                     handler
                     (fn [_env _input]
                       (hi/request! {:title "Login"
+                                    :session-id "loop-hitl-session"
                                     :fields [{:id "otp" :label "OTP"}]
                                     :timeout-ms 10000
                                     :channel-ids [chan]}))]

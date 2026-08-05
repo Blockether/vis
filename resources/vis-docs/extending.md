@@ -293,6 +293,15 @@ is active (TUI banner, web toast, …).
 blocks until they answer. The request is published to whatever channel is
 active, so the same call works in the TUI, the web UI, or the companion app.
 
+A question belongs to a **session**: it is asked inside a turn somebody is
+watching, and the session is what the answer travels back on. `vis.ask` takes
+the session of the call that is running — a tool, a slash command, a hook — and
+refuses on the spot when there is none, rather than parking on a dialog nobody
+can see. Provider lifecycle callbacks (`detect_fn`, `status_fn`) run outside any
+session, so they must never ask; keep them non-interactive and quick, and read
+credentials from the environment instead. `vis.check` needs no session at all:
+it only judges a request.
+
 ```python
 answer = vis.ask("Deploy", [
     {"name": "env", "label": "Target", "description": "Where this deploy lands.",
