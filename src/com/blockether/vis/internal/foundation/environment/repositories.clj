@@ -121,8 +121,9 @@
     [(vec roots) (aget truncated 0)]))
 
 (defn refresh-inventory!
-  "Forget all cached repository-root inventories. Environment `refresh()` calls
-   this after tree changes such as cloning or removing a repository."
+  "Forget all cached repository-root inventories. The host-only environment
+   `refresh!` — which `/reload` runs — calls this after tree changes such as
+   cloning or removing a repository."
   []
   (reset! inventory-cache {})
   nil)
