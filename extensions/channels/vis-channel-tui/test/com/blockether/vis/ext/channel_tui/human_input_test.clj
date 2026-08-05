@@ -12,6 +12,7 @@
             [com.blockether.vis.ext.channel-tui.screen :as screen]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.theme :as t]
+            [com.blockether.vis.ext.channel-tui.transient :as tr]
             [com.blockether.vis.internal.human-input :as engine]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize TextCharacter]
@@ -682,7 +683,7 @@
          (hi/paint! g 80 30 (hi/init-form (request)))
 
          foot-rule-y
-         (dec (long (:hint-row (hi/band-region 80 30 1))))
+         (dec (long (:hint-row (tr/band-region 80 30 1))))
 
          baz
          (screen-row screen (dec foot-rule-y))]
@@ -707,7 +708,7 @@
          (hi/paint! g 80 30 (hi/init-form (request)))
 
          hint-y
-         (long (:hint-row (hi/band-region 80 30 1)))
+         (long (:hint-row (tr/band-region 80 30 1)))
 
          baz
          (screen-row screen (- hint-y 2))
@@ -739,7 +740,7 @@
          (fn [f]
            (let [{:keys [screen g]} (virtual-screen)]
              (hi/paint! g 80 30 f)
-             (screen-row screen (- (long (:hint-row (hi/band-region 80 30 1))) 2))))]
+             (screen-row screen (- (long (:hint-row (tr/band-region 80 30 1))) 2))))]
 
         ;; The `•` cursor glyph a LIST row wears has no business on a pill that
         ;; recolours itself when focus arrives, and the gutter it needed had to be
@@ -777,11 +778,11 @@
           (expect (not (str/includes? text "┤"))))))
   (it "anchors the band on the prompt's closing rule at any height"
       ;; PURE: whatever the editor grew to, the band's hint row is `rows - 3`.
-      (expect (= 27 (:hint-row (hi/band-region 80 30 1))))
-      (expect (= 37 (:hint-row (hi/band-region 80 40 1))))
+      (expect (= 27 (:hint-row (tr/band-region 80 30 1))))
+      (expect (= 37 (:hint-row (tr/band-region 80 40 1))))
       ;; ...unless the transcript's top would be crossed, which wins.
-      (expect (= 1 (:left (hi/band-region 80 30 1))))
-      (expect (= 12 (:min-row (hi/band-region 80 30 12))))))
+      (expect (= 1 (:left (tr/band-region 80 30 1))))
+      (expect (= 12 (:min-row (tr/band-region 80 30 12))))))
 
 (defn- row-index
   "Index of the first plan row matching `pred`."

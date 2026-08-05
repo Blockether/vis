@@ -224,6 +224,45 @@
   [region spec]
   (band-geometry region (count (rows spec))))
 
+(def ^:private band-pad
+  "Columns of empty space on each end of a SIDELESS band's rules — the same
+   inset `render/draw-input-box!` gives the prompt's own top and bottom rules,
+   so a band lines up with the chrome it takes over instead of floating beside
+   it."
+  2)
+
+(defn band-region
+  "PURE: the rectangle an in-session BAND paints into on a `cols`×`rows`
+   terminal whose content starts at `content-top`.
+
+   The session frame is SIDELESS — the prompt is two horizontal rules with no
+   `│` rails — so a band that takes it over borrows exactly that: rules inset
+   [[band-pad]] columns, text one column further in, and `:is-sideless true`
+   so the chrome paints rules instead of `├───┤` junctions and wipes the FULL
+   terminal width (a band sits on the live transcript, not on a modal's own
+   paper). `:hint-row` is the prompt box's own closing rule (always `rows - 3`,
+   whatever height the editor grew to), which keeps the echo area's two footer
+   rows below the band alive; `:min-row` is the floor, so however tall the band
+   the header and the top of the transcript stay on screen."
+  [^long cols ^long rows ^long content-top]
+  (let
+    [pad
+     (long band-pad)
+
+     min-row
+     (max 0 content-top)
+
+     inner-w
+     (max 4 (- cols (* 2 pad)))]
+
+    {:left (dec pad)
+     :inner-w inner-w
+     :text-w (max 1 (- inner-w 2))
+     :hint-row (max (+ min-row 3) (- rows 3))
+     :min-row min-row
+     :cols cols
+     :is-sideless true}))
+
 ;;; ── Paint ───────────────────────────────────────────────────────────────────
 
 (def hint-pairs
@@ -300,6 +339,27 @@
         (p/put-str! g arg-x row argtxt)))
     (p/set-colors! g t/dialog-fg t/dialog-bg)))
 
+(defn draw-rule!
+  "One horizontal rule of the popup's chrome, on whatever frame `region` names.
+
+   A framed popup draws a capped `├───┤` separator that joins the host's rails;
+   a SIDELESS band has no rails for a junction to join, so it draws the prompt's
+   own inset line instead. One function, so a band and a modal wear the same
+   chrome and neither grows a second copy of it."
+  [g {:keys [left inner-w is-sideless]} row]
+  (let
+    [left
+     (long left)
+
+     inner-w
+     (long inner-w)]
+
+    (if is-sideless
+      (do (p/set-colors! g t/border-fg t/dialog-bg)
+          (p/put-str! g (inc left) row (p/horiz-line inner-w)))
+      (do (p/set-colors! g t/dialog-border t/dialog-bg)
+          (p/draw-separator! g left (+ left inner-w 1) row)))))
+
 (defn clear-rows!
   "Blank rows `from`..`to` (INCLUSIVE) inside the host's frame: dialog paper
    across the inner columns and the frame's plain edge back in both border
@@ -310,11 +370,15 @@
    `├`/`┤` junctions beside the popup. Capping separators put their own junctions
    back afterwards.
 
+   A SIDELESS region (`band-region`) has no border columns and no paper of its
+   own: it wipes the FULL terminal width, because anything it does not repaint
+   is the live transcript showing through between its rules.
+
    A transient erases exactly the rows it paints. A host that repaints BANDS OF
    DIFFERENT HEIGHTS into one rectangle — the model picker paging a catalog —
    owns the rows between its content and the band, and erases them with this
    before running the next page."
-  [g {:keys [left inner-w]} from to]
+  [g {:keys [left inner-w is-sideless cols]} from to]
   (let
     [left
      (long left)
@@ -328,10 +392,12 @@
     (dotimes [i (max 0 (inc (- (long to) (long from))))]
       (let [row (+ (long from) i)]
         (p/set-colors! g t/dialog-fg t/dialog-bg)
-        (p/fill-rect! g (inc left) row inner-w 1)
-        (p/set-colors! g t/dialog-border t/dialog-bg)
-        (p/set-char! g left row p/BOX_V)
-        (p/set-char! g right row p/BOX_V)))))
+        (if is-sideless
+          (p/fill-rect! g 0 row (long cols) 1)
+          (do (p/fill-rect! g (inc left) row inner-w 1)
+              (p/set-colors! g t/dialog-border t/dialog-bg)
+              (p/set-char! g left row p/BOX_V)
+              (p/set-char! g right row p/BOX_V)))))))
 
 (defn paint!
   "Paint ONE frame of `spec` at `state` into `region` on `host`. Pure geometry,
@@ -349,9 +415,6 @@
      inner-w
      (long inner-w)
 
-     right
-     (+ left inner-w 1)
-
      display-rows
      (rows spec)
 
@@ -368,13 +431,10 @@
     (when restore! (restore! top-limit (dec (long wipe-top))))
     (dotimes [i (max 1 (- (long body-top) (long wipe-top)))]
       (clear-row! (+ (long wipe-top) i)))
-    (p/set-colors! g t/dialog-border t/dialog-bg)
-    (when (>= (long sep-row) (max (long wipe-top) (long top-limit)))
-      (p/draw-separator! g left right sep-row))
-    (when (> (long title-rule-row) (long title-row))
-      (p/draw-separator! g left right title-rule-row))
+    (when (>= (long sep-row) (max (long wipe-top) (long top-limit))) (draw-rule! g region sep-row))
+    (when (> (long title-rule-row) (long title-row)) (draw-rule! g region title-rule-row))
     (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
-      (p/draw-separator! g left right foot-rule-row))
+      (draw-rule! g region foot-rule-row))
     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
     (p/styled g
               [p/BOLD]

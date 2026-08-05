@@ -1036,127 +1036,40 @@
       (expect (str/includes? inactive-label "│     0 │"))
       (expect (str/includes? inactive-label "-"))
       (expect (str/includes? inactive-label "Untitled session"))))
-  (it "draft manager separates trunk from current and parked drafts"
+  (it "the draft band is a TRANSIENT: one key per verb, the name typed on its own hint row"
+      ;; Drafts used to be a modal picker, then a text-input modal, then a confirm
+      ;; modal — three windows stacked over the very session the draft belongs to.
+      ;; It is one band inside the session's frame now, exactly like the HITL form.
       (let
-        [parked
-         {"workspace_id" "ws-parked" "label" "feature-b" "root" "/tmp/b" "is_current" false}
-
-         current
-         {"workspace_id" "ws-current" "label" "feature-a" "root" "/tmp/a" "is_current" true}
-
-         in-draft
-         (dlg/draft-picker-items [parked current])
-
-         on-trunk
-         (dlg/draft-picker-items [parked])]
-
-        (expect (= [:trunk :draft :draft] (mapv :action in-draft)))
-        (expect (= ["Trunk" "feature-a" "feature-b"] (mapv :label in-draft)))
-        (expect (:current? (second in-draft)))
-        (expect (= "stash + switch" (:hint (first in-draft))))
-        (expect (str/includes? (:description (first in-draft)) "real repository"))
-        (expect (= :trunk (:action (first on-trunk))))
-        (expect (:current? (first on-trunk)))
-        (expect (str/includes? (:description (first on-trunk)) "working tree"))))
-  (it "the new-session start picker offers trunk plus a dirty and a clean copy"
-      ;; Companion parity ("Start the session in"): the DEFAULT copy carries the
-      ;; uncommitted work (`:clean? false`); the clean copy is the opt-in.
-      (let [items dlg/start-in-items]
-        (expect (= [:trunk :draft :clean-draft] (mapv :start-in items)))
-        (expect (str/includes? (:label (second items)) "uncommitted changes come with it"))
-        ;; Trunk never forks, whatever was typed.
-        (expect (nil? (dlg/start-in-draft-spec (first items) "anything")))
-        (expect (= {:label "wire-rework" :clean? false}
-                   (dlg/start-in-draft-spec (second items) "  wire-rework  ")))
-        (expect (= {:label "wire-rework" :clean? true}
-                   (dlg/start-in-draft-spec (nth items 2) "wire-rework")))
-        ;; An empty name is a cancelled prompt, never an unnamed draft.
-        (expect (nil? (dlg/start-in-draft-spec (second items) "   ")))
-        (expect (nil? (dlg/start-in-draft-spec (second items) nil)))
-        (expect (str/includes? (dlg/start-in-body false) "uncommitted changes included"))
-        (expect (str/includes? (dlg/start-in-body true) "last commit"))))
-  (it
-    "draft manager uses standard filter keys and modified management actions"
-    (let
-      [drafts
-       [{"workspace_id" "ws-a" "label" "feature-a" "is_current" true}]
-
-       component
-       (dlg/draft-picker-component drafts)
-
-       initial
-       (:init component)
-
-       measured
-       ((:measure component) initial 120 40)
-
-       state
-       ((:reconcile component) initial measured)
-
-       ctrl-key
-       (fn [c]
-         (KeyStroke. (Character/valueOf c) true false false))
-
-       new-result
-       ((:on-key component) state (ctrl-key \n) measured)
-
-       abandon-result
-       ((:on-key component) state (ctrl-key \d) measured)
-
-       typed-n
-       ((:on-key component) state (char-key \N) measured)]
-
-      (expect (>= (:content-w measured) 72))
-      (expect (>= (:content-h-req measured) 12))
-      (expect (= :new (:action (done-key new-result))))
-      (expect (= :abandon (:action (done-key abandon-result))))
-      (expect (= "ws-a" (:workspace-id (done-key abandon-result))))
-      (expect (not (contains? typed-n done-key)))
-      (expect (= "N" (:query typed-n)))))
-  (it "draft filtering shares picker matching and hides nonmatching sections"
-      (let
-        [items
-         (dlg/draft-picker-items [{"workspace_id" "ws-a" "label" "feature-a" "root" "/tmp/alpha"}
-                                  {"workspace_id" "ws-b" "label" "docs" "root" "/tmp/beta"}])
-
-         component
-         (dlg/draft-picker-component
-           [{"workspace_id" "ws-a" "label" "feature-a" "root" "/tmp/alpha"}
-            {"workspace_id" "ws-b" "label" "docs" "root" "/tmp/beta"}])
-
-         measure
-         (:measure component)
-
-         feature
-         (measure (assoc (:init component) :query "FEATURE") 120 40)
-
-         path
-         (measure (assoc (:init component) :query "beta") 120 40)
-
-         trunk
-         (measure (assoc (:init component) :query "repository") 120 40)
-
-         none
-         (measure (assoc (:init component) :query "missing") 120 40)]
-
-        (expect (= ["feature-a"] (mapv :label (:selectable feature))))
-        (expect (= ["docs"] (mapv :label (:selectable path))))
-        (expect (= ["Trunk"] (mapv :label (:selectable trunk))))
-        (expect (empty? (:selectable none)))
-        (expect (= (mapv :label items) (mapv :label (dlg/filter-select-items items ""))))))
-  (it "draft manager filters interactively and returns the stable workspace id"
-      (let
-        [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-         (term/virtual-screen)
-
-         drafts
+        [drafts
          [{"workspace_id" "ws-a" "label" "feature-a" "is_current" true}
-          {"workspace_id" "ws-b" "label" "feature-b" "is_current" false}]]
+          {"workspace_id" "ws-b" "label" "feature-b" "is_current" false}]
 
-        (try (.addInput terminal (KeyStroke. (Character/valueOf \b) false false false))
-             (.addInput terminal (KeyStroke. KeyType/Enter))
-             (expect (= "ws-b" (:workspace-id (dlg/draft-picker! screen drafts))))
-             (finally (.stopScreen screen)))))
+         ch
+         (fn [c]
+           (KeyStroke. (Character/valueOf (char c)) false false false))
+
+         band!
+         (fn [keys]
+           (let
+             [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+              (term/virtual-screen)]
+             (try (doseq [k keys]
+                    (.addInput terminal k))
+                  (dlg/draft-transient! screen 1 drafts)
+                  (finally (.stopScreen screen)))))]
+
+        ;; A parked draft carries its OWN band key — no cursor, no Enter.
+        (expect (= {:action :draft :workspace-id "ws-b" :label "feature-b" :current? false}
+                   (band! [(ch \b)])))
+        ;; `t` is always trunk, and it knows that is not where we are.
+        (expect (= {:action :trunk :label "Trunk" :current? false} (band! [(ch \t)])))
+        ;; `-c` is a magit FLAG armed before the `n` command: the new draft is
+        ;; seeded from the last commit, and its name is read INLINE on the hint row.
+        (expect (= {:action :new :clean? true :label "wire-rework"}
+                   (band! (concat [(ch \c) (ch \n)]
+                                  (map ch "wire-rework")
+                                  [(KeyStroke. KeyType/Enter)]))))))
   (it "command palette exposes the frequent app verbs; Providers is the provider/settings hub"
       (let
         [palette-commands

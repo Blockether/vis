@@ -1237,50 +1237,9 @@
   ^long [^long row-w]
   (max 1 (- row-w 2)))
 
-(def ^:private band-pad
-  "Columns of empty space on each end of the band's rules — the SAME inset
-   `render/draw-input-box!` gives the prompt's own top and bottom rules, so the
-   band lines up with the chrome it takes over instead of floating beside it."
-  2)
 
-(defn band-region
-  "PURE: the rectangle the in-session band paints into on a `cols`×`rows`
-   terminal whose transcript starts at `content-top`.
 
-   The session frame is SIDELESS — the prompt is two horizontal rules with no
-   `│` rails — so the band borrows exactly that: rules inset [[band-pad]]
-   columns and text one column further in. `:hint-row` is the prompt box's own
-   closing rule (always `rows - 3`, whatever height the editor grew to), which
-   is what keeps the echo area's two footer rows below the band alive.
-   `:min-row` is the floor: however tall the form, the header and the top of
-   the transcript stay on screen."
-  [^long cols ^long rows ^long content-top]
-  (let
-    [pad
-     (long band-pad)
 
-     min-row
-     (max 0 content-top)]
-
-    {:left (dec pad)
-     :inner-w (max 4 (- cols (* 2 pad)))
-     :hint-row (max (+ min-row 3) (- rows 3))
-     :min-row min-row}))
-
-(defn- clear-band-row!
-  "Blank one band row across the FULL terminal width. The band sits ON the live
-   transcript, not on a modal's own paper: anything it does not repaint would
-   show through between its rules."
-  [g ^long cols ^long row]
-  (p/set-colors! g t/dialog-fg t/dialog-bg)
-  (p/fill-rect! g 0 row cols 1))
-
-(defn- draw-rule!
-  "One of the band's horizontal rules, inset to the prompt's own columns.
-   Sideless, so no `├`/`┤` junctions: there are no rails for them to join."
-  [g ^long left ^long inner-w ^long row]
-  (p/set-colors! g t/border-fg t/dialog-bg)
-  (p/put-str! g (inc left) row (p/horiz-line inner-w)))
 
 (defn paint!
   "Draw the human-input band for `form` INSIDE the session's own frame. Returns
@@ -1308,7 +1267,7 @@
       (long cols)
 
       {:keys [left inner-w] :as region}
-      (band-region cols (long rows) (long content-top))
+      (tr/band-region cols (long rows) (long content-top))
 
       left
       (long left)
@@ -1360,12 +1319,11 @@
       shown
       (subvec (vec plan) (min start total) (min total (+ start body-visible)))]
 
-     (doseq [row (range (max 0 (long sep-row)) (inc (long foot-row)))]
-       (clear-band-row! g cols row))
-     (when (>= (long sep-row) (long top-limit)) (draw-rule! g left inner-w sep-row))
-     (when (> (long title-rule-row) (long title-row)) (draw-rule! g left inner-w title-rule-row))
+     (tr/clear-rows! g region (max 0 (long sep-row)) foot-row)
+     (when (>= (long sep-row) (long top-limit)) (tr/draw-rule! g region sep-row))
+     (when (> (long title-rule-row) (long title-row)) (tr/draw-rule! g region title-rule-row))
      (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
-       (draw-rule! g left inner-w foot-rule-row))
+       (tr/draw-rule! g region foot-rule-row))
      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
      (p/styled g
                [p/BOLD]

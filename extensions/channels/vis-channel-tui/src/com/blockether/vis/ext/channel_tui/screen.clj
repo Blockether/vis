@@ -4208,7 +4208,7 @@
   "Execute one draft-manager choice through the canonical gateway API. Switching,
    creation, and destructive abandonment all return refreshed workspace data for
    the TUI footer. Prompts and confirmation are handled by the screen loop."
-  [sid {:keys [action current? workspace-id label reason]}]
+  [sid {:keys [action current? workspace-id label reason clean?]}]
   (cond current? {:changed? false :message (str "Already on " label)}
         (= action :trunk) {:changed? true
                            :message "Stashed draft — switched to trunk"
@@ -4221,7 +4221,7 @@
                                :workspace (vis/gateway-resume-draft! sid workspace-id)})
         (= action :new) {:changed? true
                          :message (str "Created draft '" label "'")
-                         :workspace (vis/gateway-create-draft! sid label false)}
+                         :workspace (vis/gateway-create-draft! sid label (boolean clean?))}
         (= action :abandon) (do (when-not workspace-id
                                   (throw (ex-info "Draft manager row has no workspace id"
                                                   {:type :draft-picker/invalid-row})))
@@ -5509,25 +5509,17 @@
               (fn start-session-in! []
                 (when-not (:dialog-open? @state/app-db)
                   (state/dispatch [:close-overlays])
-                  (when-let [choice (with-dialog-lock #(dlg/start-in-picker! screen))]
+                  (when-let
+                    [choice (with-dialog-lock
+                              #(dlg/start-in-transient!
+                                 screen
+                                 (or (get-in @state/app-db [:layout :messages-top]) 1)))]
                     (if (= :trunk (:start-in choice))
                       (do (state/dispatch [:reset-input])
                           (switch-session! {:action :new}))
-                      (let
-                        [clean?
-                         (= :clean-draft (:start-in choice))
-
-                         label
-                         (with-dialog-lock
-                           #(dlg/text-input-dialog!
-                              screen
-                              (if clean? "Name the clean draft" "Name the draft")
-                              "Draft name"
-                              :body (dlg/start-in-body clean?)))]
-
-                        (when-let [draft (dlg/start-in-draft-spec choice label)]
-                          (state/dispatch [:reset-input])
-                          (switch-session! {:action :new :draft draft})))))))
+                      (when-let [draft (:draft choice)]
+                        (state/dispatch [:reset-input])
+                        (switch-session! {:action :new :draft draft}))))))
               ;; Canonical gateway draft picker (C-x e + palette "Switch Draft…").
               ;; It is intentionally mutation-safe: the current location is selected
               ;; first (Enter is a no-op), trunk stashes, and another draft performs
@@ -5550,36 +5542,16 @@
                         (when (get-in @state/app-db [:search :active?])
                           (state/dispatch [:search-clear]))
                         (let
-                          [drafts (vis/gateway-list-drafts sid)
-                           raw-choice (with-dialog-lock #(dlg/draft-picker! screen drafts))
+                          [drafts
+                           (vis/gateway-list-drafts sid)
+
+                           ;; The band lives INSIDE this session's frame, under the
+                           ;; transcript it is about — never over the header.
+                           content-top
+                           (or (get-in @state/app-db [:layout :messages-top]) 1)
+
                            choice
-                           (case (:action raw-choice)
-                             :new
-                             (when-let
-                               [label
-                                (with-dialog-lock
-                                  #(dlg/text-input-dialog!
-                                     screen
-                                     "Create draft" "Draft name"
-                                     :body
-                                     "Creates an isolated copy of trunk and enters it. Your current draft is stashed safely."))]
-                               (when-let
-                                 [label (some-> label
-                                                str/trim
-                                                not-empty)]
-                                 (assoc raw-choice :label label)))
-
-                             :abandon
-                             (when (with-dialog-lock
-                                     #(dlg/confirm-dialog!
-                                        screen
-                                        "Abandon draft?"
-                                        (str "Permanently discard '"
-                                             (:label raw-choice)
-                                             "' and its isolated files? This cannot be undone.")))
-                               (assoc raw-choice :reason "abandoned from TUI draft manager"))
-
-                             raw-choice)]
+                           (with-dialog-lock #(dlg/draft-transient! screen content-top drafts))]
 
                           (when choice
                             ;; A queued or externally-started turn can become active while a

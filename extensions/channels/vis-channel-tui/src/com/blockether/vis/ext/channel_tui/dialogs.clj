@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.dialogs
   (:require [clojure.string :as str]
+            [com.blockether.vis.ext.channel-tui.drafts :as drafts]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.magit :as magit]
@@ -25,21 +26,6 @@
 
 ;;; ── Shared dialog chrome & components ───────────────────────────────────────
 
-(defn- abbreviate-home
-  "Shorten an absolute path for DISPLAY by replacing the user's home dir with
-   `~`, matching the footer/navigator and web filesystem-roots rail."
-  [^String path]
-  (let
-    [path
-     (str path)
-
-     home
-     (System/getProperty "user.home")]
-
-    (if (and (seq path) home (str/starts-with? path home))
-      (let [suffix (subs path (count home))]
-        (if (str/blank? suffix) "~/" (str "~" suffix)))
-      path)))
 
 ;;; ── Default modal footprint ─────────────────────────────────────────────────
 ;;
@@ -6275,368 +6261,153 @@
 
 ;;; ── Command palette ─────────────────────────────────────────────────────────
 
-(defn draft-picker-items
-  "Turn canonical gateway draft rows into the dedicated manager's selectable
-   items. Trunk is deliberately pinned in its own first section; current and
-   parked drafts follow underneath."
-  [drafts]
+(defn session-band!
+  "Run ONE transient as a magit BAND inside the LIVE SESSION frame — the same
+   in-frame band the human-input form and the magit status buffer use, painted
+   over the bottom of the transcript instead of in a window of its own.
+
+   `content-top` is the first row the band may touch (the screen's
+   `[:layout :messages-top]`), so the header and the session it is about stay
+   readable above it. The frame is snapshotted before the band paints and put
+   back on the way out — the transcript underneath is never repainted from
+   scratch and never blanked.
+
+   `f` is called with `{:screen :g :region :result}` ONLY when the transient
+   produced an action, on the band's own rows: that is where an inline
+   minibuffer (`magit-mini-read!`, `magit-mini-choose!`, `magit-mini-confirm!`)
+   asks its follow-up question, on the hint row, instead of opening a modal.
+   Returns `f`'s value, or nil on Esc."
+  [^TerminalScreen screen content-top spec f]
   (let
-    [drafts
-     (vec drafts)
+    [size
+     (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
 
-     current
-     (filterv #(true? (get % "is_current")) drafts)
+     cols
+     (.getColumns size)
 
-     parked
-     (filterv #(not (true? (get % "is_current"))) drafts)
+     rows
+     (.getRows size)
 
-     in-draft?
-     (seq current)
+     g
+     (.newTextGraphics screen)
 
-     row
-     (fn [draft current?]
-       (let
-         [label
-          (or (not-empty (get draft "label")) "Untitled draft")
+     restore!
+     (frame-restorer screen)
 
-          root
-          (some-> (get draft "root")
-                  abbreviate-home)]
+     region
+     (assoc (tr/band-region cols rows (or content-top 1)) :restore! restore!)
 
-         {:action :draft
-          :workspace-id (get draft "workspace_id")
-          :label label
-          :hint (if current? "● current" "parked")
-          :description (str (if current? "Active isolated workspace" "Preserved isolated workspace")
-                            (when (seq root) (str "  ·  " root)))
-          :search-text (str/lower-case (str label " " root))
-          :current? current?}))
+     host
+     (transient-host screen g)]
 
-     trunk
-     {:action :trunk
-      :label "Trunk"
-      :hint (if in-draft? "stash + switch" "● current")
-      :description (if in-draft?
-                     "Your real repository. Switching here safely stashes the current draft."
-                     "Your real repository. Changes here affect the working tree directly.")
-      :search-text "trunk real repository"
-      :current? (not in-draft?)}]
+    (try (when-let [result (tr/run! host region spec)]
+           (f {:screen screen :g g :region region :result result}))
+         (finally (when restore! (restore!))
+                  (.setCursorPosition screen nil)
+                  (.refresh screen Screen$RefreshType/DELTA)))))
 
-    (into [trunk] (concat (map #(row % true) current) (map #(row % false) parked)))))
+(defn draft-transient!
+  "The DRAFT band: switch, create and abandon a draft workspace without ever
+   leaving the session. Returns the choice the screen executes — `:trunk`,
+   `:draft`, `:new` (with the typed `:label` and the `-c` `:clean?` flag) or
+   `:abandon` (with `:workspace-id` and `:reason`) — or nil when the human
+   backed out at any step.
 
-(defn draft-picker-component
-  "Large, sectioned draft manager component. Trunk stays visually separate from
-   the draft collection, descriptions occupy a smaller italic second line, and
-   filtering uses the same query field, matching rules, navigation, and modified
-   action chords as the other searchable pickers. Pure measure/reconcile/key
-   handling remains testable without a terminal."
-  [drafts]
-  (let
-    [items
-     (draft-picker-items drafts)
+   Naming a new draft and confirming an abandon both happen INLINE on the band's
+   hint row, so the whole flow is one band and three keystrokes deep at most.
+   Abandoning asks WHICH draft only when there is more than one."
+  [^TerminalScreen screen content-top draft-rows]
+  (session-band!
+    screen
+    content-top
+    (drafts/spec draft-rows)
+    (fn [{:keys [g region result]}]
+      (let
+        [{:keys [left inner-w hint-row text-w]}
+         region
 
-     trunk
-     (first items)
+         choice
+         (drafts/choice draft-rows result)]
 
-     draft-items
-     (subvec (vec items) 1)
+        (case (:action choice)
+          :new
+          (when-let
+            [label (magit-mini-read! screen
+                                     g
+                                     left
+                                     inner-w
+                                     hint-row
+                                     text-w
+                                     (if (:clean? choice) "Name the clean draft:" "Name the draft:")
+                                     {})]
+            (when-let [label (not-empty (str/trim label))]
+              (assoc choice :label label)))
 
-     initial-selected
-     (or (some (fn [[idx item]]
-                 (when (:current? item) (inc (long idx))))
-               (map-indexed vector draft-items))
-         0)
+          :abandon
+          (let
+            [choices
+             (drafts/abandon-choices draft-rows)
 
-     footer
-     [["C-n" "new draft"] ["C-d" "abandon"] ["↑/↓" "move"] ["Enter" "switch"] ["Esc" "close"]]]
+             ws-id
+             (if (= 1 (count choices))
+               (:id (first choices))
+               (magit-mini-choose! screen g left inner-w hint-row text-w "Abandon draft:" choices))
 
-    {:init {:query "" :selected initial-selected :scroll 0}
-     :measure (fn [{:keys [query]} cols rows]
-                (let
-                  [selectable
-                   (filter-select-items items query)
+             row
+             (drafts/row-by-id (drafts/rows draft-rows) ws-id)]
 
-                   trunk-visible?
-                   (= :trunk (:action (first selectable)))
+            (when (and row
+                       (magit-mini-confirm!
+                         screen
+                         g
+                         left
+                         inner-w
+                         hint-row
+                         text-w
+                         (str "Permanently discard '" (:label row) "' and its isolated files?")))
+              {:action :abandon
+               :workspace-id ws-id
+               :label (:label row)
+               :reason "abandoned from the TUI draft transient"}))
 
-                   visible-drafts
-                   (filterv #(= :draft (:action %)) selectable)
-
-                   total
-                   (count selectable)
-
-                   draft-offset
-                   (if trunk-visible? 1 0)
-
-                   content-w
-                   (footer-content-width cols footer 72)
-
-                   content-h-req
-                   (adaptive-content-height rows nil)
-
-                   bounds
-                   (dialog-bounds cols rows content-w content-h-req)
-
-                   {:keys [content-top content-h hint-row]}
-                   (dialog-layout bounds)
-
-                   sections-top
-                   (long (+ (long content-top) 4))
-
-                   drafts-header-row
-                   (+ sections-top (if trunk-visible? 4 0))
-
-                   list-top
-                   (inc (long drafts-header-row))
-
-                   list-h
-                   (max 1 (quot (max 1 (- (long hint-row) list-top)) 2))]
-
-                  {:cols cols
-                   :rows rows
-                   :title "Draft workspaces"
-                   :footer footer
-                   :content-w content-w
-                   :content-h-req content-h-req
-                   :bounds bounds
-                   :content-top content-top
-                   :content-h content-h
-                   :hint-row hint-row
-                   :sections-top sections-top
-                   :drafts-header-row drafts-header-row
-                   :list-top list-top
-                   :list-h list-h
-                   :trunk-visible? trunk-visible?
-                   :draft-offset draft-offset
-                   :visible-drafts visible-drafts
-                   :selectable selectable
-                   :total total}))
-     :reconcile (fn [state {:keys [total list-h draft-offset]}]
-                  (let
-                    [draft-offset*
-                     (long draft-offset)
-
-                     selected
-                     (p/clamp (:selected state) 0 (max 0 (dec (long total))))
-
-                     draft-idx
-                     (- selected draft-offset*)]
-
-                    (assoc state
-                      :selected selected
-                      :scroll (if (neg? draft-idx)
-                                0
-                                (visible-window-start draft-idx
-                                                      (:scroll state)
-                                                      list-h
-                                                      (- (long total) draft-offset*))))))
-     :paint
-     (fn
-       [g {:keys [selected scroll query]}
-        {:keys [cols rows title footer content-w content-h-req bounds content-top content-h hint-row
-                sections-top drafts-header-row list-top list-h trunk-visible? draft-offset
-                visible-drafts total]}]
-       (let
-         [{:keys [left right inner-w]}
-          bounds
-
-          text-x
-          (+ (long left) 3)
-
-          description-w
-          (max 1 (- (long inner-w) 5))
-
-          trunk-selected?
-          (and trunk-visible? (zero? (long selected)))
-
-          query-blank?
-          (str/blank? query)]
-
-         (draw-dialog-chrome! g cols rows title content-w content-h-req)
-         (p/set-colors! g t/dialog-fg t/dialog-bg)
-         (p/fill-rect! g (inc (long left)) content-top inner-w content-h)
-         (let
-           [cursor (draw-text-input-field! g
-                                           left
-                                           content-top
-                                           inner-w
-                                           query
-                                           (count query)
-                                           "Filter drafts…")]
-           (p/set-colors! g t/dialog-border t/dialog-bg)
-           (p/draw-separator! g left right (inc (long content-top)))
-           (p/set-colors! g t/dialog-hint t/dialog-bg)
-           (p/styled g
-                     [p/ITALIC]
-                     (p/put-str!
-                       g
-                       text-x
-                       (+ (long content-top) 2)
-                       (ellipsize
-                         "Switch where this session works. Draft files stay isolated until apply."
-                         description-w)))
-           (when trunk-visible?
-             (p/set-colors! g t/dialog-title-fg t/dialog-bg)
-             (p/styled g [p/BOLD] (p/put-str! g text-x sections-top "TRUNK"))
-             (draw-list-item! g
-                              left
-                              (inc (long sections-top))
-                              inner-w
-                              trunk-selected?
-                              (:label trunk)
-                              (:hint trunk))
-             (p/set-colors! g t/dialog-hint t/dialog-bg)
-             (p/styled g
-                       [p/ITALIC]
-                       (p/put-str! g
-                                   text-x
-                                   (+ (long sections-top) 2)
-                                   (ellipsize (:description trunk) description-w)))
-             (p/set-colors! g t/dialog-border t/dialog-bg)
-             (p/draw-separator! g left right (+ (long sections-top) 3)))
-           (cond
-             (seq visible-drafts)
-             (do (p/set-colors! g t/dialog-title-fg t/dialog-bg)
-                 (p/styled
-                   g
-                   [p/BOLD]
-                   (p/put-str! g text-x drafts-header-row (str "DRAFTS  " (count visible-drafts))))
-                 (dotimes [i (min (long list-h) (long (count visible-drafts)))]
-                   (let
-                     [idx (+ (long scroll) (long i))
-                      row (+ (long list-top) (* 2 (long i)))]
-
-                     (when (< idx (count visible-drafts))
-                       (let
-                         [item (nth visible-drafts idx)
-                          absolute-idx (+ (long draft-offset) idx)]
-
-                         (draw-list-item! g
-                                          left
-                                          row
-                                          inner-w
-                                          (= absolute-idx selected)
-                                          (:label item)
-                                          (:hint item))
-                         (p/set-colors! g t/dialog-hint t/dialog-bg)
-                         (p/styled g
-                                   [p/ITALIC]
-                                   (p/put-str! g
-                                               text-x
-                                               (inc row)
-                                               (ellipsize (:description item) description-w))))))))
-             query-blank?
-             (do (p/set-colors! g t/dialog-title-fg t/dialog-bg)
-                 (p/styled g [p/BOLD] (p/put-str! g text-x drafts-header-row "DRAFTS  0"))
-                 (p/set-colors! g t/dialog-hint t/dialog-bg)
-                 (p/styled
-                   g
-                   [p/ITALIC]
-                   (p/put-str! g text-x list-top "No drafts yet. Press C-n to create one.")))
-             (zero? (long total))
-             (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                 (p/styled g [p/ITALIC] (p/put-str! g text-x sections-top "No matches"))))
-           (draw-hint-bar! g left hint-row inner-w footer)
-           cursor)))
-     :on-key (fn [{:keys [selected query] :as state} key {:keys [total selectable]}]
-               (let
-                 [clampf
-                  #(p/clamp % 0 (max 0 (dec (long total))))
-
-                  selected-item
-                  (when (pos? (long total)) (nth selectable selected))
-
-                  control-character
-                  (lower-key-character key)]
-
-                 (if-let [wheel (modal-wheel-step key)]
-                   (assoc state :selected (clampf (+ (long selected) (long wheel))))
-                   (cond (and (= KeyType/Character (key-type key))
-                              (input/ctrl-modifier? key)
-                              (= control-character \n))
-                         {::done {:action :new}}
-                         (and (= KeyType/Character (key-type key))
-                              (input/ctrl-modifier? key)
-                              (= control-character \d))
-                         (if (= :draft (:action selected-item))
-                           {::done (assoc selected-item :action :abandon)}
-                           state)
-                         :else
-                         (condp = (key-type key)
-                           KeyType/Escape {::done nil}
-                           KeyType/ArrowUp (assoc state :selected (clampf (dec (long selected))))
-                           KeyType/ArrowDown (assoc state :selected (clampf (inc (long selected))))
-                           KeyType/Enter {::done selected-item}
-                           KeyType/Backspace
-                           (assoc state
-                             :query (if (seq query) (subs query 0 (dec (count query))) query)
-                             :selected 0
-                             :scroll 0)
-                           KeyType/Character (let [c (key-character key)]
-                                               (if (and c
-                                                        (not (input/ctrl-modifier? key))
-                                                        (not (input/alt-modifier? key))
-                                                        (not (iso-control-character? c)))
-                                                 (assoc state
-                                                   :query (str query c)
-                                                   :selected 0
-                                                   :scroll 0)
-                                                 state))
-                           state)))))}))
-
-(defn draft-picker!
-  "Open the large draft manager. Returns a switch target, `{:action :new}`, or
-   `{:action :abandon ...}`; the screen layer owns prompts, confirmation, and
-   canonical gateway mutations."
-  [^TerminalScreen screen drafts]
-  (run-modal! screen (draft-picker-component drafts)))
+          choice)))))
 
 ;;; ── Where a NEW session starts ──────────────────────────────────────────────
 
-(def start-in-items
-  "Rows for the new-session START picker — the TUI twin of the companion's
-   \"Start the session in\" menu. The real project comes first (what a plain
-   `C-x n` still does), then the two isolated copies. `:start-in` is the pure
-   choice; `start-in-draft-spec` turns it into the fork the screen performs."
-  [{:start-in :trunk :label "The project itself" :hint "default"}
-   {:start-in :draft :label "A new draft — my uncommitted changes come with it"}
-   {:start-in :clean-draft :label "A new draft, without my uncommitted changes"}])
+(defn start-in-transient!
+  "Ask WHERE a new session starts, as a band in the current session's frame:
+   `t` the project itself, `d` a new draft, `-c` seeding that draft from the last
+   commit instead of the working tree. A draft is named inline on the hint row.
 
-(defn start-in-body
-  "Body text for the draft-name prompt: which tree the copy is seeded from, and
-   what moves the work back. Same promise the companion's start menu makes."
-  [clean?]
-  (if clean?
-    (str "A private copy of this project as of your last commit — your uncommitted changes stay "
-         "here and are not copied in. Applying it later is what moves the work back.")
-    (str "A private copy of this project exactly as it is now, uncommitted changes included. "
-         "Applying it later is what moves the work back.")))
+   Returns `{:start-in :trunk}`, `{:start-in :draft :clean? bool :draft {:label :clean?}}`,
+   or nil."
+  [^TerminalScreen screen content-top]
+  (session-band! screen
+                 content-top
+                 drafts/start-in-spec
+                 (fn [{:keys [g region result]}]
+                   (let
+                     [{:keys [left inner-w hint-row text-w]}
+                      region
 
-(defn start-in-draft-spec
-  "The draft a `start-in-items` choice + typed `label` asks for, or nil when the
-   session simply starts in the real project (or the name was left empty).
-   `:clean?` is the gateway's seed-from-the-COMMITTED-HEAD flag, so the default
-   `false` is the copy that carries the uncommitted work along."
-  [choice label]
-  (when-let
-    [label (some-> label
-                   str
-                   str/trim
-                   not-empty)]
-    (case (:start-in choice)
-      :draft
-      {:label label :clean? false}
+                      choice
+                      (drafts/start-in-choice result)]
 
-      :clean-draft
-      {:label label :clean? true}
-
-      nil)))
-
-(defn start-in-picker!
-  "Ask WHERE a new session starts. Returns the chosen `start-in-items` row, or
-   nil on Esc."
-  [^TerminalScreen screen]
-  (list-dialog! screen "Start the session in" start-in-items {:height :content}))
+                     (cond (nil? choice) nil
+                           (= :trunk (:start-in choice)) choice
+                           :else (when-let
+                                   [label (magit-mini-read! screen
+                                                            g
+                                                            left
+                                                            inner-w
+                                                            hint-row
+                                                            text-w
+                                                            (if (:clean? choice)
+                                                              "Name the clean draft:"
+                                                              "Name the draft:")
+                                                            {})]
+                                   (when-let [draft (drafts/draft-spec choice label)]
+                                     (assoc choice :draft draft))))))))
 
 (def palette-commands
   "Command palette entries. Each is {:id keyword :label str}. The `:id` is the
