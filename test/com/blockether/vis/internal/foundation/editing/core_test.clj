@@ -6562,7 +6562,9 @@
           (expect (contains? root-names "etc"))
           ;; dotfiles still need `is_hidden`, exactly as under fff
           (expect (not-any? #(string/starts-with? % ".") root-names))
-          (expect (some #(string/starts-with? % ".") (names {"path" "/" "is_hidden" true})))
+          ;; The root has no dotfiles on a clean Linux runner, but every home does
+          ;; (.bashrc/.profile on Linux, .zshrc/.zshenv on macOS).
+          (expect (some #(string/starts-with? % ".") (names {"path" home "is_hidden" true})))
           ;; a home directory is refused for the same reason and must list too
           (expect (= "dir" (get (row home) "type"))))))))
 
