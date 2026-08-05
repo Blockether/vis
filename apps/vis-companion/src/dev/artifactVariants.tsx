@@ -26,7 +26,7 @@
  *     two-digit count, so the layout is measured at its widest.
  */
 
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 type ArtifactKind = 'image' | 'video' | 'doc' | 'file';
 
@@ -200,7 +200,9 @@ export const ARTIFACT_STATES: Record<string, string[]> = {
 export function artifactsFor(state: string): Artifact[] {
   if (state === 'empty') return [];
   if (state === 'docs') {
-    return ARTIFACTS.filter((entry) => entry.kind === 'doc' || entry.kind === 'file');
+    return ARTIFACTS.filter(
+      (entry) => entry.kind === 'doc' || entry.kind === 'file',
+    );
   }
   return ARTIFACTS;
 }
@@ -213,7 +215,9 @@ function kilobytes(size: string): number {
 
 export function totalLabel(list: Artifact[]): string {
   const total = list.reduce((sum, entry) => sum + kilobytes(entry.size), 0);
-  return total >= 1024 ? `${(total / 1024).toFixed(1)} MB` : `${Math.round(total)} kB`;
+  return total >= 1024
+    ? `${(total / 1024).toFixed(1)} MB`
+    : `${Math.round(total)} kB`;
 }
 
 const KIND_GLYPH: Record<ArtifactKind, string> = {
@@ -228,14 +232,23 @@ const KIND_GLYPH: Record<ArtifactKind, string> = {
  * page with its page count; a recorded file has no picture and does not pretend
  * to — it wears its extension and stays a row of text.
  */
-function Thumb({ artifact, className }: { artifact: Artifact; className: string }) {
+function Thumb({
+  artifact,
+  className,
+}: {
+  artifact: Artifact;
+  className: string;
+}) {
   if (artifact.bars) {
     return (
       <span
         className={`relative flex items-end justify-center gap-0.5 overflow-hidden border-b border-dialog-edge bg-code px-2 pb-2 ${className}`}
       >
         {artifact.bars.map((bar, index) => (
-          <span key={index} className={`w-1.5 ${bar} ${artifact.hue} opacity-80`} />
+          <span
+            key={index}
+            className={`w-1.5 ${bar} ${artifact.hue} opacity-80`}
+          />
         ))}
         {artifact.kind === 'video' && (
           <span className="absolute inset-0 grid place-items-center font-mono text-subhead text-white">
@@ -279,10 +292,21 @@ function Thumb({ artifact, className }: { artifact: Artifact; className: string 
 }
 
 /** `PNG · 214 kB · turn 6` — the line that makes an artifact citable. */
-function Meta({ artifact, withTool }: { artifact: Artifact; withTool?: boolean }) {
+function Meta({
+  artifact,
+  withTool,
+}: {
+  artifact: Artifact;
+  withTool?: boolean;
+}) {
   return (
     <span className="block truncate font-mono text-chip text-dialog-hint">
-      {[artifact.media, artifact.size, `turn ${artifact.turn}`, withTool ? artifact.tool : null]
+      {[
+        artifact.media,
+        artifact.size,
+        `turn ${artifact.turn}`,
+        withTool ? artifact.tool : null,
+      ]
         .filter(Boolean)
         .join(' · ')}
     </span>
@@ -290,9 +314,41 @@ function Meta({ artifact, withTool }: { artifact: Artifact; withTool?: boolean }
 }
 
 /** A tile in a grid: picture on top, name and provenance under it. */
+
+/**
+ * What a screen reader is told about a tile. A thumbnail is a picture with no
+ * text in it, so the name, the kind, the size and the turn that produced it are
+ * the only things that make the control announceable — and they are exactly the
+ * provenance the sighted meta line already carries.
+ */
+function describeArtifact(artifact: Artifact): string {
+  return [
+    `Open ${artifact.name}`,
+    artifact.media,
+    artifact.size,
+    `produced in turn ${artifact.turn} by ${artifact.tool}`,
+    artifact.pages ? `${artifact.pages} pages` : null,
+    artifact.runtime ? `${artifact.runtime} long` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
+/**
+ * A tile in a grid: picture on top, name and provenance under it. It is a
+ * BUTTON, not a decorated span — an artifact you cannot tab to and that a
+ * screen reader never announces is a picture of a gallery, not a gallery.
+ */
 function Tile({ artifact, thumb }: { artifact: Artifact; thumb: string }) {
   return (
-    <span className="flex min-h-11 min-w-0 flex-col border border-dialog-edge bg-panel text-left transition-colors hover:bg-hover">
+    <button
+      type="button"
+      aria-label={describeArtifact(artifact)}
+      // `w-full`, because a <button> sizes to fit its CONTENT: measured in a
+      // browser, the dock filmstrip's 112px cells let the truncated name and
+      // its meta line stick 5-10px out into the gap over the next tile.
+      className="flex min-h-11 w-full min-w-0 flex-col border border-dialog-edge bg-panel text-left transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent"
+    >
       <Thumb artifact={artifact} className={thumb} />
       <span className="min-w-0 px-2 py-1.5">
         <span className="block truncate font-mono text-meta font-bold text-white">
@@ -300,7 +356,7 @@ function Tile({ artifact, thumb }: { artifact: Artifact; thumb: string }) {
         </span>
         <Meta artifact={artifact} />
       </span>
-    </span>
+    </button>
   );
 }
 
@@ -308,25 +364,61 @@ function Tile({ artifact, thumb }: { artifact: Artifact; thumb: string }) {
  * THE REPURPOSED SLOT. Same geometry Share had, and the same loud tone — but it
  * counts, so it says something true about THIS session, and with nothing
  * produced it renders nothing at all.
+ *
+ * On a phone the strip is too narrow for the word, so the visible chip is `▣ 12`
+ * — which is why the WORD lives in `aria-label`/`title` instead of only in the
+ * pixels, and `aria-expanded` says whether the surface it owns is open.
  */
-function ArtifactsChip({ count, open }: { count: number; open: boolean }) {
+function ArtifactsChip({
+  count,
+  open,
+  controls = 'artifacts-surface',
+  onToggle,
+}: {
+  count: number;
+  open: boolean;
+  controls?: string;
+  onToggle: () => void;
+}) {
   if (!count) return null;
   const tone = open
     ? 'border-accent bg-accent text-accent-foreground'
     : 'border-dialog-title bg-dialog-title text-dialog-title-foreground hover:bg-accent-2';
+  const label = `${count} artifacts produced by the model`;
+  // 44px under a finger, 24px under a cursor. Share's `h-6` was measured on an
+  // emulated iPad Pro next to a 48px settings button: the one way into the
+  // artifacts of a whole session cannot be the smallest target in the header.
   return (
-    <span
-      className={`inline-flex min-h-6 shrink-0 items-center gap-1 border px-2 font-mono text-chip font-bold uppercase tracking-[0.08em] ${tone}`}
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      aria-controls={controls}
+      aria-label={label}
+      title={label}
+      className={`inline-flex min-h-11 min-w-11 shrink-0 items-center gap-1 border px-2 font-mono text-chip font-bold uppercase tracking-[0.08em] focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-6 mouse:min-w-0 ${tone}`}
     >
       <span aria-hidden="true">▣</span>
-      <span className="hidden sm:inline">Artifacts</span>
-      <span>{count}</span>
-    </span>
+      <span aria-hidden="true" className="hidden sm:inline">
+        Artifacts
+      </span>
+      <span aria-hidden="true">{count}</span>
+    </button>
   );
 }
 
 /** The session header, with the artifacts control where Share used to be. */
-function SessionHeader({ count, open }: { count: number; open: boolean }) {
+function SessionHeader({
+  count,
+  open,
+  controls,
+  onToggle,
+}: {
+  count: number;
+  open: boolean;
+  controls?: string;
+  onToggle: () => void;
+}) {
   return (
     <header className="z-10 flex min-h-13 shrink-0 items-stretch border-b border-dialog-edge bg-panel-2">
       <span className="grid w-11 shrink-0 place-items-center border-r border-dialog-edge bg-dialog-title font-mono text-subhead font-bold text-dialog-title-foreground mouse:w-10">
@@ -345,7 +437,12 @@ function SessionHeader({ count, open }: { count: number; open: boolean }) {
         <span className="hidden max-w-36 min-h-6 items-center gap-1 border border-dialog-edge px-2 font-mono text-chip text-dialog-hint sm:inline-flex">
           <span className="opacity-50">#</span>5ca90155
         </span>
-        <ArtifactsChip count={count} open={open} />
+        <ArtifactsChip
+          count={count}
+          open={open}
+          controls={controls}
+          onToggle={onToggle}
+        />
       </span>
     </header>
   );
@@ -367,7 +464,9 @@ function TranscriptMock({ pending }: { pending: boolean }) {
           Four quarters, one figure each and the paginated report:
         </p>
         <div className="mt-2 border border-code-edge bg-code px-3 py-2 font-mono text-meta text-code-foreground">
-          <span className="block text-code-syntax-comment"># python_execution</span>
+          <span className="block text-code-syntax-comment">
+            # python_execution
+          </span>
           <span className="block">
             <span className="text-code-syntax-keyword">for</span> quarter{' '}
             <span className="text-code-syntax-keyword">in</span> quarters:
@@ -392,7 +491,9 @@ function TranscriptMock({ pending }: { pending: boolean }) {
                 drawn on · attached to this message
               </span>
             </span>
-            <span className="shrink-0 font-mono text-ui text-dialog-hint">✕</span>
+            <span className="shrink-0 font-mono text-ui text-dialog-hint">
+              ✕
+            </span>
           </div>
         </div>
       )}
@@ -426,6 +527,8 @@ function ComposerMock() {
 function SessionMock({
   count,
   open,
+  controls,
+  onToggle,
   pending = true,
   under,
   aside,
@@ -433,6 +536,8 @@ function SessionMock({
 }: {
   count: number;
   open: boolean;
+  controls?: string;
+  onToggle: () => void;
   pending?: boolean;
   under?: ReactNode;
   aside?: ReactNode;
@@ -440,7 +545,12 @@ function SessionMock({
 }) {
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden bg-ink">
-      <SessionHeader count={count} open={open} />
+      <SessionHeader
+        count={count}
+        open={open}
+        controls={controls}
+        onToggle={onToggle}
+      />
       {under}
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <TranscriptMock pending={pending} />
@@ -453,19 +563,35 @@ function SessionMock({
 }
 
 /** The sheet's own header: what this is, how much of it there is, and out. */
-function SurfaceHeader({ list, children }: { list: Artifact[]; children?: ReactNode }) {
+function SurfaceHeader({
+  list,
+  onClose,
+  children,
+}: {
+  list: Artifact[];
+  onClose: () => void;
+  children?: ReactNode;
+}) {
   return (
     <header className="flex shrink-0 items-start justify-between gap-3 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
       <span className="min-w-0">
-        <span className="block font-mono text-title font-bold text-white">Artifacts</span>
+        <span className="block font-mono text-title font-bold text-white">
+          Artifacts
+        </span>
         <span className="block font-mono text-meta text-dialog-hint">
           {list.length} produced by the model · {totalLabel(list)}
         </span>
         {children}
       </span>
-      <span className="grid min-h-8 min-w-8 shrink-0 place-items-center border border-dialog-edge font-mono text-ui text-dialog-hint">
-        ✕
-      </span>
+      {/* A finger closes this, so the target is 44px and only a cursor shrinks it. */}
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close artifacts"
+        className="grid min-h-11 min-w-11 shrink-0 place-items-center border border-dialog-edge font-mono text-ui text-dialog-hint hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-8 mouse:min-w-8"
+      >
+        <span aria-hidden="true">✕</span>
+      </button>
     </header>
   );
 }
@@ -480,28 +606,50 @@ const FILTERS: { label: string; kinds: ArtifactKind[] }[] = [
 /**
  * The kind filter. A count per chip, and a chip with nothing behind it is drawn
  * disabled rather than hidden: a strip that changes shape per session is a strip
- * you have to re-read every time.
+ * you have to re-read every time. `aria-pressed` is what makes "which filter am
+ * I looking at" answerable without the accent colour.
  */
-function FilterStrip({ list }: { list: Artifact[] }) {
+function FilterStrip({
+  list,
+  active,
+  onPick,
+}: {
+  list: Artifact[];
+  active: string;
+  onPick: (label: string) => void;
+}) {
   return (
-    <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-dialog-edge bg-panel px-3 py-2 sm:px-4">
-      {FILTERS.map((filter, index) => {
-        const count = list.filter((entry) => filter.kinds.includes(entry.kind)).length;
-        const on = index === 0;
+    <div
+      role="group"
+      aria-label="Filter artifacts by kind"
+      className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-dialog-edge bg-panel px-3 py-2 sm:px-4"
+    >
+      {FILTERS.map((filter) => {
+        const count = list.filter((entry) =>
+          filter.kinds.includes(entry.kind),
+        ).length;
+        const on = filter.label === active;
         return (
-          <span
+          <button
             key={filter.label}
-            className={`inline-flex min-h-6 shrink-0 items-center gap-1.5 border px-2 font-mono text-meta ${
+            type="button"
+            onClick={() => onPick(filter.label)}
+            disabled={!count}
+            aria-pressed={on}
+            aria-label={`${filter.label}, ${count} artifacts`}
+            className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 border px-2 font-mono text-meta focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-7 ${
               on
                 ? 'border-accent bg-hover font-bold text-white'
                 : count
-                  ? 'border-edge text-dialog-hint'
+                  ? 'border-edge text-dialog-hint hover:bg-hover'
                   : 'border-edge text-dialog-hint opacity-40'
             }`}
           >
-            {filter.label}
-            <span className={on ? 'text-accent-ink' : ''}>{count}</span>
-          </span>
+            <span aria-hidden="true">{filter.label}</span>
+            <span aria-hidden="true" className={on ? 'text-accent-ink' : ''}>
+              {count}
+            </span>
+          </button>
         );
       })}
     </div>
@@ -513,8 +661,8 @@ function SurfaceFooter() {
   return (
     <footer className="shrink-0 border-t border-dialog-edge bg-panel-2 px-3 py-1.5 font-mono text-chip text-dialog-hint sm:px-4">
       Tap to open · pinch to zoom · draw on it and{' '}
-      <span className="font-bold text-white">Attach to message</span> sends the picture back to the
-      model
+      <span className="font-bold text-white">Attach to message</span> sends the
+      picture back to the model
     </footer>
   );
 }
@@ -529,22 +677,68 @@ function SurfaceFooter() {
  * different turns says nothing about WHICH question produced which picture — the
  * turn number in the meta line is all the provenance there is.
  */
+
+/**
+ * The photographed state only SEEDS the surface — from there every proposal is
+ * really interactive, so a browser can click the chip, the ✕ and the filter and
+ * the INTERACTION is what gets cross-validated instead of a still of it. The
+ * seed is re-applied when the gallery swaps state on the mounted component.
+ */
+function useSurface(state: string) {
+  const seed = state !== 'empty' && state !== 'shut';
+  const [open, setOpen] = useState(seed);
+  const [filter, setFilter] = useState('All');
+  useEffect(() => {
+    setOpen(seed);
+    setFilter('All');
+  }, [seed, state]);
+  return {
+    open,
+    filter,
+    setFilter,
+    // Closing drops the filter: driving this in a browser showed the sheet
+    // reopening on `Documents 3` minutes later, three tiles deep, with nothing
+    // on screen explaining where the other nine went.
+    close: () => {
+      setOpen(false);
+      setFilter('All');
+    },
+    toggle: () =>
+      setOpen((was) => {
+        if (was) setFilter('All');
+        return !was;
+      }),
+  };
+}
+
 export function ArtifactsSheetVariant({ state }: { state: string }) {
   const list = artifactsFor(state);
-  const open = state !== 'empty' && state !== 'shut';
+  const { open, filter, setFilter, close, toggle } = useSurface(state);
+  const kinds = FILTERS.find((entry) => entry.label === filter)?.kinds ?? [];
+  const shown = list.filter((entry) => kinds.includes(entry.kind));
   return (
     <SessionMock
       count={list.length}
       open={open}
+      onToggle={toggle}
       overlay={
         open ? (
-          <div className="absolute inset-0 flex flex-col border-t border-dialog-edge bg-ink">
-            <SurfaceHeader list={list} />
-            <FilterStrip list={list} />
+          <div
+            id="artifacts-surface"
+            role="region"
+            aria-label="Artifacts produced by the model"
+            className="absolute inset-0 flex flex-col border-t border-dialog-edge bg-ink"
+          >
+            <SurfaceHeader list={list} onClose={close} />
+            <FilterStrip list={list} active={filter} onPick={setFilter} />
             <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 mouse:grid-cols-5">
-                {list.map((artifact) => (
-                  <Tile key={artifact.name} artifact={artifact} thumb="h-24 sm:h-28" />
+                {shown.map((artifact) => (
+                  <Tile
+                    key={artifact.name}
+                    artifact={artifact}
+                    thumb="h-24 sm:h-28"
+                  />
                 ))}
               </div>
             </div>
@@ -568,9 +762,10 @@ export function ArtifactsSheetVariant({ state }: { state: string }) {
  */
 export function ArtifactsTurnsVariant({ state }: { state: string }) {
   const list = artifactsFor(state);
-  const open = state !== 'empty';
+  const { open, close, toggle } = useSurface(state);
   const turns = Array.from(new Set(list.map((entry) => entry.turn)));
   const asked: Record<number, string> = {
+    7: 'Extend the forecast into next year',
     6: 'Chart 2024 revenue by quarter',
     5: 'Give me the report as a PDF',
     4: 'Profile the slow endpoint',
@@ -580,10 +775,16 @@ export function ArtifactsTurnsVariant({ state }: { state: string }) {
     <SessionMock
       count={list.length}
       open={open}
+      onToggle={toggle}
       overlay={
         open ? (
-          <div className="absolute inset-0 flex flex-col border-t border-dialog-edge bg-ink">
-            <SurfaceHeader list={list}>
+          <div
+            id="artifacts-surface"
+            role="region"
+            aria-label="Artifacts produced by the model, by turn"
+            className="absolute inset-0 flex flex-col border-t border-dialog-edge bg-ink"
+          >
+            <SurfaceHeader list={list} onClose={close}>
               <span className="block font-mono text-meta text-dialog-hint">
                 newest turn first · {turns.length} turns produced something
               </span>
@@ -593,21 +794,36 @@ export function ArtifactsTurnsVariant({ state }: { state: string }) {
                 const batch = list.filter((entry) => entry.turn === turn);
                 const head = batch[0];
                 return (
-                  <section key={turn}>
+                  <section key={turn} aria-label={`Turn ${turn}, ${head.tool}`}>
                     <header className="flex items-center justify-between gap-2 border-b border-dialog-edge bg-panel px-3 py-1.5 sm:px-4">
                       <span className="min-w-0">
                         <span className="block truncate font-mono text-meta font-bold tracking-[0.08em] text-white uppercase">
                           Turn {turn} · {head.at} · {head.tool}
                         </span>
-                        <span className="block truncate font-mono text-chip text-dialog-hint">
-                          “{asked[turn]}”
-                        </span>
+                        {/* A band with no remembered question paints no quote
+                            marks: photographed at 1280px, turn 7 rendered a
+                            bare “” under its heading. */}
+                        {asked[turn] && (
+                          <span className="block truncate font-mono text-chip text-dialog-hint">
+                            “{asked[turn]}”
+                          </span>
+                        )}
                       </span>
-                      <span className="shrink-0 font-mono text-chip text-link">In transcript ↗</span>
+                      <button
+                        type="button"
+                        aria-label={`Show turn ${turn} in the transcript`}
+                        className="grid min-h-11 shrink-0 place-items-center px-1 font-mono text-chip text-link hover:underline focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-7"
+                      >
+                        <span aria-hidden="true">In transcript ↗</span>
+                      </button>
                     </header>
                     <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3 sm:gap-3 sm:p-4 mouse:grid-cols-5">
                       {batch.map((artifact) => (
-                        <Tile key={artifact.name} artifact={artifact} thumb="h-24 sm:h-28" />
+                        <Tile
+                          key={artifact.name}
+                          artifact={artifact}
+                          thumb="h-24 sm:h-28"
+                        />
                       ))}
                     </div>
                   </section>
@@ -635,14 +851,21 @@ export function ArtifactsTurnsVariant({ state }: { state: string }) {
  */
 export function ArtifactsDockVariant({ state }: { state: string }) {
   const list = artifactsFor(state);
-  const open = state !== 'empty';
+  const { open, toggle } = useSurface(state);
   return (
     <SessionMock
       count={list.length}
       open={open}
+      controls="artifacts-dock-strip artifacts-dock-column"
+      onToggle={toggle}
       under={
         open ? (
-          <div className="shrink-0 border-b border-dialog-edge bg-panel sm:hidden">
+          <div
+            id="artifacts-dock-strip"
+            role="region"
+            aria-label="Artifacts produced by the model"
+            className="shrink-0 border-b border-dialog-edge bg-panel sm:hidden"
+          >
             <div className="flex items-center justify-between gap-2 px-3 pt-1.5">
               <span className="font-mono text-chip font-bold tracking-[0.08em] text-white uppercase">
                 Artifacts {list.length}
@@ -663,27 +886,38 @@ export function ArtifactsDockVariant({ state }: { state: string }) {
       }
       aside={
         open ? (
-          <aside className="hidden w-64 shrink-0 flex-col border-l border-dialog-edge bg-panel sm:flex mouse:w-72">
+          <aside
+            id="artifacts-dock-column"
+            aria-label="Artifacts produced by the model"
+            className="hidden w-64 shrink-0 flex-col border-l border-dialog-edge bg-panel sm:flex mouse:w-72"
+          >
             <header className="shrink-0 border-b border-dialog-edge px-3 py-2">
-              <span className="block font-mono text-ui font-bold text-white">Artifacts</span>
+              <span className="block font-mono text-ui font-bold text-white">
+                Artifacts
+              </span>
               <span className="block font-mono text-chip text-dialog-hint">
                 {list.length} produced · {totalLabel(list)}
               </span>
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto">
               {list.map((artifact) => (
-                <span
+                <button
                   key={artifact.name}
-                  className="flex min-h-14 items-center gap-2 border-b border-dialog-edge px-2 py-1.5 hover:bg-hover"
+                  type="button"
+                  aria-label={describeArtifact(artifact)}
+                  className="flex w-full min-h-14 items-center gap-2 border-b border-dialog-edge px-2 py-1.5 text-left hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent"
                 >
-                  <Thumb artifact={artifact} className="size-11 shrink-0 border" />
+                  <Thumb
+                    artifact={artifact}
+                    className="size-11 shrink-0 border"
+                  />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-mono text-meta font-bold text-white">
                       {artifact.name}
                     </span>
                     <Meta artifact={artifact} withTool />
                   </span>
-                </span>
+                </button>
               ))}
             </div>
             <footer className="shrink-0 border-t border-dialog-edge px-3 py-1.5 font-mono text-chip text-dialog-hint">
