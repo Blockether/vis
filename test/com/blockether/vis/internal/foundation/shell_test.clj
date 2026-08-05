@@ -55,6 +55,12 @@
   [thunk]
   (try (thunk) false (catch Throwable _ true)))
 
+(defn- throw-message
+  "The message `thunk` throws, or nil when it returns — a refusal is only useful
+   if it says the right thing."
+  [thunk]
+  (try (thunk) nil (catch Throwable t (ex-message t))))
+
 (defn- poll
   "Re-run `thunk` until `pred` holds (~5s), returning the value."
   ([thunk pred] (poll thunk pred 50))
@@ -1099,6 +1105,33 @@
         (let [r (:result (shell* {} {"commands" [["printf" "%s" "two words"]]}))]
           (expect (= ["printf %s 'two words'"] (mapv #(get % "command") (get r "commands"))))
           (expect (= "two words" (str/trim (get-in r ["commands" 0 "stdout"]))))))))
+
+(defdescribe
+  shell-mistaken-shape-test
+  ;; Both of these were got wrong by a caller mid-task, not imagined: the `git`
+  ;; habit put this call's OWN options inside `commands`, and a JSON string
+  ;; double-escaped a backslash in `until`. A wrong shape has to say where the
+  ;; argument belongs — restating its type is what makes the tool look broken.
+  (it "names the top-level lifecycle arguments when an options map lands in `commands`"
+      (let [msg (throw-message #(shell* {} {"commands" [{"op" "logs" "id" "build" "n" 30}]}))]
+        (expect (some? msg))
+        (expect (str/includes? msg "TOP-LEVEL"))
+        (expect (str/includes? msg "\"op\": \"logs\""))))
+  (it "coerces a java.util.List entry, the Python spelling of that argv array"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let
+          [argv (java.util.ArrayList. ["printf" "%s" "two words"])
+           r (:result (shell* {} {"commands" [argv]}))]
+
+          (expect (= ["printf %s 'two words'"] (mapv #(get % "command") (get r "commands"))))
+          (expect (= "two words" (str/trim (get-in r ["commands" 0 "stdout"])))))))
+  (it "teaches the one backslash level a bad `until` regex needs"
+      ;; `error\\[` — an escaped backslash and then a character class that never
+      ;; closes: exactly what one escaping level too many produces.
+      (let [msg (throw-message #(@#'shell/until-pattern "error\\\\["))]
+        (expect (some? msg))
+        (expect (str/includes? msg "is not a valid regex"))
+        (expect (str/includes? msg "escaped ONCE")))))
 
 (defdescribe
   shell-native-contract-test

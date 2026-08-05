@@ -765,16 +765,28 @@
     (str "'" (str/replace token "'" "'\\''") "'")))
 
 (defn- command-line
-  "ONE bash line from a caller's entry. A string IS the line. A nested array of
-   tokens — the argv spelling `git` takes, and the shape a caller reaches for out
-   of habit — is coerced by quoting each token and joining, instead of failing
-   the call. Anything else has no reading as a command line and throws."
+  "ONE bash line from a caller's entry. A string IS the line. An array of tokens —
+   the argv spelling `git` takes, and the shape a caller reaches for out of habit
+   — is coerced by quoting each token and joining, instead of failing the call;
+   a `java.util.List` from the Python surface is that same array.
+
+   A MAP is the one wrong shape that is not a typo but a MISPLACED CALL: this
+   op's own arguments written where its process lines belong. It is refused by
+   NAME, so the caller is told where `op`/`id`/`n` actually go instead of being
+   told again that commands are strings."
   [command]
   (cond (string? command) command
-        (sequential? command) (str/join " " (map (comp shell-quote str) command))
-        :else (throw (ex-info
-                       "shell commands must be strings \u2014 one bash -lc command line each."
-                       {:type ::bad-commands}))))
+        (or (map? command) (instance? java.util.Map command))
+        (throw (ex-info
+                 (str
+                   "shell `commands` holds bash lines, not an options map: `op`, `id`, `n`, `until`"
+                   " and `text` are TOP-LEVEL arguments — {\"op\": \"logs\", \"id\": \"build\","
+                   " \"n\": 30} — and `commands` carries only run's or background's own lines.")
+                 {:type ::bad-commands}))
+        (or (sequential? command) (instance? java.util.List command))
+        (str/join " " (map (comp shell-quote str) command))
+        :else (throw (ex-info "shell commands must be strings — one bash -lc command line each."
+                              {:type ::bad-commands}))))
 
 (defn- ordered-lines
   "`commands` as the ordered batch of bash lines: `serial-batch/ordered` (so a
@@ -1366,7 +1378,11 @@
                       {:type ::missing-until})))
     (try (re-pattern s)
          (catch java.util.regex.PatternSyntaxException e
-           (throw (ex-info (str "shell `until` is not a valid regex: " (.getMessage e))
+           (throw (ex-info (str "shell `until` is not a valid regex: "
+                                (.getMessage e)
+                                " — it is a Java regex inside a JSON string, so a backslash is"
+                                " escaped ONCE: \"error\\\\[\" matches a literal `[`, while"
+                                " \"error\\\\\\\\[\" opens a character class that never closes.")
                            {:type ::bad-until :until s}))))))
 
 (defn- shell-wait-impl
