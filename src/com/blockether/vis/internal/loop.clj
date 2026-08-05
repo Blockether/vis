@@ -9995,12 +9995,16 @@
      envelope
      (when enabled?
        (try (let [shell-fn (requiring-resolve 'com.blockether.vis.internal.foundation.shell/shell)]
-              (shell-fn env
-                        (cond-> {"commands" [cmd]}
-                          (= kind :bg)
-                          (assoc "op"
-                            "background" "id"
-                            id))))
+              ;; Calling the shell var directly skips the symbol-call seam, so the
+              ;; workspace view stays unbound and `resolve-dir` falls back to the
+              ;; PROCESS cwd — a bang inside a draft would then run on trunk.
+              (extension/with-context {:env env}
+                                      (shell-fn env
+                                                (cond-> {"commands" [cmd]}
+                                                  (= kind :bg)
+                                                  (assoc "op"
+                                                    "background" "id"
+                                                    id)))))
             (catch Throwable t
               (tel/log! {:level :warn :id ::bang-run-threw :data {:cmd cmd :error (ex-message t)}})
               {:result nil :error {:message (or (ex-message t) (str t))}})))

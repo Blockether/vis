@@ -21,26 +21,28 @@
     (try (f store) (finally (ps/db-close! store)))))
 
 (defn- bang-env
-  [store]
-  (let
-    [ws
-     (persistance/db-workspace-insert!
-       store
-       {:repo-id "test" :repo-root "/tmp" :root "/tmp" :state :active :fork-ms 0})
+  ([store] (bang-env store "/tmp"))
+  ([store root]
+   (let
+     [ws
+      (persistance/db-workspace-insert!
+        store
+        {:repo-id "test" :repo-root root :root root :state :active :fork-ms 0})
 
-     soul-id
-     (persistance/db-store-session!
-       store
-       {:channel :tui :workspace-id (:id ws) :title "bang-test" :system-prompt ""})]
+      soul-id
+      (persistance/db-store-session!
+        store
+        {:channel :tui :workspace-id (:id ws) :title "bang-test" :system-prompt ""})]
 
-    {:extensions (atom [])
-     :db-info store
-     :session-id soul-id
-     :channel :tui
-     :workspace ws
-     :workspace/id (:id ws)
-     :ctx-atom (ctx-loop/make-ctx-atom soul-id)
-     :turn-state-atom (ctx-loop/make-turn-state-atom)}))
+     {:extensions (atom [])
+      :db-info store
+      :session-id soul-id
+      :channel :tui
+      :workspace ws
+      :workspace/id (:id ws)
+      :workspace/root (:root ws)
+      :ctx-atom (ctx-loop/make-ctx-atom soul-id)
+      :turn-state-atom (ctx-loop/make-turn-state-atom)})))
 
 (defdescribe parse-bang-test
              (it "recognizes ! (sync) and !& (background), rejecting non-bangs and bare markers"
@@ -110,6 +112,43 @@
           ;; a run is ALWAYS a batch: the command's own output is its entry
           (expect (= "hi-from-bang\n" (get (first (get (:result form) "commands")) "stdout")))
           (expect (= 0 (get (:result form) "exit"))))))))
+
+;; Regression: a `!`/`!&` bang turn ran in the PROCESS cwd instead of the
+;; session's own workspace root — inside a draft `!ls -la` listed the real repo.
+;; The bang path calls the shell var DIRECTLY, so it bypassed the one seam that
+;; binds `workspace/*workspace-root*` from the environment.
+(defdescribe
+  run-turn-bang-workspace-cwd-test
+  (it "runs the bang command in the session's workspace root, not the process cwd"
+      (with-store
+        (fn [store]
+          (let
+            [root
+             (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
+                                           "vis-bang-cwd"
+                                           (into-array java.nio.file.attribute.FileAttribute []))))
+
+             env
+             (bang-env store root)
+
+             result
+             (with-redefs
+               [toggles/enabled? (fn [_]
+                                   true)]
+               (lp/run-turn! env "!pwd" {}))
+
+             turns
+             (persistance/db-list-session-turns store (:session-id env))
+
+             iters
+             (persistance/db-list-session-turn-iterations store (:id (first turns)))
+
+             shell-result
+             (:result (first (:forms (first iters))))]
+
+            (expect (= :success (:status result)))
+            (expect (= root (get shell-result "cwd")))
+            (expect (= root (str/trim (get (first (get shell-result "commands")) "stdout")))))))))
 
 (defdescribe run-turn-bang-disabled-test
              (it "refuses when the shell layer is OFF, without running the command"
