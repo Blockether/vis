@@ -25,20 +25,22 @@
  * shrinks a hit box, so an iPad keeps 44px targets at desktop width.
  */
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from "react";
 import {
   ARTIFACT_FILTERS,
   artifactTotalLabel,
   docKindLabel,
+  isTextMedia,
   pageBySize,
   SHEET_PAGE,
   type SessionArtifact,
-} from '../lib/artifacts';
-import { useAttachImage } from '../lib/attach-image';
-import { editedFilename } from '../lib/image-file';
-import type { GatewayClient } from '../lib/gateway';
-import { DocFrame } from './DocArtifact';
-import { ImageViewer } from './ImageViewer';
+} from "../lib/artifacts";
+import { useAttachImage } from "../lib/attach-image";
+import { editedFilename } from "../lib/image-file";
+import type { GatewayClient } from "../lib/gateway";
+import { DocFrame } from "./DocArtifact";
+import { ImageViewer } from "./ImageViewer";
+import { TextFrame } from "./TextArtifact";
 
 /**
  * Two documents produced by the same turn have to stay distinguishable at a
@@ -47,16 +49,16 @@ import { ImageViewer } from './ImageViewer';
  * of the artifact, not a counter.
  */
 const ARTIFACT_HUES = [
-  'bg-machine-violet',
-  'bg-machine-teal',
-  'bg-machine-orange',
-  'bg-machine-aqua',
-  'bg-machine-indigo',
-  'bg-machine-rose',
-  'bg-machine-azure',
-  'bg-machine-brass',
-  'bg-machine-coral',
-  'bg-machine-olive',
+  "bg-machine-violet",
+  "bg-machine-teal",
+  "bg-machine-orange",
+  "bg-machine-aqua",
+  "bg-machine-indigo",
+  "bg-machine-rose",
+  "bg-machine-azure",
+  "bg-machine-brass",
+  "bg-machine-coral",
+  "bg-machine-olive",
 ];
 
 export function artifactHue(key: string): string {
@@ -67,10 +69,10 @@ export function artifactHue(key: string): string {
 }
 
 const KIND_GLYPH: Record<string, string> = {
-  image: '▣',
-  video: '▶',
-  doc: '▤',
-  file: '≡',
+  image: "▣",
+  video: "▶",
+  doc: "▤",
+  file: "≡",
 };
 
 /** `PNG · 214KB · turn 6` — the line that makes an artifact citable. */
@@ -79,7 +81,7 @@ function Meta({ artifact }: { artifact: SessionArtifact }) {
     <span className="block truncate font-mono text-chip text-dialog-hint">
       {[artifact.media, artifact.sizeLabel, `turn ${artifact.turn}`]
         .filter(Boolean)
-        .join(' · ')}
+        .join(" · ")}
     </span>
   );
 }
@@ -100,7 +102,7 @@ export function describeArtifact(artifact: SessionArtifact): string {
       : `produced in turn ${artifact.turn}`,
   ]
     .filter(Boolean)
-    .join(', ');
+    .join(", ");
 }
 
 /**
@@ -153,15 +155,15 @@ function Thumb({
   sid: string;
   artifact: SessionArtifact;
 }) {
-  const box = 'h-24 sm:h-28 shrink-0 border-b border-dialog-edge';
+  const box = "h-24 sm:h-28 shrink-0 border-b border-dialog-edge";
   const { url, failed } = useArtifactUrl(
     client,
     sid,
     artifact,
-    artifact.kind === 'image',
+    artifact.kind === "image",
   );
 
-  if (artifact.kind === 'image') {
+  if (artifact.kind === "image") {
     return (
       <span className={`block overflow-hidden bg-code ${box}`}>
         {url && !failed ? (
@@ -176,17 +178,17 @@ function Thumb({
           <span
             aria-hidden="true"
             className={`grid h-full w-full place-items-center font-mono text-subhead text-dialog-hint ${
-              failed ? '' : 'animate-pulse motion-reduce:animate-none'
+              failed ? "" : "animate-pulse motion-reduce:animate-none"
             }`}
           >
-            {failed ? '✗' : ''}
+            {failed ? "✗" : ""}
           </span>
         )}
       </span>
     );
   }
 
-  if (artifact.kind === 'doc') {
+  if (artifact.kind === "doc") {
     return (
       <span
         className={`relative flex flex-col justify-center gap-1 overflow-hidden bg-panel-2 px-3 ${box}`}
@@ -198,18 +200,38 @@ function Thumb({
         <span className="h-0.5 w-full bg-dialog-hint/50" />
         <span className="h-0.5 w-1/2 bg-dialog-hint/50" />
         <span className="absolute right-1 bottom-1 bg-ink/80 px-1 font-mono text-chip text-white">
-          {docKindLabel(artifact.mediaType)}
+          {docKindLabel(artifact.mediaType, artifact.name)}
         </span>
       </span>
     );
   }
 
+  if (artifact.kind === "video") {
+    return (
+      <span
+        className={`grid place-items-center bg-code font-mono text-subhead text-dialog-hint ${box}`}
+        aria-hidden="true"
+      >
+        {KIND_GLYPH.video}
+      </span>
+    );
+  }
+
+  // A recorded file has no reader and no cheap raster, but it is still a FILE:
+  // it wears the same plate a document does, greyed, with its own format word in
+  // the corner. A `≡` in a beige box stood for every kind at once and therefore
+  // said nothing — the extension is the only part a human actually reads.
   return (
     <span
-      className={`grid place-items-center bg-code font-mono text-subhead text-dialog-hint ${box}`}
-      aria-hidden="true"
+      className={`relative flex flex-col justify-center gap-1 overflow-hidden bg-code px-3 ${box}`}
     >
-      {KIND_GLYPH[artifact.kind] ?? '≡'}
+      <span className="h-0.5 w-full bg-dialog-hint/25" />
+      <span className="h-0.5 w-4/5 bg-dialog-hint/25" />
+      <span className="h-0.5 w-full bg-dialog-hint/25" />
+      <span className="h-0.5 w-1/2 bg-dialog-hint/25" />
+      <span className="absolute right-1 bottom-1 bg-dialog-hint/60 px-1 font-mono text-chip text-white">
+        {artifact.media || "FILE"}
+      </span>
     </span>
   );
 }
@@ -234,7 +256,7 @@ function Tile({
   onOpen: (artifact: SessionArtifact) => void;
 }) {
   const shell =
-    'flex min-h-11 w-full min-w-0 flex-col border border-dialog-edge bg-panel text-left';
+    "flex min-h-11 w-full min-w-0 flex-col border border-dialog-edge bg-panel text-left";
   const body = (
     <>
       <Thumb client={client} sid={sid} artifact={artifact} />
@@ -247,7 +269,7 @@ function Tile({
     </>
   );
 
-  if (artifact.kind === 'file') {
+  if (artifact.kind === "file") {
     return (
       // No `aria-label`: a plain <div> has no role to carry one, and the name
       // and meta line inside it are already the whole announcement.
@@ -277,21 +299,24 @@ function SurfaceHeader({
 }) {
   const total = artifactTotalLabel(list);
   return (
-    <header className="flex shrink-0 items-start justify-between gap-3 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
-      <span className="min-w-0">
-        <span className="block font-mono text-title font-bold text-white">
-          Artifacts
+    // The app has ONE dialog band (`ui.tsx` `DialogFrame`): dark `dialog-title`
+    // paper, the name centred in it, and the way out welded to the right edge
+    // behind a rule. This surface used to invent its own — pale panel, title on
+    // the left, a boxed ✕ floating in the padding — so the one screen a session's
+    // output lives on did not look like the app it lives in.
+    <header className="relative flex min-h-11 shrink-0 items-center justify-center bg-dialog-title px-12 text-dialog-title-foreground mouse:min-h-8">
+      <h2 className="truncate text-center font-mono text-body font-bold tracking-wide">
+        Artifacts
+        <span className="font-normal text-dialog-title-foreground/60">
+          {` · ${list.length}${total ? ` · ${total}` : ""}`}
         </span>
-        <span className="block font-mono text-meta text-dialog-hint">
-          {list.length} produced by the model{total ? ` · ${total}` : ''}
-        </span>
-      </span>
+      </h2>
       {/* A finger closes this, so the target is 44px and only a cursor shrinks it. */}
       <button
         type="button"
         onClick={onClose}
         aria-label="Close artifacts"
-        className="grid min-h-11 min-w-11 shrink-0 place-items-center border border-dialog-edge font-mono text-ui text-dialog-hint hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-8 mouse:min-w-8"
+        className="absolute inset-y-0 right-0 grid min-w-11 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-w-8"
       >
         <span aria-hidden="true">✕</span>
       </button>
@@ -335,14 +360,17 @@ function FilterStrip({
             aria-label={`${filter.label}, ${count} artifacts`}
             className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 border px-2 font-mono text-meta focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-7 ${
               on
-                ? 'border-accent bg-hover font-bold text-white'
+                ? "border-accent bg-accent font-bold text-accent-foreground"
                 : count
-                  ? 'border-edge text-dialog-hint hover:bg-hover'
-                  : 'border-edge text-dialog-hint opacity-40'
+                  ? "border-edge text-dialog-hint hover:bg-hover"
+                  : "border-edge text-dialog-hint opacity-40"
             }`}
           >
             <span aria-hidden="true">{filter.label}</span>
-            <span aria-hidden="true" className={on ? 'text-accent-ink' : ''}>
+            <span
+              aria-hidden="true"
+              className={on ? "text-accent-foreground/70" : ""}
+            >
               {count}
             </span>
           </button>
@@ -356,7 +384,7 @@ function FilterStrip({
 function SurfaceFooter() {
   return (
     <footer className="shrink-0 border-t border-dialog-edge bg-panel-2 px-3 py-1.5 font-mono text-chip text-dialog-hint sm:px-4">
-      Tap to open · pinch to zoom · draw on it and{' '}
+      Tap to open · pinch to zoom · draw on it and{" "}
       <span className="font-bold text-white">Attach to message</span> sends the
       picture back to the model
     </footer>
@@ -380,15 +408,18 @@ function DetailOverlay({
       aria-label={name}
       className="absolute inset-0 z-20 flex flex-col bg-ink"
     >
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
-        <span className="min-w-0 truncate font-mono text-meta font-bold text-white">
+      <header className="relative flex min-h-11 shrink-0 items-center justify-center bg-dialog-title px-12 text-dialog-title-foreground mouse:min-h-8">
+        <h2
+          className="min-w-0 truncate text-center font-mono text-body font-bold tracking-wide"
+          title={name}
+        >
           {name}
-        </span>
+        </h2>
         <button
           type="button"
           onClick={onClose}
           aria-label="Back to artifacts"
-          className="grid min-h-11 min-w-11 shrink-0 place-items-center border border-dialog-edge font-mono text-ui text-dialog-hint hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-8 mouse:min-w-8"
+          className="absolute inset-y-0 right-0 grid min-w-11 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-w-8"
         >
           <span aria-hidden="true">✕</span>
         </button>
@@ -423,7 +454,7 @@ function ArtifactDetail({
     return (
       <DetailOverlay name={artifact.name} onClose={onClose}>
         <p className="p-4 font-mono text-meta text-dialog-hint">
-          {failed ? 'This artifact could not be loaded.' : 'Loading…'}
+          {failed ? "This artifact could not be loaded." : "Loading…"}
         </p>
       </DetailOverlay>
     );
@@ -432,7 +463,7 @@ function ArtifactDetail({
   // A picture is handed straight to the viewer that already owns zoom, pan, the
   // pen and the share sheet — the whole point of indexing artifacts is that
   // reaching one costs nothing extra.
-  if (artifact.kind === 'image') {
+  if (artifact.kind === "image") {
     return (
       <ImageViewer
         src={url}
@@ -448,7 +479,7 @@ function ArtifactDetail({
     );
   }
 
-  if (artifact.kind === 'video') {
+  if (artifact.kind === "video") {
     return (
       <DetailOverlay name={artifact.name} onClose={onClose}>
         <video
@@ -458,6 +489,17 @@ function ArtifactDetail({
           preload="metadata"
           className="h-full w-full bg-code object-contain"
         />
+      </DetailOverlay>
+    );
+  }
+
+  // Markdown and plain text are read by the APP, not by a sandboxed frame: an
+  // iframe would paint `# Heading` as `# Heading`, which is the artifact's
+  // source rather than the artifact.
+  if (isTextMedia(artifact.mediaType, artifact.name)) {
+    return (
+      <DetailOverlay name={artifact.name} onClose={onClose}>
+        <TextFrame url={url} mime={artifact.mediaType} name={artifact.name} />
       </DetailOverlay>
     );
   }
@@ -482,7 +524,7 @@ function ArtifactDetail({
 export function ArtifactsChip({
   count,
   open,
-  controls = 'artifacts-surface',
+  controls = "artifacts-surface",
   onToggle,
 }: {
   count: number;
@@ -492,8 +534,8 @@ export function ArtifactsChip({
 }) {
   if (!count) return null;
   const tone = open
-    ? 'border-accent bg-accent text-accent-foreground'
-    : 'border-dialog-title bg-dialog-title text-dialog-title-foreground hover:bg-accent-2';
+    ? "border-accent bg-accent text-accent-foreground"
+    : "border-dialog-title bg-dialog-title text-dialog-title-foreground hover:bg-accent-2";
   const label = `${count} artifacts produced by the model`;
   return (
     <button
@@ -530,7 +572,7 @@ export function ArtifactsSheet({
   artifacts: SessionArtifact[];
   onClose: () => void;
 }) {
-  const [filter, setFilter] = useState('All');
+  const [filter, setFilter] = useState("All");
   const [opened, setOpened] = useState<SessionArtifact | null>(null);
   // A thumbnail is a DOWNLOAD, so a session with two hundred artifacts in it is
   // two hundred requests the moment this sheet opens. One page at a time, by
@@ -543,7 +585,7 @@ export function ArtifactsSheet({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== "Escape") return;
       event.stopPropagation();
       setOpened((current) => {
         if (current) return null;
@@ -551,8 +593,8 @@ export function ArtifactsSheet({
         return null;
       });
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
   return (
