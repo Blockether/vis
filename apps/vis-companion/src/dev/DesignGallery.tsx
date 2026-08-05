@@ -19,6 +19,12 @@ import { DataTableVariant } from './tableVariants';
 import { TallyBadgesVariant, TallyHeaderVariant, TallyStripVariant } from './tallyVariants';
 import { HUMAN_INPUT_STATES, HumanInputSheetVariant } from './humanInputVariants';
 import {
+  ARTIFACT_STATES,
+  ArtifactsDockVariant,
+  ArtifactsSheetVariant,
+  ArtifactsTurnsVariant,
+} from './artifactVariants';
+import {
   MachineBannerVariant,
   MachineBlockVariant,
   MachineGutterVariant,
@@ -312,6 +318,30 @@ export const DESIGN_VARIANTS: DesignVariant[] = [
       'A parked run is a bottom sheet on a phone and a card on a desk; the question scrolls, the two buttons that end the pause never do, and a pause with no way out never offers a Cancel.',
     states: HUMAN_INPUT_STATES,
     render: (state) => <HumanInputSheetVariant state={state} />,
+  },
+  {
+    id: 'artifacts-sheet',
+    title: 'Artifacts A · Grid sheet',
+    blurb:
+      'Share leaves the header and ARTIFACTS takes the slot: one chip with a count, one sheet over the transcript, every figure/PDF/clip the model produced as a tile filtered by kind.',
+    states: ARTIFACT_STATES['artifacts-sheet'],
+    render: (state) => <ArtifactsSheetVariant state={state} />,
+  },
+  {
+    id: 'artifacts-turns',
+    title: 'Artifacts B · Indexed by turn',
+    blurb:
+      'The same sheet, ordered the way the session happened: one band per turn with the tool that made it, so an artifact is never separated from the question it answered.',
+    states: ARTIFACT_STATES['artifacts-turns'],
+    render: (state) => <ArtifactsTurnsVariant state={state} />,
+  },
+  {
+    id: 'artifacts-dock',
+    title: 'Artifacts C · Dock beside the transcript',
+    blurb:
+      'No overlay: the chip pins a filmstrip under the header on a phone and a column beside the transcript on a desk, so the reading never stops to look at what was produced.',
+    states: ARTIFACT_STATES['artifacts-dock'],
+    render: (state) => <ArtifactsDockVariant state={state} />,
   },
   {
     id: 'session-ux-board',
