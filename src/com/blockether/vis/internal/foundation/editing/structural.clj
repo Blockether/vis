@@ -351,12 +351,25 @@
    off a shared cursor, so one huge file cannot strand a worker while the others
    idle. The first exception is rethrown AS THROWN (never wrapped in an
    `ExecutionException`) so a tool's `:on-error-fn` still sees the original
-   `ex-info`; every worker is awaited, so no task outlives the call."
+   `ex-info`; every worker is awaited, so no task outlives the call.
+
+   The caller's thread bindings are CONVEYED into every worker, exactly as
+   `future`/`pmap` convey theirs. The pool is plain Java, so without this `f` runs
+   with the ROOT bindings: `safe-path` would read the per-turn workspace roots as
+   unbound and refuse a path the calling thread accepts — and, because a one-item
+   batch runs inline, indexing two files would reject what indexing one allowed.
+   Each worker restores the frame it found, so a long-lived pooled thread never
+   inherits the previous caller's bindings."
   [f items]
-  (vec (StructuralApi/mapParallel ^java.util.List (vec items)
-                                  (reify
-                                    java.util.function.Function
-                                      (apply [_ item] (f item))))))
+  (let [frame (clojure.lang.Var/cloneThreadBindingFrame)]
+    (vec (StructuralApi/mapParallel
+           ^java.util.List (vec items)
+           (reify
+             java.util.function.Function
+               (apply [_ item]
+                 (let [prev (clojure.lang.Var/getThreadBindingFrame)]
+                   (clojure.lang.Var/resetThreadBindingFrame frame)
+                   (try (f item) (finally (clojure.lang.Var/resetThreadBindingFrame prev))))))))))
 
 (defn occurrences-in-files
   "`occurrences-in` over MANY paths at once — one `{:path :occurrences}` map per

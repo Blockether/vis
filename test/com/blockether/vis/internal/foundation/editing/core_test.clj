@@ -22,6 +22,7 @@
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.editing.patch :as patch]
+            [com.blockether.vis.internal.foundation.editing.structural :as structural]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as extension]
@@ -3404,6 +3405,41 @@
           (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))
           ;; Vis's own config home is always available.
           (expect (some? (safe-path (str (System/getProperty "user.home") "/.vis/config.yml"))))))))
+  ;; Regression: `struct_index` fans its per-path work out to the pack's scan pool
+  ;; (`structural/scan-mapv`), and a Clojure dynamic binding does NOT cross a raw
+  ;; Java worker thread. `safe-path` therefore read `*filesystem-roots*` as empty
+  ;; and `*workspace-root*` as nil on every worker, so indexing ONE path (which
+  ;; runs inline on the calling thread) accepted a file in a secondary filesystem
+  ;; root while indexing TWO threw "escapes the allowed workspace roots" for that
+  ;; very same file.
+  (it "confines a path the SAME way on a scan-pool worker as on the calling thread"
+      (let
+        [safe-path
+         (private-fn "safe-path")
+
+         ;; Deliberately NOT under the system temp dir, ~/.vis or the cwd: those are
+         ;; reachable unconditionally and would hide the missing bindings.
+         ctx-root
+         "/vis-test-secondary-root"
+
+         files
+         [(str ctx-root "/a.clj") (str ctx-root "/b.clj")]
+
+         resolve-all
+         (fn [paths]
+           (structural/scan-mapv #(.getPath ^java.io.File (safe-path %)) paths))]
+
+        (binding
+          [workspace/*workspace-root*
+           (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))
+
+           workspace/*filesystem-roots*
+           [{:trunk ctx-root :clone ctx-root}]]
+
+          ;; A single item runs inline on this thread — this always worked.
+          (expect (= [(first files)] (resolve-all [(first files)])))
+          ;; Two or more fan out to the pool and MUST be confined identically.
+          (expect (= files (resolve-all files))))))
   (it
     "expands a leading ~ / ~/ so a home-relative path resolves to the real file (regression: was treated as a literal ~ segment under cwd)"
     (let

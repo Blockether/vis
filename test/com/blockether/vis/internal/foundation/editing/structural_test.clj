@@ -21,6 +21,8 @@
 
 (defn- throws? [f] (try (f) false (catch Exception _ true)))
 
+(def ^:dynamic *scan-probe* "Binding-conveyance probe for `scan-mapv`'s worker pool." :unbound)
+
 (defdescribe
   outline-test
   (it "Clojure outline lists defs with anchors"
@@ -213,6 +215,27 @@
                      (catch Exception e e))]
         (expect (instance? clojure.lang.ExceptionInfo thrown))
         (expect (= {:i 7} (ex-data thrown)))))
+  ;; Regression: workers ran with the ROOT bindings, because Clojure conveys a
+  ;; thread binding to `future`/`pmap` but never to a raw Java pool. A caller's
+  ;; per-turn dynamic state (the workspace filesystem roots) read as unbound
+  ;; inside `f`, so a batch of two behaved differently from a batch of one, which
+  ;; runs inline on the calling thread.
+  (it "scan-mapv conveys the caller's dynamic bindings into every worker"
+      (binding [*scan-probe* :bound]
+        (expect (= [:bound]
+                   (structural/scan-mapv (fn [_]
+                                           *scan-probe*)
+                                         [1])))
+        (expect (= (repeat 8 :bound)
+                   (seq (structural/scan-mapv (fn [_]
+                                                *scan-probe*)
+                                              (vec (range 8)))))))
+      ;; ...and the pooled thread is left exactly as it was found, so the next
+      ;; batch cannot inherit the previous caller's bindings.
+      (expect (= (repeat 8 :unbound)
+                 (seq (structural/scan-mapv (fn [_]
+                                              *scan-probe*)
+                                            (vec (range 8)))))))
   (it "occurrences-in-files traces every path in one parallel pass"
       (let
         [sources
