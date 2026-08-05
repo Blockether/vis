@@ -425,31 +425,31 @@
    screenshots used to UNDERSHOOT by ~30 rows apiece and `total-h` GREW under a
    reader scrolling up into them. Charged at the widest content width, and for
    every string that can carry a fence - collapsed sections included, since
-   overshoot is the invariant and a hidden picture simply costs nothing."
+   overshoot is the invariant and a hidden picture simply costs nothing.
+
+   Every string that can carry a fence is FLATTENED into one seq and summed at
+   a SINGLE arithmetic site. The shape used to mirror the message tree as three
+   nested `reduce`s over a `let`-bound `^long` helper, and every one of those
+   accumulators boxed: a local fn is invoked through `IFn.invoke`, so its
+   `^long` return hint buys nothing and `+` fell back to `Numbers.add` on
+   `Object` - nine `:warn-on-boxed` warnings on a per-frame height path."
   ^long [message ^long content-w]
   (let
-    [rows (fn ^long [s]
-            (render/image-fence-rows s content-w))]
-    (long
-      (+ (rows (:text message))
-         (long
-           (reduce (fn [^long acc it]
-                     (+ acc
-                        (rows (:thinking it))
-                        (rows (:content-stream it))
-                        (rows (:assistant-prose it))
-                        (long (reduce (fn [^long a f]
-                                        (+ a
-                                           (rows (or (:result-render f) (:result f)))
-                                           (rows (:comment f))
-                                           (long (reduce (fn [^long c card]
-                                                           (+ c (rows (:body card))))
-                                                         0
-                                                         (:cards f)))))
-                                      0
-                                      (:forms it)))))
-                   0
-                   (:traces message)))))))
+    [form-strings
+     (fn [f]
+       (list* (or (:result-render f) (:result f)) (:comment f) (map :body (:cards f))))
+
+     trace-strings
+     (fn [it]
+       (list* (:thinking it)
+              (:content-stream it)
+              (:assistant-prose it)
+              (mapcat form-strings (:forms it))))]
+
+    (long (reduce (fn [^long acc s]
+                    (+ acc (long (render/image-fence-rows s content-w))))
+                  0
+                  (cons (:text message) (mapcat trace-strings (:traces message)))))))
 
 (defn estimated-height
   "Cheap estimate of how many rows a message will paint at width

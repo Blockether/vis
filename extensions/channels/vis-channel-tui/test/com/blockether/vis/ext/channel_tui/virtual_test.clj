@@ -18,6 +18,7 @@
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe describe expect it]]
+            [clojure.java.io :as io]
             [clojure.string :as str]))
 
 (def ^:private estimated-height @#'virtual/estimated-height)
@@ -1411,3 +1412,70 @@
                (it "falls back to :session-turn-id for legacy DB messages"
                    (expect (= "server-only" (turn-identity {:session-turn-id "server-only"}))))
                (it "returns nil when neither id is present" (expect (nil? (turn-identity {}))))))
+
+;; ─── Compile-time arithmetic ─────────────────────────────────────────────────
+
+(defn- source-form
+  "The top-level form whose text starts with `marker`, read straight out of
+   `virtual.clj` on the classpath.
+
+   Compiler warnings only exist while a form is being COMPILED, so the only way
+   to assert on them is to compile that form again — here, in a throwaway
+   namespace, so a lint assertion can never redefine the loaded one."
+  [marker]
+  (let
+    [src
+     (slurp (io/resource "com/blockether/vis/ext/channel_tui/virtual.clj"))
+
+     i
+     (str/index-of src marker)]
+
+    (assert i (str "no `" marker "` in virtual.clj"))
+    (read-string (subs src i))))
+
+(defn- compile-warnings
+  "Whatever the compiler writes to `*err*` while `form` is compiled under this
+   namespace's own ratchet (`*warn-on-reflection*` + `:warn-on-boxed`), with
+   `render` aliased the way `virtual.clj` aliases it. Defines nothing that
+   survives the call."
+  [form]
+  (let
+    [shadow
+     (gensym "virtual-warn-check-")
+
+     sw
+     (java.io.StringWriter.)]
+
+    (try (binding
+           [*err*
+            sw
+
+            *warn-on-reflection*
+            true
+
+            *unchecked-math*
+            :warn-on-boxed
+
+            *ns*
+            (create-ns shadow)]
+
+           (clojure.core/refer-clojure)
+           (alias 'render 'com.blockether.vis.ext.channel-tui.render)
+           (eval form))
+         (str sw)
+         (finally (remove-ns shadow)))))
+
+;; Regression (user report): nine `Boxed math warning …
+;; Numbers.unchecked_add(Object, …)` lines came out of `virtual.clj` rows
+;; 434-446. `image-rows-est` walked the message tree as THREE nested `reduce`s
+;; that summed through a `let`-bound `^long` helper, and a local fn is invoked
+;; via `IFn.invoke` — its primitive return hint buys nothing, so every
+;; accumulator boxed on a path that runs for every message of every frame, in a
+;; namespace that declares `(set! *unchecked-math* :warn-on-boxed)`.
+(defdescribe image-rows-est-unboxed-test
+             (describe "the picture-box row estimate"
+                       (it "compiles without a single boxed add or reflective call"
+                           (let [warnings (compile-warnings (source-form "(defn- image-rows-est"))]
+                             (expect (not (str/includes? warnings "Boxed math")) warnings)
+                             (expect (not (str/includes? warnings "Reflection warning"))
+                                     warnings)))))
