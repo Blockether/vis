@@ -1699,6 +1699,9 @@
                    :fallback-provider "acme-llm"
                    :fallback-model "acme-2"})
 
+      vis/configured-providers
+      (constantly [{:id :acme-llm}])
+
       vis/authenticated-preset-providers
       (constantly [])
 
@@ -1873,7 +1876,7 @@
          (frame-with "Ollama — setup")
 
          models
-         (frame-with "ollama — models")]
+         (frame-with "Ollama — models")]
 
         (expect (some? picker))
         (expect (str/includes? picker "Add provider"))
@@ -1899,10 +1902,10 @@
          (settings-add-provider-frames [\a \a \a :esc])
 
          rows
-         (str/split-lines (first (filter #(str/includes? % "ollama — models") frames)))
+         (str/split-lines (first (filter #(str/includes? % "Ollama — models") frames)))
 
          band-top
-         (long (first (keep-indexed #(when (str/includes? %2 "ollama — models") %1) rows)))
+         (long (first (keep-indexed #(when (str/includes? %2 "Ollama — models") %1) rows)))
 
          host-row
          (nth rows (- band-top 2))]

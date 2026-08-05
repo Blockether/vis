@@ -1112,7 +1112,7 @@
      (band-region screen geom)
 
      title
-     (str (vis/display-label (:id provider)) " — models")]
+     (str (or (:label provider) (vis/display-label (:id provider))) " — models")]
 
     (loop [entries entries]
       (let
