@@ -1,0 +1,26 @@
+{:paths ["src" "resources"]
+ ;; OpenCode Go (https://opencode.ai/go) — a flat-rate ($10/mo) subscription
+ ;; gateway serving open-source coding models from one endpoint over TWO wire
+ ;; dialects. Vis surfaces them as a SINGLE provider (`:opencode-go`) that
+ ;; routes each model to the correct wire automatically:
+ ;;   - OpenAI chat /chat/completions (svar default)     — GLM, Kimi, DeepSeek, MiMo, Hy3
+ ;;   - Anthropic Messages /messages (:api-style override) — MiniMax, Qwen
+ ;; One static API key (`OPENCODE_API_KEY`), one base URL; the per-model
+ ;; `:api-style` override is the only thing that selects the wire.
+ ;;
+ ;; Self-registers with `com.blockether.vis.core` at namespace load via the
+ ;; unified `META-INF/vis-extension/vis.edn` manifest.
+ :deps
+ {org.clojure/clojure   {:mvn/version "1.12.5"}
+  ;; vis owns the extension/provider registries.
+  com.blockether/vis    {:local/root "../../.."}
+  ;; JSON for the persisted auth file (charred is already on the runtime
+  ;; classpath via vis itself).
+  com.cnuernber/charred {:mvn/version "1.041"}
+  com.taoensso/telemere {:mvn/version "1.2.1"}}
+
+ :aliases
+ {:test
+  {:extra-paths ["test"]
+   :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+   :main-opts  ["-m" "lazytest.main" "--dir" "test"]}}}

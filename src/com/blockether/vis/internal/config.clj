@@ -447,7 +447,15 @@
          (assoc :output-limit (:output-limit m))
 
          (some? (:tool-call? m))
-         (assoc :tool-call? (:tool-call? m)))))))
+         (assoc :tool-call? (:tool-call? m))
+
+         ;; Per-model `:api-style` override. svar reads `(or (:api-style
+         ;; model-map) (:api-style provider))` at request build, so a single
+         ;; provider can serve models on DIFFERENT wires (e.g. one endpoint that
+         ;; routes some models to /chat/completions and others to /messages).
+         ;; Without this carry-through the override is silently dropped.
+         (some? (:api-style m))
+         (assoc :api-style (:api-style m)))))))
 
 (def ^:private boot-token-timeout-ms
   "Upper bound on a synchronous boot-time token fetch (OAuth `get-token-fn`).

@@ -1,0 +1,5 @@
+;; OpenCode Go provider. Loading the ns registers the single `:opencode-go`
+;; provider, which serves both wire dialects (OpenAI chat + Anthropic Messages)
+;; through per-model `:api-style` overrides.
+{opencode-go
+ {:nses [com.blockether.vis.ext.provider-opencode-go]}}
