@@ -722,10 +722,6 @@ const FALLBACK_SLASHES: SlashCommand[] = [
     doc: "Create a new session. Optional text starts its first turn.",
   },
   { name: "/sessions", doc: "Return to the session list." },
-  {
-    name: "/clear",
-    doc: "Start a fresh session without deleting this transcript.",
-  },
   { name: "/rename", doc: "Rename this session's title." },
   {
     name: "/export",
@@ -3706,7 +3702,7 @@ export function SessionScreen({
       return;
     }
 
-    if (command === "/new-session" || command === "/clear") {
+    if (command === "/new-session") {
       setPrompt("");
       setError(null);
       setRunning(true);
@@ -4031,7 +4027,7 @@ export function SessionScreen({
     slashMatches[Math.min(slashIndex, Math.max(0, slashMatches.length - 1))];
 
   function completeSlash(command: SlashCommand) {
-    const noArgs = new Set(["/help", "/sessions", "/clear"]);
+    const noArgs = new Set(["/help", "/sessions"]);
     const completed = command.name + (noArgs.has(command.name) ? "" : " ");
     setPrompt(completed);
     setSlashIndex(0);
