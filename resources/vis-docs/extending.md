@@ -849,7 +849,8 @@ every `sub_loop` fork) and loaded lazily on first import:
 - Data / formats — `numpy`, `pandas`, `yaml`, `toml`, `tabulate`, `sqlite3`,
   `brotli`.
 - HTTP / web — `requests`, `httpx`, `urllib3`, `bs4`.
-- Documents / media — `PIL`, `matplotlib`, `pptx`, `xlsxwriter`, `fontTools`.
+- Documents / media — `anydoc` (any document as Markdown), `PIL`, `matplotlib`,
+  `pptx`, `xlsxwriter`, `fontTools`.
 - Time — `zoneinfo` (604+ zones from `java.time`), `dateutil`.
 - Ops / testing — `paramiko`, `pytest` (the same shim the test runner installs).
 - Globals, no import needed — `vis_attach` / `vis_attachments` /
