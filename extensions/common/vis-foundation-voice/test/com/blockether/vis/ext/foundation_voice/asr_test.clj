@@ -292,3 +292,31 @@
                      ;; written into ~/lib/<platform> and the ABI sherpa was built against.
                      (expect (= #{expected} required) platform)
                      (expect (contains? provided expected) platform)))))
+
+(defdescribe chunk-plan-test
+             ;; Progress used to be impossible to report at all: the whole recording went
+             ;; into ONE offline `decode` call, so a two-minute clip was a black box.
+             (it "a clip shorter than one chunk is decoded whole"
+                 (expect (= [[0 16000]] (asr/chunk-plan 16000 16000 20.0)))
+                 (expect (= [[0 320000]] (asr/chunk-plan 320000 16000 20.0))))
+             (it "a long recording is cut on chunk boundaries, in order, covering every sample"
+                 (let [plan (asr/chunk-plan 500000 16000 20.0)]
+                   (expect (= [[0 320000] [320000 500000]] plan))
+                   (expect (= 0 (ffirst plan)))
+                   (expect (= 500000 (last (peek plan))))
+                   ;; no gaps: each range starts where the previous ended
+                   (expect (every? (fn [[[_ end] [start _]]]
+                                     (= end start))
+                                   (partition 2 1 plan)))))
+             (it "a sliver of a tail is merged into the piece before it, never decoded alone"
+                 ;; a 0.1s tail decodes blank or trips an ONNX shape error, and would still
+                 ;; be reported as a whole step of progress
+                 (let [plan (asr/chunk-plan 321600 16000 20.0)]
+                   (expect (= [[0 321600]] plan)))
+                 (let [plan (asr/chunk-plan 641600 16000 20.0)]
+                   (expect (= [[0 320000] [320000 641600]] plan))))
+             (it "degenerate input is answered, not thrown at"
+                 (expect (= [] (asr/chunk-plan 0 16000 20.0)))
+                 (expect (= [] (asr/chunk-plan -5 16000 20.0)))
+                 (expect (= [[0 1000]] (asr/chunk-plan 1000 0 20.0)))
+                 (expect (= [[0 1000]] (asr/chunk-plan 1000 16000 0.0)))))

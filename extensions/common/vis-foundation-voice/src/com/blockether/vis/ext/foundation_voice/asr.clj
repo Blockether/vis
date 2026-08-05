@@ -497,20 +497,83 @@
 (defn- assert-audio-long-enough!
   [audio-path ^WaveReader reader]
   (let [{:keys [duration-seconds] :as stats} (audio-stats reader)]
-    (when (< (double duration-seconds) min-audio-seconds)
+    (when (< (double duration-seconds) (double min-audio-seconds))
       (throw (ex-info "Voice recording too short - try again"
                       (assoc stats
                         :type :voice-asr/audio-too-short
                         :path (str audio-path)
                         :min-duration-seconds min-audio-seconds))))))
 
+(def ^:const default-chunk-seconds
+  "Audio longer than this is decoded in pieces so PROGRESS is a measurement and
+   not an animation: each finished piece is a real fraction of the recording.
+   Parakeet is an offline (non-streaming) model, so a single `decode` call is a
+   black box of unknown length — the only honest progress it can report is how
+   much AUDIO has been consumed."
+  20.0)
+
+(defn chunk-plan
+  "Pure: the `[start end]` SAMPLE ranges to decode, in order.
+
+   A recording shorter than `chunk-seconds` is ONE range (chunking cannot improve
+   a clip that decodes in a moment, and every extra boundary risks cutting a
+   word). A trailing piece shorter than [[min-audio-seconds]] is merged into the
+   one before it: a sliver of audio decodes blank or trips ONNX shape errors, and
+   it would be reported as a whole chunk of progress for nothing."
+  [^long total-samples ^long sample-rate ^double chunk-seconds]
+  (cond (not (pos? total-samples)) []
+        (or (not (pos? sample-rate)) (not (pos? chunk-seconds))) [[0 total-samples]]
+        :else (let [size (max 1 (long (* sample-rate chunk-seconds)))]
+                (if (<= total-samples size)
+                  [[0 total-samples]]
+                  (let
+                    [starts (range 0 total-samples size)
+                     ranges (mapv (fn [s]
+                                    [(long s) (long (min total-samples (+ (long s) size)))])
+                                  starts)
+                     tail (peek ranges)
+                     min-samples (long (* (double sample-rate) (double min-audio-seconds)))]
+
+                    (if (and (> (count ranges) 1)
+                             (< (- (long (tail 1)) (long (tail 0))) min-samples))
+                      (let [prev (nth ranges (- (count ranges) 2))]
+                        (conj (subvec ranges 0 (- (count ranges) 2)) [(prev 0) (tail 1)]))
+                      ranges))))))
+
+(defn- decode-chunk!
+  "One `[start end]` range through its own stream. A stream is single-use, so a
+   fresh one per chunk is the API's own contract, not a precaution."
+  ;; NO primitive hints on the numbers: five arguments is one past the four a
+  ;; primitive-taking fn may have, and the ints are cast at the call below anyway.
+  ^String [^OfflineRecognizer r ^floats samples sample-rate start end]
+  (let [^OfflineStream stream (.createStream r)]
+    (try (.acceptWaveform stream
+                          (java.util.Arrays/copyOfRange samples (int start) (int end))
+                          (int sample-rate))
+         (.decode r stream)
+         (str/trim (.getText (.getResult r stream)))
+         (finally (try (.release stream) (catch Throwable _))))))
+
 (defn transcribe-file!
   "Transcribe `audio-path` with local Parakeet TDT int8 through the sherpa-onnx
-   Java API. Auto-downloads the model on first use. Returns plain text."
-  ([audio-path] (transcribe-file! (model-dir) audio-path))
-  ([dir audio-path]
+   Java API. Auto-downloads the model on first use. Returns plain text.
+
+   `opts` may carry `:on-progress`, called with `{:phase :progress}` (`:preparing`
+   while the model and the native runtime are being made ready, then
+   `:transcribing` with 0..100 of the AUDIO consumed) and `:chunk-seconds`. A
+   throwing or slow callback can never fail a transcription: it is guarded here."
+  ([audio-path] (transcribe-file! (model-dir) audio-path nil))
+  ([dir audio-path] (transcribe-file! dir audio-path nil))
+  ([dir audio-path {:keys [on-progress chunk-seconds]}]
    (let
-     [dir
+     [report
+      (fn [m]
+        (when on-progress (try (on-progress m) (catch Throwable _ nil))))
+
+      _
+      (report {:phase :preparing :progress 0})
+
+      dir
       (ensure-model! dir)
 
       files
@@ -541,14 +604,31 @@
         _
         (assert-audio-long-enough! audio-path reader)
 
+        ^floats samples
+        (.getSamples reader)
+
+        sample-rate
+        (long (.getSampleRate reader))
+
+        total
+        (long (alength samples))
+
+        plan
+        (chunk-plan total sample-rate (double (or chunk-seconds default-chunk-seconds)))
+
+        _
+        (report {:phase :transcribing :progress 0})
+
         ^OfflineRecognizer r
-        (recognizer files)
+        (recognizer files)]
 
-        ^OfflineStream stream
-        (.createStream r)]
-
-       (try (.acceptWaveform stream (.getSamples reader) (.getSampleRate reader))
-            (.decode r stream)
-            (str/trim (.getText (.getResult r stream)))
-            (finally (try (.release stream) (catch Throwable _))
-                     (try (.release r) (catch Throwable _))))))))
+       (try (->> plan
+                 (map (fn [[start end]]
+                        (let [text (decode-chunk! r samples sample-rate start end)]
+                          (report {:phase :transcribing
+                                   :progress (min 100 (/ (* 100.0 (long end)) (max 1 total)))})
+                          text)))
+                 (remove str/blank?)
+                 (str/join " ")
+                 str/trim)
+            (finally (try (.release r) (catch Throwable _))))))))

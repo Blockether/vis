@@ -1,3 +1,5 @@
+import type { VoiceProgress } from "./types";
+
 export interface WavRecording {
   stop: () => Promise<Blob>;
   cancel: () => Promise<void>;
@@ -250,4 +252,39 @@ export async function startWavRecording(
     cancel: close,
     isCapturing: () => !closed && !interrupted && context.state === 'running',
   };
+}
+
+/**
+ * What the composer says while a dictation is in flight.
+ *
+ * "Transcribing on your machine…" was the only sentence the app had, from the
+ * moment the microphone stopped until the words appeared: a slow upload on a
+ * train, a voice model still downloading and a wedged engine all looked exactly
+ * the same. Each phase now names itself, and the ones that can be measured carry
+ * their percentage.
+ */
+export function voiceProgressLabel(progress: VoiceProgress | null): string {
+  if (!progress) return "Sending recording…";
+  const percent = Math.max(
+    0,
+    Math.min(100, Math.round(progress.progress || 0)),
+  );
+  switch (progress.phase) {
+    case "uploading":
+      return `Sending recording · ${percent}%`;
+    case "queued":
+      return "Recording received · waiting for the engine";
+    case "preparing":
+      return percent > 0
+        ? `Preparing voice engine · ${percent}%`
+        : "Preparing voice engine…";
+    case "transcribing":
+      return `Transcribing · ${percent}%`;
+    case "done":
+      return "Transcribing · 100%";
+    case "failed":
+      return "Transcription failed";
+    default:
+      return "Transcribing…";
+  }
 }

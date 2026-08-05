@@ -3,7 +3,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.foundation-voice.recorder :as recorder]
-            [com.blockether.vis.ext.foundation-voice.asr :as asr]
+            [com.blockether.vis.internal.voice :as voice]
             [taoensso.telemere :as tel]))
 
 (defonce state (atom {:recorder nil :ticker nil :transcribing? false :workspace-id nil}))
@@ -139,13 +139,39 @@
                   (swap! state assoc :ticker ticker))
                 (voice-status! "● Recording 00:00" :warn))))
 
+(defn- progress-label
+  "What the status line says while the engine works. A phase without a number is
+   still an answer (\"preparing\"), a phase WITH one is the whole point: the human
+   sees the recording being consumed instead of guessing whether it hung."
+  [{:keys [phase progress]}]
+  (let
+    [pct (some-> progress
+                 long)]
+    (case phase
+      :preparing
+      (if (and pct (pos? (long pct)))
+        (str "● Preparing voice engine " pct "%")
+        "● Preparing voice engine...")
+
+      :transcribing
+      (if pct (str "● Transcribing " pct "%") "● Transcribing...")
+
+      :done
+      "● Transcribing 100%"
+
+      "● Transcribing...")))
+
 (defn- transcribe-and-insert!
   [audio-file workspace-id]
   (future
-    (try (voice-status! "● Transcribing..." :info)
+    (try (voice-status! "● Sending to voice engine..." :info)
          (let
            [text
-            (clean-transcript (asr/transcribe-file! audio-file))
+            ;; the ENGINE is whatever is registered (local Parakeet today, a
+            ;; whisper.cpp server tomorrow): the TUI never names one.
+            (voice/transcribe! {:audio-path (str audio-file)
+                                :on-progress (fn [update-map]
+                                               (voice-status! (progress-label update-map) :info))})
 
             blank?
             (or (nil? text) (str/blank? text))]

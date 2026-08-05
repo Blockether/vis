@@ -461,7 +461,15 @@ export interface GatewayCapabilities {
       enabled: boolean;
       transport: "audio/wav";
       transcription: "gateway-local";
+      /** Since the job API: POST answers 202 and progress arrives from the job. */
+      is_async?: boolean;
+      /** Every phase a job can report, in order. */
+      phases?: VoicePhase[];
       model: VoiceModelState;
+      /** Every transcription engine this gateway can use. */
+      engines?: VoiceEngine[];
+      /** Id of the engine a recording is sent to unless one is named. */
+      selected?: string | null;
     };
     push?: PushStatus;
   };
@@ -469,6 +477,47 @@ export interface GatewayCapabilities {
 
 export interface VoiceTranscript {
   text: string;
+}
+
+/** One transcription engine as the gateway advertises it. */
+export interface VoiceEngine {
+  id: string;
+  label?: string;
+}
+
+/**
+ * Where a transcription IS.
+ *
+ * `uploading` is the CLIENT's own phase (bytes still in flight); everything from
+ * `queued` on is the gateway's job reporting on itself.
+ */
+export type VoicePhase =
+  | "uploading"
+  | "queued"
+  | "preparing"
+  | "transcribing"
+  | "done"
+  | "failed";
+
+/** A transcription job as `/voice/jobs/:id` reports it. */
+export interface VoiceJob {
+  id: string;
+  engine?: string;
+  phase: VoicePhase;
+  progress: number;
+  is_done: boolean;
+  created_at?: number;
+  updated_at?: number;
+  text?: string;
+  error?: string;
+}
+
+/** One progress tick handed to a caller of `transcribeVoice`. */
+export interface VoiceProgress {
+  phase: VoicePhase;
+  /** 0..100 within THIS phase. */
+  progress: number;
+  engine?: string;
 }
 
 export interface GatewayStatus {

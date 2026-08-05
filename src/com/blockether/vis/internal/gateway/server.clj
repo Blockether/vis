@@ -38,6 +38,7 @@
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.voice :as voice]
             [reitit.ring :as rr]
             [ring.adapter.jetty :as jetty]
             [ring.core.protocols :as ring-protocols]
@@ -2490,12 +2491,40 @@
 ;; every client — web, iOS, TUI — hits the SAME canonical /v1 route.
 ;; =============================================================================
 
-(defn- voice-asr-resolve
-  "Soft-resolve a `foundation-voice.asr` fn (nil when the voice extension is not
-   on the classpath)."
-  [fn-name]
-  (try (requiring-resolve (symbol "com.blockether.vis.ext.foundation-voice.asr" fn-name))
-       (catch Throwable _ nil)))
+(defn- requested-engine-id
+  "`?engine=whisper-server` names the engine for THIS request; absent means the
+   gateway's default. Naming an engine is how a client picks between several
+   registered transcribers without any of them being special."
+  [request]
+  (some-> (get-in request [:query-params "engine"])
+          str/trim
+          not-empty
+          keyword))
+
+(defn- with-voice-engine
+  "Resolve the session and the engine, or answer the ONE refusal that fits:
+   404 unknown session, 400 an engine id nobody registered, 501 no transcription
+   engine at all (a build without any voice extension)."
+  [request f]
+  (let
+    [sid
+     (path-sid request)
+
+     id
+     (requested-engine-id request)]
+
+    (cond (not (and sid (state/soul sid)))
+          (json-response 404 {:status "unavailable" :error "unknown session"})
+          :else (if-let [engine (try (voice/resolve-engine id) (catch Throwable _ nil))]
+                  (f sid engine)
+                  (if id
+                    (json-response 400
+                                   {:status "unavailable"
+                                    :error (str "unknown voice engine: " (name id))
+                                    :engines (mapv voice/public-engine (voice/engines))})
+                    (json-response 501
+                                   {:status "unavailable"
+                                    :error "no voice transcription engine is registered"}))))))
 
 (defn- voice-state->json
   [st]
@@ -2686,33 +2715,28 @@
 (defn- capabilities-handler
   "GET /v1/capabilities — stable feature negotiation for remote/native clients.
    Availability describes what THIS gateway can accept; device-side permissions
-   remain the client's responsibility. Voice reports the local model state without
-   starting its download. `protocol` carries the VERSION contract
-   ([[protocol/handshake]]) and `compatibility` this gateway's verdict on the
-   CALLER, so one request answers both \"what can you do\" and \"can we talk\"."
+   remain the client's responsibility. Voice reports the SELECTED engine, every
+   engine that is registered, the phase vocabulary a client may be shown, and the
+   selected engine's readiness — without starting any download. `protocol` carries
+   the VERSION contract ([[protocol/handshake]]) and `compatibility` this
+   gateway's verdict on the CALLER, so one request answers both \"what can you
+   do\" and \"can we talk\"."
   [request]
   (let
-    [model-state
-     (voice-asr-resolve "model-state")
+    [engine
+     (try (voice/default-engine) (catch Throwable _ nil))
 
-     transcribe
-     (voice-asr-resolve "transcribe-file!")
-
-     voice
-     (if (and model-state transcribe)
-       (try {:enabled true
+     voice-caps
+     (merge {:enabled (boolean engine)
              :transport "audio/wav"
              :transcription "gateway-local"
-             :model (voice-state->json (model-state))}
-            (catch Throwable t
-              {:enabled false
-               :transport "audio/wav"
-               :transcription "gateway-local"
-               :model {:status "unavailable" :error (or (ex-message t) "voice unavailable")}}))
-       {:enabled false
-        :transport "audio/wav"
-        :transcription "gateway-local"
-        :model {:status "unavailable"}})]
+             ;; the POST returns a JOB, not a transcript: a client that sees this
+             ;; polls progress instead of holding a socket open for a minute.
+             :is-async true
+             :phases (mapv name voice/phases)
+             :model
+             (if engine (voice-state->json (voice/readiness engine)) {:status "unavailable"})}
+            (voice/engines-info))]
 
     (json-response {:version 1
                     :protocol (protocol/handshake)
@@ -2728,7 +2752,7 @@
                                              :max-files attachments/max-image-count
                                              :max-file-bytes attachments/max-upload-image-bytes
                                              :max-video-bytes attachments/max-video-bytes}
-                               :voice voice
+                               :voice voice-caps
                                :push (push/status)}})))
 
 (defn- wav-file?
@@ -2745,82 +2769,82 @@
                 (= "WAVE" (String. head 8 4 "US-ASCII")))))))
 
 (defn- voice-model-handler
-  "GET  /v1/sessions/:sid/voice/model — current voice-model state (clients poll
-        this before recording).
-   POST /v1/sessions/:sid/voice/model — start the background download if the model
-        is absent (idempotent; returns immediately).
-   JSON: {:status \"ready|downloading|failed|absent|unavailable\" :progress 0..100? :error \"…\"?}."
+  "GET  /v1/sessions/:sid/voice/model — the selected engine's readiness (clients
+        poll this before recording).
+   POST /v1/sessions/:sid/voice/model — ask the engine to prepare itself (a local
+        model starts downloading; idempotent, returns immediately).
+   JSON: {:status \"ready|downloading|failed|absent|unavailable\" :progress 0..100?
+   :error \"…\" :engine \"…\"}. An engine that needs no preparation is simply ready."
   [request]
-  (let
-    [sid
-     (path-sid request)
-
-     model-state
-     (voice-asr-resolve "model-state")
-
-     start-dl
-     (voice-asr-resolve "start-download!")]
-
-    (cond (not (and sid (state/soul sid)))
-          (json-response 404 {:status "unavailable" :error "unknown session"})
-          (or (nil? model-state) (nil? start-dl))
-          (json-response 501
-                         {:status "unavailable" :error "voice extension is not on the classpath"})
-          :else (json-response 200
-                               (voice-state->json (if (= :post (:request-method request))
-                                                    (start-dl)
-                                                    (model-state)))))))
+  (with-voice-engine request
+                     (fn [_sid engine]
+                       (json-response 200
+                                      (assoc (voice-state->json (if (= :post
+                                                                       (:request-method request))
+                                                                  (voice/prepare! engine)
+                                                                  (voice/readiness engine)))
+                                        :engine (name (:id engine)))))))
 
 (defn- voice-handler
-  "POST /v1/sessions/:sid/voice — body is a recorded WAV blob. Transcribes through
-   the LOCAL Parakeet model; soft-resolved so a build without vis-foundation-voice
-   answers 501. The model must already be installed — the client drives the download
-   via /voice/model; a not-ready model answers 425 (Too Early) with the model state,
-   NEVER blocking the request thread on the ~465MB download."
+  "POST /v1/sessions/:sid/voice — body is a recorded WAV blob. ACCEPTS the audio
+   and answers **202 with a job**; transcription runs on its own thread and the
+   client watches `/voice/jobs/:job-id`.
+
+   That split is the whole point: the upload is the CLIENT's progress (bytes in
+   flight), and 202 is the gateway saying \"I have your recording\" — from then on
+   the phase and percentage come from the job, so a minute-long transcription is
+   never an unexplained spinner and never a dead socket.
+
+   The engine must be ready — the client drives preparation via /voice/model; a
+   not-ready engine answers 425 (Too Early) with its state, NEVER blocking the
+   request thread on a ~465MB download."
+  [request]
+  (with-voice-engine
+    request
+    (fn [_sid engine]
+      (if-not (voice/ready? engine)
+        (json-response 425 (voice-state->json (voice/readiness engine)))
+        (let [tmp (java.io.File/createTempFile "vis-voice" ".wav")]
+          (try (with-open
+                 [in ^java.io.InputStream (:body request)
+                  out (io/output-stream tmp)]
+
+                 (io/copy in out))
+               (if-not (wav-file? tmp)
+                 (do (.delete tmp)
+                     (json-response 400 {:error "body must be a RIFF/WAVE audio file"}))
+                 ;; the temp file outlives this response on purpose: it is the
+                 ;; job's input and is deleted by `:on-done`, whichever way the
+                 ;; job ends.
+                 (json-response 202
+                                (voice/submit! {:audio-path (str tmp)
+                                                :engine-id (:id engine)
+                                                :on-done (fn [_job]
+                                                           (.delete tmp))})))
+               (catch Throwable t
+                 (.delete tmp)
+                 (tel/log! {:level :error :id ::voice-transcribe-failed :data {:error (str t)}})
+                 (json-response 400 {:error (voice/error-message t)}))))))))
+
+(defn- voice-job-handler
+  "GET    /v1/sessions/:sid/voice/jobs/:job-id — where this transcription is:
+          `{:id :engine :phase :progress :is_done :text? :error?}`.
+   DELETE /v1/sessions/:sid/voice/jobs/:job-id — forget it once the transcript has
+          been collected (finished jobs also expire on their own)."
   [request]
   (let
     [sid
      (path-sid request)
 
-     transcribe
-     (voice-asr-resolve "transcribe-file!")
-
-     clean
-     (try (requiring-resolve (symbol "com.blockether.vis.ext.foundation-voice.input"
-                                     "clean-transcript"))
-          (catch Throwable _ nil))
-
-     model-state
-     (voice-asr-resolve "model-state")]
+     job-id
+     (get-in request [:path-params :job-id])]
 
     (cond (not (and sid (state/soul sid))) (json-response 404 {:error "unknown session"})
-          (or (nil? transcribe) (nil? model-state))
-          (json-response 501 {:error "voice extension is not on the classpath"})
-          (not= :ready (:state (model-state))) (json-response 425 (voice-state->json (model-state)))
-          :else (let [tmp (java.io.File/createTempFile "vis-voice" ".wav")]
-                  (try (with-open
-                         [in ^java.io.InputStream (:body request)
-                          out (io/output-stream tmp)]
-
-                         (io/copy in out))
-                       (if-not (wav-file? tmp)
-                         (json-response 400 {:error "body must be a RIFF/WAVE audio file"})
-                         (json-response 200
-                                        {:text (let [raw (str/trim (str (transcribe (str tmp))))]
-                                                 (if clean (clean raw) raw))}))
-                       (catch Throwable t
-                         (tel/log!
-                           {:level :error :id ::voice-transcribe-failed :data {:error (str t)}})
-                         (json-response 400
-                                        {:error (or (ex-message t)
-                                                    (->> (iterate (fn [^Throwable x]
-                                                                    (some-> x
-                                                                            .getCause))
-                                                                  t)
-                                                         (take-while some?)
-                                                         (map str)
-                                                         (str/join " <- ")))}))
-                       (finally (.delete tmp)))))))
+          (= :delete (:request-method request)) (do (voice/forget! job-id)
+                                                    (json-response 200 {:is-forgotten true}))
+          :else (if-let [job (voice/job job-id)]
+                  (json-response 200 job)
+                  (json-response 404 {:error "unknown transcription job"})))))
 
 (defn- suggest-handler
   "GET /v1/sessions/:sid/suggest?kind=file&q= — the SHARED fuzzy suggestion
@@ -3148,6 +3172,7 @@
         [(sid-route "/human-input/:request-id/actions/cancel") {:post cancel-human-input-handler}]
         [(sid-route "/events") {:get events-handler}] [(sid-route "/voice") {:post voice-handler}]
         [(sid-route "/voice/model") {:get voice-model-handler :post voice-model-handler}]
+        [(sid-route "/voice/jobs/:job-id") {:get voice-job-handler :delete voice-job-handler}]
         [(sid-route "/events-since") {:get events-since-handler}]
         [(sid-route "/seq") {:get seq-handler}] [(sid-route "/context") {:get context-handler}]
         [(sid-route "/transcript") {:get transcript-handler}]

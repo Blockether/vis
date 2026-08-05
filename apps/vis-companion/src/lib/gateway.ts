@@ -37,7 +37,9 @@ import type {
   PushDevice,
   PushDeviceInput,
   PushStatus,
+  VoiceJob,
   VoiceModelState,
+  VoiceProgress,
   VoiceTranscript,
   McpAuthFlow,
   McpAuthStatus,
@@ -165,6 +167,27 @@ function voiceTimeoutMs(bytes: number): number {
     VOICE_TIMEOUT_FLOOR_MS +
     Math.ceil(bytes / VOICE_BYTES_PER_SECOND) * VOICE_TIMEOUT_PER_SECOND_MS
   );
+}
+
+/** How often a running transcription job is asked where it is. */
+const VOICE_POLL_MS = 700;
+
+/**
+ * A job that reports no new phase or percentage for this long is dead, not slow:
+ * progress is measured per decoded chunk, so a live engine always moves.
+ */
+const VOICE_STALL_TIMEOUT_MS = 120_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+/** The gateway's own `{error}` sentence, or the bare status when it sent none. */
+function errorText(parsed: unknown, status: number): string {
+  const error = (parsed as { error?: string | { message?: string } })?.error;
+  const message =
+    error instanceof Object ? error.message : (error as string | undefined);
+  return message || `HTTP ${status}`;
 }
 
 /** Router rows per gateway base URL, shared by every screen and client instance. */
@@ -740,75 +763,171 @@ export class GatewayClient {
     );
   }
 
+  /**
+   * Upload the recording and get the JOB back (HTTP 202), reporting the bytes as
+   * they leave. This is the only part of a transcription the client can measure
+   * itself, and on a phone it is the slow half.
+   *
+   * XHR, not `fetch`: `fetch` still cannot report upload progress in a WebView.
+   */
+  private uploadVoice(
+    sid: string,
+    wav: Blob,
+    onUploaded: (percent: number) => void,
+    signal?: AbortSignal,
+  ): Promise<VoiceJob> {
+    const budget = voiceTimeoutMs(wav.size);
+    const seconds = Math.round(budget / 1000);
+    return new Promise<VoiceJob>((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+        return;
+      }
+      const xhr = new XMLHttpRequest();
+      const onAbort = () => xhr.abort();
+      const done = () => signal?.removeEventListener("abort", onAbort);
+      xhr.open(
+        "POST",
+        `${this.base}/v1/sessions/${encodeURIComponent(sid)}/voice`,
+      );
+      xhr.timeout = budget;
+      this.headers({ "Content-Type": "audio/wav" }).forEach((value, key) =>
+        xhr.setRequestHeader(key, value),
+      );
+      if (xhr.upload) {
+        xhr.upload.onprogress = (event: ProgressEvent) => {
+          if (event.lengthComputable && event.total > 0) {
+            onUploaded(Math.round((event.loaded / event.total) * 100));
+          }
+        };
+      }
+      xhr.onload = () => {
+        done();
+        let parsed: unknown;
+        try {
+          parsed = xhr.responseText ? JSON.parse(xhr.responseText) : undefined;
+        } catch {
+          parsed = xhr.responseText;
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          onUploaded(100);
+          resolve(parsed as VoiceJob);
+          return;
+        }
+        reject(new GatewayError(xhr.status, errorText(parsed, xhr.status), parsed));
+      };
+      xhr.onerror = () => {
+        done();
+        reject(new GatewayError(0, "network error: upload failed"));
+      };
+      xhr.ontimeout = () => {
+        done();
+        reject(
+          new GatewayError(0, `transcription did not answer within ${seconds}s`),
+        );
+      };
+      xhr.onabort = () => {
+        done();
+        reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      xhr.send(wav);
+    });
+  }
+
+  /** Where one transcription job is right now. */
+  voiceJob(sid: string, jobId: string, signal?: AbortSignal): Promise<VoiceJob> {
+    return this.request<VoiceJob>(
+      "GET",
+      `/v1/sessions/${encodeURIComponent(sid)}/voice/jobs/${encodeURIComponent(jobId)}`,
+      undefined,
+      signal,
+    );
+  }
+
+  /** Drop a collected job. Finished jobs also expire on the gateway by themselves. */
+  async forgetVoiceJob(sid: string, jobId: string): Promise<void> {
+    try {
+      await this.request(
+        "DELETE",
+        `/v1/sessions/${encodeURIComponent(sid)}/voice/jobs/${encodeURIComponent(jobId)}`,
+      );
+    } catch {
+      // Housekeeping: the transcript is already in the composer.
+    }
+  }
+
+  /**
+   * Transcribe a recording, SAYING WHERE IT IS the whole way: `uploading` while
+   * the bytes travel, then the gateway job's own `queued` / `preparing` /
+   * `transcribing` percentage until the text arrives.
+   *
+   * The dictation used to be one opaque POST that returned the text minutes
+   * later — indistinguishable from a hang, and its socket was the only thing
+   * holding the result, so a locked screen lost the words.
+   */
   async transcribeVoice(
     sid: string,
     wav: Blob,
-    signal?: AbortSignal,
+    opts: {
+      onProgress?: (progress: VoiceProgress) => void;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<VoiceTranscript> {
-    let response: Response;
-    let text: string;
-    // Same shape as `request`: bound the whole exchange, keep a caller's own
-    // abort (screen unmounted, session switched) reporting as itself.
-    const deadline = new AbortController();
-    const budget = voiceTimeoutMs(wav.size);
-    const timer = window.setTimeout(() => deadline.abort(), budget);
-    const stalled = () => deadline.signal.aborted && !signal?.aborted;
-    const seconds = Math.round(budget / 1000);
-    try {
-      const attemptSignal = anySignal(
-        signal ? [signal, deadline.signal] : [deadline.signal],
-      );
+    const { onProgress, signal } = opts;
+    // A reporting callback is a UI detail; it can never fail a transcription.
+    const report = (progress: VoiceProgress) => {
       try {
-        response = await fetch(
-          `${this.base}/v1/sessions/${encodeURIComponent(sid)}/voice`,
-          {
-            method: "POST",
-            headers: this.headers({ "Content-Type": "audio/wav" }),
-            body: wav,
-            signal: attemptSignal,
-          },
-        );
-      } catch (cause) {
-        throw stalled()
-          ? new GatewayError(
-              0,
-              `transcription did not answer within ${seconds}s`,
-            )
-          : new GatewayError(0, `network error: ${(cause as Error).message}`);
+        onProgress?.(progress);
+      } catch {
+        /* ignored */
       }
-      try {
-        text = await response.text();
-      } catch (cause) {
-        throw stalled()
-          ? new GatewayError(
-              0,
-              `transcription stopped sending after ${seconds}s`,
-            )
-          : new GatewayError(0, `network error: ${(cause as Error).message}`);
-      }
-    } finally {
-      window.clearTimeout(timer);
-    }
+    };
+    report({ phase: "uploading", progress: 0 });
+    const accepted = await this.uploadVoice(
+      sid,
+      wav,
+      (percent) => report({ phase: "uploading", progress: percent }),
+      signal,
+    );
+    let job = accepted;
+    report({
+      phase: job.phase ?? "queued",
+      progress: job.progress ?? 0,
+      engine: job.engine,
+    });
 
-    let parsed: unknown;
-    try {
-      parsed = text ? JSON.parse(text) : undefined;
-    } catch {
-      parsed = text;
+    // A job that stops MOVING is the failure mode worth naming: the daemon died,
+    // the engine wedged. Every fresh phase/percentage resets the patience.
+    let movedAt = Date.now();
+    let seen = `${job.phase}:${job.progress}`;
+    while (!job.is_done) {
+      if (signal?.aborted) {
+        throw signal.reason ?? new DOMException("Aborted", "AbortError");
+      }
+      await sleep(VOICE_POLL_MS);
+      job = await this.voiceJob(sid, job.id, signal);
+      const mark = `${job.phase}:${job.progress}`;
+      if (mark !== seen) {
+        seen = mark;
+        movedAt = Date.now();
+      } else if (Date.now() - movedAt > VOICE_STALL_TIMEOUT_MS) {
+        throw new GatewayError(
+          0,
+          `transcription stopped reporting for ${Math.round(VOICE_STALL_TIMEOUT_MS / 1000)}s`,
+        );
+      }
+      report({
+        phase: job.phase,
+        progress: job.progress ?? 0,
+        engine: job.engine,
+      });
     }
-    if (!response.ok) {
-      const message =
-        (parsed as { error?: string | { message?: string } })?.error instanceof
-        Object
-          ? (parsed as { error: { message?: string } }).error.message
-          : (parsed as { error?: string })?.error;
-      throw new GatewayError(
-        response.status,
-        message || `HTTP ${response.status}`,
-        parsed,
-      );
+    void this.forgetVoiceJob(sid, job.id);
+    if (job.phase === "failed" || job.error) {
+      throw new GatewayError(0, job.error || "transcription failed");
     }
-    return parsed as VoiceTranscript;
+    return { text: job.text ?? "" };
   }
 
   // ── Settings (shared feature-toggle registry, same as TUI) ──────

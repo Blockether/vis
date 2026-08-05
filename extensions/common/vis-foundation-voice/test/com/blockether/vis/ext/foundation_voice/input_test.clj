@@ -5,6 +5,8 @@
             [com.blockether.vis.ext.foundation-voice.input :as voice]
             [com.blockether.vis.ext.foundation-voice.recorder :as recorder]
             [com.blockether.vis.ext.foundation-voice.asr :as asr]
+            [com.blockether.vis.ext.foundation-voice.engine :as engine]
+            [com.blockether.vis.internal.voice :as vcore]
             [lazytest.core :refer [defdescribe it expect]]))
 
 (defdescribe
@@ -48,9 +50,9 @@
          (fn [_]
            :audio-file)
 
-         asr/transcribe-file!
-         (fn [audio-file]
-           (expect (= :audio-file audio-file))
+         vcore/transcribe!
+         (fn [{audio-file :audio-path}]
+           (expect (= ":audio-file" audio-file))
            "Parakeet translation")
 
          vis/publish-channel-event!
@@ -98,28 +100,60 @@
       (expect (= "So I think we should" (voice/clean-transcript "So I, I, I think we should")))
       ;; case and internal punctuation (apostrophe) preserved
       (expect (= "don't worry" (voice/clean-transcript "don't don't worry"))))
-  (it "appends the cleaned Parakeet transcript"
-      (let [events (atom [])]
-        (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
-        (with-redefs
-          [recorder/start! (fn []
-                             {:started-at-ms (System/currentTimeMillis)})
-           recorder/stop! (fn [_]
-                            :audio-file)
-           asr/transcribe-file! (fn [_]
-                                  "uh add add this this to to the prompt")
-           vis/publish-channel-event! (fn [_ event]
-                                        (swap! events conj event))]
+  (it "appends the transcript the ENGINE cleaned, not the raw ASR output"
+      ;; Cleanup moved out of the TUI and into the engine, so the gateway and the
+      ;; app receive the same finished text the terminal does. This drives the
+      ;; whole chain: input -> engine registry -> Parakeet engine -> ASR.
+      (let
+        [events
+         (atom [])
 
-          (voice/start-recording! {})
-          (voice/stop-and-transcribe! {})
-          (loop [n 50]
-            (when (and (pos? n) (not (some #(= :input/append (:op %)) @events)))
-              (Thread/sleep 20)
-              (recur (dec n))))
-          (expect (some #(= {:op :input/append :text "add this to the prompt" :source :voice/input}
-                            %)
-                        @events)))))
+         before
+         (vcore/engines)]
+
+        (doseq [e before]
+          (vcore/unregister-engine! (:id e)))
+        (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
+        (try (engine/register!)
+             (with-redefs
+               [recorder/start!
+                (fn []
+                  {:started-at-ms (System/currentTimeMillis)})
+
+                recorder/stop!
+                (fn [_]
+                  :audio-file)
+
+                asr/model-state
+                (fn []
+                  {:state :ready :progress 100})
+
+                asr/model-dir
+                (fn []
+                  "model-dir")
+
+                asr/transcribe-file!
+                (fn [_dir audio-path _opts]
+                  (expect (= ":audio-file" audio-path))
+                  "uh add add this this to to the prompt")
+
+                vis/publish-channel-event!
+                (fn [_ event]
+                  (swap! events conj event))]
+
+               (voice/start-recording! {})
+               (voice/stop-and-transcribe! {})
+               (loop [n 50]
+                 (when (and (pos? n) (not (some #(= :input/append (:op %)) @events)))
+                   (Thread/sleep 20)
+                   (recur (dec n))))
+               (expect (some
+                         #(= {:op :input/append :text "add this to the prompt" :source :voice/input}
+                             %)
+                         @events)))
+             (finally (vcore/unregister-engine! engine/engine-id)
+                      (doseq [e before]
+                        (vcore/register-engine! e))))))
   (it "starts ticker after recorder is visible in shared state"
       (let [events (atom [])]
         (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
@@ -189,8 +223,8 @@
                            {:started-at-ms (System/currentTimeMillis)})
          recorder/stop! (fn [_]
                           :silent.wav)
-         asr/transcribe-file! (fn [_]
-                                "")
+         vcore/transcribe! (fn [_]
+                             "")
          vis/publish-channel-event! (fn [channel event]
                                       (expect (= :tui channel))
                                       (swap! events conj event))]
@@ -228,8 +262,8 @@
                              {:started-at-ms (System/currentTimeMillis)})
            recorder/stop! (fn [_]
                             :silent.wav)
-           asr/transcribe-file! (fn [_]
-                                  "   \t\n  ")
+           vcore/transcribe! (fn [_]
+                               "   \t\n  ")
            vis/publish-channel-event! (fn [_ event]
                                         (swap! events conj event))]
 
@@ -264,8 +298,8 @@
          (fn [_]
            "too-short.wav")
 
-         asr/transcribe-file!
-         (fn [audio-file]
+         vcore/transcribe!
+         (fn [{audio-file :audio-path}]
            (expect (= "too-short.wav" audio-file))
            (throw (ex-info "Voice recording too short - try again"
                            {:type :voice-asr/audio-too-short})))
@@ -304,3 +338,66 @@
                                    (get-in % [:data :error]))
                                 (= :voice-asr/audio-too-short (get-in % [:data :type])))
                           @logs))))))))
+
+(defdescribe
+  voice-progress-test
+  (it "says where the transcription IS, through whichever engine is registered"
+      ;; The status line used to freeze on one opaque "● Transcribing..." from the
+      ;; moment the recording stopped until the text appeared, so a long clip was
+      ;; indistinguishable from a hang — and the TUI called the local ASR
+      ;; namespace directly, which no replacement engine could ever take over.
+      (let
+        [events
+         (atom [])
+
+         engine
+         {:id :test-progress
+          :label "Test"
+          :transcribe (fn [{:keys [audio-path on-progress]}]
+                        (expect (= "clip.wav" audio-path))
+                        (on-progress {:phase :preparing :progress 40})
+                        (on-progress {:phase :transcribing :progress 0})
+                        (on-progress {:phase :transcribing :progress 70})
+                        "from the test engine")}
+
+         before
+         (vcore/engines)]
+
+        (doseq [e before]
+          (vcore/unregister-engine! (:id e)))
+        (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
+        (try (vcore/register-engine! engine)
+             (with-redefs
+               [recorder/start!
+                (fn []
+                  {:started-at-ms (System/currentTimeMillis)})
+
+                recorder/stop!
+                (fn [_]
+                  "clip.wav")
+
+                vis/publish-channel-event!
+                (fn [_ event]
+                  (swap! events conj event))]
+
+               (voice/start-recording! {})
+               (voice/stop-and-transcribe! {})
+               (loop [n 100]
+                 (when (and (pos? n) (not (some #(= :input/append (:op %)) @events)))
+                   (Thread/sleep 20)
+                   (recur (dec n))))
+               (let [texts (mapv :text @events)]
+                 (expect (some #(= "● Sending to voice engine..." %) texts))
+                 (expect (some #(= "● Preparing voice engine 40%" %) texts))
+                 (expect (some #(= "● Transcribing 0%" %) texts))
+                 (expect (some #(= "● Transcribing 70%" %) texts))
+                 ;; and the phases arrive in that order, never backwards
+                 (expect (< (.indexOf texts "● Sending to voice engine...")
+                            (.indexOf texts "● Preparing voice engine 40%")
+                            (.indexOf texts "● Transcribing 70%"))))
+               (expect
+                 (some #(= {:op :input/append :text "from the test engine" :source :voice/input} %)
+                       @events)))
+             (finally (vcore/unregister-engine! :test-progress)
+                      (doseq [e before]
+                        (vcore/register-engine! e)))))))

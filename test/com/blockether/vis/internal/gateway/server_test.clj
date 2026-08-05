@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.theme :as theme]
             [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.voice :as voice]
             [com.blockether.vis.internal.loop :as lp]
             [reitit.ring :as rr]
             [ring.adapter.jetty :as jetty]
@@ -456,9 +457,32 @@
   [m]
   (java.io.ByteArrayInputStream. (.getBytes ^String (wire/json-str m) "UTF-8")))
 
+(defn- with-only-engine!
+  "Run `f` with EXACTLY `engine` registered (nil = a gateway with no voice engine
+   at all), then put the registry back."
+  [engine f]
+  (let [before (voice/engines)]
+    (doseq [e before]
+      (voice/unregister-engine! (:id e)))
+    (try (when engine (voice/register-engine! engine))
+         (f)
+         (finally (doseq [e (voice/engines)]
+                    (voice/unregister-engine! (:id e)))
+                  (doseq [e before]
+                    (voice/register-engine! e))))))
+
+(defn- wav-body
+  "A RIFF/WAVE header long enough to pass the gateway's cheap pre-filter."
+  []
+  (let [b (byte-array 64)]
+    (System/arraycopy (.getBytes "RIFF" "US-ASCII") 0 b 0 4)
+    (System/arraycopy (.getBytes "WAVE" "US-ASCII") 0 b 8 4)
+    (java.io.ByteArrayInputStream. b)))
+
 (deftest capabilities-advertise-gateway-voice-and-attachment-contract
-  (testing "a gateway without the optional voice extension reports it honestly"
-    (with-redefs-fn {(rv 'voice-asr-resolve) (constantly nil)}
+  (testing "a gateway without any voice engine reports it honestly"
+    (with-only-engine!
+      nil
       (fn []
         (let
           [response
@@ -483,25 +507,128 @@
                  (get-in body ["features" "attachments" "video_media_types"])))
           (is (= (* 32 1024 1024) (get-in body ["features" "attachments" "max_video_bytes"])))
           (is (false? (get-in body ["features" "voice" "enabled"])))
-          (is (= "unavailable" (get-in body ["features" "voice" "model" "status"])))))))
-  (testing "voice support includes the current model state without starting a download"
-    (with-redefs-fn {(rv 'voice-asr-resolve) (fn [fn-name]
-                                               (case fn-name
-                                                 "model-state"
-                                                 (constantly {:state :ready})
+          (is (= "unavailable" (get-in body ["features" "voice" "model" "status"])))
+          (is (empty? (get-in body ["features" "voice" "engines"])))
+          (is (nil? (get-in body ["features" "voice" "selected"])))))))
+  (testing "voice advertises the engine CATALOGUE, the selection and the phase vocabulary"
+    (with-only-engine! {:id :fake-engine
+                        :label "Fake"
+                        :transcribe (constantly "hi")
+                        :model-state (constantly {:state :ready})}
+                       (fn []
+                         (let
+                           [body (-> ((rv 'capabilities-handler) {})
+                                     :body
+                                     wire/parse-json)]
+                           (is (true? (get-in body ["features" "voice" "enabled"])))
+                           (is (= "audio/wav" (get-in body ["features" "voice" "transport"])))
+                           (is (= "ready" (get-in body ["features" "voice" "model" "status"])))
+                           ;; a client that sees this polls a job instead of holding a socket open
+                           (is (true? (get-in body ["features" "voice" "is_async"])))
+                           (is (= ["uploading" "queued" "preparing" "transcribing" "done" "failed"]
+                                  (get-in body ["features" "voice" "phases"])))
+                           (is (= "fake-engine" (get-in body ["features" "voice" "selected"])))
+                           (is (= [{"id" "fake-engine" "label" "Fake"}]
+                                  (get-in body ["features" "voice" "engines"]))))))))
 
-                                                 "transcribe-file!"
-                                                 identity
+(deftest voice-post-accepts-the-recording-and-reports-progress-through-a-job
+  ;; POST /voice used to BLOCK until the transcript existed: the client could not
+  ;; tell "still uploading" from "transcribing", and a long recording was an
+  ;; unexplained spinner over a socket that could time out.
+  (let
+    [sid
+     (str (random-uuid))
 
-                                                 nil))}
+     release
+     (promise)]
+
+    (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
       (fn []
-        (let
-          [body (-> ((rv 'capabilities-handler) {})
-                    :body
-                    wire/parse-json)]
-          (is (true? (get-in body ["features" "voice" "enabled"])))
-          (is (= "audio/wav" (get-in body ["features" "voice" "transport"])))
-          (is (= "ready" (get-in body ["features" "voice" "model" "status"]))))))))
+        (voice/reset-jobs!)
+        (with-only-engine!
+          {:id :slow
+           :label "Slow"
+           :transcribe (fn [{:keys [on-progress]}]
+                         (on-progress {:phase :transcribing :progress 40})
+                         @release
+                         "the transcript")}
+          (fn []
+            (let
+              [accepted
+               ((rv 'voice-handler) {:path-params {:sid sid} :body (wav-body)})
+
+               job
+               (wire/parse-json (:body accepted))
+
+               poll
+               (fn []
+                 (wire/parse-json (:body ((rv 'voice-job-handler)
+                                           {:request-method :get
+                                            :path-params {:sid sid :job-id (get job "id")}}))))]
+
+              (testing "the upload is answered immediately with a job, not a transcript"
+                (is (= 202 (:status accepted)))
+                (is (string? (get job "id")))
+                (is (= "slow" (get job "engine")))
+                (is (false? (get job "is_done")))
+                (is (nil? (get job "text"))))
+              (testing "the job reports the phase and the percentage while it runs"
+                (is (wait-until #(= "transcribing" (get (poll) "phase"))))
+                (is (= 40 (get (poll) "progress"))))
+              (testing "the finished job carries the text"
+                (deliver release :go)
+                (is (wait-until #(true? (get (poll) "is_done"))))
+                (let [done (poll)]
+                  (is (= "done" (get done "phase")))
+                  (is (= 100 (get done "progress")))
+                  (is (= "the transcript" (get done "text")))))
+              (testing "a collected job can be forgotten, and an unknown one is a 404"
+                (is (= 200
+                       (:status ((rv 'voice-job-handler)
+                                  {:request-method :delete
+                                   :path-params {:sid sid :job-id (get job "id")}}))))
+                (is (= 404
+                       (:status ((rv 'voice-job-handler)
+                                  {:request-method :get
+                                   :path-params {:sid sid :job-id "vj_nope"}}))))))))))))
+
+(deftest voice-refusals-name-the-reason-instead-of-failing-late
+  (let [sid (str (random-uuid))]
+    (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
+      (fn []
+        (testing "no engine at all is 501, not a broken 500"
+          (with-only-engine! nil
+                             (fn []
+                               (is (= 501
+                                      (:status ((rv 'voice-handler)
+                                                 {:path-params {:sid sid} :body (wav-body)})))))))
+        (with-only-engine!
+          {:id :fake-engine :transcribe (constantly "hi") :model-state (constantly {:state :ready})}
+          (fn []
+            (testing "naming an engine nobody registered is the CALLER's 400"
+              (is (= 400
+                     (:status ((rv 'voice-handler)
+                                {:path-params {:sid sid}
+                                 :query-params {"engine" "whisper-server"}
+                                 :body (wav-body)})))))
+            (testing "a body that is not RIFF/WAVE never reaches the engine"
+              (is (= 400
+                     (:status ((rv 'voice-handler)
+                                {:path-params {:sid sid}
+                                 :body (java.io.ByteArrayInputStream. (byte-array 64))})))))))
+        (testing "an engine that is still preparing answers 425 with its own state"
+          (with-only-engine! {:id :downloading
+                              :transcribe (constantly "hi")
+                              :model-state (constantly {:state :downloading :progress 42})}
+                             (fn []
+                               (let
+                                 [response ((rv 'voice-handler)
+                                             {:path-params {:sid sid} :body (wav-body)})
+                                  body (wire/parse-json (:body response))]
+
+                                 (is (= 425 (:status response)))
+                                 (is (= "downloading" (get body "status")))
+                                 (is (= 42 (get body "progress")))))))))))
 
 (deftest theme-handler-shares-the-tui-palette-and-persistence
   (let [saved (atom nil)]
