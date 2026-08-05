@@ -1222,13 +1222,21 @@
      (rt/parkable-wall start timeout-ms)
 
      worker
-     (cancellation/worker-future "vis-native-tool"
-                                 #(binding
-                                    [rt/*blocking-wall-park*
-                                     park]
+     (cancellation/worker-future
+       "vis-native-tool"
+       #(binding
+          [rt/*blocking-wall-park*
+           park]
 
-                                    (handler (assoc environment :vis/outside-tool-wall park)
-                                             input)))
+          ;; The ONE seam that binds `workspace/*workspace-root*` /
+          ;; `workspace/*filesystem-roots*` from the environment for
+          ;; every extension callback (extension/with-context's own
+          ;; docstring). A `:handler` native tool used to call `handler`
+          ;; directly here, so `git`/`shell` silently resolved cwd
+          ;; against the JVM's launch directory instead of a draft
+          ;; workspace's `:workspace/root`.
+          (extension/with-context {:env environment}
+                                  (handler (assoc environment :vis/outside-tool-wall park) input))))
 
      dispose-cancel-hook
      (when-let [cancel-token (:cancel-token environment)]
@@ -3105,26 +3113,79 @@
                    (string? scopes) [scopes]
                    :else nil)))
 
-     ;; An id the resolver cannot even PARSE — `t3/i89-i141`, a RANGE spelled as
-     ;; ONE token — is kept verbatim, matches no wire iteration and therefore
-     ;; collapses nothing, yet the fold was still recorded and acked. That is how
-     ;; three consecutive folds reported `saved ~0 tokens` while the window kept
-     ;; growing (session 91576db9): the model believes it compacted and stops
-     ;; trying. An id is `tN`, `tN/iM` or `tN/iM/fK`; a RANGE is a selector, so
-     ;; the spelling is refused here instead of acked as a fold of nothing.
+     current-turn
+     (fn []
+       (let
+         [v (some-> ctx-atom
+                    deref
+                    (get "session_turn"))]
+         (cond (integer? v) (long v)
+               (string? v) (parse-long (str/trim v))
+               :else nil)))
+
+     universe-now
+     (fn []
+       (or (some-> ctx-atom
+                   deref
+                   (get "engine_iter_universe"))
+           []))
+
      scope-id?
      (fn [s]
        (boolean (or (ctx-engine/scope-key s) (ctx-engine/turn-key s))))
 
-     refuse-unparseable!
-     (fn [ids]
-       (when-let [bad (not-empty (into (sorted-set) (remove scope-id?) ids))]
-         (throw (ex-info (str "session_fold: unparseable scope id "
-                              (str/join ", " (map pr-str bad))
-                              " — an id is \"tN/iM\" (or a bare \"tN\" for a whole turn); a RANGE "
-                              "is a selector: {\"from\": \"tN/iA\", \"to\": \"tN/iB\"}. "
-                              "Nothing was folded.")
+     ;; The ledger, the fold card and the transcript breadcrumb all PRINT scopes
+     ;; in the compact anchor grammar (`ctx-engine/pretty-scopes`): `t3/i89-i141`,
+     ;; `t3/i1-i2,i5 t4/*`. That is therefore the spelling the model reads on
+     ;; scroll-back and hands straight back — and `t3/i89-i141`, a RANGE spelled as
+     ;; ONE id, used to be kept verbatim, match no wire iteration and collapse
+     ;; nothing while the receipt still said `folded … saved ~0 tokens` (session
+     ;; 91576db9: three such folds in a row, the window growing the whole time).
+     ;; What the engine prints, the engine PARSES: `ctx-engine/parse-anchor`
+     ;; COERCES the anchor — a range, a whole-turn `t3/*`, `turn 3`, a `to` missing
+     ;; its turn — into the concrete scopes it names. Only a string that names NO
+     ;; scope at all is refused, and then loudly: a fold of nothing that acks like
+     ;; a fold is how a model stops trying to compact.
+     refuse!
+     (fn [bad]
+       (when-let [bad (not-empty (into (sorted-set) (remove nil?) bad))]
+         (throw (ex-info (str
+                           "session_fold: cannot resolve scope " (str/join ", " (map pr-str bad))
+                           " — a scope is \"tN/iM\", a whole turn \"tN\", or the ledger's own "
+                           "compact range (\"t3/i89-i141\", \"t3/i1-i2,i5\", \"t2-t4/*\"), which "
+                           "is coerced for you; a cursor may name a span and collapses to its "
+                           "edge. Nothing was folded.")
                          {:type :vis/session-fold-invalid-scope :scopes bad}))))
+
+     coerce-ids
+     ;; An id the resolver already understands (`tN/iM`, `tN/iM/fK`, a whole-turn
+     ;; `tN`) is kept VERBATIM so `expand-through` keeps owning its semantics;
+     ;; anything else is read as an anchor and expanded to the scopes it names.
+     (fn [ids]
+       (let
+         [[ok bad]
+          (reduce (fn [[ok bad] s]
+                    (if (scope-id? s)
+                      [(conj ok s) bad]
+                      (if-let [got (seq (ctx-engine/parse-anchor s (universe-now) (current-turn)))]
+                        [(into ok got) bad]
+                        [ok (conj bad s)])))
+                  [#{} []]
+                  ids)]
+         (refuse! bad)
+         ok))
+
+     coerce-cursor
+     ;; A cursor is one POINT, so an anchor naming a span collapses to its own
+     ;; edge: the LAST scope it names for an upper bound (`through`, `to`), the
+     ;; FIRST for a lower one (`since`, `from`).
+     (fn [s edge default-turn]
+       (when s
+         (if (ctx-engine/scope-key s)
+           s
+           (when-let
+             [got (seq (ctx-engine/parse-anchor s (universe-now) (or default-turn (current-turn))))]
+             (if (= :end edge) (last got) (first got))))))
 
      freeze
      (fn [intent]
@@ -3143,9 +3204,7 @@
               (and (contains? intent "from") (not (contains? intent "to"))))
 
           universe
-          (some-> ctx-atom
-                  deref
-                  (get "engine_iter_universe"))]
+          (universe-now)]
 
          (if (and unbounded? (seq universe))
            (first (ctx-engine/expand-through [intent] universe))
@@ -3164,22 +3223,37 @@
               thr (pick "through")
               snc (pick "since")
               frm (pick "from")
-              to (pick "to")]
+              to (pick "to")
+              thr* (coerce-cursor thr :end nil)
+              snc* (coerce-cursor snc :start nil)
+              frm* (coerce-cursor frm :start nil)
+              ;; `{"from": "t3/i89", "to": "i141"}` — the window's own turn
+              ;; completes a bound that dropped it.
+              to* (coerce-cursor to :end (first (ctx-engine/scope-key frm*)))]
 
-             (refuse-unparseable! (remove nil? [thr snc frm to]))
-             (cond thr [{"through" thr} (str "through " thr)]
-                   snc [(freeze {"since" snc}) (str "since " snc)]
-                   (or frm to) [(freeze (cond-> {}
-                                          frm
-                                          (assoc "from" frm)
+             (refuse! (keep (fn [[raw resolved]]
+                              (when (and raw (nil? resolved)) raw))
+                            [[thr thr*] [snc snc*] [frm frm*] [to to*]]))
+             (cond thr* [{"through" thr*} (str "through " thr*)]
+                   snc* [(freeze {"since" snc*}) (str "since " snc*)]
+                   (or frm* to*) [(freeze (cond-> {}
+                                            frm*
+                                            (assoc "from" frm*)
 
-                                          to
-                                          (assoc "to" to)))
-                                (str "window " (or frm "start") ".." (or to "end"))]
+                                            to*
+                                            (assoc "to" to*)))
+                                  (str "window " (or frm* "start") ".." (or to* "end"))]
                    :else nil))
-           (let [ss (->set scopes)]
-             (refuse-unparseable! ss)
-             (when (seq ss) [{"scopes" ss} (str/join ", " (sort ss))])))))
+           (let [ss (coerce-ids (->set scopes))]
+             (when (seq ss)
+               [{"scopes" ss}
+                ;; ONE anchor vocabulary: the ack names the fold in the very
+                ;; grammar the breadcrumb and the ledger print (`t1/i1-i2 t2/i1`,
+                ;; not `t1/i1, t1/i2, t2/i1`) — which `parse-anchor` now takes
+                ;; straight back. A whole-turn `tN` has no iteration key, so a
+                ;; target carrying one keeps the plain list.
+                (or (when (every? ctx-engine/scope-key ss) (ctx-engine/pretty-scopes ss []))
+                    (str/join ", " (sort ss)))])))))
 
      exclude-protected
      (fn [intent]
@@ -3211,16 +3285,6 @@
                 (dissoc "through" "from" "to" "since")
                 (assoc "scopes" kept))
             intent) omitted]))
-
-     current-turn
-     (fn []
-       (let
-         [v (some-> ctx-atom
-                    deref
-                    (get "session_turn"))]
-         (cond (integer? v) (long v)
-               (string? v) (parse-long (str/trim v))
-               :else nil)))
 
      record!
      (fn [intent]

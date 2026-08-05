@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.loop-test
   (:require [clojure.string :as str]
+            [clojure.java.io :as io]
             [com.blockether.svar.core :as svar]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.content :as content]
@@ -644,6 +645,34 @@
                    (expect (= :vis/native-tool-timeout (get-in result [:error :type])))
                    (expect (= "repl_eval" (get-in result [:error :data :tool])))
                    (expect (< (- (System/currentTimeMillis) started-at) 2000)))))
+
+;; Regression, issue: git/shell (native `:handler` tools) resolved cwd against the
+;; JVM's launch directory instead of the active draft workspace, because
+;; `run-native-handler` invoked the handler directly instead of through
+;; `extension/with-context` — the ONE seam that binds `workspace/*workspace-root*`
+;; from `:workspace/root` for every other extension callback. A session running
+;; inside a draft therefore had `git`/`shell` silently act on the trunk checkout.
+(defdescribe native-handler-workspace-root-test
+             (it "binds workspace/*workspace-root* from the environment's :workspace/root"
+                 (let
+                   [draft-root
+                    (.getCanonicalPath (io/file "/tmp"))
+
+                    observed
+                    (promise)
+
+                    handler
+                    (fn [_env _input]
+                      (deliver observed (workspace/cwd))
+                      {:ok true})
+
+                    _
+                    ((deref #'lp/run-native-handler) handler
+                     {:workspace/root draft-root}
+                     {}
+                     "git")]
+
+                   (expect (= draft-root (.getCanonicalPath (deref observed 100 (io/file ""))))))))
 
 (defdescribe guest-interrupt-on-eval-timeout-test
              ;; REGRESSION: an eval timeout (and Esc cancel) only did `Future.cancel(true)`.
