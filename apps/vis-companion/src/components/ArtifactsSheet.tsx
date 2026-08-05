@@ -304,19 +304,21 @@ function SurfaceHeader({
     // behind a rule. This surface used to invent its own — pale panel, title on
     // the left, a boxed ✕ floating in the padding — so the one screen a session's
     // output lives on did not look like the app it lives in.
-    <header className="relative flex min-h-11 shrink-0 items-center justify-center bg-dialog-title px-12 text-dialog-title-foreground mouse:min-h-8">
+    <header className="relative flex min-h-9 shrink-0 items-center justify-center bg-dialog-title px-12 py-1.5 text-dialog-title-foreground mouse:min-h-8">
       <h2 className="truncate text-center font-mono text-body font-bold tracking-wide">
         Artifacts
         <span className="font-normal text-dialog-title-foreground/60">
           {` · ${list.length}${total ? ` · ${total}` : ""}`}
         </span>
       </h2>
-      {/* A finger closes this, so the target is 44px and only a cursor shrinks it. */}
+      {/* The band and its close are the DialogFrame's own metrics, not a taller
+          copy of them: a 44px block welded across a 36px band is what made this
+          header read as a toolbar bolted onto the sheet. */}
       <button
         type="button"
         onClick={onClose}
         aria-label="Close artifacts"
-        className="absolute inset-y-0 right-0 grid min-w-11 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-w-8"
+        className="absolute inset-y-0 right-0 grid min-w-9 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-w-8"
       >
         <span aria-hidden="true">✕</span>
       </button>
@@ -343,7 +345,7 @@ function FilterStrip({
     <div
       role="group"
       aria-label="Filter artifacts by kind"
-      className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-dialog-edge bg-panel px-3 py-2 sm:px-4"
+      className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-dialog-edge bg-panel px-3 py-1.5 sm:px-4"
     >
       {ARTIFACT_FILTERS.map((filter) => {
         const count = list.filter((entry) =>
@@ -358,7 +360,7 @@ function FilterStrip({
             disabled={!count}
             aria-pressed={on}
             aria-label={`${filter.label}, ${count} artifacts`}
-            className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 border px-2 font-mono text-meta focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-7 ${
+            className={`inline-flex min-h-8 shrink-0 items-center gap-1.5 border px-2 font-mono text-meta focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-7 ${
               on
                 ? "border-accent bg-accent font-bold text-accent-foreground"
                 : count
@@ -408,7 +410,7 @@ function DetailOverlay({
       aria-label={name}
       className="absolute inset-0 z-20 flex flex-col bg-ink"
     >
-      <header className="relative flex min-h-11 shrink-0 items-center justify-center bg-dialog-title px-12 text-dialog-title-foreground mouse:min-h-8">
+      <header className="relative flex min-h-9 shrink-0 items-center justify-center bg-dialog-title px-12 py-1.5 text-dialog-title-foreground mouse:min-h-8">
         <h2
           className="min-w-0 truncate text-center font-mono text-body font-bold tracking-wide"
           title={name}
@@ -419,7 +421,7 @@ function DetailOverlay({
           type="button"
           onClick={onClose}
           aria-label="Back to artifacts"
-          className="absolute inset-y-0 right-0 grid min-w-11 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-w-8"
+          className="absolute inset-y-0 right-0 grid min-w-9 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-w-8"
         >
           <span aria-hidden="true">✕</span>
         </button>
@@ -517,9 +519,9 @@ function ArtifactDetail({
  *
  * On a phone the strip is too narrow for the word, so the visible chip is `▣ 12`
  * — which is why the WORD lives in `aria-label`/`title` instead of only in the
- * pixels, and `aria-expanded` says whether the surface it owns is open. 44px
- * under a finger, 24px under a cursor: the one way into a whole session's output
- * cannot be the smallest target in the header.
+ * pixels, and `aria-expanded` says whether the surface it owns is open. It is a
+ * CHIP in a row of chips: the same 32px box the settings strip uses, 24px under
+ * a cursor, so it sits beside the session id instead of towering over it.
  */
 export function ArtifactsChip({
   count,
@@ -545,7 +547,7 @@ export function ArtifactsChip({
       aria-controls={controls}
       aria-label={label}
       title={label}
-      className={`inline-flex min-h-11 min-w-11 shrink-0 items-center gap-1 border px-2 font-mono text-chip font-bold tracking-[0.08em] uppercase focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-6 mouse:min-w-0 ${tone}`}
+      className={`inline-flex min-h-8 min-w-8 shrink-0 items-center gap-1 border px-2 font-mono text-chip font-bold tracking-[0.08em] uppercase focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-6 mouse:min-w-0 ${tone}`}
     >
       <span aria-hidden="true">▣</span>
       <span aria-hidden="true" className="hidden sm:inline">
@@ -632,7 +634,7 @@ export function ArtifactsSheet({
                 type="button"
                 onClick={() => setPages((current) => current + 1)}
                 aria-label={`Load ${page.restLabel} of artifacts`}
-                className="mt-3 flex min-h-11 w-full items-center justify-center gap-1.5 border border-dialog-edge bg-panel font-mono text-meta text-dialog-hint hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-8"
+                className="mt-3 flex min-h-9 w-full items-center justify-center gap-1.5 border border-dialog-edge bg-panel font-mono text-meta text-dialog-hint hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-8"
               >
                 <span aria-hidden="true">↓</span>
                 <span>Load {page.restLabel}</span>

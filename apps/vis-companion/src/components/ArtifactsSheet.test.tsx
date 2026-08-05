@@ -1,8 +1,33 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ArtifactsChip, ArtifactsSheet } from "./ArtifactsSheet";
+import { DialogFrame } from "./ui";
 import type { GatewayClient } from "../lib/gateway";
 import type { SessionArtifact } from "../lib/artifacts";
+
+/** The SIZE utilities of a rendering's first dialog band and of the close welded
+ *  into it — "canonical" has to mean pixels, not only colour. */
+const bandMetrics = (html: string) => {
+  const sizes = (classes: string) =>
+    classes.split(" ").filter((token) => /min-[hw]-/.test(token));
+  return {
+    band: sizes(/<header[^>]*class="([^"]*)"/.exec(html)?.[1] ?? ""),
+    close: sizes(
+      /<button[^>]*class="(absolute inset-y-0 right-0[^"]*)"/.exec(html)?.[1] ??
+        "",
+    ),
+  };
+};
+
+/** The band every dialog in the app wears, measured from the source of truth. */
+const canonicalBand = () =>
+  bandMetrics(
+    renderToStaticMarkup(
+      <DialogFrame title="Anything" onClose={() => {}}>
+        <p>body</p>
+      </DialogFrame>,
+    ),
+  );
 
 /** The bytes are never fetched in static markup: effects do not run. */
 const client = {
@@ -103,11 +128,14 @@ describe("the artifacts chip", () => {
     expect(html).toContain("hidden sm:inline");
   });
 
-  it("never shrinks under a finger, only under a cursor", () => {
+  // Regression: the chip stood 44px tall next to a 24px session id, so the
+  // header read as one big button with some text beside it.
+  it("is a chip among chips, and shrinks only under a cursor", () => {
     const html = renderToStaticMarkup(
       <ArtifactsChip count={3} open onToggle={() => {}} />,
     );
-    expect(html).toContain("min-h-11");
+    expect(html).toContain("min-h-8");
+    expect(html).not.toContain("min-h-11");
     expect(html).toContain("mouse:min-h-6");
     expect(html).toContain('aria-expanded="true"');
   });
@@ -133,9 +161,12 @@ describe("the artifacts sheet", () => {
     expect(html).toContain("bg-dialog-title");
     expect(html).toContain("border-l border-dialog-title-foreground/20");
     expect(html).toContain('aria-label="Close artifacts"');
-    // 44px under a finger; only a cursor earns the tight desktop rhythm.
-    expect(html).toContain("min-w-11");
-    expect(html).toContain("mouse:min-w-8");
+    // Regression: the band and its close were a 44px copy of a 36px original,
+    // so the one screen a session's output lives on wore a taller header than
+    // every dialog around it.
+    const canonical = canonicalBand();
+    expect(canonical.band).toContain("min-h-9");
+    expect(bandMetrics(html)).toEqual(canonical);
   });
 
   // Regression: a `.md` note was classified as an unreadable file, so the tile
@@ -226,7 +257,7 @@ describe("the artifacts sheet, paged", () => {
 
   it("keeps the reveal control tappable", () => {
     const html = sheet(many(30, 64 * 1024));
-    expect(html).toContain("min-h-11");
+    expect(html).toContain("min-h-9");
     expect(html).toContain("mouse:min-h-8");
   });
 });
