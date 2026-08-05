@@ -12,9 +12,15 @@
  * a control mark again — `icons.test.tsx` reads the shipped source and fails.
  *
  * ONE grammar, so a strip of them looks like a set: a 24-unit grid, `size-3.5`
- * (the composer's own size — pass `className` for a bigger one), `none` fill,
- * `currentColor` stroke at 1.8, rounded joins, and `aria-hidden` because an icon
- * inside a labelled control is decoration.
+ * (the composer's own size), `none` fill, `currentColor` stroke at 1.8, rounded
+ * joins, and `aria-hidden` because an icon inside a labelled control is
+ * decoration.
+ *
+ * That size is a FLOOR, not a default argument: `className` carries colour,
+ * spacing and motion far more often than a size, and a default parameter is
+ * REPLACED by whatever the caller passes — which is how the transcript's paste
+ * disclosure shipped an `<svg>` with no width at all and grew to the width of
+ * the bubble. `size-3.5` is applied unless the caller's own classes name a size.
  *
  * ONE SIZE, and the viewBox is not it. `0 0 24 24` sizes the CANVAS: a paperclip
  * drawn corner to corner and a cross drawn across the middle third are the same
@@ -36,9 +42,16 @@
  */
 import type { ReactNode } from "react";
 
+/** One class list from parts, so an absent one leaves no hole behind. */
+const classes = (...parts: (string | false | undefined)[]) =>
+  parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+
+/** Does this class list already say how big the mark is? */
+const NAMES_A_SIZE = /(?:^|\s)(?:size|[hw])-/;
+
 function Icon({
   children,
-  className = "size-3.5",
+  className = "",
 }: {
   children: ReactNode;
   className?: string;
@@ -46,7 +59,11 @@ function Icon({
   return (
     <svg
       viewBox="0 0 24 24"
-      className={`shrink-0 ${className}`}
+      className={classes(
+        "shrink-0",
+        !NAMES_A_SIZE.test(className) && "size-3.5",
+        className,
+      )}
       fill="none"
       stroke="currentColor"
       strokeWidth="1.8"
@@ -87,16 +104,18 @@ export function CloseIcon({ className }: { className?: string }) {
  */
 export function ChevronIcon({
   open = false,
-  className = "size-3.5",
+  className,
 }: {
   open?: boolean;
   className?: string;
 }) {
   return (
     <Icon
-      className={`transition-transform duration-150 motion-reduce:transition-none ${
-        open ? "rotate-90" : ""
-      } ${className}`}
+      className={classes(
+        "transition-transform duration-150 motion-reduce:transition-none",
+        open && "rotate-90",
+        className,
+      )}
     >
       <path d="M8.62 5.25l6.75 6.75l-6.75 6.75" />
     </Icon>
@@ -208,16 +227,17 @@ export function TrashIcon({ className }: { className?: string }) {
  */
 export function StarIcon({
   filled = false,
-  className = "size-3.5",
+  className,
 }: {
   filled?: boolean;
   className?: string;
 }) {
   return (
     <Icon
-      className={`${
-        filled ? "fill-accent stroke-accent" : "fill-none stroke-current"
-      } ${className}`}
+      className={classes(
+        filled ? "fill-accent stroke-accent" : "fill-none stroke-current",
+        className,
+      )}
     >
       <path d="M12 5.17l2.2 4.51l4.98 0.69l-3.59 3.47l0.81 4.98L12 16.51l-4.4 2.31l0.81 -4.98l-3.59 -3.47l4.98 -0.69z" />
     </Icon>
