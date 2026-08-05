@@ -571,8 +571,9 @@
 
 (defn- prose-surfaces
   "Every place vis DESCRIBES anydoc to somebody who will not read the source: the
-   `:shim/description` the system prompt advertises, the module docstring the
-   sandbox hands the model, and the docs page. All three are prose nobody runs."
+   `:shim/description` the registry advertises (the sandbox's `doc`/`apropos`
+   gist), the module docstring the sandbox hands the model, and the docs page.
+   All three are prose nobody runs."
   [^Context python-context]
   {":shim/description" (-> shim-anydoc/vis-extension
                            :ext/sandbox-shims

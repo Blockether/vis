@@ -2210,7 +2210,11 @@
   (vis/extension
     {:ext/name "foundation-shim-pil"
      :ext/description
-     "Sandbox Pillow (`PIL`) subset backed by com.blockether/imaging's Rust renderer (no java.desktop/pip/native wheel): Image, ImageDraw, ImageFilter, ImageOps, ImageColor, ImageEnhance, ImageChops, ImageStat/Math/Font and related APIs; transforms, compositing, drawing, filters, palettes, EXIF, JPEG/WebP quality, and animated GIF read/write. `Image.show()` attaches inline; images above 512 MiB RGBA are rejected."
+     (str "Sandbox Pillow (`PIL`) subset backed by com.blockether/imaging's Rust renderer (no "
+          "java.desktop/pip/native wheel): Image, ImageDraw, ImageFilter, ImageOps, ImageColor, "
+          "ImageEnhance, ImageChops, ImageStat/Math/Font and related APIs; transforms, "
+          "compositing, drawing, filters, palettes, EXIF, JPEG/WebP quality, and animated GIF "
+          "read/write. `Image.show()` attaches inline; images above 512 MiB RGBA are rejected.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -2220,7 +2224,11 @@
      [{:shim/name "pil"
        :shim/imports ["PIL"]
        :shim/description
-       "Pillow-compatible `PIL`, Rust-backed without java.desktop: Image, ImageDraw, ImageFilter, ImageOps, ImageColor, ImageEnhance, ImageChops, ImageFont; animated GIF seek/n_frames/save_all; JPEG/WebP quality; adaptive quantization; EXIF. Rejects images over 512 MiB RGBA. Not supported: some color conversions and `Image.transform` methods (`ValueError`)."
+       (str "Pillow-compatible `PIL`, Rust-backed without java.desktop: "
+            "Image, ImageDraw, ImageFilter, ImageOps, ImageColor, ImageEnhance, ImageChops, "
+            "ImageFont; animated GIF seek/n_frames/save_all; JPEG/WebP quality; adaptive "
+            "quantization; EXIF. Rejects images over 512 MiB RGBA. "
+            "Not supported: some color conversions and `Image.transform` methods (`ValueError`).")
        :shim/bindings pil-bridge-bindings
        :shim/source "vis-shims/pil.py"}]}))
 

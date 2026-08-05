@@ -120,7 +120,9 @@
   (vis/extension
     {:ext/name "foundation-shim-tzdata"
      :ext/description
-     "Sandbox `zoneinfo`/`pytz`/`tzdata`/`dateutil` subset (tz, parser, relativedelta), backed by JVM `java.time` IANA data. Avoids denied-filesystem getcwd failures; no pip/wheel/data files."
+     (str "Sandbox `zoneinfo`/`pytz`/`tzdata`/`dateutil` subset (tz, parser, relativedelta), "
+          "backed by JVM `java.time` IANA data. Avoids denied-filesystem getcwd failures; no "
+          "pip/wheel/data files.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -130,7 +132,8 @@
      [{:shim/name "tzdata"
        :shim/imports ["dateutil" "pytz" "tzdata" "zoneinfo"]
        :shim/description
-       "JVM java.time-backed zoneinfo/pytz/tzdata and dateutil.tz/parser/relativedelta: 600+ IANA zones, DST-correct, no data files. Other dateutil submodules unsupported."
+       (str "JVM java.time-backed zoneinfo/pytz/tzdata and dateutil.tz/parser/relativedelta: "
+            "600+ IANA zones, DST-correct, no data files. Other dateutil submodules unsupported.")
        :shim/bindings tzdata-bridge-bindings
        :shim/source "vis-shims/tzdata.py"}]}))
 

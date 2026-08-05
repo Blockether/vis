@@ -30,7 +30,8 @@
   (vis/extension
     {:ext/name "foundation-shim-urllib3"
      :ext/description
-     "Sandbox `urllib3` package (`PoolManager`, `util`, `fields`, `response`) wrapping the requests shim. No pip/wheel/host bridge."
+     (str "Sandbox `urllib3` package (`PoolManager`, `util`, `fields`, `response`) wrapping the "
+          "requests shim. No pip/wheel/host bridge.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -40,7 +41,9 @@
      [{:shim/name "urllib3"
        :shim/imports ["urllib3"]
        :shim/description
-       "`urllib3` as a package: `PoolManager`/`ProxyManager`, `HTTPResponse`, `request`, `util` (`Retry`, `Timeout`, `parse_url`, `make_headers`), `fields`, `filepost`, `exceptions`. Retries, pooling, and low-level TLS options are best-effort no-ops."
+       (str "`urllib3` as a package: `PoolManager`/`ProxyManager`, `HTTPResponse`, `request`, "
+            "`util` (`Retry`, `Timeout`, `parse_url`, `make_headers`), `fields`, `filepost`, "
+            "`exceptions`. Retries, pooling, and low-level TLS options are best-effort no-ops.")
        :shim/source "vis-shims/urllib3.py"}]}))
 
 (vis/register-extension! vis-extension)

@@ -791,7 +791,12 @@
   (vis/extension
     {:ext/name "foundation-shim-matplotlib"
      :ext/description
-     "Sandbox Matplotlib subset with pyplot/OO Figure-Axes APIs and `mpl_toolkits.mplot3d`: line/scatter/bar/hist/fill/step/pie/box/image plus surface/wireframe/contour/scatter/plot/text/bar3d, styling, labels, legends, subplots, views, and colormaps. Native imaging renders PNG; pure Python renders ASCII/Braille. `show()` displays inline PNG or text fallback; `savefig` writes PNG or txt/asc. No pip/native wheel."
+     (str "Sandbox Matplotlib subset with pyplot/OO Figure-Axes APIs and `mpl_toolkits.mplot3d`: "
+          "line/scatter/bar/hist/fill/step/pie/box/image plus "
+          "surface/wireframe/contour/scatter/plot/text/bar3d, styling, labels, legends, "
+          "subplots, views, and colormaps. Native imaging renders PNG; pure Python renders "
+          "ASCII/Braille. `show()` displays inline PNG or text fallback; `savefig` writes PNG or "
+          "txt/asc. No pip/native wheel.")
      :ext/version "0.5.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -801,7 +806,13 @@
      [{:shim/name "matplotlib"
        :shim/imports ["matplotlib" "mpl_toolkits"]
        :shim/description
-       "matplotlib.pyplot/OO subset with native PNG and ASCII renderers: line/scatter/bar/hist/fill/step/pie/box/image. mpl_toolkits.mplot3d supports surface/wireframe/contour/scatter/plot/text/bar3d, views, z limits/labels, shading, and colormaps. `show()` is the display call: inline PNG on graphics terminals, ASCII otherwise. `savefig` writes PNG or txt/asc ASCII. Not supported: animation, full rcParams theming, undocumented plot types."
+       (str "matplotlib.pyplot/OO subset with native PNG and ASCII renderers: "
+            "line/scatter/bar/hist/fill/step/pie/box/image. "
+            "mpl_toolkits.mplot3d supports surface/wireframe/contour/scatter/plot/text/bar3d, "
+            "views, z limits/labels, shading, and colormaps. "
+            "`show()` is the display call: inline PNG on graphics terminals, ASCII otherwise. "
+            "`savefig` writes PNG or txt/asc ASCII. Not supported: "
+            "animation, full rcParams theming, undocumented plot types.")
        :shim/bindings mpl-bridge-bindings
        :shim/source "vis-shims/matplotlib.py"}]}))
 

@@ -91,7 +91,9 @@
   (vis/extension
     {:ext/name "foundation-shim-ruff"
      :ext/description
-     "Sandbox in-process `ruff` formatter/linter: importable module plus `vis-agent python -m ruff check|format`, backed by com.blockether/ruff. Honours nearest ruff.toml/.ruff.toml/pyproject.toml config; no pip/PATH binary."
+     (str "Sandbox in-process `ruff` formatter/linter: importable module plus `vis-agent python "
+          "-m ruff check|format`, backed by com.blockether/ruff. "
+          "Honours nearest ruff.toml/.ruff.toml/pyproject.toml config; no pip/PATH binary.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -101,7 +103,12 @@
      [{:shim/name "ruff"
        :shim/imports ["ruff"]
        :shim/description
-       "In-process Ruff, no pip/PATH: `python -m ruff check|format <paths>` (`format`: --check/--diff); import API: format_/check_{str,file}, config_for, version. Finds nearest .ruff.toml, ruff.toml, or pyproject.toml [tool.ruff] per file and honors per-file-ignores; otherwise uses/reports E4,E7,E9,F defaults. Not supported: --fix, --watch, --output-format, --show-settings, config exclude walking."
+       (str "In-process Ruff, no pip/PATH: `python -m ruff check|format <paths>` (`format`: "
+            "--check/--diff); import API: format_/check_{str,file}, config_for, version. "
+            "Finds nearest .ruff.toml, ruff.toml, or pyproject.toml [tool.ruff] per file and "
+            "honors per-file-ignores; otherwise uses/reports E4,E7,E9,F defaults. "
+            "Not supported: --fix, --watch, --output-format, --show-settings, config exclude "
+            "walking.")
        :shim/bindings ruff-bridge-bindings
        :shim/source "vis-shims/ruff.py"}]}))
 

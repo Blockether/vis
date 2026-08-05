@@ -257,7 +257,13 @@
   (vis/extension
     {:ext/name "foundation-shim-anydoc"
      :ext/description
-     "Sandbox `anydoc` module: Word/PDF/EPUB/presentation/spreadsheet bytes to GitHub-Flavored Markdown via com.blockether/imaging's Rust cdylib (no office suite, no wheel, no java.desktop), with the document's own structure (blocks, heading path, table cells, PDF page numbers) and a BM25-ranked search over one document or a whole corpus that cites page, section, line and a snippet. Conversions are cached on the content hash, so a second question about a corpus converts nothing."
+     (str "Sandbox `anydoc` module: Word/PDF/EPUB/presentation/spreadsheet bytes to "
+          "GitHub-Flavored Markdown via com.blockether/imaging's Rust cdylib (no office suite, "
+          "no wheel, no java.desktop), with the document's own structure (blocks, heading path, "
+          "table cells, PDF page numbers) and a BM25-ranked search over one document or a whole "
+          "corpus that cites page, section, line and a snippet. "
+          "Conversions are cached on the content hash, so a second question about a corpus "
+          "converts nothing.")
      :ext/version "0.2.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -267,7 +273,30 @@
      [{:shim/name "anydoc"
        :shim/imports ["anydoc"]
        :shim/description
-       "`anydoc.to_markdown(path)` / `to_markdown_bytes(data)` render .doc .docx .odt .rtf .pdf .epub .ppt .pptx .odp .xls .xlsx .xlsm .xlsb .ods .csv as GitHub-Flavored Markdown; `to_document`/`read(path)` add the detected format, embedded assets as bytes, the plain `text`, the `blocks` (heading path, table cells, PDF `page`) and `pages`. `anydoc.search(query, sources)` searches ONE document, a list, a {id: doc} mapping or a whole directory and returns BM25-ranked `Citation`s with `.document_id .page .section .line .column .snippet .highlight .score .text .match .block_kind .cell`; `str(citation)` is `id p.N line L › Section: …snippet…`. Query language: bare terms (OR), \"a phrase\" (crosses line wraps AND table cells), +required, -excluded, `NEAR(a b, 5)`, prefix `rev*`, field scopes `heading: table: code: list: note: section: page:N`, `/regex/`. Exclusions and filters only NARROW: a query needs at least one thing to look FOR, so `-draft` or `page:3` alone is refused with that sentence. Matching folds ligatures, accents, curly quotes, soft/line-break hyphens and NBSP, and stems plurals, so `efficient` finds `eﬃcient` and `quarterly revenue` finds it wrapped over two lines. `results.explain()` says exactly how the query parsed and why each document scored; `results.suggestions` answers a typo; `results.skipped` names files that could not be read; `results.total_matches`/`.is_truncated` never lie about a capped search. Conversions are cached (`anydoc.cache_info()`), so `doc.search(...)` and a second corpus question cost no conversion. Errors are typed and catchable: `QueryError` (with the offending column), `DocumentError` (with `.document_id`), `SourceError`, all under `AnydocError`. Signature-less CSV needs a name or an explicit format. Not supported: writing documents, OCR of scanned pages, embeddings/semantic search."
+       (str "`anydoc.to_markdown(path)` / `to_markdown_bytes(data)` render .doc .docx .odt .rtf "
+            ".pdf .epub .ppt .pptx .odp .xls .xlsx .xlsm .xlsb .ods .csv as GitHub-Flavored "
+            "Markdown; `to_document`/`read(path)` add the detected format, embedded assets as "
+            "bytes, the plain `text`, the `blocks` (heading path, table cells, PDF `page`) and "
+            "`pages`. `anydoc.search(query, sources)` searches ONE document, a list, a {id: "
+            "doc} mapping or a whole directory and returns BM25-ranked `Citation`s with "
+            "`.document_id .page .section .line .column .snippet .highlight .score .text .match "
+            ".block_kind .cell`; `str(citation)` is `id p.N line L › Section: "
+            "…snippet…`. Query language: bare terms (OR), \"a phrase\" (crosses line wraps AND "
+            "table cells), +required, -excluded, `NEAR(a b, 5)`, prefix `rev*`, field scopes "
+            "`heading: table: code: list: note: section: page:N`, `/regex/`. "
+            "Exclusions and filters only NARROW: a query needs at least one thing to look FOR, "
+            "so `-draft` or `page:3` alone is refused with that sentence. "
+            "Matching folds ligatures, accents, curly quotes, soft/line-break hyphens and NBSP, "
+            "and stems plurals, so `efficient` finds `eﬃcient` and `quarterly revenue` finds it "
+            "wrapped over two lines. `results.explain()` says exactly how the query parsed and "
+            "why each document scored; `results.suggestions` answers a typo; `results.skipped` "
+            "names files that could not be read; `results.total_matches`/`.is_truncated` never "
+            "lie about a capped search. Conversions are cached (`anydoc.cache_info()`), so "
+            "`doc.search(...)` and a second corpus question cost no conversion. "
+            "Errors are typed and catchable: `QueryError` (with the offending column), "
+            "`DocumentError` (with `.document_id`), `SourceError`, all under `AnydocError`. "
+            "Signature-less CSV needs a name or an explicit format. "
+            "Not supported: writing documents, OCR of scanned pages, embeddings/semantic search.")
        :shim/bindings anydoc-bridge-bindings
        :shim/source "vis-shims/anydoc.py"}]}))
 

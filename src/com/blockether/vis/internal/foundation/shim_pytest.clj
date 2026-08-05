@@ -49,7 +49,9 @@
   (vis/extension
     {:ext/name "foundation-shim-pytest"
      :ext/description
-     "Sandbox pure-stdlib `pytest` subset: collection, assert introspection, fixtures, parametrize/marks, raises, monkeypatch, capsys, tmp_path, and `pytest.main`. No pip/wheel/host bridge; no plugins and most CLI options unsupported."
+     (str "Sandbox pure-stdlib `pytest` subset: collection, assert introspection, fixtures, "
+          "parametrize/marks, raises, monkeypatch, capsys, tmp_path, and `pytest.main`. "
+          "No pip/wheel/host bridge; no plugins and most CLI options unsupported.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -59,7 +61,14 @@
      [{:shim/name "pytest"
        :shim/imports ["pytest"]
        :shim/description
-       "Stdlib pytest subset: collection/assert introspection; conftest, parametrize, marks, raises/warns/approx; fixtures monkeypatch, capsys/capfd/caplog, recwarn, tmp_path/tmpdir factories, request, and pytester/testdir. `pytest.main(args)` discovers test_*.py/*_test.py, selects node ids (`file::name`, `file::Class::method`, `file::name[id]`), honours `--collect-only`, exits 5 when nothing ran and 4 on a missing path; no paths runs current-block tests. pytester supports makepyfile/makeconftest/runpytest and RunResult assertions. Not supported: plugins, most CLI options, import-time assertion rewriting."
+       (str "Stdlib pytest subset: collection/assert introspection; conftest, parametrize, "
+            "marks, raises/warns/approx; fixtures monkeypatch, capsys/capfd/caplog, recwarn, "
+            "tmp_path/tmpdir factories, request, and pytester/testdir. "
+            "`pytest.main(args)` discovers test_*.py/*_test.py, selects node ids (`file::name`, "
+            "`file::Class::method`, `file::name[id]`), honours `--collect-only`, exits 5 when "
+            "nothing ran and 4 on a missing path; no paths runs current-block tests. "
+            "pytester supports makepyfile/makeconftest/runpytest and RunResult assertions. "
+            "Not supported: plugins, most CLI options, import-time assertion rewriting.")
        :shim/source "vis-shims/pytest.py"}]}))
 
 (vis/register-extension! vis-extension)

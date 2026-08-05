@@ -25,8 +25,10 @@
 (def vis-extension
   (vis/extension
     {:ext/name "foundation-shim-numpy"
-     :ext/description
-     "Sandbox pure-Python `numpy` subset (`numpy.array`): ndarray broadcasting, reductions, ufuncs, indexing, dot/matmul, linalg norm/det/inv/solve, and random. Stdlib only, no pip/wheel/host bridge; correctness-focused, not C-speed."
+     :ext/description (str "Sandbox pure-Python `numpy` subset (`numpy.array`): "
+                           "ndarray broadcasting, reductions, ufuncs, indexing, dot/matmul, linalg "
+                           "norm/det/inv/solve, and random. Stdlib only, no pip/wheel/host bridge; "
+                           "correctness-focused, not C-speed.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -36,7 +38,11 @@
      [{:shim/name "numpy"
        :shim/imports ["numpy"]
        :shim/description
-       "Pure-Python `numpy` subset: ndarray/broadcasting; reductions with keepdims/tuple axis; linalg norm/det/inv/solve; random/split/take/repeat/histogram. Not supported: C speed or shared-memory slice views; eig/svd/qr; >2-D axis median/cumsum/sort/flip and tuple-rep tile; >1-D pad; dstack (`NotImplementedError`)."
+       (str "Pure-Python `numpy` subset: ndarray/broadcasting; reductions with keepdims/tuple "
+            "axis; linalg norm/det/inv/solve; random/split/take/repeat/histogram. "
+            "Not supported: C speed or shared-memory slice views; eig/svd/qr; >2-D axis "
+            "median/cumsum/sort/flip and tuple-rep tile; >1-D pad; dstack "
+            "(`NotImplementedError`).")
        :shim/source "vis-shims/numpy.py"}]}))
 
 (vis/register-extension! vis-extension)

@@ -305,7 +305,11 @@
   (vis/extension
     {:ext/name "foundation-shim-sqlite3"
      :ext/description
-     "Sandbox DB-API 2.0 `sqlite3` over JVM xerial sqlite-jdbc: connections/cursors, execute variants, fetch, transactions/context manager, Row, named/qmark params, blobs, errors, and `total_changes`. Replaces unavailable GraalPy `_sqlite3`; no pip/new dependency. Bind values: int/float/str/None only."
+     (str "Sandbox DB-API 2.0 `sqlite3` over JVM xerial sqlite-jdbc: "
+          "connections/cursors, execute variants, fetch, transactions/context manager, Row, "
+          "named/qmark params, blobs, errors, and `total_changes`. "
+          "Replaces unavailable GraalPy `_sqlite3`; no pip/new dependency. "
+          "Bind values: int/float/str/None only.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -315,7 +319,8 @@
      [{:shim/name "sqlite3"
        :shim/imports ["sqlite3"]
        :shim/description
-       "JVM xerial sqlite-jdbc `sqlite3` DB-API 2.0; connections use integer handles. Bindings support int/float/str/None only, else `InterfaceError`."
+       (str "JVM xerial sqlite-jdbc `sqlite3` DB-API 2.0; connections use integer handles. "
+            "Bindings support int/float/str/None only, else `InterfaceError`.")
        :shim/bindings sqlite-bridge-bindings
        :shim/source "vis-shims/sqlite3.py"}]}))
 

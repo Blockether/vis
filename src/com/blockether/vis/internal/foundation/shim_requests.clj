@@ -24,7 +24,8 @@
   (vis/extension
     {:ext/name "foundation-shim-requests"
      :ext/description
-     "Sandbox pure-stdlib `requests` subset (`requests.get`) over urllib; uses sandbox sockets and network guard. No pip/wheel/host bridge."
+     (str "Sandbox pure-stdlib `requests` subset (`requests.get`) over urllib; uses sandbox "
+          "sockets and network guard. No pip/wheel/host bridge.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -34,7 +35,8 @@
      [{:shim/name "requests"
        :shim/imports ["requests"]
        :shim/description
-       "`requests`-compatible API via pure-Python stdlib urllib. No HTTP/2 or real pooling; `HTTPDigestAuth` is accepted but sends no auth header."
+       (str "`requests`-compatible API via pure-Python stdlib urllib. "
+            "No HTTP/2 or real pooling; `HTTPDigestAuth` is accepted but sends no auth header.")
        :shim/source "vis-shims/requests.py"}]}))
 
 (vis/register-extension! vis-extension)

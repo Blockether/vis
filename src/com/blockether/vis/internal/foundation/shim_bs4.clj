@@ -44,7 +44,12 @@
   (vis/extension
     {:ext/name "foundation-shim-bs4"
      :ext/description
-     "Sandbox pure-stdlib `bs4`/BeautifulSoup subset: find/find_all and the directional finders, CSS select/select_one with sibling combinators and structural pseudo-classes, get_text, navigation, tree mutation, HTML serialization, and bs4's introspection surface (PageElement/ResultSet/SoupStrainer, builder, formatters, encoding detection). Uses `html.parser`; pairs with requests for fetch+parse. No pip/wheel/host bridge."
+     (str "Sandbox pure-stdlib `bs4`/BeautifulSoup subset: "
+          "find/find_all and the directional finders, CSS select/select_one with sibling "
+          "combinators and structural pseudo-classes, get_text, navigation, tree mutation, HTML "
+          "serialization, and bs4's introspection surface (PageElement/ResultSet/SoupStrainer, "
+          "builder, formatters, encoding detection). Uses `html.parser`; pairs with requests for "
+          "fetch+parse. No pip/wheel/host bridge.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -54,7 +59,11 @@
      [{:shim/name "bs4"
        :shim/imports ["bs4" "soupsieve"]
        :shim/description
-       "`bs4` BeautifulSoup API (`find`, `find_all`, `select`, `get_text`, mutation, serialization, plus PageElement/ResultSet/SoupStrainer, `soup.builder`, formatters and `bs4.dammit` encoding detection) via stdlib `html.parser`, with a bundled soupsieve-compatible engine (`soupsieve` 2.5, `soup.css`, `:has()`, namespace and custom selectors). No lxml/html5lib parsers."
+       (str "`bs4` BeautifulSoup API (`find`, `find_all`, `select`, `get_text`, mutation, "
+            "serialization, plus PageElement/ResultSet/SoupStrainer, `soup.builder`, formatters "
+            "and `bs4.dammit` encoding detection) via stdlib `html.parser`, with a bundled "
+            "soupsieve-compatible engine (`soupsieve` 2.5, `soup.css`, `:has()`, namespace and "
+            "custom selectors). No lxml/html5lib parsers.")
        :shim/source "vis-shims/bs4.py"}]}))
 
 (vis/register-extension! vis-extension)

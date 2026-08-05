@@ -113,7 +113,16 @@
         (expect (not (str/blank? name)))
         (expect (not (str/blank? description)) (str name " has no :shim/description"))
         (expect (or (seq imports) (some? bindings))
-                (str name " declares neither :shim/imports nor :shim/bindings")))))
+                (str name " declares neither :shim/imports nor :shim/bindings"))))
+  ;; A description is WRITTEN over several lines — `(str "…" "…")` — so a human
+  ;; edits ONE sentence instead of reflowing a 700-character literal. Its VALUE
+  ;; stays a single line, because `doc()` / `apropos` print it as one gist: a raw
+  ;; multi-line string literal would smuggle newlines and the source file's own
+  ;; indentation into that gist.
+  (it "keeps every shim description a single line"
+      (doseq [{:shim/keys [name description]} (registered-shims)]
+        (expect (not (str/includes? (str description) "\n"))
+                (str name " :shim/description spans lines — write it as (str \"…\" \"…\")")))))
 
 (defdescribe shim-resource-test
              (it "has a shim declaring every resources/vis-shims/*.py"

@@ -40,7 +40,10 @@
   (vis/extension
     {:ext/name "foundation-shim-pptx"
      :ext/description
-     "Sandbox python-pptx compatibility backed by com.blockether/imaging's Rust OOXML reader/writer: create, open, edit, and save presentations with layouts, placeholders, rich text, images, fills, shapes, tables, connectors, charts, notes, properties, units, colors, and common enums. No pip wheel or JVM document model."
+     (str "Sandbox python-pptx compatibility backed by com.blockether/imaging's Rust OOXML "
+          "reader/writer: create, open, edit, and save presentations with layouts, placeholders, "
+          "rich text, images, fills, shapes, tables, connectors, charts, notes, properties, "
+          "units, colors, and common enums. No pip wheel or JVM document model.")
      :ext/version "0.3.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -50,7 +53,9 @@
      [{:shim/name "pptx"
        :shim/imports ["pptx"]
        :shim/description
-       "python-pptx-compatible create/open/edit/save support backed by one Rust read and one Rust build, including charts, images, rich text, tables, notes, layouts, and properties."
+       (str "python-pptx-compatible create/open/edit/save support backed by one Rust read and "
+            "one Rust build, including charts, images, rich text, tables, notes, layouts, and "
+            "properties.")
        :shim/bindings pptx-bridge-bindings
        :shim/source "vis-shims/pptx.py"}]}))
 

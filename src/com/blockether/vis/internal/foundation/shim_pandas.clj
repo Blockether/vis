@@ -28,7 +28,9 @@
   (vis/extension
     {:ext/name "foundation-shim-pandas"
      :ext/description
-     "Sandbox pure-Python `pandas` subset: Series/DataFrame, selection, loc/iloc, masks, groupby, merge, concat, describe, and CSV I/O; interoperates with the NumPy shim. Stdlib only, no pip/wheel/host bridge; correctness-focused, not C-speed."
+     (str "Sandbox pure-Python `pandas` subset: Series/DataFrame, selection, loc/iloc, masks, "
+          "groupby, merge, concat, describe, and CSV I/O; interoperates with the NumPy shim. "
+          "Stdlib only, no pip/wheel/host bridge; correctness-focused, not C-speed.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -38,7 +40,9 @@
      [{:shim/name "pandas"
        :shim/imports ["pandas"]
        :shim/description
-       "Pure-Python `pandas` subset: Series, DataFrame, groupby, merge, read_csv. No C speed or broader vectorized/IO-heavy APIs; `to_csv(path)` is disabled—use `to_csv()` for text."
+       (str "Pure-Python `pandas` subset: Series, DataFrame, groupby, merge, read_csv. "
+            "No C speed or broader vectorized/IO-heavy APIs; `to_csv(path)` is disabled—use "
+            "`to_csv()` for text.")
        :shim/source "vis-shims/pandas.py"}]}))
 
 (vis/register-extension! vis-extension)

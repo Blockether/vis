@@ -38,7 +38,10 @@
   (vis/extension
     {:ext/name "foundation-shim-fonttools"
      :ext/description
-     "Sandbox `fontTools`/`brotli` subset: WOFF2→TTF (`fontTools.ttLib.woff2.decompress`) and Brotli decompression (`brotli.decompress`) via vendored MIT pure-Python brotlidecpy and an inlined WOFF2 reader, enabling PIL WOFF2 fonts. No pip/wheel/host bridge; decompression only."
+     (str "Sandbox `fontTools`/`brotli` subset: WOFF2→TTF (`fontTools.ttLib.woff2.decompress`) "
+          "and Brotli decompression (`brotli.decompress`) via vendored MIT pure-Python "
+          "brotlidecpy and an inlined WOFF2 reader, enabling PIL WOFF2 fonts. "
+          "No pip/wheel/host bridge; decompression only.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -48,7 +51,9 @@
      [{:shim/name "fonttools"
        :shim/imports ["brotli" "fontTools"]
        :shim/description
-       "WOFF2/Brotli subset: `fontTools.ttLib.woff2.decompress(input, output)` builds TTF and reverses glyf/loca transforms; `brotli.decompress(bytes)` uses vendored brotlidecpy. No brotli.compress, WOFF1, TTFont, or wider fontTools APIs."
+       (str "WOFF2/Brotli subset: `fontTools.ttLib.woff2.decompress(input, output)` builds TTF "
+            "and reverses glyf/loca transforms; `brotli.decompress(bytes)` uses vendored "
+            "brotlidecpy. No brotli.compress, WOFF1, TTFont, or wider fontTools APIs.")
        :shim/source "vis-shims/fonttools.py"}]}))
 
 (vis/register-extension! vis-extension)

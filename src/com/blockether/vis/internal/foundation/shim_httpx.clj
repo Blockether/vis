@@ -32,7 +32,9 @@
      [{:shim/name "httpx"
        :shim/imports ["httpx"]
        :shim/description
-       "`httpx` subset wrapping requests: get/post, Client/AsyncClient, Response, raise_for_status. AsyncClient coroutines use synchronous I/O. No HTTP/2 or concurrent async I/O."
+       (str "`httpx` subset wrapping requests: get/post, Client/AsyncClient, Response, "
+            "raise_for_status. AsyncClient coroutines use synchronous I/O. "
+            "No HTTP/2 or concurrent async I/O.")
        :shim/source "vis-shims/httpx.py"}]}))
 
 (vis/register-extension! vis-extension)

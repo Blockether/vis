@@ -530,7 +530,11 @@
   (vis/extension
     {:ext/name "foundation-shim-paramiko"
      :ext/description
-     "Sandbox Paramiko-compatible SSH2 over pure-Java JSch: SSHClient exec/SFTP, RSA/DSS/ECDSA/Ed25519 keys, Transport, and server APIs/constants. Real-socket `start_server` uses Apache MINA SSHD for reverse `tcpip-forward` with ServerInterface auth/approval; no `invoke_shell`. Works without cryptography/cffi, pip, wheel, or host binary."
+     (str "Sandbox Paramiko-compatible SSH2 over pure-Java JSch: "
+          "SSHClient exec/SFTP, RSA/DSS/ECDSA/Ed25519 keys, Transport, and server "
+          "APIs/constants. Real-socket `start_server` uses Apache MINA SSHD for reverse "
+          "`tcpip-forward` with ServerInterface auth/approval; no `invoke_shell`. "
+          "Works without cryptography/cffi, pip, wheel, or host binary.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -540,7 +544,14 @@
      [{:shim/name "paramiko"
        :shim/imports ["paramiko"]
        :shim/description
-       "Paramiko-compatible SSH2 via pure-Java JSch: SSHClient exec/SFTP, RSA/DSS/ECDSA/Ed25519 keys, and server APIs/constants. `Transport(real_socket).start_server()` runs Apache MINA SSHD for reverse `tcpip-forward`, delegating `none`/password auth and approval to `ServerInterface` (`check_auth_none`/`check_auth_password`/`check_port_forward_request`); `Transport.auth_none` authenticates against a server that accepts it. Import and socket-less `start_server()` start nothing; live servers cap at 32 and self-reap. Not supported: `invoke_shell`; use `exec_command`/SFTP."
+       (str "Paramiko-compatible SSH2 via pure-Java JSch: SSHClient exec/SFTP, "
+            "RSA/DSS/ECDSA/Ed25519 keys, and server APIs/constants. "
+            "`Transport(real_socket).start_server()` runs Apache MINA SSHD for reverse "
+            "`tcpip-forward`, delegating `none`/password auth and approval to `ServerInterface` "
+            "(`check_auth_none`/`check_auth_password`/`check_port_forward_request`); "
+            "`Transport.auth_none` authenticates against a server that accepts it. "
+            "Import and socket-less `start_server()` start nothing; live servers cap at 32 and "
+            "self-reap. Not supported: `invoke_shell`; use `exec_command`/SFTP.")
        :shim/bindings paramiko-bridge-bindings
        :shim/source "vis-shims/paramiko.py"}]}))
 

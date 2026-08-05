@@ -33,7 +33,11 @@
   (vis/extension
     {:ext/name "foundation-shim-xlsxwriter"
      :ext/description
-     "Sandbox XlsxWriter subset backed by com.blockether/imaging's Rust writer: workbooks/worksheets, formats, cell/row/column writes, formulas, dates, URLs, rich strings, ranges, panes, filters, images, and utilities. Produces real `.xlsx` files without pip/native wheel/JVM document model; no streaming, VBA, charts, or data validation."
+     (str "Sandbox XlsxWriter subset backed by com.blockether/imaging's Rust writer: "
+          "workbooks/worksheets, formats, cell/row/column writes, formulas, dates, URLs, rich "
+          "strings, ranges, panes, filters, images, and utilities. "
+          "Produces real `.xlsx` files without pip/native wheel/JVM document model; no "
+          "streaming, VBA, charts, or data validation.")
      :ext/version "0.2.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -43,7 +47,8 @@
      [{:shim/name "xlsxwriter"
        :shim/imports ["xlsxwriter"]
        :shim/description
-       "Rust-backed `xlsxwriter` .xlsx writer: models workbooks in Python and builds on close. No `constant_memory` streaming, VBA, charts, or data validation."
+       (str "Rust-backed `xlsxwriter` .xlsx writer: models workbooks in Python and builds on "
+            "close. No `constant_memory` streaming, VBA, charts, or data validation.")
        :shim/bindings xlsxwriter-bridge-bindings
        :shim/source "vis-shims/xlsxwriter.py"}]}))
 

@@ -21,7 +21,9 @@
   (vis/extension
     {:ext/name "foundation-shim-toml"
      :ext/description
-     "Sandbox pure-Python `toml` subset: stdlib `tomllib` reading plus writing scalars, arrays, inline tables, nested sections, and arrays of tables. No pip/wheel/host bridge."
+     (str "Sandbox pure-Python `toml` subset: stdlib `tomllib` reading plus writing scalars, "
+          "arrays, inline tables, nested sections, and arrays of tables. "
+          "No pip/wheel/host bridge.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -31,7 +33,8 @@
      [{:shim/name "toml"
        :shim/imports ["toml"]
        :shim/description
-       "`toml`: `loads`/`load` via stdlib tomllib; `dumps`/`dump` via pure Python. Reads are spec-correct; no comment preservation or exotic writer formatting."
+       (str "`toml`: `loads`/`load` via stdlib tomllib; `dumps`/`dump` via pure Python. "
+            "Reads are spec-correct; no comment preservation or exotic writer formatting.")
        :shim/source "vis-shims/toml.py"}]}))
 
 (vis/register-extension! vis-extension)
