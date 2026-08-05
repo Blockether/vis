@@ -7177,23 +7177,34 @@
 (defn- apply-auth-cooldown-routing
   "Seed an iteration's routing with the providers still serving an auth cooldown so
    the dead credential is skipped BEFORE the request instead of being rediscovered
-   with another 401. A provider the caller pinned explicitly is never excluded — an
-   explicit pin outranks the cooldown, and its own 401 re-arms the window."
+   with another 401.
+
+   A PIN does not outrank the cooldown. EVERY main turn is pinned — `prepare-turn-context`
+   forces the active provider+model into `:routing` so a provider failure surfaces as
+   an error the user acts on — so exempting a pinned provider exempted every real
+   turn: vis logged a five-minute cooldown and then re-probed, re-minted and
+   re-fell-back on the very next iteration, ~12-16s later (issue #114). A COOLED pin
+   is released exactly the way [[auth-fallback-routing]] releases it, which is the
+   route the previous fallback already took. A pin on a HEALTHY provider is left
+   alone, and the provider's own accepted request re-admits it immediately."
   [routing]
   (let
     [current
      (or routing {})
 
-     pinned
-     (or (:provider current) (:force-provider current))
-
      cooled
-     (disj (auth-cooled-providers) pinned)]
+     (auth-cooled-providers)
+
+     pinned
+     (or (:provider current) (:force-provider current))]
 
     (if (empty? cooled)
       current
       (cond->
         (-> current
+            (cond->
+              (contains? cooled pinned)
+              (dissoc :provider :model :force-provider :force-model))
             (assoc :on-auth-error :fallback-provider)
             (update :exclude-providers (fnil into #{}) cooled))
         (or (nil? (:on-transient-error current))
@@ -7334,15 +7345,24 @@
                        (long AUTH_PROPAGATION_WINDOW_MS)))))))
 
 (defn- note-provider-request-ok!
-  "Clear the just-refreshed propagation marker AND any auth cooldown for this
-   turn's provider once a request has been ACCEPTED (auth succeeded). Keeps
-   [[refresh-just-failed?]]'s recency window scoped to the post-refresh settling
-   burst, so a real credential rotation later is treated as a fresh 401 (re-mint),
-   never misread as propagation lag, and lets a re-authenticated provider re-enter
-   routing immediately instead of waiting out [[AUTH_COOLDOWN_MS]]. No-op when the
-   provider has neither marker."
-  [resolved-model]
-  (when-let [pid (:provider resolved-model)]
+  "Clear the just-refreshed propagation marker AND any auth cooldown for the provider
+   that ACCEPTED this iteration's request. Keeps [[refresh-just-failed?]]'s recency
+   window scoped to the post-refresh settling burst, so a real credential rotation
+   later is treated as a fresh 401 (re-mint), never misread as propagation lag, and
+   lets a re-authenticated provider re-enter routing immediately instead of waiting
+   out [[AUTH_COOLDOWN_MS]].
+
+   `iteration-result`'s `:llm-provider` is the provider that actually SERVED the
+   request; `resolved-model` is only Vis' pre-call guess — `resolve-effective-model`
+   reads the router HEAD, which the turn's pin hoists — so noting the guess let a
+   turn RESCUED on a peer re-admit the dead credential, and the next iteration
+   re-probed it (issue #114). No-op when the provider has neither marker."
+  [resolved-model iteration-result]
+  (when-let
+    [pid (let [served (:llm-provider iteration-result)]
+           (cond (keyword? served) served
+                 (string? served) (keyword served)
+                 :else (:provider resolved-model)))]
     (when (contains? @auth-last-refreshed pid) (swap! auth-last-refreshed dissoc pid))
     (clear-provider-auth-cooldown! pid)))
 
@@ -9219,7 +9239,10 @@
                                  :trace (conj trace trace-entry))))))
                   (let
                     [_ (accumulate-usage! (:api-usage iteration-result))
-                     _ (note-provider-request-ok! resolved-model)
+                     ;; The provider that ACCEPTED the request re-enters routing, never
+                     ;; the pre-call guess: a turn rescued on a peer used to re-admit the
+                     ;; dead credential and the next iteration re-probed it (issue #114).
+                     _ (note-provider-request-ok! resolved-model iteration-result)
                      {:keys [thinking assistant-prose blocks final-result]} iteration-result
                      block (first blocks)
                      ;; Phase 7: merge per-iteration `:lru` stamps

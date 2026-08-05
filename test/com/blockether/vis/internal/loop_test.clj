@@ -4987,10 +4987,10 @@
                          :exclude-providers #{:rbi-genai}}
                         (apply-cooldown base)))
              ;; An accepted request (re-login, rotated key) re-admits it immediately.
-             (request-ok! {:provider :rbi-genai})
+             (request-ok! {:provider :rbi-genai} {:llm-provider :rbi-genai})
              (expect (= base (apply-cooldown base)))
              (finally (reset! cooldown {})))))
-  (it "expires with the window and never excludes an explicitly pinned provider"
+  (it "expires with the window and releases even an explicitly pinned provider"
       (let
         [cooldown @#'lp/provider-auth-cooldown
 
@@ -5003,12 +5003,19 @@
           (reset! cooldown {:rbi-genai {:until (- now 1) :since (- now 60000) :hits 3}})
           (expect (= {} (apply-cooldown {})))
           (expect (= {} @cooldown))
-          ;; An EXPLICIT pin outranks the cooldown: the caller asked for that
-          ;; provider, so it is called (and its own 401 re-arms the window).
+          ;; A pin does NOT outrank the cooldown: every main turn is pinned, so the
+          ;; old exemption exempted every turn (see `auth-cooldown-storm-test`).
           (reset! cooldown {:rbi-genai {:until (+ now 60000) :since now :hits 1}})
-          (expect (= {:provider :rbi-genai :model "m"}
+          (expect (= {:on-auth-error :fallback-provider
+                      :on-transient-error :hybrid
+                      :exclude-providers #{:rbi-genai}}
                      (apply-cooldown {:provider :rbi-genai :model "m"})))
-          (expect (= {:force-provider :rbi-genai} (apply-cooldown {:force-provider :rbi-genai})))
+          ;; A pin on a HEALTHY provider survives, with the cooled peer excluded around it.
+          (expect (= {:provider :openai
+                      :on-auth-error :fallback-provider
+                      :on-transient-error :hybrid
+                      :exclude-providers #{:rbi-genai}}
+                     (apply-cooldown {:provider :openai})))
           (finally (reset! cooldown {})))))
   (it "reports the cooldown for observability"
       (let [cooldown @#'lp/provider-auth-cooldown]
@@ -5019,6 +5026,59 @@
                (expect (= 300000 (:cooldown-ms metrics)))
                (expect (= 1 (:hits (get (:cooldowns metrics) :rbi-genai)))))
              (finally (reset! cooldown {}))))))
+
+;; Regression, issue #114: vis logged `Provider auth recovery exhausted; falling back
+;; {:cooldown-ms 300000}` and then re-probed the very same dead credential ~12-16s
+;; later, minting a fresh OAuth token on every single iteration. Two holes fed the
+;; storm: every MAIN turn is pinned to the active provider (`prepare-turn-context`
+;; forces provider+model into `:routing`) and a pinned provider was EXEMPT from the
+;; cooldown, so the exemption covered every real turn; and a turn RESCUED on a peer
+;; cleared the DEAD provider's cooldown, because the accepted request was noted
+;; against Vis' pre-call guess (the router HEAD = the pinned provider) instead of
+;; the provider that actually answered.
+(defdescribe
+  auth-cooldown-storm-test
+  "The logged cooldown must be ENFORCED: a dead credential is neither re-probed nor
+   re-minted until the window elapses or the provider itself accepts a request."
+  (let
+    [cooldown @#'lp/provider-auth-cooldown
+
+     note! @#'lp/note-provider-auth-cooldown!
+
+     request-ok! @#'lp/note-provider-request-ok!
+
+     apply-cooldown @#'lp/apply-auth-cooldown-routing
+
+     released {:on-auth-error :fallback-provider
+               :on-transient-error :hybrid
+               :exclude-providers #{:rbi-genai}}]
+
+    (it "releases a PINNED dead provider instead of re-probing it every iteration"
+        (try
+          (reset! cooldown {})
+          (note! :rbi-genai)
+          ;; Exactly what a depth-0 turn asks for: the active provider+model, pinned.
+          (expect (= released
+                     (apply-cooldown {:provider :rbi-genai
+                                      :model "gpt-5"
+                                      :on-transient-error :fallback-model-in-the-same-provider})))
+          ;; `:force-provider` is the same pin under another name.
+          (expect (= released
+                     (apply-cooldown {:force-provider :rbi-genai :force-model "gpt-5"})))
+          (finally (reset! cooldown {}))))
+    (it "keeps the cooldown armed when a PEER served the turn"
+        (try
+          (reset! cooldown {})
+          (note! :rbi-genai)
+          ;; `resolved-model` is the pre-call guess (router head, i.e. the pin); only
+          ;; the iteration result knows which provider actually answered.
+          (request-ok! {:provider :rbi-genai :name "gpt-5"} {:llm-provider :openai})
+          (expect (= #{:rbi-genai} (:cooled-providers (lp/auth-cooldown-metrics))))
+          (expect (= released (apply-cooldown {:provider :rbi-genai :model "gpt-5"})))
+          ;; The provider that DID answer is re-admitted at once.
+          (request-ok! {:provider :rbi-genai :name "gpt-5"} {:llm-provider :rbi-genai})
+          (expect (= #{} (:cooled-providers (lp/auth-cooldown-metrics))))
+          (finally (reset! cooldown {}))))))
 
 (defdescribe
   wrapped-auth-exhaustion-cooldown-test
@@ -5079,7 +5139,7 @@
                            :exclude-providers #{:rbi-genai}
                            :on-transient-error :hybrid}
                           (@#'lp/apply-auth-cooldown-routing {})))
-               (@#'lp/note-provider-request-ok! resolved)
+               (@#'lp/note-provider-request-ok! resolved {:llm-provider :rbi-genai})
                (expect (= {} (@#'lp/apply-auth-cooldown-routing {})))
                (finally (reset! cooldown {})))))))
 
@@ -5149,7 +5209,7 @@
           (expect (true? (refresh-just-failed? (auth-401) {:provider :ap})))))
     (it "note-provider-request-ok! clears the marker so a later 401 re-mints, not backs off"
         (reset! auth-last-refreshed {:ap {:at (System/currentTimeMillis)}})
-        (note-provider-request-ok! {:provider :ap})
+        (note-provider-request-ok! {:provider :ap} {:llm-provider :ap})
         (expect (nil? (get @auth-last-refreshed :ap)))
         (expect (not (refresh-just-failed? (auth-401) {:provider :ap}))))
     (it "a post-refresh 401 stays REFRESHABLE-shaped but routes to backoff, never a dead latch"
