@@ -720,3 +720,40 @@
         (expect (= "sid-inner"
                    (extension/with-context {:env {:session-id "sid-inner"}}
                                            (:session-id extension/*current-environment*)))))))
+
+;; ── format_code/lint_code/etc. share invoke-symbol-wrapper with draft-aware cwd ──
+;;
+;; Turn 10-13's bug (`git`/`shell`/`repl*` bypassing `with-context`) lived in
+;; `run-native-handler`, the seam ONLY for symbols carrying an explicit
+;; `:ext.symbol/handler`. `format_code`/`lint_code` (and every plain
+;; `:inject-env? true` engine symbol without a `:handler`) never went through
+;; that seam at all: they dispatch through `invoke-symbol-wrapper`, which has
+;; wrapped every call in `with-context` since before this investigation
+;; started. This pins that the SAME generic path — the one
+;; `format_code`/`lint_code` actually use — resolves `workspace/*workspace-root*`
+;; from the call's own `:workspace/root`, so a draft session's format/lint
+;; already run against the draft, not trunk.
+(defn draft-cwd-probe
+  "A plain engine-bound symbol shaped like format_code/lint_code: no :handler,
+   :inject-env? true so the live env lands as its first argument."
+  [env]
+  (extension/success {:result {"root" (str workspace/*workspace-root*)
+                               "env-root" (str (:workspace/root env))}}))
+
+(defdescribe invoke-symbol-wrapper-workspace-root-test
+             (it "binds workspace/*workspace-root* from :workspace/root for a plain engine symbol"
+                 (let
+                   [draft-root
+                    (.getCanonicalPath (java.io.File. "target/test-draft-cwd-probe"))
+
+                    sym
+                    (extension/symbol #'draft-cwd-probe {:tag :observation :inject-env? true})
+
+                    ext
+                    {:ext/name "test.draft-cwd-probe" :ext/engine {:ext.engine/symbols [sym]}}
+
+                    result
+                    (extension/invoke-symbol-wrapper ext sym [] {:workspace/root draft-root})]
+
+                   (expect (= draft-root (get result "root")))
+                   (expect (= draft-root (get result "env-root"))))))
