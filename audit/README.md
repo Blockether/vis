@@ -184,6 +184,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
 | `com.blockether/fff` | `0.12.4` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/imaging` | `0.1.9` | MIT | 23 KB | Blockether (in-house) |
+| `com.blockether/rift` | `0.0.10-10` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.3.4` | MIT | 9 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.100` | Apache-2.0 | 507 KB | Blockether (in-house) |
 | `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.39` | MIT | 175 KB | Blockether (in-house) |
@@ -282,14 +283,6 @@ _Durable session store (SQLite + Flyway migrations)._
 | `org.flywaydb/flyway-database-nc-sqlite` | `12.11.0` | Apache-2.0 | 6 KB | 3rd-party |
 | `org.xerial/sqlite-jdbc` | `3.53.2.1` | Apache-2.0 | 11.4 MB | 3rd-party |
 | `tools.jackson.core/jackson-databind` | `3.2.1` | Apache-2.0 | 1.9 MB | 3rd-party |
-
-### `vis-workspace-rift` extension
-
-_Rift workspace/FFM integration._
-
-| Dependency | Version | License | Jar size | Ownership |
-|---|---|---|---|---|
-| `com.blockether/rift` | `0.0.10-10` | MIT | 11 KB | Blockether (in-house) |
 
 ---
 

@@ -11,7 +11,6 @@
             [com.blockether.vis.internal.foundation.workspace-slashes :as ws-slashes]
             [com.blockether.vis.ext.persistance-sqlite.core :as ps]
             [com.blockether.vis.ext.persistance-sqlite.registrar]
-            [com.blockether.vis.ext.workspace-rift]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.slash :as slash]

@@ -3,10 +3,11 @@
 
    The user's real cwd is *trunk* — Vis never mutates it, and Vis no
    longer requires it to be a git repo. A session works in trunk by
-   default; `/draft new` opts into an isolated workspace supplied by a
-   registered backend. Backends declare concrete capabilities such as
+   default; `/draft new` opts into an isolated workspace forked by Rift, the
+   only backend Vis ships. Rift declares concrete capabilities such as
    isolated fork, rollback, merge-back, retained revisions, and parallel
-   safety. Core never assumes which implementation provides them.
+   safety; core exposes them as a diagnostics/feature-discovery surface
+   rather than a selection mechanism.
 
    'What changed since the fork' is computed git-free: `clonefile`
    preserves source mtimes, so files the agent touches in the clone get
@@ -21,14 +22,15 @@
    the env carries `:workspace/root` from `create-environment` onward."
   (:refer-clojure :exclude [get])
   (:require [clojure.java.io :as io]
-            [clojure.set :as set]
             [clojure.string :as str]
+            [com.blockether.rift :as rift]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.persistance :as p])
+            [com.blockether.vis.internal.persistance :as p]
+            [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.nio.file CopyOption FileVisitResult Files LinkOption Path SimpleFileVisitor
             StandardCopyOption]
-           [java.nio.file.attribute BasicFileAttributes]))
+           [java.nio.file.attribute BasicFileAttributes FileAttribute PosixFilePermission]))
 
 ;; =============================================================================
 ;; Dynamic cwd binding
@@ -381,142 +383,279 @@
     (str name "-" hash)))
 
 ;; =============================================================================
-;; Workspace backend registry and capability matrix
+;; Rift copy-on-write workspace backend — the only backend, hardcoded
 ;; =============================================================================
 
-(def workspace-capabilities
-  "Closed capability vocabulary for workspace backends."
-  #{:isolated-fork :merge-back :rollback :retained-revisions :parallel-safe})
+(defn- rift-linked-git-worktree-source?
+  [root]
+  (try (let [dot-git (io/file root ".git")]
+         (and (.isFile dot-git)
+              (some-> (slurp dot-git)
+                      str/trim
+                      (str/starts-with? "gitdir:"))))
+       (catch Throwable _ false)))
 
-(def ^:private draft-required-capabilities
-  #{:isolated-fork :merge-back :rollback :retained-revisions})
+(defn- rift-writable-dir?
+  [path]
+  (try (Files/isWritable (.toPath (io/file path))) (catch Throwable _ false)))
 
-(defonce ^:private backend-registry (atom {}))
+(defn- rift-delete-path! [^Path path] (Files/deleteIfExists path))
 
-(defn workspace-backend
-  "Validate and return a workspace backend descriptor.
+(defn- rift-delete-tree!
+  "Delete a temporary Rift probe tree.
 
-   Required keys:
-     :workspace.backend/id            keyword
-     :workspace.backend/capabilities  capability set
-     :workspace.backend/available-fn  ({:source-root :store-root} -> bool or
-                                      {:available? bool :reason keyword :details map})
-     :workspace.backend/fork-fn       ({:source-root :store-root :name} -> path
-                                      OR {:root <path> :mechanism <keyword>},
-                                      where :mechanism names HOW the clone was
-                                      physically made, e.g. :apfs / :worktree)
-     :workspace.backend/discard-fn    ({:root} -> nil)"
-  [backend]
+   This is intentionally fail-loud. Recursive deletion cannot be atomic, but it
+   must never silently leave a partial tree behind. We try every child first,
+   then throw with both failures and remaining paths so callers get actionable
+   cleanup diagnostics."
+  [dir]
   (let
-    [id
-     (:workspace.backend/id backend)
-
-     caps
-     (:workspace.backend/capabilities backend)]
-
-    (when-not (keyword? id)
-      (throw (ex-info "Workspace backend id must be a keyword"
-                      {:type :workspace/invalid-backend :backend backend})))
-    (when-not (and (set? caps) (every? workspace-capabilities caps))
-      (throw (ex-info "Workspace backend has invalid capabilities"
-                      {:type :workspace/invalid-backend :backend-id id :capabilities caps})))
-    (doseq
-      [k [:workspace.backend/available-fn :workspace.backend/fork-fn :workspace.backend/discard-fn]]
-      (when-not (ifn? (clojure.core/get backend k))
-        (throw (ex-info (str "Workspace backend requires " k)
-                        {:type :workspace/invalid-backend :backend-id id :key k}))))
-    (update backend :workspace.backend/priority #(long (or % 0)))))
-
-(defn register-backend!
-  "Register a workspace backend. Idempotent by backend id."
-  [backend]
-  (let
-    [backend
-     (workspace-backend backend)
-
-     id
-     (:workspace.backend/id backend)]
-
-    (swap! backend-registry assoc id backend)
-    backend))
-
-(defn deregister-backend! [backend-id] (swap! backend-registry dissoc backend-id) nil)
-
-(defn registered-backends
-  "Registered workspace backends ordered by descending priority."
-  []
-  (->> @backend-registry
-       vals
-       (sort-by (juxt (comp - :workspace.backend/priority) (comp str :workspace.backend/id)))
-       vec))
-
-(defn capability-matrix
-  "Describe every registered backend for `source-root`, including availability
-   and declared capabilities. This is the public feature-discovery surface.
-   It never loads extensions: extension discovery owns backend registration."
-  ([source-root] (capability-matrix source-root source-root))
-  ([source-root store-root]
-   (mapv (fn [backend]
-           (let
-             [availability
-              (try ((:workspace.backend/available-fn backend)
-                     {:source-root (file-path source-root) :store-root (file-path store-root)})
+    [root (some-> dir
+                  io/file
+                  .toPath)]
+    (when (and root (Files/exists root (make-array LinkOption 0)))
+      (let [failures (atom [])]
+        (Files/walkFileTree
+          root
+          (proxy [SimpleFileVisitor] []
+            (visitFile [path _attrs]
+              (try (rift-delete-path! path)
                    (catch Throwable t
-                     {:available? false
-                      :reason :availability-check-failed
-                      :details {:error (or (ex-message t) (str t))}}))
+                     (swap! failures conj {:path (str path) :error (or (ex-message t) (str t))})))
+              FileVisitResult/CONTINUE)
+            (postVisitDirectory [path exc]
+              (when exc
+                (swap! failures conj {:path (str path) :error (or (ex-message exc) (str exc))}))
+              (try (rift-delete-path! path)
+                   (catch Throwable t
+                     (swap! failures conj {:path (str path) :error (or (ex-message t) (str t))})))
+              FileVisitResult/CONTINUE)))
+        (when (seq @failures)
+          (let
+            [remaining
+             (try (with-open [stream (Files/walk root (make-array java.nio.file.FileVisitOption 0))]
+                    (vec (map str (iterator-seq (.iterator stream)))))
+                  (catch Throwable t
+                    [(str "<remaining-path-scan-failed: " (or (ex-message t) (str t)) ">")]))]
+            (throw (ex-info "Failed to fully delete Rift temporary tree"
+                            {:type :workspace-rift/delete-tree-failed
+                             :root (str root)
+                             :failures @failures
+                             :remaining remaining}))))))))
 
-              availability
-              (if (map? availability) availability {:available? (boolean availability)})]
-
-             (merge {:backend (:workspace.backend/id backend)
-                     :priority (:workspace.backend/priority backend)
-                     :available? (boolean (:available? availability))
-                     :capabilities (:workspace.backend/capabilities backend)}
-                    (select-keys availability [:reason :details]))))
-         (registered-backends))))
-
-(defn select-backend
-  "Select the highest-priority available backend covering `required`.
-   Returns nil when no backend can provide the requested semantics."
-  [source-root store-root required]
+(defn- rift-fork-failure-data
+  [{:keys [source-root store-root name]} t]
   (let
-    [required
-     (set required)
+    [into-file
+     (io/file store-root)
 
-     available
-     (capability-matrix source-root store-root)]
+     parent-file
+     (.getParentFile into-file)
 
-    (some (fn [{:keys [backend available? capabilities]}]
-            (when (and available? (set/subset? required capabilities))
-              (clojure.core/get @backend-registry backend)))
-          available)))
+     data
+     (ex-data t)]
 
-(defn supports?
-  "True when some backend can provide `required` for the given roots."
-  ([source-root required] (supports? source-root source-root required))
-  ([source-root store-root required] (boolean (select-backend source-root store-root required))))
+    {:source-root (file-path source-root)
+     :source-linked-worktree? (rift-linked-git-worktree-source? source-root)
+     :clone-name (str name)
+     :store-root (file-path store-root)
+     :store-exists? (.exists into-file)
+     :store-writable? (rift-writable-dir? store-root)
+     :store-parent (some-> parent-file
+                           .getCanonicalPath)
+     :store-parent-writable? (boolean (and parent-file (rift-writable-dir? parent-file)))
+     :rift-error-type (:type data)
+     :rift-error-code (:code data)
+     :rift-error-command (:command data)
+     :rift-error-path (:path data)
+     :error (or (ex-message t) (str t))}))
+
+(def ^:private rift-prune-dir-names
+  "Directory names skipped AT ANY DEPTH when toggling source perms for a fork:
+   VCS internals plus build/dependency/editor caches. They hold thousands of
+   gitignored files that are never part of the fork, so walking them just to
+   flip a write bit is what made `/draft new` stall on a large repo."
+  #{".git" ".rift" ".trash" ".cpcache" ".lsp" ".lsp-cache" "target" "node_modules" ".shadow-cljs"
+    ".cljs_node_repl" ".gitlibs" ".gradle" ".idea"})
+
+(defn- rift-source-prune-dir?
+  "True when the source-relative directory `dir` lies in a VCS/build/cache
+   subtree (`rift-prune-dir-names` at ANY depth, or `.clj-kondo/.cache`) that the
+   perms walk must skip. A monorepo nests its caches — `apps/web/node_modules`,
+   `extensions/<ext>/target` — so matching only the first segment walked them
+   all anyway, which is the stall this prune exists to avoid."
+  [^Path root ^Path dir]
+  (let
+    [rel
+     (.relativize root dir)
+
+     c
+     (.getNameCount rel)]
+
+    (loop [i 0]
+      (if (>= i c)
+        false
+        (let [s (str (.getName rel i))]
+          (if (or (contains? rift-prune-dir-names s)
+                  (and (= ".clj-kondo" s) (< (inc i) c) (= ".cache" (str (.getName rel (inc i))))))
+            true
+            (recur (inc i))))))))
+
+(defn- rift-read-only-perms
+  "Map {Path -> perms} of every non-owner-writable regular file under `src`,
+   pruning `rift-source-prune-dir?` subtrees so a large repo's `.git`/`target`/`.cpcache`
+   are never walked."
+  [src]
+  (try (let
+         [root
+          (.toPath (io/file src))
+
+          no-link
+          (make-array LinkOption 0)
+
+          acc
+          (java.util.HashMap.)]
+
+         (Files/walkFileTree root
+                             (proxy [SimpleFileVisitor] []
+                               (preVisitDirectory [dir _attrs]
+                                 (if (rift-source-prune-dir? root dir)
+                                   FileVisitResult/SKIP_SUBTREE
+                                   FileVisitResult/CONTINUE))
+                               (visitFile [^Path p _attrs]
+                                 (let [perms (Files/getPosixFilePermissions p no-link)]
+                                   (when-not (.contains perms PosixFilePermission/OWNER_WRITE)
+                                     (.put acc p perms)))
+                                 FileVisitResult/CONTINUE)))
+         (into {} acc))
+       (catch Exception _ {})))
+
+(defn- rift-with-source-writable
+  [src thunk]
+  (let [orig (rift-read-only-perms src)]
+    (doseq [[^Path p ^java.util.Set perms] orig]
+      (let [w (java.util.HashSet. perms)]
+        (.add w PosixFilePermission/OWNER_WRITE)
+        (Files/setPosixFilePermissions p w)))
+    (try (thunk)
+         (finally (doseq [[^Path p perms] orig]
+                    (try (Files/setPosixFilePermissions p perms) (catch Exception _ nil)))))))
+
+(defonce ^:private rift-availability-cache (atom {}))
+
+(defn- rift-probe-key [source-root store-root] [(file-path source-root) (file-path store-root)])
+
+(defn- rift-probe!
+  [{:keys [source-root store-root]}]
+  (try (when (rift-linked-git-worktree-source? source-root)
+         (throw (ex-info "Linked Git worktrees are not supported as Rift sources"
+                         {:type :workspace/unsupported-rift-source :reason :linked-git-worktree})))
+       (Files/createDirectories (.toPath (io/file store-root)) (make-array FileAttribute 0))
+       (let
+         [src
+          (str (Files/createTempDirectory (.toPath (io/file source-root))
+                                          ".vis-rift-probe-"
+                                          (make-array FileAttribute 0)))
+
+          dst
+          (str (Files/createTempDirectory (.toPath (io/file store-root))
+                                          ".vis-rift-probe-"
+                                          (make-array FileAttribute 0)))]
+
+         (try (spit (io/file src "probe") "ok")
+              (rift/init {:at src})
+              (if (rift/create {:from src :name "clone" :into dst})
+                {:available? true}
+                {:available? false :reason :probe-returned-no-workspace})
+              (finally (try (rift/remove! {:at (str (io/file dst "clone"))})
+                            (catch Throwable _ nil))
+                       (try (rift/gc) (catch Throwable _ nil))
+                       (rift-delete-tree! src)
+                       (rift-delete-tree! dst))))
+       (catch Throwable t
+         {:available? false
+          :reason (or (:reason (ex-data t)) :probe-failed)
+          :details (rift-fork-failure-data
+                     {:source-root source-root :store-root store-root :name "availability-probe"}
+                     t)})))
+
+(defn rift-available?
+  "Probe (and cache) whether Rift can fork `source-root` into `store-root`.
+   Returns `{:available? bool :reason kw :details map}`. Rift is the only
+   workspace backend Vis ships."
+  [source-root store-root]
+  (let [store-root (or store-root source-root)]
+    (try (if (rift-linked-git-worktree-source? source-root)
+           {:available? false :reason :linked-git-worktree}
+           (do (Files/createDirectories (.toPath (io/file store-root)) (make-array FileAttribute 0))
+               (let [key (rift-probe-key source-root store-root)]
+                 (if (contains? @rift-availability-cache key)
+                   (clojure.core/get @rift-availability-cache key)
+                   (let [result (rift-probe! {:source-root source-root :store-root store-root})]
+                     (swap! rift-availability-cache assoc key result)
+                     result)))))
+         (catch Throwable t
+           {:available? false
+            :reason :probe-setup-failed
+            :details {:error (or (ex-message t) (str t))}}))))
+
+(defn rift-fork!
+  "Clone `source-root` into `store-root` and report HOW rift made the clone:
+   `{:root <path> :mechanism :btrfs|:reflink|:apfs|:worktree|:copy}`. The
+   mechanism is nil against a native library older than kind reporting; vis
+   persists it so a draft can say it is worktree-backed rather than guess."
+  [{:keys [source-root store-root name] :as opts}]
+  (try (when (rift-linked-git-worktree-source? source-root)
+         (throw (ex-info "Linked Git worktrees are not supported as Rift sources"
+                         {:type :workspace/unsupported-rift-source
+                          :reason :linked-git-worktree
+                          :source (file-path source-root)})))
+       (rift/init {:at source-root})
+       (Files/createDirectories (.toPath (io/file store-root)) (make-array FileAttribute 0))
+       (let
+         [{:keys [path kind]} (rift-with-source-writable
+                                source-root
+                                #(rift/create-detailed
+                                   {:from source-root :name name :into store-root}))]
+         {:root path :mechanism kind})
+       (catch Throwable t
+         (tel/log! {:level :warn :id ::fork-failed :data (rift-fork-failure-data opts t)}
+                   (str "Rift workspace fork failed: " (or (ex-message t) (str t))))
+         (throw t))))
+
+(defn rift-discard!
+  "Release and physically delete the clone at `root` (remove! + gc). Synchronous:
+   callers (and tests) rely on the clone being gone once this returns."
+  [{:keys [root]}]
+  (rift/remove! {:at root})
+  (rift/gc))
 
 (declare draft-store-root)
 
 (defn workspace-capability-matrix
-  "Capability matrix for a workspace (or root path), using the real derived
+  "Rift's availability for `workspace-or-root`, using the real derived
    workspace storage location rather than assuming source and destination are
-   on the same filesystem."
+   on the same filesystem. One-entry vector; Rift is the only backend Vis
+   ships, so this is a feature-discovery/diagnostics surface rather than a
+   selection mechanism."
   [workspace-or-root]
   (let
     [source-root
      (if (map? workspace-or-root) (:root workspace-or-root) workspace-or-root)
 
      repo-root
-     (if (map? workspace-or-root) (:repo-root workspace-or-root) workspace-or-root)]
+     (if (map? workspace-or-root) (:repo-root workspace-or-root) workspace-or-root)
 
-    (capability-matrix source-root (draft-store-root repo-root))))
+     availability
+     (rift-available? (file-path source-root) (file-path (draft-store-root repo-root)))]
+
+    [(merge {:backend :rift :available? (boolean (:available? availability))}
+            (select-keys availability [:reason :details]))]))
 
 (defn isolated-workspaces-supported?
   "True when the current root can create full draft workspaces."
   ([] (isolated-workspaces-supported? (trunk-root)))
-  ([root] (supports? root (draft-store-root root) draft-required-capabilities)))
+  ([root] (:available? (first (workspace-capability-matrix root)))))
 
 (defn cow-platform-hint
   "The copy-on-write requirement for `os-name` (a raw `os.name` value), as one
@@ -543,25 +682,15 @@
                      "this platform has no copy-on-write workspace backend."))))
 
 (defn isolation-unavailable-hint
-  "One actionable sentence explaining why no backend can fork
-   `workspace-or-root` and what the user must change. Derived from the live
-   capability matrix first (no backend registered, an unforkable source), and
-   otherwise from the platform's copy-on-write requirement. Only meaningful
-   when `isolated-workspaces-supported?` is false."
+  "One actionable sentence explaining why Rift cannot fork `workspace-or-root`
+   and what the user must change. Only meaningful when
+   `isolated-workspaces-supported?` is false."
   ([] (isolation-unavailable-hint (trunk-root)))
   ([workspace-or-root]
-   (let
-     [matrix
-      (workspace-capability-matrix workspace-or-root)
-
-      reasons
-      (into #{} (keep :reason) matrix)]
-
-     (cond (empty? matrix)
-           "No workspace backend is registered — the workspace-rift extension is not loaded."
-           (contains? reasons :linked-git-worktree)
-           "A linked Git worktree cannot be forked — start the session from the main worktree."
-           :else (cow-platform-hint (System/getProperty "os.name"))))))
+   (let [reasons (into #{} (keep :reason) (workspace-capability-matrix workspace-or-root))]
+     (if (contains? reasons :linked-git-worktree)
+       "A linked Git worktree cannot be forked — start the session from the main worktree."
+       (cow-platform-hint (System/getProperty "os.name"))))))
 
 (def
   ^{:dynamic true
@@ -600,36 +729,32 @@
                LinkOption/NOFOLLOW_LINKS]))
 
 (defn- backend-fork!
-  "Fork `source-root` with the strongest backend providing `required`. Returns
-   `{:root <clone path> :backend <id> :mechanism <keyword|nil>}` — `:mechanism`
-   is HOW the clone was physically made (rift: `:btrfs` `:reflink` `:apfs`
-   `:worktree` `:copy`), nil for a backend that does not report one."
-  [source-root store-root name required]
+  "Fork `source-root` into a private Rift clone under `store-root`. Returns
+   `{:root <clone path> :backend :rift :mechanism <keyword|nil>}` —
+   `:mechanism` is HOW the clone was physically made (`:btrfs` `:reflink`
+   `:apfs` `:worktree` `:copy`)."
+  [source-root store-root name]
   (let
     [store-root
      (draft-store-root store-root)
 
-     backend
-     (select-backend source-root store-root required)]
+     availability
+     (rift-available? (file-path source-root) (file-path store-root))]
 
-    (when-not backend
-      (throw (ex-info "No workspace backend provides the required capabilities"
+    (when-not (:available? availability)
+      (throw (ex-info "Rift cannot fork this workspace"
                       {:type :workspace/capability-unavailable
-                       :required (set required)
                        :source-root (file-path source-root)
-                       :capability-matrix (capability-matrix source-root store-root)})))
+                       :reason (:reason availability)
+                       :details (:details availability)
+                       :capability-matrix (workspace-capability-matrix source-root)})))
     (let
-      [forked
-       ((:workspace.backend/fork-fn backend)
-         {:source-root (file-path source-root) :store-root (file-path store-root) :name name})
-
-       ;; A backend returns either a bare clone path or `{:root :mechanism}`.
-       root
-       (if (map? forked) (:root forked) forked)]
-
-      {:root (file-path root)
-       :backend (:workspace.backend/id backend)
-       :mechanism (when (map? forked) (mechanism-id (:mechanism forked)))})))
+      [forked (rift-fork! {:source-root (file-path source-root)
+                           :store-root (file-path store-root)
+                           :name name})]
+      {:root (file-path (:root forked))
+       :backend :rift
+       :mechanism (mechanism-id (:mechanism forked))})))
 
 (defn- git*
   "Run `git <args>` inside `dir` and return `{:exit :out}` — `:exit` is nil when
@@ -746,14 +871,10 @@
 
 (defn- discard-root!
   [backend-id root]
-  ;; The clean-seed sidecar lives NEXT TO the clone, so the backend's own
-  ;; discard never sees it — drop it with the clone it describes.
+  ;; The clean-seed sidecar lives NEXT TO the clone, so Rift's own discard
+  ;; never sees it — drop it with the clone it describes.
   (when root (io/delete-file (clean-seed-manifest root) true))
-  (when (and root (not= :live backend-id))
-    (if-let [backend (clojure.core/get @backend-registry backend-id)]
-      ((:workspace.backend/discard-fn backend) {:root (file-path root)})
-      (throw (ex-info "Workspace backend is not registered"
-                      {:type :workspace/backend-unavailable :backend backend-id :root root})))))
+  (when (and root (not= :live backend-id)) (rift-discard! {:root (file-path root)})))
 
 (defonce ^:private discard-executor
   ;; Single daemon thread: serializes physical clone reclamation OFF the request
@@ -1326,17 +1447,16 @@
         (insert-trunk! db-info session-state-id canon)))))
 
 (defn- fork-extra-roots!
-  "Mint one private clone per planned extra root (`[{:trunk :policy}]`, from
-   `draft-isolation-plan`). Returns persistable entries, each recording the
-   backend AND the mechanism that physically made the clone. Best-effort per
-   root: a root that cannot be forked yields NO entry, and `env-filesystem-roots`
-   then marks that copy-policy root `:denied?` — the draft loses access rather
+  "Mint one private Rift clone per planned extra root (`[{:trunk :policy}]`,
+   from `draft-isolation-plan`). Returns persistable entries, each recording
+   the mechanism that physically made the clone. Best-effort per root: a root
+   that cannot be forked yields NO entry, and `env-filesystem-roots` then
+   marks that copy-policy root `:denied?` — the draft loses access rather
    than silently writing through to the real tree."
-  [plan name required]
+  [plan name]
   (into []
         (keep (fn [{:keys [trunk policy]}]
-                (try (let
-                       [{:keys [root backend mechanism]} (backend-fork! trunk trunk name required)]
+                (try (let [{:keys [root backend mechanism]} (backend-fork! trunk trunk name)]
                        (cond->
                          {:trunk trunk
                           :clone (file-path root)
@@ -1365,7 +1485,7 @@
    as agent edits, and the dropped paths are recorded so `deleted-paths`
    never mistakes them for deletions. Requires a repository with a commit;
    throws `:workspace/clean-seed-unavailable` otherwise."
-  [db-info {:keys [session-state-id label from required-capabilities clean? filesystem-roots]}]
+  [db-info {:keys [session-state-id label from clean? filesystem-roots]}]
   (let
     [trunk
      (or (:repo-root from) (trunk-root))
@@ -1385,7 +1505,7 @@
      (free-workspace-name trunk label)
 
      {:keys [root backend mechanism]}
-     (backend-fork! parent trunk nm (or required-capabilities draft-required-capabilities))
+     (backend-fork! parent trunk nm)
 
      ;; BEFORE the baseline below: the revert rewrites mtimes, and a clone
      ;; that cannot be scrubbed must never survive as a half-seeded draft.
@@ -1405,9 +1525,7 @@
      ;; caller may pass an explicit plan (tests, non-interactive spawns);
      ;; otherwise the plan comes from the roots bound for this turn.
      extra-roots
-     (fork-extra-roots! (or filesystem-roots (draft-isolation-plan))
-                        nm
-                        (or required-capabilities draft-required-capabilities))
+     (fork-extra-roots! (or filesystem-roots (draft-isolation-plan)) nm)
 
      ws
      (p/db-workspace-insert! db-info

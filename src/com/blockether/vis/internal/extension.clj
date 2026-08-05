@@ -858,8 +858,6 @@
 (s/def :ext/persistance-entry (s/keys :req [:persistance/id :persistance/ns]))
 
 (s/def :ext/persistance (s/coll-of :ext/persistance-entry :kind vector?))
-;; Workspace isolation/checkpoint backends exported by this extension.
-(s/def :ext/workspace-backends (s/coll-of map? :kind vector?))
 ;; Attachment storage-offload backends exported by this extension (each a
 ;; descriptor map: :storage/id :storage/scheme :storage/put-fn :storage/get-fn
 ;; plus optional :storage/offload? :storage/priority).
@@ -1301,9 +1299,9 @@
                        :ext/ctx-fn :ext/protected-paths :ext/hooks :ext/op-hooks
                        :ext/network-filters :ext/env :ext/settings :ext/theme :ext/requires
                        :ext/version :ext/author :ext/owner :ext/license :ext/cli :ext/channels
-                       :ext/providers :ext/persistance :ext/workspace-backends
-                       :ext/attachment-storage :ext/channel-contributions :ext/slash-commands
-                       :ext/doctor-fn :ext/sandbox-shims])
+                       :ext/providers :ext/persistance :ext/attachment-storage
+                       :ext/channel-contributions :ext/slash-commands :ext/doctor-fn
+                       :ext/sandbox-shims])
          ns-alias-required-when-symbols?
          kind-required-when-symbols?))
 ;; =============================================================================
@@ -2762,7 +2760,6 @@
         (seq (:ext/channels spec)) "channels"
         (seq (:ext/channel-contributions spec)) "channels"
         (seq (:ext/persistance spec)) "persistance"
-        (seq (:ext/workspace-backends spec)) "workspace"
         :else nil))
 
 (defn extension
@@ -2822,9 +2819,6 @@
 
         (not (:ext/persistance spec))
         (assoc :ext/persistance [])
-
-        (not (:ext/workspace-backends spec))
-        (assoc :ext/workspace-backends [])
 
         (not (:ext/attachment-storage spec))
         (assoc :ext/attachment-storage [])
@@ -3091,11 +3085,6 @@
   (doseq [{:persistance/keys [id ns]} entries]
     (persistance/register-backend! id ns)))
 
-(defn- dispatch-workspace-backends!
-  [entries]
-  (doseq [entry entries]
-    (workspace/register-backend! entry)))
-
 (defn- dispatch-attachment-storage!
   [entries]
   (doseq [entry entries]
@@ -3201,7 +3190,6 @@
                       :channels (count (:ext/channels ext))
                       :providers (count (:ext/providers ext))
                       :persistance (count (:ext/persistance ext))
-                      :workspace-backends (count (:ext/workspace-backends ext))
                       :themes (count (:ext/theme ext))}
                :msg (str "Extension '" ns-sym "' registered globally")})
     (doseq [c (:ext/cli ext)]
@@ -3210,7 +3198,6 @@
       (registry/register-channel! c))
     (dispatch-providers! (:ext/providers ext))
     (dispatch-persistance! (:ext/persistance ext))
-    (dispatch-workspace-backends! (:ext/workspace-backends ext))
     (dispatch-attachment-storage! (:ext/attachment-storage ext))
     (install-op-hooks! ext)
     (install-egress-filters! ext)
@@ -3383,14 +3370,6 @@
              (tel/log! {:level :warn
                         :id ::deregister-backend-failed
                         :data {:ext ns-sym :backend-id id :error (ex-message t)}}))))
-    (doseq [backend (:ext/workspace-backends ext)]
-      (try (workspace/deregister-backend! (:workspace.backend/id backend))
-           (catch Throwable t
-             (tel/log! {:level :warn
-                        :id ::deregister-workspace-backend-failed
-                        :data {:ext ns-sym
-                               :backend-id (:workspace.backend/id backend)
-                               :error (ex-message t)}}))))
     (doseq [backend (:ext/attachment-storage ext)]
       (try (attachment-storage/deregister-backend! (:storage/id backend))
            (catch Throwable t

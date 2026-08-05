@@ -34,8 +34,7 @@
     "extensions/common/vis-foundation-bridge/test" "extensions/common/vis-foundation-search/test"
     "extensions/common/vis-foundation-voice/test" "extensions/languages/vis-language-clojure/test"
     "extensions/languages/vis-language-python/test"
-    "extensions/languages/vis-language-typescript-bun/test"
-    "extensions/workspaces/vis-workspace-rift/test"]
+    "extensions/languages/vis-language-typescript-bun/test"]
    :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
               "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
               "-Dvis.drafts.dir=target/vis-drafts-test"]
@@ -112,7 +111,7 @@
   com.blockether/vis-language-python {:local/root "extensions/languages/vis-language-python"}
   com.blockether/vis-language-typescript-bun {:local/root
                                               "extensions/languages/vis-language-typescript-bun"}
-  com.blockether/vis-workspace-rift {:local/root "extensions/workspaces/vis-workspace-rift"}
+  com.blockether/rift {:mvn/version "0.0.10-10"}
   com.blockether/svar {:mvn/version "0.7.100"}
   com.blockether/anomaly {:mvn/version "1.0.1"}
   ;; Runtime downloader for the per-platform FFM native jars (fff/ruff/imaging/
@@ -121,8 +120,8 @@
   ;; none) and it is the sole reason com.cognitect.aws/{api,s3,endpoints} + their
   ;; slf4j/jackson tail get resolved, downloaded and logged during every cold CI
   ;; native build — and they are not native-image-safe.
-  org.clojure/tools.deps {:mvn/version "0.31.1638"
-                          :exclusions [org.clojure/tools.deps.maven-s3-transporter]}
+  org.clojure/tools.deps {:exclusions [org.clojure/tools.deps.maven-s3-transporter]
+                          :mvn/version "0.31.1638"}
   org.commonmark/commonmark {:mvn/version "0.29.0"}
   org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.29.0"}
   org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.29.0"}
@@ -146,7 +145,7 @@
   com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.39"}
   com.blockether/ruff {:mvn/version "0.3.4"}
   org.clojure/core.memoize {:mvn/version "1.2.281"}
-   com.blockether/fff {:mvn/version "0.12.4"}
+  com.blockether/fff {:mvn/version "0.12.4"}
   com.taoensso/telemere {:mvn/version "1.2.1"}
   ;; Version MUST match com.taoensso/telemere.
   com.taoensso/telemere-slf4j {:mvn/version "1.2.1"}

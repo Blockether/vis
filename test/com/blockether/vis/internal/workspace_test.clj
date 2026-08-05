@@ -8,9 +8,6 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.ext.persistance-sqlite.core :as ps]
             [com.blockether.vis.ext.persistance-sqlite.registrar]
-            ;; Registers the :rift workspace backend (the capability that create!/apply!
-            ;; dispatch to) at load via its top-level register-extension!.
-            [com.blockether.vis.ext.workspace-rift]
             [com.blockether.vis.internal.workspace :as ws]
             [lazytest.core :refer [defdescribe expect it]]
             [next.jdbc :as jdbc]))
@@ -63,22 +60,21 @@
     store
     {:id (str (random-uuid)) :repo-id "rt" :repo-root base :root base :state :active :fork-ms 1}))
 
-(defn- mechanism-backend
-  "Fake backend whose fork-fn reports HOW it made the clone. `mechanism` nil
-   returns a BARE path, exactly like a backend written before mechanism
-   reporting existed."
-  [mechanism]
-  (ws/workspace-backend {:workspace.backend/id :live
-                         :workspace.backend/capabilities ws/workspace-capabilities
-                         :workspace.backend/available-fn (constantly true)
-                         :workspace.backend/fork-fn (fn [{:keys [store-root name]}]
-                                                      (let [root (io/file store-root name)]
-                                                        (.mkdirs root)
-                                                        (if mechanism
-                                                          {:root (.getCanonicalPath root)
-                                                           :mechanism mechanism}
-                                                          (.getCanonicalPath root))))
-                         :workspace.backend/discard-fn (constantly nil)}))
+(defn- with-fork-mechanism
+  "Redef rift-fork! so `create!` reports `mechanism` (nil = a native library
+   older than kind reporting, exactly like the bare-path case)."
+  [mechanism f]
+  (with-redefs
+    [ws/rift-fork!
+     (fn [{:keys [store-root name]}]
+       (let [root (io/file store-root name)]
+         (.mkdirs root)
+         {:root (.getCanonicalPath root) :mechanism mechanism}))
+
+     ws/rift-available?
+     (constantly {:available? true})]
+
+    (f)))
 
 (defn- pin-session!
   "Insert a session_soul + session_state pinned 1:1 to `workspace-id`, so
@@ -812,9 +808,10 @@
       (expect (re-find #"(?i)one directory is enough" (ws/cow-platform-hint "Linux")))
       (expect (re-find #"vis\.drafts\.dir" (ws/cow-platform-hint "Linux")))
       (expect (re-find #"(?i)copy-on-write" (ws/cow-platform-hint "Windows 11"))))
-  (it "blames a missing backend registry before the filesystem"
+  (it "falls back to the platform requirement when no backend is available"
       (with-redefs [ws/workspace-capability-matrix (constantly [])]
-        (expect (re-find #"workspace-rift" (ws/isolation-unavailable-hint "/tmp")))))
+        (expect (= (ws/cow-platform-hint (System/getProperty "os.name"))
+                   (ws/isolation-unavailable-hint "/tmp")))))
   (it "reports an unforkable linked git worktree from the capability matrix"
       (with-redefs
         [ws/workspace-capability-matrix
@@ -843,15 +840,13 @@
                  (fn [store]
                    (let
                      [seed (seed-workspace! store base)
-                      reported (with-redefs
-                                 [ws/select-backend (fn [_ _ _]
-                                                      (mechanism-backend :worktree))]
-                                 (ws/create! store {:from seed}))
+                      reported (with-fork-mechanism :worktree
+                                                    (fn []
+                                                      (ws/create! store {:from seed})))
                       ;; a backend from before mechanism reporting returns a BARE path
-                      legacy (with-redefs
-                               [ws/select-backend (fn [_ _ _]
-                                                    (mechanism-backend nil))]
-                               (ws/create! store {:from seed}))]
+                      legacy (with-fork-mechanism nil
+                                                  (fn []
+                                                    (ws/create! store {:from seed})))]
 
                      (expect (= :worktree (:workspace-mechanism reported)))
                      ;; and it survives the sqlite column, not just the in-memory return

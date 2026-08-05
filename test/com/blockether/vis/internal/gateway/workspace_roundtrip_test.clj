@@ -8,7 +8,6 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.ext.persistance-sqlite.core :as ps]
             [com.blockether.vis.ext.persistance-sqlite.registrar]
-            [com.blockether.vis.ext.workspace-rift]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
@@ -32,16 +31,20 @@
   (doseq [f (reverse (file-seq (io/file root)))]
     (io/delete-file f true)))
 
-(defn- local-test-backend
-  []
-  (ws/workspace-backend {:workspace.backend/id :live
-                         :workspace.backend/capabilities ws/workspace-capabilities
-                         :workspace.backend/available-fn (constantly true)
-                         :workspace.backend/fork-fn (fn [{:keys [store-root name]}]
-                                                      (let [root (io/file store-root name)]
-                                                        (.mkdirs root)
-                                                        (.getCanonicalPath root)))
-                         :workspace.backend/discard-fn (constantly nil)}))
+(defn- with-fake-fork
+  "Redef rift so `create-draft!` clones without touching the real store."
+  [f]
+  (with-redefs
+    [ws/rift-available?
+     (constantly {:available? true})
+
+     ws/rift-fork!
+     (fn [{:keys [store-root name]}]
+       (let [root (io/file store-root name)]
+         (.mkdirs root)
+         {:root (.getCanonicalPath root)}))]
+
+    (f)))
 
 (defn- pin-session!
   [store workspace-id]
@@ -162,10 +165,8 @@
               (binding [ws/*drafts-home* (io/file drafts-home)]
                 (with-redefs [lp/db-info (constantly store)]
                   (let
-                    [created (with-redefs
-                               [ws/select-backend (fn [_ _ _]
-                                                    (local-test-backend))]
-                               (state/create-draft! sid "picker-created" false))
+                    [created (with-fake-fork (fn []
+                                               (state/create-draft! sid "picker-created" false)))
                      draft-id (get created "id")]
 
                     (expect (true? (get created "is_draft")))

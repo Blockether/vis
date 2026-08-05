@@ -35,8 +35,7 @@
    "vis-foundation-voice"    "_Local speech (sherpa-onnx / ONNX Runtime)._"
    "vis-foundation-bridge"   "_Bridge verification tool surface._"
    "vis-foundation-search"   "_Web/code/paper search tool surface._"
-   "vis-channel-tui"         "_Terminal UI (Lanterna)._"
-   "vis-workspace-rift"      "_Rift workspace/FFM integration._"})
+   "vis-channel-tui"         "_Terminal UI (Lanterna)._"})
 
 ;; Licenses that POMs express oddly / not at all — pin them explicitly so the
 ;; audit never regresses to UNKNOWN on the ones we've already vetted by hand.
