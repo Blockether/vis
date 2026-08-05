@@ -125,15 +125,18 @@ export function TrashIcon() {
 }
 
 /**
- * The favorite mark. Filled is "starred": the outline alone is too quiet to
- * read at a glance in a list, and the swipe action needs to show both states.
+ * The favorite mark. Filled is "starred": a filled star is an amber FILL, so it
+ * wears the brand yellow (`accent`, #ffc420), not the legible amber ink a text
+ * glyph would need. The outline stays adaptive (`stroke-current`) so it reads
+ * among the other action glyphs; the fill alone is too quiet to spot at a
+ * glance in a list, so the swipe action still shows both states.
  */
 export function StarIcon({ filled = false }: { filled?: boolean }) {
   return (
     <svg
       viewBox="0 0 16 16"
       aria-hidden="true"
-      className={`size-4 stroke-current stroke-[1.4] ${filled ? 'fill-current' : 'fill-none'}`}
+      className={`size-4 stroke-[1.4] ${filled ? 'fill-accent stroke-accent' : 'fill-none stroke-current'}`}
     >
       <path
         d="M8 1.9l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.7l-3.8 2 .7-4.3-3.1-3 4.3-.6z"

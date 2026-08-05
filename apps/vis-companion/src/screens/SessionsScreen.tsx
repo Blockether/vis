@@ -1932,7 +1932,7 @@ const SessionRow = memo(function SessionRow({
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-start justify-between gap-3">
             {isStarred && (
-              <span className="mt-px shrink-0 text-accent-ink">
+              <span className="mt-px shrink-0">
                 <StarIcon filled />
                 <span className="sr-only">Favorite</span>
               </span>
@@ -2214,18 +2214,18 @@ function formatDuration(value?: number): string {
 function SkeletonBar({
   type,
   width,
-  bar,
+  baz,
   tone,
 }: {
   type: string;
   width: string;
-  bar: string;
+  baz: string;
   tone: string;
 }) {
   return (
     <span className={`grid ${width}`}>
       <span className={`col-start-1 row-start-1 invisible font-mono ${type}`}>&nbsp;</span>
-      <span className={`col-start-1 row-start-1 self-center ${bar} ${tone}`} />
+      <span className={`col-start-1 row-start-1 self-center ${baz} ${tone}`} />
     </span>
   );
 }
@@ -2244,13 +2244,13 @@ function NavigatorSkeleton() {
             {/* mirrors ProjectGroup's <header> */}
             <div className="flex min-h-11 items-center justify-between gap-3 bg-panel-2 px-3 py-2 sm:px-4">
               <div className="min-w-0">
-                <SkeletonBar type="text-ui" width="w-28" bar="h-2.5" tone="bg-muted/40" />
+                <SkeletonBar type="text-ui" width="w-28" baz="h-2.5" tone="bg-muted/40" />
                 <div className="mt-0.5">
-                  <SkeletonBar type="text-chip" width="w-40" bar="h-1.5" tone="bg-muted/20" />
+                  <SkeletonBar type="text-chip" width="w-40" baz="h-1.5" tone="bg-muted/20" />
                 </div>
               </div>
               <div className="shrink-0">
-                <SkeletonBar type="text-chip" width="w-14" bar="h-1.5" tone="bg-muted/25" />
+                <SkeletonBar type="text-chip" width="w-14" baz="h-1.5" tone="bg-muted/25" />
               </div>
             </div>
             {/* mirrors SessionRow's <button> */}
@@ -2263,16 +2263,16 @@ function NavigatorSkeleton() {
                   <span className="mt-0.5 invisible shrink-0 font-mono text-body">›</span>
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-start justify-between gap-3">
-                      <SkeletonBar type="text-ui" width={width} bar="h-2.5" tone="bg-muted/30" />
+                      <SkeletonBar type="text-ui" width={width} baz="h-2.5" tone="bg-muted/30" />
                       <span className="shrink-0">
-                        <SkeletonBar type="text-chip" width="w-12" bar="h-1.5" tone="bg-muted/25" />
+                        <SkeletonBar type="text-chip" width="w-12" baz="h-1.5" tone="bg-muted/25" />
                       </span>
                     </span>
                     <span className="mt-1 flex items-center gap-x-2 font-mono text-chip">
-                      <SkeletonBar type="text-chip" width="w-10" bar="h-1.5" tone="bg-muted/20" />
-                      <SkeletonBar type="text-chip" width="w-14" bar="h-1.5" tone="bg-muted/20" />
+                      <SkeletonBar type="text-chip" width="w-10" baz="h-1.5" tone="bg-muted/20" />
+                      <SkeletonBar type="text-chip" width="w-14" baz="h-1.5" tone="bg-muted/20" />
                       <span className="ml-auto shrink-0 pl-2">
-                        <SkeletonBar type="text-chip" width="w-12" bar="h-1.5" tone="bg-muted/20" />
+                        <SkeletonBar type="text-chip" width="w-12" baz="h-1.5" tone="bg-muted/20" />
                       </span>
                     </span>
                   </span>
