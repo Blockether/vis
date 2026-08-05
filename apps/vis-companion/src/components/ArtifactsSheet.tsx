@@ -28,7 +28,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
   ARTIFACT_FILTERS,
-  artifactTotalLabel,
   docKindLabel,
   isTextMedia,
   pageBySize,
@@ -324,98 +323,71 @@ function Tile({
   );
 }
 
-/** The sheet's own header: what this is, how much of it there is, and out. */
-function SurfaceHeader({
-  list,
-  onClose,
-}: {
-  list: SessionArtifact[];
-  onClose: () => void;
-}) {
-  const total = artifactTotalLabel(list);
-  return (
-    // The app has ONE dialog band (`ui.tsx` `DialogFrame`): dark `dialog-title`
-    // paper, the name centred in it, and the way out welded to the right edge
-    // behind a rule. This surface used to invent its own — pale panel, title on
-    // the left, a boxed ✕ floating in the padding — so the one screen a session's
-    // output lives on did not look like the app it lives in. The band opens
-    // flush under the session header's own dark back plate, and `dialog-edge`
-    // IS `dialog-title`, so the rule between them has to be the PALE one the
-    // close already wears — otherwise the corner is one black smear.
-    <header className="relative flex min-h-9 shrink-0 items-center justify-center border-t border-dialog-title-foreground/20 bg-dialog-title px-12 py-1.5 text-dialog-title-foreground mouse:min-h-8">
-      <h2 className="truncate text-center font-mono text-body font-bold tracking-wide">
-        Artifacts
-        <span className="font-normal text-dialog-title-foreground/60">
-          {` · ${list.length}${total ? ` · ${total}` : ""}`}
-        </span>
-      </h2>
-      {/* The band and its close are the DialogFrame's own metrics, not a taller
-          copy of them: a 44px block welded across a 36px band is what made this
-          header read as a toolbar bolted onto the sheet. */}
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="Close artifacts"
-        className="absolute inset-y-0 right-0 grid min-w-9 place-items-center border-l border-dialog-title-foreground/20 text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-w-8"
-      >
-        <CloseIcon />
-      </button>
-    </header>
-  );
-}
-
 /**
- * The kind filter. A count per chip, and a chip with nothing behind it is drawn
- * disabled rather than hidden: a strip that changes shape per session is a strip
- * you have to re-read every time. `aria-pressed` is what makes "which filter am
- * I looking at" answerable without the accent colour.
+ * The kind filter, doubling as the sheet's whole top band: a count per chip
+ * (a chip with nothing behind it is drawn disabled rather than hidden — a
+ * strip that changes shape per session is a strip you have to re-read every
+ * time), and the way out welded to its right edge instead of a separate title
+ * band above it — one row, not two.
  */
 function FilterStrip({
   list,
   active,
   onPick,
+  onClose,
 }: {
   list: SessionArtifact[];
   active: string;
   onPick: (label: string) => void;
+  onClose: () => void;
 }) {
   return (
     <div
       role="group"
       aria-label="Filter artifacts by kind"
-      className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-dialog-edge bg-panel px-3 py-1.5 sm:px-4"
+      className="flex min-h-9 shrink-0 items-center gap-1.5 border-b border-dialog-edge bg-panel pl-3 pr-1 py-1.5 mouse:min-h-8 sm:pl-4"
     >
-      {ARTIFACT_FILTERS.map((filter) => {
-        const count = list.filter((entry) =>
-          filter.kinds.includes(entry.kind),
-        ).length;
-        const on = filter.label === active;
-        return (
-          <button
-            key={filter.label}
-            type="button"
-            onClick={() => onPick(filter.label)}
-            disabled={!count}
-            aria-pressed={on}
-            aria-label={`${filter.label}, ${count} artifacts`}
-            className={`inline-flex min-h-7 shrink-0 items-center gap-1.5 border px-2 font-mono text-meta focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-6 ${
-              on
-                ? "border-accent bg-accent font-bold text-accent-foreground"
-                : count
-                  ? "border-edge text-dialog-hint hover:bg-hover"
-                  : "border-edge text-dialog-hint opacity-40"
-            }`}
-          >
-            <span aria-hidden="true">{filter.label}</span>
-            <span
-              aria-hidden="true"
-              className={on ? "text-accent-foreground/70" : ""}
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
+        {ARTIFACT_FILTERS.map((filter) => {
+          const count = list.filter((entry) =>
+            filter.kinds.includes(entry.kind),
+          ).length;
+          const on = filter.label === active;
+          return (
+            <button
+              key={filter.label}
+              type="button"
+              onClick={() => onPick(filter.label)}
+              disabled={!count}
+              aria-pressed={on}
+              aria-label={`${filter.label}, ${count} artifacts`}
+              className={`inline-flex min-h-7 shrink-0 items-center gap-1.5 border px-2 font-mono text-meta focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-6 ${
+                on
+                  ? "border-accent bg-accent font-bold text-accent-foreground"
+                  : count
+                    ? "border-edge text-dialog-hint hover:bg-hover"
+                    : "border-edge text-dialog-hint opacity-40"
+              }`}
             >
-              {count}
-            </span>
-          </button>
-        );
-      })}
+              <span aria-hidden="true">{filter.label}</span>
+              <span
+                aria-hidden="true"
+                className={on ? "text-accent-foreground/70" : ""}
+              >
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close artifacts"
+        className="grid min-h-7 min-w-7 shrink-0 place-items-center border border-edge text-dialog-hint transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-h-6 mouse:min-w-6"
+      >
+        <CloseIcon />
+      </button>
     </div>
   );
 }
@@ -704,10 +676,10 @@ export function ArtifactsSheet({
       aria-label="Artifacts produced by the model"
       className="absolute inset-0 z-30 flex flex-col bg-ink"
     >
-      <SurfaceHeader list={artifacts} onClose={onClose} />
       <FilterStrip
         list={artifacts}
         active={filter}
+        onClose={onClose}
         onPick={(label) => {
           setFilter(label);
           setPages(1);

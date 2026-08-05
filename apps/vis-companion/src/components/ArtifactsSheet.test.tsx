@@ -1,35 +1,9 @@
-import artifactsSheetSource from "./ArtifactsSheet.tsx?raw";
 import sessionScreenSource from "../screens/SessionScreen.tsx?raw";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ArtifactsChip, ArtifactsSheet } from "./ArtifactsSheet";
-import { DialogFrame } from "./ui";
 import type { GatewayClient } from "../lib/gateway";
 import type { SessionArtifact } from "../lib/artifacts";
-
-/** The SIZE utilities of a rendering's first dialog band and of the close welded
- *  into it — "canonical" has to mean pixels, not only colour. */
-const bandMetrics = (html: string) => {
-  const sizes = (classes: string) =>
-    classes.split(" ").filter((token) => /min-[hw]-/.test(token));
-  return {
-    band: sizes(/<header[^>]*class="([^"]*)"/.exec(html)?.[1] ?? ""),
-    close: sizes(
-      /<button[^>]*class="(absolute inset-y-0 right-0[^"]*)"/.exec(html)?.[1] ??
-        "",
-    ),
-  };
-};
-
-/** The band every dialog in the app wears, measured from the source of truth. */
-const canonicalBand = () =>
-  bandMetrics(
-    renderToStaticMarkup(
-      <DialogFrame title="Anything" onClose={() => {}}>
-        <p>body</p>
-      </DialogFrame>,
-    ),
-  );
 
 /** The height the OTHER chip in the session header wears, read from its own
  *  source. `CopyableId` is not exported and importing that screen into a unit
@@ -183,41 +157,20 @@ describe("the artifacts sheet", () => {
     expect(html).toContain("absolute inset-0");
   });
 
-  it("counts the production and adds up what it weighs", () => {
-    expect(text(sheet([picture, document, recorded]))).toContain("· 3 · 4.0KB");
-  });
-
-  // Regression: this surface invented its own chrome — a pale panel, the title
-  // on the left, a boxed ✕ floating in the padding — so the one screen a
-  // session's output lives on did not look like the app around it.
-  it("wears the app’s own dialog band and its welded close", () => {
+  it("opens directly on its filter strip — no separate title band above it", () => {
     const html = sheet([picture]);
-    expect(html).toContain("bg-dialog-title");
-    expect(html).toContain("border-l border-dialog-title-foreground/20");
-    expect(html).toContain('aria-label="Close artifacts"');
-    // Regression: the band and its close were a 44px copy of a 36px original,
-    // so the one screen a session's output lives on wore a taller header than
-    // every dialog around it.
-    const canonical = canonicalBand();
-    expect(canonical.band).toContain("min-h-9");
-    expect(bandMetrics(html)).toEqual(canonical);
+    expect(html).not.toMatch(/<header/);
+    expect(html).not.toContain("bg-dialog-title");
   });
 
-  // Regression: the sheet's dark band opened flush under the session header's
-  // own dark back plate — `--dialog-border` IS `--dialog-title-bg` (#3f3f3f), so
-  // the rule between the two slabs was invisible and the corner read as one
-  // black smear. The band separates itself in the pale ink its close uses.
-  it("separates its dark band from the dark chrome above it", () => {
-    expect(sheet([picture])).toContain(
-      "border-t border-dialog-title-foreground/20",
-    );
-    const bands =
-      artifactsSheetSource.match(
-        /<header className="[^"]*bg-dialog-title[^"]*"/g,
-      ) ?? [];
-    expect(bands.length).toBeGreaterThan(1);
-    for (const band of bands)
-      expect(band).toContain("border-t border-dialog-title-foreground/20");
+  it("welds the close onto the filter strip instead of a band above it", () => {
+    const html = sheet([picture]);
+    const groupAt = html.indexOf('role="group"');
+    const closeAt = html.indexOf('aria-label="Close artifacts"');
+    const gridAt = html.indexOf('class="min-h-0 flex-1 overflow-y-auto');
+    expect(groupAt).toBeGreaterThan(-1);
+    expect(closeAt).toBeGreaterThan(groupAt);
+    expect(closeAt).toBeLessThan(gridAt);
   });
 
   // Regression: a `.md` note was classified as an unreadable file, so the tile
