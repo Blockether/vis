@@ -348,32 +348,48 @@
       [{"id" (str (java.util.UUID/randomUUID))
         "type" "error"
         "code" "turn_failed"
-        "message" (vis/format-error (get result "error"))
+        ;; The block's own `"code"` is the label both surfaces paint in FRONT of
+        ;; the sentence, so an `ERROR: ` prefix inside the sentence says the same
+        ;; word twice (`turn_failed ERROR: turn failed`). Keep the bare message.
+        "message" (vis/error-message (get result "error"))
         "retryable" false}])))
 
 (defn content->markdown
   "Disposable Markdown projection of canonical content blocks."
   [blocks]
   (->> blocks
-       (keep (fn [block]
-               (case (get block "type")
-                 "prose"
-                 (get block "markdown")
+       (keep
+         (fn [block]
+           (case (get block "type")
+             "prose"
+             (get block "markdown")
 
-                 "code"
-                 (str "```" (or (get block "language") "") "\n" (get block "text" "") "\n```")
+             "code"
+             (str "```" (or (get block "language") "") "\n" (get block "text" "") "\n```")
 
-                 "reasoning"
-                 (get block "text")
+             "reasoning"
+             (get block "text")
 
-                 ("error" "notice")
-                 (get block "message")
+             ;; Same card the companion paints (`ChatContent.tsx`:
+             ;; `<strong>{code}</strong><span>{message}</span>`) - the machine
+             ;; code is the bold lead, the sentence follows. The TUI bubble
+             ;; painter tints those rows on the warning surface in error ink,
+             ;; so a failed turn reads as a card in both channels.
+             ("error" "notice")
+             (let
+               [message
+                (get block "message")
 
-                 "tool"
-                 (some-> (get block "output")
-                         str)
+                code
+                (get block "code")]
 
-                 nil)))
+               (if (and (seq code) (seq message)) (str "**" code "** " message) message))
+
+             "tool"
+             (some-> (get block "output")
+                     str)
+
+             nil)))
        (str/join "\n\n")))
 
 (defn render-answer

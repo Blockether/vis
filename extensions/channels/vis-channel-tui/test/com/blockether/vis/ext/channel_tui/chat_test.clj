@@ -667,7 +667,13 @@
              (it "creates a canonical error block when content is absent"
                  (let [out (chat/error-content {"error" "boom"})]
                    (expect (= "error" (get-in out [0 "type"])))
-                   (expect (str/includes? (get-in out [0 "message"]) "boom")))))
+                   (expect (str/includes? (get-in out [0 "message"]) "boom"))
+                   ;; The `"code"` IS the bold label both the error card and the
+                   ;; companion paint in FRONT of the sentence, so the sentence
+                   ;; must not repeat it: `turn_failed ERROR: turn failed` said
+                   ;; the same word twice.
+                   (expect (= "turn_failed" (get-in out [0 "code"])))
+                   (expect (not (str/includes? (get-in out [0 "message"]) "ERROR:"))))))
 
 (defdescribe
   gateway-disconnect-propagation-test

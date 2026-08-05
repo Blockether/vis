@@ -1659,6 +1659,20 @@
 
 (defn- warning-message? [text] (and (string? text) (str/starts-with? text "Warning:")))
 
+(defn error-message?
+  "True when a message's canonical content is nothing but `error` blocks.
+
+   DATA, not a text sniff (contrast `warning-message?`, which reads a
+   \"Warning:\" prefix): a failed turn arrives as `chat/error-content`
+   blocks, and the companion decides the very same way before painting
+   its error card (`ChatContent.tsx` -> `border-warn-edge bg-warn-surface
+   text-err`). A bubble mixing prose with an error block is still an
+   answer that happened to end badly, so only an all-error bubble
+   becomes a card."
+  [message]
+  (let [blocks (:content message)]
+    (boolean (and (seq blocks) (every? #(= "error" (get % "type")) blocks)))))
+
 (defn- paint-table-data-line!
   "Two-pass paint for a table header or body row.
 
@@ -1927,6 +1941,14 @@
      warning?
      (warning-message? text)
 
+     ;; A failed turn is a CARD, exactly like in the companion: the
+     ;; warning surface, error ink, an edge bar down the left column
+     ;; and the bold machine code the projection puts in front of the
+     ;; sentence. No extra rows - the card is the content rows the
+     ;; height math already reserved.
+     error?
+     (and (not queued?) (not (= :cancelled status)) (error-message? message))
+
      ;; Cancelled turns are status messages, not real answers -
      ;; render the entire bubble dim (gray + italic), drop the
      ;; meta line, dim the role label too. Skips markdown so a
@@ -1998,7 +2020,8 @@
      ;; bubble-wide fill that competed visually with adjacent
      ;; assistant messages.
      bg-color
-     (cond warning? t/warning-bg
+     (cond error? t/warning-bg
+           warning? t/warning-bg
            queued? t/terminal-bg
            ;; User messages fill their content rows with a
            ;; very pale warm-yellow block so "you said this"
@@ -2010,6 +2033,7 @@
      fg-color
      (cond cancelled? t/cancelled-fg
            queued? t/dialog-hint
+           error? t/footer-error-fg
            warning? t/warning-fg
            user? t/user-bubble-fg
            :else t/ai-bubble-fg)
@@ -2017,8 +2041,20 @@
      role-fg
      (cond cancelled? t/dialog-hint
            queued? t/dialog-hint
+           error? t/footer-error-fg
            user? t/user-role-fg
            :else t/ai-role-fg)
+
+     ;; The answer zone paints its own paper and ink row by row - the
+     ;; `answer-txt-marker` branch does it unconditionally. An error card owns
+     ;; its WHOLE surface, so the zone's colours are bound once, here: every
+     ;; marker branch below then paints the card instead of repainting it back
+     ;; to `t/answer-bg` line by line.
+     zone-bg
+     (if error? bg-color t/answer-bg)
+
+     zone-fg
+     (if error? fg-color t/answer-fg)
 
      time-str
      (vis/format-date timestamp)
@@ -2094,7 +2130,9 @@
       ;;
       ;; Warnings: fill ONLY the content rows so the amber alarm
       ;; reads as the message itself, no extra chrome.
-      (when warning? (p/set-bg! g bg-color) (p/fill-rect! g bx btop bubble-w (max 1 bubble-h)))
+      (when (or warning? error?)
+        (p/set-bg! g bg-color)
+        (p/fill-rect! g bx btop bubble-w (max 1 bubble-h)))
       ;;
       ;; Cancelled: NO bubble-wide fill. The muted italic fg
       ;; (`cancelled-fg`) + dimmed role label + plain status footer
@@ -2222,7 +2260,12 @@
                    ;; Assistant answer text starts at the same column as
                    ;; the `Vis` label. User bubbles keep their inset so the
                    ;; left rail remains visually separate from prompt text.
-                   x (+ (long bx) (long (if user? h-pad 0)))
+                   ;; An error card is inset like a user block (the companion's
+                   ;; `px-2.5`): the edge bar then lands in the padding column
+                   ;; instead of eating the first character of the code. The wrap
+                   ;; width is `bubble-w - 2*h-pad` for every role already, so the
+                   ;; inset costs no row and no re-wrap.
+                   x (+ (long bx) (long (if (or user? error?) h-pad 0)))
                    y (+ (long btop) (long i))
                    iw bubble-w
                    fbx bx
@@ -2249,7 +2292,7 @@
                    fbx (if output-indented? (+ (long fbx) (long tool-output-indent-cols)) fbx)]
 
                   ;; Pre-fill answer zone bg so ALL line types get it
-                  (when in-answer? (p/set-bg! g t/answer-bg) (p/fill-rect! g fbx y iw 1))
+                  (when in-answer? (p/set-bg! g zone-bg) (p/fill-rect! g fbx y iw 1))
                   ;; Reserved inline-image row: record its EXACT painted
                   ;; position (absolute screen coords) for the post-refresh
                   ;; graphics pass. The row itself paints blank below.
@@ -2651,50 +2694,50 @@
                     ;; remain the BASE style; inline spans STACK on top
                     ;; (e.g. `## **plain** *and italic*` keeps the gold +
                     ;; bold base, plus italic on the second word).
-                    (str/starts-with? line md-h1-marker)
-                    (let [lbg (if in-answer? t/answer-bg bg-color)]
-                      (p/set-colors! g t/md-h1-fg lbg)
-                      (p/fill-rect! g fbx y iw 1)
-                      (p/styled g
-                                [p/BOLD]
-                                (p/paint-styled-line! g
-                                                      x
-                                                      y
-                                                      (subs line 1)
-                                                      t/md-h1-fg
-                                                      lbg
-                                                      t/code-block-fg
-                                                      t/code-block-bg)))
-                    (str/starts-with? line md-h2-marker)
-                    (let [lbg (if in-answer? t/answer-bg bg-color)]
-                      (p/set-colors! g t/md-h2-fg lbg)
-                      (p/fill-rect! g fbx y iw 1)
-                      (p/styled g
-                                [p/BOLD]
-                                (p/paint-styled-line! g
-                                                      x
-                                                      y
-                                                      (subs line 1)
-                                                      t/md-h2-fg
-                                                      lbg
-                                                      t/code-block-fg
-                                                      t/code-block-bg)))
-                    (str/starts-with? line md-h3-marker)
-                    (let [lbg (if in-answer? t/answer-bg bg-color)]
-                      (p/set-colors! g t/md-h3-fg lbg)
-                      (p/fill-rect! g fbx y iw 1)
-                      (p/styled g
-                                [p/BOLD]
-                                (p/paint-styled-line! g
-                                                      x
-                                                      y
-                                                      (subs line 1)
-                                                      t/md-h3-fg
-                                                      lbg
-                                                      t/code-block-fg
-                                                      t/code-block-bg)))
+                    (str/starts-with? line md-h1-marker) (let [lbg (if in-answer? zone-bg bg-color)]
+                                                           (p/set-colors! g t/md-h1-fg lbg)
+                                                           (p/fill-rect! g fbx y iw 1)
+                                                           (p/styled g
+                                                                     [p/BOLD]
+                                                                     (p/paint-styled-line!
+                                                                       g
+                                                                       x
+                                                                       y
+                                                                       (subs line 1)
+                                                                       t/md-h1-fg
+                                                                       lbg
+                                                                       t/code-block-fg
+                                                                       t/code-block-bg)))
+                    (str/starts-with? line md-h2-marker) (let [lbg (if in-answer? zone-bg bg-color)]
+                                                           (p/set-colors! g t/md-h2-fg lbg)
+                                                           (p/fill-rect! g fbx y iw 1)
+                                                           (p/styled g
+                                                                     [p/BOLD]
+                                                                     (p/paint-styled-line!
+                                                                       g
+                                                                       x
+                                                                       y
+                                                                       (subs line 1)
+                                                                       t/md-h2-fg
+                                                                       lbg
+                                                                       t/code-block-fg
+                                                                       t/code-block-bg)))
+                    (str/starts-with? line md-h3-marker) (let [lbg (if in-answer? zone-bg bg-color)]
+                                                           (p/set-colors! g t/md-h3-fg lbg)
+                                                           (p/fill-rect! g fbx y iw 1)
+                                                           (p/styled g
+                                                                     [p/BOLD]
+                                                                     (p/paint-styled-line!
+                                                                       g
+                                                                       x
+                                                                       y
+                                                                       (subs line 1)
+                                                                       t/md-h3-fg
+                                                                       lbg
+                                                                       t/code-block-fg
+                                                                       t/code-block-bg)))
                     (str/starts-with? line md-bold-marker)
-                    (let [lbg (if in-answer? t/answer-bg bg-color)]
+                    (let [lbg (if in-answer? zone-bg bg-color)]
                       (p/set-colors! g fg-color lbg)
                       (p/fill-rect! g fbx y iw 1)
                       (p/styled g
@@ -2858,7 +2901,7 @@
                     ;; Bullet items: same inline-span treatment as plain text.
                     ;; `- **bold** thing` should bold the word.
                     (str/starts-with? line md-bullet-marker)
-                    (let [lbg (if in-answer? t/answer-bg bg-color)]
+                    (let [lbg (if in-answer? zone-bg bg-color)]
                       (p/set-colors! g fg-color lbg)
                       (p/fill-rect! g fbx y iw 1)
                       (p/paint-styled-line! g
@@ -2876,7 +2919,7 @@
                     ;; in markdown->lines didn't run markdown->inline. Both
                     ;; halves now fixed; this is the painter half.
                     (str/starts-with? line md-quote-marker)
-                    (let [lbg (if in-answer? t/answer-bg bg-color)]
+                    (let [lbg (if in-answer? zone-bg bg-color)]
                       (p/set-colors! g t/dialog-hint lbg)
                       (p/fill-rect! g fbx y iw 1)
                       (p/styled g
@@ -2889,11 +2932,10 @@
                                                       lbg
                                                       t/code-block-fg
                                                       t/code-block-bg)))
-                    (str/starts-with? line md-hr-marker)
-                    (let [lbg (if in-answer? t/answer-bg bg-color)]
-                      (p/set-colors! g t/answer-sep-fg lbg)
-                      (p/fill-rect! g fbx y iw 1)
-                      (p/put-str! g x y (subs line 1)))
+                    (str/starts-with? line md-hr-marker) (let [lbg (if in-answer? zone-bg bg-color)]
+                                                           (p/set-colors! g t/answer-sep-fg lbg)
+                                                           (p/fill-rect! g fbx y iw 1)
+                                                           (p/put-str! g x y (subs line 1)))
                     ;; ── Markdown table (answer) ── grid blends into surrounding zone
                     ;; Chrome (│┌─┐├┼┤└┴┘─) stays in muted `code-border-fg`,
                     ;; cell text in dark text color, headers bold.
@@ -2913,8 +2955,8 @@
                       [stripped (subs line 1)
                        head? (str/starts-with? line md-table-head-marker)
                        border? (str/starts-with? line md-table-sep-marker)
-                       tbg (if in-answer? t/answer-bg t/code-block-bg)
-                       tfg (if in-answer? t/answer-fg t/code-block-fg)]
+                       tbg (if in-answer? zone-bg t/code-block-bg)
+                       tfg (if in-answer? zone-fg t/code-block-fg)]
 
                       (p/clear-styles! g)
                       (p/set-colors! g t/code-border-fg tbg)
@@ -3115,19 +3157,19 @@
                     ;; contain inline sentinels from IR spans, e.g. `[:c "/command"]` becomes
                     ;; INLINE_CODE_ON/OFF around the body text. Consume those
                     ;; here instead of writing raw PUA glyphs to the terminal.
-                    (str/starts-with? line answer-txt-marker)
-                    (do (p/set-colors! g t/answer-fg t/answer-bg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (p/paint-styled-line! g
-                                              x
-                                              y
-                                              (subs line 1)
-                                              t/answer-fg
-                                              t/answer-bg
-                                              t/code-block-fg
-                                              t/code-block-bg))
+                    (str/starts-with? line answer-txt-marker) (do (p/set-colors! g zone-fg zone-bg)
+                                                                  (p/fill-rect! g fbx y iw 1)
+                                                                  (p/paint-styled-line!
+                                                                    g
+                                                                    x
+                                                                    y
+                                                                    (subs line 1)
+                                                                    zone-fg
+                                                                    zone-bg
+                                                                    t/code-block-fg
+                                                                    t/code-block-bg))
                     ;; ── Answer padding ──
-                    (str/starts-with? line answer-pad-marker) (do (p/set-bg! g t/answer-bg)
+                    (str/starts-with? line answer-pad-marker) (do (p/set-bg! g zone-bg)
                                                                   (p/fill-rect! g fbx y iw 1))
                     ;; ── Plain text - answer bg if in answer zone, else bubble bg ──
                     ;; Cancelled status messages render in muted italic on
@@ -3140,8 +3182,8 @@
                     ;; structural answer marker sits earlier in the trailer.
                     (let
                       [in-answer-zone? (and in-answer? (not cancelled?))
-                       line-bg (if in-answer-zone? t/answer-bg bg-color)
-                       line-fg (if in-answer-zone? t/answer-fg fg-color)]
+                       line-bg (if in-answer-zone? zone-bg bg-color)
+                       line-fg (if in-answer-zone? zone-fg fg-color)]
 
                       (when in-answer-zone? (p/set-bg! g line-bg) (p/fill-rect! g fbx y iw 1))
                       (p/set-colors! g line-fg line-bg)
@@ -3214,9 +3256,12 @@
                                   (p/underline-cell! g (+ abs-col dc) y t/link-chrome-hover-fg))
                                 table-row? (dotimes [dc (long width)]
                                              (p/underline-cell! g (+ abs-col dc) y)))))))
-                  (when user?
+                  ;; Left edge bar, painted in the inner padding column so it
+                  ;; steals no text width: the user block's own rule, and the
+                  ;; error card's `border-warn-edge` equivalent.
+                  (when (or user? error?)
                     (p/clear-styles! g)
-                    (p/set-colors! g role-fg bg-color)
+                    (p/set-colors! g (if error? t/warning-border role-fg) bg-color)
                     (p/put-str! g bx (+ (long btop) (long i)) "│")))
                 (recur (inc i))))))
         ;; Below-content footer row: optional right-aligned meta, with

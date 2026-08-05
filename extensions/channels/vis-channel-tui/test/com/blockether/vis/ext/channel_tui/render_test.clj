@@ -1,5 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.render-test
   (:require [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.capture :as cap]
+            [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
@@ -4465,3 +4467,77 @@
         ;; every painted row of the card is clickable, blanks included: a card
         ;; whose middle row does nothing is a card that swallows a click.
         (expect (= (count (filter :doc (:line-meta data))) (dec (count lines)))))))
+
+;; ── A failed turn is a CARD, in the terminal too ──
+;;
+;; A stalled provider used to land as ordinary answer prose. The bubble-wide
+;; warning fill IS painted first, but the answer zone then repainted every TEXT
+;; row on top of it with `t/answer-bg` / `t/answer-fg` - the `answer-txt-marker`
+;; branch did it unconditionally - so only the blank row under the `Vis` label
+;; kept the amber surface and the sentence read exactly like an answer. Pixel
+;; truth from a real paint: every row of an all-error bubble wears the card.
+(defdescribe
+  error-card-paint-test
+  (let
+    [rgb
+     (fn [^com.googlecode.lanterna.TextColor$RGB c]
+       [(.getRed c) (.getGreen c) (.getBlue c)])
+
+     blocks
+     (chat/error-content {"error" (str "Provider stream stalled: no output at all for 123507ms "
+                                       "while waiting in :provider-call")})
+
+     md
+     (chat/content->markdown blocks)
+
+     rendered
+     (render/format-answer-markdown-data (vis/markdown->ast md) 72 nil)
+
+     message
+     {:role :assistant
+      :text md
+      :content blocks
+      :prewrapped-lines (:lines rendered)
+      :line-meta (:line-meta rendered)}
+
+     captured
+     (cap/capture!
+       {:cols 80
+        :rows 10
+        :paint! (fn [{:keys [screen]}]
+                  (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+                    (render/draw-chat-bubble! (.newTextGraphics s) message 2 2 76 {:viewport-h 20})
+                    (.refresh s)))})
+
+     grid
+     (first (:frames captured))
+
+     ;; The card is exactly the rows carrying its own left edge bar.
+     card-rows
+     (filterv (fn [row]
+                (some #(= "│" (:ch %)) row))
+       grid)
+
+     ;; Bubble band only: `bx` 2, `bubble-w` 76.
+     band
+     (fn [row]
+       (subvec (vec row) 2 78))
+
+     ink
+     (into [] (comp (mapcat band) (remove #(= " " (:ch %)))) card-rows)]
+
+    (it "paints the whole card on the warning surface, never on the answer's"
+        ;; label gap + the two wrapped sentence rows
+        (expect (= 3 (count card-rows)))
+        (expect (= #{(rgb t/warning-bg)} (into #{} (comp (mapcat band) (map :bg)) card-rows))))
+    (it "leads with the bold machine code in error ink behind an amber edge bar"
+        (expect (= "turn_failed" (apply str (map :ch (filter :bold ink)))))
+        (expect (= #{(rgb t/warning-border)}
+                   (into #{} (comp (filter #(= "│" (:ch %))) (map :fg)) ink)))
+        (expect (= #{(rgb t/footer-error-fg)}
+                   (into #{} (comp (remove #(= "│" (:ch %))) (map :fg)) ink))))
+    (it "reads as a sentence, not as raw markdown"
+        (let [text (cap/frame-text captured)]
+          (expect (str/includes? text "turn_failed Provider stream stalled"))
+          (expect (not (str/includes? text "**")))
+          (expect (not (str/includes? text "ERROR:")))))))

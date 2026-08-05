@@ -33,25 +33,35 @@
                                         class
                                         .getName)})))
    (->> blocks
-        (keep (fn [block]
-                (case (get block "type")
-                  "prose"
-                  (get block "markdown")
+        (keep
+          (fn [block]
+            (case (get block "type")
+              "prose"
+              (get block "markdown")
 
-                  "code"
-                  (str "```" (or (get block "language") "") "\n" (get block "text" "") "\n```")
+              "code"
+              (str "```" (or (get block "language") "") "\n" (get block "text" "") "\n```")
 
-                  "reasoning"
-                  (get block "text")
+              "reasoning"
+              (get block "text")
 
-                  ("error" "notice")
-                  (get block "message")
+              ;; Mirrors `chat/content->markdown` (bold machine code + sentence,
+              ;; the companion's error card).
+              ("error" "notice")
+              (let
+                [message
+                 (get block "message")
 
-                  "tool"
-                  (some-> (get block "output")
-                          str)
+                 code
+                 (get block "code")]
 
-                  nil)))
+                (if (and (seq code) (seq message)) (str "**" code "** " message) message))
+
+              "tool"
+              (some-> (get block "output")
+                      str)
+
+              nil)))
         (str/join "\n\n"))))
 
 (defn- parse-session-id-flag
