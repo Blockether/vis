@@ -1693,17 +1693,50 @@
   (fff-index/with-index [idx (fff-index/lease root true (fff-ls-overlay target-rel))]
                         (fff-ls-records idx "" (fff-ls-keeper root "" levels is-hidden?))))
 
+(defn- walk-ls-items
+  "Listing rows read STRAIGHT off the filesystem — the last resort for a directory
+   fff will not index AT ALL. fff refuses a filesystem root and any home directory
+   outright (\"Can not run certain FFF features in a file system root or home
+   directories\"), so `ls /` and `ls ~` used to have no answer whatsoever, only the
+   `fff-unavailable` throw. A real `ls` never fails at the one listing every machine
+   has, so this reads the directory itself.
+
+   Ignore files are NOT consulted here — fff owns that decision and fff is exactly
+   what is unavailable — so the listing is everything but dotfiles, which still need
+   `is_hidden`. A hidden directory is skipped whole rather than descended into, and a
+   symlinked directory is listed but never followed, so `/System/Volumes/Data` cannot
+   walk the same disk twice."
+  [^File root ^long levels is-hidden?]
+  (letfn [(walk [^File dir ^String prefix ^long level]
+            (mapcat
+              (fn [^File f]
+                (let
+                  [local
+                   (str prefix (.getName f))
+
+                   dir?
+                   (.isDirectory f)]
+
+                  (when (or is-hidden? (not (.isHidden f)))
+                    (cons {:relative-path local :directory? dir? :size (when-not dir? (.length f))}
+                          (when (and dir? (< level levels) (not (fs/sym-link? f)))
+                            (walk f (str local "/") (unchecked-inc level)))))))
+              (or (.listFiles dir) [])))]
+    (vec (walk root "" 1))))
+
 (defn- list-dir
-  "Directory listing as MODEL data, powered by fff — never a filesystem walk.
+  "Directory listing as MODEL data, powered by fff wherever fff can answer.
 
    fff owns `.gitignore`, `.ignore`, `.rgignore`, and the live `vis.yml` grep overlay
-   in one native index; this code only rebuilds the documented tree shape. Two
+   in one native index; this code only rebuilds the documented tree shape. Three
    sources, cheapest first:
 
    1. the WARM workspace index `grep`/`find` already maintain, prefix-filtered — no
       new index and no new watcher;
    2. otherwise an index rooted at the directory itself, which is also what keeps a
-      directly listed ignored directory readable, as it was before.
+      directly listed ignored directory readable, as it was before;
+   3. and, only when fff refuses that root outright (`fff-unavailable`: a filesystem
+      root or a home directory), a plain filesystem walk — `walk-ls-items`.
 
    Records are depth-filtered inside the paging loop (`fff-ls-scan`), so cost tracks
    the rows RETURNED rather than the size of the tree, and rendered paths are joined
@@ -1728,7 +1761,11 @@
 
      items
      (or (fff-ls-workspace-items root target-rel levels is-hidden?)
-         (fff-ls-target-items root target-rel levels is-hidden?))
+         (try (fff-ls-target-items root target-rel levels is-hidden?)
+              (catch clojure.lang.ExceptionInfo e
+                (if (= :ext.foundation.editing/fff-unavailable (:type (ex-data e)))
+                  (walk-ls-items root levels is-hidden?)
+                  (throw e)))))
 
      render-prefix
      (if (= "." base) "" (str base "/"))

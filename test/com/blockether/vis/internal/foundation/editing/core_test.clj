@@ -6486,6 +6486,50 @@
                                   {"grep" {"include_gitignored_paths" [rel-included]}})]
         (expect (contains? (names) "repositories"))))))
 
+;; Regression, issue #126: `ls` was fff-only, and fff refuses to index a filesystem
+;; root or a home directory ("Can not run certain FFF features in a file system root
+;; or home directories"), so `ls("/")` and `ls("~")` answered with
+;; "rg requires fff for directory search, but fff failed for /" and the ROOT files
+;; were unreachable — the one listing a real `ls` never fails at.
+(defdescribe
+  ls-unindexable-dir-test
+  (it
+    "ls lists a directory fff refuses to index — filesystem root and home"
+    (let
+      [ls-tool
+       (private-fn "ls-tool")
+
+       home
+       (System/getProperty "user.home")]
+
+      ;; the session that reported this had the WHOLE filesystem granted as a root
+      (with-redefs
+        [workspace/allowed-roots
+         (constantly ["/" home])
+
+         workspace/filesystem-root-mappings
+         (constantly [{:trunk "/" :clone "/"}])]
+
+        (let
+          [row
+           (fn [spec]
+             (first (get (:result (ls-tool {"paths" [spec]})) "results")))
+
+           names
+           (fn [spec]
+             (into #{} (map #(get % "name")) (get (row spec) "entries")))
+
+           root-names
+           (names "/")]
+
+          (expect (contains? root-names "usr"))
+          (expect (contains? root-names "etc"))
+          ;; dotfiles still need `is_hidden`, exactly as under fff
+          (expect (not-any? #(string/starts-with? % ".") root-names))
+          (expect (some #(string/starts-with? % ".") (names {"path" "/" "is_hidden" true})))
+          ;; a home directory is refused for the same reason and must list too
+          (expect (= "dir" (get (row home) "type"))))))))
+
 (defdescribe
   ls-fff-index-reuse-test
   (it
