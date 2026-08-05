@@ -6,6 +6,7 @@ import {
 } from 'react';
 
 import type { MachineColor } from '../lib/machine-colors';
+import { CloseIcon } from './icons';
 
 // Ref-forwarding: a button that ANCHORS something (a popover, a focus return) has
 // to be measurable by its owner, and cloning the element's classes at the call site
@@ -128,11 +129,11 @@ export function DialogFrame({
         {onClose && (
           <button
             type="button"
-            className="absolute inset-y-0 right-0 grid min-w-9 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-w-8"
+            className="absolute inset-y-0 right-0 grid min-w-9 place-items-center border-l border-dialog-title-foreground/20 text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-w-8"
             onClick={onClose}
             aria-label="Close dialog"
           >
-            ✕
+            <CloseIcon />
           </button>
         )}
       </header>

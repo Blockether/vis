@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import { StarIcon } from './SwipeActions';
+import { StarIcon } from './icons';
 
 // Regression (reported: "make the star icon truly yellow"): the filled star used
 // `fill-current`, so it inherited `text-accent-ink` — the legible amber INK

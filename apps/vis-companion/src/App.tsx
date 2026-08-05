@@ -40,6 +40,11 @@ import {
 } from "./lib/share-intake";
 import { applyTheme, resolveLocalTheme } from "./lib/theme";
 import { getThemePalette, getThemePref } from "./lib/storage";
+import {
+  MachinesIcon,
+  SettingsIcon,
+  TranscriptsIcon,
+} from "./components/icons";
 import { ConnectScreen } from "./screens/ConnectScreen";
 import { SessionsScreen } from "./screens/SessionsScreen";
 import { IncompatibleScreen } from "./screens/IncompatibleScreen";
@@ -1104,49 +1109,7 @@ export function TabBar({
 }
 
 function NavIcon({ id }: { id: Tab }) {
-  if (id === "sessions") {
-    return (
-      <svg
-        viewBox="0 0 20 20"
-        className="size-4"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        aria-hidden="true"
-      >
-        <path d="M3.5 4.5h13v11h-13zM6.5 7.5h7M6.5 10h7M6.5 12.5h4" />
-      </svg>
-    );
-  }
-  return (
-    <svg
-      viewBox="0 0 20 20"
-      className="size-4"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      aria-hidden="true"
-    >
-      <path d="M4 4.5h12v4H4zM4 11.5h12v4H4zM6.5 6.5h.01M6.5 13.5h.01" />
-    </svg>
-  );
-}
-
-/** Header cog. Same 20-unit box, stroke and weight as `NavIcon` so the two read as one set. */
-function SettingsIcon() {
-  return (
-    <svg
-      viewBox="0 0 20 20"
-      className="size-4"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      aria-hidden="true"
-    >
-      <path d="M8.35 4.23 L8.72 1.9 A8.2 8.2 0 0 1 11.28 1.9 L11.65 4.23 A6 6 0 0 1 14.17 5.68 L16.37 4.84 A8.2 8.2 0 0 1 17.66 7.06 L15.82 8.55 A6 6 0 0 1 15.82 11.45 L17.66 12.94 A8.2 8.2 0 0 1 16.37 15.16 L14.17 14.32 A6 6 0 0 1 11.65 15.77 L11.28 18.1 A8.2 8.2 0 0 1 8.72 18.1 L8.35 15.77 A6 6 0 0 1 5.83 14.32 L3.63 15.16 A8.2 8.2 0 0 1 2.34 12.94 L4.18 11.45 A6 6 0 0 1 4.18 8.55 L2.34 7.06 A8.2 8.2 0 0 1 3.63 4.84 L5.83 5.68 A6 6 0 0 1 8.35 4.23 Z" />
-      <circle cx="10" cy="10" r="2.4" />
-    </svg>
-  );
+  return id === "sessions" ? <TranscriptsIcon /> : <MachinesIcon />;
 }
 
 function Splash() {

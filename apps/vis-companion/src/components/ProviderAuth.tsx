@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
 import type { AuthFlow, ProviderLimitRow, ProviderPreset, RouterProvider } from '../lib/types';
 import { Banner, Button, Input } from './ui';
+import { ChevronIcon, PlusIcon } from './icons';
 
 /** How long to keep polling a device flow before giving up on our side. */
 const DEVICE_POLL_CEILING_MS = 15 * 60 * 1000;
@@ -953,8 +954,8 @@ export function AddProviderPanel({
                 {busy ? 'Adding…' : presetHint(preset)}
               </span>
             </span>
-            <span className="shrink-0 font-mono text-meta text-dialog-hint" aria-hidden="true">
-              {preset.is_local ? '▸' : '+'}
+            <span className="shrink-0 text-dialog-hint" aria-hidden="true">
+              {preset.is_local ? <ChevronIcon /> : <PlusIcon />}
             </span>
           </button>
         );

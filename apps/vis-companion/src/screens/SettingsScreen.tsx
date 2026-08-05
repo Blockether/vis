@@ -10,6 +10,7 @@ import {
   GatewayError,
   cachedThemeCatalogs,
 } from "../lib/gateway";
+import { ChevronIcon, CloseIcon } from "../components/icons";
 import type {
   GatewayConn,
   PushDevice,
@@ -233,11 +234,11 @@ export function GatewaySettingsDialog({
           </div>
           <button
             type="button"
-            className="grid min-w-10 self-stretch place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
+            className="grid min-w-10 self-stretch place-items-center border-l border-dialog-title-foreground/20 text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
             onClick={onClose}
             aria-label="Close machine settings"
           >
-            ✕
+            <CloseIcon />
           </button>
         </header>
 
@@ -1208,11 +1209,11 @@ export function ApplicationSettingsDialog({
           </div>
           <button
             type="button"
-            className="grid min-w-10 self-stretch place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
+            className="grid min-w-10 self-stretch place-items-center border-l border-dialog-title-foreground/20 text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
             onClick={onClose}
             aria-label="Close application settings"
           >
-            ✕
+            <CloseIcon />
           </button>
         </header>
 
@@ -1459,12 +1460,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                         : providerStatusLine(provider)}
                   </span>
                 </span>
-                <span
-                  className="shrink-0 font-mono text-meta text-dialog-hint"
-                  aria-hidden="true"
-                >
-                  {open ? "▾" : "▸"}
-                </span>
+                <ChevronIcon open={open} className="size-3.5 text-dialog-hint" />
               </button>
 
               <ProviderNotice auth={auth} provider={provider} />

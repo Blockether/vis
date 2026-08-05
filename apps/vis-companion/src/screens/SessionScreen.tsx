@@ -17,6 +17,14 @@ import { ArtifactsChip, ArtifactsSheet } from "../components/ArtifactsSheet";
 import { collectArtifacts } from "../lib/artifacts";
 import { ExpandableImage } from "../components/ImageViewer";
 import { Banner, Spinner } from "../components/ui";
+import {
+  ArrowDownIcon,
+  CameraIcon,
+  CloseIcon,
+  ImageIcon,
+  MicIcon,
+  PlusIcon,
+} from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
 import { ProviderRouterDialog } from "./RouterScreen";
 import {
@@ -943,12 +951,12 @@ function PasteEditor({
           </div>
           <button
             type="button"
-            className="grid min-h-10 min-w-10 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
+            className="grid min-h-10 min-w-10 place-items-center border-l border-dialog-title-foreground/20 text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
             onMouseDown={keepKeyboard}
             onClick={onClose}
             aria-label="Close paste editor"
           >
-            ✕
+            <CloseIcon />
           </button>
         </header>
 
@@ -4493,10 +4501,11 @@ export function SessionScreen({
           {showJump && !fileMatches.length && !slashMatches.length && (
             <button
               type="button"
-              className="absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2 border border-dialog-edge bg-button px-3 py-1.5 font-mono text-meta font-bold text-button-foreground shadow-[4px_4px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate,background-color] duration-150 starting:translate-y-2 starting:opacity-0 active:scale-[0.97] motion-reduce:transition-none"
+              className="absolute bottom-full left-1/2 z-20 mb-2 inline-flex -translate-x-1/2 items-center gap-1.5 border border-dialog-edge bg-button px-3 py-1.5 font-mono text-meta font-bold text-button-foreground shadow-[4px_4px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate,background-color] duration-150 starting:translate-y-2 starting:opacity-0 active:scale-[0.97] motion-reduce:transition-none"
               onClick={() => scrollToEnd("smooth")}
             >
-              ↓ Latest
+              <ArrowDownIcon />
+              Latest
             </button>
           )}
 
@@ -4717,7 +4726,7 @@ export function SessionScreen({
                       }}
                       aria-label={`Remove queued message ${index + 1}`}
                     >
-                      ×
+                      <CloseIcon className="size-3" />
                     </button>
                   </div>
                 );
@@ -4750,7 +4759,7 @@ export function SessionScreen({
                       onClick={() => removePaste(paste.id)}
                       aria-label={`Remove pasted block ${paste.id}`}
                     >
-                      ×
+                      <CloseIcon className="size-3" />
                     </button>
                   </span>
                 ))}
@@ -4793,7 +4802,7 @@ export function SessionScreen({
                       onClick={() => removeAttachment(attachment.id)}
                       aria-label={`Remove ${attachment.filename}`}
                     >
-                      ×
+                      <CloseIcon className="size-3" />
                     </button>
                   </div>
                 ))}
@@ -4893,20 +4902,7 @@ export function SessionScreen({
                           void takePhoto();
                         }}
                       >
-                        <svg
-                          viewBox="0 0 24 24"
-                          className="size-3.5 shrink-0"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.8"
-                          aria-hidden="true"
-                        >
-                          <path
-                            d="M3 8h4l1.5-2h7L17 8h4v11H3z"
-                            strokeLinecap="square"
-                          />
-                          <circle cx="12" cy="13" r="3.2" />
-                        </svg>
+                        <CameraIcon />
                         Take a photo
                       </button>
                       <button
@@ -4919,21 +4915,7 @@ export function SessionScreen({
                           void addAttachments();
                         }}
                       >
-                        <svg
-                          viewBox="0 0 24 24"
-                          className="size-3.5 shrink-0"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.8"
-                          aria-hidden="true"
-                        >
-                          <path d="M4 6h16v12H4z" strokeLinecap="square" />
-                          <path
-                            d="M4 15l4.5-4.5 3 3 3.5-3.5L20 15"
-                            strokeLinecap="square"
-                          />
-                          <circle cx="9" cy="9.5" r="1.2" />
-                        </svg>
+                        <ImageIcon />
                         Photos or videos
                       </button>
                     </div>
@@ -4972,16 +4954,9 @@ export function SessionScreen({
                       : "Choose photos or videos"
                   }
                 >
-                  <svg
-                    viewBox="0 0 24 24"
+                  <PlusIcon
                     className={`size-3.5 transition-transform duration-150 motion-reduce:transition-none ${attachMenuOpen ? "rotate-45" : ""}`}
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    aria-hidden="true"
-                  >
-                    <path d="M12 5v14M5 12h14" strokeLinecap="square" />
-                  </svg>
+                  />
                 </button>
               </div>
 
@@ -5010,20 +4985,7 @@ export function SessionScreen({
                       : "Dictate message"
                   }
                 >
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="size-3.5"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    aria-hidden="true"
-                  >
-                    <rect x="9" y="3" width="6" height="11" rx="3" />
-                    <path
-                      d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7"
-                      strokeLinecap="square"
-                    />
-                  </svg>
+                  <MicIcon />
                 </button>
               )}
 

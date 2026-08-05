@@ -13,6 +13,7 @@ import {
 import Prism from 'prismjs';
 import { DataTable } from './DataTable';
 import { DocCard, DocPreview } from './DocArtifact';
+import { AlertIcon, ArrowDownIcon, ArrowOutIcon, ChevronIcon } from './icons';
 import {
   attachmentBytes,
   attachmentIsDoc,
@@ -1285,7 +1286,7 @@ export const ThinkingBand = memo(function ThinkingBand({ children }: { children:
           aria-expanded={expanded}
           onClick={() => setExpandRequested((value) => !value)}
         >
-          <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>
+          <ChevronIcon open={expanded} />
           <span>{expanded ? 'THINKING' : `THINKING +${hiddenRows} more`}</span>
         </button>
       )}
@@ -1356,7 +1357,10 @@ const AttachmentTile = memo(function AttachmentTile({
   // and never revisited, so this branch cannot resize anything.
   if (!isPlayable || !iterationId) {
     return (
-      <div className="mt-2 min-w-0 truncate font-mono text-chip text-footer-muted">{`↗ ${name}`}</div>
+      <div className="mt-2 flex min-w-0 items-center gap-1.5 font-mono text-chip text-footer-muted">
+        <ArrowOutIcon />
+        <span className="min-w-0 truncate">{name}</span>
+      </div>
     );
   }
 
@@ -1370,8 +1374,9 @@ const AttachmentTile = memo(function AttachmentTile({
     <figure className="mt-2.5 min-w-0">
       <div className={mediaSlotFrame(slot)}>
         {failed ? (
-          <div className="flex h-full w-full items-center bg-thinking-surface px-2 font-mono text-chip text-footer-muted">
-            {`✗ ${name}`}
+          <div className="flex h-full w-full items-center gap-1.5 bg-thinking-surface px-2 font-mono text-chip text-footer-muted">
+            <AlertIcon />
+            <span className="min-w-0 truncate">{name}</span>
           </div>
         ) : !url ? (
           <div className={mediaPendingClass} aria-hidden="true" />
@@ -1556,7 +1561,7 @@ export const AttachmentRail = memo(function AttachmentRail({
           aria-label={`Load ${page.restLabel} of attachments`}
           className="mt-2 flex min-h-11 w-full min-w-0 items-center gap-1.5 border border-dialog-edge px-2 text-left font-mono text-chip text-footer-muted hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-8"
         >
-          <span aria-hidden="true" className="shrink-0 opacity-70">↓</span>
+          <ArrowDownIcon className="size-3.5 opacity-70" />
           <span className="min-w-0 truncate">Load {page.restLabel}</span>
         </button>
       )}
@@ -1568,9 +1573,10 @@ export const AttachmentRail = memo(function AttachmentRail({
             onClick={() => setOpen((current) => !current)}
             className="flex min-h-8 w-full min-w-0 items-center gap-1.5 text-left font-mono text-chip text-footer-muted"
           >
-            <span aria-hidden="true" className="shrink-0 opacity-70">{open ? '▾' : '▸'}</span>
+            <ChevronIcon open={open} className="size-3.5 opacity-70" />
+            <ArrowOutIcon className="size-3.5 opacity-70" />
             <span className="min-w-0 truncate">
-              ↗ {head.name}
+              {head.name}
               {head.count > 1 ? ` ×${head.count}` : ''}
             </span>
             {rest > 0 && <span className="shrink-0 opacity-70">+{rest} more</span>}
@@ -1927,8 +1933,10 @@ export const ContentBlockView = memo(function ContentBlockView({ block }: { bloc
       );
     case 'attachment':
       return (
-        <div className="my-2 w-fit border border-dialog-edge bg-panel px-2.5 py-1.5 font-mono text-meta text-dialog-foreground">
-          ↗ {block.name ?? 'Attachment'} <small className="ml-2 text-dialog-hint">{block.media_type}</small>
+        <div className="my-2 flex w-fit items-center gap-1.5 border border-dialog-edge bg-panel px-2.5 py-1.5 font-mono text-meta text-dialog-foreground">
+          <ArrowOutIcon />
+          <span className="min-w-0 truncate">{block.name ?? 'Attachment'}</span>
+          <small className="text-dialog-hint">{block.media_type}</small>
         </div>
       );
     case 'notice':
@@ -2106,7 +2114,7 @@ export const UserMessage = memo(function UserMessage(
           // padding.
           <details key={part.key} className="group -mx-3 my-3 block max-w-none border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0">
             <summary className="cursor-pointer list-none select-none px-3 py-2 font-mono text-meta font-semibold text-accent-ink marker:hidden [&::-webkit-details-marker]:hidden">
-              <span className="mr-1.5 inline-block text-dialog-hint transition-transform group-open:rotate-90">▸</span>
+              <ChevronIcon className="mr-1.5 inline-block text-dialog-hint group-open:rotate-90" />
               {part.summary}
             </summary>
             <pre className="max-h-[min(28rem,60dvh)] overflow-auto overscroll-contain border-t border-code-edge px-3 py-2 font-mono text-meta [tab-size:2]">

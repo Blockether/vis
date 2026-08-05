@@ -31,7 +31,8 @@ import {
   topVisibleRow,
   type ListAnchor,
 } from '../lib/list-scroll';
-import { PencilIcon, StarIcon, SwipeActions, TrashIcon } from '../components/SwipeActions';
+import { SwipeActions } from '../components/SwipeActions';
+import { ChevronIcon, PencilIcon, StarIcon, TrashIcon } from '../components/icons';
 import { DEFAULT_SESSION_PAGE_SIZE, getSessionsPerPage, subscribeSessionsPerPage } from '../lib/storage';
 import { hostOf } from '../lib/endpoints';
 import {
@@ -1091,7 +1092,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen }: 
                 title={scopeTarget ? 'Start in a draft' : 'Choose a machine'}
                 onClick={() => (startMenu ? leaveStart() : openStartMenu())}
               >
-                <span aria-hidden>▾</span>
+                <ChevronIcon open />
               </Button>
             </div>
           </div>
@@ -1696,9 +1697,7 @@ const ProjectGroup = memo(function ProjectGroup({
           className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:px-4"
         >
           <span className="flex min-w-0 items-center gap-2">
-            <span className="shrink-0 font-mono text-ui text-dialog-hint" aria-hidden="true">
-              {isOpen ? '▾' : '▸'}
-            </span>
+            <ChevronIcon open={isOpen} className="size-3.5 text-dialog-hint" />
             <span className="min-w-0">
               <span className="block truncate font-mono text-ui font-bold text-white">{project}</span>
               <span className="mt-0.5 block truncate font-mono text-chip text-dialog-hint" title={root}>

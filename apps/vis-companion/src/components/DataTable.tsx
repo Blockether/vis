@@ -1,4 +1,5 @@
 import { memo, useCallback, useId, useMemo, useRef, useState } from 'react';
+import { SortIcon } from './icons';
 
 // A CSV/TSV artifact is DATA, not a picture. `vis_attach` emits it as a
 // ````vis-table` fence and BOTH surfaces paint it as a real grid: the TUI through
@@ -446,9 +447,10 @@ export const DataTable = memo(function DataTable({
                       }`}
                     >
                       <span className="truncate">{cellLabel || ' '}</span>
-                      <span className={sort?.index === index ? 'shrink-0' : 'shrink-0 opacity-50'}>
-                        {sort?.index === index ? (sort.dir === 'asc' ? '▲' : '▼') : '⇅'}
-                      </span>
+                      <SortIcon
+                        dir={sort?.index === index ? sort.dir : undefined}
+                        className={sort?.index === index ? 'size-3.5' : 'size-3.5 opacity-50'}
+                      />
                     </button>
                   </th>
                 ))}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
 import type { ModelPref, RouterProvider } from '../lib/types';
 import { Banner, Button } from '../components/ui';
+import { ChevronIcon, CloseIcon } from '../components/icons';
 import {
   defaultFirstProviders,
   isProviderAuthed,
@@ -114,11 +115,11 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
           </div>
           <button
             type="button"
-            className="grid min-h-10 min-w-10 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
+            className="grid min-h-10 min-w-10 place-items-center border-l border-dialog-title-foreground/20 text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
             onClick={onClose}
             aria-label="Close model picker"
           >
-            ✕
+            <CloseIcon />
           </button>
         </header>
 
@@ -161,7 +162,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
                       {limits ?? `${provider.models.length} models`}
                     </span>
                   </span>
-                  <span className="font-mono text-meta text-dialog-hint">{open ? '▾' : '▸'}</span>
+                  <ChevronIcon open={open} className="size-3.5 text-dialog-hint" />
                 </button>
 
                 {open && (

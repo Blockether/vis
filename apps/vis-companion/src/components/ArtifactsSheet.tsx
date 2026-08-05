@@ -41,6 +41,13 @@ import type { GatewayClient } from "../lib/gateway";
 import { DocFrame } from "./DocArtifact";
 import { ImageViewer } from "./ImageViewer";
 import { TextFrame } from "./TextArtifact";
+import {
+  AlertIcon,
+  ArrowDownIcon,
+  ClipIcon,
+  CloseIcon,
+  PlayIcon,
+} from "./icons";
 
 /**
  * Two documents produced by the same turn have to stay distinguishable at a
@@ -66,41 +73,6 @@ export function artifactHue(key: string): string {
   for (let at = 0; at < key.length; at += 1)
     hash = (hash * 31 + key.charCodeAt(at)) >>> 0;
   return ARTIFACT_HUES[hash % ARTIFACT_HUES.length];
-}
-
-/**
- * The ONE glyph left. A clip has no cheap raster and `▶` is the mark that reads
- * as "play" in every locale; every other kind now says what it actually is — a
- * picture shows itself, a document and a file wear their own format word.
- */
-const VIDEO_GLYPH = "▶";
-
-/**
- * The mark of an ATTACHMENT, drawn in the app's own icon grammar (24-grid,
- * `currentColor`, 1.8 stroke) like the camera, the picture and the microphone in
- * the composer. `▣` was a geometric box that stood for "some object" and at
- * `text-chip` read as a smudge; a paperclip is the mark every mail client, chat
- * app and issue tracker already taught this user.
- */
-function ClipIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      className="size-3.5 shrink-0"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      aria-hidden="true"
-    >
-      {/* The DIAGONAL clip, because at 14px an upright one closes up into a
-          blob: the slant keeps both openings wider than the stroke. */}
-      <path
-        d="M20 11.5l-8.2 8.2a5 5 0 0 1-7.1-7.1l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
 }
 
 /** `PNG · 214KB · turn 6` — the line that makes an artifact citable. */
@@ -205,11 +177,11 @@ function Thumb({
         ) : (
           <span
             aria-hidden="true"
-            className={`grid h-full w-full place-items-center font-mono text-subhead text-dialog-hint ${
+            className={`grid h-full w-full place-items-center text-dialog-hint ${
               failed ? "" : "animate-pulse motion-reduce:animate-none"
             }`}
           >
-            {failed ? "✗" : ""}
+            {failed ? <AlertIcon className="size-5" /> : null}
           </span>
         )}
       </span>
@@ -237,10 +209,10 @@ function Thumb({
   if (artifact.kind === "video") {
     return (
       <span
-        className={`grid place-items-center bg-code font-mono text-subhead text-dialog-hint ${box}`}
+        className={`grid place-items-center bg-code text-dialog-hint ${box}`}
         aria-hidden="true"
       >
-        {VIDEO_GLYPH}
+        <PlayIcon className="size-7" />
       </span>
     );
   }
@@ -346,9 +318,9 @@ function SurfaceHeader({
         type="button"
         onClick={onClose}
         aria-label="Close artifacts"
-        className="absolute inset-y-0 right-0 grid min-w-9 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-w-8"
+        className="absolute inset-y-0 right-0 grid min-w-9 place-items-center border-l border-dialog-title-foreground/20 text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-w-8"
       >
-        <span aria-hidden="true">✕</span>
+        <CloseIcon />
       </button>
     </header>
   );
@@ -449,9 +421,9 @@ function DetailOverlay({
           type="button"
           onClick={onClose}
           aria-label="Back to artifacts"
-          className="absolute inset-y-0 right-0 grid min-w-9 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-w-8"
+          className="absolute inset-y-0 right-0 grid min-w-9 place-items-center border-l border-dialog-title-foreground/20 text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-w-8"
         >
-          <span aria-hidden="true">✕</span>
+          <CloseIcon />
         </button>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
@@ -665,7 +637,7 @@ export function ArtifactsSheet({
                 aria-label={`Load ${page.restLabel} of artifacts`}
                 className="mt-3 flex min-h-8 w-full items-center justify-center gap-1.5 border border-dialog-edge bg-panel font-mono text-meta text-dialog-hint hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-7"
               >
-                <span aria-hidden="true">↓</span>
+                <ArrowDownIcon />
                 <span>Load {page.restLabel}</span>
               </button>
             )}
