@@ -3005,7 +3005,59 @@
             (expect (= out (patch/decode-unicode-escapes out)) (pr-str in))
             (expect (= (count (re-seq #"\n" in)) (count (re-seq #"\n" out))) (pr-str in))
             (expect (<= (count out) (count in)) (pr-str in))
-            (expect (not-any? invisible-or-unreal? invented) (pr-str in)))))))
+            (expect (not-any? invisible-or-unreal? invented) (pr-str in))))))
+  (it "folds its hex quad in ASCII only, so a non-ASCII digit is not a digit"
+      ;; The decoder reads the four hex digits itself instead of matching a
+      ;; regex, and deliberately not with `Character/digit`: that helper answers
+      ;; 4 for U+0664 ARABIC-INDIC FOUR and for U+FF14 FULLWIDTH FOUR alike, so
+      ;; a quad of those would have decoded into a character nobody typed.
+      (doseq
+        [quad [[0x662 0x660 0x661 0x664] ;; ARABIC-INDIC 2 0 1 4
+               [0xff12 0xff10 0xff11 0xff14] ;; FULLWIDTH 2 0 1 4
+               [0x32 0x30 0x31 0xff14]]] ;; one fullwidth digit is enough
+        (let [s (str "\\u" (apply str (map #(char (long %)) quad)))]
+          (expect (= s (patch/decode-unicode-escapes s)) (pr-str s)))))
+  (it "decodes megabytes in one linear pass"
+      ;; Every `patch` `replace` and every `struct_patch` `code` goes through the
+      ;; decoder, so it may never be the slow part of an edit: text between
+      ;; backslashes is bulk-copied rather than walked character by character,
+      ;; and an escape costs no substring and no matcher. All four blobs together
+      ;; decode in about 4 ms (the first, regex-and-charAt cut needed 13 ms), so
+      ;; the budget below keeps ~600x of room: it is here to catch a quadratic
+      ;; scan or a per-character allocation, not to time a CI box.
+      (let
+        [drift
+         (apply str (repeat 40000 "(str \"a\\u2014b\") ;; drift\n"))
+
+         emoji
+         (apply str (repeat 40000 "\\ud83d\\ude00"))
+
+         about
+         (apply str (repeat 40000 "\\\\u2014 stays\n"))
+
+         runs
+         (apply str (repeat 20 (str (apply str (repeat 50000 "\\")) "u2014")))
+
+         blobs
+         [drift emoji about runs]
+
+         t0
+         (System/nanoTime)
+
+         outs
+         (mapv patch/decode-unicode-escapes blobs)
+
+         ms
+         (/ (- (System/nanoTime) t0) 1e6)]
+
+        (expect (<= 3000000 (reduce + (map count blobs))))
+        (expect (string/includes? (nth outs 0) "a\u2014b"))
+        (expect (not (string/includes? (nth outs 0) "\\u2014")))
+        (expect (= (apply str (repeat 40000 "\ud83d\ude00")) (nth outs 1)))
+        (expect (= about (nth outs 2)))
+        (expect (= runs (nth outs 3)))
+        (expect (< ms 2500)
+                (str "decode of " (reduce + (map count blobs)) " characters took " ms " ms")))))
 
 
 (defdescribe
