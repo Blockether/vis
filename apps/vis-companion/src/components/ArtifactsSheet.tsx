@@ -303,8 +303,11 @@ function SurfaceHeader({
     // paper, the name centred in it, and the way out welded to the right edge
     // behind a rule. This surface used to invent its own — pale panel, title on
     // the left, a boxed ✕ floating in the padding — so the one screen a session's
-    // output lives on did not look like the app it lives in.
-    <header className="relative flex min-h-9 shrink-0 items-center justify-center bg-dialog-title px-12 py-1.5 text-dialog-title-foreground mouse:min-h-8">
+    // output lives on did not look like the app it lives in. The band opens
+    // flush under the session header's own dark back plate, and `dialog-edge`
+    // IS `dialog-title`, so the rule between them has to be the PALE one the
+    // close already wears — otherwise the corner is one black smear.
+    <header className="relative flex min-h-9 shrink-0 items-center justify-center border-t border-dialog-title-foreground/20 bg-dialog-title px-12 py-1.5 text-dialog-title-foreground mouse:min-h-8">
       <h2 className="truncate text-center font-mono text-body font-bold tracking-wide">
         Artifacts
         <span className="font-normal text-dialog-title-foreground/60">
@@ -410,7 +413,7 @@ function DetailOverlay({
       aria-label={name}
       className="absolute inset-0 z-20 flex flex-col bg-ink"
     >
-      <header className="relative flex min-h-9 shrink-0 items-center justify-center bg-dialog-title px-12 py-1.5 text-dialog-title-foreground mouse:min-h-8">
+      <header className="relative flex min-h-9 shrink-0 items-center justify-center border-t border-dialog-title-foreground/20 bg-dialog-title px-12 py-1.5 text-dialog-title-foreground mouse:min-h-8">
         <h2
           className="min-w-0 truncate text-center font-mono text-body font-bold tracking-wide"
           title={name}
@@ -605,7 +608,7 @@ export function ArtifactsSheet({
       id="artifacts-surface"
       role="region"
       aria-label="Artifacts produced by the model"
-      className="absolute inset-0 z-10 flex flex-col border-t border-dialog-edge bg-ink"
+      className="absolute inset-0 z-10 flex flex-col bg-ink"
     >
       <SurfaceHeader list={artifacts} onClose={onClose} />
       <FilterStrip

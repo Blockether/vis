@@ -1,3 +1,4 @@
+import artifactsSheetSource from "./ArtifactsSheet.tsx?raw";
 import sessionScreenSource from "../screens/SessionScreen.tsx?raw";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -199,6 +200,23 @@ describe("the artifacts sheet", () => {
     const canonical = canonicalBand();
     expect(canonical.band).toContain("min-h-9");
     expect(bandMetrics(html)).toEqual(canonical);
+  });
+
+  // Regression: the sheet's dark band opened flush under the session header's
+  // own dark back plate — `--dialog-border` IS `--dialog-title-bg` (#3f3f3f), so
+  // the rule between the two slabs was invisible and the corner read as one
+  // black smear. The band separates itself in the pale ink its close uses.
+  it("separates its dark band from the dark chrome above it", () => {
+    expect(sheet([picture])).toContain(
+      "border-t border-dialog-title-foreground/20",
+    );
+    const bands =
+      artifactsSheetSource.match(
+        /<header className="[^"]*bg-dialog-title[^"]*"/g,
+      ) ?? [];
+    expect(bands.length).toBeGreaterThan(1);
+    for (const band of bands)
+      expect(band).toContain("border-t border-dialog-title-foreground/20");
   });
 
   // Regression: a `.md` note was classified as an unreadable file, so the tile
