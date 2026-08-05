@@ -149,3 +149,58 @@ it('suspends the snap transition while a pinch or pan is live, and restores it o
   });
   expect(transformed.style.transitionDuration).toBe('');
 });
+
+// Regression: beginGesture returned immediately for ANY pointer while drawing
+// was active, before a second finger was ever registered — so a pinch could
+// never start once the pen was out. AnnotationLayer's own stroke handlers
+// also called stopPropagation() on every move/up, which would have blocked a
+// second finger's move from ever reaching the container even once the guard
+// above was fixed. Both had to give a second, non-primary pointer a path
+// through.
+it('still pinch-zooms with a second finger while a stroke is in progress', () => {
+  Element.prototype.setPointerCapture = vi.fn();
+  // Draw resets the transform to fitted, so zoom AFTER entering drawing mode
+  // or the reset — not the pinch — would be the only thing this proves.
+  act(() => named('Draw').click());
+  act(() => control('Zoom in').click());
+  expect(control('Reset zoom').textContent).toBe('135%');
+
+  const canvas = document.querySelector('canvas');
+  if (!canvas) throw new Error('annotation canvas not found');
+
+  act(() => {
+    canvas.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        pointerId: 1,
+        isPrimary: true,
+        clientX: 0,
+        clientY: 0,
+        bubbles: true,
+      }),
+    );
+  });
+  act(() => {
+    canvas.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        pointerId: 2,
+        isPrimary: false,
+        clientX: 300,
+        clientY: 0,
+        bubbles: true,
+      }),
+    );
+  });
+  act(() => {
+    canvas.dispatchEvent(
+      new PointerEvent('pointermove', {
+        pointerId: 2,
+        isPrimary: false,
+        clientX: 250,
+        clientY: 0,
+        bubbles: true,
+      }),
+    );
+  });
+
+  expect(control('Reset zoom').textContent).not.toBe('135%');
+});

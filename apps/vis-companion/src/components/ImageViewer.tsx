@@ -174,7 +174,15 @@ export function ImageViewer({
   }
 
 function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
-    if (drawing) return;
+    const point = { x: event.clientX, y: event.clientY };
+    pointersRef.current.set(event.pointerId, point);
+    const pointers = [...pointersRef.current.values()];
+    const [a, b] = pointers;
+    const pinching = Boolean(a && b);
+    // A lone finger while drawing is a stroke owned by the annotation layer
+    // above this handler, not a pan — only a SECOND finger starts a gesture
+    // here, so a pinch still works while the pen is out.
+    if (drawing && !pinching) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     // A live pinch/pan writes the transform every frame; the CSS transition
@@ -182,19 +190,13 @@ function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
     // finger moves, which is what read as stutter and a lagging, rubber-banded
     // pinch. Only a finger on the glass suspends it.
     if (transformedRef.current) transformedRef.current.style.transitionDuration = '0ms';
-    const point = { x: event.clientX, y: event.clientY };
-    pointersRef.current.set(event.pointerId, point);
-    const pointers = [...pointersRef.current.values()];
-    const [a, b] = pointers;
-    gestureRef.current =
-      a && b
-        ? pinchFrom(a, b, transformRef.current)
-        : panFrom(event.pointerId, point, transformRef.current);
+    gestureRef.current = pinching
+      ? pinchFrom(a, b, transformRef.current)
+      : panFrom(event.pointerId, point, transformRef.current);
   }
 
   function moveGesture(event: ReactPointerEvent<HTMLDivElement>) {
-    if (drawing || !pointersRef.current.has(event.pointerId)) return;
-    event.preventDefault();
+    if (!pointersRef.current.has(event.pointerId)) return;
     pointersRef.current.set(event.pointerId, {
       x: event.clientX,
       y: event.clientY,
@@ -203,26 +205,30 @@ function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
     if (!gesture) return;
     const [a, b] = [...pointersRef.current.values()];
     if (gesture.kind === 'pinch' && a && b) {
+      event.preventDefault();
       applyTransform(pinchTransform(gesture, a, b));
     } else if (
+      !drawing &&
       gesture.kind === 'pan' &&
       gesture.pointerId === event.pointerId
     ) {
+      event.preventDefault();
       applyTransform(
         panTransform(gesture, { x: event.clientX, y: event.clientY }),
       );
     }
   }
 
-function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
-    if (drawing) return;
+  function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
     pointersRef.current.delete(event.pointerId);
     // Lifting one finger of a pinch continues as a pan from where the other one
-    // is, instead of jumping the picture on the next move.
+    // is, instead of jumping the picture on the next move — unless the pen is
+    // out, where the remaining finger belongs to the stroke, never a pan.
     const [remaining] = [...pointersRef.current.entries()];
-    gestureRef.current = remaining
-      ? panFrom(remaining[0], remaining[1], transformRef.current)
-      : null;
+    gestureRef.current =
+      remaining && !drawing
+        ? panFrom(remaining[0], remaining[1], transformRef.current)
+        : null;
     // Last finger up: restore the CSS transition so a clamp snap-back (e.g.
     // pinching past 1x) and the toolbar's own zoom buttons animate again.
     if (!gestureRef.current && transformedRef.current)

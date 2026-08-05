@@ -130,11 +130,12 @@ export function AnnotationLayer({
   function extend(event: ReactPointerEvent<HTMLCanvasElement>): void {
     const canvas = canvasRef.current;
     const stroke = drawingRef.current;
-    if (!active || !stroke || !canvas) return;
+    // A second finger is a pinch, not the pen: never swallow its move, or the
+    // container never sees the two points it needs to compute the pinch.
+    if (!active || !stroke || !canvas || !event.isPrimary) return;
     const point = canvasPoint(canvas, event.clientX, event.clientY);
     if (!point) return;
     event.preventDefault();
-    event.stopPropagation();
     const previous = stroke.points[stroke.points.length - 1];
     stroke.points.push(point);
     const context = canvas.getContext('2d');
@@ -142,9 +143,9 @@ export function AnnotationLayer({
   }
 
   function finish(event: ReactPointerEvent<HTMLCanvasElement>): void {
-    if (!drawingRef.current) return;
+    // A second finger lifting is a pinch ending, not the pen: never swallow it.
+    if (!drawingRef.current || !event.isPrimary) return;
     event.preventDefault();
-    event.stopPropagation();
     drawingRef.current = null;
   }
 
