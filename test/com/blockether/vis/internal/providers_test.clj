@@ -9,7 +9,9 @@
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
-            [com.blockether.vis.internal.registry :as registry]))
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.workspace :as workspace]))
 
 (defn- rv
   "Resolve a (possibly private) var in the providers namespace."
@@ -558,3 +560,35 @@
     (is (not= ::still-running detected))
     (is (false? (:is-authenticated detected)))
     (is (str/includes? (str (:error detected)) "timed out"))))
+
+;; Regression, issue #113: bounding the probe moved the callback onto a bare
+;; worker thread with no binding conveyance, so a provider callback invoked from
+;; inside a LIVE session saw no session at all — `vis.jailed_shell_session` and
+;; `vis.ask` refused with "available only while handling a session", `vis.state`
+;; fell back to the process-wide DB, and a jailed spawn was scoped to the process
+;; cwd instead of the caller's workspace.
+(deftest provider-probe-keeps-the-callers-session-context-test
+  (let
+    [env
+     {:session-id "s-probe" :workspace {:root (str (workspace/cwd))}}
+
+     seen
+     (extension/with-context {:env env}
+                             (providers/safe-provider-status
+                               {:id :ctx
+                                :provider/status-fn (fn []
+                                                      {:is-authenticated true
+                                                       :session (:session-id
+                                                                  extension/*current-environment*)
+                                                       :root workspace/*workspace-root*})}))
+
+     detected
+     (extension/with-context {:env env}
+                             (providers/safe-provider-status
+                               {:id :ctx
+                                :provider/detect-fn #(:session-id
+                                                       extension/*current-environment*)}))]
+
+    (is (= "s-probe" (:session seen)))
+    (is (= (workspace/workspace-root env) (:root seen)))
+    (is (true? (:is-authenticated detected)))))

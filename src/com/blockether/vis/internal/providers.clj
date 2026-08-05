@@ -221,9 +221,19 @@
 (defn- probe-within
   "Run `f` off the calling thread and wait at most `probe-timeout-ms` for it.
    Returns `::timed-out` when the callback is still running by then; whatever
-   the callback threw is rethrown as-is, so callers keep one error path."
+   the callback threw is rethrown as-is, so callers keep one error path.
+
+   The worker runs `f` through `bound-fn*`. A provider callback reads its context
+   off dynamic vars — `extension/*current-environment*` and the workspace roots
+   derived from it — and `cancel/worker-future` starts a bare thread that conveys
+   no bindings (unlike `clojure.core/future`). Without conveyance, bounding the
+   probe silently unbound the session: a callback invoked from inside a live
+   session had `vis.jailed_shell_session` and `vis.ask` refuse it as \"available
+   only while handling a session\", `vis.state` fall back to the process-wide DB,
+   and a `vis.jailed_shell` spawn scoped to the process cwd instead of the
+   caller's workspace."
   [label f]
-  (let [fut (cancel/worker-future (str "vis-provider-" label) f)]
+  (let [fut (cancel/worker-future (str "vis-provider-" label) (bound-fn* f))]
     (try (let [value (deref fut probe-timeout-ms ::timed-out)]
            (when (identical? ::timed-out value) (.cancel ^java.util.concurrent.Future fut true))
            value)

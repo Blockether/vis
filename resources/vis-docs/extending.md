@@ -700,6 +700,17 @@ and every row must carry `id`, `label`, `scope` (`account` / `plan` / `workspace
 becomes `:<name>?`. One missing required key invalidates the whole report and the
 footer renders `limits: error`, so check yours with `vis-agent providers limits <id>`.
 
+**Provider callbacks run at process level, not inside a session.** `detect_fn`,
+`status_fn` and `limits_fn` are called while Vis starts, while the provider picker
+and *Settings → Providers* paint, and from the footer's own polling thread —
+moments when no turn is being handled at all. `subprocess`, `os.system`,
+`vis.shell` and `vis.jailed_shell` work with or without a session and are what a
+credential helper must use here; `vis.jailed_shell_session` and `vis.ask` require
+a live turn and refuse with *available only while handling a session*. Write these
+slots so they can answer with no session — cache a minted credential on disk
+rather than shelling out to mint one at render time. When a callback *is* invoked
+from a caller that has a session, the host keeps that session around it.
+
 For an interactive login, give `auth_fn=` a `def login(printer): ...` — the runtime
 hands it a `printer(line)` callback to emit instructions, and its return signals
 the outcome (`"ok"` / `"already-authenticated"` = silent success; anything else
