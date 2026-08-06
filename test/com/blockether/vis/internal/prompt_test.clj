@@ -143,12 +143,12 @@
                   ;; op `wait`), never the tool-local prohibition.
                   "`time.sleep`" "`asyncio.sleep`" "poll in Python"]]
         (expect (not (str/includes? text surplus))))))
-  (it "requires retained fold gists to be structured resumption handoffs"
+  (it "requires retained fold gists to be readable Markdown resumption handoffs"
       (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
         (doseq
-          [required ["Fold gists are structured resumption handoffs" "`Goal:`" "`Previous state:`"
-                     "`Hypothesis:`" "`Next:`" "confirmed work, edits, and checks" "dead ends"
-                     "worth exploring" "`tN/iN`" "`t5/*`"]]
+          [required ["Fold gists are structured resumption handoffs" "Use this Markdown" "## Goal"
+                     "## Previous state" "- **Confirmed:**" "- **Dead ends:**"
+                     "- **Worth exploring:**" "`tN/iN`" "`t5/*`" "## Hypothesis" "## Next" "1. "]]
           (expect (str/includes? text required)))))
   (it
     "advertises exact model-facing Python capabilities, never internal shim ids"
