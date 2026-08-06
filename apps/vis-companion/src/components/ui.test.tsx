@@ -141,6 +141,13 @@ describe('MachineBanner', () => {
     expect(html).not.toContain('sm:mr-0');
   });
 
+  // Regression, issue: adjacent list edges rendered as two visible rules when the machine banner followed the filter or machine gap.
+  it('overlaps its top edge with an adjacent border', () => {
+    const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
+
+    expect(html).toContain('-mt-px');
+  });
+
   it('uses the same unforced title and metadata typography as project headers', () => {
     const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
 
