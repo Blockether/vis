@@ -50,4 +50,11 @@ describe('where "New session" lives', () => {
     expect(source.slice(guardAt, headerAt)).not.toContain(')}');
     expect(source).toContain('!!barMachine.error');
   });
+
+  // Regression, reported machine block overflow: the mobile-only translation on
+  // the machine actions pushed its border beyond the full-width list block.
+  it('keeps machine actions inside the full-width header', () => {
+    expect(source).not.toContain('translate-x-2');
+    expect(source).not.toContain('sm:translate-x-0');
+  });
 });

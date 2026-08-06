@@ -1315,7 +1315,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                           10rem box that used to align the counts is gone — the button is
                           what the eye and the thumb aim at now, and the machine's name
                           keeps whatever is left. */}
-                      <span className="flex shrink-0 translate-x-2 items-center justify-end gap-2 font-mono text-chip text-dialog-hint sm:translate-x-0">
+                      <span className="flex shrink-0 items-center justify-end gap-2 font-mono text-chip text-dialog-hint">
                         {machine.error ? (
                           <>
                             <span>offline</span>

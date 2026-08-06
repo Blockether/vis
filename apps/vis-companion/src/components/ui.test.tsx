@@ -127,18 +127,25 @@ describe('MachineGap', () => {
 });
 
 describe('MachineBanner', () => {
-  // Regression, reported header typography mismatch: machine banners forced their
-  // labels and counts into uppercase tracked type while project headers used the
-  // normal monospace hierarchy, so otherwise-aligned headers still looked unlike.
-  it('uses the same unforced title and metadata typography as project headers', () => {
+  // Regression, reported machine block overflow: its banner was narrower than
+  // every session row and used a stronger rule, so the machine looked clipped
+  // instead of belonging to the same list.
+  it('fills the machine block and uses the session-row boundary', () => {
     const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
 
     expect(html).toContain('<header');
+    expect(html).toContain('border-dialog-edge');
+    expect(html).not.toContain('border-edge-strong');
+    expect(html).not.toContain('mr-2');
+    expect(html).not.toContain('sm:mr-0');
+  });
+
+  it('uses the same unforced title and metadata typography as project headers', () => {
+    const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
+
     expect(html).not.toContain('uppercase');
     expect(html).not.toContain('tracking-[0.12em]');
     expect(html).not.toContain('font-bold');
-    expect(html).toContain('border-edge-strong');
-    expect(html).not.toContain('border-dialog-edge');
   });
 
   it('matches a project header’s 44px minimum touch height', () => {
@@ -155,15 +162,6 @@ describe('MachineBanner', () => {
     expect(html).toContain('sticky');
     expect(html).toContain('top-0');
     expect(html).toContain('studio-mbp');
-  });
-
-  // Regression: on iOS the sticky band is composited over WKWebView's overlay
-  // scrollbar, so the thumb disappeared behind every machine header.
-  it('leaves the overlay scrollbar visible on phones', () => {
-    const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
-
-    expect(html).toContain('mr-2');
-    expect(html).toContain('sm:mr-0');
   });
 });
 

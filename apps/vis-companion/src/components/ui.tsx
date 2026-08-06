@@ -259,18 +259,15 @@ export function MachineGap() {
 }
 
 /**
- * A machine header is a sticky banner: its rail and stronger boundary distinguish
- * the computer from its projects while its title and tally retain the same
- * monospace hierarchy those project headers use.
- *
- * A sticky band is composited ABOVE the scroller's overlay scrollbar, so on iOS
- * it painted over the thumb: the bar vanished behind every machine header. The
- * band therefore stops short of the right edge on phones; from `sm` up the
- * scroller reserves a real gutter and the margin is dropped.
+ * A machine header is a sticky banner: its rail and boundary distinguish the
+ * computer from its projects while its title and tally retain the same
+ * monospace hierarchy those project headers use. It fills the machine block just
+ * like a session row; leaving a scrollbar-sized side margin made the machine
+ * boundary look clipped and introduced a false horizontal edge on narrow screens.
  */
 export function MachineBanner({ children }: { children: ReactNode }) {
   return (
-    <header className="sticky top-0 z-10 mr-2 flex min-h-11 items-center justify-between gap-3 border-b border-edge-strong bg-panel px-3 py-2 sm:mr-0 sm:px-4">
+    <header className="sticky top-0 z-10 flex min-h-11 items-center justify-between gap-3 border-b border-dialog-edge bg-panel px-3 py-2 sm:px-4">
       {children}
     </header>
   );
