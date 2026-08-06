@@ -174,35 +174,52 @@
                    (try (expect (false? (uv-project? (.getPath root)))) (finally (cleanup root))))))
 
 ;; ── live REPL subprocess ─────────────────────────────────────────────────────
-(defdescribe repl-lifecycle-test
-             (it "starts, evaluates, persists globals across evals, captures output + errors, stops"
-                 (when (has-python?)
-                   (let [dir (.getPath (tmp-dir))]
-                     (try (expect
-                            (= "up" (get (repl/start! dir {:session-id test-session-id}) "status")))
-                          ;; last expression's value is captured (REPL semantics)
-                          (expect (= "2" (get (repl/eval! dir "1+1" 10000) "value")))
-                          ;; globals PERSIST across separate evals — a real session
-                          (repl/eval! dir "x = 21" 10000)
-                          (expect (= "42" (get (repl/eval! dir "x*2" 10000) "value")))
-                          ;; stdout is captured, not leaked
-                          (let [r (repl/eval! dir "print('hi')" 10000)]
-                            (expect (= "hi\n" (get r "out")))
-                            (expect (get r "ok")))
-                          ;; an exception is captured, not thrown into Clojure
-                          (let [r (repl/eval! dir "1/0" 10000)]
-                            (expect (false? (get r "ok")))
-                            (expect (re-find #"ZeroDivisionError" (str (get r "exc")))))
-                          (expect (= "up" (get (repl/status dir) "status")))
-                          (repl/stop! dir)
-                          (expect (= "down" (get (repl/status dir) "status")))
-                          (finally (repl/stop! dir))))))
-             (it "eval before start fails closed with a clear error"
-                 (let [dir (str (.getPath (tmp-dir)) "-never-started")]
-                   (expect (= :py/no-repl
-                              (try (repl/eval! dir "1" 1000)
-                                   nil
-                                   (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+(defdescribe
+  repl-lifecycle-test
+  (it "starts, evaluates, persists globals across evals, captures output + errors, stops"
+      (when (has-python?)
+        (let [dir (.getPath (tmp-dir))]
+          (try (expect (= "up" (get (repl/start! dir {:session-id test-session-id}) "status")))
+               ;; last expression's value is captured (REPL semantics)
+               (expect (= "2" (get (repl/eval! dir "1+1" 10000) "value")))
+               ;; globals PERSIST across separate evals — a real session
+               (repl/eval! dir "x = 21" 10000)
+               (expect (= "42" (get (repl/eval! dir "x*2" 10000) "value")))
+               ;; stdout is captured, not leaked
+               (let [r (repl/eval! dir "print('hi')" 10000)]
+                 (expect (= "hi\n" (get r "out")))
+                 (expect (get r "ok")))
+               ;; an exception is captured, not thrown into Clojure
+               (let [r (repl/eval! dir "1/0" 10000)]
+                 (expect (false? (get r "ok")))
+                 (expect (re-find #"ZeroDivisionError" (str (get r "exc")))))
+               (expect (= "up" (get (repl/status dir) "status")))
+               (repl/stop! dir)
+               (expect (= "down" (get (repl/status dir) "status")))
+               (finally (repl/stop! dir))))))
+  ;; Regression, issue #123: a pinned `vis-agent python` command rejected `-u`,
+  ;; but start still reported an unusable process as up and exposed its driver source.
+  (it "fails startup when the child cannot complete the ping handshake"
+      (let [dir (.getPath (tmp-dir))]
+        (try (let
+               [result (with-redefs
+                         [interp/resolve-command (constantly ["sh" "-c"
+                                                              "printf 'not-json\\n'; sleep 30"])]
+                         (repl/start! dir {:session-id test-session-id}))]
+               (expect (= "failed" (get result "status")))
+               (expect (re-find #"invalid response" (get result "error")))
+               (expect (= "<vis python driver>" (last (get result "cmd"))))
+               (expect (= :py/no-repl
+                          (try (repl/eval! dir "1" 1000)
+                               nil
+                               (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
+             (finally (repl/stop! dir)))))
+  (it "eval before start fails closed with a clear error"
+      (let [dir (str (.getPath (tmp-dir)) "-never-started")]
+        (expect (= :py/no-repl
+                   (try (repl/eval! dir "1" 1000)
+                        nil
+                        (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
 
 ;; ── language-facade wiring ───────────────────────────────────────────────────
 (defdescribe

@@ -111,18 +111,19 @@ _main()
   (boolean (some-> ^Process (:process info)
                    .isAlive)))
 
+(declare request!)
+
 (defn start!
-  "Spawn (or replace) the managed Python REPL for `dir`. Returns a STRING-keyed
-   status map (crosses the strings-only boundary as a tool `:result`)."
+  "Spawn (or replace) the managed Python REPL for `dir`. A start succeeds only
+   after the child answers its protocol ping; failed children never masquerade
+   as usable REPLs. Returns a STRING-keyed lifecycle map."
   [dir {:keys [session-id]}]
   (when-let [old (get @processes dir)]
     (try (.destroy ^Process (:process old)) (catch Throwable _ nil)))
   (let
     [cmd
-     (vec (concat (interp/resolve-command dir) ["-u" "-c" server-script]))
+     (vec (concat (interp/resolve-command dir) ["-c" server-script]))
 
-     ;; Resolve argv + proxy env atomically. Unknown/disposed sessions are denied
-     ;; before spawn, and direct outbound traffic remains behind Seatbelt.
      launch
      (vis/session-process-launch session-id cmd)
 
@@ -144,12 +145,39 @@ _main()
      {:process p
       :writer (io/writer (.getOutputStream p))
       :reader (io/reader (.getInputStream p))
+      :error-reader (io/reader (.getErrorStream p))
       :cmd cmd
       :pid (.pid p)
-      :started-at (System/currentTimeMillis)}]
+      :started-at (System/currentTimeMillis)}
+
+     shown-cmd
+     (conj (vec (butlast cmd)) "<vis python driver>")]
 
     (swap! processes assoc dir info)
-    {"status" "up" "pid" (.pid p) "cmd" cmd "cwd" dir}))
+    (try (let [ping (request! dir {"op" "ping"} 5000)]
+           (if (true? (get ping "pong"))
+             {"status" "up" "pid" (.pid p) "cmd" shown-cmd "cwd" dir}
+             (throw (ex-info "Python REPL did not acknowledge its startup ping"
+                             {:type :py/bad-handshake :response ping}))))
+         (catch Throwable e
+           (try (.destroy p) (catch Throwable _ nil))
+           (try (.waitFor p) (catch Throwable _ nil))
+           (try (when (.isAlive p) (.destroyForcibly p)) (catch Throwable _ nil))
+           (let
+             [stderr
+              (try (slurp (:error-reader info)) (catch Throwable _ ""))
+
+              exit-code
+              (try (.exitValue p) (catch Throwable _ nil))]
+
+             (swap! processes dissoc dir)
+             {"status" "failed"
+              "pid" (.pid p)
+              "cmd" shown-cmd
+              "cwd" dir
+              "stderr" stderr
+              "exit_code" exit-code
+              "error" (str "Python REPL failed its startup handshake: " (.getMessage e))})))))
 
 (defn- request!
   [dir req timeout-ms]
@@ -172,9 +200,33 @@ _main()
             (do (future-cancel fut)
                 (throw (ex-info "Python eval timed out" {:type :py/timeout :dir dir})))
             (if (nil? line)
-              (throw (ex-info "Python REPL closed the connection (process died)"
-                              {:type :py/closed :dir dir}))
-              (json/read-json line))))))))
+              (let
+                [stderr (try (slurp (:error-reader info)) (catch Throwable _ ""))
+                 exit-code (try (.exitValue ^Process (:process info)) (catch Throwable _ nil))]
+
+                (swap! processes dissoc dir)
+                (throw (ex-info
+                         "Python REPL closed the connection; restart it with repl(\"python\")."
+                         {:type :py/closed :dir dir :stderr stderr :exit-code exit-code})))
+              (try
+                (json/read-json line)
+                (catch Throwable e
+                  (try (.destroyForcibly ^Process (:process info)) (catch Throwable _ nil))
+                  (try (.waitFor ^Process (:process info)) (catch Throwable _ nil))
+                  (let
+                    [stderr (try (slurp (:error-reader info)) (catch Throwable _ ""))
+                     exit-code (try (.exitValue ^Process (:process info)) (catch Throwable _ nil))]
+
+                    (swap! processes dissoc dir)
+                    (throw
+                      (ex-info
+                        "Python REPL returned an invalid response and is dead; restart it with repl(\"python\")."
+                        {:type :py/protocol-error
+                         :dir dir
+                         :raw-line line
+                         :stderr stderr
+                         :exit-code exit-code}
+                        e))))))))))))
 
 (defn eval!
   "Evaluate `code` in the REPL for `dir`. Returns

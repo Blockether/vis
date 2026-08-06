@@ -67,7 +67,7 @@
   ;; the CENTRAL resources.clj DATA shape (keyword keys — ->data stringifies its
   ;; own keys + kind/status/owner/language enums), but `:detail` is passed
   ;; THROUGH verbatim, so it must already be STRING-keyed for the boundary.
-  (when (and session (get result "pid"))
+  (when (and session (= "up" (get result "status")) (get result "pid"))
     (vis/register-resource! session
                             {:id (repl-resource-id dir id)
                              :kind :repl

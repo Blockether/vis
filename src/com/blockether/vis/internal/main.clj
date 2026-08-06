@@ -854,6 +854,12 @@
   (.println ^java.io.PrintStream config/original-stdout s)
   (.flush ^java.io.PrintStream config/original-stdout))
 
+(defn- stderr!
+  "Print a diagnostic to the process's real stderr."
+  [^String s]
+  (.println ^java.io.PrintStream config/original-stderr s)
+  (.flush ^java.io.PrintStream config/original-stderr))
+
 (defn- write-stdout!
   "Write to the real terminal without appending a newline. Used by the
    live trace renderer for cursor-back/redraw frames."
@@ -3712,7 +3718,7 @@
    output to the real terminal. Returns the module's exit code."
   [ctx module]
   (if (str/blank? module)
-    (do (stdout! "vis-agent python -m requires a MODULE argument.") 2)
+    (do (stderr! "vis-agent python -m requires a MODULE argument.") 2)
     (let
       [exit-name
        "__vis_cli_exit_code__"
@@ -3764,7 +3770,7 @@
        :code
        (if code
          (run-python-source! ctx code)
-         (do (stdout! "vis-agent python -c requires a CODE argument.") 2))
+         (do (stderr! "vis-agent python -c requires a CODE argument.") 2))
 
        :stdin
        (run-python-source! ctx (slurp System/in))
@@ -3773,7 +3779,7 @@
        (let [f (io/file file)]
          (if (.isFile f)
            (run-python-source! ctx (slurp f))
-           (do (stdout! (str "vis-agent python: no such file: " file)) 2)))
+           (do (stderr! (str "vis-agent python: no such file: " file)) 2)))
 
        :module
        (run-python-module! ctx module)
