@@ -6420,77 +6420,48 @@
 (declare auth-refresh-allowed?)
 
 (defn- boot-refresh-provider-token!
-  "Build-time sibling of `try-refresh-provider-token!`. When a provider's
-   router build fails with an AUTH-shaped error (401/403 or an auth-worded
-   message) AND the provider exposes `:provider/refresh-token-fn`, force ONE
-   refresh-token exchange (persisting rotated creds) so the caller can retry
-   the build. Strictly gated to auth errors — transport failures (TLS/DNS/
-   timeout) are never auth-shaped and fall straight through to the skip path.
+  "Build-time sibling of `try-refresh-provider-token!`.
 
-   Unlike the mid-turn `try-refresh-provider-token!` it must NOT rebuild the
-   router: it runs DURING the build itself, and a rebuild would recurse.
-   Returns true when a refresh actually happened (caller retries the build)."
+   When Svar classifies a router-build failure as authentication and the
+   provider exposes `:provider/refresh-token-fn`, force one credential mutation
+   so the caller can make a new build request. Svar remains the sole failure
+   classifier; this function only refreshes a credential Svar cannot mint.
+
+   Unlike the mid-turn path, it must not rebuild the router recursively."
   [pid ^Throwable t]
   (let
-    [d
-     (ex-data t)
-
-     provider-message
-     (perr/provider-body-message (some-> (:body d)
-                                         str))
-
-     provider
+    [provider
      (registry/provider-by-id pid)
 
      f
      (:provider/refresh-token-fn provider)]
 
     (boolean
-      (when (and f
-                 (perr/auth-provider-error? (:status d) provider-message (ex-message t))
-                 (auth-refresh-allowed? pid))
+      (when (and f (= :auth (:category (perr/svar-classification t))) (auth-refresh-allowed? pid))
         (let [rejected (config/baked-token pid)]
-          (try
-            ;; force refresh-token exchange + persist; pass the rejected token
-            ;; so reuse can't hand it straight back. Fall back to 0-arity for
-            ;; older/third-party hooks that don't accept it.
-            (try (f rejected) (catch clojure.lang.ArityException _ (f)))
-            (tel/log! {:level :warn :id ::boot-auth-token-refreshed :data {:provider pid}}
-                      (str "Provider build hit auth error — force-refreshed OAuth token for "
-                           pid
-                           "; retrying build"))
-            true
-            (catch Throwable rt
-              (tel/log! {:level :warn
-                         :id ::boot-auth-token-refresh-failed
-                         :data {:provider pid :error (ex-message rt)}}
-                        (str "Provider build auth refresh FAILED for " pid "; skipping"))
-              false)))))))
+          (try (try (f rejected) (catch clojure.lang.ArityException _ (f)))
+               (tel/log! {:level :warn :id ::boot-auth-token-refreshed :data {:provider pid}}
+                         (str "Provider build hit auth error — force-refreshed OAuth token for "
+                              pid
+                              "; retrying build"))
+               true
+               (catch Throwable rt
+                 (tel/log! {:level :warn
+                            :id ::boot-auth-token-refresh-failed
+                            :data {:provider pid :error (ex-message rt)}}
+                           (str "Provider build auth refresh FAILED for " pid "; skipping"))
+                 false)))))))
 
 (defn- boot-refresh-credential-command!
-  "Command-backed sibling of `boot-refresh-provider-token!`, for providers whose
-   credential comes from `api_key_command` instead of a registered OAuth hook.
+  "Command-backed sibling of `boot-refresh-provider-token!`.
 
-   A short-lived SSO token expires WHILE vis runs, so the very failure this has
-   to heal is the one a cache would otherwise keep serving: drop the memoized
-   token for this provider and let the caller re-exec the helper once. Gated
-   exactly like the OAuth path — auth-shaped errors only, and
-   `auth-refresh-allowed?` still owns the rate budget — so a helper that is
-   simply broken can never be re-run in a hot loop."
+   Svar decides whether the failure is authentication. This function only
+   invalidates a short-lived command credential so a subsequent build request
+   can carry a new token; `auth-refresh-allowed?` bounds that mutation."
   [p ^Throwable t]
-  (let
-    [pid
-     (:id p)
-
-     d
-     (ex-data t)
-
-     provider-message
-     (perr/provider-body-message (some-> (:body d)
-                                         str))]
-
+  (let [pid (:id p)]
     (boolean (when (and (:api-key-command p)
-                        (perr/auth-provider-error? (:status d) provider-message (ex-message t))
+                        (= :auth (:category (perr/svar-classification t)))
                         (auth-refresh-allowed? pid))
                (config/invalidate-credential-command! pid)
                (tel/log!
@@ -7016,22 +6987,12 @@
                          in-window)}))
 
 (defn- auth-error-shaped?
-  "True when `e` looks like a provider auth rejection (401/403 or an auth-shaped
-   message), regardless of whether the provider can refresh.
+  "True exactly when Svar's canonical failure verdict is authentication.
 
-   Reads the WRAPPER and, failing that, the ATTEMPTS: once svar's router has
-   walked the fleet it throws `Provider unavailable` with no status and no auth
-   prose of its own, and the 401s survive only on `:attempts`. Without the
-   second look every wrapped credential failure skipped both the rescue route
-   and [[note-provider-auth-cooldown!]], so the dead provider was re-probed on
-   the very next iteration — the storm #82 reports."
+   Vis uses the verdict only to cool down or mutate credentials; it never
+   reclassifies provider status codes, prose, or routing attempts."
   [^Throwable e]
-  (let [d (ex-data e)]
-    (or (perr/auth-provider-error? (:status d)
-                                   (perr/provider-body-message (some-> (:body d)
-                                                                       str))
-                                   (ex-message e))
-        (perr/auth-exhausted-attempts? e))))
+  (= :auth (:category (perr/svar-classification e))))
 
 (defn- auth-fallback-routing
   "Build one cross-provider rescue route after OAuth refresh/backoff is exhausted.
@@ -7102,34 +7063,16 @@
     (clear-provider-auth-cooldown! pid)))
 
 (defn- auth-refreshable-error?
-  "True when exception `e` is a provider auth rejection (401/403 or an
-   auth-shaped message) AND the failing provider can still produce a NEW
-   credential: a registered force-refresh hook, or an `api_key_command` helper
-   that can simply be asked again."
+  "True when Svar classified `e` as authentication and Vis can produce a new
+   credential for the failing provider.
+
+   Refreshing OAuth or `api_key_command` output mutates the next request; it is
+   not a second provider failure classifier or transport retry policy."
   [^Throwable e resolved-model]
-  (let
-    [d
-     (ex-data e)
-
-     status
-     (:status d)
-
-     provider-message
-     (perr/provider-body-message (some-> (:body d)
-                                         str))
-
-     pid
-     (:provider resolved-model)]
-
-    (boolean (and (or (perr/auth-provider-error? status provider-message (ex-message e))
-                      ;; A wrapped fleet failure hides its 401s on `:attempts`;
-                      ;; an expired OAuth token deserves its refresh before the
-                      ;; provider is cooled down.
-                      (perr/auth-exhausted-attempts? e))
+  (let [pid (:provider resolved-model)]
+    (boolean (and (= :auth (:category (perr/svar-classification e)))
                   (or (some-> (registry/provider-by-id pid)
                               :provider/refresh-token-fn)
-                      ;; A short-lived SSO token minted by `api_key_command` is
-                      ;; the same recoverable rejection: re-run the helper.
                       (config/command-backed? pid))))))
 
 (defn- hydrate-router-credentials

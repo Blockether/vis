@@ -10,6 +10,7 @@
             [com.blockether.vis.internal.config-spec :as config-spec]
             [com.blockether.vis.internal.credential-command :as cred]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.provider-error :as perr]
             [com.blockether.vis.internal.providers :as providers]
             [lazytest.core :refer [defdescribe expect it]]
             [yamlstar.core :as yamlstar]))
@@ -280,6 +281,8 @@
         ;; The argv map is the only thing that survives the build.
         (expect (not (str/includes? (pr-str @config/router-credential-argv) "tok-1")))
         (expect (= 1 (exec-count)))))
+  ;; Regression, issue #105: the credential refresh gate used to classify auth
+  ;; independently from Svar's canonical failure verdict.
   (it "an auth rejection is recoverable with NO OAuth hook, by re-running the helper"
       (fresh!)
       (let
@@ -299,7 +302,10 @@
                        first
                        :api-key)))
         (expect (= 1 (exec-count)))
-        (expect (#'lp/auth-refreshable-error? unauthorized {:provider :sso-401}))
+        (with-redefs [perr/svar-classification (constantly {:category :invalid-request})]
+          (expect (not (#'lp/auth-refreshable-error? unauthorized {:provider :sso-401}))))
+        (with-redefs [perr/svar-classification (constantly {:category :auth})]
+          (expect (#'lp/auth-refreshable-error? unauthorized {:provider :sso-401})))
         (expect (#'lp/try-refresh-provider-token! router {:provider :sso-401}))
         ;; …and the retry actually SENDS the freshly minted token: a short-lived
         ;; SSO credential that expired mid-session heals without a restart.

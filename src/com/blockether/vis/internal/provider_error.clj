@@ -151,96 +151,6 @@
     second
     parse-long))
 
-(defn auth-provider-error?
-  [status message wrapper-message]
-  (let [text (str (or message "") "\n" (or wrapper-message ""))]
-    (boolean
-      (or
-        (contains? #{401 403} status)
-        (re-find
-          #"(?i)(authentication|unauthorized|forbidden|credential|api[ -]?key|access[ -]?token|expired token|invalid token)"
-          text)))))
-
-(defn- billing-required-error?
-  "True for an HTTP 402 payment/credits gate. This is terminal like auth: no
-   unchanged retry or model self-correction can make the provider accept it."
-  [status]
-  (= 402 status))
-
-
-(defn- rate-limit-error?
-  [status message wrapper-message]
-  (let [text (str/lower-case (str (or message "") "\n" (or wrapper-message "")))]
-    (or (= 429 status) (str/includes? text "rate limit") (str/includes? text "rate-limit"))))
-
-(defn- transport-error?
-  "True for a TRANSPORT/connection failure — the HTTP request never got a
-   response back: the socket closed with no bytes, the connection was reset /
-   refused / timed out, DNS failed, TLS was torn down. The model NEVER saw the
-   request, so it is emphatically NOT a rejection — surfacing it as one (\"the
-   provider rejected the request\") is both false and useless. These carry no
-   usable HTTP status (nothing answered), so we key off the wrapper/cause text."
-  [status message wrapper-message]
-  (let [text (str/lower-case (str (or message "") "\n" (or wrapper-message "")))]
-    (boolean
-      (and (nil? status)
-           (or (str/includes? text "received no bytes")
-               (str/includes? text "no response headers")
-               (str/includes? text "header parser")
-               (str/includes? text "no bytes")
-               (str/includes? text "unexpected end of stream")
-               (str/includes? text "end of stream")
-               (str/includes? text "connection reset")
-               (str/includes? text "connection closed")
-               (str/includes? text "connection refused")
-               (str/includes? text "connection timed out")
-               (str/includes? text "broken pipe")
-               (str/includes? text "no route to host")
-               (str/includes? text "network is unreachable")
-               (str/includes? text "unknownhostexception")
-               (str/includes? text "name or service not known")
-               (str/includes? text "handshake")
-               (str/includes? text "premature")
-               (str/includes? text "eof")
-               (= "closed" (str/trim text)))))))
-
-(defn transport-throwable?
-  "True when Throwable `t` is a CONNECTION/transport failure — the SAME
-   classification `transport-error?` makes from a parsed provider error, but
-   taken straight off a Throwable so the RETRY gate and the human message agree.
-
-   Walks the whole cause chain for the message text. Idempotent by definition:
-   a transport failure means the request never reached the model (the socket
-   closed with no bytes, was reset/refused/timed out, DNS/TLS died), so it is
-   ALWAYS safe to retry — regardless of whether a response STREAM had started
-   (a pre-response failure carries no `:stream?`, yet is the safest retry of
-   all). A real REJECTION carries an HTTP status, so `transport-error?`'s
-   `nil status` guard keeps 4xx/5xx out of this path."
-  [^Throwable t]
-  (when t
-    (let
-      [chain
-       (take 16
-             (take-while some?
-                         (iterate (fn [^Throwable x]
-                                    (some-> x
-                                            .getCause))
-                                  t)))
-
-       text
-       (str/join "\n"
-                 (keep (fn [^Throwable x]
-                         (.getMessage x))
-                       chain))
-
-       data
-       (ex-data t)
-
-       status
-       (or (:status data) (:status (:data data)))]
-
-      (transport-error? status text nil))))
-
 (defn- ->classifiable
   "`err` as the Throwable svar's classifier expects. A trace-entry error map is
    the same evidence wearing a map, so rebuild the ex-info instead of
@@ -262,15 +172,9 @@
   (failure/classify (->classifiable err)))
 
 (defn unanswered-request?
-  "True when NOTHING answered: svar reports a pre-response transport drop, so
-   `:reached-model?` is false and re-sending is side-effect-free.
-
-   Why ask svar rather than `transport-error?`: vis' own text gate only fires
-   when NO HTTP status is present, but the shared gateway answers a pre-response
-   socket drop with a 502 whose body carries the real cause. That status alone
-   made vis call it a rejection — the exact complaint in issue #69. A
-   `:connect-timeout` is deliberately NOT folded in here: `upstream-timeout-phase`
-   already says `while connecting — the request never reached the model`."
+  "True when Svar says nothing reached the model: a canonical pre-response
+   `:transport-drop`. A connect timeout remains distinct so presentation can
+   explain that phase precisely."
   [err]
   (let [{:keys [category reached-model?]} (svar-classification err)]
     (boolean (and (false? reached-model?) (= :transport-drop category)))))
@@ -339,8 +243,7 @@
 
 (defn- ->error-text
   "Best-effort human text for ONE upstream failure value — a string, an svar
-   error map or a Throwable — so classification can read a cause svar recorded
-   as data rather than as prose."
+   error map or a Throwable — for presentation details such as timeout phase."
   [x]
   (cond (nil? x) nil
         (string? x) x
@@ -349,44 +252,26 @@
         (map? x) (str (or (:message x) (ex-message x)) " " (:body (or (:data x) x)))
         :else (str x)))
 
-(defn- attempt-auth-failure?
-  "True when ONE routing attempt bowed out on credentials: svar's
-   `:authentication` reason, a 401/403, or auth prose in the recorded error."
-  [{:keys [status reason error]}]
-  (boolean (or (contains? #{:authentication :auth} reason)
-               (contains? #{401 403} status)
-               (auth-provider-error? status (->error-text error) nil))))
+(defn- all-attempts-auth?
+  "Svar's explicit unanimous-attempt verdict, used only for plural UI copy."
+  [err]
+  (let [{:keys [category all-attempts-category?]} (svar-classification err)]
+    (boolean (and (= :auth category) all-attempts-category?))))
 
 (defn auth-failed-provider-ids
-  "The providers that bowed out on credentials, in the order svar tried them."
+  "Provider ids whose Svar attempt classification is `:auth`, in routing order."
   [err]
-  (into []
-        (comp (filter attempt-auth-failure?) (keep :provider) (distinct))
-        (provider-error-attempts err)))
-
-(defn auth-exhausted-attempts?
-  "True when EVERY provider svar tried bowed out on credentials.
-
-   The `all-providers-exhausted` / `Provider unavailable` wrapper carries no
-   status and no provider prose of its own, so `auth-provider-error?` — which
-   reads only the wrapper — called an all-401 fleet failure `:generic` and told
-   the user to `retry, or switch provider/model`. An unchanged retry re-sends
-   the SAME rejected key to every provider. The evidence is on the attempts, so
-   read it there; with no attempts recorded there is no auth verdict to make."
-  [err]
-  (let [attempts (provider-error-attempts err)]
-    (boolean (and (seq attempts) (every? attempt-auth-failure? attempts)))))
+  (let [{:keys [attempt-categories]} (svar-classification err)]
+    (into []
+          (comp (keep (fn [[attempt category]]
+                        (when (= :auth category) (:provider attempt))))
+                (distinct))
+          (map vector (provider-error-attempts err) attempt-categories))))
 
 (defn provider-error-upstream-text
-  "EVERY scrap of upstream failure text Vis holds for `err`, lowercased and
-   joined: the wrapper message, the raw upstream body, and the per-provider
-   attempt reasons/errors svar records on a routing failure.
-
-   Classification must read THIS and not only the wrapper message. An
-   `all-providers-exhausted` / `Provider unavailable` wrapper keeps the real
-   cause (`litellm.Timeout: BedrockException: Timeout Error …`) down on the
-   attempts — which is exactly how an upstream timeout used to be presented as
-   a generic outage."
+  "Every upstream text fragment retained for presentation: wrapper, body and
+   Svar routing-attempt details. Used only to describe timeout phase, never to
+   classify the failure."
   [err]
   (let [data (or (:data err) (ex-data err) err)]
     (str/lower-case (str/join "\n"
@@ -398,26 +283,6 @@
                                                        [(:reason a) (:error a)])
                                                      (provider-error-attempts err)))))))))
 
-(defn upstream-timeout-error?
-  "True when the UPSTREAM request timed out: a provider/gateway/SDK deadline that
-   arrives as message text (`litellm.Timeout: BedrockException: Timeout Error`)
-   or as HTTP 408/504 — NOT svar's own typed stream watchdogs, which
-   `stream-timeout-error?` already owns. Text-based on purpose: these carry no
-   typed `ex-data`, only prose, and collapsing them into `Provider unavailable`
-   hides both the real failure mode and the right recovery."
-  [status text]
-  (let [text (str/lower-case (str text))]
-    (or (= 408 status)
-        (= 504 status)
-        (str/includes? text "timeout error")
-        (str/includes? text "litellm.timeout")
-        (str/includes? text "timed out")
-        (str/includes? text "read timeout")
-        (str/includes? text "connect timeout")
-        (str/includes? text "connection timeout")
-        (str/includes? text "gateway timeout")
-        (str/includes? text "deadline exceeded")
-        (str/includes? text "etimedout"))))
 
 (defn upstream-timeout-phase
   "`:connect` (the request never reached the model), `:read` (it did, and the
@@ -438,17 +303,7 @@
           :read
           :else nil)))
 
-(defn resource-mismatch-error?
-  "True when the conversation/item is PINNED to a different backend resource —
-   Azure OpenAI's 'The requested item was created under a different Azure OpenAI
-   resource', a stored response read from the wrong deployment. Emphatically not
-   transient: the identical request against the identical endpoint fails the
-   identical way, so suggesting a blind retry is wrong."
-  [text]
-  (let [text (str/lower-case (str text))]
-    (or (str/includes? text "created under a different")
-        (str/includes? text "same resource that created")
-        (str/includes? text "different azure openai resource"))))
+(declare provider-error-kind)
 
 (defn provider-error-explanation
   "The `WHAT HAPPENED:` prose line — the single canonical human sentence for this
@@ -535,10 +390,10 @@
              (str " (it requires at least " minimum ")"))
            " — a request defect, not an outage." (when (seq provider-message)
                                                    (str " " provider-message)))
-      (auth-provider-error? status provider-message message)
+      (and (= :auth (provider-error-kind err)) (not (all-attempts-auth? err)))
       (str "WHAT HAPPENED: the provider rejected your credentials."
            (when (seq provider-message) (str " " provider-message)))
-      (auth-exhausted-attempts? err)
+      (all-attempts-auth? err)
       (let [ids (auth-failed-provider-ids err)]
         (str "WHAT HAPPENED: "
              (if (> (count (provider-error-attempts err)) 1)
@@ -546,23 +401,20 @@
                "the provider rejected your credentials")
              (when (seq ids) (str " (" (str/join ", " (map str ids)) ")"))
              " — an unchanged retry re-sends the same rejected key."))
-      (billing-required-error? status)
-      (str "WHAT HAPPENED: the provider requires payment or has no usable credits."
-           (when (seq provider-message) (str " " provider-message)))
-      (= :quota-exhausted (:category (svar-classification err)))
+      (= :quota-exhausted (provider-error-kind err))
       (str "WHAT HAPPENED: the provider says this account has no usable quota or credits."
            (when (seq provider-message) (str " " provider-message)))
-      (or (transport-error? status provider-message message) (unanswered-request? err))
+      (= :transport (provider-error-kind err))
       "WHAT HAPPENED: the connection dropped before any response came back. The model never saw the request."
-      (rate-limit-error? status provider-message message)
+      (= :rate-limit (provider-error-kind err))
       (str "WHAT HAPPENED: the provider rate-limited this request."
            (when (seq provider-message) (str " " provider-message)))
-      (resource-mismatch-error? (provider-error-upstream-text err))
+      (= :resource-mismatch (provider-error-kind err))
       (str "WHAT HAPPENED: this conversation is pinned to a different provider resource — the "
            "item was created under another deployment/endpoint, so the one Vis just called "
            "cannot read it. Not an outage: an identical retry fails identically."
            (when (seq provider-message) (str " " provider-message)))
-      (upstream-timeout-error? status (provider-error-upstream-text err))
+      (= :upstream-timeout (provider-error-kind err))
       (let [phase (upstream-timeout-phase status (provider-error-upstream-text err))]
         (str "WHAT HAPPENED: the provider request timed out upstream"
              (case phase
@@ -574,21 +426,22 @@
 
                "")
              ". Nothing was rejected; your transcript and tool results are intact."))
-      (or (= "All providers exhausted" message) (= "Provider unavailable" message))
-      (if (or (= "Provider unavailable" message) (<= (count (provider-error-attempts err)) 1))
-        (str "WHAT HAPPENED: the selected provider failed before a usable response. No "
-             "fallback was tried. Transcript and tool results are intact.")
-        (str "WHAT HAPPENED: every provider in this turn's fallback list failed before a "
-             "usable response. Transcript and tool results are intact."))
+      (contains? #{:model-unavailable :gateway-unavailable :stream-interrupted}
+                 (provider-error-kind err))
+      (str "WHAT HAPPENED: "
+           (or (:summary (svar-classification err))
+               "the provider failed before a usable response."))
       (and (nil? status) (str/blank? provider-message) (:request-id (svar-classification err)))
       (str "WHAT HAPPENED: the provider call failed with nothing but a correlation id — no "
            "status, no provider message. Nothing here says the request was rejected; quote the "
            "id below if it keeps happening.")
+      (= :unknown (:category (svar-classification err)))
+      (str "WHAT HAPPENED: " (or (:summary (svar-classification err)) "the provider call failed."))
       (seq provider-message) (str "WHAT HAPPENED: the provider rejected the request. "
                                   provider-message)
-      :else "WHAT HAPPENED: the provider rejected the request.")))
+      :else (str "WHAT HAPPENED: "
+                 (or (:summary (svar-classification err)) "the provider call failed.")))))
 
-(declare provider-error-kind)
 
 (defn provider-error-title
   "A SHORT headline for the failure, by kind — the card title on every surface."
@@ -624,18 +477,24 @@
       "Output token budget too small"
 
       :auth
-      (if (and (auth-exhausted-attempts? err) (> (count (provider-error-attempts err)) 1))
+      (if (and (all-attempts-auth? err) (> (count (provider-error-attempts err)) 1))
         "All providers rejected your credentials"
         "Provider authentication failed")
-
-      :billing
-      "Provider billing required"
 
       :quota-exhausted
       "Provider quota exhausted"
 
       :rate-limit
       "Provider rate-limited"
+
+      :model-unavailable
+      "Provider model unavailable"
+
+      :gateway-unavailable
+      "Provider gateway unavailable"
+
+      :stream-interrupted
+      "Provider stream interrupted"
 
       :upstream-timeout
       "Provider request timed out"
@@ -667,17 +526,16 @@
 
       :stream-timeout
       (if (= :svar.core/stream-semantic-timeout (:type data))
-        (str "NEXT STEP: Vis is retrying automatically after a short backoff. If long reasoning "
-             "turns keep tripping it, raise `semantic-timeout-ms` or set it to `nil`.")
-        (str "NEXT STEP: Vis is retrying automatically after a short backoff. If the transport "
-             "is expected to stay silent this long, raise `idle-timeout-ms`."))
+        (str "NEXT STEP: retry explicitly. If long reasoning turns keep tripping the "
+             "watchdog, raise `semantic-timeout-ms` or set it to `nil`.")
+        (str "NEXT STEP: retry explicitly. If the transport is expected to stay silent "
+             "this long, raise `idle-timeout-ms`."))
 
       :empty-content
-      (str "NEXT STEP: retry — Vis re-sends and these stalls usually clear. If it "
-           "persists, rephrase or trim the last message.")
+      (str "NEXT STEP: retry explicitly. If it persists, rephrase or trim the last " "message.")
 
       :invalid-thinking-signature
-      "NEXT STEP: retry — Vis resends with plain context. If it persists, don't replay preserved thinking across a provider/model switch."
+      "NEXT STEP: retry with plain context. If it persists, don't replay preserved thinking across a provider/model switch."
 
       :tool-schema
       (if-let [field (gateway-tool-field-rejection err)]
@@ -701,9 +559,6 @@
                (if (= 1 (count ids)) "its API key" "their API keys")
                ", then retry.")
           (auth-provider-next-step data)))
-
-      :billing
-      "NEXT STEP: check the provider's billing and available credits, then retry."
 
       :quota-exhausted
       "NEXT STEP: check the provider plan, usage limits, and available credits, then retry."
@@ -732,9 +587,11 @@
       :transport
       (transport-next-step)
 
-      (if (and (= "All providers exhausted" message) (> (count (provider-error-attempts err)) 1))
-        "NEXT STEP: retry, or switch provider/model."
-        "NEXT STEP: retry; if it persists, switch provider/model."))))
+      (if-let [step (:next-step (svar-classification err))]
+        (str "NEXT STEP: " step)
+        (if (and (= "All providers exhausted" message) (> (count (provider-error-attempts err)) 1))
+          "NEXT STEP: retry, or switch provider/model."
+          "NEXT STEP: retry; if it persists, switch provider/model.")))))
 
 (defn provider-error-attempts
   "The per-provider failure records svar accumulates on an `all-providers-exhausted`
@@ -770,6 +627,10 @@
     (when (seq as) (str/join " · " (map attempt->line as)))))
 
 (defn provider-error-kind
+  "Map Svar's canonical category to Vis's presentation vocabulary.
+
+   Vis only refines failures whose typed payload carries UI-specific detail. It
+   never reclassifies provider status codes, prose, or routing outcomes."
   [err]
   (let
     [message
@@ -778,75 +639,67 @@
      data
      (or (:data err) (ex-data err) err)
 
-     body-raw
-     (some-> (:body data)
-             str)
-
-     status
-     (:status data)
-
      provider-message
-     (provider-body-message body-raw)
-
-     schema-rejection?
-     (tool-schema-rejection-message? (str provider-message "\n" message))
-
-     gateway-field?
-     (some? (gateway-tool-field-rejection err))]
+     (provider-body-message (some-> (:body data)
+                                    str))]
 
     (cond (context-overflow-error? err) :context-overflow
           (stream-timeout-error? err) :stream-timeout
           (empty-content-error? err) :empty-content
           (invalid-thinking-signature-message? provider-message) :invalid-thinking-signature
-          schema-rejection? :tool-schema
-          gateway-field? :tool-schema
-          (output-budget-too-small-error? status (str provider-message "\n" message))
+          (or (tool-schema-rejection-message? (str provider-message "\n" message))
+              (some? (gateway-tool-field-rejection err)))
+          :tool-schema
+          (output-budget-too-small-error? (:status data) (str provider-message "\n" message))
           :output-budget-too-small
-          (or (auth-provider-error? status provider-message message) (auth-exhausted-attempts? err))
-          :auth
-          (billing-required-error? status) :billing
-          (= :quota-exhausted (:category (svar-classification err))) :quota-exhausted
-          (rate-limit-error? status provider-message message) :rate-limit
-          (or (transport-error? status provider-message message) (unanswered-request? err))
-          :transport
-          (resource-mismatch-error? (provider-error-upstream-text err)) :resource-mismatch
-          (upstream-timeout-error? status (provider-error-upstream-text err)) :upstream-timeout
-          :else :generic)))
+          :else (case (:category (svar-classification err))
+                  :auth
+                  :auth
 
-(def ^:private RETRYABLE_KINDS
-  "Kinds vis knows are worth another attempt even when svar has no opinion —
-   its own typed outcomes (an empty 200 body, a stream watchdog) plus the
-   transport/timeout families it words itself.
+                  :quota-exhausted
+                  :quota-exhausted
 
-   `:rate-limit` is NOT here: a 429 status is ambiguous — svar reads the BODY
-   and distinguishes a genuine rate-limit (retryable) from quota exhaustion
-   (terminal). Keeping `:rate-limit` here overrode svar's `:retryable? false`
-   verdict for quota-exhausted 429s, so the gateway re-queued credits-out
-   failures forever. Now kind `:rate-limit` falls through to svar's verdict."
-  #{:transport :overloaded :empty-content :stream-timeout :upstream-timeout})
+                  :rate-limited
+                  :rate-limit
 
-(def ^:private TERMINAL_KINDS
-  "Kinds where an identical retry fails identically: the request, the key, the
-   plan or the pinned resource is wrong. No classification may soften these."
-  #{:auth :billing :quota-exhausted :tool-schema :context-overflow :resource-mismatch
-    :output-budget-too-small :invalid-thinking-signature})
+                  :transport-drop
+                  :transport
+
+                  :connect-timeout
+                  :upstream-timeout
+
+                  :upstream-timeout
+                  :upstream-timeout
+
+                  :gateway-unavailable
+                  :gateway-unavailable
+
+                  :model-unavailable
+                  :model-unavailable
+
+                  :resource-mismatch
+                  :resource-mismatch
+
+                  :tool-schema-unsupported
+                  :tool-schema
+
+                  :context-length-exceeded
+                  :context-overflow
+
+                  :stream-interrupted
+                  :stream-interrupted
+
+                  :generic))))
+
+
 
 (defn provider-error-retryable?
-  "Whether retrying the SAME request can plausibly succeed. Surfaces read this
-   so they never suggest a blind retry for a terminal or pinned failure (auth,
-   billing, tool schema, resource mismatch, context overflow).
+  "Svar's canonical retry-safety verdict, exposed to Vis presentation surfaces.
 
-   Vis answers only for the kinds it classifies better than svar does (its typed
-   stream watchdogs, empty content, gateway tool-field rejections). Everything
-   else — every plain HTTP failure — defers to `svar-classification`'s
-   `:retryable?`, so vis never keeps a second, drifting copy of that verdict.
-
-   This is presentation only: svar owns the actual retry ladder."
+   This does not drive a retry in Vis. Svar owns and exhausts the retry ladder
+   before an error reaches this namespace."
   [err]
-  (let [kind (provider-error-kind err)]
-    (cond (contains? RETRYABLE_KINDS kind) true
-          (contains? TERMINAL_KINDS kind) false
-          :else (boolean (:retryable? (svar-classification err))))))
+  (boolean (:retryable? (svar-classification err))))
 
 (defn provider-failure?
   "True when `err` is a PROVIDER failure — presentable as the styled card

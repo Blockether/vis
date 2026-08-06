@@ -3192,11 +3192,9 @@
           (expect (= 2 (:session_count result)))
           (expect (= (str pid) (:project_id result)))))))
 
-;; Regression: a GitHub-Copilot turn stalled 123507ms in `:provider-call`, landed its
-;; styled stall card, and the gateway re-queued it for the automatic retry — after
-;; which the blocking submit result came back as a bare `ERROR: turn failed` with no
-;; Regression: a terminal event must carry its own styled failure content so a
-;; blocking submit can settle from that event without a separate registry read.
+;; Regression, issue #105: a stalled provider turn was re-queued automatically,
+;; and the blocking submit later received a bare `ERROR: turn failed` instead of
+;; the styled failure. The terminal event must carry that content itself.
 (defdescribe
   terminal-event-settled-failure-test
   (it

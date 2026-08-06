@@ -5865,24 +5865,25 @@
     (it "leaves every other failure to the provider-card path"
         (expect (nil? (user-error-content {:message "boom" :data {:type :vis/code-error}}))))))
 
-(defdescribe billing-error-is-terminal-test
-             (it "ends a 402 turn once and preserves an actionable billing card"
-                 (let
-                   [result
-                    (lp/handle-iteration-exception!
-                      (ex-info "Exceptional status code: 402"
-                               {:status 402
-                                :provider :anthropic-coding-plan
-                                :body
-                                "{\"error\":{\"message\":\"Payment required: add credits\"}}"})
-                      {:iteration 1 :messages [{:role "user" :content "hi"}]})
+;; Regression, issue #105: Vis used to override Svar's terminal 402 quota
+;; classification with its own legacy billing kind.
+(defdescribe quota-error-is-terminal-test
+             (it "ends a 402 turn once and preserves Svar's actionable quota card"
+                 (let [result
+                       (lp/handle-iteration-exception!
+                         (ex-info "Exceptional status code: 402"
+                                  {:status 402
+                                   :provider :anthropic-coding-plan
+                                   :body
+                                   "{\"error\":{\"message\":\"Payment required: add credits\"}}"})
+                         {:iteration 1 :messages [{:role "user" :content "hi"}]})
 
-                    block
-                    (first (perr/provider-error-content (::lp/iteration-error result)))]
+                       block
+                       (first (perr/provider-error-content (::lp/iteration-error result)))]
 
                    (expect (true? (::lp/fatal-iteration-error result)))
-                   (expect (= "provider_billing" (get block "code")))
-                   (expect (str/includes? (get block "message") "billing and available credits")))))
+                   (expect (= "provider_quota-exhausted" (get block "code")))
+                   (expect (str/includes? (get block "message") "plan, usage limits")))))
 
 (defdescribe
   reload-router-hook-test

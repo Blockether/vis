@@ -63,21 +63,24 @@
                       :reason :transient-error
                       :error "boom"}]}})
 
-(defdescribe single-provider-exhausted-test
-             (it "one attempt does NOT claim the whole fleet was tried"
-                 (expect (= "Provider unavailable" (perr/provider-error-title single-attempt-err)))
-                 (let [ex (perr/provider-error-explanation single-attempt-err)]
-                   (expect (str/includes? ex "selected provider"))
-                   (expect (not (str/includes? ex "every provider"))))
-                 (expect (str/includes? (perr/provider-error-next-step single-attempt-err)
-                                        "switch provider/model"))
-                 ;; Surface-agnostic: the card must not assume a TUI or a shell.
-                 (expect (nil? (re-find #"(?i)ctrl\\+k|`vis "
-                                        (perr/provider-error-next-step single-attempt-err)))))
-             (it "two+ attempts still read as the fleet-wide exhaustion"
-                 (expect (= "All providers unavailable" (perr/provider-error-title exhausted-err)))
-                 (expect (str/includes? (perr/provider-error-explanation exhausted-err)
-                                        "every provider"))))
+(defdescribe
+  single-provider-exhausted-test
+  (it "one attempt uses Svar's gateway verdict without claiming the fleet was tried"
+      (expect (= :gateway-unavailable (:category (perr/svar-classification single-attempt-err))))
+      (expect (= "Provider gateway unavailable" (perr/provider-error-title single-attempt-err)))
+      (let [ex (perr/provider-error-explanation single-attempt-err)]
+        (expect (str/includes? ex "gateway or its upstream"))
+        (expect (not (str/includes? ex "every provider"))))
+      (expect (str/includes? (perr/provider-error-next-step single-attempt-err)
+                             "switch provider/model"))
+      ;; Surface-agnostic: the card must not assume a TUI or a shell.
+      (expect (nil? (re-find #"(?i)ctrl\+k|`vis "
+                             (perr/provider-error-next-step single-attempt-err)))))
+  (it "mixed attempts keep Svar's unknown verdict while naming the fleet in the title"
+      (expect (= :unknown (:category (perr/svar-classification exhausted-err))))
+      (expect (= "All providers unavailable" (perr/provider-error-title exhausted-err)))
+      (expect (str/includes? (perr/provider-error-explanation exhausted-err)
+                             "provider call failed"))))
 
 (def ^:private provider-unavailable-err
   "svar >= 0.7.55 no longer wraps a one-provider turn as `all-providers-exhausted`:
@@ -93,11 +96,13 @@
                       :error "boom"}]}})
 
 (defdescribe provider-unavailable-message-test
-             (it "the native single-provider message reads as one provider, not the fleet"
-                 (expect (= "Provider unavailable"
+             (it "uses Svar's gateway verdict for the native single-provider wrapper"
+                 (expect (= :gateway-unavailable
+                            (:category (perr/svar-classification provider-unavailable-err))))
+                 (expect (= "Provider gateway unavailable"
                             (perr/provider-error-title provider-unavailable-err)))
                  (let [ex (perr/provider-error-explanation provider-unavailable-err)]
-                   (expect (str/includes? ex "selected provider"))
+                   (expect (str/includes? ex "gateway or its upstream"))
                    (expect (not (str/includes? ex "every provider"))))
                  (expect (str/includes? (perr/provider-error-next-step provider-unavailable-err)
                                         "switch provider/model")))
@@ -120,12 +125,13 @@
                      (expect (not (str/includes? ex "rejected the request")))))
                (it "the next step tells the user to just retry"
                    (expect (str/includes? (perr/provider-error-next-step err) "retry")))
-               (it "classifies the terse `closed` wrapper as transport"
+               (it "does not treat a bare `closed` string as transport evidence"
                    (let [closed-err {:message "closed" :data {}}]
-                     (expect (= :transport (perr/provider-error-kind closed-err)))
-                     (expect (= "Could not reach provider" (perr/provider-error-title closed-err)))
+                     (expect (= :unknown (:category (perr/svar-classification closed-err))))
+                     (expect (= :generic (perr/provider-error-kind closed-err)))
+                     (expect (= "Provider unavailable" (perr/provider-error-title closed-err)))
                      (expect (str/includes? (perr/provider-error-explanation closed-err)
-                                            "connection dropped"))))
+                                            "provider call failed"))))
                (it "a real HTTP status is NOT mistaken for a transport failure"
                    (expect (= :generic
                               (perr/provider-error-kind
@@ -133,31 +139,6 @@
                                  :data {:status 400
                                         :body "{\"error\":{\"message\":\"bad\"}}"}}))))))
 
-(defdescribe
-  transport-throwable-test
-  ;; `transport-throwable?` is the RETRY gate's classifier: a Throwable is
-  ;; retry-safe iff it's a CONNECTION/transport failure (no response byte
-  ;; received), regardless of whether a stream had started. It shares the
-  ;; exact patterns `transport-error?` applies to the human message, so the
-  ;; "just retry" advice and the actual retry can never disagree again (the
-  ;; disagreement that made a failed turn NOT retry while telling the user
-  ;; it would).
-  (it "retries a socket that closed before any response byte"
-      (expect (perr/transport-throwable? (ex-info "HTTP/1.1 header parser received no bytes" {}))))
-  (it "retries a TTFT timeout before response headers"
-      (expect (perr/transport-throwable?
-                (ex-info "Stream TTFT timeout (60000ms with no response headers)" {}))))
-  (it "walks the cause chain for a wrapped transport failure"
-      (expect (perr/transport-throwable? (ex-info "provider call failed"
-                                                  {}
-                                                  (ex-info "header parser received no bytes" {})))))
-  (it "retries a connection reset / DNS failure"
-      (expect (perr/transport-throwable? (ex-info "java.net.SocketException: Connection reset" {})))
-      (expect (perr/transport-throwable? (ex-info "java.net.UnknownHostException: api.host" {}))))
-  (it "does NOT retry a real rejection — 429/400 carry an HTTP status"
-      (expect (not (perr/transport-throwable? (ex-info "rate limited" {:status 429}))))
-      (expect (not (perr/transport-throwable? (ex-info "bad request" {:status 400})))))
-  (it "is nil-safe" (expect (not (perr/transport-throwable? nil)))))
 
 (defdescribe
   tool-schema-rejection-test
@@ -253,7 +234,8 @@
                    (expect (re-find #"no text and no tool" (perr/provider-error-explanation err)))
                    (expect (re-find #"Re-sent 2 times" (perr/provider-error-explanation err)))
                    (expect (nil? (re-find #"(?i)rejected" (perr/provider-error-explanation err))))
-                   (expect (re-find #"Vis re-sends" (perr/provider-error-next-step err)))))
+                   ;; Svar already attempted any transparent resend; Vis only offers an explicit retry.
+                   (expect (nil? (re-find #"Vis re-sends" (perr/provider-error-next-step err))))))
              (it "empty-content without svar resend bookkeeping still classifies and reads honestly"
                  (let [err {:message "blank" :data {:type :svar.llm/empty-content}}]
                    (expect (= :empty-content (perr/provider-error-kind err)))
@@ -284,15 +266,15 @@
         (expect (re-find #"300s" (perr/provider-error-explanation err)))
         (expect (re-find #"still reasoning" (perr/provider-error-explanation err)))
         (expect (nil? (re-find #"(?i)auth, and quota" next-step)))
-        ;; Cross-validated vs Codex: svar never same-provider-retries a watchdog abort
-        ;; (deliberate-stream-abort-types), but the gateway queue DOES auto-retry a
-        ;; :stream-timeout as transient. The copy stays surface-agnostic: no CLI
-        ;; commands, no keybindings, no internal var names.
-        (expect (re-find #"retrying automatically" next-step))
+        ;; Regression, issue #105: escaped watchdog failures used to claim that
+        ;; Vis would retry them even though Svar had already exhausted its policy.
+        (expect (nil? (re-find #"retrying automatically" next-step)))
+        (expect (re-find #"retry" next-step))
         (expect (re-find #"semantic-timeout-ms" next-step))
         (expect (re-find #"set it to `nil`" next-step))
         (expect (nil? (re-find #"idle-timeout-ms" next-step)))
-        (expect (true? (get (first (perr/provider-error-content err)) "retryable")))))
+        (expect (= (boolean (:retryable? (perr/svar-classification err)))
+                   (get (first (perr/provider-error-content err)) "retryable")))))
   (it "the idle-timeout sibling classifies the same way"
       (let
         [err {:message "Stream idle timeout (180000ms with no bytes)."
@@ -360,10 +342,11 @@
                 :data {:type :svar.tokens/context-overflow :provider-error-code "prompt_too_long"}}]
           (expect (= :context-overflow (perr/provider-error-kind err)))
           (expect (str/includes? (perr/provider-error-explanation err) "context window"))))
-    (it "does not classify matching prose without the canonical type"
+    (it "uses Svar's canonical context verdict even when the typed Vis preflight marker is absent"
         (let [err {:message "context_length_exceeded" :data {:status 400}}]
           (expect (false? (perr/context-overflow-error? err)))
-          (expect (= :generic (perr/provider-error-kind err)))))
+          (expect (= :context-length-exceeded (:category (perr/svar-classification err))))
+          (expect (= :context-overflow (perr/provider-error-kind err)))))
     (it "keeps the separate Extra inputs request-schema failure generic"
         (let
           [err {:message "Provider stream failed"
@@ -374,18 +357,21 @@
           (expect (= :generic (perr/provider-error-kind err)))
           (expect (not= "Context window exceeded" (perr/provider-error-title err)))))))
 
+;; Regression, issue #105: Vis used to override Svar's 402 quota verdict with
+;; a separate local `:billing` classifier.
 (defdescribe
   billing-required-error-test
   (let
     [err {:message "Exceptional status code: 402"
           :data {:status 402 :body "{\"error\":{\"message\":\"Payment required: add credits\"}}"}}]
-    (it "turns HTTP 402 into a clear, non-retryable billing card"
-        (expect (= :billing (perr/provider-error-kind err)))
-        (expect (= "Provider billing required" (perr/provider-error-title err)))
-        (expect (str/includes? (perr/provider-error-explanation err) "requires payment"))
-        (expect (str/includes? (perr/provider-error-next-step err) "billing and available credits"))
+    (it "presents HTTP 402 using Svar's canonical terminal quota verdict"
+        (expect (= :quota-exhausted (:category (perr/svar-classification err))))
+        (expect (= :quota-exhausted (perr/provider-error-kind err)))
+        (expect (= "Provider quota exhausted" (perr/provider-error-title err)))
+        (expect (str/includes? (perr/provider-error-explanation err) "no usable quota or credits"))
+        (expect (str/includes? (perr/provider-error-next-step err) "plan, usage limits"))
         (let [block (first (perr/provider-error-content err))]
-          (expect (= "provider_billing" (get block "code")))
+          (expect (= "provider_quota-exhausted" (get block "code")))
           (expect (false? (get block "retryable")))))))
 
 ;; Regression, issue #105: Anthropic's exhausted extra-usage 400 was parsed again in Vis while
@@ -408,6 +394,23 @@
         (with-redefs
           [perr/svar-classification (constantly {:category :invalid-request :retryable? false})]
           (expect (= :generic (perr/provider-error-kind err)))))))
+
+;; Regression, issue #105: Svar's model-unavailable verdict used to fall through
+;; Vis's legacy prose/status heuristics and become an unrelated generic failure.
+(defdescribe
+  svar-category-presentation-test
+  (it "maps model availability from Svar without reclassifying the provider prose"
+      (with-redefs
+        [perr/svar-classification (constantly {:category :model-unavailable
+                                               :retryable? false
+                                               :summary "The requested model is unavailable."
+                                               :next-step "Choose another model."})]
+        (let [err {:message "opaque upstream failure" :data {:status 418}}]
+          (expect (= :model-unavailable (perr/provider-error-kind err)))
+          (expect (= "Provider model unavailable" (perr/provider-error-title err)))
+          (expect (str/includes? (perr/provider-error-explanation err)
+                                 "The requested model is unavailable."))
+          (expect (str/includes? (perr/provider-error-next-step err) "Choose another model."))))))
 
 (def ^:private bedrock-timeout-err
   "A gateway timeout that reaches Vis ONLY as prose on the routing attempts —
@@ -456,8 +459,8 @@
   (it "leaves svar's TYPED stream watchdogs alone"
       (let [err {:message "stream stalled" :data {:type :svar.core/stream-idle-timeout}}]
         (expect (= :stream-timeout (perr/provider-error-kind err)))))
-  (it "leaves a bare transport drop alone"
-      (expect (= :transport (perr/provider-error-kind {:message "closed" :data {}})))))
+  (it "does not revive the legacy bare-`closed` transport heuristic"
+      (expect (= :generic (perr/provider-error-kind {:message "closed" :data {}})))))
 
 (def ^:private bedrock-timeout-throwable
   "The SAME failure as `bedrock-timeout-err`, but as the live `ex-info` svar's
@@ -581,12 +584,12 @@
 
 (defdescribe
   retryability-defers-to-svar-test
-  ;; vis answers only for the kinds it words itself; everything else reads
-  ;; svar's `:retryable?` so the two layers can never drift apart.
-  (it "a gateway 503 vis calls :generic is still retryable, because svar says so"
+  ;; Every retryability answer is Svar's `:retryable?`; Vis has no fallback set.
+  (it "maps a gateway 503 to Svar's retryable gateway category"
       (let
         [err {:message "Provider unavailable" :data {:status 503 :body "upstream connect failure"}}]
-        (expect (= :generic (perr/provider-error-kind err)))
+        (expect (= :gateway-unavailable (:category (perr/svar-classification err))))
+        (expect (= :gateway-unavailable (perr/provider-error-kind err)))
         (expect (true? (perr/provider-error-retryable? err)))))
   (it "a definitive 400 is not retryable"
       (expect (false? (perr/provider-error-retryable?
@@ -633,12 +636,17 @@
                       :reason :authentication
                       :error "Invalid API key provided"}]}})
 
+;; Regression, issue #105: Vis used to inspect attempt status/reason/prose itself
+;; instead of consuming Svar's canonical aggregate classification.
 (defdescribe
   all-attempts-auth-test
   "An all-401 fleet failure used to classify `:generic` and tell the user to
    `retry, or switch provider/model` — advice that re-sends the same rejected
    key to every provider. The verdict lives on the attempts, not the wrapper."
-  (it "classifies the wrapper as :auth from the attempts alone"
+  (it "classifies the wrapper as :auth from Svar's attempts verdict alone"
+      (expect (= {:category :auth :all-attempts-category? true}
+                 (select-keys (perr/svar-classification all-auth-exhausted-err)
+                              [:category :all-attempts-category?])))
       (expect (= :auth (perr/provider-error-kind all-auth-exhausted-err))))
   (it "names the fleet in the headline"
       (expect (= "All providers rejected your credentials"
@@ -672,7 +680,7 @@
       (expect (= "All providers unavailable" (perr/provider-error-title exhausted-err))))
   (it "a wrapper with no attempts is no auth verdict"
       (let [bare {:message "Provider unavailable" :data {:type :svar.llm/provider-unavailable}}]
-        (expect (false? (perr/auth-exhausted-attempts? bare)))
+        (expect (not (:all-attempts-category? (perr/svar-classification bare))))
         (expect (= :generic (perr/provider-error-kind bare)))))
   (it "a timeout fleet is still an upstream timeout, not auth"
       (let
@@ -685,13 +693,19 @@
                                :error "litellm.Timeout: BedrockException: Timeout Error"}]}}]
         (expect (= :upstream-timeout (perr/provider-error-kind t)))
         (expect (perr/provider-error-retryable? t))))
-  (it "reads auth prose off an attempt that carries no status"
+  (it "lets Svar classify auth prose retained only on an attempt"
       (let
-        [p {:message "All providers exhausted"
-            :data {:type :svar.llm/all-providers-exhausted
-                   :attempts [{:provider :a
-                               :model "m"
-                               :reason :error
-                               :error "Authentication failed: invalid api key"}]}}]
-        (expect (perr/auth-exhausted-attempts? p))
+        [p
+         {:message "All providers exhausted"
+          :data {:type :svar.llm/all-providers-exhausted
+                 :attempts [{:provider :a
+                             :model "m"
+                             :reason :error
+                             :error "Authentication failed: invalid api key"}]}}
+
+         classification
+         (perr/svar-classification p)]
+
+        (expect (= :auth (:category classification)))
+        (expect (:all-attempts-category? classification))
         (expect (= [:a] (perr/auth-failed-provider-ids p))))))
