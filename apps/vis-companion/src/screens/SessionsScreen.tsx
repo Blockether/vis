@@ -1149,9 +1149,16 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
               {/* With several machines paired every header carries this pair itself, so
                   the fleet bar grows one ONLY while it IS a machine — a solo fleet, or a
                   strip scoped down to one. */}
-              {!showMachineHeaders && (
-                <>
-                </>
+              {!showMachineHeaders && target && onMachineSettings && (
+                <button
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-label={`Machine actions for ${machineLabel(target)}`}
+                  onClick={(event) => openStartMenuAt(event.currentTarget, target)}
+                  className="flex min-h-8 min-w-8 items-center justify-center border border-edge text-dialog-hint transition-colors duration-150 hover:border-accent hover:text-white focus-visible:border-accent focus-visible:outline-none motion-reduce:transition-none"
+                >
+                  <DotsIcon className="size-4" />
+                </button>
               )}
             </div>
           </div>
@@ -1320,6 +1327,17 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                         >
                           Manage projects
                         </button>
+                        {onMachineSettings && (
+                          <button
+                            type="button"
+                            aria-haspopup="menu"
+                            aria-label={`Machine actions for ${machineLabel(machine.conn)}`}
+                            onClick={(event) => openStartMenuAt(event.currentTarget, machine.conn)}
+                            className="flex min-h-8 min-w-8 items-center justify-center border border-edge text-dialog-hint transition-colors duration-150 hover:border-accent hover:text-white focus-visible:border-accent focus-visible:outline-none motion-reduce:transition-none"
+                          >
+                            <DotsIcon className="size-3" />
+                          </button>
+                        )}
                       </span>
                     </MachineBanner>
                   )}

@@ -18,6 +18,14 @@ describe('where "New session" lives', () => {
     expect(source).not.toContain('Create, move, or remove projects and their sessions.');
   });
 
+  // Regression: machine settings must remain on the machine bar after project
+  // management moves there; removing the old machine overflow control hid pairing
+  // and unpair actions.
+  it('keeps machine settings in the machine bar actions', () => {
+    expect(source).toContain('aria-label={`Machine actions for ${machineLabel(machine.conn)}`}');
+    expect(source).toContain('title="Machine settings"');
+    expect(source).toContain('onMachineSettings(target)');
+  });
   it('creates directly in the selected project root', () => {
     expect(source).toContain("onNewSession={(root) => void createSession({ kind: 'trunk' }, machine.conn, root)}");
     expect(source).toContain('startAt={root || null}');
