@@ -267,7 +267,7 @@ export function MachineGap() {
  */
 export function MachineBanner({ children }: { children: ReactNode }) {
   return (
-    <header className="sticky top-0 z-10 -mt-px flex min-h-11 items-center justify-between gap-3 border-y border-dialog-edge bg-panel px-3 py-2 sm:px-4">
+    <header className="sticky top-0 z-10 flex min-h-11 items-center justify-between gap-3 border-b border-dialog-edge bg-panel px-3 py-2 sm:px-4">
       {children}
     </header>
   );
@@ -277,8 +277,7 @@ export function MachineBanner({ children }: { children: ReactNode }) {
  * The rail that CONTAINS a machine: one 2px line in the machine's own hue running
  * down everything it owns, banner included. A project boundary is a hairline and a
  * machine boundary is a colour change — the eye can see where `tower` ends without
- * reading a single word. Without a colour there is no rail: a fleet of one is not
- * a boundary, so a solo machine pays nothing for the concept.
+ * reading a single word. The same treatment identifies a solo machine too.
  */
 export function MachineRail({ color, children }: { color?: MachineColor; children: ReactNode }) {
   if (!color) return <>{children}</>;

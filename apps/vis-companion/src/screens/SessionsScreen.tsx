@@ -50,6 +50,7 @@ import {
 import type { PendingAttachment } from '../lib/attachments';
 import { favoriteKey, forgetFavorites, toggleFavorite, useFavorites } from '../lib/favorites';
 import {
+  groupByWorkDir,
   pageSessions,
   draftsRead,
   draftsReadKey,
@@ -620,9 +621,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
     // machines' `vis` checkouts into one project that belonged to neither.
     const projects = new Set(
       inScope.flatMap((machine) =>
-        (machine.sessions ?? []).map(
-          (session) => `${machineKey(machine.conn)}\u0000${projectLabel(session)}`,
-        ),
+        (machine.sessions ?? []).map((session) => `${machineKey(machine.conn)}\u0000${projectPath(session)}`),
       ),
     ).size;
     const live = sessions?.filter(sessionIsLive).length ?? 0;
@@ -657,13 +656,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
   const scopeMachine = scope
     ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
     : null;
-  // The strip is where the fleet's tallies live; the header line only speaks
-  // when there is no strip to speak for it.
   const hasScopeStrip = showsScopeStrip(machines);
-  const showMachineHeaders = machines.length > 1 && !scopeMachine;
-  // The machine the fleet BAR speaks for: the scoped one, or the only one paired.
-  // `null` only while the bar answers for several at once — and then every machine
-  // header below carries its own pair of verbs instead.
 
   // One hue per paired machine, assigned from the machine's own key, so a rail
   // keeps its colour across reloads and reorderings and two machines side by side
@@ -1026,7 +1019,10 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
     () =>
       filtered.map((entry) => ({
         machine: entry.machine,
-        groups: groupByProject(entry.sessions),
+        groups: groupByWorkDir(entry.sessions).map(([path, sessions]) => [
+          homeifyPath(path) || 'No workspace path',
+          sessions,
+        ] as [string, Session[]]),
       })),
     [filtered],
   );
@@ -1146,20 +1142,6 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                   {createBusyLabel}
                 </span>
               )}
-              {/* With several machines paired every header carries this pair itself, so
-                  the fleet bar grows one ONLY while it IS a machine — a solo fleet, or a
-                  strip scoped down to one. */}
-              {!showMachineHeaders && target && onMachineSettings && (
-                <button
-                  type="button"
-                  aria-haspopup="menu"
-                  aria-label={`Machine actions for ${machineLabel(target)}`}
-                  onClick={(event) => openStartMenuAt(event.currentTarget, target)}
-                  className="flex min-h-8 min-w-8 items-center justify-center border border-edge text-dialog-hint transition-colors duration-150 hover:border-accent hover:text-white focus-visible:border-accent focus-visible:outline-none motion-reduce:transition-none"
-                >
-                  <DotsIcon className="size-4" />
-                </button>
-              )}
             </div>
           </div>
           {createError && (
@@ -1256,26 +1238,22 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
             {sections.map(({ machine, groups }, index) => {
               const key = machineKey(machine.conn);
               return (
-                <section key={key} aria-label={machines.length > 1 ? `${machineLabel(machine.conn)} projects` : undefined}>
-                  {/* With one machine paired the fleet costs nothing — not the header,
-                      not the strip, and not even a landmark a screen reader has to walk
-                      past, which is why the section goes unnamed. */}
+                <section key={key} aria-label={`${machineLabel(machine.conn)} projects`}>
+                  {/* Every machine keeps its own named panel and landmark, even when it is
+                      the only machine in the fleet. */}
                   {/* A machine boundary is not a project boundary, so it is not drawn
                       with the same hairline: a band of the page's own colour, closed top
                       and bottom by the strong rule, says one computer ENDED before any
                       label is read. It is charged once per EXTRA machine — the first
                       block starts flush, and a solo fleet never pays it. */}
-                  {showMachineHeaders && index > 0 && <MachineGap />}
+                  {index > 0 && <MachineGap />}
                   {/* Everything one machine owns hangs off ITS rail: a project
                       boundary is a hairline, a machine boundary is a colour
                       change, so where `tower` ends is seen before it is read.
-                      With a single machine paired there is no colour and no
-                      rail — the concept costs a solo user nothing. */}
-                  <MachineRail color={showMachineHeaders ? machineColor(machineColors, key) : undefined}>
-                  {/* The machine header exists only while there is more than one
-                      machine to tell apart, and disappears once the strip has scoped
-                      to one — the chip already says where you are. */}
-                  {showMachineHeaders && (
+                      The rail and panel remain visible even for a solo machine. */}
+                  <MachineRail color={machineColor(machineColors, key)}>
+                  {/* The machine panel is always rendered for the machine whose projects
+                      follow, whether this is the whole fleet or a scoped view. */}
                     <MachineBanner>
                       <span className="flex min-w-0 items-center gap-2">
                         {/* The machine's hue, not its health: health is a WORD
@@ -1340,9 +1318,8 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                         )}
                       </span>
                     </MachineBanner>
-                  )}
                   {groups.length === 0
-                    ? showMachineHeaders && (
+                    ? (
                         <p className="px-3 py-3 font-mono text-meta text-dialog-hint sm:px-4">
                           {machine.error
                             ? 'This machine is not answering.'
@@ -2553,18 +2530,6 @@ function sessionSearchText(session: Session): string {
     .toLowerCase();
 }
 
-function groupByProject(sessions: Session[]): Array<[string, Session[]]> {
-  const groups = new Map<string, Session[]>();
-  for (const session of sessions) {
-    const key = projectLabel(session);
-    const group = groups.get(key) ?? [];
-    group.push(session);
-    groups.set(key, group);
-  }
-
-  // Map insertion order preserves the gateway's canonical live-first order.
-  return [...groups.entries()];
-}
 
 function dateMillis(value?: string): number {
   if (!value) return 0;

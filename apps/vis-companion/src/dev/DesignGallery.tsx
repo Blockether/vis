@@ -25,15 +25,6 @@ import {
   ArtifactsTurnsVariant,
 } from './artifactVariants';
 import {
-  MachineBannerVariant,
-  MachineBlockVariant,
-  MachineGutterVariant,
-  MachinePaletteVariant,
-  MachineRailBandVariant,
-  MachineRailVariant,
-  MachineShippedVariant,
-} from './machineVariants';
-import {
   MenuBandVariant,
   MenuCapVariant,
   MenuCrownVariant,
@@ -57,7 +48,6 @@ import {
 } from './startVariants';
 import { PROJECT_STATES, SessionFlowVariant, SessionUxBoardVariant } from './projectVariants';
 
-// Registered last so the four machine-separation proposals sit together in the index.
 
 export interface DesignVariant {
   id: string;
@@ -179,62 +169,6 @@ export const DESIGN_VARIANTS: DesignVariant[] = [
       'Chips own both counts as filled blocks while the strip exists; with one machine paired the header line takes them back.',
     states: ['default', 'solo'],
     render: (state) => <TallyStripVariant state={state} />,
-  },
-  {
-    id: 'machine-shipped',
-    title: 'Machine 0 · Shipped (the bug)',
-    blurb:
-      'Two machines meet on the same 1px hairline that separates two projects, so the fleet reads as one flat list of rows.',
-    states: ['default', 'offline', 'solo'],
-    render: (state) => <MachineShippedVariant state={state} />,
-  },
-  {
-    id: 'machine-gutter',
-    title: 'Machine A · Gutter',
-    blurb:
-      'A machine is a BLOCK: page-coloured air above it and a strong rule top and bottom, so the boundary is space, not a line to read.',
-    states: ['default', 'offline', 'solo'],
-    render: (state) => <MachineGutterVariant state={state} />,
-  },
-  {
-    id: 'machine-banner',
-    title: 'Machine B · Banner',
-    blurb:
-      'The machine header stops being a row and becomes a tracked banner that sticks to the top of the scroller, so which machine you are inside survives scrolling.',
-    states: ['default', 'offline', 'solo'],
-    render: (state) => <MachineBannerVariant state={state} />,
-  },
-  {
-    id: 'machine-rail',
-    title: 'Machine C · Rail (per-machine colour)',
-    blurb:
-      'Every paired machine keeps one of sixteen hues: a rail down everything it owns, the same block in its banner, so a machine boundary is a colour change instead of one more line.',
-    states: ['default', 'offline', 'many', 'solo'],
-    render: (state) => <MachineRailVariant state={state} />,
-  },
-  {
-    id: 'machine-rail-band',
-    title: 'Machine C2 · Rail + band',
-    blurb:
-      'The coloured rail with the page-coloured band kept between machines — the shot decides whether the band still earns its 12px once the rails differ.',
-    states: ['default', 'offline', 'many', 'solo'],
-    render: (state) => <MachineRailBandVariant state={state} />,
-  },
-  {
-    id: 'machine-palette',
-    title: 'Machine palette · 16 hues',
-    blurb:
-      'The identity palette as a set: one lightness so no machine outshouts another, no green because green means LIVE, and every swatch has to hold on paper and on ink.',
-    states: ['default'],
-    render: () => <MachinePaletteVariant />,
-  },
-  {
-    id: 'machine-block',
-    title: 'Machine D · Block (air + banner)',
-    blurb:
-      'Air says a machine ENDED and a sticky tracked banner says which one begins; the band is charged once per extra machine and never to a solo fleet.',
-    states: ['default', 'offline', 'solo'],
-    render: (state) => <MachineBlockVariant state={state} />,
   },
   {
     id: 'menu-shipped',

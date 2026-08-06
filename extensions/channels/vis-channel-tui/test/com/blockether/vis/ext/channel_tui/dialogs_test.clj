@@ -1180,12 +1180,13 @@
                    ;; blank message gets a placeholder
                    (expect (= "(no message)" (:label (nth rows 2)))))))
 
-;; Navigator hierarchy: focused project's group comes first, every project stays
-;; contiguous, persisted order remains intact inside each project.
+;; Regression, issue #session-list-work-dir: project names used to split one working directory into separate groups.
+;; Navigator hierarchy: the working directory comes first, regardless of project name.
+;; A project name is metadata, not a second place to put the same directory.
 (defdescribe
-  navigator-project-grouping-test
+  navigator-work-dir-grouping-test
   (it
-    "keeps the focused project first and every project contiguous"
+    "keeps the focused work dir first and every work dir contiguous"
     (let
       [all-rows
        (var-get #'dlg/navigator-all-rows)
@@ -1193,24 +1194,28 @@
        sessions
        [{"id" "s1"
          "title" "A1"
+         "project_name" "named-a"
          "turn_count" 1
          "created_at" 0
          "modified_at" 4000
          :work-dir "~/proj-a"}
         {"id" "s2"
          "title" "B1"
+         "project_name" "named-b"
          "turn_count" 1
          "created_at" 0
          "modified_at" 3000
          :work-dir "~/proj-b"}
         {"id" "s3"
          "title" "A2"
+         "project_name" "another-name-for-a"
          "turn_count" 1
          "created_at" 0
          "modified_at" 2000
          :work-dir "~/proj-a"}
         {"id" "s4"
          "title" "B2"
+         "project_name" "another-name-for-b"
          "turn_count" 1
          "created_at" 0
          "modified_at" 1000
@@ -1219,7 +1224,7 @@
        rows
        (all-rows {:active-session-id "s1" :sessions sessions})]
 
-      ;; Focused project A is first and remains one coherent group, followed by B.
+      ;; Focused work dir A is first and remains one coherent group, followed by B.
       (expect (= ["s1" "s3" "s2" "s4"] (mapv (comp str :id :target) rows)))))
   (it "sessions without a work-dir share one group and keep recency order"
       (let

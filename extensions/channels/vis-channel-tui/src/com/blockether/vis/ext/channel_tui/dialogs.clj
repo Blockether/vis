@@ -5528,8 +5528,8 @@
     (if (= day "-") "-" (str (subs day 5) " " (format-session-time v)))))
 
 (defn- navigator-session-row
-  "Normalize one session for the full-width navigator list. Project owns the
-   hierarchy; title and compact metadata stay inside the session block."
+  "Normalize one session for the full-width navigator list. The working directory
+   owns the hierarchy; project names stay metadata and never split a directory."
   [active-session-id session]
   (let
     [id
@@ -5540,8 +5540,8 @@
         (some-> active-session-id
                 str))
 
-     project
-     (or (not-empty (get session "project_name")) (not-empty (:work-dir session)) "No project")]
+     work-dir
+     (or (not-empty (:work-dir session)) "No work dir")]
 
     {:id (str "session:" id)
      :focused? active?
@@ -5551,8 +5551,8 @@
      :draft (or (not-empty (:draft-label session)) "trunk")
      :group (not-empty (get session "project_name"))
      :position (get session "project_position")
-     :dir project
-     :work-dir (or (not-empty (:work-dir session)) "")
+     :dir work-dir
+     :work-dir work-dir
      :status (if active? "● focused" (str (long (or (get session "turn_count") 0)) " turns"))
      :created (navigator-stamp (get session "created_at"))
      :modified (navigator-stamp (or (get session "modified_at")
@@ -5561,8 +5561,8 @@
      :target {:action :switch :id id}}))
 
 (defn- group-rows-by-dir
-  "Keep each project contiguous. The focused project's group comes first and
-   its focused session leads that group; persisted project order remains intact
+  "Keep each working directory contiguous. The focused directory comes first
+   and its focused session leads that group; persisted order remains intact
    for every other row."
   [rows]
   (let

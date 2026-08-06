@@ -86,25 +86,26 @@
       (.getAbsolutePath (io/file old-home "bin/java"))
 
       pb
-      (ProcessBuilder. ^java.util.List
-                       ["bash" (.getAbsolutePath (io/file repo "bin/vis-agent")) "--jvm"
-                        "--version"])
+      (java.lang.ProcessBuilder. ^java.util.List
+                                 (vec ["bash" (.getAbsolutePath (io/file repo "bin/vis-agent")) "--jvm"
+                                       "--version"]))
 
       env
       (.environment pb)]
 
      (.directory pb repo)
      (.redirectErrorStream pb true)
-     (.put env "HOME" (.getAbsolutePath home))
+     (.put env "HOME" (.getAbsolutePath ^java.io.File home))
      (.put env
            "PATH"
-           (str (when java? (str (.getAbsolutePath (io/file old-home "bin")) ":"))
-                (.getAbsolutePath tools)
+           (str (when java? (str (.getAbsolutePath ^java.io.File (io/file old-home "bin")) ":"))
+                (.getAbsolutePath ^java.io.File tools)
                 (if java? ":/usr/bin:/bin" ":/bin")))
      (if java?
-       (do (.put env "JAVA_HOME" (.getAbsolutePath old-home)) (.put env "JAVA_CMD" old-java))
+       (do (.put env "JAVA_HOME" (.getAbsolutePath ^java.io.File old-home))
+           (.put env "JAVA_CMD" old-java))
        (do (.remove env "JAVA_HOME") (.remove env "JAVA_CMD")))
-     (.put env "VIS_TEST_PINNED_HOME" (.getAbsolutePath pinned-home))
+     (.put env "VIS_TEST_PINNED_HOME" (.getAbsolutePath ^java.io.File pinned-home))
      (.put env "VIS_NO_DEV_CHECKOUT" "1")
      (let
        [process
@@ -247,9 +248,9 @@
 (defn- tar-gz!
   [dir out]
   (let
-    [pb (ProcessBuilder. ^java.util.List
-                         ["tar" "-C" (.getAbsolutePath ^java.io.File dir) "-czf"
-                          (.getAbsolutePath ^java.io.File out) "."])]
+    [pb (java.lang.ProcessBuilder. ^java.util.List
+                                  (vec ["tar" "-C" (.getAbsolutePath ^java.io.File dir) "-czf"
+                                        (.getAbsolutePath ^java.io.File out) "."]))]
     (.redirectErrorStream pb true)
     (let [process (.start pb)]
       (slurp (.getInputStream process))

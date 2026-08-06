@@ -467,9 +467,8 @@ export function isDraftWorkspace(session: Session): boolean {
 }
 
 /**
- * The path a session GROUPS under: the repo it belongs to, which for a draft is
- * `repo_root` and not the clone it happens to be checked out in. It is also the
- * scope of the parked-drafts list, which is why the drafts read keys on it.
+ * The path a session is grouped under: its working directory. Drafts use their
+ * repository root so the draft clone does not become a second group.
  */
 export function projectPath(session: Session): string {
   const workspace = session.workspace;
@@ -478,6 +477,18 @@ export function projectPath(session: Session): string {
     ? workspace.repo_root || workspace.root
     : workspace.root || workspace.repo_root;
   return path?.replace(/\/+$/, '') || '';
+}
+
+/** Group sessions by working directory, never by their optional project name. */
+export function groupByWorkDir(sessions: Session[]): Array<[string, Session[]]> {
+  const groups = new Map<string, Session[]>();
+  for (const session of sessions) {
+    const key = projectPath(session);
+    const group = groups.get(key) ?? [];
+    group.push(session);
+    groups.set(key, group);
+  }
+  return [...groups.entries()];
 }
 
 /** Where a machine is working right now, as the menu says it out loud. */

@@ -71,6 +71,11 @@ import {
   pushPermission,
 } from "./lib/push";
 import { syncPushRegistrations } from "./lib/notify";
+import {
+  isWebNotificationsPlatform,
+  registerWebServiceWorker,
+  syncWebPushRegistrations,
+} from "./lib/web-push";
 import { registerForPush, unregisterFromPush } from "./lib/relay";
 import { isShellChromeVisible, shellScreen } from "./lib/shell";
 import {
@@ -773,6 +778,27 @@ export function App() {
     // A switch flipped while its machine was unreachable is stored but not yet
     // asserted, and waking is exactly when that machine tends to come back.
     const off = onWake(() => void sweep());
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, [notifyTargets]);
+
+  useEffect(() => {
+    if (!isWebNotificationsPlatform()) return;
+    void registerWebServiceWorker().catch(() => undefined);
+  }, []);
+
+  // Existing permission and subscriptions are enough to restore background delivery;
+  // never prompt on launch. The service worker owns the notification, not this tab.
+  useEffect(() => {
+    if (!isWebNotificationsPlatform() || notifyTargets.length === 0) return;
+    let cancelled = false;
+    const sweep = () => {
+      void syncWebPushRegistrations(notifyTargets, () => cancelled);
+    };
+    sweep();
+    const off = onWake(sweep);
     return () => {
       cancelled = true;
       off();

@@ -34,8 +34,19 @@ import {
   pushPlatform,
   type PushPermission,
 } from "../lib/push";
+import {
+  ensureWebPushSubscription,
+  getExistingWebPushSubscription,
+  isWebNotificationsPlatform,
+  isWebPushSupported,
+  registerWebPushForGateway,
+  requestWebPushPermission,
+  unregisterWebPushForGateway,
+  webPushApplicationServerKey,
+  webPushPermission,
+} from "../lib/web-push";
 import { applyTheme, dedupeThemes, resolveLocalTheme } from "../lib/theme";
-import { applyGatewayNotify } from "../lib/notify";
+import { applyGatewayNotify, applyWebGatewayNotify } from "../lib/notify";
 import {
   registerForPush,
   registeredIds,
@@ -1508,7 +1519,10 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                         : providerStatusLine(provider)}
                   </span>
                 </span>
-                <ChevronIcon open={open} className="size-3.5 text-dialog-hint" />
+                <ChevronIcon
+                  open={open}
+                  className="size-3.5 text-dialog-hint"
+                />
               </button>
 
               <ProviderNotice auth={auth} provider={provider} />
@@ -1658,6 +1672,133 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
  * token it stores, and the app matches its own row by computing the same mask.
  */
 function NotificationsPanel({
+  client,
+  gateway,
+}: {
+  client: GatewayClient;
+  gateway: GatewayConn;
+}) {
+  if (isWebNotificationsPlatform())
+    return <WebNotificationsPanel gateway={gateway} />;
+  return <NativeNotificationsPanel client={client} gateway={gateway} />;
+}
+
+function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
+  const [perm, setPerm] = useState<PushPermission>(webPushPermission());
+  const [subscription, setSubscription] = useState<PushSubscription | null>(null);
+  const [notify, setNotify] = useState(true);
+  const [busy, setBusy] = useState<"enable" | "disable" | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const supported = isWebPushSupported();
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([getGatewayNotify(gateway.url), getExistingWebPushSubscription(gateway.url)]).then(
+      ([wanted, current]) => {
+        if (cancelled) return;
+        setNotify(wanted);
+        setSubscription(current);
+        setPerm(webPushPermission());
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [gateway.url]);
+
+  const enable = useCallback(async () => {
+    setBusy("enable");
+    setErr(null);
+    setNote(null);
+    try {
+      if (!supported) throw new Error("This browser does not support background Web Push.");
+      const permission = await requestWebPushPermission();
+      setPerm(permission);
+      if (permission !== "granted")
+        throw new Error("Notifications are blocked in this browser. Allow them in browser settings first.");
+      const target = new GatewayClient(gateway).pushTarget();
+      const status = await target.status();
+      const next = await ensureWebPushSubscription(
+        gateway.url,
+        webPushApplicationServerKey(status),
+      );
+      await registerWebPushForGateway(gateway, next);
+      await applyWebGatewayNotify(gateway.url, true);
+      setSubscription(next);
+      setNotify(true);
+      setNote("Background Web Push is enabled for this machine.");
+    } catch (cause) {
+      setErr(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(null);
+    }
+  }, [gateway, supported]);
+
+  const disable = useCallback(async () => {
+    setBusy("disable");
+    setErr(null);
+    setNote(null);
+    try {
+      const current = subscription ?? (await getExistingWebPushSubscription(gateway.url));
+      if (current) await unregisterWebPushForGateway(gateway, current);
+      await applyWebGatewayNotify(gateway.url, false);
+      setNotify(false);
+      setNote("Background Web Push is disabled for this machine.");
+    } catch (cause) {
+      setErr(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(null);
+    }
+  }, [gateway, subscription]);
+
+  const notifying = supported && notify && perm === "granted" && subscription !== null;
+  return (
+    <SettingsPanel
+      title="Notifications"
+      description="Alerts from THIS machine only — every paired machine has its own switch."
+      meta={`web push · ${perm}`}
+    >
+      <div className="space-y-2 p-3">
+        {err && <Banner kind="err">{err}</Banner>}
+        {note && <Banner kind="ok">{note}</Banner>}
+        {supported ? (
+          <Banner kind="ok">Background Web Push is available in this browser.</Banner>
+        ) : (
+          <Banner kind="warn">This browser does not support background Web Push.</Banner>
+        )}
+        {supported && perm === "denied" && (
+          <Banner kind="warn">
+            Notifications are blocked in this browser — allow them in browser settings first.
+          </Banner>
+        )}
+        <div className="flex flex-wrap gap-2">
+          {!notifying && (
+            <Button
+              className="min-h-9 flex-1 px-3 font-mono text-meta"
+              disabled={busy !== null || !supported}
+              onClick={() => void enable()}
+            >
+              {busy === "enable" ? "Enabling…" : "Notify me from this machine"}
+            </Button>
+          )}
+          {notifying && (
+            <Button
+              variant="danger"
+              className="min-h-9 flex-1 px-3 font-mono text-meta"
+              disabled={busy !== null}
+              onClick={() => void disable()}
+            >
+              {busy === "disable" ? "Disabling…" : "Stop notifying me from this machine"}
+            </Button>
+          )}
+        </div>
+      </div>
+    </SettingsPanel>
+  );
+}
+
+function NativeNotificationsPanel({
   client,
   gateway,
 }: {

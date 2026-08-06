@@ -137,18 +137,16 @@ describe('the design board wears the shipped chrome', () => {
   });
 });
 /**
- * The one test here that RENDERS instead of reading: the solo promise is about what
- * is absent, and absence is the thing a source grep is worst at proving. The board
- * shipped a card captioned "no machine header, no chips, no machine question" whose
- * fleet bar counted three machines.
+ * The one test here that RENDERS instead of reading: the solo state must retain the
+ * machine panel, and presence is the thing a source grep is worst at proving.
  */
-describe('solo pays nothing', () => {
+describe('solo keeps its machine panel', () => {
   const html = (state: string) =>
     renderToStaticMarkup(createElement(SessionFlowVariant, { state }));
 
-  it('never mentions the fleet when one machine is paired', () => {
+  it('shows the machine name and project totals when one machine is paired', () => {
     const solo = html('solo');
-    expect(solo).not.toMatch(/machines?</);
+    expect(solo).toContain('studio-mbp');
     expect(solo).toContain('3 projects');
     expect(solo).toContain('214 sessions');
   });

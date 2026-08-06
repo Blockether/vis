@@ -47,6 +47,15 @@ describe('where "New session" lives', () => {
     expect(source).toContain('firstProject={groupIndex === 0}');
   });
 
+  // Regression, issue: the machine panel disappeared when only one machine was paired.
+  it('keeps the machine panel and rail unconditional for every machine section', () => {
+    expect(source).toContain('<MachineBanner>');
+    expect(source).toContain('const hasScopeStrip = showsScopeStrip(machines);');
+    expect(source).toContain('{index > 0 && <MachineGap />}');
+    expect(source).not.toContain('showMachineHeaders');
+  });
+
+
   // Regression: the session count used to flash from empty to the cached total on
   // every cold start while the async native connection store was loading.
   it('seeds the application connection list synchronously on startup', () => {

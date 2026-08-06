@@ -77,6 +77,7 @@ export const PUBLISHER_RELAY_URL =
  * not for an iPhone, so the verdict is per platform, never the summary flag.
  */
 function signsItself(push: PushStatus, platform: string): boolean {
+  if (platform === "web") return false;
   return Boolean(
     platform === "android" ? push.fcm?.is_available : push.apns?.is_available,
   );

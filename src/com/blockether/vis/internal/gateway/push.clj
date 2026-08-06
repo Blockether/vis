@@ -31,6 +31,7 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [com.blockether.vis.internal.gateway.fcm :as fcm]
+            [com.blockether.vis.internal.gateway.web-push :as web-push]
             [com.blockether.vis.internal.gateway.relay :as relay]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
@@ -353,15 +354,9 @@
 (defn device-count ^long [] (count (ensure-loaded!)))
 
 (defn any-configured?
-  "True when this gateway can deliver a push to SOME platform.
-
-   It normally can, with nothing configured: a gateway names the publisher's
-   relay by default, and a registered device may name the one that sealed its
-   grant. Its own Apple or Android credentials answer yes too. The only no left
-   is an operator who pointed this machine at an address a bearer grant may not
-   be handed to."
+  "True when this gateway can deliver a push to SOME platform."
   []
-  (boolean (or (configured?) (fcm/configured?) (relay/configured?))))
+  (boolean (or (configured?) (fcm/configured?) (web-push/configured?) (relay/configured?))))
 
 (defn- not-blank
   [s]
@@ -542,6 +537,9 @@
                                                   (when (relay/dead-grant? r)
                                                     (unregister-device! id))
                                                   r)
+       (= "web" platform) (let [r (web-push/send! token notification)]
+                            (when (contains? #{404 410} (:status r)) (unregister-device! id))
+                            r)
        (str/blank? (str token)) {:status 0 :reason "relay-not-configured"}
        (= "android" platform) (let [r (fcm/send! token notification)]
                                 (when (fcm/dead-token? r) (unregister-device! id))
@@ -581,7 +579,7 @@
          :id ::push-failed
          :data
          {:token (mask id) :platform platform :status (:status result) :reason (:reason result)}}))
-    (assoc result :is-delivered (= 200 (:status result)))))
+    (assoc result :is-delivered (<= 200 (long (:status result)) 299))))
 
 (defn broadcast!
   "Send one notification to every registered device. Returns a per-device
@@ -752,12 +750,19 @@
      f
      (fcm/config)
 
-     r
-     (relay/status)]
+     w
+     (web-push/config)
 
-    {:is-available (or (:is-configured cfg) (:is-configured f) (:is-available r))
+     r
+     (relay/status)
+
+     is-available
+     (or (:is-configured cfg) (:is-configured f) (:is-configured w) (:is-available r))]
+
+    {:is-available is-available
      :provider (cond (and (:is-configured cfg) (:is-configured f)) "apns+fcm"
                      (:is-configured f) "fcm"
+                     (:is-configured w) "web"
                      (and (:is-available r) (not (:is-configured cfg))) "relay"
                      :else "apns")
      :environment (:default-environment cfg)
@@ -772,5 +777,10 @@
            :project-id (:project-id f)
            :source (:source f)
            :missing (:missing f)}
+     :web-push {:is-available (:is-configured w)
+                :application-server-key (:application-server-key w)
+                :subject (:subject w)
+                :source (:source w)
+                :missing (:missing w)}
      :relay r
      :devices (device-count)}))

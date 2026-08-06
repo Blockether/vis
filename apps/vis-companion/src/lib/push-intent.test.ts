@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import appSource from '../App.tsx?raw';
+import settingsSource from '../screens/SettingsScreen.tsx?raw';
+import webPushSource from './web-push.ts?raw';
+import serviceWorkerSource from '../../public/sw.js?raw';
 import {
   pushIntentFrom,
   resolvePushIntent,
@@ -224,5 +227,17 @@ describe('a tapped notification ends on the session screen', () => {
     const outcome = resolvePushIntent(pushIntentFrom(TAP, 1_000), s);
     expect(outcome).toEqual({ action: 'open', conn: laptop, sid: 'sess-42' });
     expect(screenAfter(outcome, s)).toBe('session');
+  });
+});
+
+// Regression, issue #web-push: the web build used to depend on foreground SSE instead of background push delivery.
+describe('web notification wiring', () => {
+  it('registers the worker and uses the background Web Push path', () => {
+    expect(appSource).toContain('void registerWebServiceWorker().catch(() => undefined);');
+    expect(settingsSource).toContain('isWebNotificationsPlatform()');
+    expect(settingsSource).toContain('isWebPushSupported');
+    expect(webPushSource).toContain('navigator.serviceWorker.register("/sw.js", { scope: "/" })');
+    expect(serviceWorkerSource).toContain('self.addEventListener("push"');
+    expect(serviceWorkerSource).toContain('self.registration.showNotification');
   });
 });

@@ -264,7 +264,6 @@ function FleetList({
   machineAction,
   projectAction,
   machines = MACHINES,
-  withMachineHeader = true,
 }: {
   header?: {
     title: string;
@@ -275,18 +274,14 @@ function FleetList({
   headerAction?: ReactNode;
   machineAction?: (machine: FleetMachine) => ReactNode;
   projectAction?: (project: string) => ReactNode;
-  /** Solo is the falsifier: one machine paired must cost no machine chrome at all. */
   machines?: FleetMachine[];
-  withMachineHeader?: boolean;
 }) {
   return (
     <>
-      {/* Solo cannot lie about the fleet: with the machine chrome off, the bar counts
-          ONE machine — which is exactly the count `FleetBar` then refuses to print. */}
       <FleetBar
         action={headerAction}
         {...header}
-        machines={withMachineHeader ? header?.machines : 1}
+        machines={header?.machines ?? machines.length}
       />
       <FilterBar />
       <div className="border-t border-dialog-edge">
@@ -295,9 +290,8 @@ function FleetList({
           const dead = machine.state !== 'online';
           return (
             <section key={machine.id}>
-              {withMachineHeader && index > 0 && <MachineGap />}
-              <MachineRail color={withMachineHeader ? machineHue(machine) : undefined}>
-                {withMachineHeader && (
+              {index > 0 && <MachineGap />}
+              <MachineRail color={machineHue(machine)}>
                   <MachineBanner>
                     <span className="flex min-w-0 items-center gap-2">
                       <MachineMark color={machineHue(machine)} />
@@ -319,7 +313,6 @@ function FleetList({
                       {machineAction?.(machine)}
                     </span>
                   </MachineBanner>
-                )}
                 {dead ? (
                   <p className="px-3 py-3 font-mono text-meta text-dialog-hint">
                     This machine is not answering.
@@ -667,9 +660,8 @@ export function SessionFlowVariant({ state }: { state: string }) {
       <Screen>
         <FleetList
           machines={MACHINES.slice(0, 1)}
-          withMachineHeader={false}
-          header={{ title: 'studio-mbp', projects: 3, sessions: 214 }}
-          headerAction={<KebabButton label="Actions for studio-mbp" open />}
+          header={{ title: 'Projects', projects: 3, sessions: 214 }}
+          machineAction={MACHINE_ACTION}
           projectAction={PROJECT_ACTION}
         />
         <MachineMenu label="studio-mbp" />
@@ -756,9 +748,9 @@ export const FLOW_STEPS: FlowStep[] = [
   },
   {
     step: '7',
-    title: 'Solo pays nothing (falsifier)',
+    title: 'Solo keeps the machine panel',
     caption:
-      'One machine paired: no machine header, no chips, no machine question. The fleet bar IS the machine and carries the same ⋯ — the feature costs a solo user one glyph.',
+      'One machine paired: the machine panel remains visible with its identity, project totals, and actions; only the fleet chooser is absent.',
     variant: 'session-flow',
     state: 'solo',
   },

@@ -64,9 +64,8 @@
   (it
     "keeps the sectioned core contract explicit and non-contradictory"
     (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-      ;; Context safety is worth a small fixed prompt cost; keep the whole core below 5.2k.
-      ;; The lifecycle checkpoint and full pre-fold recovery record must not squeeze out §7 teardown.
-      (expect (< (count text) 5200))
+      ;; Typed fold instructions cost a small fixed amount; keep the core compact.
+      (expect (< (count text) 5400))
       (let
         [steps (mapv #(str/index-of text %)
                      ["`grep` locates unknown code" "`struct_index` every known file"
@@ -110,9 +109,9 @@
           "rerun after the fix" "unverified until a test covers it" "BATCH every tool"
           "Write only files the task asked" "Commit, push, publish" "Treat context as a budget"
           "at most two targeted" "named unresolved decision blocks the edit"
-          "no repeated search/read" "Fold settled work into a gist" "recorded thinking"
-          "in-flight hidden reasoning remain" "When edit-ready and headroom permits, patch first"
-          "Prefer folding after edit/verification" "Before an unavoidable fold, checkpoint"]]
+          "no repeated search/read" "Fold settled work into typed data" "recorded thinking"
+          "in-flight hidden reasoning remain" "When ready, patch first"
+          "Before an unavoidable fold, checkpoint"]]
         (expect (str/includes? text required)))
       (doseq
         [required ["exact paths; confirm reduction" "Fold only settled steps"
@@ -143,13 +142,15 @@
                   ;; op `wait`), never the tool-local prohibition.
                   "`time.sleep`" "`asyncio.sleep`" "poll in Python"]]
         (expect (not (str/includes? text surplus))))))
-  (it "requires retained fold gists to be readable Markdown resumption handoffs"
+  (it "requires typed fold records and derived Markdown breadcrumbs"
       (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
         (doseq
-          [required ["Fold gists are structured resumption handoffs" "Use this Markdown" "## Goal"
-                     "## Previous state" "- **Confirmed:**" "- **Dead ends:**"
-                     "- **Worth exploring:**" "`tN/iN`" "`t5/*`" "## Hypothesis" "## Next" "1. "]]
-          (expect (str/includes? text required)))))
+          [required ["Fold settled work into typed data" "`goal`" "`previous_goal`" "`confirmed`"
+                     "`exploration_dead_ends`" "`worth_exploring`" "`hypothesis`"
+                     "{text, references}" "Markdown is derived only"]]
+          (expect (str/includes? text required)))
+        (expect (not (str/includes? text "## Next")))
+        (expect (not (str/includes? text "Previous state")))))
   (it
     "advertises exact model-facing Python capabilities, never internal shim ids"
     (let

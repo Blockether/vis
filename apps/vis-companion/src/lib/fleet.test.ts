@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  groupByWorkDir,
   creatableMachines,
   pageSessions,
   draftsRead,
@@ -76,6 +77,23 @@ describe('isDraftWorkspace', () => {
     ).toBe(false);
   });
 });
+
+describe('groupByWorkDir', () => {
+  // Regression, issue #session-list-work-dir: project names used to split one working directory into separate groups.
+  it('groups sessions by workspace root even when their project names differ', () => {
+    const rows = [
+      session('a', { project_name: 'first-name', workspace: { root: '/Users/me/vis' } }),
+      session('b', { project_name: 'second-name', workspace: { root: '/Users/me/vis' } }),
+      session('c', { project_name: 'other', workspace: { root: '/Users/me/other' } }),
+    ];
+
+    expect(groupByWorkDir(rows)).toEqual([
+      ['/Users/me/vis', [rows[0], rows[1]]],
+      ['/Users/me/other', [rows[2]]],
+    ]);
+  });
+});
+
 describe('reconcileMachines', () => {
   it('keeps loaded rows across a re-pair, drops removed machines, blanks new ones', () => {
     const loaded = machine(studio, [session('a')]);

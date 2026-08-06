@@ -577,7 +577,7 @@ export interface GatewayStatus {
  */
 export interface PushStatus {
   is_available: boolean;
-  provider: "apns" | "fcm" | "apns+fcm" | "relay";
+  provider: "apns" | "fcm" | "apns+fcm" | "relay" | "web";
   /** APNs view, mirrored at the top level for older gateways. */
   environment?: "sandbox" | "production";
   topic?: string | null;
@@ -596,11 +596,15 @@ export interface PushStatus {
     source?: string | null;
     missing?: string[];
   };
-  /**
-   * The push relay this gateway would send through. A machine with no signing
-   * key of its own is not silent: it can still wake a device that handed it a
-   * relay grant, and `url` is where that grant is minted.
-   */
+  /** This gateway's generated VAPID identity for browser push. */
+  web_push?: {
+    is_available: boolean;
+    application_server_key?: string | null;
+    subject?: string | null;
+    source?: string | null;
+    missing?: string[];
+  };
+  /** The native push relay, used only by native builds without local credentials. */
   relay?: {
     is_available: boolean;
     url?: string | null;

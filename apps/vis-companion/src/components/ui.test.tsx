@@ -106,11 +106,7 @@ describe('UnreadBadge', () => {
   });
 });
 
-// The sessions list used to close a whole computer with the SAME 1px
-// `border-dialog-edge` hairline that closes a project, so the second machine's
-// header read as a third project of the first one (see the `machine-shipped`
-// design proposal, kept as the before picture). The boundary is now space plus
-// a promoted name.
+// A machine gap separates computers with space; the banner supplies the promoted name.
 describe('MachineGap', () => {
   it('is a band of the page ink, not another hairline', () => {
     const html = renderToStaticMarkup(<MachineGap />);
@@ -142,10 +138,12 @@ describe('MachineBanner', () => {
   });
 
   // Regression, issue: adjacent list edges rendered as two visible rules when the machine banner followed the filter or machine gap.
-  it('overlaps its top edge with an adjacent border', () => {
+  it('keeps the shared top edge on the preceding row', () => {
     const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
 
-    expect(html).toContain('-mt-px');
+    expect(html).toContain('border-b border-dialog-edge');
+    expect(html).not.toContain('border-y');
+    expect(html).not.toContain('-mt-px');
   });
 
   it('uses the same unforced title and metadata typography as project headers', () => {
