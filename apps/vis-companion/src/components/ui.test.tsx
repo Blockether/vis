@@ -126,13 +126,16 @@ describe('MachineGap', () => {
 });
 
 describe('MachineBanner', () => {
-  it('is set as a banner, not as one more row', () => {
+  // Regression, reported header typography mismatch: machine banners forced their
+  // labels and counts into uppercase tracked type while project headers used the
+  // normal monospace hierarchy, so otherwise-aligned headers still looked unlike.
+  it('uses the same unforced title and metadata typography as project headers', () => {
     const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
 
     expect(html).toContain('<header');
-    expect(html).toContain('uppercase');
-    expect(html).toContain('tracking-[0.12em]');
-    expect(html).toContain('font-bold');
+    expect(html).not.toContain('uppercase');
+    expect(html).not.toContain('tracking-[0.12em]');
+    expect(html).not.toContain('font-bold');
     expect(html).toContain('border-edge-strong');
     expect(html).not.toContain('border-dialog-edge');
   });
