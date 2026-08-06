@@ -128,7 +128,6 @@ jobs:
           - extensions/common/vis-foundation-search
           - extensions/common/vis-foundation-voice
           - extensions/languages/vis-language-clojure
-          - extensions/workspaces/vis-workspace-rift
     steps:
       - uses: actions/checkout@v7
       # See the tests job for why we install GraalVM CE 25.1.3 directly rather
