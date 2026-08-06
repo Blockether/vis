@@ -112,6 +112,7 @@ describe('MachineGap', () => {
     const html = renderToStaticMarkup(<MachineGap />);
 
     expect(html).toContain('h-3');
+    expect(html).toContain('-mb-px');
     expect(html).toContain('bg-ink');
     expect(html).toContain('border-edge-strong');
     expect(html).not.toContain('border-dialog-edge');
@@ -130,19 +131,17 @@ describe('MachineBanner', () => {
     const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
 
     expect(html).toContain('<header');
-    expect(html).toContain('border-dialog-edge');
-    expect(html).toContain('border-b');
+    expect(html).toContain('border-y border-dialog-edge');
     expect(html).not.toContain('border-edge-strong');
     expect(html).not.toContain('mr-2');
     expect(html).not.toContain('sm:mr-0');
   });
 
   // Regression, issue: adjacent list edges rendered as two visible rules when the machine banner followed the filter or machine gap.
-  it('keeps the shared top edge on the preceding row', () => {
+  it('keeps both edges visible without a sticky negative margin', () => {
     const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
 
-    expect(html).toContain('border-b border-dialog-edge');
-    expect(html).not.toContain('border-y');
+    expect(html).toContain('border-y border-dialog-edge');
     expect(html).not.toContain('-mt-px');
   });
 

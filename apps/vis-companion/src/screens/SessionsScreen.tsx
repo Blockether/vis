@@ -1198,7 +1198,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
           </div>
         )}
 
-        <div className="flex min-h-10 items-center border-b border-dialog-edge bg-panel px-3 mouse:min-h-9 sm:px-4">
+        <div className="flex min-h-10 items-center -mb-px border-b border-dialog-edge bg-panel px-3 mouse:min-h-9 sm:px-4">
           <ChevronIcon className="size-3.5 text-accent-ink" />
           <input
             value={query}
@@ -1834,7 +1834,7 @@ const ProjectGroup = memo(function ProjectGroup({
   return (
     <>
     <section
-      className={`${firstProject ? '' : 'border-t'} border-dialog-edge`}
+      className={`${firstProject ? '' : '-mt-px border-t'} border-dialog-edge`}
       aria-label={`${project} sessions`}
     >
       <header className="flex items-stretch border-b border-dialog-edge bg-panel-2">
