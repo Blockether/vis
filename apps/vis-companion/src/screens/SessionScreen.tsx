@@ -1274,10 +1274,9 @@ export function SessionScreen({
   // backgrounded webview loses the network mid-request, and dropping the blob
   // there would throw away a finished sentence.
   const pendingVoiceRef = useRef<Blob | null>(null);
-  // Open/settle window: while it is in the future the transcript is still being
-  // measured and every scroll inside it is ours, not the user's.
+  // Scroll ownership is explicit: a pin is one correction, never a timed fight with
+  // the browser's layout or the reader's finger.
   const settleUntilRef = useRef(0);
-  const settleTimersRef = useRef<number[]>([]);
   const followingRef = useRef(true);
   // A wake after a real absence owes the reader the newest turn, not the pixel
   // they left on. The wake pins immediately, but the catch-up transcript lands
@@ -1499,7 +1498,6 @@ export function SessionScreen({
     setHydratedTurnCount(FIRST_PAINT_TURNS);
     followingRef.current = true;
     initialScrollPendingRef.current = !fresh;
-    settleUntilRef.current = 0;
     showJumpRef.current = false;
     setRouterOpen(false);
     // Switching sessions swaps the pin, so paint the NEW session's last known
@@ -1621,43 +1619,16 @@ export function SessionScreen({
     }
   }, []);
 
-  // Opening a session must LAND on the latest turn, and one scrollTo cannot do
-  // that: the transcript keeps growing after the first paint (deferred Markdown,
-  // fonts, images, code blocks). Worse, the scroll event produced by that first
-  // scrollTo is delivered AFTER the growth, so `handleScroll` measured a large
-  // distance-to-bottom and cleared `followingRef` — which then vetoed the
-  // ResizeObserver's catch-up scroll and left the session parked mid-history.
-  // Pin instead: re-scroll on a settle schedule and own every scroll event in
-  // that window.
+  // Opening a session must LAND on the latest turn. The opening layout effect waits
+  // until the mounted window is complete, so this is one correction against the
+  // complete initial DOM rather than a visible sequence of guesses as rows hydrate.
   const pinToEnd = useCallback(() => {
-    settleTimersRef.current.forEach((id) => window.clearTimeout(id));
-    settleTimersRef.current = [];
-    settleUntilRef.current = Date.now() + 1200;
     scrollToEnd("auto");
-    for (const delay of [60, 160, 320, 600, 1000]) {
-      settleTimersRef.current.push(
-        window.setTimeout(() => {
-          // The reader taking hold of the scroller ends the pin outright, and it
-          // must end here rather than only in `releasePin`: that handler sits on
-          // the scroller's own React props, so anything the gesture does not
-          // deliver there — a flick that starts on a child that stops the event,
-          // a momentum phase, a trackpad — used to leave the whole settle
-          // schedule running, and the 600 ms and 1000 ms re-pins then hauled the
-          // reader back to the end a beat after they had scrolled away.
-          if (readerOwnsScroll()) settleUntilRef.current = 0;
-          if (Date.now() > settleUntilRef.current) return;
-          scrollToEnd("auto");
-        }, delay),
-      );
-    }
   }, [scrollToEnd]);
 
-  // A real gesture ends the pin at once — never fight the finger.
-  const releasePin = useCallback(() => {
-    settleUntilRef.current = 0;
-    settleTimersRef.current.forEach((id) => window.clearTimeout(id));
-    settleTimersRef.current = [];
-  }, []);
+  // A real gesture never fights the reader; the handlers remain attached to claim the
+  // gesture before any future correction can be introduced.
+  const releasePin = useCallback(() => {}, []);
 
   // Rotation reflows the whole transcript: every wrapped line changes width, so
   // the pixel `scrollTop` you were reading at stops pointing at the same turn
@@ -1726,6 +1697,7 @@ export function SessionScreen({
     };
     const observer = new ResizeObserver(() => {
       if (busy()) return;
+      // The end is its own anchor, and a hand on the glass owns the scroller: in
       // The end is its own anchor, and a hand on the glass owns the scroller: in
       // both cases the reader's line is wherever they just put it, so re-read it.
       if (followingRef.current || readerOwnsScroll()) {
@@ -3025,7 +2997,11 @@ export function SessionScreen({
   ]);
 
   useLayoutEffect(() => {
-    if (initialScrollPendingRef.current && turns.length) {
+    if (
+      initialScrollPendingRef.current &&
+      turns.length &&
+      hydratedTurnCount >= Math.min(visibleTurnCount, turns.length)
+    ) {
       initialScrollPendingRef.current = false;
       pinToEnd();
       // Reveal one frame later, after the browser paints the bottom-pinned
@@ -3178,8 +3154,6 @@ export function SessionScreen({
         window.cancelAnimationFrame(scrollMetricsFrameRef.current);
         scrollMetricsFrameRef.current = null;
       }
-      settleTimersRef.current.forEach((id) => window.clearTimeout(id));
-      settleTimersRef.current = [];
     };
   }, [scrollToEnd, sid]);
 
@@ -3976,18 +3950,8 @@ export function SessionScreen({
       // A stale scroll event from a reflow must not change following or overwrite
       // the snapshot while that transaction is pending.
       if (isViewportRotating() || rotationRestorePendingRef.current) return;
-      // Outside rotation, the opening/keyboard pin still owns its own delayed
-      // scroll events so they cannot be misread as a reader leaving the end —
-      // unless the reader is moving the scroller themselves, in which case this
-      // scroll is theirs and the pin has already lost its claim.
-      if (Date.now() <= settleUntilRef.current && !readerOwnsScroll()) {
-        followingRef.current = true;
-        if (showJumpRef.current) {
-          showJumpRef.current = false;
-          setShowJump(false);
-        }
-        return;
-      }
+      // The one opening correction has already happened; subsequent scroll events
+      // belong to the reader and are measured normally.
       const distance =
         viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
       const following = distance < 64;
