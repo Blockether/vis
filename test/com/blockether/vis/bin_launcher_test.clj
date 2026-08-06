@@ -381,6 +381,69 @@
 
          {:exit (.waitFor process) :output output})))))
 
+(defdescribe
+  wrapper-clojure-install-test
+  (it
+    "installs the Clojure CLI into Vis state when a JVM runtime needs it"
+    (let
+      [root
+       (.toFile (Files/createTempDirectory "vis-agent-clojure-test-" (make-array FileAttribute 0)))
+
+       install-dir
+       (doto (io/file root "install") .mkdirs)
+
+       home
+       (doto (io/file root "home") .mkdirs)
+
+       vis-home
+       (doto (io/file home ".vis") .mkdirs)
+
+       managed-src
+       (doto (io/file vis-home "install/src") .mkdirs)
+
+       tools
+       (doto (io/file root "tools") .mkdirs)
+
+       launcher
+       (io/file install-dir "vis-agent")
+
+       installer
+       (io/file root "clojure-installer.sh")]
+
+      (try
+        (Files/copy (.toPath (io/file "bin/vis-agent"))
+                    (.toPath launcher)
+                    (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+        (.setExecutable launcher true)
+        (spit (io/file managed-src "deps.edn") "{}")
+        (spit
+          installer
+          (str
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n" "prefix=''\n"
+            "while [[ $# -gt 0 ]]; do\n"
+            "  case \"$1\" in --prefix) prefix=\"$2\"; shift 2 ;; *) shift ;; esac\n"
+            "done\n" "mkdir -p \"$prefix/bin\"\n"
+            "printf '#!/usr/bin/env bash\\nprintf installed-clojure\\n' > \"$prefix/bin/clojure\"\n"
+            "chmod +x \"$prefix/bin/clojure\"\n"))
+        (.setExecutable installer true)
+        (write-executable! (io/file tools "uname") "#!/usr/bin/env bash\nprintf 'Linux\\n'\n")
+        (write-executable! (io/file tools "curl")
+                           (str "#!/usr/bin/env bash\n" "out=''\n"
+                                "while [[ $# -gt 0 ]]; do\n"
+                                "  case \"$1\" in -o) out=\"$2\"; shift 2 ;; *) shift ;; esac\n"
+                                "done\n" "cp \"$VIS_TEST_CLOJURE_INSTALLER\" \"$out\"\n"))
+        (let
+          [{:keys [exit output]}
+           ((wrapper-runner
+              {:launcher launcher :cwd root :home home :vis-home vis-home :tools tools})
+             ["runtime" "use" "jvm"]
+             {"VIS_TEST_CLOJURE_INSTALLER" (.getAbsolutePath installer)})]
+          (expect (= 0 exit) output)
+          (expect (str/includes? output "Clojure CLI not found; installing it under") output)
+          (expect (.isFile (io/file vis-home "install/clojure/bin/clojure")) output))
+        (finally (delete-tree! root))))))
+
 (defn- git!
   "Runs git in `dir` with a deterministic identity; returns exit + merged output."
   [dir & args]

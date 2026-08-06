@@ -70,13 +70,13 @@ done
 # Fail before writing anything rather than half-way through. curl fetches the
 # wrapper here; the rest is what the source runtime needs in step 2.
 missing=()
-for cmd in curl git java clojure; do
+for cmd in curl git java; do
   command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
 done
 if (( ${#missing[@]} > 0 )); then
   echo "vis-agent install: missing required command(s): ${missing[*]}" >&2
-  echo "  The source runtime needs Java 25+, the Clojure CLI, and git." >&2
-  echo "  macOS/Homebrew: brew install openjdk@25 clojure/tools/clojure git" >&2
+  echo "  The source runtime needs Java 25+, git, and curl." >&2
+  echo "  Vis installs the Clojure CLI automatically on first JVM use." >&2
   exit 1
 fi
 
@@ -91,11 +91,7 @@ if [[ ! "$java_major" =~ ^[0-9]+$ || "$java_major" -lt 25 ]]; then
   echo "vis-agent install: Java 25 or newer is required (found: ${java_version:-unknown})." >&2
   exit 1
 fi
-clojure -Sdescribe >/dev/null 2>&1 || {
-  echo "vis-agent install: clojure exists but failed to run: clojure -Sdescribe" >&2
-  echo "vis-agent install: install the official Clojure CLI, not only a standalone clojure.jar." >&2
-  exit 1
-}
+# The wrapper installs the official Clojure CLI when the source runtime is first used.
 
 if ! mkdir -p "$install_dir" 2>/dev/null || [[ ! -w "$install_dir" ]]; then
   echo "vis-agent install: cannot write to $install_dir" >&2
@@ -169,8 +165,10 @@ fi
 # VIS_NO_DEV_CHECKOUT keeps a developer's ~/vis checkout from hijacking the
 # freshly installed wrapper: this run must install into $install_dir. Naming the
 # runtime on `update` also persists it, so there is nothing left to select.
-if ! VIS_NO_DEV_CHECKOUT=1 VIS_HOME="$vis_home" VIS_RUNTIME=jvm VIS_BRANCH="$branch" \
-     "$install_dir/vis-agent" update --jvm; then
+if ! ( VIS_NO_DEV_CHECKOUT=1 VIS_HOME="$vis_home" VIS_RUNTIME=jvm VIS_BRANCH="$branch" \
+       "$install_dir/vis-agent" update --jvm && \
+       VIS_NO_DEV_CHECKOUT=1 VIS_HOME="$vis_home" VIS_RUNTIME=jvm VIS_BRANCH="$branch" \
+       "$install_dir/vis-agent" runtime use jvm ); then
   if (( ! path_configured )); then
     cat >&2 <<EOF
 

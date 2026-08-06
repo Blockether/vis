@@ -29,7 +29,7 @@ vis-agent help
 
 The installer and the `vis-agent` command are downloaded as release assets — `raw.githubusercontent.com` is blocked on many corporate networks, `github.com` is not. `installer` is a rolling release: every commit on `main` that touches either script re-uploads it, so the one-liner is never older than the branch. What they install is not tagged either: `vis-agent` checks the source out at the newest commit of `main`, because a published tag can carry broken source and the fix lands on the branch first.
 
-That installs the `vis-agent` command into `~/.local/bin` (adding it to your PATH when needed). `vis-agent` then checks out the source it owns into `~/.vis/install/src` and runs it with `clojure -M:vis`, so the install needs Java 25+, the Clojure CLI, and git. From then on vis-agent owns both:
+That installs the `vis-agent` command into `~/.local/bin` (adding it to your PATH when needed). `vis-agent` then checks out the source it owns into `~/.vis/install/src` and runs it with `clojure -M:vis`, installing the Clojure CLI automatically when a JVM runtime first needs it. You need Java 25+ and git. On macOS, automatic installation uses Homebrew; on Linux, Vis installs the official CLI under `~/.vis/install/clojure`.
 
 ```bash
 vis-agent runtime show      # what is installed and selected

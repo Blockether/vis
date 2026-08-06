@@ -61,6 +61,10 @@ launcher_parent="$(cd -P "$bin_dir/.." && pwd)"
 launcher_is_checkout=0
 if [[ -f "$launcher_parent/deps.edn" ]]; then launcher_is_checkout=1; fi
 bundled_native="$bin_dir/vis-agent-native"
+clojure_install_dir="$vis_install_dir/clojure"
+if [[ -d "$clojure_install_dir/bin" ]]; then
+  export PATH="$clojure_install_dir/bin:$PATH"
+fi
 
 # The live checkout `dev` runs: this one when the launcher is a checkout file,
 # otherwise $VIS_DEV_CHECKOUT (default ~/vis).
@@ -394,7 +398,7 @@ runtime_readiness() {
       if [[ ! -f "$managed_src/deps.edn" ]] && (( ! launcher_is_checkout )); then
         say "no source is installed yet — get it: vis-agent update --jvm"
       fi
-      say_missing_clojure
+      if ! ensure_clojure_cli; then say_missing_clojure; return 1; fi
       ;;
     dev)
       say "dev follows the live checkout at $dev_checkout (VIS_DEV_CHECKOUT overrides it)"
@@ -406,10 +410,69 @@ runtime_readiness() {
   esac
 }
 
+clojure_cli_ready() {
+  command -v clojure >/dev/null 2>&1
+}
+
+ensure_clojure_cli() {
+  clojure_cli_ready && return 0
+  case "${VIS_NO_AUTO_INSTALL:-}" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 1
+      ;;
+  esac
+
+  local os installer
+  os="$(uname -s 2>/dev/null || printf 'unknown')"
+  case "$os" in
+    Darwin)
+      if ! command -v brew >/dev/null 2>&1; then
+        warn "Clojure CLI is missing and Homebrew is not installed"
+        warn "Install Homebrew from https://brew.sh, then run this command again"
+        return 1
+      fi
+      say "Clojure CLI not found; installing it with Homebrew"
+      brew install clojure/tools/clojure || return 1
+      hash -r 2>/dev/null || true
+      ;;
+    Linux)
+      if ! command -v curl >/dev/null 2>&1; then
+        warn "Clojure CLI is missing and curl is not installed"
+        return 1
+      fi
+      mkdir -p "$clojure_install_dir" || return 1
+      installer="$(mktemp "${TMPDIR:-/tmp}/vis-clojure-install.XXXXXX")" || return 1
+      say "Clojure CLI not found; installing it under $clojure_install_dir"
+      if ! curl -fL "https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh" -o "$installer"; then
+        rm -f "$installer"
+        return 1
+      fi
+      chmod +x "$installer"
+      if ! "$installer" --prefix "$clojure_install_dir"; then
+        rm -f "$installer"
+        return 1
+      fi
+      rm -f "$installer"
+      export PATH="$clojure_install_dir/bin:$PATH"
+      hash -r 2>/dev/null || true
+      ;;
+    *)
+      warn "Clojure CLI is missing and automatic installation is unsupported on $os"
+      return 1
+      ;;
+  esac
+
+  if clojure_cli_ready; then
+    say "Clojure CLI is ready"
+    return 0
+  fi
+  warn "Clojure CLI installation finished, but 'clojure' is still not on PATH"
+  return 1
+}
+
 say_missing_clojure() {
-  if ! command -v clojure >/dev/null 2>&1; then
-    say "source runtimes run 'clojure -M:vis', and 'clojure' is not on PATH yet"
-    say "  install it: https://clojure.org/guides/install_clojure"
+  if ! clojure_cli_ready; then
+    say "source runtimes need the Clojure CLI; a JVM launch will install it automatically"
   fi
 }
 
@@ -834,11 +897,9 @@ case "$runtime" in
           "Install the source runtime:     vis-agent update --jvm" \
           "Or use the native runtime:      vis-agent update --native"
     fi
-    # A source runtime is only as real as its toolchain. Say which tool is
-    # missing here, instead of letting exec fail with 'clojure: not found'.
-    if ! command -v clojure >/dev/null 2>&1; then
-      die "the $runtime runtime runs 'clojure -M:vis', but 'clojure' is not on PATH" \
-          "Install the Clojure CLI:  https://clojure.org/guides/install_clojure" \
+    if ! ensure_clojure_cli; then
+      die "the $runtime runtime needs the Clojure CLI" \
+          "Automatic installation failed; set VIS_NO_AUTO_INSTALL=1 to disable it" \
           "Or run the published one: vis-agent update --native && vis-agent runtime use native"
     fi
     if ! command -v java >/dev/null 2>&1 && [[ -z "${JAVA_CMD:-}" && -z "${JAVA_HOME:-}" ]]; then
