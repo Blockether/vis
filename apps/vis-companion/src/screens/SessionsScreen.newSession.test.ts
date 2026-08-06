@@ -11,9 +11,11 @@ describe('where "New session" lives', () => {
     expect(source).toContain('onPress={() => onNewSession(root)}');
   });
 
-  it('does not offer machine-level project switching and names project management', () => {
+  it('puts project management on the machine bar, not project actions', () => {
     expect(source).not.toContain('Switch project');
     expect(source).toContain('Manage projects');
+    expect(source).toContain('aria-label={`Manage projects on ${machineLabel(machine.conn)}`}');
+    expect(source).not.toContain('Create, move, or remove projects and their sessions.');
   });
 
   it('creates directly in the selected project root', () => {

@@ -248,6 +248,10 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
   const [searchHits, setSearchHits] = useState<Map<string, Session[]>>(() => new Map());
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [manageProjects, setManageProjects] = useState<{
+    machine: FleetMachine;
+    at: { top: number; left: number };
+  } | null>(null);
   // "Creating..." is a lie while a 12k-file repo is being cloned, so the busy word
   // follows the WORK: fork, enter, or plain create.
   const [createBusyLabel, setCreateBusyLabel] = useState('Creating...');
@@ -1305,7 +1309,17 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                                 time. */}
                           </>
                         )}
-                        {/* New session belongs to a project header, never to this machine header. */}
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            const at = menuPosition(event.currentTarget.getBoundingClientRect(), 384);
+                            if (at) setManageProjects({ machine, at });
+                          }}
+                          aria-label={`Manage projects on ${machineLabel(machine.conn)}`}
+                          className="shrink-0 border border-edge px-2 py-1 font-mono text-chip text-dialog-hint transition-colors duration-150 hover:border-accent hover:text-white focus-visible:border-accent focus-visible:outline-none motion-reduce:transition-none"
+                        >
+                          Manage projects
+                        </button>
                       </span>
                     </MachineBanner>
                   )}
@@ -1581,6 +1595,22 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
           at={browseAt}
           onCancel={() => setStartFlow(startFlowBack)}
           onChoose={(root) => void createSession({ kind: 'trunk' }, target, root)}
+        />
+      )}
+
+      {manageProjects && (
+        <ManageProjectsSheet
+          label={machineLabel(manageProjects.machine.conn)}
+          client={clientFor(manageProjects.machine.conn)}
+          startAt={machineProject(manageProjects.machine)?.path ?? null}
+          knownRoots={new Set(
+            (manageProjects.machine.sessions ?? [])
+              .map(projectPath)
+              .filter((path): path is string => !!path),
+          )}
+          at={manageProjects.at}
+          onCancel={() => setManageProjects(null)}
+          onChoose={(_root: string) => setManageProjects(null)}
         />
       )}
 
@@ -1908,23 +1938,6 @@ const ProjectGroup = memo(function ProjectGroup({
               type="button"
               role="menuitem"
               onClick={() => {
-                const at = menu;
-                closeMenu();
-                if (at) setManageAt(at);
-              }}
-              className="flex w-full items-center gap-3 px-3 py-3 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none"
-            >
-              <span className="min-w-0">
-                <span className="block font-mono text-ui font-bold text-white">Manage projects</span>
-                <span className="mt-0.5 block font-mono text-meta text-dialog-hint">
-                  Create, move, or remove projects and their sessions.
-                </span>
-              </span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
                 closeMenu();
                 onDeleteProject(project, sessions, conn);
               }}
@@ -1942,17 +1955,17 @@ const ProjectGroup = memo(function ProjectGroup({
         </div>,
         document.body,
       )}
-    {manageAt && (
-      <ManageProjectsSheet
-        label={machineLabel(conn)}
-        client={clientFor(conn)}
-        startAt={root || null}
-        knownRoots={new Set(sessions.map(projectPath).filter((path): path is string => !!path))}
-        at={manageAt}
-        onCancel={() => setManageAt(null)}
-        onChoose={(_root: string) => setManageAt(null)}
-      />
-    )}
+      {manageAt && (
+        <ManageProjectsSheet
+          label={machineLabel(conn)}
+          client={clientFor(conn)}
+          startAt={root || null}
+          knownRoots={new Set(sessions.map(projectPath).filter((path): path is string => !!path))}
+          at={manageAt}
+          onCancel={() => setManageAt(null)}
+          onChoose={(_root: string) => setManageAt(null)}
+        />
+      )}
     </>
   );
 });
