@@ -47,9 +47,12 @@ const STORAGE_KEY = 'vis.snapshots.v1';
  * all until a `/v1/router` probe (seconds on a cold daemon) came back. `theme`
  * is the palette catalog of one gateway: without it the application settings
  * dialog opens on the bundled pair and jumps once every paired machine answers.
+ * `sessions-pin` is the session list's tiny head-window ETag, paired with its
+ * persisted rows so a cold client can revalidate rather than download them again.
  */
 const DURABLE_KINDS = new Set([
   'sessions',
+  'sessions-pin',
   'session',
   'transcript',
   'setting',

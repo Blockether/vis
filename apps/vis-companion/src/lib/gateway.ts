@@ -1920,7 +1920,37 @@ export class GatewayClient {
   ): Promise<Session[]> {
     const key = this.snapshotKey("sessions");
     const cached = this.cachedSessions();
-    const pinned = GatewayClient.sessionsValidators.get(key);
+    let pinned = GatewayClient.sessionsValidators.get(key);
+    // A webview kill clears the in-memory pin but not the rows it described. Put
+    // the durable head ETag back onto those exact rows, so the first cold-start
+    // request can be a 304 instead of re-downloading the complete list.
+    if (!pinned && cached?.length) {
+      const persisted = readSnapshot<{ etag?: unknown; total?: unknown }>(
+        this.snapshotKey("sessions-pin"),
+      );
+      if (
+        typeof persisted?.etag === "string" &&
+        persisted.etag &&
+        persisted.total === cached.length
+      ) {
+        pinned = {
+          full: cached,
+          windows: new Map([
+            [
+              0,
+              {
+                etag: persisted.etag,
+                order: "",
+                rows: cached.slice(0, SESSIONS_PAGE),
+                total: persisted.total,
+                hasMore: cached.length > SESSIONS_PAGE,
+              },
+            ],
+          ]),
+        };
+        GatewayClient.sessionsValidators.set(key, pinned);
+      }
+    }
     // Only ever ask conditionally when a 304 can actually be ANSWERED from the
     // rows those validators were issued for.
     const known =
@@ -2052,9 +2082,17 @@ export class GatewayClient {
         });
       }
     }
-    if (windows.size)
+    if (windows.size) {
       GatewayClient.sessionsValidators.set(key, { full: rows, windows });
-    else GatewayClient.sessionsValidators.delete(key);
+      const head = windows.get(0);
+      writeSnapshot(
+        this.snapshotKey("sessions-pin"),
+        head ? { etag: head.etag, total: head.total } : null,
+      );
+    } else {
+      GatewayClient.sessionsValidators.delete(key);
+      writeSnapshot(this.snapshotKey("sessions-pin"), null);
+    }
     return rows;
   }
 
