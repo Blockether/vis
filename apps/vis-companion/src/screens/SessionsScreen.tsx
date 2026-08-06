@@ -2108,12 +2108,6 @@ const SessionRow = memo(function SessionRow({
         >
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-start justify-between gap-3">
-            {isStarred && (
-              <span className="mt-px shrink-0">
-                <StarIcon filled />
-                <span className="sr-only">Favorite</span>
-              </span>
-            )}
             <span
               className={`block min-w-0 truncate font-mono text-ui font-semibold ${
                 session.title?.trim() ? 'text-white' : 'text-white/45'
@@ -2139,6 +2133,12 @@ const SessionRow = memo(function SessionRow({
               <span className={`size-1.5 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`} />
               {status}
             </span>
+            {isStarred && (
+              <span className="mt-px shrink-0">
+                <StarIcon filled />
+                <span className="sr-only">Favorite</span>
+              </span>
+            )}
           </span>
           </span>
           <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-chip text-dialog-hint">

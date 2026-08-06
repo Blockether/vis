@@ -273,7 +273,7 @@ describe("the icon set", () => {
  * marks the TUI paints too, and the spinner's Braille cadence is deliberate as
  * well. Only marks that stand in for an icon are refused.
  */
-const GLYPHS_AS_ICONS = ["✕", "✖", "✗", "▾", "▶", "◀", "▲", "↓", "↗", "▣", "≡", "⋯"];
+const GLYPHS_AS_ICONS = ["✕", "✖", "✗", "▾", "▶", "◀", "▲", "↓", "↗", "▣", "≡", "⋯", "›", "‹"];
 
 /**
  * Two of them have an honest job in TEXT: `×` multiplies (`retried 3×`, `3 rows
@@ -286,6 +286,20 @@ const GLYPHS_ALONE = ["×", "▸"];
 /** Comments may NAME the glyph they replaced — that is how a regression is documented. */
 const withoutComments = (source: string) =>
   source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+/**
+ * `{'›'}` paints the very same chevron as `›` — it is only spelled so that a
+ * scanner reading the source misses it. Every escape inside a STRING is folded
+ * back to its character before the string is judged, so a glyph cannot hide
+ * behind its own code point. Only strings: a regex that MATCHES a character in
+ * text the app receives (the TUI's `⋯` gutter divider) paints nothing and
+ * is none of this test's business.
+ */
+const UNICODE_ESCAPE = /\\u\{([0-9a-fA-F]{1,6})\}|\\u([0-9a-fA-F]{4})/g;
+const unescaped = (source: string) =>
+  source.replace(UNICODE_ESCAPE, (_match, braced: string | undefined, plain: string) =>
+    String.fromCodePoint(Number.parseInt(braced ?? plain, 16)),
+  );
 
 const STRING = /(['"`])(?:\\.|(?!\1)[^\\])*\1/g;
 
@@ -308,7 +322,8 @@ const glyphsAsIcons = (source: string) => {
       if (run.trim() === glyph) marks.add(glyph);
     }
   };
-  const markup = withoutComments(source).replace(STRING, (literal) => {
+  const markup = withoutComments(source).replace(STRING, (raw) => {
+    const literal = unescaped(raw);
     if (!isProse(literal)) collect(literal.slice(1, -1));
     return " ";
   });
@@ -366,6 +381,17 @@ describe("the shipped screens", () => {
     expect(glyphsAsIcons("<button>×</button>")).toEqual(["×"]);
     expect(glyphsAsIcons("const tail = ` ×${count}`;")).toEqual([]);
     expect(glyphsAsIcons("// this used to paint a ✕\n")).toEqual([]);
+    // Regression, reported as "these chevrons look shitty — different heights,
+    // fonts etc" in the session list: the disclosure in front of a session row was
+    // the CHARACTER › set in the row's mono face, one line above a real
+    // `ChevronIcon`, so the same mark came out at two sizes in the same column. It
+    // survived this scan twice over — › was not on the list, and the session row
+    // spelled it `{'\\u203a'}`, which reads as prose to a scanner that never
+    // decodes an escape.
+    expect(glyphsAsIcons("<span>›</span>")).toEqual(["›"]);
+    expect(glyphsAsIcons("<span>{'\\u203a'}</span>")).toEqual(["›"]);
+    expect(glyphsAsIcons("<span aria-hidden>‹</span>")).toEqual(["‹"]);
+    expect(glyphsAsIcons("<span>Settings ›</span>")).toEqual(["›"]);
   });
 
   it("never paint a glyph where an icon belongs", () => {
