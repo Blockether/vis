@@ -12,6 +12,13 @@
             [lazytest.core :refer [defdescribe expect it]]
             [next.jdbc :as jdbc]))
 
+;; Regression, reported issue: a configured `~/vis` root was canonicalized as a
+;; child of the process directory, so new sessions opened in the wrong worktree.
+(defdescribe normalize-root-test
+             (it "expands a leading home marker before canonicalizing the workspace root"
+                 (expect (= (.getCanonicalPath (io/file (System/getProperty "user.home") "vis"))
+                            (ws/normalize-root "~/vis")))))
+
 (defn- with-store
   "Open an :memory sqlite store, run `f` with it, dispose."
   [f]
