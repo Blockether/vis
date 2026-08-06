@@ -7,6 +7,7 @@
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.foundation.editing.core :as ed]
@@ -6496,3 +6497,13 @@
                   :provider nil
                   :model nil}
                  (#'lp/provider-call-chunk 0 {} 1)))))
+
+(defdescribe providers-router-rebuild-hook-wiring-test
+  ;; The picker's config-affecting saves fire `providers/rebuild-shared-router!`,
+  ;; which only rebuilds the shared router because `loop` registered `reload-router!`
+  ;; as that hook. Before the wiring the hook fired into nil and a default-model
+  ;; change never reached the shared router — a new session's first turn kept the
+  ;; OLD root until the model was re-pinned on the session.
+  (it "wires reload-router! as the providers router-rebuild hook"
+      (expect (identical? (providers/router-rebuild-hook-val)
+                          lp/reload-router!))))

@@ -711,6 +711,38 @@
   []
   (reset! fleet-cache nil))
 
+;; ── Shared-router rebuild hook ──────────────────────────────────────────────
+;; The shared LLM router and every cached session env that snapshotted it live in
+;; `loop`, which REQUIRES this namespace — so a provider/selection mutation cannot
+;; rebuild the router itself. It fires this hook instead. Without it, picking a new
+;; default persisted config and the picker showed the new model while the shared
+;; `router-atom` (and every env built since) kept the OLD root: a new session's
+;; first turn ran the previous model until the user re-pinned it on the session.
+;; `loop` registers `reload-router!` here at load (no-op until the router is built).
+(defonce ^:private router-rebuild-hook (atom nil))
+
+(defn set-router-rebuild-hook!
+  "Register the function `loop` calls to rebuild the shared router from current
+  config and reseed every cached session env. Idempotent; latest wins; nil clears."
+  [f]
+  (reset! router-rebuild-hook f))
+
+(defn router-rebuild-hook-val
+  "Current registered router-rebuild hook fn (or nil) — inspection/test accessor."
+  []
+  @router-rebuild-hook)
+
+(defn- rebuild-shared-router!
+  "Drop the configured-provider cache, then fire the registered router-rebuild
+  hook best-effort so the shared router (and every cached session env that
+  snapshotted it) rebuilds from current config. No-op before `loop` registers
+  (early boot) or when the router was never built — `reload-router!` guards the
+  latter on `router-initialized?`."
+  []
+  (invalidate-configured-providers!)
+  (when-let [f @router-rebuild-hook]
+    (try (f) (catch Throwable _ nil))))
+
 (defn- refresh-fleet-cache!
   "Single-flight BACKGROUND re-enumeration of the fleet snapshot. Errors
    leave the last-known value untouched."
@@ -990,7 +1022,7 @@
        (if (seq providers*) (assoc raw "providers" providers*) (dissoc raw "providers"))
        source)
      (try (config/reload-config!) (catch Throwable _ nil))
-     (invalidate-configured-providers!)
+     (rebuild-shared-router!)
      providers*)))
 
 (def ^:private selection-keys
@@ -1117,7 +1149,7 @@
 
       (config/save-config! raw* source)
       (try (config/reload-config!) (catch Throwable _ nil))
-      (invalidate-configured-providers!)
+      (rebuild-shared-router!)
       selection)))
 
 (defn save-default-selection!
@@ -1144,7 +1176,7 @@
    (let [raw (or (config/load-global-config-raw) {})]
      (config/save-config! (apply dissoc raw (vals (:fallback selection-keys))) source)
      (try (config/reload-config!) (catch Throwable _ nil))
-     (invalidate-configured-providers!)
+     (rebuild-shared-router!)
      nil)))
 
 (defn add-config-provider!
@@ -1214,5 +1246,5 @@
      (try (logout-fn) (catch Throwable _ nil)))
    (let [changed? (config/remove-config-provider! provider-id source)]
      (try (config/reload-config!) (catch Throwable _ nil))
-     (invalidate-configured-providers!)
+     (rebuild-shared-router!)
      changed?)))

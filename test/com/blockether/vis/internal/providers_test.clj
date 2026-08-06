@@ -609,3 +609,50 @@
 
     (is (str/includes? text "Usage: max_budget: 100.0, remaining_requests: 42, spend: 25.49"))
     (is (not (str/includes? text "{\"max_budget\"")))))
+
+(deftest picking-a-default-rebuilds-the-shared-router
+  ;; Regression: changing the default model via the picker persisted config and the
+  ;; picker showed the new model, but the shared router-atom (and every session env
+  ;; that snapshotted it) kept the OLD root — a new session's first turn ran the
+  ;; previous model until the user re-pinned it on the session. A config-affecting
+  ;; save must rebuild the shared router the same turn a new session will snapshot.
+  (let
+    [fleet
+     [{:id :openai :models [{:name "gpt-5"}]}
+      {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]
+
+     rebuilt
+     (atom 0)
+
+     prev
+     (providers/router-rebuild-hook-val)]
+
+    (try (providers/set-router-rebuild-hook! (fn []
+                                               (swap! rebuilt inc)))
+         (with-redefs
+           [providers/picker-fleet
+            (constantly fleet)
+
+            providers/fetch-models
+            (constantly nil)
+
+            config/load-global-config-raw
+            (constantly {"providers" [{"id" "openai" "models" [{"name" "gpt-5"}]}
+                                      {"id" "anthropic-coding-plan"
+                                       "models" [{"name" "claude-fable-5"}]}]})
+
+            config/save-config!
+            (fn [_ _])
+
+            config/reload-config!
+            (constantly nil)]
+
+           (is (=
+                 {:provider-id :anthropic-coding-plan :model "claude-fable-5"}
+                 (providers/save-default-selection! :anthropic-coding-plan "claude-fable-5" :test)))
+           (is (= 1 @rebuilt) "a default pick rebuilds the shared router")
+           (providers/clear-fallback-selection! :test)
+           (is (= 2 @rebuilt) "clearing the fallback rebuilds the shared router")
+           (providers/save-providers! fleet :test)
+           (is (= 3 @rebuilt) "a fleet mutation rebuilds the shared router"))
+         (finally (providers/set-router-rebuild-hook! prev)))))
