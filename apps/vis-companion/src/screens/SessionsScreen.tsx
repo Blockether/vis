@@ -1831,12 +1831,12 @@ const ProjectGroup = memo(function ProjectGroup({
   return (
     <>
     <section className="-mt-px" aria-label={`${project} sessions`}>
-      <header className="flex items-stretch border-y border-dialog-edge bg-panel-2">
+      <header className="flex items-stretch border-y border-dialog-edge bg-panel-2 mouse:h-9">
         <button
           type="button"
           onClick={() => onToggle(groupKey)}
           aria-expanded={isOpen}
-          className="-my-px flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 border-y border-dialog-edge px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:px-4"
+          className="-my-px flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 border-y border-dialog-edge px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:min-h-0 mouse:py-0 sm:px-4"
         >
           <span className="flex min-w-0 items-center gap-2">
             <ChevronIcon open={isOpen} className="size-3.5 text-dialog-hint" />
@@ -1875,7 +1875,7 @@ const ProjectGroup = memo(function ProjectGroup({
             aria-haspopup="menu"
             aria-expanded={menu !== null}
             aria-label="Project actions"
-            className="flex min-h-11 shrink-0 items-center justify-center px-3 text-ui text-dialog-hint transition-colors duration-150 hover:bg-hover hover:text-white focus-visible:bg-hover focus-visible:text-white focus-visible:outline-none motion-reduce:transition-none sm:px-4"
+            className="flex min-h-11 shrink-0 items-center justify-center px-3 text-ui text-dialog-hint transition-colors duration-150 hover:bg-hover hover:text-white focus-visible:bg-hover focus-visible:text-white focus-visible:outline-none motion-reduce:transition-none mouse:min-h-0 sm:px-4"
           >
             <DotsIcon className="size-4" />
           </button>

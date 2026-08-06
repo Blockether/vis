@@ -58,6 +58,14 @@ describe('where "New session" lives', () => {
     expect(source).not.toContain('firstProject');
   });
 
+  // Regression, user report: making New session 28px tall exposed an 11px band of bare
+  // project-header paper above and below it because the mouse project row stayed 50px.
+  it('compacts the mouse project row around its compact create button', () => {
+    expect(source).toContain('<header className="flex items-stretch border-y border-dialog-edge bg-panel-2 mouse:h-9">');
+    expect(source).toContain('motion-reduce:transition-none mouse:min-h-0 mouse:py-0 sm:px-4');
+    expect(source).toContain('motion-reduce:transition-none mouse:min-h-0 sm:px-4');
+  });
+
   // Regression, issue: the machine panel disappeared when only one machine was paired.
   it('keeps the machine panel and rail unconditional for every machine section', () => {
     expect(source).toContain('<MachineBanner>');
