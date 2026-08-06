@@ -33,7 +33,7 @@ import {
   type ListAnchor,
 } from '../lib/list-scroll';
 import { SwipeActions } from '../components/SwipeActions';
-import { SwitchProjectSheet } from '../components/SwitchProjectSheet';
+import { ManageProjectsSheet } from '../components/ManageProjectsSheet';
 import { ChevronIcon, DotsIcon, PencilIcon, StarIcon, TrashIcon } from '../components/icons';
 import { DEFAULT_SESSION_PAGE_SIZE, getOfferDrafts, getSessionsPerPage, subscribeOfferDrafts, subscribeSessionsPerPage } from '../lib/storage';
 import { hostOf } from '../lib/endpoints';
@@ -660,10 +660,6 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
   // The machine the fleet BAR speaks for: the scoped one, or the only one paired.
   // `null` only while the bar answers for several at once — and then every machine
   // header below carries its own pair of verbs instead.
-  const barMachine = useMemo(() => {
-    const inScope = scopedMachines(machines, scope);
-    return inScope.length === 1 ? inScope[0] : null;
-  }, [machines, scope]);
 
   // One hue per paired machine, assigned from the machine's own key, so a rail
   // keeps its colour across reloads and reorderings and two machines side by side
@@ -891,22 +887,6 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
     }
   }
 
-  /**
-   * The header's own verb, straight through: create on THAT machine, in the project
-   * it is already in, with nothing to read on the way. A machine that has never run a
-   * session has no project to start in, so the tap falls through to the folder browser
-   * instead — anchored on the button, inside the very order the `⋯` would have opened.
-   */
-  function startOnMachine(machine: FleetMachine, anchor: HTMLElement) {
-    const root = machineProject(machine);
-    if (root) {
-      void createSession({ kind: 'trunk' }, machine.conn, root.path);
-      return;
-    }
-    startAnchorEl.current = anchor;
-    const at = menuPosition(anchor.getBoundingClientRect(), START_MENU_WIDTH);
-    setStartFlow((flow) => startFlowStep(startFlowOpen(flow, at), 'browse', machine.conn));
-  }
 
   function askDraftName(clean: boolean) {
     if (!target) return;
@@ -1167,20 +1147,6 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                   strip scoped down to one. */}
               {!showMachineHeaders && (
                 <>
-                  {barMachine && (
-                    <NewSessionButton
-                      machine={machineLabel(barMachine.conn)}
-                      where={machineProject(barMachine)?.label ?? null}
-                      disabled={createBusy || !!barMachine.error}
-                      onPress={(anchor) => startOnMachine(barMachine, anchor)}
-                    />
-                  )}
-                  <MachineKebab
-                    label={scopeTarget ? machineLabel(scopeTarget) : 'this fleet'}
-                    open={startMenu !== null}
-                    disabled={createBusy || machines.length === 0 || !!scopeMachine?.error}
-                    onOpen={(anchor) => (startMenu ? leaveStart(true) : openStartMenuAt(anchor))}
-                  />
                 </>
               )}
             </div>
@@ -1339,26 +1305,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                                 time. */}
                           </>
                         )}
-                        {/* A machine's own verbs, on the machine's own header. "New
-                            session" is the one people came for, so it is a BUTTON in the
-                            Blockether yellow — not the first row of a menu — and it names
-                            WHICH machine without asking. The `⋯` beside it keeps the rest.
-                            A machine that is not answering offers neither. */}
-                        {!machine.error && (
-                          <>
-                            <NewSessionButton
-                              machine={machineLabel(machine.conn)}
-                              where={machineProject(machine)?.label ?? null}
-                              disabled={createBusy}
-                              onPress={(anchor) => startOnMachine(machine, anchor)}
-                            />
-                            <MachineKebab
-                              label={machineLabel(machine.conn)}
-                              open={startMenu !== null && !!target && machineKey(target) === key}
-                              onOpen={(anchor) => openStartMenuAt(anchor, machine.conn)}
-                            />
-                          </>
-                        )}
+                        {/* New session belongs to a project header, never to this machine header. */}
                       </span>
                     </MachineBanner>
                   )}
@@ -1387,6 +1334,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                           onRename={startRename}
                           onDelete={startDelete}
                           onDeleteProject={startProjectDelete}
+                          onNewSession={(root) => void createSession({ kind: 'trunk' }, machine.conn, root)}
                           expanded={expanded.has(`${key}\u0000${project}`)}
                           forceExpand={forceExpand}
                           onToggle={toggleProject}
@@ -1512,17 +1460,6 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                     onSelect={() => setStartFlow((flow) => startFlowStep(flow, 'drafts', target))}
                   />
                 )}
-                {/* WHERE the button starts is still said out loud — once, on the row that
-                    can change it, because a header has no room for a path. */}
-                <StartOption
-                  title="Switch project…"
-                  hint={
-                    project
-                      ? `now in ${project.label} · ${homeifyPath(project.path)}${project.when ? ` · last used ${timeLabel(project.when)}` : ''}`
-                      : 'this machine has no project yet — browse its files'
-                  }
-                  onSelect={() => setStartFlow((flow) => startFlowStep(flow, 'browse', target))}
-                />
                 {onMachineSettings && (
                   <StartOption
                     title="Machine settings"
@@ -1632,11 +1569,10 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
         document.body,
       )}
 
-      {/* "Switch project…": the machine's own filesystem, as a breadcrumb browser. It
-          is a surface of its own rather than another band in the menu, because picking
-          a folder is a walk and a walk needs the whole phone. */}
+      {/* Manage projects opens the machine's filesystem surface. It is separate from the
+          session creation action, because project management is not a machine-level verb. */}
       {target && browseAt && (
-        <SwitchProjectSheet
+        <ManageProjectsSheet
           label={machineLabel(target)}
           client={clientFor(target)}
           startAt={project?.path ?? null}
@@ -1759,6 +1695,7 @@ const ProjectGroup = memo(function ProjectGroup({
   onRename,
   onDelete,
   onDeleteProject,
+  onNewSession,
   expanded,
   forceExpand,
   onToggle,
@@ -1777,6 +1714,7 @@ const ProjectGroup = memo(function ProjectGroup({
   onRename: (session: Session, conn: GatewayConn) => void;
   onDelete: (session: Session, conn: GatewayConn) => void;
   onDeleteProject: (project: string, sessions: Session[], conn: GatewayConn) => void;
+  onNewSession: (root: string) => void;
   expanded: boolean;
   forceExpand: boolean;
   onToggle: (groupKey: string) => void;
@@ -1799,6 +1737,7 @@ const ProjectGroup = memo(function ProjectGroup({
   // "close," and one that deletes 40 sessions is drawn identically to one that deletes 1.
   // The ⋯ is a neutral overflow control; "Delete all N" rides inside it carrying its count.
   const [menu, setMenu] = useState<{ top: number; left: number } | null>(null);
+  const [manageAt, setManageAt] = useState<{ top: number; left: number } | null>(null);
   const kebabRef = useRef<HTMLButtonElement>(null);
   const openMenu = useCallback(() => {
     setMenu(menuPosition(kebabRef.current?.getBoundingClientRect(), PROJECT_MENU_WIDTH));
@@ -1896,6 +1835,11 @@ const ProjectGroup = memo(function ProjectGroup({
             )}
           </span>
         </button>
+        <NewSessionButton
+          machine={machineLabel(conn)}
+          where={project}
+          onPress={() => onNewSession(root)}
+        />
         {/* Gone while a query is live: a group showing 3 of 40 matches must never
             offer a control that deletes 40. */}
         {!needle && (
@@ -1958,18 +1902,31 @@ const ProjectGroup = memo(function ProjectGroup({
               type="button"
               role="menuitem"
               onClick={() => {
+                const at = menu;
+                closeMenu();
+                if (at) setManageAt(at);
+              }}
+              className="flex w-full items-center gap-3 px-3 py-3 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none"
+            >
+              <span className="min-w-0">
+                <span className="block font-mono text-ui font-bold text-white">Manage projects</span>
+                <span className="mt-0.5 block font-mono text-meta text-dialog-hint">
+                  Create, move, or remove projects and their sessions.
+                </span>
+              </span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
                 closeMenu();
                 onDeleteProject(project, sessions, conn);
               }}
               className="flex w-full items-center gap-3 px-3 py-3 text-left transition-colors duration-150 hover:bg-err/15 focus-visible:bg-err/15 focus-visible:outline-none motion-reduce:transition-none"
             >
-              <span className="shrink-0 text-err">
-                <TrashIcon className="size-4" />
-              </span>
+              <span className="shrink-0 text-err"><TrashIcon className="size-4" /></span>
               <span className="min-w-0">
-                <span className="block font-mono text-ui font-bold text-err">
-                  Purge all {sessions.length} {sessions.length === 1 ? 'session' : 'sessions'}
-                </span>
+                <span className="block font-mono text-ui font-bold text-err">Remove sessions</span>
                 <span className="mt-0.5 block font-mono text-meta text-dialog-hint">
                   Removes every transcript in this project on this machine. This cannot be undone.
                 </span>
@@ -1979,6 +1936,17 @@ const ProjectGroup = memo(function ProjectGroup({
         </div>,
         document.body,
       )}
+    {manageAt && (
+      <ManageProjectsSheet
+        label={machineLabel(conn)}
+        client={clientFor(conn)}
+        startAt={root || null}
+        knownRoots={new Set(sessions.map(projectPath).filter((path): path is string => !!path))}
+        at={manageAt}
+        onCancel={() => setManageAt(null)}
+        onChoose={(_root: string) => setManageAt(null)}
+      />
+    )}
     </>
   );
 });
@@ -2651,34 +2619,6 @@ function escapeRegExp(value: string): string {
  * what is left behind this control is the rarer half: a private copy, another folder,
  * the machine's own settings. `min-h-11` keeps it a real thumb target.
  */
-function MachineKebab({
-  label,
-  open,
-  disabled,
-  onOpen,
-}: {
-  label: string;
-  open: boolean;
-  disabled?: boolean;
-  onOpen: (anchor: HTMLElement) => void;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      aria-haspopup="menu"
-      aria-expanded={open}
-      aria-label={`Actions for ${label}`}
-      title={`Actions for ${label}`}
-      className={`-mr-3 flex min-h-11 shrink-0 items-center justify-center px-3 text-ui transition-colors duration-150 disabled:opacity-40 focus-visible:outline-none motion-reduce:transition-none sm:-mr-4 sm:px-4 ${
-        open ? 'bg-hover text-white' : 'text-dialog-hint hover:bg-hover hover:text-white focus-visible:bg-hover focus-visible:text-white'
-      }`}
-      onClick={(event) => onOpen(event.currentTarget)}
-    >
-      <DotsIcon className="size-4" />
-    </button>
-  );
-}
 
 function StartOption({
   title,

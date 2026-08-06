@@ -1,5 +1,5 @@
 /**
- * "Switch project" — a breadcrumb browser of ONE machine's own filesystem.
+ * Manage projects on ONE machine: browse, create, move, and choose project folders.
  *
  * A machine owns its projects, so the only thing that knows which folders exist is
  * the machine: every row here comes from `GET /v1/fs` on that gateway. The sheet
@@ -72,7 +72,7 @@ function entryHint(entry: BrowseEntry): string {
   return entry.branch ? `${count} · ${entry.branch}` : count;
 }
 
-export function SwitchProjectSheet({
+export function ManageProjectsSheet({
   label,
   client,
   startAt,
@@ -215,7 +215,7 @@ export function SwitchProjectSheet({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={`Switch project on ${label}`}
+        aria-label={`Manage projects on ${label}`}
         className="absolute inset-x-0 bottom-0 flex max-h-[82vh] flex-col border-t-2 border-accent bg-panel pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-auto sm:bottom-auto sm:left-[var(--menu-left)] sm:top-[var(--menu-top)] sm:max-h-[70vh] sm:w-96 sm:border sm:border-dialog-edge sm:pb-0 sm:shadow-[8px_8px_0_var(--line2)]"
         style={
           at
@@ -224,7 +224,7 @@ export function SwitchProjectSheet({
         }
         onClick={(event) => event.stopPropagation()}
       >
-        <p className={`${BAND} ${QUIET_BAND} shrink-0 truncate`}>Switch project · {label}</p>
+        <p className={`${BAND} ${QUIET_BAND} shrink-0 truncate`}>Manage projects · {label}</p>
 
         {typed === null ? (
           <div className="flex shrink-0 items-center gap-1 border-b border-dialog-edge bg-panel-2 px-3 py-2">
@@ -357,7 +357,7 @@ export function SwitchProjectSheet({
               disabled={saving || !target || (folder !== null && !folder.trim())}
               onClick={() => void commit()}
             >
-              {folder === null ? 'Switch here' : 'Create & switch'}
+              {folder === null ? 'Use project' : 'Create project'}
             </Button>
           </div>
         </div>
