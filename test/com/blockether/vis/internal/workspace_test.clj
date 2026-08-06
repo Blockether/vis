@@ -477,6 +477,15 @@
                  (expect (= (.getCanonicalPath (io/file (System/getProperty "user.dir")))
                             (:repo-root (ws/trunk-info))))))
 
+;; Regression, issue #workspace-root-single-source: the gateway used display-only
+;; `~/…` input as a path relative to its launch directory and persisted `/…/~/…`.
+(defdescribe create-trunk-root-normalization-test
+             (it "normalizes a home-relative root before persisting the workspace"
+                 (with-store (fn [store]
+                               (let [workspace (ws/create-trunk-at! store "~")]
+                                 (expect (= (ws/normalize-root "~") (:root workspace)))
+                                 (expect (= (:root workspace) (:repo-root workspace))))))))
+
 (defdescribe
   change-root-test
   (it "repoints the session to a trunk at the new path"

@@ -51,14 +51,16 @@
   "Canonicalize a workspace root string/File. Blank/nil → nil. Expand a leading
    `~` or `~/` against the current user's home directory."
   [root]
-  (let [s (some-> root
-                  str
-                  str/trim)]
+  (let
+    [s (some-> root
+               str
+               str/trim)]
     (when (seq s)
-      (let [s (cond (= s "~") (System/getProperty "user.home")
-                    (or (str/starts-with? s "~/") (str/starts-with? s "~\\"))
-                    (str (System/getProperty "user.home") (subs s 1))
-                    :else s)]
+      (let
+        [s (cond (= s "~") (System/getProperty "user.home")
+                 (or (str/starts-with? s "~/") (str/starts-with? s "~\\"))
+                 (str (System/getProperty "user.home") (subs s 1))
+                 :else s)]
         (.getCanonicalPath (io/file s))))))
 
 (defn workspace-root
@@ -1393,7 +1395,7 @@
   ([db-info session-state-id root]
    (let
      [trunk
-      (file-path root)
+      (normalize-root root)
 
       ws
       (p/db-workspace-insert! db-info
@@ -1422,7 +1424,7 @@
    Returns the workspace row (with `:id`) to pass as `:workspace-id` when
    creating the session."
   [db-info root]
-  (insert-trunk! db-info nil (file-path root)))
+  (insert-trunk! db-info nil root))
 
 (defn change-root!
   "Repoint `session-state-id`'s primary workspace root to `path`. Refuses while
