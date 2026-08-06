@@ -232,23 +232,23 @@
 
 (def ^:private env-name-re #"^[A-Za-z_][A-Za-z0-9_]*$")
 
+(defn- normalize-env-names
+  "Distinct, validated env-var names from any source: `str`, regex-filtered,
+   deduped. Malformed entries are dropped. Used by BOTH the resolution path
+   (runtime values via `resolve-declared-env`) and the spec path (`:ext/env`
+   declarations in `registration->spec`), so the two never diverge on what
+   counts as a valid name."
+  [names]
+  (into [] (comp (map str) (filter #(re-matches env-name-re %)) (distinct)) (or names [])))
+
 (defn ^:no-doc resolve-declared-env
   "Values for the env var names an extension DECLARED, resolved from the host
    process environment (`System/getenv`). Names that are unset are simply
    absent from the result (never an empty string, so an extension's
-   `os.environ.get(...) or default` still works).
-
-   `declared` is the raw Python list; malformed names are dropped."
+   `os.environ.get(...) or default` still works). Extra names the user allowed
+   in `vis.yml` (`env-passthrough`) are merged in."
   [declared]
-  (let
-    [extra
-     (config-env-passthrough)
-
-     names
-     (into []
-           (comp (map str) (filter #(re-matches env-name-re %)) (distinct))
-           (concat (or declared []) extra))]
-
+  (let [names (normalize-env-names (concat (or declared []) (config-env-passthrough)))]
     (into {}
           (keep (fn [n]
                   (when-let [v (System/getenv n)]
@@ -1217,12 +1217,9 @@
            (get reg "network_filters"))
 
      declared-env
-     (into []
-           (comp (map str)
-                 (distinct)
-                 (map (fn [n]
-                        {:name n})))
-           (get reg "env"))]
+     (mapv (fn [n]
+             {:name n :required? true})
+           (normalize-env-names (get reg "env")))]
 
     (cond->
       {:ext/name ext-name
