@@ -477,3 +477,23 @@
                (expect (some? (get attempt "error")))
                (expect (= code (get attempt "code"))))
              (finally (vis/db-dispose-connection! s))))))
+
+;; Regression, issue #130: a cancel interrupt was attributed to the form that
+;; happened to be on the stack, making a user stop look like broken agent code.
+(defdescribe cancel-interrupt-classification-test
+             (let
+               [classify
+                @#'introspection/classify-expression-failure
+
+                advice
+                @#'introspection/advice-for-classification]
+
+               (it "reports cancellation fallout instead of a code failure"
+                   (expect (= :turn-cancelled
+                              (classify "python_execution(...)" "java.lang.InterruptedException")))
+                   (expect (= :turn-cancelled
+                              (classify "grep(...)" "java.util.concurrent.CancellationException")))
+                   (expect (str/includes? (advice :turn-cancelled) "cancelled")))
+               (it "keeps genuine agent failures classified as code errors"
+                   (expect (= :code-execution-error
+                              (classify "python_execution(...)" "NameError: name 'x'"))))))

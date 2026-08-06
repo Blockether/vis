@@ -3023,7 +3023,10 @@
              (cancel-waiting-turn! sid tid cancel-token))))
 
        fut
-       (cancellation/worker-future (str "gateway-turn-" tid) worker)]
+       ;; Turn work can block in embedded Python, native SDKs, or subprocesses.
+       ;; Keep it off the virtual-thread scheduler so a pinned cancelled worker
+       ;; cannot prevent the next turn from beginning.
+       (cancellation/worker-future (str "gateway-turn-" tid) worker {:platform? true})]
 
       ;; Deliberately NOT `cancellation-set-future!`. That registers a bare
       ;; `.cancel(true)`, and a `FutureTask` cancelled BEFORE its thread enters
@@ -3040,9 +3043,11 @@
           (if (.compareAndSet claimed false true)
             ;; Off the cancelling thread: this lands a terminal and drains the
             ;; queue, which must never run inside an HTTP/UI cancel handler.
+            ;; It must also remain runnable while a cancelled turn pins native code.
             (cancellation/worker-future (str "gateway-turn-cancel-" tid)
                                         (fn []
-                                          (cancel-waiting-turn! sid tid cancel-token)))
+                                          (cancel-waiting-turn! sid tid cancel-token))
+                                        {:platform? true})
             ;; The body IS running, so it owns the terminal — unless it never
             ;; gets there. `cancel!` only fires a token; a worker parked in
             ;; uninterruptible code (native GIL, stuck cleanup) ignores it and the

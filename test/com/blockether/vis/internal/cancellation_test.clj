@@ -3,7 +3,8 @@
    `cancel!`, late registration after cancellation still triggers
    immediately, and `dispose!` removes the hook cleanly without
    side-effects."
-  (:require [com.blockether.vis.internal.cancellation :as cancellation]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.cancellation :as cancellation]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe on-cancel-callback-test
@@ -117,3 +118,47 @@
              (it "is nil for a token nobody cancelled"
                  (expect (nil? (cancellation/cancel-reason (cancellation/cancellation-token))))
                  (expect (nil? (cancellation/cancel-reason nil)))))
+
+;; Regression, issue #130: repeated cancellation re-fired the same terminal hook,
+;; and blocked turn work could pin every virtual-thread carrier.
+(defdescribe
+  cancel-worker-resilience-test
+  (it "drains callbacks after the first cancel while preserving its reason"
+      (let
+        [token
+         (cancellation/cancellation-token)
+
+         fired
+         (atom 0)]
+
+        (cancellation/on-cancel! token #(swap! fired inc))
+        (cancellation/cancel! token :client-cancel-turn)
+        (cancellation/cancel! token :stall-watchdog)
+        (expect (= 1 @fired))
+        (expect (= :client-cancel-turn (cancellation/cancel-reason token)))))
+  (it "runs an explicitly platform worker on its named thread"
+      (let
+        [thread-name
+         (promise)
+
+         fut
+         (cancellation/worker-future "vis-test-platform"
+                                     #(do (deliver thread-name (.getName (Thread/currentThread)))
+                                          :done)
+                                     {:platform? true})]
+
+        (expect (= :done (deref fut 5000 :timeout)))
+        (expect (= "vis-test-platform" (deref thread-name 5000 :timeout)))))
+  (it "keeps the default worker virtual when supported"
+      (let
+        [virtual?
+         (promise)
+
+         fut
+         (cancellation/worker-future
+           "vis-test-default"
+           #(do (deliver virtual? (str/includes? (str (Thread/currentThread)) "VirtualThread"))
+                :done))]
+
+        (expect (= :done (deref fut 5000 :timeout)))
+        (expect (= (cancellation/virtual-threads-available?) (deref virtual? 5000 :timeout))))))

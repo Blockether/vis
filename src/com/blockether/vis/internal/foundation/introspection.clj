@@ -316,6 +316,16 @@
   [code]
   (when (string? code) (second (re-find #"^\s*\(?([^\s\)]+)" code))))
 
+(defn- cancellation-failure?
+  "True when an error is fallout from interrupting a cancelled turn, rather than
+   a defect in the form that happened to be on the stack."
+  [lower-message]
+  (or (str/includes? lower-message "interruptedexception")
+      (str/includes? lower-message "cancellationexception")
+      (str/includes? lower-message "closedbyinterruptexception")
+      (str/includes? lower-message "interrupted while")
+      (str/includes? lower-message "sleep interrupted")))
+
 (defn- classify-expression-failure
   [code error]
   (let
@@ -328,7 +338,8 @@
      tool-name
      (or (tool-name-from-code code) "")]
 
-    (cond (and (str/includes? tool-name "rg")
+    (cond (cancellation-failure? lower-message) :turn-cancelled
+          (and (str/includes? tool-name "rg")
                (str/includes? lower-message "unsupported escape character"))
           :regex-unsupported-escape
           (and (str/includes? tool-name "rg")
@@ -363,6 +374,9 @@
 
     :patch-stale-anchor
     "The anchor no longer matches. Re-read the smallest file slice and retry once with its fresh lineno:hash anchor."
+
+    :turn-cancelled
+    "Not a code defect: the turn was cancelled and the interrupt surfaced on the frame that was running. Re-run the interrupted step if you still need it."
 
     :unresolved-symbol
     "A reader/string boundary probably split the form and exposed a bare symbol. Check quoting before retrying."
@@ -666,7 +680,7 @@
   [failures]
   (->> (group-by repetition-signature failures)
        (keep (fn [[signature group]]
-               (when (>= (count group) REPETITION_THRESHOLD)
+               (when (>= (count group) (long REPETITION_THRESHOLD))
                  {:signature signature :count (count group) :sample (first group)})))
        (sort-by :count >)
        vec))

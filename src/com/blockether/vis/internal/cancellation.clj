@@ -43,11 +43,16 @@
   "Run `f` on a cancellable worker Future. Uses a virtual thread when the JVM
    supports it, otherwise falls back to a named daemon platform thread.
 
+   Pass `{:platform? true}` for work that can pin a virtual-thread carrier in
+   native or uninterruptible code. A platform worker costs one thread but cannot
+   starve the virtual-thread scheduler that runs ordinary lightweight work.
+
    The returned value implements java.util.concurrent.Future plus Clojure
    deref/realized? protocols so legacy `future` call sites can migrate without
    losing timeout/cancellation behavior."
-  ([f] (worker-future "vis-worker" f))
-  ([name f]
+  ([f] (worker-future "vis-worker" f nil))
+  ([name f] (worker-future name f nil))
+  ([name f {:keys [platform?]}]
    (let
      [task
       (java.util.concurrent.FutureTask. ^java.util.concurrent.Callable
@@ -56,7 +61,7 @@
                                             (call [_] (f))))
 
       _runner
-      (if (virtual-threads-available?)
+      (if (and (not platform?) (virtual-threads-available?))
         (let [m (.getMethod Thread "startVirtualThread" (into-array Class [Runnable]))]
           (.invoke m nil (object-array [task])))
         (doto (Thread. ^Runnable task (str name)) (.setDaemon true) (.start)))]
@@ -142,20 +147,26 @@
    finishes."
   [token thunk]
   (when (and token (fn? thunk))
-    (if (cancelled? token)
-      (do (try (thunk) (catch Throwable _ nil)) (constantly nil))
-      (let
-        [cb-id
-         (Object.)
+    (let
+      [cb-id
+       (Object.)
 
-         ; identity key; survives equal-by-value collisions
-         callbacks
-         (::callbacks token)]
+       callbacks
+       (::callbacks token)
 
-        (swap! callbacks conj [cb-id thunk])
-        (fn dispose! []
-          (swap! callbacks (fn [cbs]
-                             (vec (remove #(identical? cb-id (first %)) cbs)))))))))
+       fire-now?
+       (atom false)]
+
+      ;; The flag check shares the callback-atom transition. A hook either joins
+      ;; cancel!'s drained batch or fires here; it cannot slip between them.
+      (swap! callbacks (fn [cbs]
+                         (if (cancelled? token)
+                           (do (reset! fire-now? true) cbs)
+                           (conj cbs [cb-id thunk]))))
+      (when @fire-now? (try (thunk) (catch Throwable _ nil)))
+      (fn dispose! []
+        (swap! callbacks (fn [cbs]
+                           (vec (remove #(identical? cb-id (first %)) cbs))))))))
 
 (defn cancellation-set-future!
   "Register a worker `Future` so `cancel!` interrupts it. Thin
@@ -172,26 +183,23 @@
   fut)
 
 (defn cancel!
-  "Abort the in-flight turn. Flips the cooperative flag AND runs every
-   registered `on-cancel!` callback. Each callback is wrapped in its
-   own `try`/`catch` so one bad consumer cannot starve the rest.
-   Safe to call multiple times — on the second call the flag is
-   already set, and the callback list has typically drained because
-   workers disposed themselves.
+  "Abort the in-flight turn. Flips the cooperative flag and runs every registered
+   `on-cancel!` callback exactly once. Each callback is wrapped in its own
+   `try`/`catch` so one bad consumer cannot starve the rest.
+
+   The callback list is atomically drained before callbacks run. Repeated stops
+   from a user, watchdog, or shutdown therefore preserve the first reason without
+   re-entering a turn's terminal/unwind path.
 
    `reason` names the ORIGIN (`:client-cancel-turn`, `:stall-watchdog`,
-   `:gateway-shutdown`, …). The first one wins — a shutdown that lands on
-   an already user-cancelled turn must not rewrite history — and it is read
-   back with [[cancel-reason]]. The one-arity call records `:unspecified`
-   rather than nothing, so an unattributed cancel is still visibly a cancel."
+   `:gateway-shutdown`, …). The first one wins and is read back with
+   [[cancel-reason]]. The one-arity call records `:unspecified`."
   ([token] (cancel! token :unspecified))
   ([token reason]
    (when token
-     (try (swap! (::reason token) (fn [old]
-                                    (or old reason :unspecified)))
-          (catch Throwable _ nil))
+     (try (swap! (::reason token) #(or % reason :unspecified)) (catch Throwable _ nil))
      (try (reset! (::flag token) true) (catch Throwable _ nil))
-     (doseq [[_ thunk] @(::callbacks token)]
+     (doseq [[_ thunk] (first (swap-vals! (::callbacks token) empty))]
        (try (thunk) (catch Throwable _ nil))))
    nil))
 
