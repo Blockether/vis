@@ -2573,11 +2573,10 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
 ;; =============================================================================
 
 (defn- live-bg-script
-  "The bash the LIVE background shell `id` is already running. A `wait`/`logs`/
-   `send`/`stop` runs no command of its OWN, but the command it acts on is right
+  "The bash the LIVE background shell `id` is already running. A `logs`/`send`/
+   `stop` call runs no command of its OWN, but the command it acts on is right
    there in the registry — the same lines the finished card renders out of its
-   result — so a pending lifecycle card shows a real COMMAND section instead of
-   narrating the stage in prose.
+   result — so its pending card can show that real command.
 
    nil when no live shell answers to that id, or when two sessions both do and the
    answer would be a guess."
@@ -2593,12 +2592,11 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
 
    `:summary` is the finished headline with the outcome replaced by what the call
    is doing (`$ npm test (running)`, `◷ \\`dev\\` waiting · until Local:.*http`).
-   `:render` is that card's BODY: a `**COMMAND**` section holding the bash — the
-   lines about to run, or, for a lifecycle stage, the bash its target background
-   shell is already running — plus the `**STATUS**` rows the request itself
-   carries (id / cwd / until / timeout / keys). There is no pending dialect: a
-   running block and the block it becomes are one card, and nothing is a
-   hand-written comment band.
+   `:render` is that card's BODY: run/background calls carry the bash in a
+   `**COMMAND**` section; lifecycle calls carry the `**STATUS**` rows the request
+   itself describes (id / cwd / until / timeout / keys). A `wait` never invents a
+   command — schema or caller placeholders are not work it performs. There is no
+   pending dialect: a running block and the block it becomes are one card.
 
    nil when the arguments name neither a command nor a target — the raw invocation
    stays the honest fallback."
@@ -2621,9 +2619,10 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
      (opt input :commands)
 
      cmds
-     (when (some? commands)
-       ;; A malformed batch is the CALL's error to report, never this preview's:
-       ;; fall through to the raw invocation instead of throwing before the run.
+     (when (and (#{"run" "background"} op) (some? commands))
+       ;; Lifecycle calls run no command from this field. Some callers must carry
+       ;; a schema placeholder; rendering it would misrepresent what `wait` does.
+       ;; A malformed real batch is the CALL's error to report, never this preview's.
        (try (vec (ordered-lines commands)) (catch Throwable _ nil)))
 
      until
@@ -2640,10 +2639,9 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
              keys-label)
 
      script
-     (or (some->> cmds
-                  seq
-                  (str/join "\n"))
-         (live-bg-script id))
+     (cond (seq cmds) (str/join "\n" cmds)
+           (= "wait" op) nil
+           :else (live-bg-script id))
 
      summary
      (cond

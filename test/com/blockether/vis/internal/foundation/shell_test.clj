@@ -1225,13 +1225,18 @@
                   :render (str "**COMMAND**\n```bash\nnpm run dev\n```\n\n"
                                "**STATUS**\n```\nid: dev\n```")}
                  (render-shell-call {"op" "background" "id" "dev" "commands" ["npm run dev"]}))))
-  (it "puts what a `wait` is waiting for in the card's STATUS rows"
+  ;; Regression, reported wait card: an irrelevant lifecycle placeholder command
+  ;; used to replace the WAIT headline and add a bogus COMMAND section.
+  (it "puts only what a `wait` is waiting for in the card's STATUS rows"
       ;; The wall a wait puts up IS its `until` regex plus the backstop it gives
       ;; up after — the same rows the finished wait card reports.
       (expect (= {:summary "◷ `dev` waiting · until Local:.*http · timeout 600s"
                   :render "**STATUS**\n```\nid: dev\nuntil: Local:.*http\ntimeout: 600s\n```"}
-                 (render-shell-call
-                   {"op" "wait" "id" "dev" "until" "Local:.*http" "timeout_secs" 600}))))
+                 (render-shell-call {"op" "wait"
+                                     "id" "dev"
+                                     "commands" ["true"]
+                                     "until" "Local:.*http"
+                                     "timeout_secs" 600}))))
   (it "reports a `send` by its keystroke label, never a byte count"
       (expect (= {:summary "↵ `dev` sending \"y\" ↵"
                   :render "**STATUS**\n```\nid: dev\nkeys: \"y\" ↵\n```"}
