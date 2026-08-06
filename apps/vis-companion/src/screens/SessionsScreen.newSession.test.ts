@@ -25,4 +25,11 @@ describe('where "New session" lives', () => {
     expect(source).not.toContain('translate-x-2');
     expect(source).not.toContain('sm:translate-x-0');
   });
+
+  it('keeps machine and project boundaries to one rule', () => {
+    expect(source).toContain('border-b border-dialog-edge bg-panel px-3 mouse:min-h-9');
+    expect(source).toContain('firstProject={groupIndex === 0}');
+    expect(source).toContain("className={`${firstProject ? '' : 'border-t'} border-dialog-edge`}");
+    expect(source.match(/border-t border-dialog-edge first:border-t-0/g)?.length).toBe(1);
+  });
 });
