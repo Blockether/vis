@@ -11,6 +11,7 @@ Read only the section relevant to the change. Keep this file for durable, repo-w
 - Prefer established, well-maintained libraries when they reduce overall complexity or improve reliability; do not reimplement common functionality without a clear reason.
 - Lean on the dependencies already in the project before writing your own implementation or adding packages. Do not assume a library lacks a capability without checking its documentation and types.
 - Make architectural decisions for the long term. Do not accept a stopgap that only works for now and is meant to be replaced later.
+- Never introduce Clojure `declare`. Order definitions so every dependency appears before its consumers; refactor dependency cycles instead of forward-declaring Vars.
 
 ## This repo is public: never document Blockether's own deployment
 

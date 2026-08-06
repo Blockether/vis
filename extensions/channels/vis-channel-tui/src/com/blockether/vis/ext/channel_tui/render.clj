@@ -4299,13 +4299,451 @@
 
     {:lines lines :line-meta line-meta :text (str/join "\n" (map strip-paint-markers-line lines))}))
 
-(declare paste-aware-ast->entries)
+(defn- paste-code-block?
+  "True for a `vis-paste` code node — the collapsed-transcript shape
+   `input/collapse-paste-placeholders` emits for a `[Pasted #N: ...]`
+   token: `[:code {:lang \"vis-paste\"} \"<token>\\n<payload>\"]`."
+  [node]
+  (and (vector? node) (= :code (first node)) (= "vis-paste" (:lang (second node)))))
+
+(defn- image-code-block?
+  "True for a `vis-image` code node — the collapsed-transcript shape
+   `input/collapse-paste-placeholders` emits for an `[Image #N: ...]`
+   token. Body lines: summary, absolute path, mime, `WxH`, size-label."
+  [node]
+  (and (vector? node) (= :code (first node)) (= "vis-image" (:lang (second node)))))
+
+(defn- table-code-block?
+  "True for a `vis-table` code node — the fence `vis_attach` emits for a CSV or
+   TSV artifact. Body lines: summary, file name, mime, `COLSxROWS`, size-label,
+   then the (row-capped) payload as normalized CSV."
+  [node]
+  (and (vector? node) (= :code (first node)) (= "vis-table" (:lang (second node)))))
+
+(defn- doc-code-block?
+  "True for a `vis-doc` code node — the fence `vis_attach` emits for a PDF or an
+   HTML page. Body lines: summary, absolute host path, mime, file name,
+   size-label. There is no payload: a document is opened, not inlined."
+  [node]
+  (and (vector? node) (= :code (first node)) (= "vis-doc" (:lang (second node)))))
+
+(defn- disclosure-code-block?
+  [node]
+  (or (paste-code-block? node)
+      (image-code-block? node)
+      (table-code-block? node)
+      (doc-code-block? node)))
+
+(defn- image-block-parts
+  "Parse a `vis-image` node body into `{:summary :path :mime :width :height
+   :size-label}`. Missing fields come back nil."
+  [node]
+  (let
+    [lines
+     (str/split (str (nth node 2 "")) #"\n" -1)
+
+     [summary path mime dims size-label]
+     lines
+
+     [w h]
+     (when (seq dims) (str/split (str dims) #"x"))
+
+     ascii
+     (let [a (str/join "\n" (drop 5 lines))]
+       (when-not (str/blank? a) a))]
+
+    {:summary (str/trim (str summary))
+     :path (str path)
+     :mime (when (seq mime) mime)
+     :width (some-> w
+                    str/trim
+                    not-empty
+                    parse-long)
+     :height (some-> h
+                     str/trim
+                     not-empty
+                     parse-long)
+     :size-label (not-empty (str/trim (str size-label)))
+     :ascii ascii}))
+
+(defn- paste-block-parts
+  "Split a `vis-paste` code node body into `[summary payload]` — the
+   collapse pass writes the `[Pasted #N: ...]` token as the FIRST body
+   line, the verbatim payload underneath."
+  [node]
+  (let
+    [body
+     (str (nth node 2 ""))
+
+     nl
+     (.indexOf body "\n")]
+
+    (if (neg? nl) [body ""] [(subs body 0 nl) (subs body (inc nl))])))
+
+(defn- paste-disclosure-entries
+  "Render one `vis-paste` block as a collapsible disclosure: the
+   `[Pasted #N: ...]` token is the chevron summary row (`▸`/`▾` +
+   `:toggle-details` click meta), the verbatim payload the body shown
+   only when expanded. Collapsed by default so a pasted wall stays a
+   one-liner. A trailing blank row gives the next content breathing
+   room."
+  [node content-w {:keys [session-id session-turn-id detail-expansions] :as opts}]
+  (let
+    [[summary payload]
+     (paste-block-parts node)
+
+     summary
+     (str/trim summary)
+
+     id
+     (or (some-> (re-find #"#(\d+)" summary)
+                 second)
+         "0")
+
+     node-id
+     (detail-node-id
+       {:session-turn-id session-turn-id :section :user :kind :paste :details-path [id]})
+
+     expanded?
+     (detail-expanded? detail-expansions session-id node-id false)
+
+     header
+     (detail-summary-entries {:marker md-summary-marker
+                              :max-w content-w
+                              :summary summary
+                              :collapsed? (not expanded?)
+                              :session-id session-id
+                              :node-id node-id})
+
+     body
+     (when expanded?
+       (tag-copy-block-body
+         (vec (layout/ast->entries [:ast {} [:code {:wrap? true} payload]] content-w opts))
+         node-id
+         payload))]
+
+    (vec (concat header body))))
+
+(def ^:private image-max-rows
+  "Ceiling on the inline-image box HEIGHT in cells. The box WIDTH is NOT
+   capped: it fills the bubble's content width, so a picture is normalized to
+   the terminal instead of pinned to a fixed strip. This row ceiling is all
+   that keeps a portrait image from reserving an absurd column of transcript;
+   a box that still overflows the viewport is never dropped —
+   `fitting-image-placements` shrinks a bottom-overflowing box
+   (aspect-preserving) to the visible rows, and Kitty source-crops only a
+   picture the user has actually scrolled INTO."
+  40)
+
+(defn image-cell-box
+  "The cell box `{:cols :rows}` the transcript RESERVES for a picture of
+   intrinsic `width`x`height` pixels laid out in `content-w` columns:
+   aspect-preserving, width-filling, capped at [[image-max-rows]] rows.
+
+   The ONE place that geometry is decided. The painter pre-allocates it and
+   the height estimator charges the very same rows for a picture it has not
+   painted yet, so a transcript full of screenshots never GROWS under a reader
+   who is scrolling through it."
+  [width height content-w]
+  (timg/cell-size {:w width :h height} (max 1 (long content-w)) image-max-rows))
+
+(def ^:private vis-image-dims-re
+  ;; A `vis-image` fence's 4th body line is the picture's intrinsic `WxH` (see
+  ;; `image-block-parts`); raw markdown is all the height estimator ever has.
+  #"(?m)^````vis-image[ \t]*\n[^\n]*\n[^\n]*\n[^\n]*\n[ \t]*(\d+)x(\d+)")
+
+(defn image-fence-rows
+  "Rows every `vis-image` fence in raw markdown `md` reserves at `content-w`
+   columns - the picture boxes [[image-disclosure-entries]] pre-allocates,
+   counted without parsing the markdown or reading a single pixel.
+
+   0 on a terminal that cannot draw pictures (the fence paints as a text card
+   there, which the prose estimate already covers) and 0 for a fence whose
+   dimensions are missing."
+  ^long [md ^long content-w]
+  (if (and (string? md) (str/includes? md "````vis-image") (timg/graphical-terminal?))
+    (long (reduce (fn [^long acc m]
+                    (+ acc
+                       (long (max 1
+                                  (long (:rows (image-cell-box (parse-long (nth m 1))
+                                                               (parse-long (nth m 2))
+                                                               content-w)))))))
+                  0
+                  (re-seq vis-image-dims-re md)))
+    0))
+
+(defn- image-disclosure-entries
+  "Render one `vis-image` block with its box PRE-ALLOCATED — NOT collapsible.
+
+   The `[Image #N: ...]` token paints as a plain caption row; on a graphical
+   terminal the image's cell box (width × height) is reserved IMMEDIATELY
+   below it, so the virtual layout always accounts for the picture's true
+   size — no expand/collapse state, no height pop-in, no image painted at a
+   stale position. The FIRST reserved row carries `:kind :image` meta so the
+   screen loop can paint the actual picture (Kitty/iTerm2 graphics) over the
+   box AFTER Lanterna's delta refresh; every reserved row (pads included)
+   carries the `:img` map so the paint loop registers a click region that
+   opens the file in the OS previewer. Terminals without inline-image
+   support (or an unreadable file) render the descriptive fallback plus the
+   fence's ASCII body instead — likewise always visible."
+  [node content-w {:keys [session-turn-id] :as opts}]
+  (let
+    [{:keys [summary path mime width height size-label ascii]}
+     (image-block-parts node)
+
+     id
+     (or (some-> (re-find #"#(\d+)" summary)
+                 second)
+         "0")
+
+     node-id
+     (detail-node-id {:session-turn-id session-turn-id
+                      :section (:image-section opts :user)
+                      :kind :image
+                      :details-path [id]})
+
+     header
+     (vec (layout/ast->entries [:ast {} [:p {} summary]] content-w {}))
+
+     can-draw?
+     (and (timg/graphical-terminal?) width height)
+
+     body
+     (if can-draw?
+       (let
+         [box
+          ;; Height ceiling in cells (see `image-max-rows`): large enough that
+          ;; a width-filled portrait fills the width cap, while an over-tall
+          ;; box is clamped to the viewport by `fitting-image-placements`.
+          (image-cell-box width height content-w)
+
+          rows
+          (max 1 (long (:rows box)))
+
+          img
+          {:path path :mime mime :cols (:cols box) :rows rows :width width :height height}]
+
+         ;; First reserved row carries the paint meta; the rest are
+         ;; blanks the graphics sequence spans over. Every row is
+         ;; tagged (and carries `:img`) so `trim-user-prompt-margin-entries`
+         ;; doesn't mistake the reserved box for trailing margin AND so
+         ;; each painted row registers its own click region.
+         (into [{:line "" :meta {:kind :image :img img :img-idx 0 :node-id (str node-id)}}]
+               (map (fn [i]
+                      {:line "" :meta {:kind :image-pad :img img :img-idx (inc (long i))}})
+                    (range (dec rows)))))
+       ;; Fallback: describe the image so headless / unsupported
+       ;; terminals still see what was attached (ASCII body included).
+       (let
+         [dims
+          (when (and width height) (str width "×" height))
+
+          desc
+          (str (or (not-empty (last (str/split path #"/"))) "image")
+               (when dims (str "  " dims))
+               (when size-label (str "  " size-label)))
+
+          ast
+          (if ascii [:ast {} [:p {} desc] [:code {} ascii]] [:ast {} [:p {} desc]])]
+
+         (tag-copy-block-body (vec (layout/ast->entries ast content-w {})) node-id path)))]
+
+    (vec (concat header body))))
+
+(defn- table-block-parts
+  "Parse a `vis-table` node body — the header lines `vis_attach` writes, then the
+   CSV payload — into `{:summary :name :cols :rows :csv}`. Missing fields come
+   back nil."
+  [node]
+  (let
+    [lines
+     (str/split (str (nth node 2 "")) #"\n" -1)
+
+     [summary name _mime dims]
+     lines
+
+     [c r]
+     (when (seq dims) (str/split (str dims) #"x"))
+
+     num
+     #(some-> %
+              str/trim
+              not-empty
+              parse-long)]
+
+    {:summary (str/trim (str summary))
+     :name (str/trim (str name))
+     :cols (num c)
+     :rows (num r)
+     :csv (str/join "\n" (drop 5 lines))}))
+
+(def ^:private table-preview-rows
+  "Data rows a `vis-table` fence paints INLINE. The transcript shows a preview,
+   never the whole dataset: the full payload rides in every painted row's
+   `:table` meta, and the table dialog (click the grid) pages, sorts and
+   selects over ALL of it."
+  10)
+
+(def ^:private table-grid-rule-chars
+  "Openers of a boxed grid's pure RULE lines - the rows that carry no cell text."
+  #{\┌ \├ \└ \┬ \┴ \┼ \─ \┐ \┤ \┘})
+
+(defn- tag-table-grid-lines
+  "Tag each entry of a `vis-table` card with the role its line plays, in
+   `:meta :table-line`: `:title` for the headline, `:border` for the rules,
+   `:head` for the column names, `:row`/`:row-alt` alternating down the data rows
+   - the zebra that separates one row from the next without spending a rule line
+   on each - and `:hint` for the `… N more rows` footer.
+
+   The role is read off the line itself rather than counted as an index into
+   `csv-grid-lines`, because the chip's own pad and blank rows sit between them
+   and a role read from the text cannot drift when the card gains a row."
+  [entries]
+  (first
+    (reduce (fn [[acc data-rows] {:keys [line] :as entry}]
+              (let
+                [ch
+                 (first (str/triml (if (seq line) (subs line 1) "")))
+
+                 n
+                 (long data-rows)
+
+                 kind
+                 (cond (nil? ch) nil
+                       (contains? table-grid-rule-chars ch) :border
+                       (= \│ ch) (cond (zero? n) :head
+                                       (odd? n) :row
+                                       :else :row-alt)
+                       (zero? n) :title
+                       :else :hint)]
+
+                [(conj acc
+                       (cond-> entry
+                         kind
+                         (assoc-in [:meta :table-line] kind))) (if (= \│ ch) (inc n) n)]))
+            [[] 0]
+            entries)))
+
+(defn- table-disclosure-entries
+  "Render one `vis-table` block as a single card: the `[Table: …]` headline, a
+   bordered preview of the first rows — numeric columns right-aligned, over-wide
+   cells ellipsized — and the `… N more rows` hint.
+
+   Two things make it read as a sheet rather than as a code block that happens to
+   contain pipes. Column widths are STRETCHED, so the grid's borders meet the
+   card's own edges instead of leaving dead fill to the right; and headline, grid
+   and hint are ONE chip, so they share one background and one pair of pads.
+
+   Every entry carries the whole CSV in `:meta :table`: the paint loop turns each
+   painted row into a click region opening the full table dialog — the headline
+   included, which is the row a reader aims at."
+  [node content-w _opts]
+  (let
+    [{:keys [summary name cols rows csv]}
+     (table-block-parts node)
+
+     grid
+     (table/parse-csv csv)
+
+     ;; Leave room for the code chip's own 2-column inset on each side so a
+     ;; stretched grid line is never clipped at the right border.
+     grid-w
+     (max 12 (- (long content-w) 4))
+
+     shown
+     (vec (take (inc (long table-preview-rows)) grid))
+
+     hidden
+     (long (max 0 (- (count grid) (count shown))))
+
+     widths
+     (table/csv-stretch-widths (table/csv-widths shown grid-w) grid-w)
+
+     lines
+     (-> [summary]
+         (into (table/csv-grid-lines shown grid-w {:widths widths}))
+         (cond->
+           (pos? hidden)
+           (conj (str "… "
+                      hidden
+                      " more row"
+                      (when (not= 1 hidden) "s")
+                      " — click the table to page, sort and select"))))
+
+     tbl
+     {:name name :csv csv :cols cols :rows rows :title (or (not-empty name) summary)}]
+
+    (mapv #(assoc-in % [:meta :table] tbl)
+          (tag-table-grid-lines
+            (layout/ast->entries [:ast {} [:code {} (str/join "\n" lines)]] content-w {})))))
+
+(defn- doc-block-parts
+  "Parse a `vis-doc` node body — the header lines `vis_attach` writes for a PDF or
+   an HTML page — into `{:summary :path :mime :name :size-label}`. Missing fields
+   come back nil."
+  [node]
+  (let
+    [lines
+     (str/split (str (nth node 2 "")) #"\n" -1)
+
+     [summary path mime name size-label]
+     lines]
+
+    {:summary (str/trim (str summary))
+     :path (str/trim (str path))
+     :mime (not-empty (str/trim (str mime)))
+     :name (not-empty (str/trim (str name)))
+     :size-label (not-empty (str/trim (str size-label)))}))
+
+(defn- doc-disclosure-entries
+  "Render one `vis-doc` block as a single card: the `[Document: …]` headline and
+   one hint line.
+
+   A PDF is pages and an HTML page is markup — neither has pixels a terminal
+   could paint, and neither is ever handed to the model as an image. So the card
+   is deliberately just a HANDLE: every painted row carries the document in
+   `:meta :doc`, the paint loop turns each into a click region, and clicking it
+   opens the host file in the system viewer (the companion renders the same
+   artifact inline, inside a sandboxed frame)."
+  [node content-w _opts]
+  (let
+    [{:keys [summary path mime name size-label]}
+     (doc-block-parts node)
+
+     lines
+     [(if (str/blank? summary) "[Document]" summary) "↗ click to open in the system viewer"]
+
+     doc
+     {:path path :mime mime :name name :size-label size-label :title (or name summary)}]
+
+    (mapv #(assoc-in % [:meta :doc] doc)
+          (layout/ast->entries [:ast {} [:code {} (str/join "\n" lines)]] content-w {}))))
+
+(defn- paste-aware-ast->entries
+  "`layout/ast->entries`, but each top-level `vis-paste` code block becomes
+   a collapsible paste disclosure instead of an inline code chip. Falls
+   back to the plain walker (zero overhead) when the IR carries no paste."
+  [answer content-w opts]
+  (let [blocks (vec (drop 2 answer))]
+    (if (not-any? disclosure-code-block? blocks)
+      (vec (layout/ast->entries answer content-w opts))
+      (->> (partition-by disclosure-code-block? blocks)
+           (mapcat (fn [run]
+                     (if (disclosure-code-block? (first run))
+                       (mapcat (fn [node]
+                                 (cond (image-code-block? node)
+                                       (image-disclosure-entries node content-w opts)
+                                       (table-code-block? node)
+                                       (table-disclosure-entries node content-w opts)
+                                       (doc-code-block? node)
+                                       (doc-disclosure-entries node content-w opts)
+                                       :else (paste-disclosure-entries node content-w opts)))
+                               run)
+                       (layout/ast->entries (into [:ast {}] run) content-w opts))))
+           vec))))
 
 ;;; ── Inline markdown tokenizer (mid-line bold / italic / strike / code) ──
 ;;
-;; `markdown->inline` is forward-declared once at the top of the
-;; file (search `(declare markdown->inline)`), so no second declare
-;; here.
 ;; ── Markdown link / image pre-pass ────────────────────────────────────────
 ;;
 ;; Hand-rolled scanner that mirrors the regex
@@ -6329,449 +6767,6 @@
      (vec (reverse (drop-while user-prompt-margin-entry? (reverse trimmed-leading))))]
 
     trimmed-trailing))
-
-(defn- paste-code-block?
-  "True for a `vis-paste` code node — the collapsed-transcript shape
-   `input/collapse-paste-placeholders` emits for a `[Pasted #N: ...]`
-   token: `[:code {:lang \"vis-paste\"} \"<token>\\n<payload>\"]`."
-  [node]
-  (and (vector? node) (= :code (first node)) (= "vis-paste" (:lang (second node)))))
-
-(defn- image-code-block?
-  "True for a `vis-image` code node — the collapsed-transcript shape
-   `input/collapse-paste-placeholders` emits for an `[Image #N: ...]`
-   token. Body lines: summary, absolute path, mime, `WxH`, size-label."
-  [node]
-  (and (vector? node) (= :code (first node)) (= "vis-image" (:lang (second node)))))
-
-(defn- table-code-block?
-  "True for a `vis-table` code node — the fence `vis_attach` emits for a CSV or
-   TSV artifact. Body lines: summary, file name, mime, `COLSxROWS`, size-label,
-   then the (row-capped) payload as normalized CSV."
-  [node]
-  (and (vector? node) (= :code (first node)) (= "vis-table" (:lang (second node)))))
-
-(defn- doc-code-block?
-  "True for a `vis-doc` code node — the fence `vis_attach` emits for a PDF or an
-   HTML page. Body lines: summary, absolute host path, mime, file name,
-   size-label. There is no payload: a document is opened, not inlined."
-  [node]
-  (and (vector? node) (= :code (first node)) (= "vis-doc" (:lang (second node)))))
-
-(defn- disclosure-code-block?
-  [node]
-  (or (paste-code-block? node)
-      (image-code-block? node)
-      (table-code-block? node)
-      (doc-code-block? node)))
-
-(defn- image-block-parts
-  "Parse a `vis-image` node body into `{:summary :path :mime :width :height
-   :size-label}`. Missing fields come back nil."
-  [node]
-  (let
-    [lines
-     (str/split (str (nth node 2 "")) #"\n" -1)
-
-     [summary path mime dims size-label]
-     lines
-
-     [w h]
-     (when (seq dims) (str/split (str dims) #"x"))
-
-     ascii
-     (let [a (str/join "\n" (drop 5 lines))]
-       (when-not (str/blank? a) a))]
-
-    {:summary (str/trim (str summary))
-     :path (str path)
-     :mime (when (seq mime) mime)
-     :width (some-> w
-                    str/trim
-                    not-empty
-                    parse-long)
-     :height (some-> h
-                     str/trim
-                     not-empty
-                     parse-long)
-     :size-label (not-empty (str/trim (str size-label)))
-     :ascii ascii}))
-
-(defn- paste-block-parts
-  "Split a `vis-paste` code node body into `[summary payload]` — the
-   collapse pass writes the `[Pasted #N: ...]` token as the FIRST body
-   line, the verbatim payload underneath."
-  [node]
-  (let
-    [body
-     (str (nth node 2 ""))
-
-     nl
-     (.indexOf body "\n")]
-
-    (if (neg? nl) [body ""] [(subs body 0 nl) (subs body (inc nl))])))
-
-(defn- paste-disclosure-entries
-  "Render one `vis-paste` block as a collapsible disclosure: the
-   `[Pasted #N: ...]` token is the chevron summary row (`▸`/`▾` +
-   `:toggle-details` click meta), the verbatim payload the body shown
-   only when expanded. Collapsed by default so a pasted wall stays a
-   one-liner. A trailing blank row gives the next content breathing
-   room."
-  [node content-w {:keys [session-id session-turn-id detail-expansions] :as opts}]
-  (let
-    [[summary payload]
-     (paste-block-parts node)
-
-     summary
-     (str/trim summary)
-
-     id
-     (or (some-> (re-find #"#(\d+)" summary)
-                 second)
-         "0")
-
-     node-id
-     (detail-node-id
-       {:session-turn-id session-turn-id :section :user :kind :paste :details-path [id]})
-
-     expanded?
-     (detail-expanded? detail-expansions session-id node-id false)
-
-     header
-     (detail-summary-entries {:marker md-summary-marker
-                              :max-w content-w
-                              :summary summary
-                              :collapsed? (not expanded?)
-                              :session-id session-id
-                              :node-id node-id})
-
-     body
-     (when expanded?
-       (tag-copy-block-body
-         (vec (layout/ast->entries [:ast {} [:code {:wrap? true} payload]] content-w opts))
-         node-id
-         payload))]
-
-    (vec (concat header body))))
-
-(def ^:private image-max-rows
-  "Ceiling on the inline-image box HEIGHT in cells. The box WIDTH is NOT
-   capped: it fills the bubble's content width, so a picture is normalized to
-   the terminal instead of pinned to a fixed strip. This row ceiling is all
-   that keeps a portrait image from reserving an absurd column of transcript;
-   a box that still overflows the viewport is never dropped —
-   `fitting-image-placements` shrinks a bottom-overflowing box
-   (aspect-preserving) to the visible rows, and Kitty source-crops only a
-   picture the user has actually scrolled INTO."
-  40)
-
-(defn image-cell-box
-  "The cell box `{:cols :rows}` the transcript RESERVES for a picture of
-   intrinsic `width`x`height` pixels laid out in `content-w` columns:
-   aspect-preserving, width-filling, capped at [[image-max-rows]] rows.
-
-   The ONE place that geometry is decided. The painter pre-allocates it and
-   the height estimator charges the very same rows for a picture it has not
-   painted yet, so a transcript full of screenshots never GROWS under a reader
-   who is scrolling through it."
-  [width height content-w]
-  (timg/cell-size {:w width :h height} (max 1 (long content-w)) image-max-rows))
-
-(def ^:private vis-image-dims-re
-  ;; A `vis-image` fence's 4th body line is the picture's intrinsic `WxH` (see
-  ;; `image-block-parts`); raw markdown is all the height estimator ever has.
-  #"(?m)^````vis-image[ \t]*\n[^\n]*\n[^\n]*\n[^\n]*\n[ \t]*(\d+)x(\d+)")
-
-(defn image-fence-rows
-  "Rows every `vis-image` fence in raw markdown `md` reserves at `content-w`
-   columns - the picture boxes [[image-disclosure-entries]] pre-allocates,
-   counted without parsing the markdown or reading a single pixel.
-
-   0 on a terminal that cannot draw pictures (the fence paints as a text card
-   there, which the prose estimate already covers) and 0 for a fence whose
-   dimensions are missing."
-  ^long [md ^long content-w]
-  (if (and (string? md) (str/includes? md "````vis-image") (timg/graphical-terminal?))
-    (long (reduce (fn [^long acc m]
-                    (+ acc
-                       (long (max 1
-                                  (long (:rows (image-cell-box (parse-long (nth m 1))
-                                                               (parse-long (nth m 2))
-                                                               content-w)))))))
-                  0
-                  (re-seq vis-image-dims-re md)))
-    0))
-
-(defn- image-disclosure-entries
-  "Render one `vis-image` block with its box PRE-ALLOCATED — NOT collapsible.
-
-   The `[Image #N: ...]` token paints as a plain caption row; on a graphical
-   terminal the image's cell box (width × height) is reserved IMMEDIATELY
-   below it, so the virtual layout always accounts for the picture's true
-   size — no expand/collapse state, no height pop-in, no image painted at a
-   stale position. The FIRST reserved row carries `:kind :image` meta so the
-   screen loop can paint the actual picture (Kitty/iTerm2 graphics) over the
-   box AFTER Lanterna's delta refresh; every reserved row (pads included)
-   carries the `:img` map so the paint loop registers a click region that
-   opens the file in the OS previewer. Terminals without inline-image
-   support (or an unreadable file) render the descriptive fallback plus the
-   fence's ASCII body instead — likewise always visible."
-  [node content-w {:keys [session-turn-id] :as opts}]
-  (let
-    [{:keys [summary path mime width height size-label ascii]}
-     (image-block-parts node)
-
-     id
-     (or (some-> (re-find #"#(\d+)" summary)
-                 second)
-         "0")
-
-     node-id
-     (detail-node-id {:session-turn-id session-turn-id
-                      :section (:image-section opts :user)
-                      :kind :image
-                      :details-path [id]})
-
-     header
-     (vec (layout/ast->entries [:ast {} [:p {} summary]] content-w {}))
-
-     can-draw?
-     (and (timg/graphical-terminal?) width height)
-
-     body
-     (if can-draw?
-       (let
-         [box
-          ;; Height ceiling in cells (see `image-max-rows`): large enough that
-          ;; a width-filled portrait fills the width cap, while an over-tall
-          ;; box is clamped to the viewport by `fitting-image-placements`.
-          (image-cell-box width height content-w)
-
-          rows
-          (max 1 (long (:rows box)))
-
-          img
-          {:path path :mime mime :cols (:cols box) :rows rows :width width :height height}]
-
-         ;; First reserved row carries the paint meta; the rest are
-         ;; blanks the graphics sequence spans over. Every row is
-         ;; tagged (and carries `:img`) so `trim-user-prompt-margin-entries`
-         ;; doesn't mistake the reserved box for trailing margin AND so
-         ;; each painted row registers its own click region.
-         (into [{:line "" :meta {:kind :image :img img :img-idx 0 :node-id (str node-id)}}]
-               (map (fn [i]
-                      {:line "" :meta {:kind :image-pad :img img :img-idx (inc (long i))}})
-                    (range (dec rows)))))
-       ;; Fallback: describe the image so headless / unsupported
-       ;; terminals still see what was attached (ASCII body included).
-       (let
-         [dims
-          (when (and width height) (str width "×" height))
-
-          desc
-          (str (or (not-empty (last (str/split path #"/"))) "image")
-               (when dims (str "  " dims))
-               (when size-label (str "  " size-label)))
-
-          ast
-          (if ascii [:ast {} [:p {} desc] [:code {} ascii]] [:ast {} [:p {} desc]])]
-
-         (tag-copy-block-body (vec (layout/ast->entries ast content-w {})) node-id path)))]
-
-    (vec (concat header body))))
-
-(defn- table-block-parts
-  "Parse a `vis-table` node body — the header lines `vis_attach` writes, then the
-   CSV payload — into `{:summary :name :cols :rows :csv}`. Missing fields come
-   back nil."
-  [node]
-  (let
-    [lines
-     (str/split (str (nth node 2 "")) #"\n" -1)
-
-     [summary name _mime dims]
-     lines
-
-     [c r]
-     (when (seq dims) (str/split (str dims) #"x"))
-
-     num
-     #(some-> %
-              str/trim
-              not-empty
-              parse-long)]
-
-    {:summary (str/trim (str summary))
-     :name (str/trim (str name))
-     :cols (num c)
-     :rows (num r)
-     :csv (str/join "\n" (drop 5 lines))}))
-
-(def ^:private table-preview-rows
-  "Data rows a `vis-table` fence paints INLINE. The transcript shows a preview,
-   never the whole dataset: the full payload rides in every painted row's
-   `:table` meta, and the table dialog (click the grid) pages, sorts and
-   selects over ALL of it."
-  10)
-
-(def ^:private table-grid-rule-chars
-  "Openers of a boxed grid's pure RULE lines - the rows that carry no cell text."
-  #{\┌ \├ \└ \┬ \┴ \┼ \─ \┐ \┤ \┘})
-
-(defn- tag-table-grid-lines
-  "Tag each entry of a `vis-table` card with the role its line plays, in
-   `:meta :table-line`: `:title` for the headline, `:border` for the rules,
-   `:head` for the column names, `:row`/`:row-alt` alternating down the data rows
-   - the zebra that separates one row from the next without spending a rule line
-   on each - and `:hint` for the `… N more rows` footer.
-
-   The role is read off the line itself rather than counted as an index into
-   `csv-grid-lines`, because the chip's own pad and blank rows sit between them
-   and a role read from the text cannot drift when the card gains a row."
-  [entries]
-  (first
-    (reduce (fn [[acc data-rows] {:keys [line] :as entry}]
-              (let
-                [ch
-                 (first (str/triml (if (seq line) (subs line 1) "")))
-
-                 n
-                 (long data-rows)
-
-                 kind
-                 (cond (nil? ch) nil
-                       (contains? table-grid-rule-chars ch) :border
-                       (= \│ ch) (cond (zero? n) :head
-                                       (odd? n) :row
-                                       :else :row-alt)
-                       (zero? n) :title
-                       :else :hint)]
-
-                [(conj acc
-                       (cond-> entry
-                         kind
-                         (assoc-in [:meta :table-line] kind))) (if (= \│ ch) (inc n) n)]))
-            [[] 0]
-            entries)))
-
-(defn- table-disclosure-entries
-  "Render one `vis-table` block as a single card: the `[Table: …]` headline, a
-   bordered preview of the first rows — numeric columns right-aligned, over-wide
-   cells ellipsized — and the `… N more rows` hint.
-
-   Two things make it read as a sheet rather than as a code block that happens to
-   contain pipes. Column widths are STRETCHED, so the grid's borders meet the
-   card's own edges instead of leaving dead fill to the right; and headline, grid
-   and hint are ONE chip, so they share one background and one pair of pads.
-
-   Every entry carries the whole CSV in `:meta :table`: the paint loop turns each
-   painted row into a click region opening the full table dialog — the headline
-   included, which is the row a reader aims at."
-  [node content-w _opts]
-  (let
-    [{:keys [summary name cols rows csv]}
-     (table-block-parts node)
-
-     grid
-     (table/parse-csv csv)
-
-     ;; Leave room for the code chip's own 2-column inset on each side so a
-     ;; stretched grid line is never clipped at the right border.
-     grid-w
-     (max 12 (- (long content-w) 4))
-
-     shown
-     (vec (take (inc (long table-preview-rows)) grid))
-
-     hidden
-     (long (max 0 (- (count grid) (count shown))))
-
-     widths
-     (table/csv-stretch-widths (table/csv-widths shown grid-w) grid-w)
-
-     lines
-     (-> [summary]
-         (into (table/csv-grid-lines shown grid-w {:widths widths}))
-         (cond->
-           (pos? hidden)
-           (conj (str "… "
-                      hidden
-                      " more row"
-                      (when (not= 1 hidden) "s")
-                      " — click the table to page, sort and select"))))
-
-     tbl
-     {:name name :csv csv :cols cols :rows rows :title (or (not-empty name) summary)}]
-
-    (mapv #(assoc-in % [:meta :table] tbl)
-          (tag-table-grid-lines
-            (layout/ast->entries [:ast {} [:code {} (str/join "\n" lines)]] content-w {})))))
-
-(defn- doc-block-parts
-  "Parse a `vis-doc` node body — the header lines `vis_attach` writes for a PDF or
-   an HTML page — into `{:summary :path :mime :name :size-label}`. Missing fields
-   come back nil."
-  [node]
-  (let
-    [lines
-     (str/split (str (nth node 2 "")) #"\n" -1)
-
-     [summary path mime name size-label]
-     lines]
-
-    {:summary (str/trim (str summary))
-     :path (str/trim (str path))
-     :mime (not-empty (str/trim (str mime)))
-     :name (not-empty (str/trim (str name)))
-     :size-label (not-empty (str/trim (str size-label)))}))
-
-(defn- doc-disclosure-entries
-  "Render one `vis-doc` block as a single card: the `[Document: …]` headline and
-   one hint line.
-
-   A PDF is pages and an HTML page is markup — neither has pixels a terminal
-   could paint, and neither is ever handed to the model as an image. So the card
-   is deliberately just a HANDLE: every painted row carries the document in
-   `:meta :doc`, the paint loop turns each into a click region, and clicking it
-   opens the host file in the system viewer (the companion renders the same
-   artifact inline, inside a sandboxed frame)."
-  [node content-w _opts]
-  (let
-    [{:keys [summary path mime name size-label]}
-     (doc-block-parts node)
-
-     lines
-     [(if (str/blank? summary) "[Document]" summary) "↗ click to open in the system viewer"]
-
-     doc
-     {:path path :mime mime :name name :size-label size-label :title (or name summary)}]
-
-    (mapv #(assoc-in % [:meta :doc] doc)
-          (layout/ast->entries [:ast {} [:code {} (str/join "\n" lines)]] content-w {}))))
-
-(defn- paste-aware-ast->entries
-  "`layout/ast->entries`, but each top-level `vis-paste` code block becomes
-   a collapsible paste disclosure instead of an inline code chip. Falls
-   back to the plain walker (zero overhead) when the IR carries no paste."
-  [answer content-w opts]
-  (let [blocks (vec (drop 2 answer))]
-    (if (not-any? disclosure-code-block? blocks)
-      (vec (layout/ast->entries answer content-w opts))
-      (->> (partition-by disclosure-code-block? blocks)
-           (mapcat (fn [run]
-                     (if (disclosure-code-block? (first run))
-                       (mapcat (fn [node]
-                                 (cond (image-code-block? node)
-                                       (image-disclosure-entries node content-w opts)
-                                       (table-code-block? node)
-                                       (table-disclosure-entries node content-w opts)
-                                       (doc-code-block? node)
-                                       (doc-disclosure-entries node content-w opts)
-                                       :else (paste-disclosure-entries node content-w opts)))
-                               run)
-                       (layout/ast->entries (into [:ast {}] run) content-w opts))))
-           vec))))
 
 (defn format-answer-markdown-data*
   [answer bubble-w opts]
