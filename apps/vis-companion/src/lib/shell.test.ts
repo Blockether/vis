@@ -79,11 +79,18 @@ describe('shell screen', () => {
 // session used to unmount the cached fleet, replay its entrance animation, and
 // visibly reflow every machine's sessions instead of restoring the previous frame.
 describe('retained session list', () => {
-  it('keeps the sessions screen mounted and hides it behind an open session', () => {
-    expect(appSource).toContain('shellView === "sessions" || shellView === "session"');
-    expect(appSource).toContain('className={shellView === "session" ? "hidden" : "h-full"}');
-    expect(appSource).toContain('<SessionScreen');
-    expect(appSource).toContain('<SessionsScreen');
+  it('keeps the sessions screen mounted while visiting Machines and hides it', () => {
+    expect(appSource).toContain('const sessionsMounted = conns.length > 0 && !!active;');
+    expect(appSource).toContain('const sessionsVisible = shellView === "sessions";');
+    expect(appSource).toContain('className={sessionsVisible ? "h-full" : "hidden"}');
+    expect(appSource).toContain('sessionsMounted && (');
+
+    const main = appSource.indexOf('<main');
+    const list = appSource.indexOf('{sessionsMounted && (');
+    const connect = appSource.indexOf('{shellView === "connect" && (');
+    expect(main).toBeGreaterThanOrEqual(0);
+    expect(list).toBeGreaterThan(main);
+    expect(connect).toBeGreaterThan(list);
   });
 });
 

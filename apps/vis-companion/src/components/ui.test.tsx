@@ -229,6 +229,11 @@ describe('NewSessionButton', () => {
     expect(html()).not.toContain('active:scale');
   });
 
+  it('is compact only for a mouse, while touch keeps the hit box', () => {
+    expect(html()).toContain('mouse:min-h-7');
+    expect(html()).toContain('mouse:text-meta');
+  });
+
   it('is refused while the machine is busy or not answering', () => {
     expect(html({ disabled: true })).toContain('disabled=""');
   });

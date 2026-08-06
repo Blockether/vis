@@ -898,6 +898,11 @@ export function App() {
     tab,
   });
   const isChromeVisible = isShellChromeVisible(shellView);
+  // Keep the fleet list alive while Machines is open, not only while a session is open.
+  // Changing tabs should change visibility, never the list's component identity: its cached
+  // rows, scope, scroll position, and expanded projects are already the user's frame.
+  const sessionsMounted = conns.length > 0 && !!active;
+  const sessionsVisible = shellView === "sessions";
 
   return (
     <Shell>
@@ -913,7 +918,18 @@ export function App() {
       <main
         className={`min-h-0 flex-1 overflow-x-hidden overscroll-contain ${shellView === "session" ? "overflow-hidden" : "overflow-y-auto"}`}
       >
-        {shellView === "connect" ? (
+        {sessionsMounted && (
+          <div className={sessionsVisible ? "h-full" : "hidden"}>
+            <SessionsScreen
+              conns={conns}
+              subscriptions={subscriptions}
+              onUnreachable={handleUnreachable}
+              onOpen={openGatewaySession}
+              onMachineSettings={openSettings}
+            />
+          </div>
+        )}
+        {shellView === "connect" && (
           <ConnectScreen
             conns={conns}
             active={active}
@@ -923,7 +939,8 @@ export function App() {
             offlineError={blocked ? offline : null}
             onRetry={() => setOffline(null)}
           />
-        ) : shellView === "incompatible" && sessionConn && compat ? (
+        )}
+        {shellView === "incompatible" && sessionConn && compat && (
           <IncompatibleScreen
             compat={compat}
             conn={sessionConn}
@@ -934,36 +951,21 @@ export function App() {
               setTab("connect");
             }}
           />
-        ) : shellView === "sessions" || shellView === "session" ? (
-          <>
-            {/* Keep the fleet mounted behind a session. Its cached rows, scope, scroll
-                position, and expanded projects are the previous screen, not a loading
-                state to recreate when the user comes back. */}
-            <div className={shellView === "session" ? "hidden" : "h-full"}>
-              <SessionsScreen
-                conns={conns}
-                subscriptions={subscriptions}
-                onUnreachable={handleUnreachable}
-                onOpen={openGatewaySession}
-                onMachineSettings={openSettings}
-              />
-            </div>
-            {openTarget && client && subscriptions && (
-              <SessionScreen
-                key={`${openTarget.conn.url}:${openTarget.sid}`}
-                client={client}
-                subscriptions={subscriptions}
-                sid={openTarget.sid}
-                fresh={openTarget.fresh}
-                onBack={leaveSession}
-                onOpenSession={(sid, fresh) =>
-                  void openGatewaySession(openTarget.conn, sid, fresh)
-                }
-                onManageProviders={() => openSettings(openTarget.conn)}
-              />
-            )}
-          </>
-        ) : null}
+        )}
+        {shellView === "session" && openTarget && client && subscriptions && (
+          <SessionScreen
+            key={`${openTarget.conn.url}:${openTarget.sid}`}
+            client={client}
+            subscriptions={subscriptions}
+            sid={openTarget.sid}
+            fresh={openTarget.fresh}
+            onBack={leaveSession}
+            onOpenSession={(sid, fresh) =>
+              void openGatewaySession(openTarget.conn, sid, fresh)
+            }
+            onManageProviders={() => openSettings(openTarget.conn)}
+          />
+        )}
       </main>
 
       {hasConn && isChromeVisible && <TabBar tab={tab} onTab={setTab} />}
