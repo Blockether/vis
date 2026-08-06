@@ -2024,7 +2024,7 @@ const SessionRow = memo(function SessionRow({
   // Turns that finished while this session was closed: the one thing a relative
   // timestamp cannot announce.
   const unread = unreadTurnCount(session);
-  // The left chevron is a real DISCLOSURE, not decoration: it opens this
+  // The right chevron is a real DISCLOSURE, not decoration: it opens this
   // session's usage rollup in place. It stays a sibling of the open-session
   // button, never nested inside it, so "tell me more" cannot navigate away.
   const [statsOpen, setStatsOpen] = useState(false);
@@ -2079,27 +2079,6 @@ const SessionRow = memo(function SessionRow({
         ]}
       >
       <div className="flex items-stretch">
-        <button
-          type="button"
-          aria-expanded={statsOpen}
-          aria-label={`${statsOpen ? 'Hide' : 'Show'} details for ${title}`}
-          onClick={toggleStats}
-          className={`flex w-8 shrink-0 items-start justify-center pt-2.5 font-mono text-body text-accent-ink transition-[background-color,opacity] duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:w-9 sm:pt-2 ${
-            statsOpen ? 'bg-hover opacity-100' : 'opacity-40 hover:opacity-100'
-          }`}
-        >
-          {/* One glyph that TURNS, not two glyphs that swap: the quarter turn is
-              the same gesture as the panel below it, and a swap has no motion to
-              read at all. */}
-          <span
-            aria-hidden="true"
-            className={`inline-block transition-[rotate] duration-200 ease-[cubic-bezier(0.22,0.61,0.36,1)] motion-reduce:transition-none ${
-              statsOpen ? 'rotate-90' : 'rotate-0'
-            }`}
-          >
-            {'\u203a'}
-          </span>
-        </button>
         <button
           type="button"
           className="group flex min-h-14 min-w-0 flex-1 items-start py-2.5 pl-2 pr-3 text-left transition-colors duration-150 hover:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:min-h-12 mouse:py-2 sm:pr-4"
@@ -2159,6 +2138,17 @@ const SessionRow = memo(function SessionRow({
             <span className="ml-auto shrink-0 pl-2" title={formatExact(timestamp)}>{timeLabel(timestamp)}</span>
           </span>
         </span>
+        </button>
+        <button
+          type="button"
+          aria-expanded={statsOpen}
+          aria-label={`${statsOpen ? 'Hide' : 'Show'} details for ${title}`}
+          onClick={toggleStats}
+          className={`flex w-8 shrink-0 items-start justify-center pt-2.5 transition-[background-color,opacity] duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:w-9 sm:pt-2 ${
+            statsOpen ? 'bg-hover opacity-100' : 'opacity-40 hover:opacity-100'
+          }`}
+        >
+          <ChevronIcon open={statsOpen} className="size-3.5 text-dialog-hint" />
         </button>
       </div>
       </SwipeActions>
