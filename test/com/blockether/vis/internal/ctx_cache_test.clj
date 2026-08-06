@@ -19,6 +19,7 @@
 
    These tests pin the mechanism the fix relies on."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.ctx-engine :as ctx-engine]
             [com.blockether.vis.internal.ctx-renderer :as cr]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
@@ -140,6 +141,22 @@
                                              {"session_resources" {"repls" {"clojure"
                                                                             {"." {"id" "old"}}}}})
                         "session_resources")))))
+  ;; Regression, issue #gateway-restart-resources: live resources used to be
+  ;; serialized into the resumed context even though their gateway processes die.
+  (it "strips live resources from the context snapshot"
+      (let
+        [ctx
+         {"session_id" "s1"
+          "session_resources" {"repls" {"clojure" {"." {"id" "live"}}}}
+          "engine_warnings" []
+          "session_workspace" {"root" "/repo"}}
+
+         clean
+         (ctx-engine/strip-ephemeral ctx)]
+
+        (expect (not (contains? clean "session_resources")))
+        (expect (not (contains? clean "engine_warnings")))
+        (expect (= {"root" "/repo"} (get clean "session_workspace")))))
   (it "renders turn and utilization explicitly for iteration 1"
       (let
         [boundary (cr/render-turn-boundary {:ctx (assoc base-ctx

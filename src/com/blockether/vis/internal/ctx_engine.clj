@@ -252,15 +252,16 @@
     "engine_warnings" []}))
 
 (defn strip-ephemeral
-  "Remove every `\"engine_*\"` key from a ctx. Call before Nippy-snapshotting
-   to persistence so transient mutator state (warnings, pending satisfy
-   requests) does not leak into the durable record."
+  "Remove transient context keys before Nippy-snapshotting. Engine bookkeeping
+   and live gateway resources must never become durable session state; the next
+   render rebuilds resources from the in-memory registry."
   [ctx]
   (when ctx
     (into {}
           (remove (fn [[k _]]
-                    (and (string? k) (str/starts-with? k "engine_")))
-            ctx))))
+                    (or (= k "session_resources")
+                        (and (string? k) (str/starts-with? k "engine_")))))
+          ctx)))
 ;; =============================================================================
 ;; Iter-scope parsing + comparator
 ;; =============================================================================

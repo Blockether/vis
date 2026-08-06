@@ -1,43 +1,8 @@
 (ns com.blockether.vis.internal.resources
-  "Canonical registry of VIS-MANAGED STATEFUL RESOURCES — the one interface every
-   long-lived thing vis spawns (an nREPL, a daemon, a background shell, a file
-   watch, a capture) registers under, so a single definition drives THREE spouts:
-
-     1. the agent     — `:session/resources` in ctx + `resource_stop`
-     2. the footer/TUI — a live count + a dialog that stops by id
-     3. the engine     — teardown on shutdown
-
-   SESSION-SCOPED. The registry is partitioned by `session-id`: a resource one
-   session registers is INVISIBLE to every other session, and `id`s only need to
-   be unique WITHIN a session (the `(session, id)` pair is the global key). Every
-   public verb takes the owning `session` as its first arg; the per-session
-   sandbox tools + ctx are closed over that id, so the agent in session A can
-   neither see nor stop session B's resources.
-
-   B-DISPATCH model. A resource is split into:
-
-     - DATA (serializable, STRING-KEYED): id, kind, label, status, detail,
-       pid, owner, session, can_stop, created_at. This is
-       what the footer renders and what persists to `~/.vis/resources.edn` so a
-       resource survives a vis restart (display + pid re-attach).
-     - LIFECYCLE THUNKS (live, in-memory only): `:stop-fn :alive-fn
-       :logs-fn :health-fn`. Never serialized. Across a restart the OWNER
-       re-registers them (e.g. the Clojure pack re-attaches its nREPLs by pid on
-       init) — exactly the pattern `repl-manager` already uses, lifted here so
-       EVERY kind gets it. `:health-fn` answers \"alive, but is it WORKING?\"
-       (:up :starting :failed :down …) and is probed — parallel, hard timeout —
-       on every `list-resources`, flipping the stored `status` to reality.
-
-   `:kind` is OPEN-ENDED — a bare keyword, no closed enum. The registry never
-   switches on it; only owners do.
-
-   Model ctx stays PURE DATA and groups the flat registry through `model-view`:
-   REPLs live at `session[\"resources\"][\"repls\"][language][cwd]`; `cwd` is
-   their model-facing identity. Ctx leaves are PROJECTED (`repl-ctx-keys` /
-   `other-ctx-keys`) to what changes a decision — `can_stop` included, so ctx never
-   stops advertising what the agent still has to tear down — never a callable, never the
-   pack's full detail. Killing goes through `stop!` (by session + id) — the
-   single path the agent tool AND the footer both call. `id` IS the binding."
+  "Canonical in-memory registry of gateway-managed stateful resources. Every
+   long-lived thing vis spawns registers here so the agent, footer, and shutdown
+   all share one live view. Resources are deliberately not persisted: their
+   processes belong to the gateway and die when the gateway dies."
   (:require [clojure.java.io :as io]
             [clojure.string :as str])
   (:import (java.lang ProcessHandle)))
@@ -47,49 +12,10 @@
 ;; :alive-fn} } }. defonce so a `(require :reload)` during dev never drops live
 ;; resources.
 ;; ---------------------------------------------------------------------------
+
 (defonce ^:private registry (atom {}))
 
-(defn- state-dir
-  "`~/.vis`, resolved per call: a top-level `def` would freeze the native-image
-   BUILDER's home into the binary."
-  ^java.io.File []
-  (io/file (System/getProperty "user.home") ".vis"))
-
-(defn- registry-file ^java.io.File [] (io/file (state-dir) "resources.edn"))
-
-(defonce ^:private registry-lock (Object.))
-
 (defn- skey [session] (str session))
-
-;; ---------------------------------------------------------------------------
-;; Persistence — the DATA part only (thunks can't serialize), partitioned by
-;; session. Survives restart for display + pid re-attach; owners re-register
-;; thunks on init.
-;; ---------------------------------------------------------------------------
-
-(defn- write-persisted!
-  [session->id->data]
-  (locking registry-lock
-    (try (.mkdirs (state-dir))
-         (spit (registry-file) (pr-str (or session->id->data {})))
-         (catch Throwable _ nil))))
-
-(defn- persist-snapshot!
-  "Persist the DATA of every registered resource, partitioned by session."
-  []
-  ;; Take the snapshot under the same monitor that serializes writes. Registry
-  ;; mutation itself stays lock-free, but every queued writer now reads the latest
-  ;; atom value only after older writes finish, so a delayed stale snapshot cannot
-  ;; overwrite a newer registration on disk.
-  (locking registry-lock
-    (write-persisted! (into {}
-                            (map (fn [[sid id->rec]]
-                                   [sid
-                                    (into {}
-                                          (map (fn [[id r]]
-                                                 [id (:data r)]))
-                                          id->rec)]))
-                            @registry))))
 
 ;; ---------------------------------------------------------------------------
 ;; Liveness — generic pid check; owners may supply a richer `:alive-fn`.
@@ -252,7 +178,6 @@
 
          health-fn
          (assoc :health-fn health-fn)))
-     (persist-snapshot!)
      data)))
 
 (defn update!
@@ -277,7 +202,6 @@
       (let [normalized (normalize-patch patch)]
         (when-let
           [updated (replace-record-if-current! sid id expected #(update % :data merge normalized))]
-          (persist-snapshot!)
           (:data updated))))))
 
 (defn unregister!
@@ -298,7 +222,6 @@
      removed?
      (and expected (remove-record-if-current! sid id expected))]
 
-    (when removed? (persist-snapshot!))
     (boolean removed?)))
 
 (defn prune!
@@ -326,7 +249,6 @@
                    (when (remove-record-if-current! sid id record) id)))
            dead)]
 
-    (when (seq removed) (persist-snapshot!))
     removed))
 
 ;; Hard per-probe deadline for a `:health-fn`. One wedged health thunk (a hung
@@ -339,7 +261,7 @@
    stored `status` where it changed. A replacement installed while an old probe
    is blocked is never patched. A `:health-fn` returns a keyword status (:up
    :starting :failed :down …); nil / a throw / a timeout means UNKNOWN and leaves
-   the stored status alone. Best-effort; persists once when anything flipped."
+   the stored status alone. Best-effort."
   [session]
   (let
     [sid
@@ -363,7 +285,7 @@
               (and (not= status (get-in record [:data "status"]))
                    (replace-record-if-current! sid id record #(assoc-in % [:data "status"] status)))
               (vreset! changed? true))))))
-    (when @changed? (persist-snapshot!))))
+    (when @changed? nil)))
 
 (defn list-resources
   "Vector of live resource DATA maps for `session`, dead ones pruned and every
@@ -542,22 +464,16 @@
        :message "Resource has no stop handle (owner must re-register after a restart)."}
 
       :claimed
-      (do
-        ;; Persist the claim before invoking arbitrary user lifecycle code. The
-        ;; callback can block, and a concurrent replacement must become visible
-        ;; without waiting for it.
-        (persist-snapshot!)
-        (let
-          [res (try {:ok (do ((:stop-fn record)) true)}
-                    (catch Throwable t {:error (ex-message t)}))]
-          (if-let [message (:error res)]
-            (do
-              ;; A thrown stop is not proof that the underlying resource died.
-              ;; Restore its exact lifecycle handles for retry, but never overwrite
-              ;; newer state the callback or another thread installed meanwhile.
-              (when (replace-record-if-current! sid id nil (constantly record)) (persist-snapshot!))
-              {:result :error :id id :message message})
-            {:result :stopped :id id}))))))
+      (let
+        [res (try {:ok (do ((:stop-fn record)) true)} (catch Throwable t {:error (ex-message t)}))]
+        (if-let [message (:error res)]
+          (do
+            ;; A thrown stop is not proof that the underlying resource died.
+            ;; Restore its exact lifecycle handles for retry, but never overwrite
+            ;; newer state the callback or another thread installed meanwhile.
+            (when (replace-record-if-current! sid id nil (constantly record)) nil)
+            {:result :error :id id :message message})
+          {:result :stopped :id id})))))
 
 (defn stop-all!
   "Teardown spout for one `session` (engine end-of-session): stop every stoppable
@@ -650,13 +566,11 @@
    teardown are chased too. Best-effort; returns `{session-id [stop! results]}`.
 
    Once teardown has completed, the process is going away and no resource can be
-   retried. Clear the registry and its persisted snapshot even when a resource
-   was not stoppable or its stop callback failed; retaining either would expose
-   dead resources to the next gateway session."
+   retried. Clear the in-memory registry even when a resource was not stoppable
+   or its stop callback failed; the process is going away."
   []
   (let [result (teardown-sessions! (constantly true))]
     (reset! registry {})
-    (persist-snapshot!)
     result))
 
 ;; ---------------------------------------------------------------------------
