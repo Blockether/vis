@@ -135,6 +135,7 @@ describe('MachineBanner', () => {
 
     expect(html).toContain('<header');
     expect(html).toContain('border-dialog-edge');
+    expect(html).toContain('border-y');
     expect(html).not.toContain('border-edge-strong');
     expect(html).not.toContain('mr-2');
     expect(html).not.toContain('sm:mr-0');
