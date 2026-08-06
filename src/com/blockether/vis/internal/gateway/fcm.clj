@@ -6,19 +6,17 @@
    Google service-account JSON — from the macOS keychain (service `vis-fcm`,
    account `service_account`), from the environment, or from a file under
    `~/.vis/fcm/`. Key material is never returned, logged or sent over the wire."
-  (:require [clojure.java.io :as io]
+  (:require [babashka.http-client :as http]
+            [clojure.java.io :as io]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [taoensso.telemere :as tel])
   (:import [java.io File]
-           [java.net URI URLEncoder]
-           [java.net.http HttpClient HttpClient$Version HttpRequest HttpRequest$BodyPublishers
-            HttpResponse HttpResponse$BodyHandlers]
+           [java.net URLEncoder]
            [java.nio.charset StandardCharsets]
            [java.security KeyFactory Signature]
            [java.security.spec PKCS8EncodedKeySpec]
-           [java.time Duration]
            [java.util Base64]))
 
 (def ^:private TOKEN_URI "https://oauth2.googleapis.com/token")
@@ -153,8 +151,8 @@
 (defn- sign-jwt
   [sa]
   (let
-    [now
-     (quot (System/currentTimeMillis) 1000)
+    [^long now
+     (long (quot (System/currentTimeMillis) 1000))
 
      header
      (b64url (utf8 (wire/json-str {:alg "RS256" :typ "JWT"})))
@@ -164,7 +162,7 @@
                                    :scope SCOPE
                                    :aud (or (get sa "token_uri") TOKEN_URI)
                                    :iat now
-                                   :exp (+ now JWT_TTL_SECONDS)})))
+                                   :exp (+ now (long JWT_TTL_SECONDS))})))
 
      signing-input
      (str header "." claims)
@@ -176,11 +174,7 @@
 
     (str signing-input "." (b64url (.sign sig)))))
 
-(defonce ^:private http-client
-  (delay (-> (HttpClient/newBuilder)
-             (.version HttpClient$Version/HTTP_2)
-             (.connectTimeout (Duration/ofSeconds 10))
-             (.build))))
+(defonce ^:private http-client (delay (http/client {:connect-timeout 10000 :version :http2})))
 
 (defonce ^:private token-cache
   ;; {:token "…" :expires-at ms :client-email "…"}
@@ -200,19 +194,20 @@
      (form-encode {"grant_type" "urn:ietf:params:oauth:grant-type:jwt-bearer"
                    "assertion" (sign-jwt sa)})
 
-     ^HttpResponse resp
-     (.send ^HttpClient @http-client
-            (-> (HttpRequest/newBuilder (URI/create (or (get sa "token_uri") TOKEN_URI)))
-                (.header "content-type" "application/x-www-form-urlencoded")
-                (.timeout (Duration/ofSeconds 15))
-                (.POST (HttpRequest$BodyPublishers/ofString body))
-                (.build))
-            (HttpResponse$BodyHandlers/ofString))
+     resp
+     (http/request {:uri (or (get sa "token_uri") TOKEN_URI)
+                    :method :post
+                    :client @http-client
+                    :headers {"content-type" "application/x-www-form-urlencoded"}
+                    :body body
+                    :timeout 15000
+                    :throw false
+                    :as :string})
 
      parsed
-     (wire/parse-json (.body resp))]
+     (wire/parse-json (:body resp))]
 
-    (when (= 200 (.statusCode resp)) (get parsed "access_token"))))
+    (when (= 200 (:status resp)) (get parsed "access_token"))))
 
 (defn- access-token
   "Cached OAuth access token; Google's are valid an hour, refreshed at 50 min."
@@ -250,42 +245,39 @@
    str}` — status 0 for a transport failure, so this never throws. A `reason` of
    `UNREGISTERED` means the caller should drop the token."
   [token notification]
-  (try
-    (let
-      [sa
-       (service-account)
+  (try (let
+         [sa
+          (service-account)
 
-       cfg
-       (config)]
+          cfg
+          (config)]
 
-      (if-not (:is-configured cfg)
-        {:status 0 :reason "not-configured"}
-        (if-let [at (access-token sa)]
-          (let
-            [^HttpResponse resp (.send ^HttpClient @http-client
-                                       (-> (HttpRequest/newBuilder
-                                             (URI/create (str
-                                                           "https://fcm.googleapis.com/v1/projects/"
-                                                           (:project-id cfg)
-                                                           "/messages:send")))
-                                           (.header "authorization" (str "Bearer " at))
-                                           (.header "content-type" "application/json")
-                                           (.timeout (Duration/ofSeconds 15))
-                                           (.POST (HttpRequest$BodyPublishers/ofString
-                                                    (wire/json-str (message token notification))))
-                                           (.build))
-                                       (HttpResponse$BodyHandlers/ofString))
-             status (.statusCode resp)
-             parsed (wire/parse-json (.body resp))
-             reason (or (get-in parsed ["error" "details" 0 "errorCode"])
-                        (get-in parsed ["error" "status"])
-                        "")]
+         (if-not (:is-configured cfg)
+           {:status 0 :reason "not-configured"}
+           (if-let [at (access-token sa)]
+             (let
+               [resp (http/request {:uri (str "https://fcm.googleapis.com/v1/projects/"
+                                              (:project-id cfg)
+                                              "/messages:send")
+                                    :method :post
+                                    :client @http-client
+                                    :headers {"authorization" (str "Bearer " at)
+                                              "content-type" "application/json"}
+                                    :body (wire/json-str (message token notification))
+                                    :timeout 15000
+                                    :throw false
+                                    :as :string})
+                status (:status resp)
+                parsed (wire/parse-json (:body resp))
+                reason (or (get-in parsed ["error" "details" 0 "errorCode"])
+                           (get-in parsed ["error" "status"])
+                           "")]
 
-            (when (not= 200 status)
-              (tel/log! {:level :warn :id ::fcm-failed :data {:status status :reason reason}}))
-            {:status status :reason reason})
-          {:status 0 :reason "oauth-failed"})))
-    (catch Throwable t {:status 0 :reason (or (ex-message t) "transport-error")})))
+               (when (not= 200 status)
+                 (tel/log! {:level :warn :id ::fcm-failed :data {:status status :reason reason}}))
+               {:status status :reason reason})
+             {:status 0 :reason "oauth-failed"})))
+       (catch Throwable t {:status 0 :reason (or (ex-message t) "transport-error")})))
 
 (defn dead-token?
   "True when FCM's verdict means the registration is gone for good."

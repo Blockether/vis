@@ -269,10 +269,10 @@
     "  Do not auto-fold an immediate related follow-up or unresolved verification. Fold only settled steps.\n\n"
     "## 7. Style and finish\n"
     "- Lead with the answer. Be terse; depth only when earned.\n"
-    "- Finish clean: stop every session resource you started — REPLs (`repl` op \"stop\"),\n"
-    "  background shells (`shell` op \"stop\") — BEFORE your final answer: leave\n"
-    "  `session[\"resources\"]` with nothing of yours running; a live `can_stop` entry\n"
-    "  means NOT done. External/user-owned ones: detach them.\n"
+    "- Finish clean: stop managed REPLs you started. Stop a background shell before final answer only\n"
+    "  when it was temporary implementation or test machinery.\n"
+    "- A healthy service the user asked you to run is persistent user infrastructure: leave it running\n"
+    "  across turns and final answers unless asked to stop, unhealthy, or being replaced. External/user-owned resources: detach.\n"
     "- Confirm destructive actions.\n"))
 
 (defn- config-system-prompt

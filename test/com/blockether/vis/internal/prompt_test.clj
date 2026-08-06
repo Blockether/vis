@@ -120,10 +120,16 @@
                    "fresh reasoning" "new task + only the relevant checkpoint"
                    "Do not auto-fold an immediate related follow-up"]]
         (expect (str/includes? text required)))
+      ;; Regression, user report: blanket resource cleanup stopped a healthy dev server
+      ;; that the user had explicitly asked the agent to open and keep available.
       (doseq
-        [required ["Finish clean: stop every session resource you started"
+        [required ["Finish clean: stop managed REPLs you started"
+                   "temporary implementation or test machinery"
+                   "healthy service the user asked you to run is persistent user infrastructure"
+                   "leave it running" "across turns and final answers"
                    "Confirm destructive actions."]]
         (expect (str/includes? text required)))
+      (expect (not (str/includes? text "stop every session resource you started")))
       ;; Python's native-result retrieval contract belongs in the execution-surface
       ;; guidance because it controls context shaping across every native tool.
       (expect (= 1 (count (re-seq #"ntr\[key\]" text))))

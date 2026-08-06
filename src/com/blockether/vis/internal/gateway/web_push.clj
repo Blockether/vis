@@ -6,25 +6,23 @@
    here, and this gateway encrypts and sends notifications directly to the
    browser's push service. There is no publisher URL or shared web relay.
 
-   Java interop is kept at the cryptographic, file, and HTTP boundaries. The
-   rest of the namespace passes ordinary Clojure maps and byte arrays between
-   small helpers so the protocol steps remain visible and testable."
-  (:require [clojure.java.io :as io]
+   Java interop is kept at the cryptographic and file boundaries. The rest of
+   the namespace passes ordinary Clojure maps and byte arrays between small
+   helpers so the protocol steps remain visible and testable."
+  (:require [babashka.http-client :as http]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.math BigInteger]
            [java.net URI]
-           [java.net.http HttpClient HttpClient$Version HttpRequest HttpRequest$BodyPublishers
-            HttpRequest$Builder HttpResponse HttpResponse$BodyHandlers]
            [java.nio ByteBuffer]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files]
            [java.security KeyFactory KeyPair KeyPairGenerator PrivateKey SecureRandom Signature]
            [java.security.interfaces ECPublicKey]
            [java.security.spec ECGenParameterSpec X509EncodedKeySpec PKCS8EncodedKeySpec]
-           [java.time Duration]
            [java.util Arrays Base64]
            [javax.crypto Cipher KeyAgreement Mac]
            [javax.crypto.spec GCMParameterSpec SecretKeySpec]))
@@ -536,40 +534,13 @@
   (let [uri (URI/create endpoint)]
     (str (.getScheme uri) "://" (.getAuthority uri))))
 
-(defn- build-http-client
-  "Build the shared HTTP/2 client used for push-service requests."
-  []
-  (-> (HttpClient/newBuilder)
-      (.version HttpClient$Version/HTTP_2)
-      (.connectTimeout (Duration/ofSeconds 10))
-      (.build)))
+(defonce ^:private http-client (delay (http/client {:connect-timeout 10000 :version :http2})))
 
-(defn- request-builder
-  "Start a JDK HTTP request for one push-service endpoint."
-  ^HttpRequest$Builder [^String endpoint]
-  (HttpRequest/newBuilder (URI/create endpoint)))
 
-(defonce ^:private http-client (delay (build-http-client)))
 
-(defn- header
-  "Add one string-valued header while keeping builder interop in one helper."
-  ^HttpRequest$Builder [^HttpRequest$Builder request name value]
-  (.header request name (str value)))
 
-(defn- request-timeout
-  "Set a request timeout on a JDK HTTP request builder."
-  ^HttpRequest$Builder [^HttpRequest$Builder request ^long seconds]
-  (.timeout request (Duration/ofSeconds seconds)))
 
-(defn- request-body
-  "Set a binary POST body on a JDK HTTP request builder."
-  ^HttpRequest$Builder [^HttpRequest$Builder request ^bytes body]
-  (.POST request (HttpRequest$BodyPublishers/ofByteArray body)))
 
-(defn- build-request
-  "Finish a JDK HTTP request builder at the transport boundary."
-  ^HttpRequest [^HttpRequest$Builder request]
-  (.build request))
 
 (defn- push-request
   "Build the authenticated encrypted request sent to a browser push service."
@@ -581,31 +552,29 @@
      jwt
      (vapid-token cfg (key-pair-private pair) (origin endpoint))]
 
-    (-> (request-builder endpoint)
-        (header "authorization" (str "vapid t=" jwt ", k=" (:application-server-key cfg)))
-        (header "ttl" "86400")
-        (header "content-encoding" "aes128gcm")
-        (header "content-type" "application/octet-stream")
-        (request-timeout 15)
-        (request-body body)
-        build-request)))
+    {:uri endpoint
+     :method :post
+     :client @http-client
+     :headers {"authorization" (str "vapid t=" jwt ", k=" (:application-server-key cfg))
+               "ttl" "86400"
+               "content-encoding" "aes128gcm"
+               "content-type" "application/octet-stream"}
+     :body body
+     :timeout 15000
+     :throw false
+     :as :string}))
 
 (defn- response-result
-  "Convert a JDK response into the gateway's stable push result map."
-  [^HttpResponse response]
-  {:status (.statusCode response) :reason (if (str/blank? (.body response)) "" (.body response))})
+  "Convert an HTTP response into the gateway's stable push result map."
+  [{:keys [status body]}]
+  {:status status :reason (if (str/blank? body) "" body)})
 
-(defn- send-http-request
-  "Send one request through the shared JDK HTTP client."
-  [^HttpRequest request]
-  (let [^HttpClient client @http-client]
-    (.send client request (HttpResponse$BodyHandlers/ofString))))
 
 (defn- post!
   "Send one encrypted request and turn transport failures into status zero."
   [cfg pair subscription ^bytes body]
   (try (-> (push-request cfg pair subscription body)
-           send-http-request
+           http/request
            response-result)
        (catch Throwable t {:status 0 :reason (or (ex-message t) "transport-error")})))
 

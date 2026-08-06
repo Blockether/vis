@@ -28,7 +28,8 @@
 
    The wire surface lives in `gateway.server` (`/v1/devices`); this namespace
    knows nothing about Ring."
-  (:require [clojure.edn :as edn]
+  (:require [babashka.http-client :as http]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [com.blockether.vis.internal.gateway.fcm :as fcm]
             [com.blockether.vis.internal.gateway.web-push :as web-push]
@@ -38,13 +39,9 @@
             [com.blockether.vis.internal.gateway.wire :as wire]
             [taoensso.telemere :as tel])
   (:import [java.io File]
-           [java.net URI]
-           [java.net.http HttpClient HttpClient$Version HttpRequest HttpRequest$BodyPublishers
-            HttpResponse HttpResponse$BodyHandlers]
            [java.nio.charset StandardCharsets]
            [java.security KeyFactory Signature]
            [java.security.spec PKCS8EncodedKeySpec]
-           [java.time Duration]
            [java.util Base64]))
 
 (def ^:private PROD_HOST "https://api.push.apple.com")
@@ -437,11 +434,7 @@
 ;; Sending
 ;; =============================================================================
 
-(defonce ^:private http-client
-  (delay (-> (HttpClient/newBuilder)
-             (.version HttpClient$Version/HTTP_2)
-             (.connectTimeout (Duration/ofSeconds 10))
-             (.build))))
+(defonce ^:private http-client (delay (http/client {:connect-timeout 10000 :version :http2})))
 
 (defn- host-for [environment] (if (= "sandbox" environment) SANDBOX_HOST PROD_HOST))
 
@@ -449,47 +442,38 @@
   "One HTTP/2 POST to APNs. Returns `{:status int :reason str}`; a transport
    failure is reported as status 0 so a caller never sees an exception."
   [cfg environment token ^String payload {:keys [collapse-id]}]
-  (try
-    (let
-      [req
-       (cond-> (HttpRequest/newBuilder (URI/create (str (host-for environment) "/3/device/" token)))
-         :always
-         (.header "authorization" (str "bearer " (provider-token cfg)))
+  (try (let
+         [headers
+          (cond->
+            {"authorization" (str "bearer " (provider-token cfg))
+             "apns-topic" (:topic cfg)
+             "apns-push-type" "alert"
+             "apns-priority" "10"
+             "content-type" "application/json"}
+            collapse-id
+            (assoc "apns-collapse-id"
+              (subs (str collapse-id) 0 (min 64 (count (str collapse-id))))))
 
-         :always
-         (.header "apns-topic" (:topic cfg))
+          resp
+          (http/request {:uri (str (host-for environment) "/3/device/" token)
+                         :method :post
+                         :client @http-client
+                         :headers headers
+                         :body payload
+                         :timeout 15000
+                         :throw false
+                         :as :string})
 
-         :always
-         (.header "apns-push-type" "alert")
+          status
+          (:status resp)
 
-         :always
-         (.header "apns-priority" "10")
+          reason
+          (or (some-> (wire/parse-json (:body resp))
+                      (get "reason"))
+              "")]
 
-         :always
-         (.header "content-type" "application/json")
-
-         collapse-id
-         (.header "apns-collapse-id" (subs (str collapse-id) 0 (min 64 (count (str collapse-id)))))
-
-         :always
-         (.timeout (Duration/ofSeconds 15))
-
-         :always
-         (.POST (HttpRequest$BodyPublishers/ofString payload)))
-
-       ^HttpResponse resp
-       (.send ^HttpClient @http-client (.build req) (HttpResponse$BodyHandlers/ofString))
-
-       status
-       (.statusCode resp)
-
-       reason
-       (or (some-> (wire/parse-json (.body resp))
-                   (get "reason"))
-           "")]
-
-      {:status status :reason reason})
-    (catch Throwable t {:status 0 :reason (or (ex-message t) "transport-error")})))
+         {:status status :reason reason})
+       (catch Throwable t {:status 0 :reason (or (ex-message t) "transport-error")})))
 
 (defn- alert-payload
   ;; APNs spells the `aps` keys in kebab-case (`thread-id`, `interruption-level`)

@@ -22,18 +22,15 @@
    A `conn` is a plain map of closures + state; the extension treats it
    opaquely. Lifecycle: `connect` (which performs the `initialize` handshake) →
    `list-tools` / `call-tool` → `close`."
-  (:require [charred.api :as json]
+  (:require [babashka.http-client :as http]
+            [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
             [com.blockether.vis.internal.process-jail :as process-jail]
             [taoensso.telemere :as tel])
-  (:import
-    (java.io BufferedReader)
-    (java.net URI)
-    (java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse$BodyHandlers)
-    (java.time Duration)
-    (java.util.concurrent ConcurrentHashMap)))
+  (:import (java.io BufferedReader)
+           (java.util.concurrent ConcurrentHashMap)))
 
 (def ^:private protocol-version "2025-11-25")
 
@@ -270,11 +267,18 @@
        vec))
 
 (defn- apply-headers
-  ^java.net.http.HttpRequest$Builder [^java.net.http.HttpRequest$Builder b headers]
-  (reduce-kv (fn [^java.net.http.HttpRequest$Builder bb k v]
-               (.header bb (clj-name k) (str v)))
-             b
+  [headers]
+  (reduce-kv (fn [result k v]
+               (assoc result (clj-name k) (str v)))
+             {}
              (or headers {})))
+
+(defn- response-header
+  [response header-name]
+  (let [wanted (str/lower-case header-name)]
+    (some (fn [[k v]]
+            (when (= wanted (str/lower-case (clj-name k))) (if (sequential? v) (first v) v)))
+          (:headers response))))
 
 (defn- http-listen-loop!
   "Best-effort SSE listen channel: GET the MCP endpoint with `Accept:
@@ -285,37 +289,33 @@
   (letfn
     [(build-request []
        (let
-         [b
-          (-> (HttpRequest/newBuilder (URI/create url))
-              (.header "Accept" "text/event-stream")
-              (.header "MCP-Protocol-Version" @protocol-version-atom)
-              (.timeout (Duration/ofHours 1))
-              (.GET))
+         [request-headers
+          (cond->
+            (merge (apply-headers headers)
+                   {"Accept" "text/event-stream" "MCP-Protocol-Version" @protocol-version-atom})
+            @session-atom
+            (assoc "Mcp-Session-Id" @session-atom))
 
-          b
-          (apply-headers b headers)
+          request-headers
+          (if-let [token (when bearer-fn (try (bearer-fn) (catch Throwable _ nil)))]
+            (assoc request-headers "Authorization" (str "Bearer " token))
+            request-headers)]
 
-          b
-          (if-let [s @session-atom]
-            (.header b "Mcp-Session-Id" s)
-            b)
-
-          b
-          (if-let [t (when bearer-fn (try (bearer-fn) (catch Throwable _ nil)))]
-            (.header b "Authorization" (str "Bearer " t))
-            b)]
-
-         (.build b)))]
+         {:uri url
+          :method :get
+          :client @mcp-http/client
+          :headers request-headers
+          :timeout 3600000
+          :throw false
+          :as :string}))]
     (doto (Thread.
             ^Runnable
             (fn []
               (let [backoff (atom 1000)]
                 (while (not @closed?)
                   (try (let
-                         [resp (.send ^HttpClient @mcp-http/client
-                                      (build-request)
-                                      (HttpResponse$BodyHandlers/ofString))
-                          status (.statusCode resp)]
+                         [resp (http/request (build-request))
+                          ^long status (long (:status resp))]
 
                          (cond (or (= 404 status) (= 405 status))
                                ;; Server doesn't support the listen channel — quit quietly.
@@ -329,7 +329,7 @@
                                    (swap! backoff #(long (min 30000
                                                               (unchecked-multiply 2 (long %))))))
                                :else (do (reset! backoff 1000)
-                                         (doseq [msg (sse-data-objects (.body resp))]
+                                         (doseq [msg (sse-data-objects (:body resp))]
                                            (when (and (map? msg) (get msg "method"))
                                              (try (on-notify msg) (catch Throwable _ nil)))))))
                        (catch Throwable _
@@ -352,11 +352,11 @@
      protocol-version*
      (atom protocol-version)
 
-     www-auth
      ;; The CALLER's atom when it supplied one. A server answering 401 with a
      ;; Bearer challenge is the only proof it wants OAuth at all: `oauth.clj`
      ;; discovers from that live header, and the extension tells "sign in" from
      ;; "it is down" by whether this ever got set.
+     www-auth
      (or www-auth-atom (atom nil))
 
      closed?
@@ -369,51 +369,39 @@
           (when bearer-fn (try (bearer-fn) (catch Throwable _ nil)))
 
           build-req
-          (fn [^String bearer]
-            (let
-              [b
-               (-> (HttpRequest/newBuilder (URI/create url))
-                   (.timeout (Duration/ofMillis (long timeout-ms)))
-                   (.header "Content-Type" "application/json")
-                   (.header "Accept" "application/json, text/event-stream")
-                   (.header "MCP-Protocol-Version" @protocol-version*)
-                   (.POST (HttpRequest$BodyPublishers/ofString body)))
+          (fn [bearer]
+            {:uri url
+             :method :post
+             :client @mcp-http/client
+             :headers (cond->
+                        (merge (apply-headers headers)
+                               {"Content-Type" "application/json"
+                                "Accept" "application/json, text/event-stream"
+                                "MCP-Protocol-Version" @protocol-version*})
+                        @session
+                        (assoc "Mcp-Session-Id" @session)
 
-               b
-               (apply-headers b headers)
-
-               b
-               (if-let [s @session]
-                 (.header b "Mcp-Session-Id" s)
-                 b)
-
-               b
-               (if bearer (.header b "Authorization" (str "Bearer " bearer)) b)]
-
-              (.build b)))
+                        bearer
+                        (assoc "Authorization" (str "Bearer " bearer)))
+             :body body
+             :timeout timeout-ms
+             :throw false
+             :as :string})
 
           send1
-          (fn [^String bearer]
+          (fn [bearer]
             (let
               [resp
-               (.send ^HttpClient @mcp-http/client
-                      (build-req bearer)
-                      (HttpResponse$BodyHandlers/ofString))
+               (http/request (build-req bearer))
 
                status
-               (.statusCode resp)]
+               (:status resp)]
 
-              (when-let
-                [sid (-> (.headers resp)
-                         (.firstValue "mcp-session-id")
-                         (.orElse nil))]
+              (when-let [sid (response-header resp "mcp-session-id")]
                 (reset! session sid))
-              (when-let
-                [wa (-> (.headers resp)
-                        (.firstValue "www-authenticate")
-                        (.orElse nil))]
+              (when-let [wa (response-header resp "www-authenticate")]
                 (reset! www-auth wa))
-              {:status status :body (.body resp) :bearer bearer}))
+              {:status status :body (:body resp) :bearer bearer}))
 
           first-resp
           (send1 tok)]
@@ -468,21 +456,21 @@
        :close-fn (fn []
                    (reset! closed? true)
                    (when-let [sid @session]
-                     (try (let
-                            [b (-> (HttpRequest/newBuilder (URI/create url))
-                                   (.timeout (Duration/ofSeconds 5))
-                                   (.header "Mcp-Session-Id" sid)
-                                   (.header "MCP-Protocol-Version" @protocol-version*)
-                                   (.DELETE))
-                             b (apply-headers b headers)
-                             b (if-let
-                                 [t (when bearer-fn (try (bearer-fn) (catch Throwable _ nil)))]
-                                 (.header b "Authorization" (str "Bearer " t))
-                                 b)]
-
-                            (.send ^HttpClient @mcp-http/client
-                                   (.build b)
-                                   (HttpResponse$BodyHandlers/discarding)))
+                     (try (http/request {:uri url
+                                         :method :delete
+                                         :client @mcp-http/client
+                                         :headers
+                                         (cond->
+                                           (merge (apply-headers headers)
+                                                  {"Mcp-Session-Id" sid
+                                                   "MCP-Protocol-Version" @protocol-version*})
+                                           bearer-fn
+                                           (assoc "Authorization"
+                                             (str "Bearer "
+                                                  (try (bearer-fn) (catch Throwable _ nil)))))
+                                         :timeout 5000
+                                         :throw false
+                                         :as :string})
                           (catch Throwable _ nil)))
                    (reset! session nil))
        :alive-fn (fn []

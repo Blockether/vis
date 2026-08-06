@@ -1,13 +1,14 @@
 (ns com.blockether.vis.ext.foundation-voice.asr
   "Direct Java sherpa-onnx integration for Parakeet TDT ASR."
-  (:require [clojure.java.io :as io]
+  (:require [babashka.http-client :as http]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.paths :as paths])
   (:import [com.k2fsa.sherpa.onnx OfflineModelConfig OfflineRecognizer OfflineRecognizerConfig
             OfflineStream OfflineTransducerModelConfig WaveReader]
            [java.io File FileInputStream FileOutputStream]
-           [java.net URL]
+           [java.net URI]
            [org.apache.commons.compress.archivers.tar TarArchiveInputStream]
            [org.apache.commons.compress.compressors.bzip2 BZip2CompressorInputStream]))
 
@@ -218,6 +219,8 @@
              (recur))))))
    target-dir))
 
+(defonce ^:private download-http-client (delay (http/client {:connect-timeout 20000})))
+
 (defn- download-with-progress!
   "Stream `url` to `path`, calling `(on-progress pct)` (0..99) as bytes land
    when the server reports a content length. nil `on-progress` is fine.
@@ -227,25 +230,37 @@
   [url path on-progress]
   (.mkdirs (.getParentFile (io/file path)))
   (let
-    [^java.net.URLConnection conn
-     (doto (.openConnection (URL. url)) (.setConnectTimeout 20000) (.setReadTimeout 120000))
+    [uri
+     (URI/create url)
 
-     total
-     (.getContentLengthLong conn)]
+     response
+     (if (= "file" (.getScheme uri))
+       (let [file (io/file uri)]
+         {:body (io/input-stream file) :headers {"content-length" (str (.length file))}})
+       (http/get url {:client @download-http-client :as :stream :timeout 120000 :throw true}))
+
+     raw-total
+     (get-in response [:headers "content-length"])
+
+     raw-total
+     (if (sequential? raw-total) (first raw-total) raw-total)
+
+     ^long total
+     (try (Long/parseLong (str raw-total)) (catch Throwable _ -1))]
 
     (with-open
-      [in
-       (.getInputStream conn)
+      [^java.io.InputStream in
+       (:body response)
 
-       out
+       ^FileOutputStream out
        (FileOutputStream. (io/file path))]
 
       (let [buf (byte-array 1048576)]
-        (loop [done 0]
-          (let [n (.read in buf)]
+        (loop [^long done 0]
+          (let [^long n (.read in buf)]
             (when-not (neg? n)
               (.write out buf 0 n)
-              (let [done' (+ (long done) (long n))]
+              (let [^long done' (+ done n)]
                 (when (and on-progress (pos? total))
                   (on-progress (min 99 (long (* 100 (/ (double done') (double total)))))))
                 (recur done'))))))))

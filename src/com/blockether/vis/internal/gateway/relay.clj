@@ -30,16 +30,14 @@
    `~/.vis/relay.edn` `{:url \"https://push.example.com\"}`, replaces the default
    on one machine; the direct `gateway.push` / `gateway.fcm` credentials still
    work exactly as before."
-  (:require [clojure.edn :as edn]
+  (:require [babashka.http-client :as http]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [taoensso.telemere :as tel])
   (:import [java.io File]
-           [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse
-            HttpResponse$BodyHandlers]
-           [java.time Duration]))
+           [java.net URI]))
 
 (defn- vis-home
   ^File []
@@ -141,10 +139,7 @@
   (let [s (str grant)]
     (if (<= (count s) 12) "…" (str (subs s 0 6) "…" (subs s (- (count s) 4))))))
 
-(defonce ^:private http-client
-  (delay (-> (HttpClient/newBuilder)
-             (.connectTimeout (Duration/ofSeconds 10))
-             (.build))))
+(defonce ^:private http-client (delay (http/client {:connect-timeout 10000})))
 
 (defn- payload
   ^String [{:keys [title body data thread-id collapse-id badge]}]
@@ -171,21 +166,22 @@
 (defn- post-once
   [url grant notification]
   (try (let
-         [^HttpResponse resp
-          (.send ^HttpClient @http-client
-                 (-> (HttpRequest/newBuilder (URI/create (str url "/v1/push")))
-                     (.header "authorization" (str "Bearer " grant))
-                     (.header "content-type" "application/json")
-                     (.timeout (Duration/ofSeconds 15))
-                     (.POST (HttpRequest$BodyPublishers/ofString (payload notification)))
-                     (.build))
-                 (HttpResponse$BodyHandlers/ofString))
+         [resp
+          (http/request {:uri (str url "/v1/push")
+                         :method :post
+                         :client @http-client
+                         :headers {"authorization" (str "Bearer " grant)
+                                   "content-type" "application/json"}
+                         :body (payload notification)
+                         :timeout 15000
+                         :throw false
+                         :as :string})
 
           status
-          (.statusCode resp)
+          (:status resp)
 
           parsed
-          (wire/parse-json (.body resp))
+          (wire/parse-json (:body resp))
 
           reason
           (str (or (get parsed "reason") (get-in parsed ["error" "code"]) ""))]

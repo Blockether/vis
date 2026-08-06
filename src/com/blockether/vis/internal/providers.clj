@@ -14,7 +14,8 @@
    (local). The registry's `:provider/*-fn` contract stays the single
    integration point for provider extensions, so a provider extension
    automatically works in every channel."
-  (:require [clojure.string :as str]
+  (:require [babashka.http-client :as http]
+            [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.cancellation :as cancel]
             [com.blockether.vis.internal.config :as config]
@@ -24,9 +25,6 @@
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.registry :as registry])
   (:import [java.net ConnectException URI]
-           [java.net.http HttpClient HttpClient$Version HttpConnectTimeoutException HttpRequest
-            HttpRequest$Builder HttpResponse$BodyHandlers]
-           [java.time Duration]
            [java.util Date]))
 
 ;;; ── Classification ─────────────────────────────────────────────────────────
@@ -267,6 +265,9 @@
                :else nil)
          (catch Throwable e {:is-authenticated false :error (or (ex-message e) (str e))}))))
 
+(defonce ^:private local-probe-http-client
+  (delay (http/client {:connect-timeout 1500 :version :http1.1})))
+
 (defn probe-local-reachable
   "Probe a local OpenAI-compatible provider (Ollama / LM Studio) by
    GETting its `<base-url>/models` endpoint with a short timeout.
@@ -293,46 +294,32 @@
          host
          (url-host base)]
 
-        (try (let
-               [client
-                (-> (HttpClient/newBuilder)
-                    (.connectTimeout (Duration/ofMillis 1500))
-                    ;; Force HTTP/1.1: the default client negotiates h2c
-                    ;; (`Upgrade` on plain http) and LM Studio's server
-                    ;; hangs on that upgrade instead of answering — the
-                    ;; probe then times out against a perfectly live
-                    ;; endpoint and the health gate demotes it every turn.
-                    (.version HttpClient$Version/HTTP_1_1)
-                    (.build))
+        (try
+          (let
+            [resp
+             (http/request {:uri url
+                            :method :get
+                            :client @local-probe-http-client
+                            :timeout 2500
+                            :throw false
+                            :as :string})
 
-                ^HttpRequest$Builder rb
-                (HttpRequest/newBuilder (URI/create url))
+             ^long code
+             (long (:status resp))]
 
-                req
-                (-> rb
-                    (.timeout (Duration/ofMillis 2500))
-                    (.GET)
-                    (.build))
-
-                resp
-                (.send client req (HttpResponse$BodyHandlers/discarding))
-
-                code
-                (.statusCode resp)]
-
-               ;; Any answer below 500 means the server is up — even a
-               ;; 401/404 proves the port is live. 5xx is the server failing.
-               (if (< code 500)
-                 (assoc base* :is-authenticated true)
-                 (assoc base* :error (str label " returned HTTP " code " at " host))))
-             (catch ConnectException _
-               (assoc base* :error (str "Can't reach " label " at " host " — is it running?")))
-             (catch HttpConnectTimeoutException _
-               (assoc base* :error (str label " timed out at " host " — is it running?")))
-             (catch Throwable e
-               (assoc base*
-                 :error
-                 (str "Can't reach " label " at " host " (" (or (ex-message e) (str e)) ")"))))))))
+            ;; Any answer below 500 means the server is up — even a 401/404 proves
+            ;; the port is live. 5xx is the server failing.
+            (if (< code 500)
+              (assoc base* :is-authenticated true)
+              (assoc base* :error (str label " returned HTTP " code " at " host))))
+          (catch ConnectException _
+            (assoc base* :error (str "Can't reach " label " at " host " — is it running?")))
+          (catch Throwable e
+            (if (str/includes? (str/lower-case (or (ex-message e) "")) "timed out")
+              (assoc base* :error (str label " timed out at " host " — is it running?"))
+              (assoc base*
+                :error
+                (str "Can't reach " label " at " host " (" (or (ex-message e) (str e)) ")")))))))))
 
 (declare provider-limits-safe)
 

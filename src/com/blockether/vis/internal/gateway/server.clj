@@ -3785,7 +3785,7 @@
       (when (pos? pending)
         (tel/log! :info ["gateway: draining before stop" pending "turn(s) running"])
         ;; Cancel in-flight turns FIRST. The drain below only waits for them to
-        ;; reach a terminal state; it does NOT keep the JVM's shared HttpClient
+        ;; reach a terminal state; it does NOT keep the provider transport
         ;; alive — that executor is torn down concurrently on shutdown. A turn
         ;; left looping would dispatch its next LLM iteration into the dying
         ;; pool and die with a RejectedExecutionException surfaced to the user

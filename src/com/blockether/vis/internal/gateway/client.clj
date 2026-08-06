@@ -41,9 +41,9 @@
 ;; Freshness debounce: `ensure-gateway!` verifies the daemon with a full HTTP
 ;; GET /healthz probe on EVERY call. The TUI footer/poll loop calls it dozens of
 ;; times a second, so that doubled every gateway request (probe + real call) and
-;; dominated client-side allocation (Clojure reflective interop on the OLD raw
-;; java.net.http response + HTTP futures) on the render JVM. The JSON layer is
-;; charred (reflection-free); interop was the churn. We keep the belt-and-suspenders probe but only re-run it once per
+;; dominated client-side allocation (reflective interop around the old raw
+;; transport response and futures) on the render JVM. The JSON layer is charred
+;; (reflection-free); transport interop was the churn. We keep the belt-and-suspenders probe but only re-run it once per
 ;; `entry-probe-ttl-ms`; within the window a cheap pid-liveness check suffices.
 (def ^:private entry-probe-ttl-ms 4000)
 
@@ -81,7 +81,7 @@
    verb string (\"GET\"/\"POST\"/\"PATCH\"/\"DELETE\"/…); `opts` may carry `:body`
    (serialized to JSON) and `:as` ∈ #{:string :bytes :stream} (default :string).
    `:throw false`, so 4xx/5xx come back as a response map (callers branch on
-   `:status`) exactly like the old `HttpResponse.statusCode`. A :stream request
+   `:status`) directly. A :stream request
    asks for `text/event-stream` with compression disabled so the SSE body stays
    byte-live for the line reader + idle watchdog."
   [{:keys [secret] :as _entry} method path

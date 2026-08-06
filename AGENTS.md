@@ -10,6 +10,7 @@ Read only the section relevant to the change. Keep this file for durable, repo-w
 - Keep components modular and concerns clearly separated.
 - Prefer established, well-maintained libraries when they reduce overall complexity or improve reliability; do not reimplement common functionality without a clear reason.
 - Lean on the dependencies already in the project before writing your own implementation or adding packages. Do not assume a library lacks a capability without checking its documentation and types.
+- **All outbound HTTP in production Clojure uses `babashka.http-client`.** Never use the JDK HTTP client, `URLConnection`, or `HttpURLConnection` directly. Configure timeouts, HTTP versions, streaming, headers, and non-throwing status handling through `babashka.http-client`; keep direct JDK networking only for non-client primitives such as URIs, sockets, and embedded servers.
 - Make architectural decisions for the long term. Do not accept a stopgap that only works for now and is meant to be replaced later.
 - Never introduce Clojure `declare`. Order definitions so every dependency appears before its consumers; refactor dependency cycles instead of forward-declaring Vars.
 
@@ -46,6 +47,12 @@ Read only the section relevant to the change. Keep this file for durable, repo-w
 - For tests-only verification, call `run_tests` directly; use `repl_eval` when interactive inspection, exploration, or stateful evaluation is part of the task.
 - A managed REPL retains Vars. When interactive evaluation is part of the workflow, reload every changed production namespace, then every changed test namespace, before rerunning; there is no restart op — `stop` then `start` a fresh REPL when a clean load is safer.
 - Clean JVM commands from the owning project: `clojure -M:test`, `clojure -M:test --namespace my.ns-test`, or `clojure -M:test --var my.ns-test/my-test`.
+## Companion web dev server
+
+- When a user asks to open the companion web application, start its Vite dev server from `apps/vis-companion` with `npm run dev -- --host 127.0.0.1` and report the URL only after it responds.
+- Reuse an already-running server when it is serving the requested app. A healthy user-requested dev server is persistent user infrastructure, not a disposable test process: do not stop it merely because the interaction is complete; stop it only when the user asks, the process is unhealthy, or it must be replaced.
+- This policy is separate from managed REPL lifecycle cleanup. Never describe an intentional stop as automatic cleanup. If a higher-level runtime policy nevertheless requires stopping an agent-owned server, state that conflict plainly before doing so.
+
 
 ## Companion UI (`apps/vis-companion`)
 

@@ -24,27 +24,24 @@
    bearer token; 1-arg (with the token the server just rejected) forces a
    refresh. It never opens a browser and never waits — with nothing to refresh
    it throws `:mcp/oauth-required`, which callers turn into `sign in`."
-  (:require [charred.api :as json]
+  (:require [babashka.http-client :as http]
+            [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
             [com.blockether.vis.internal.oauth :as oauth]
             [taoensso.telemere :as tel])
-  (:import
-    (com.sun.net.httpserver HttpHandler HttpServer)
-    (java.net InetSocketAddress URI URLDecoder URLEncoder)
-    (java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse$BodyHandlers)
-    (java.security MessageDigest SecureRandom)
-    (java.time Duration)
-    (java.util Base64)))
+  (:import (com.sun.net.httpserver HttpHandler HttpServer)
+           (java.net InetSocketAddress URI URLDecoder URLEncoder)
+           (java.security MessageDigest SecureRandom)
+           (java.util Base64)))
 
 (def ^:private protocol-version-header "MCP-Protocol-Version")
 
 (def ^:private protocol-version "2025-06-18")
 
-;; HTTP client is shared with `client.clj` via `mcp-http/client` — see
-;; `mcp/http.clj` for the perf/threading rationale (one JDK HttpClient, one
-;; selector pool, virtual-thread executor).
+;; The lazy babashka.http-client instance is shared with `client.clj` through
+;; `mcp-http/client`.
 
 (defn- b64url
   ^String [^bytes bs]
@@ -92,54 +89,51 @@
 (defn- http-get-json
   [^String url]
   (let
-    [req
-     (-> (HttpRequest/newBuilder (URI/create url))
-         (.header "Accept" "application/json")
-         (.header protocol-version-header protocol-version)
-         (.timeout (Duration/ofSeconds 15))
-         (.GET)
-         .build)
+    [resp
+     (http/request {:uri url
+                    :method :get
+                    :client @mcp-http/client
+                    :headers {"Accept" "application/json" protocol-version-header protocol-version}
+                    :timeout 15000
+                    :throw false
+                    :as :string})
 
-     resp
-     (.send ^HttpClient @mcp-http/client req (HttpResponse$BodyHandlers/ofString))]
+     ^long status
+     (long (:status resp))]
 
-    (when (< (.statusCode resp) 400) (try (json/read-json (.body resp)) (catch Throwable _ nil)))))
+    (when (< status 400) (try (json/read-json (:body resp)) (catch Throwable _ nil)))))
 
 (defn- http-post-form
   [^String url form]
   (let
-    [req
-     (-> (HttpRequest/newBuilder (URI/create url))
-         (.header "Content-Type" "application/x-www-form-urlencoded")
-         (.header "Accept" "application/json")
-         (.header protocol-version-header protocol-version)
-         (.timeout (Duration/ofSeconds 30))
-         (.POST (HttpRequest$BodyPublishers/ofString (form-encode form)))
-         .build)
-
-     resp
-     (.send ^HttpClient @mcp-http/client req (HttpResponse$BodyHandlers/ofString))]
-
-    {:status (.statusCode resp)
-     :body (try (json/read-json (.body resp)) (catch Throwable _ (.body resp)))}))
+    [resp (http/request {:uri url
+                         :method :post
+                         :client @mcp-http/client
+                         :headers {"Content-Type" "application/x-www-form-urlencoded"
+                                   "Accept" "application/json"
+                                   protocol-version-header protocol-version}
+                         :body (form-encode form)
+                         :timeout 30000
+                         :throw false
+                         :as :string})]
+    {:status (:status resp)
+     :body (try (json/read-json (:body resp)) (catch Throwable _ (:body resp)))}))
 
 (defn- http-post-json
   [^String url body]
   (let
-    [req
-     (-> (HttpRequest/newBuilder (URI/create url))
-         (.header "Content-Type" "application/json")
-         (.header "Accept" "application/json")
-         (.header protocol-version-header protocol-version)
-         (.timeout (Duration/ofSeconds 30))
-         (.POST (HttpRequest$BodyPublishers/ofString (json/write-json-str body)))
-         .build)
-
-     resp
-     (.send ^HttpClient @mcp-http/client req (HttpResponse$BodyHandlers/ofString))]
-
-    {:status (.statusCode resp)
-     :body (try (json/read-json (.body resp)) (catch Throwable _ (.body resp)))}))
+    [resp (http/request {:uri url
+                         :method :post
+                         :client @mcp-http/client
+                         :headers {"Content-Type" "application/json"
+                                   "Accept" "application/json"
+                                   protocol-version-header protocol-version}
+                         :body (json/write-json-str body)
+                         :timeout 30000
+                         :throw false
+                         :as :string})]
+    {:status (:status resp)
+     :body (try (json/read-json (:body resp)) (catch Throwable _ (:body resp)))}))
 
 ;; ---------------------------------------------------------------------------
 ;; Discovery (RFC 9728 + RFC 8414 fallbacks)
