@@ -2573,8 +2573,9 @@
    `h` to arm it, press it again to disarm it), the escape hatch for a repo whose
    pre-commit/commit-msg githook is broken or irrelevant. COMMANDS: `c` commit the
    staged index, `a` amend the last commit (magit's `c c` / `c a`). The message is
-   then read INLINE, as before."
-  [mini root model]
+   then read INLINE. Commit verification runs off the render/input thread while
+   `busy!` repaints progress in the status buffer's footer."
+  [busy! mini root model]
   (when-let
     [{:keys [action switches]}
      ((:transient! mini)
@@ -2598,7 +2599,10 @@
                  {:initial (if amend? (or (magit/last-commit-message root) "") "")})]
           (if (str/blank? msg)
             {:ok? false :msg "Empty message — commit aborted"}
-            (magit/commit! root msg {:amend? amend? :no-verify? no-verify?})))))))
+            (run-async-with-ticker!
+              #(magit/commit! root msg {:amend? amend? :no-verify? no-verify?})
+              #(busy! "Verifying and committing")
+              80)))))))
 
 ;;; ── One band, every question it can ask ─────────────────────────────────────
 ;; A band IS a region — six coordinates — plus the screen it paints on. They are
@@ -2977,7 +2981,7 @@
     (magit-discard-flow! mini root row)
 
     \c
-    (magit-commit-flow! mini root model)
+    (magit-commit-flow! busy! mini root model)
 
     \l
     (magit-log-flow! screen mini root)

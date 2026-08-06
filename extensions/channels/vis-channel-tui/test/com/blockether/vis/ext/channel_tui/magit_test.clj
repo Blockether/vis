@@ -315,7 +315,12 @@
         (block-commit-hook! dir)
         (spit (str dir "/a.txt") "one\ntwo\n")
         (magit/stage-file! dir "a.txt")
-        (let [r ((var-get #'dialogs/magit-commit-flow!) mini dir (magit/status-model dir))]
+        (let
+          [r ((var-get #'dialogs/magit-commit-flow!)
+               (fn [_])
+               mini
+               dir
+               (magit/status-model dir))]
           (expect (:ok? r))
           (expect (= "via transient" (:head-subject (magit/status-model dir)))))))
   (it "the commit transient without the -h flag leaves githooks in force"
@@ -332,7 +337,12 @@
         (block-commit-hook! dir)
         (spit (str dir "/a.txt") "one\ntwo\n")
         (magit/stage-file! dir "a.txt")
-        (let [r ((var-get #'dialogs/magit-commit-flow!) mini dir (magit/status-model dir))]
+        (let
+          [r ((var-get #'dialogs/magit-commit-flow!)
+               (fn [_])
+               mini
+               dir
+               (magit/status-model dir))]
           (expect (false? (:ok? r)))
           (expect (= "initial" (:head-subject (magit/status-model dir))))))))
 
@@ -830,6 +840,50 @@
                                   {:ok? true})
                                 (fn [])
                                 10)))))
+
+;; Regression, user report: commit verification blocked Magit's render/input loop.
+(defdescribe
+  async-commit-run-test
+  (it
+    "keeps the UI thread repainting while the commit gate runs"
+    (let
+      [caller
+       (Thread/currentThread)
+
+       commit-thread
+       (atom nil)
+
+       labels
+       (atom [])
+
+       mini
+       {:transient! (fn [_]
+                      {:action :commit :switches #{}})
+        :read! (fn [_ _]
+                 "Commit without freezing")}
+
+       result
+       (with-redefs
+         [magit/commit! (fn [_ _ _]
+                          (reset! commit-thread (Thread/currentThread))
+                          (Thread/sleep 120)
+                          {:ok? true :msg "committed"})]
+         (#'dialogs/magit-char-action!
+          nil
+          (fn [label]
+            (swap! labels conj label))
+          mini
+          "/repo"
+          {:staged [{:path "changed.clj"}]}
+          []
+          0
+          nil
+          \c))]
+
+      (expect (= {:ok? true :msg "committed"} result))
+      (expect (not= caller @commit-thread))
+      (expect (seq @labels))
+      (expect (every? #{"Verifying and committing"} @labels)))))
 
 ;;; ── Multi-root workspaces (one root + extra filesystem roots, drafts) ───────
 
