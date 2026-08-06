@@ -101,7 +101,7 @@ exactly one runtime: JVM source at the newest commit of the branch it follows
 (`VIS_BRANCH`, default `main`). It installs the wrapper and then hands off to
 `vis-agent update --jvm`, which acquires that runtime and persists the choice in
 the same command, so runtime acquisition always belongs to `vis-agent` and the
-two cannot drift apart. It requires Java 25+, git, and curl; the Clojure CLI is installed automatically when the JVM runtime first needs it.
+two cannot drift apart. It requires git and curl. A JVM launch reuses a matching GraalVM CE 25.1.3 already installed (including through SDKMAN), or installs the pinned JDK when no Java is available; the Clojure CLI is installed automatically when the JVM runtime first needs it. Set `VIS_NO_AUTO_INSTALL=1` to disable automatic tool installation.
 
 Nothing that install *runs* is tagged: the source comes from the branch tip,
 because a published `vX.Y.Z` can be broken source and a fix lands on the branch

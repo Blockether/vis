@@ -7,6 +7,15 @@
 
 (defn- write-executable! [file body] (spit file body) (.setExecutable ^java.io.File file true) file)
 
+(defn- link-command!
+  [dir name]
+  (let
+    [target (first (filter #(.isFile ^java.io.File %) (map #(io/file % name) ["/usr/bin" "/bin"])))]
+    (when target
+      (Files/createSymbolicLink (.toPath (io/file dir name))
+                                (.toPath target)
+                                (make-array FileAttribute 0)))))
+
 (defn- delete-tree!
   [root]
   (doseq [file (reverse (file-seq root))]
@@ -61,46 +70,54 @@
                        (str "#!/usr/bin/env bash\n" "printf 'JAVA_HOME=%s\\n' \"$JAVA_HOME\"\n"
                             "printf 'GRAALVM_HOME=%s\\n' \"${GRAALVM_HOME:-}\"\n"
                             "printf 'JAVA_CMD=%s\\n' \"${JAVA_CMD:-}\"\n"))
+    ;; Keep the no-Java launch isolated from the host JDK while retaining the
+    ;; ordinary POSIX tools the wrapper needs during startup.
+    (doseq
+      [name ["awk" "basename" "bash" "cat" "chmod" "cp" "cut" "date" "dirname" "env" "find" "grep"
+             "head" "ls" "mkdir" "mktemp" "pwd" "readlink" "rm" "sed" "sort" "tail" "tr" "uname"]]
+      (link-command! tools name))
     {:root root :repo repo :home home :old-home old-home :pinned-home pinned-home :tools tools}))
 
 (defn- run-launcher
-  [{:keys [repo home old-home pinned-home tools]}]
-  (let
-    [old-java
-     (.getAbsolutePath (io/file old-home "bin/java"))
+  ([fixture] (run-launcher fixture {}))
+  ([{:keys [repo home old-home pinned-home tools]} {:keys [java?] :or {java? true}}]
+   (let
+     [old-java
+      (.getAbsolutePath (io/file old-home "bin/java"))
 
-     pb
-     (ProcessBuilder. ^java.util.List
-                      ["bash" (.getAbsolutePath (io/file repo "bin/vis-agent")) "--jvm"
-                       "--version"])
+      pb
+      (ProcessBuilder. ^java.util.List
+                       ["bash" (.getAbsolutePath (io/file repo "bin/vis-agent")) "--jvm"
+                        "--version"])
 
-     env
-     (.environment pb)]
+      env
+      (.environment pb)]
 
-    (.directory pb repo)
-    (.redirectErrorStream pb true)
-    (.put env "HOME" (.getAbsolutePath home))
-    (.put env
-          "PATH"
-          (str (.getAbsolutePath (io/file old-home "bin"))
-               ":"
-               (.getAbsolutePath tools)
-               ":/usr/bin:/bin"))
-    (.put env "JAVA_HOME" (.getAbsolutePath old-home))
-    (.put env "JAVA_CMD" old-java)
-    (.put env "VIS_TEST_PINNED_HOME" (.getAbsolutePath pinned-home))
-    (.put env "VIS_NO_DEV_CHECKOUT" "1")
-    (let
-      [process
-       (.start pb)
+     (.directory pb repo)
+     (.redirectErrorStream pb true)
+     (.put env "HOME" (.getAbsolutePath home))
+     (.put env
+           "PATH"
+           (str (when java? (str (.getAbsolutePath (io/file old-home "bin")) ":"))
+                (.getAbsolutePath tools)
+                (if java? ":/usr/bin:/bin" ":/bin")))
+     (if java?
+       (do (.put env "JAVA_HOME" (.getAbsolutePath old-home)) (.put env "JAVA_CMD" old-java))
+       (do (.remove env "JAVA_HOME") (.remove env "JAVA_CMD")))
+     (.put env "VIS_TEST_PINNED_HOME" (.getAbsolutePath pinned-home))
+     (.put env "VIS_NO_DEV_CHECKOUT" "1")
+     (let
+       [process
+        (.start pb)
 
-       output
-       (slurp (.getInputStream process))
+        output
+        (slurp (.getInputStream process))
 
-       exit
-       (.waitFor process)]
+        exit
+        (.waitFor process)]
 
-      {:exit exit :output output})))
+       {:exit exit :output output}))))
+
 
 (defdescribe
   jvm-launcher-runtime-test
@@ -115,6 +132,16 @@
                (expect (str/includes? output (str "JAVA_HOME=" (.getAbsolutePath pinned-home))))
                (expect (str/includes? output (str "GRAALVM_HOME=" (.getAbsolutePath pinned-home))))
                (expect (str/includes? output (str "JAVA_CMD=" pinned-java))))
+             (finally (delete-tree! root)))))
+  ;; A missing Java must be provisioned before the JVM launch.
+  (it "automatically provisions the pinned JDK when no Java is available"
+      (let [{:keys [root pinned-home] :as fixture} (launcher-fixture "GraalVM CE 25.1.3+9.1")]
+        (try (let [{:keys [exit output]} (run-launcher fixture {:java? false})]
+               (expect (= 0 exit))
+               (expect (str/includes? output (str "JAVA_HOME=" (.getAbsolutePath pinned-home))))
+               (expect (str/includes?
+                         output
+                         (str "JAVA_CMD=" (.getAbsolutePath pinned-home) "/bin/java"))))
              (finally (delete-tree! root)))))
   (it "preserves a stock JDK because it has no built-in Truffle to collide"
       (let [{:keys [root old-home] :as fixture} (launcher-fixture "Eclipse Adoptium-25.0.3+8")]

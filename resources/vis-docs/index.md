@@ -96,7 +96,7 @@ vis-agent help
 The installer puts `vis-agent` in `~/.local/bin`, adds that directory to your
 shell profile when PATH lacks it, and then runs `vis-agent update --jvm` so the
 wrapper checks the source it owns out at the newest commit and selects it. That
-runtime needs Java 25+ and git. Vis installs the Clojure CLI automatically when the JVM runtime first needs it.
+runtime needs git. A JVM launch reuses a matching GraalVM CE 25.1.3 already installed (including through SDKMAN), or installs the pinned JDK automatically when no Java is available. Vis also installs the Clojure CLI automatically when the JVM runtime first needs it; set `VIS_NO_AUTO_INSTALL=1` to disable automatic tool installation.
 
 Afterwards every runtime action belongs to vis-agent:
 
