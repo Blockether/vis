@@ -315,7 +315,7 @@
                 (while (not @closed?)
                   (try (let
                          [resp (http/request (build-request))
-                          ^long status (long (:status resp))]
+                          status (long (:status resp))]
 
                          (cond (or (= 404 status) (= 405 status))
                                ;; Server doesn't support the listen channel — quit quietly.

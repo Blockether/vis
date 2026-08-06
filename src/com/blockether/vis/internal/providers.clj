@@ -304,12 +304,12 @@
                             :throw false
                             :as :string})
 
-             ^long code
-             (long (:status resp))]
+             code
+             (:status resp)]
 
             ;; Any answer below 500 means the server is up — even a 401/404 proves
             ;; the port is live. 5xx is the server failing.
-            (if (< code 500)
+            (if (< (long code) 500)
               (assoc base* :is-authenticated true)
               (assoc base* :error (str label " returned HTTP " code " at " host))))
           (catch ConnectException _

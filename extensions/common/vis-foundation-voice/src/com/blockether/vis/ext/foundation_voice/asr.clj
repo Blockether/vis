@@ -256,11 +256,11 @@
        (FileOutputStream. (io/file path))]
 
       (let [buf (byte-array 1048576)]
-        (loop [^long done 0]
-          (let [^long n (.read in buf)]
+        (loop [done 0]
+          (let [n (.read in buf)]
             (when-not (neg? n)
               (.write out buf 0 n)
-              (let [^long done' (+ done n)]
+              (let [done' (+ done n)]
                 (when (and on-progress (pos? total))
                   (on-progress (min 99 (long (* 100 (/ (double done') (double total)))))))
                 (recur done'))))))))

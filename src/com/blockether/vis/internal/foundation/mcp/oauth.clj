@@ -98,7 +98,7 @@
                     :throw false
                     :as :string})
 
-     ^long status
+     status
      (long (:status resp))]
 
     (when (< status 400) (try (json/read-json (:body resp)) (catch Throwable _ nil)))))

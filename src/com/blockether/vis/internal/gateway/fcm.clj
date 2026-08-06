@@ -151,8 +151,8 @@
 (defn- sign-jwt
   [sa]
   (let
-    [^long now
-     (long (quot (System/currentTimeMillis) 1000))
+    [now
+     (quot (System/currentTimeMillis) 1000)
 
      header
      (b64url (utf8 (wire/json-str {:alg "RS256" :typ "JWT"})))
