@@ -234,11 +234,12 @@ describe('NewSessionButton', () => {
     expect(html()).not.toContain('active:scale');
   });
 
-  // Reported visual defect: `mouse:min-h-7` only set a floor, so the project header's
-  // `items-stretch` still pulled the yellow action to the full two-line row height.
-  it('pins the compact mouse height instead of stretching with the project row', () => {
+  // Reported visual defect: after the stretched button was given `mouse:h-7`, the inherited
+  // `sm:min-h-8` still held it at 32px and flex-start pinned it to the project's top edge.
+  it('uses a compact line-safe mouse box centered in the project row', () => {
     expect(html()).toContain('mouse:h-7');
-    expect(html()).not.toContain('mouse:min-h-7');
+    expect(html()).toContain('mouse:min-h-7');
+    expect(html()).toContain('mouse:self-center');
     expect(html()).toContain('mouse:text-meta');
   });
 

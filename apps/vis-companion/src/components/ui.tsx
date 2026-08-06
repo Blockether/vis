@@ -325,7 +325,7 @@ export function NewSessionButton({
       disabled={disabled}
       aria-label={`New session on ${machine}`}
       title={where ? `New session on ${machine}, in ${where}` : `New session on ${machine}`}
-      className="shrink-0 whitespace-nowrap mouse:h-7 mouse:text-meta"
+      className="shrink-0 whitespace-nowrap mouse:h-7 mouse:min-h-7 mouse:self-center mouse:text-meta"
       onClick={(event) => onPress(event.currentTarget)}
     >
       New session
