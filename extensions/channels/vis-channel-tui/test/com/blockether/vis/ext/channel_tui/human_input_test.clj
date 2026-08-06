@@ -1333,7 +1333,7 @@
         ;; address above them.
         (expect (str/includes? (first ringed) "[ ]"))
         (expect (= t/header-active-tab-accent (:fg (cell-under (otp-form) "▎"))))))
-  (it "bolds the label of the focused field and dims every other label"
+  (it "keeps every field label bold while focus still controls its ink"
       (let
         [form
          (assoc (hi/init-form (request)) :focus 0)
@@ -1346,7 +1346,8 @@
 
         (expect (:is-bold mine))
         (expect (= t/dialog-fg (:fg mine)))
-        (expect (not (:is-bold theirs)))
+        ;; Unfocused labels remain quiet in colour, but their headline weight is stable.
+        (expect (:is-bold theirs))
         (expect (= t/dialog-hint (:fg theirs)))))
   (it "makes the focused field's prose readable and leaves the rest as hints"
       (let [note-focused (assoc (hi/init-form (request)) :focus 7)]

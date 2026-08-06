@@ -1089,9 +1089,7 @@
 
       (p/set-colors! g fg t/dialog-bg)
       (p/fill-rect! g (inc (long left)) row inner-w 1)
-      (if (:is-active-field entry)
-        (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row head))
-        (p/put-str! g (inc (long left)) row head))
+      (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row head))
       (when mark? (paint-required! g (+ (inc (long left)) (count head)) row t/dialog-bg))
       nil)
 
