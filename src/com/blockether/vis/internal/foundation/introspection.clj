@@ -52,20 +52,6 @@
 
 (defn- current-session-id [env] (:session-id env))
 
-(defn- current-session-turn-id
-  "UUID of the in-flight turn, or nil when no turn is running yet.
-
-   Internally this is the `session_turn_soul` id — stored as the
-   `:session-turn-id` field on the single `:turn-state-atom` (see
-   `ctx-loop/make-turn-state-atom`). The product concept is *turn*;
-   everywhere this id is surfaced to the model (e.g. inspect
-   current-turn results, the `:in-flight-turn-id` slot) it's labelled
-   `turn`. Mirrors the sandbox-visible `TURN_ID` SYSTEM var so meta-fns
-   can filter it without round-tripping through the sandbox."
-  [env]
-  (some-> (:turn-state-atom env)
-          deref
-          :session-turn-id))
 
 (defn- same-uuid?
   "True when two values denote the same UUID. Accepts UUID instances
@@ -457,48 +443,49 @@
            (assoc :elapsed-ms (elapsed-ms turn))))))))
 
 (defn- session-snapshot
-  "Map for a single session: identity + every turn rolled up to a
-   compact `{:id :user-request :outcome :answer :iteration-count :status}`
-   shape. Used by the session-summary portion of inspect.
+  "Map for a single session: identity + every persisted turn rolled up to a
+   compact `{:id :user-request :outcome :answer :iteration-count}` shape.
 
-   `:iteration-count` is the integer number of LLM rounds the turn
-   consumed. Spelled out so it never gets confused with the vector
-   shape that the runtime trace uses for per-iteration entries."
+   Iteration rows are authoritative while a turn is live: the denormalized
+   count on `session_turn_soul` is finalized only when the turn settles. Reading
+   the rows here keeps this summary consistent with `transcript.turns` for both
+   current and foreign live sessions."
   [db-info session-id]
   (when (and db-info session-id)
-    (try
-      (when-let [session (vis/db-get-session db-info session-id)]
-        (let
-          [turn-rows (vis/db-list-session-turns db-info session-id)
-           turns (mapv (fn [turn]
-                         (cond-> {:id (:id turn) :outcome (or (:prior-outcome turn) (:status turn))}
-                           (:user-request turn)
-                           (assoc :user-request (:user-request turn))
+    (try (when-let [session (vis/db-get-session db-info session-id)]
+           (let
+             [turn-rows (vis/db-list-session-turns db-info session-id)
+              turns (mapv (fn [turn]
+                            (let [iteration-count (count (iteration-rows db-info (:id turn)))]
+                              (cond->
+                                {:id (:id turn)
+                                 :outcome (or (:prior-outcome turn) (:status turn))
+                                 :iteration-count iteration-count}
+                                (:user-request turn)
+                                (assoc :user-request (:user-request turn))
 
-                           (:answer turn)
-                           (assoc :answer (:answer turn))
+                                (:answer turn)
+                                (assoc :answer (:answer turn))
 
-                           (:iteration-count turn)
-                           (assoc :iteration-count (:iteration-count turn))
+                                (:total-cost turn)
+                                (assoc :total-cost (:total-cost turn)))))
+                          turn-rows)]
 
-                           (:total-cost turn)
-                           (assoc :total-cost (:total-cost turn))))
-                       turn-rows)]
+             (cond->
+               {:id session-id
+                :channel (:channel session)
+                :title (:title session)
+                :model (:model session)
+                :created-at (:created-at session)
+                :turns turns
+                :turn-count (count turns)}
+               (:provider session)
+               (assoc :provider (:provider session))
 
-          (cond->
-            {:id session-id
-             :channel (:channel session)
-             :title (:title session)
-             :model (:model session)
-             :created-at (:created-at session)
-             :turns turns
-             :turn-count (count turns)}
-            (:provider session)
-            (assoc :provider (:provider session))
-
-            (format-provider-model (:provider session) (:model session))
-            (assoc :provider-model (format-provider-model (:provider session) (:model session))))))
-      (catch Throwable _ nil))))
+               (format-provider-model (:provider session) (:model session))
+               (assoc :provider-model
+                 (format-provider-model (:provider session) (:model session))))))
+         (catch Throwable _ nil))))
 
 ;; ---------------------------------------------------------------------------
 ;; Meta fns take `env` as their first argument via declarative `:inject-env?`.
@@ -510,27 +497,11 @@
   ([env session-id] (turn-snapshot env session-id)))
 
 (defn- foundation-session
-  "Snapshot for a session. The in-flight turn (= current `TURN_ID`)
-   is automatically excluded from `:turns` because its `:iteration-count` /
-   `:total-cost` haven't been finalized yet - listing it would render
-   as `null | $null` and confuse downstream summaries. The excluded id
-   is surfaced as `:in-flight-turn-id` so callers can opt into seeing
-   it. Filtering happens only when the in-flight turn belongs to this
-   session; foreign sessions are returned verbatim."
+  "Snapshot for a session, including its live turn and every iteration row that
+   has already completed. The richer `:current-turn` projection separately
+   carries the env-local pointer for the provider round still in flight."
   ([env] (foundation-session env (current-session-id env)))
-  ([env session-id]
-   (when-let [snapshot (session-snapshot (:db-info env) session-id)]
-     (let
-       [in-flight-id (current-session-turn-id env)
-        same-session? (and in-flight-id (same-uuid? session-id (current-session-id env)))]
-
-       (if-not same-session?
-         snapshot
-         (let [filtered (filterv #(not (same-uuid? in-flight-id (:id %))) (:turns snapshot))]
-           (-> snapshot
-               (assoc :turns filtered)
-               (assoc :turn-count (count filtered))
-               (assoc :in-flight-turn-id in-flight-id))))))))
+  ([env session-id] (session-snapshot (:db-info env) session-id)))
 
 (defn- foundation-sessions-data
   "List every session the DB knows about, newest-first. With no

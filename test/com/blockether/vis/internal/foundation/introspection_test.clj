@@ -458,6 +458,39 @@
           (finally (vis/db-dispose-connection! s))))))
 
 (defdescribe
+  session-state-live-turn-ledger-test
+  ;; Regression (session e95e1cb2): `session_state()` removed the live turn from
+  ;; `session.turns`, and a foreign live turn reported the turn row's stale zero
+  ;; instead of the iteration rows already persisted for it.
+  (it "returns the live turn and its persisted iterations consistently"
+      (let [s (vis/db-create-connection! :memory)]
+        (try (let
+               [cid (h/store-session! s {:channel :tui :title "Live fixture"})
+                turn (vis/db-store-session-turn!
+                       s
+                       {:parent-session-id cid :user-request "still working" :status :running})
+                _ (doseq [position (range 1 3)]
+                    (h/store-iteration! s
+                                        {:session-turn-id turn
+                                         :code (str "(+ " position " 1)")
+                                         :forms [{:src (str "(+ " position " 1)")
+                                                  :result (inc position)}]
+                                         :duration-ms 1}))
+                env {:session-id cid
+                     :db-info s
+                     :turn-state-atom (atom {:session-turn-id turn :iteration {:position 3}})}
+                data (:result (@#'introspection/foundation-inspect env cid))
+                session (get data "session")
+                summary-turn (first (get session "turns"))
+                transcript-turn (first (get-in data ["transcript" "turns"]))]
+
+               (expect (= 1 (get session "turn_count")))
+               (expect (= (str turn) (str (get summary-turn "id"))))
+               (expect (= 2 (get summary-turn "iteration_count")))
+               (expect (= 2 (get transcript-turn "iteration_count"))))
+             (finally (vis/db-dispose-connection! s))))))
+
+(defdescribe
   iteration-form-error-ledger-test
   ;; Regression (session 227812d4): `:failures`, `:diagnosis` and every
   ;; attempt's `:error` were read off the ITERATION row (`(:error iteration)`),
