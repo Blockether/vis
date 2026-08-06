@@ -15,6 +15,7 @@ import { GatewayClient, ROUTER_TTL_MS } from "./lib/gateway";
 import {
   getPrimaryConnection,
   loadConnections,
+  loadConnectionsSync,
   loadSubscribedSessions,
   rememberSubscribedSession,
   setActiveUrl,
@@ -165,7 +166,9 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, []);
 
-  const [conns, setConns] = useState<GatewayConn[]>([]);
+  // localStorage mirrors the native connection store, so seed the first frame without
+  // waiting for Capacitor Preferences to resolve asynchronously.
+  const [conns, setConns] = useState<GatewayConn[]>(loadConnectionsSync);
   const [active, setActive] = useState<GatewayConn | null>(null);
   const [primary, setPrimary] = useState<GatewayConn | null>(null);
   const [tab, setTab] = useState<Tab>("sessions");

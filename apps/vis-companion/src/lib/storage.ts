@@ -25,6 +25,18 @@ function localGet(key: string): string | null {
   }
 }
 
+/** Read the mirrored web storage without waiting for the native Preferences bridge. */
+export function loadConnectionsSync(): GatewayConn[] {
+  const raw = localGet(CONNS_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as GatewayConn[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 function localSet(key: string, value: string): void {
   try {
     globalThis.localStorage?.setItem(key, value);

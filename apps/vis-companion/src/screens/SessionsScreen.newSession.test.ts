@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import source from './SessionsScreen.tsx?raw';
+import appSource from '../App.tsx?raw';
 
 // Regression (reported: new sessions belong to a project, not a machine): the create
 // button used to live on the fleet and machine headers, where it had no project owner.
@@ -41,5 +42,12 @@ describe('where "New session" lives', () => {
     expect(source).toContain('firstProject={groupIndex === 0}');
     expect(source).toContain("className={`${firstProject ? '' : 'border-t'} border-dialog-edge`}");
     expect(source.match(/border-t border-dialog-edge first:border-t-0/g)?.length).toBe(1);
+  });
+
+  // Regression: the session count used to flash from empty to the cached total on
+  // every cold start while the async native connection store was loading.
+  it('seeds the application connection list synchronously on startup', () => {
+    expect(appSource).toContain('loadConnectionsSync');
+    expect(appSource).toContain('useState<GatewayConn[]>(loadConnectionsSync)');
   });
 });
