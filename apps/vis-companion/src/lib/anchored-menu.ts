@@ -1,8 +1,9 @@
 /**
  * Where an anchored popover sits — and whether it can stay open at all.
  *
- * The sessions list hangs its "start in" menu under the caret of the New session
- * split control. Both answers live here because it is the SAME question asked
+ * The sessions list hangs its "start in" menu under a machine header's `⋯` — or under
+ * the New session button beside it, for a machine with no project to start in yet.
+ * Both answers live here because it is the SAME question asked
  * twice: once when the menu opens, and again every time the viewport moves under
  * an open one.
  */

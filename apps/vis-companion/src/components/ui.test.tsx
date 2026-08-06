@@ -9,6 +9,7 @@ import {
   MachineGap,
   MachineMark,
   MachineRail,
+  NewSessionButton,
   UnreadBadge,
 } from './ui';
 
@@ -201,5 +202,36 @@ describe('MachineMark', () => {
     expect(html).toContain(MACHINE_COLORS[7].dot);
     expect(html).toContain('aria-hidden="true"');
     expect(html).not.toContain('bg-ok');
+  });
+});
+
+// Regression (reported: "the new session is button so frequently used that we should
+// take it from the ⋯ and put on every machine header before the ⋯, as a yellow
+// button"): the verb this whole screen exists for was the first row of a menu, so the
+// thing people do all day cost a tap, a popover and a read before it could be pressed.
+describe('NewSessionButton', () => {
+  const html = (props: Partial<Parameters<typeof NewSessionButton>[0]> = {}) =>
+    renderToStaticMarkup(<NewSessionButton machine="tower" onPress={() => {}} {...props} />);
+
+  it('is the yellow one: the verb of the screen, not a row of a menu', () => {
+    expect(html()).toContain('bg-accent');
+    expect(html()).toContain('New session');
+  });
+
+  it('names the machine it will start on, because every header carries one', () => {
+    expect(html({ machine: 'nuc' })).toContain('aria-label="New session on nuc"');
+  });
+
+  it('puts the project on the tooltip, where the header has no room for a path', () => {
+    expect(html({ where: 'vis' })).toContain('title="New session on tower, in vis"');
+    expect(html()).toContain('title="New session on tower"');
+  });
+
+  it('does not move under the press: it anchors the folder browser', () => {
+    expect(html()).not.toContain('active:scale');
+  });
+
+  it('is refused while the machine is busy or not answering', () => {
+    expect(html({ disabled: true })).toContain('disabled=""');
   });
 });

@@ -10,6 +10,7 @@ import {
   MachineGap,
   MachineMark,
   MachineRail,
+  NewSessionButton,
   Spinner,
   UnreadBadge,
 } from '../components/ui';
@@ -146,8 +147,8 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
 
 // The scope strip's chips: one per machine plus "All".
 //
-// A chip is a CONTROL, so it sits on the app's control scale: the same `min-h-6`
-// as the New session button above it, and `text-meta` — the step the header line
+// A chip is a CONTROL, so it sits on the app's control scale: `min-h-6` under the
+// buttons of the bar above it, and `text-meta` — the step the header line
 // it answers is already set in. At `text-chip` inside a `min-h-7` box the label
 // was the smallest type on the screen floating in eight px of dead space on each
 // side, so every chip read as taller than the row that holds it while saying
@@ -189,8 +190,8 @@ function useNow(intervalMs: number): number {
 
 /**
  * The start-in menu's desktop width in px. The popover is RIGHT-aligned to the
- * caret, so the anchor math needs the width before the menu has ever been measured;
- * it must stay equal to the `sm:w-80` the menu paints itself at.
+ * control it hangs from, so the anchor math needs the width before the menu has ever
+ * been measured; it must stay equal to the `sm:w-80` the menu paints itself at.
  */
 const START_MENU_WIDTH = 320;
 
@@ -250,10 +251,10 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
   // "Creating..." is a lie while a 12k-file repo is being cloned, so the busy word
   // follows the WORK: fork, enter, or plain create.
   const [createBusyLabel, setCreateBusyLabel] = useState('Creating...');
-  // New session is a SPLIT control, and the whole order behind it — which machine,
-  // which workspace, what to call the draft — is ONE value, so leaving it anywhere
-  // forgets every answer in it. Portalled and viewport-anchored because the header
-  // panel clips its overflow.
+  // The `⋯` order — which machine, which workspace, what to call the draft — is ONE
+  // value, so leaving it anywhere forgets every answer in it. The yellow button beside
+  // it needs none of those answers: it starts where the machine already is. Portalled
+  // and viewport-anchored because the header panel clips its overflow.
   const [startFlow, setStartFlow] = useState<StartFlow>(START_IDLE);
   // The menu and its draft sub-question share one surface, so both anchor from the
   // control the order started at. Browsing is NOT that surface: it takes the screen.
@@ -263,8 +264,9 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
   // Forking asks for the draft's name first: the gateway rejects a blank label, and
   // the name is what `/draft list` and every later resume will show.
   const namePrompt = startFlow.step === 'name' ? startFlow : null;
-  // The control the open order hangs from — a machine header's `⋯`, or the solo
-  // fleet bar's. It is an element, not a ref, because every header carries one.
+  // The control the open order hangs from — a machine header's `⋯`, its New session
+  // button when that machine has no project yet, or the solo fleet bar's. An element,
+  // not a ref, because every header carries its own pair.
   const startAnchorEl = useRef<HTMLElement | null>(null);
   // Drafts are an expert move, off by default: with the switch off "New session" is
   // one verb and the private-copy question is never asked. See Settings.
@@ -655,6 +657,13 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
   // when there is no strip to speak for it.
   const hasScopeStrip = showsScopeStrip(machines);
   const showMachineHeaders = machines.length > 1 && !scopeMachine;
+  // The machine the fleet BAR speaks for: the scoped one, or the only one paired.
+  // `null` only while the bar answers for several at once — and then every machine
+  // header below carries its own pair of verbs instead.
+  const barMachine = useMemo(() => {
+    const inScope = scopedMachines(machines, scope);
+    return inScope.length === 1 ? inScope[0] : null;
+  }, [machines, scope]);
 
   // One hue per paired machine, assigned from the machine's own key, so a rail
   // keeps its colour across reloads and reorderings and two machines side by side
@@ -683,8 +692,9 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
    * that has a workspace, and the menu NAMES that repo — a fleet spanning several
    * projects must not be told these drafts belong to whatever it creates next.
    */
-  // Where a "New session" tap lands: the scoped machine, or the only machine
-  // paired. `null` means the app must ASK before it can create anything.
+  // Which machine the `⋯` order is about while the bar speaks for the whole fleet: the
+  // scoped machine, or the only one paired. `null` means the app must ASK before it
+  // can create anything.
   const scopeTarget = newSessionTarget(machines, scope);
   // Several machines: the menu asks WHICH first, and that answer — not a session on
   // trunk — is what the workspace question below is then asked about.
@@ -815,7 +825,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
 
   // An anchored popover whose anchor moved is a lie, so a resize RE-ANCHORS it to
   // the live caret; only a caret that has left the document closes it. Closing on
-  // resize is what made the split control look dead on a phone: the on-screen
+  // resize is what made this menu look dead on a phone: the on-screen
   // keyboard hiding — one tap after the filter, in the very tap that opens this
   // menu — fires `resize`, and the menu died on the frame it was born. Escape
   // closes it and hands focus back to the caret it came from.
@@ -879,6 +889,23 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
     } finally {
       setCreateBusy(false);
     }
+  }
+
+  /**
+   * The header's own verb, straight through: create on THAT machine, in the project
+   * it is already in, with nothing to read on the way. A machine that has never run a
+   * session has no project to start in, so the tap falls through to the folder browser
+   * instead — anchored on the button, inside the very order the `⋯` would have opened.
+   */
+  function startOnMachine(machine: FleetMachine, anchor: HTMLElement) {
+    const root = machineProject(machine);
+    if (root) {
+      void createSession({ kind: 'trunk' }, machine.conn, root.path);
+      return;
+    }
+    startAnchorEl.current = anchor;
+    const at = menuPosition(anchor.getBoundingClientRect(), START_MENU_WIDTH);
+    setStartFlow((flow) => startFlowStep(startFlowOpen(flow, at), 'browse', machine.conn));
   }
 
   function askDraftName(clean: boolean) {
@@ -1129,22 +1156,32 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                 )}
               </p>
             </div>
-            {/* With several machines paired each header carries its own `⋯`, so the
-                fleet bar grows one ONLY for a solo machine — there the bar IS the
-                machine, and its `⋯` is the only control on the screen. */}
             <div className="flex shrink-0 items-center gap-2">
               {createBusy && (
                 <span aria-live="polite" className="font-mono text-chip text-dialog-hint">
                   {createBusyLabel}
                 </span>
               )}
+              {/* With several machines paired every header carries this pair itself, so
+                  the fleet bar grows one ONLY while it IS a machine — a solo fleet, or a
+                  strip scoped down to one. */}
               {!showMachineHeaders && (
-                <MachineKebab
-                  label={scopeTarget ? machineLabel(scopeTarget) : 'this fleet'}
-                  open={startMenu !== null}
-                  disabled={createBusy || machines.length === 0 || !!scopeMachine?.error}
-                  onOpen={(anchor) => (startMenu ? leaveStart(true) : openStartMenuAt(anchor))}
-                />
+                <>
+                  {barMachine && (
+                    <NewSessionButton
+                      machine={machineLabel(barMachine.conn)}
+                      where={machineProject(barMachine)?.label ?? null}
+                      disabled={createBusy || !!barMachine.error}
+                      onPress={(anchor) => startOnMachine(barMachine, anchor)}
+                    />
+                  )}
+                  <MachineKebab
+                    label={scopeTarget ? machineLabel(scopeTarget) : 'this fleet'}
+                    open={startMenu !== null}
+                    disabled={createBusy || machines.length === 0 || !!scopeMachine?.error}
+                    onOpen={(anchor) => (startMenu ? leaveStart(true) : openStartMenuAt(anchor))}
+                  />
+                </>
               )}
             </div>
           </div>
@@ -1273,7 +1310,12 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                           {machineLabel(machine.conn)}
                         </span>
                       </span>
-                      <span className="flex w-40 shrink-0 translate-x-2 items-center justify-start gap-2 font-mono text-chip text-dialog-hint sm:translate-x-0">
+                      {/* The machine's own column, measured from the RIGHT edge it is
+                          pinned to: what it reports, the verb, and the `⋯`. The fixed
+                          10rem box that used to align the counts is gone — the button is
+                          what the eye and the thumb aim at now, and the machine's name
+                          keeps whatever is left. */}
+                      <span className="flex shrink-0 translate-x-2 items-center justify-end gap-2 font-mono text-chip text-dialog-hint sm:translate-x-0">
                         {machine.error ? (
                           <>
                             <span>offline</span>
@@ -1297,15 +1339,25 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                                 time. */}
                           </>
                         )}
-                        {/* A machine's own verbs, on the machine's own header — the
-                            same control the solo fleet bar carries, and the only
-                            place "New session" names WHICH machine without asking. */}
+                        {/* A machine's own verbs, on the machine's own header. "New
+                            session" is the one people came for, so it is a BUTTON in the
+                            Blockether yellow — not the first row of a menu — and it names
+                            WHICH machine without asking. The `⋯` beside it keeps the rest.
+                            A machine that is not answering offers neither. */}
                         {!machine.error && (
-                          <MachineKebab
-                            label={machineLabel(machine.conn)}
-                            open={startMenu !== null && !!target && machineKey(target) === key}
-                            onOpen={(anchor) => openStartMenuAt(anchor, machine.conn)}
-                          />
+                          <>
+                            <NewSessionButton
+                              machine={machineLabel(machine.conn)}
+                              where={machineProject(machine)?.label ?? null}
+                              disabled={createBusy}
+                              onPress={(anchor) => startOnMachine(machine, anchor)}
+                            />
+                            <MachineKebab
+                              label={machineLabel(machine.conn)}
+                              open={startMenu !== null && !!target && machineKey(target) === key}
+                              onOpen={(anchor) => openStartMenuAt(anchor, machine.conn)}
+                            />
+                          </>
                         )}
                       </span>
                     </MachineBanner>
@@ -1430,7 +1482,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
           onClick={() => leaveStart(true)}
         >
           {/* Phones get a bottom sheet (thumb-reachable, full width, safe-area aware);
-              from `sm` up it becomes a popover pinned under the caret it came from. */}
+              from `sm` up it becomes a popover pinned under the control it came from. */}
           <div
             role="menu"
             aria-label={
@@ -1445,27 +1497,12 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
             onClick={(event) => event.stopPropagation()}
           >
             {target && !isDraftsOpen ? (
-              /* The machine's own verbs. "New session" is the whole answer for the
-                 common case — it starts in the project this machine is already in and
-                 SAYS which — so nothing below it has to be read to get to work. */
+              /* What is LEFT once the verb moved out to the header: the yellow button
+                 beside this `⋯` already starts a session in the project this machine is
+                 in, so the menu holds the rarer half of the order — a private copy,
+                 another folder, the machine itself. */
               <>
                 <p className={LOUD_BAND}>{machineLabel(target)}</p>
-                <StartOption
-                  title="New session"
-                  hint={
-                    project
-                      ? `in ${project.label} · ${homeifyPath(project.path)}${project.when ? ` · last used ${timeLabel(project.when)}` : ''}`
-                      : 'this machine has no project yet — pick a folder first'
-                  }
-                  badge="Default"
-                  onSelect={() => {
-                    if (!project) {
-                      setStartFlow((flow) => startFlowStep(flow, 'browse', target));
-                      return;
-                    }
-                    void createSession({ kind: 'trunk' }, target, project.path);
-                  }}
-                />
                 {/* A draft is an expert move and costs everyone else a question, so it
                     is a SECOND verb and only when the app was told to offer it. */}
                 {offerDrafts && (
@@ -1475,9 +1512,15 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                     onSelect={() => setStartFlow((flow) => startFlowStep(flow, 'drafts', target))}
                   />
                 )}
+                {/* WHERE the button starts is still said out loud — once, on the row that
+                    can change it, because a header has no room for a path. */}
                 <StartOption
                   title="Switch project…"
-                  hint="browse this machine's files"
+                  hint={
+                    project
+                      ? `now in ${project.label} · ${homeifyPath(project.path)}${project.when ? ` · last used ${timeLabel(project.when)}` : ''}`
+                      : 'this machine has no project yet — browse its files'
+                  }
                   onSelect={() => setStartFlow((flow) => startFlowStep(flow, 'browse', target))}
                 />
                 {onMachineSettings && (
@@ -2332,7 +2375,8 @@ function formatDuration(value?: number): string {
 // 2. GEOMETRY: a placeholder that is not the exact height of the thing it
 //    stands for makes the whole list jump when data lands. So the skeleton
 //    mirrors `ProjectGroup`'s header and `SessionRow` class for class
-//    (`min-h-11` / `min-h-14 sm:min-h-12`, same padding, same `mt-*`), and each
+//    (`min-h-11` / `min-h-14` with the very same `mouse:` step, same padding,
+//    same `mt-*`), and each
 //    bar is centred inside an INVISIBLE glyph of the real type step. That sizer
 //    is what makes the line box identical — a bare `h-2` bar is 8px where a
 //    `text-ui` line is not, and three such rows per group is a visible lurch.
@@ -2612,10 +2656,10 @@ function escapeRegExp(value: string): string {
 // real thumb target on a phone sheet.
 
 /**
- * Every verb one machine has, behind ONE control. It is the only thing this screen
- * grew: the fleet bar carries it while a solo machine IS the fleet, and each machine
- * header carries its own once there are several — so "New session" never has to ask
- * which computer it meant. `min-h-11` keeps it a real thumb target.
+ * Everything one machine has EXCEPT the obvious one. "New session" is the yellow
+ * button immediately to its left, on the fleet bar and on every machine header, so
+ * what is left behind this control is the rarer half: a private copy, another folder,
+ * the machine's own settings. `min-h-11` keeps it a real thumb target.
  */
 function MachineKebab({
   label,

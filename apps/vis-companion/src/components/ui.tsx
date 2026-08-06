@@ -295,3 +295,44 @@ export function MachineRail({ color, children }: { color?: MachineColor; childre
 export function MachineMark({ color }: { color: MachineColor }) {
   return <span className={`size-1.5 shrink-0 ${color.dot}`} aria-hidden="true" />;
 }
+
+/**
+ * The verb this screen exists for, on the machine that will run it.
+ *
+ * It used to be the first row of the header's `⋯` menu: a tap, a popover, a read,
+ * and only then the thing people do all day. So it is a BUTTON now — the Blockether
+ * yellow, on every machine header, directly before the `⋯` that keeps the rarer
+ * verbs — and the menu is left with the questions that actually deserve one.
+ *
+ * It NAMES its machine, because every header carries one and three controls all
+ * labelled "New session" say nothing to a screen reader; `where` puts the project it
+ * will start in on the tooltip, since the header has no room to print a path.
+ *
+ * `pressEffect="none"`: a machine with no project yet falls through to the folder
+ * browser anchored on this button, and a transform moves the box that was measured.
+ */
+export function NewSessionButton({
+  machine,
+  where,
+  disabled,
+  onPress,
+}: {
+  machine: string;
+  where?: string | null;
+  disabled?: boolean;
+  onPress: (anchor: HTMLElement) => void;
+}) {
+  return (
+    <Button
+      type="button"
+      pressEffect="none"
+      disabled={disabled}
+      aria-label={`New session on ${machine}`}
+      title={where ? `New session on ${machine}, in ${where}` : `New session on ${machine}`}
+      className="shrink-0 whitespace-nowrap"
+      onClick={(event) => onPress(event.currentTarget)}
+    >
+      New session
+    </Button>
+  );
+}
