@@ -27,9 +27,15 @@ describe('where "New session" lives', () => {
     expect(source).toContain('title="Machine settings"');
     expect(source).toContain('onMachineSettings(target)');
   });
-  it('creates directly in the selected project root', () => {
+  // Regression, user report: the project header reused a home-shortened display path as
+  // both its name and the root sent back to the gateway. On a gateway that resolved `~`
+  // relatively, creating in `~/vis` produced the impossible `~/vis/~/vis` project.
+  it('keeps the project name, display path, and canonical create root separate', () => {
+    expect(source).toContain("project={projectLabel(projectSessions[0]!)}");
+    expect(source).toContain("return sessions.map(projectPath).find(Boolean) ?? '';");
+    expect(source).toContain("{homeifyPath(root) || 'No workspace path'}");
     expect(source).toContain("onNewSession={(root) => void createSession({ kind: 'trunk' }, machine.conn, root)}");
-    expect(source).toContain('startAt={root || null}');
+    expect(source).not.toContain('return homeifyPath(sessions.map(projectPath).find(Boolean));');
   });
 
   it('keeps machine actions inside the full-width header', () => {

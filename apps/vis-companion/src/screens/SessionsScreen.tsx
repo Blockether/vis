@@ -1019,10 +1019,10 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
     () =>
       filtered.map((entry) => ({
         machine: entry.machine,
-        groups: groupByWorkDir(entry.sessions).map(([path, sessions]) => [
-          homeifyPath(path) || 'No workspace path',
-          sessions,
-        ] as [string, Session[]]),
+        // Group identity and every create action keep the gateway's canonical path.
+        // Home-shortening is paint only; feeding `~/vis` back as an API root is how an
+        // older gateway produced the impossible `/…/vis/~/vis` directory.
+        groups: groupByWorkDir(entry.sessions),
       })),
     [filtered],
   );
@@ -1330,11 +1330,11 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                                 : 'No sessions on this machine yet.'}
                         </p>
                       )
-                    : groups.map(([project, projectSessions]) => (
+                    : groups.map(([groupRoot, projectSessions]) => (
                         <ProjectGroup
-                          key={`${key}\u0000${project}`}
-                          groupKey={`${key}\u0000${project}`}
-                          project={project}
+                          key={`${key}\u0000${groupRoot}`}
+                          groupKey={`${key}\u0000${groupRoot}`}
+                          project={projectLabel(projectSessions[0]!)}
                           sessions={projectSessions}
                           conn={machine.conn}
                           matches={matches}
@@ -1344,7 +1344,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                           onDelete={startDelete}
                           onDeleteProject={startProjectDelete}
                           onNewSession={(root) => void createSession({ kind: 'trunk' }, machine.conn, root)}
-                          expanded={expanded.has(`${key}\u0000${project}`)}
+                          expanded={expanded.has(`${key}\u0000${groupRoot}`)}
                           forceExpand={forceExpand}
                           onToggle={toggleProject}
                           pageSize={pageSize}
@@ -1843,7 +1843,7 @@ const ProjectGroup = memo(function ProjectGroup({
             <span className="min-w-0">
               <span className="block truncate font-mono text-ui font-bold text-white">{project}</span>
               <span className="mt-0.5 block truncate font-mono text-chip text-dialog-hint" title={root}>
-                {root || 'No workspace path'}
+                {homeifyPath(root) || 'No workspace path'}
               </span>
             </span>
           </span>
@@ -2481,7 +2481,7 @@ function projectLabel(session: Session): string {
 }
 
 function projectRoot(sessions: Session[]): string {
-  return homeifyPath(sessions.map(projectPath).find(Boolean));
+  return sessions.map(projectPath).find(Boolean) ?? '';
 }
 
 function statusLabel(session: Session): string {
