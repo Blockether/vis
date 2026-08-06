@@ -37,16 +37,17 @@ describe('where "New session" lives', () => {
     expect(source).not.toContain('sm:translate-x-0');
   });
 
-  // Regression, user report: every project header must own both its top and bottom
-  // rule; borrowing the previous row's edge left the first header without a top border.
-  it('gives every project header both edges without doubling adjacent rules', () => {
+  // Regression, user report: the clickable project header itself had no top or bottom
+  // border classes; the rules lived only on its parent <header>, so inspecting the
+  // actual project control showed neither edge.
+  it('gives every clickable project header both edges without doubling adjacent rules', () => {
     expect(source).toContain('className="border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4"');
     expect(source).toContain('className="flex min-h-10 items-center -mb-px border-b border-dialog-edge bg-panel px-3 mouse:min-h-9');
     expect(source).toContain('        ) : (\n          <div>\n            {sections.map');
     expect(source).toContain('      {rows.length > 0 && (\n        <div>');
     expect(source).toContain('<section className="-mt-px" aria-label={`${project} sessions`}>');
     expect(source).toContain(
-      '<header className="flex items-stretch border-y border-dialog-edge bg-panel-2">',
+      'className="-my-px flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 border-y border-dialog-edge',
     );
     expect(source).not.toContain('firstProject');
   });

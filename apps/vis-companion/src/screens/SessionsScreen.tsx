@@ -1836,7 +1836,7 @@ const ProjectGroup = memo(function ProjectGroup({
           type="button"
           onClick={() => onToggle(groupKey)}
           aria-expanded={isOpen}
-          className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:px-4"
+          className="-my-px flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 border-y border-dialog-edge px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:px-4"
         >
           <span className="flex min-w-0 items-center gap-2">
             <ChevronIcon open={isOpen} className="size-3.5 text-dialog-hint" />
