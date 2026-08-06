@@ -284,10 +284,10 @@ def __vis_install_attach__():
             # painted for the human. Staying silent here is the whole point.
             return None
         if in_answer:
-            # Painted exactly once, in the answer's gallery, so the human reads
-            # the figures where the conclusion is instead of scrolling the run.
+            # The row marker keeps this artifact in the final answer gallery, but
+            # the producing tool result is also a human-visible surface: paint the
+            # same persisted image there instead of replacing it with a label.
             print("[Answer gallery: " + name + "]" + ((" " + cap) if cap else ""))
-            return None
         disp = env[1] if len(env) > 1 else None
         if __vis_is_doc(mt):
             if not __vis_emit_doc_fence(disp, name, mt, len(data), cap):
@@ -445,8 +445,8 @@ def __vis_install_attach__():
         "routes it: 'both' (default) shows the human AND sends it to the model, "
         "'user' shows the human only and never enters the model's context, "
         "'model' sends it to the model only and paints nothing for the human. "
-        "in_answer=True holds it back for the gallery under the FINAL ANSWER, "
-        "painted exactly once where the human reads the conclusion - the only way "
+        "in_answer=True ALSO places it in the gallery under the FINAL ANSWER; the "
+        "tool result still paints it where it was produced. This is the only way "
         "to put an image IN the answer. The sandbox-confined path is read, its "
         "media type inferred, and its bytes stored across restarts; images can "
         "replay to vision models. A CSV/TSV file attaches as a live TABLE: the "
@@ -521,9 +521,9 @@ def __vis_install_attach__():
         "separate shots. audience='both' shows the human and sends it to the "
         "model; 'user' shows the human ONLY and never enters the model's context; "
         "'model' sends it to the model ONLY and paints nothing for the human. "
-        "in_answer=True holds it back for the gallery under the FINAL ANSWER, "
-        "painted exactly once where the human reads the conclusion - prefer it "
-        "for the one or two figures that make your point. Images replay to vision "
+        "in_answer=True ALSO places it in the gallery under the FINAL ANSWER; the "
+        "tool result still paints it where it was produced. Prefer it for the one "
+        "or two figures that make your point. Images replay to vision "
         "models; a CSV/TSV attaches as a live TABLE the transcript paints as a "
         "sortable, pageable grid whose rows stay OUT of the model's context "
         "(vis_read_attachment(id) reads them back); a *.pdf/*.html attaches as "

@@ -102,10 +102,10 @@
   "Body of `__vis_record_attachment__`: validate the already-decided attachment
    fields and append the map to the active per-block artifact sink.
 
-   The image probe runs ONCE: its `[path w h]` is returned to the shim (which
-   prints the inline `vis-image` fence) and, for an `in_answer` artifact the shim
-   deliberately does NOT print, stamped onto the row so the answer's own gallery
-   can paint it later without re-decoding the bytes."
+   The image probe runs ONCE: its `[path w h]` is returned to the shim for the
+   inline `vis-image` fence and, for an `in_answer` artifact, also stamped onto the
+   row so the answer's gallery can paint the same persisted image later without
+   re-decoding the bytes."
   [kind media-type b64 filename size audience in-answer label]
   (attach-envelope
     #(cond (str/blank? (str b64)) (throw (ex-info "vis_attach: empty payload (no bytes to persist)"
@@ -170,8 +170,8 @@
    `\"user\"` (the human sees it, the bytes never reach the wire — an image
    replays IN FULL on every later request, so a screenshot the model does not
    need is re-billed forever) or `\"model\"` (the model gets it, the human's
-   transcript stays clean). `in-answer` defers the artifact to the gallery under
-   the final answer, which is where a human actually reviews figures."
+   transcript stays clean). `in-answer` also adds the artifact to the gallery under
+   the final answer; its producing tool result remains visible in the run."
   []
   {"__vis_record_attachment__"
    (fn record-attachment [kind media-type b64 filename size audience in-answer label]
@@ -235,16 +235,17 @@
        :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_read_attachment"
                       "vis_reinspect_attachment" "vis_attachment_versions" "vis_attachment_version"]
        :shim/description
-       (str "`vis_attach`/`vis_attach_bytes` persist artifacts (images, CSV/TSV tables, JSON, "
-            "PDF, audio) as durable DB-owned iteration attachments with sniffed media types, "
-            "surviving restarts. SAME DOCUMENT, SAME NAME — a new revision of an artifact you "
-            "already attached goes back under its OWN filename and becomes that artifact's next "
-            "VERSION, never `report_v2.png` beside `report.png`; a fresh name starts a genuinely "
-            "different document, and `vis_attachment_versions(name)` / "
-            "`vis_attachment_version(name, n)` walk that thread. Multiple images compose into "
-            "one sheet (a matplotlib grid, one montage) for a single call; "
-            "`audience='both'|'user'|'model'` routes who sees it, and `in_answer=True` places it "
-            "in the FINAL ANSWER's gallery. Vis-native; no upstream library.")
+       (str
+         "`vis_attach`/`vis_attach_bytes` persist artifacts (images, CSV/TSV tables, JSON, "
+         "PDF, audio) as durable DB-owned iteration attachments with sniffed media types, "
+         "surviving restarts. SAME DOCUMENT, SAME NAME — a new revision of an artifact you "
+         "already attached goes back under its OWN filename and becomes that artifact's next "
+         "VERSION, never `report_v2.png` beside `report.png`; a fresh name starts a genuinely "
+         "different document, and `vis_attachment_versions(name)` / "
+         "`vis_attachment_version(name, n)` walk that thread. Multiple images compose into "
+         "one sheet (a matplotlib grid, one montage) for a single call; "
+         "`audience='both'|'user'|'model'` routes who sees it, and `in_answer=True` paints it "
+         "in the tool result AND places it in the FINAL ANSWER's gallery. Vis-native; no upstream library.")
        :shim/bindings attach-bridge-bindings
        :shim/source "vis-shims/attach.py"}]}))
 

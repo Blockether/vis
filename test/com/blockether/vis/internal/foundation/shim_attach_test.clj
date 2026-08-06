@@ -577,8 +577,8 @@
    painted but never becomes a wire image block (the opt-out for the one cost
    multimodal history cannot undo: an image RE-UPLOADED in full on every later
    request), \"model\" rides the request and is never painted. `in_answer=True`
-   holds the paint back for the answer's own gallery, so the human reviews one
-   collected set of figures where the conclusion is instead of scrolling the run."
+   paints the artifact in the producing result and also collects it in the final
+   answer gallery, so neither surface silently loses the figure."
   (it "defaults to audience \"both\" and paints the inline image fence"
       (let [out (attach-out "vis_attach_bytes(b'PNGDATA', 'chart.png', media_type='image/png')\n")]
         (expect (nil? (:error out)))
@@ -602,17 +602,28 @@
         ;; Staying silent IS the feature: no fence, no caption line, nothing in
         ;; the block naming an artifact the human was never meant to review.
         (expect (not (re-find #"chart\.png" (str (:stdout out)))))))
-  (it "keeps an in_answer artifact out of the block and marks it for the gallery"
-      (let
-        [out (attach-out (str "vis_attach_bytes(b'PNGDATA', 'chart.png', media_type='image/png', "
-                              "in_answer=True, label='fleet, phone width')\n"))]
-        (expect (nil? (:error out)))
-        (expect (true? (:is-in-answer (:row out))))
-        (expect (= "fleet, phone width" (:label (:row out))))
-        (expect (= "both" (:audience (:row out))))
-        ;; One line naming it, never the fence: the answer paints it exactly once.
-        (expect (re-find #"\[Answer gallery: chart\.png\] fleet, phone width" (str (:stdout out))))
-        (expect (not (re-find #"vis-image" (str (:stdout out)))))))
+  ;; Regression, session 617d3b77-8522-4866-b4b4-01cc8253bf1a: `in_answer=True`
+  ;; withheld the image fence from the tool result, leaving only an answer-gallery label.
+  (it
+    "paints an in_answer image in the result and marks it for the final gallery"
+    (let
+      [out
+       (attach-out
+         (str
+           "import base64\n"
+           "png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')\n"
+           "vis_attach_bytes(png, 'chart.png', in_answer=True, " "label='fleet, phone width')\n"))
+
+       stdout
+       (str (:stdout out))]
+
+      (expect (nil? (:error out)))
+      (expect (true? (:is-in-answer (:row out))))
+      (expect (= "fleet, phone width" (:label (:row out))))
+      (expect (= "both" (:audience (:row out))))
+      (expect (re-find #"\[Answer gallery: chart\.png\] fleet, phone width" stdout))
+      (expect (re-find #"vis-image" stdout))
+      (expect (re-find #"\[Image: chart\.png 1×1," stdout))))
   (it "refuses an audience outside the closed vocabulary"
       (let
         [out (attach-out (str "try:\n"

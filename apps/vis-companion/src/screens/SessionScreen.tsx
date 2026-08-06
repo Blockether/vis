@@ -2995,12 +2995,13 @@ export function SessionScreen({
     if (
       initialScrollPendingRef.current &&
       turns.length &&
-      hydratedTurnCount >= Math.min(visibleTurnCount, turns.length)
+      hydratedTurnCount >= Math.min(FIRST_PAINT_TURNS, turns.length)
     ) {
       initialScrollPendingRef.current = false;
       pinToEnd();
-      // Reveal one frame later, after the browser paints the bottom-pinned
-      // transcript, so opening a session lands on the latest turn.
+      // The first paint window is the whole opening contract. Reveal one frame
+      // after it is bottom-pinned; older turns continue hydrating above the
+      // viewport instead of keeping an already-readable transcript behind a veil.
       requestAnimationFrame(() => setLoading(false));
       return;
     }
