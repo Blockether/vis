@@ -139,6 +139,12 @@ describe("which machines need a relay", () => {
     expect(relayUrlFor(androidOnly, "ios")).toBe(RELAY);
   });
 
+  it("never routes browser push through the native relay", () => {
+    expect(
+      relayUrlFor(status({ relay: { is_available: true, url: RELAY } }), "web"),
+    ).toBeNull();
+  });
+
   it("falls back to the relay this BUILD was published with", () => {
     // Nobody should have to know an address to be notified. WHICH relay can
     // sign for this app is a property of the app — its publisher owns the topic

@@ -162,7 +162,6 @@ export async function syncWebPushRegistrations(
         if (webPushPermission() !== "granted") continue;
         const subscription = await getExistingWebPushSubscription(conn.url);
         if (subscription) await target.register(webPushDeviceRegistration(subscription));
-        await target.register(webPushDeviceRegistration(subscription));
       } else {
         const subscription = await getExistingWebPushSubscription(conn.url);
         if (subscription) await target.unregister(webPushToken(subscription));

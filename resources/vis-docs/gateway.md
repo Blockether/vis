@@ -264,11 +264,27 @@ no key, topic, or environment value works around it.
 | your gateway + a store-distributed companion | only from a gateway holding **that publisher's** credentials |
 | your gateway + a store-distributed companion, using your own key | ❌ permanent 403 — nothing to configure |
 
-Push needs no credentials at all. A gateway holding none reports `features.push`
-as **available** and delivers through the relay described next; the credentials
+Native push needs no credentials at all. A gateway holding none reports `features.push`
+as **available** and delivers through the native relay described next; the credentials
 below only matter for a companion you build and sign yourself, when you would
-rather push directly than through anybody's relay. Sessions, streaming, and
-drafts are unaffected either way.
+rather push directly than through anybody's relay. Browser push is separate:
+
+### Browser Web Push (gateway-local)
+
+The web companion does not use the native relay or a build-time URL. Each gateway
+generates its own VAPID P-256 key pair once under `~/.vis/web-push/`, advertises
+only its public key through `GET /v1/devices`, and sends encrypted Web Push
+requests directly to the browser's push service. The companion registers its
+service worker automatically and keeps one push subscription per gateway, so a
+user can run a private web app against any number of their own gateways without
+a shared publisher endpoint. `VIS_WEB_PUSH_SUBJECT` may set the VAPID contact
+(`mailto:` or `https://`); otherwise the gateway uses a local default.
+
+The browser's subscription is registered as `platform: "web"` on that gateway.
+The gateway owns the VAPID key, encryption, delivery and stale-subscription
+cleanup; no Cloudflare Worker or static relay URL is involved. Sessions, streaming,
+and drafts are unaffected either way.
+
 
 ### Relayed push (a gateway with no Apple or Google key)
 

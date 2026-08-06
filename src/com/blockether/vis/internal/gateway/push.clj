@@ -287,7 +287,9 @@
      @jwt-cache
 
      fresh?
-     (and token (= key-id (:key-id cfg)) (< (- (System/currentTimeMillis) (long at)) JWT_TTL_MS))]
+     (and token
+          (= key-id (:key-id cfg))
+          (< (- (System/currentTimeMillis) (long at)) (long JWT_TTL_MS)))]
 
     (if fresh?
       token
@@ -331,7 +333,7 @@
 (defn- prune
   "Keep the registry bounded, newest-seen first."
   [m]
-  (if (<= (count m) MAX_DEVICES)
+  (if (<= (long (count m)) (long MAX_DEVICES))
     m
     (into {} (take MAX_DEVICES (sort-by #(- (long (:last-seen (val %) 0))) m)))))
 

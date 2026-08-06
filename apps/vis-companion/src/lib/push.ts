@@ -8,9 +8,8 @@
  * alert came from. It never talks to the gateway itself — `GatewayClient`
  * does that — so the same token can be registered with several gateways.
  *
- * On the web this is a no-op that reports `unsupported`: browsers would need a
- * service worker plus a Web Push key pair, which is a different transport than
- * APNs and is deliberately out of scope here.
+ * On the web, `web-push.ts` owns the service worker and gateway-local Web Push
+ * subscription. This module only owns native APNs/FCM registration.
  */
 
 import { Capacitor } from '@capacitor/core';

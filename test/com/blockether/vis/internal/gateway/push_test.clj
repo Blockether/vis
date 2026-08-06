@@ -9,7 +9,6 @@
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.web-push :as web-push]
-            [com.blockether.vis.internal.gateway.relay :as relay]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire])
   (:import [java.security KeyPairGenerator Signature]

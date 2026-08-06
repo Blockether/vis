@@ -88,6 +88,9 @@ export function relayUrlFor(
   platform: string,
 ): string | null {
   if (!push) return null;
+  // Browser subscriptions are delivered by the gateway that owns their VAPID key;
+  // they never enter the native relay path.
+  if (platform === "web") return null;
   if (signsItself(push, platform)) return null;
   const named = push.relay?.url;
   // A machine that names no relay is the ordinary case, not a broken one: it

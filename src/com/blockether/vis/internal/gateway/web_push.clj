@@ -35,6 +35,7 @@
 (def ^:private PUBLIC_KEY_PREFIX
   (byte-array [0x30 0x59 0x30 0x13 0x06 0x07 0x2a 0x86 0x48 0xce 0x3d 0x02 0x01 0x06 0x08 0x2a 0x86
                0x48 0xce 0x3d 0x03 0x01 0x07 0x03 0x42 0x00]))
+(defonce ^:private key-lock (Object.))
 
 (defn- env-val
   [name]
@@ -60,16 +61,26 @@
 
 (defn- utf8 ^bytes [^String value] (.getBytes value StandardCharsets/UTF_8))
 
+(defn- array-length ^long [^bytes array] (alength array))
+
 (defn- bytes-concat
   ^bytes [& arrays]
-  (let [out (byte-array (reduce + 0 (map alength arrays)))]
+  (let
+    [out (byte-array (reduce (fn [^long total ^bytes array]
+                               (+ total (array-length array)))
+                             0
+                             arrays))]
     (loop
       [offset 0
        remaining arrays]
 
       (if-let [array (first remaining)]
-        (do (System/arraycopy ^bytes array 0 out offset (alength array))
-            (recur (+ offset (alength array)) (next remaining)))
+        (let
+          [^bytes array array
+           length (array-length array)]
+
+          (System/arraycopy array 0 out offset length)
+          (recur (+ offset length) (next remaining)))
         out))))
 
 (defn- fixed32
@@ -160,7 +171,7 @@
 (defn- load-or-generate-key-pair
   []
   (or (load-key-pair)
-      (locking (web-home)
+      (locking key-lock
         (or (load-key-pair)
             (when-not (and (.isFile (key-file)) (.isFile (public-file))) (generate-key-pair!))))))
 
@@ -406,6 +417,7 @@
 
     (cond (not (:is-configured cfg)) {:status 0 :reason "not-configured"}
           (nil? target) {:status 400 :reason "invalid-subscription"}
-          (> (alength payload) MAX_PAYLOAD_BYTES) {:status 413 :reason "payload-too-large"}
+          (> (long (alength ^bytes payload)) (long MAX_PAYLOAD_BYTES)) {:status 413
+                                                                        :reason "payload-too-large"}
           :else
           (post! cfg pair target (encrypted-payload (:public-key target) (:auth target) payload)))))
