@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.32] - 2026-08-06
+
+### Changed
+- Release v0.1.32
+- Drop stale workspace backend re-exports from core
+- Allow per-model provider API styles
+- Match fleet header typography
+- Make fleet headers and attachments easier to use
+- Use the shared Button component for doc-artifact toolbar controls
+- companion: let a pinch start while a stroke is in progress
+- Fold the artifacts sheet's title band into its filter strip
+- Drop oversized py-2 override from image-viewer/annotation buttons
+- Raise ArtifactsSheet z-index above transcript copy buttons
+- Bridge extension: throw on missing :workspace/root instead of falling back to user.dir
+- companion: resume last session on cold hashless relaunch
+- Drop bossy "ATTACH ONE OR TWO PER TURN" framing from attach shim's prompt-facing description
+- Print every shim's supported surface in the system prompt
+- Write every shim description as an editable multi-line str
+- Tell the write side to keep one document under one name
+- Version artifacts so a name is one continuous thread of work
+- Hardcode workspace backend to Rift, remove pluggable backend registry
+- Align fleet kebab flush-right and match project header typography
+- Add vis-agent gateway mcp CLI commands
+- Replace ⋯ glyph with a proper DotsIcon in the icon set
+- Remove the redundant fleet bar ⋯ — one kebab per machine header only
+- Rename release-companion skill to release-companion-hotfix
+- Remove the /clear slash command
+- Fix iOS keyboard glitch when tapping a slash command
+- Put every machine verb behind one ⋯ menu and let a session pick its project
+- Suspend the zoom-viewer snap transition during a live pinch/pan
+- Fit the composer text to its own line box
+- Loosen the small type steps and refuse a hardcoded line-height
+- release: update release notes for v0.1.31
+- Draw the design board with the app's own list components
+
+### Package changes
+
+#### com.blockether/vis
+- Release v0.1.32 (6d4bf9101)
+- Drop stale workspace backend re-exports from core (5609ac9f2)
+- Allow per-model provider API styles (efb7b129d)
+- Match fleet header typography (1cf300753)
+- Make fleet headers and attachments easier to use (93d4aff0b)
+- Use the shared Button component for doc-artifact toolbar controls (c17473390)
+- companion: let a pinch start while a stroke is in progress (5ed890df4)
+- Fold the artifacts sheet's title band into its filter strip (48fde2874)
+- Drop oversized py-2 override from image-viewer/annotation buttons (9b344dc58)
+- Raise ArtifactsSheet z-index above transcript copy buttons (9abaf9a00)
+- companion: resume last session on cold hashless relaunch (ee72aad57)
+- Drop bossy "ATTACH ONE OR TWO PER TURN" framing from attach shim's prompt-facing description (344923028)
+- Print every shim's supported surface in the system prompt (da99aadd0)
+- Write every shim description as an editable multi-line str (64fcd44c1)
+- Tell the write side to keep one document under one name (06424ae2f)
+- Version artifacts so a name is one continuous thread of work (4e5ba78ab)
+- Hardcode workspace backend to Rift, remove pluggable backend registry (a84314623)
+- Align fleet kebab flush-right and match project header typography (c269eefa3)
+- Add vis-agent gateway mcp CLI commands (74f26e03c)
+- Replace ⋯ glyph with a proper DotsIcon in the icon set (52280c55e)
+- Remove the redundant fleet bar ⋯ — one kebab per machine header only (32f70e99b)
+- Rename release-companion skill to release-companion-hotfix (386459ad6)
+- Remove the /clear slash command (398d28da8)
+- Fix iOS keyboard glitch when tapping a slash command (23cbf2f1b)
+- Put every machine verb behind one ⋯ menu and let a session pick its project (62daee7ea)
+- Suspend the zoom-viewer snap transition during a live pinch/pan (577388d1f)
+- Fit the composer text to its own line box (c877137e0)
+- Loosen the small type steps and refuse a hardcoded line-height (5f45e7f0b)
+- release: update release notes for v0.1.31 (507ca8dc1)
+- Draw the design board with the app's own list components (0f423eb9b)
+
+#### com.blockether/vis-foundation-bridge
+- Bridge extension: throw on missing :workspace/root instead of falling back to user.dir (cb4e63b8e)
+
+#### com.blockether/vis-persistance-sqlite
+- Version artifacts so a name is one continuous thread of work (4e5ba78ab)
+
+
+
 ## [v0.1.31] - 2026-08-05
 
 ### Changed
@@ -3572,7 +3649,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.31...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.32...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -3597,3 +3674,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.27]: https://github.com/Blockether/vis/releases/tag/v0.1.27
 [v0.1.28]: https://github.com/Blockether/vis/releases/tag/v0.1.28
 [v0.1.31]: https://github.com/Blockether/vis/releases/tag/v0.1.31
+[v0.1.32]: https://github.com/Blockether/vis/releases/tag/v0.1.32
