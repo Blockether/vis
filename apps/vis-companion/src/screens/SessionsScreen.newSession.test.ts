@@ -37,14 +37,18 @@ describe('where "New session" lives', () => {
     expect(source).not.toContain('sm:translate-x-0');
   });
 
-  // Regression (reported: adjacent bottom/top rules made the filter and session rows render as a doubled divider).
-  it('uses one rule at each filter, project, and session boundary', () => {
+  // Regression, user report: every project header must own both its top and bottom
+  // rule; borrowing the previous row's edge left the first header without a top border.
+  it('gives every project header both edges without doubling adjacent rules', () => {
     expect(source).toContain('className="border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4"');
     expect(source).toContain('className="flex min-h-10 items-center -mb-px border-b border-dialog-edge bg-panel px-3 mouse:min-h-9');
     expect(source).toContain('        ) : (\n          <div>\n            {sections.map');
     expect(source).toContain('      {rows.length > 0 && (\n        <div>');
-    expect(source).toContain("className={`${firstProject ? '' : '-mt-px border-t'} border-dialog-edge`}");
-    expect(source).toContain('firstProject={groupIndex === 0}');
+    expect(source).toContain('<section className="-mt-px" aria-label={`${project} sessions`}>');
+    expect(source).toContain(
+      '<header className="flex items-stretch border-y border-dialog-edge bg-panel-2">',
+    );
+    expect(source).not.toContain('firstProject');
   });
 
   // Regression, issue: the machine panel disappeared when only one machine was paired.

@@ -1330,7 +1330,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                                 : 'No sessions on this machine yet.'}
                         </p>
                       )
-                    : groups.map(([project, projectSessions], groupIndex) => (
+                    : groups.map(([project, projectSessions]) => (
                         <ProjectGroup
                           key={`${key}\u0000${project}`}
                           groupKey={`${key}\u0000${project}`}
@@ -1344,7 +1344,6 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                           onDelete={startDelete}
                           onDeleteProject={startProjectDelete}
                           onNewSession={(root) => void createSession({ kind: 'trunk' }, machine.conn, root)}
-                          firstProject={groupIndex === 0}
                           expanded={expanded.has(`${key}\u0000${project}`)}
                           forceExpand={forceExpand}
                           onToggle={toggleProject}
@@ -1722,7 +1721,6 @@ const ProjectGroup = memo(function ProjectGroup({
   onDelete,
   onDeleteProject,
   onNewSession,
-  firstProject,
   expanded,
   forceExpand,
   onToggle,
@@ -1742,7 +1740,6 @@ const ProjectGroup = memo(function ProjectGroup({
   onDelete: (session: Session, conn: GatewayConn) => void;
   onDeleteProject: (project: string, sessions: Session[], conn: GatewayConn) => void;
   onNewSession: (root: string) => void;
-  firstProject: boolean;
   expanded: boolean;
   forceExpand: boolean;
   onToggle: (groupKey: string) => void;
@@ -1833,11 +1830,8 @@ const ProjectGroup = memo(function ProjectGroup({
 
   return (
     <>
-    <section
-      className={`${firstProject ? '' : '-mt-px border-t'} border-dialog-edge`}
-      aria-label={`${project} sessions`}
-    >
-      <header className="flex items-stretch border-b border-dialog-edge bg-panel-2">
+    <section className="-mt-px" aria-label={`${project} sessions`}>
+      <header className="flex items-stretch border-y border-dialog-edge bg-panel-2">
         <button
           type="button"
           onClick={() => onToggle(groupKey)}
