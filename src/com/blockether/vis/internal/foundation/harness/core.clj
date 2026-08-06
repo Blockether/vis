@@ -186,16 +186,21 @@
          task)))
 
 (defn- skill-template-entries
-  "Every discovered skill as one dynamic prompt template named `<name>`."
+  "Every discovered skill as one dynamic prompt template named `<name>`. A
+   repository-local skill carries its owning project root so invocation can run
+   relative to that project even when selected from a repository-root session."
   []
   (mapv (fn [s]
-          {:name (:name s)
-           :description (str "Load skill "
-                             (:name s)
-                             (when-let [d (not-empty (str (:description s)))]
-                               (str " — " (clip d 140))))
-           :expand-fn (fn [env args]
-                        (skill-template-text env s args))})
+          (cond->
+            {:name (:name s)
+             :description (str "Load skill "
+                               (:name s)
+                               (when-let [d (not-empty (str (:description s)))]
+                                 (str " — " (clip d 140))))
+             :expand-fn (fn [env args]
+                          (skill-template-text env s args))}
+            (:project-root s)
+            (assoc :project-root (:project-root s))))
         (d/skills)))
 
 (prompt-templates/register-provider! ::skills skill-template-entries)

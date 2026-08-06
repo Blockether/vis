@@ -116,31 +116,44 @@
                                    {:answer nil :iteration-count 0 :duration-ms 0})]
               (lp/run-turn! env "hello world" {}))
             (expect (true? @fell-through?))))))
-  (it "binds the session workspace and preserves the root template's argument tail"
-      (with-store
-        (fn [store]
-          (let
-            [env
-             (slash-env store [])
+  ;; Regression: a root-visible nested skill expanded under the root session and then
+  ;; ran every relative tool call from the repository root instead of its owning app.
+  (it
+    "re-roots a nested template's normal turn while preserving root-session expansion"
+    (with-store
+      (fn [store]
+        (let
+          [env
+           (slash-env store [])
 
-             seen
-             (atom nil)]
+           app-root
+           (workspace/workspace-root "/tmp/apps/companion")
 
-            (prompt-templates/register-provider!
-              ::workspace-template
-              (fn []
-                [{:name "scoped-template"
-                  :expand-fn (fn [_ args]
-                               (reset! seen {:root (.getPath (workspace/cwd)) :args args})
-                               "expanded")}]))
-            (try (with-redefs
-                   [lp/iteration-loop (fn [& _]
-                                        {:answer "done" :iteration-count 0 :duration-ms 0})]
-                   (lp/run-turn! env "/scoped-template audit apps/companion" {}))
-                 (expect (= {:root (workspace/workspace-root "/tmp") :args "audit apps/companion"}
-                            @seen))
-                 (finally (prompt-templates/register-provider! ::workspace-template
-                                                               (constantly nil)))))))))
+           seen
+           (atom nil)
+
+           run-root
+           (atom nil)]
+
+          (prompt-templates/register-provider!
+            ::workspace-template
+            (fn []
+              [{:name "scoped-template"
+                :project-root app-root
+                :expand-fn (fn [_ args]
+                             (reset! seen {:root (.getPath (workspace/cwd)) :args args})
+                             "expanded")}]))
+          (try (with-redefs
+                 [lp/iteration-loop (fn [turn-env & _]
+                                      (reset! run-root {:env (:workspace/root turn-env)
+                                                        :cwd (.getPath (workspace/cwd))})
+                                      {:answer "done" :iteration-count 0 :duration-ms 0})]
+                 (lp/run-turn! env "/scoped-template audit apps/companion" {}))
+               (expect (= {:root (workspace/workspace-root "/tmp") :args "audit apps/companion"}
+                          @seen))
+               (expect (= {:env app-root :cwd app-root} @run-root))
+               (finally (prompt-templates/register-provider! ::workspace-template
+                                                             (constantly nil)))))))))
 
 ;; =============================================================================
 ;; IR-shaped :slash/body persists as Markdown

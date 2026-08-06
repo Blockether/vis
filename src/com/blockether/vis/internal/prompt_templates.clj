@@ -230,11 +230,12 @@
       (if (str/blank? args) body (str body "\n\n" args)))))
 
 (defn expand
-  "Expand a `/name args…` prompt-template invocation against the
-   available templates. Returns `{:name :text :path?}` when a template
-   matched and produced non-blank text, else nil. Never throws — a
-   failing `:expand-fn` logs and yields nil so the engine falls back to
-   normal slash error handling."
+  "Expand a `/name args…` prompt-template invocation against the available
+   templates. Returns `{:name :text :path? :project-root?}` when a template
+   matched and produced non-blank text, else nil. `:project-root` is trusted
+   provider metadata used to execute a nested project's template from its owner.
+   Never throws — a failing `:expand-fn` logs and yields nil so the engine falls
+   back to normal slash error handling."
   [env text]
   (when-let [{:keys [name args]} (parse-invocation text)]
     (when-let [t (first (filter #(= name (:name %)) (templates)))]
@@ -250,4 +251,7 @@
         (when (and (string? body) (not (str/blank? body)))
           (cond-> {:name name :text body}
             (:path t)
-            (assoc :path (:path t))))))))
+            (assoc :path (:path t))
+
+            (:project-root t)
+            (assoc :project-root (:project-root t))))))))

@@ -228,6 +228,32 @@
   (it "uses ancestor walking for every project-local harness source"
       (doseq [sources [d/agent-sources d/skill-sources d/command-sources]]
         (expect (not-any? #(= :rel (second %)) sources))))
+  ;; Regression: a repository-root session could not see a skill owned by a nested app,
+  ;; and moving the skill to the repository root made its relative instructions run there.
+  (it
+    "discovers gitignored descendant-project skills from the repository root and records their owner"
+    (let
+      [root
+       (.toFile (Files/createTempDirectory "vis-root-skill-discovery" (make-array FileAttribute 0)))
+
+       app
+       (io/file root "apps" "companion")
+
+       skill-md
+       (io/file app ".agents" "skills" "app-design" "SKILL.md")]
+
+      (try (.mkdirs (io/file root ".git"))
+           (io/make-parents skill-md)
+           (spit (io/file root ".gitignore") ".agents/\n")
+           (spit skill-md "---\nname: app-design\ndescription: nested\n---\nAPP")
+           (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+             (with-redefs [d/skill-sources [[:agents :rel-walk ".agents" "skills"]]]
+               (let [skill (first (filter #(= "app-design" (:name %)) (d/discover-skills)))]
+                 (expect (some? skill))
+                 (expect (= (.getCanonicalPath app) (:project-root skill)))
+                 (expect (= (.getCanonicalPath skill-md)
+                            (.getCanonicalPath (io/file (:path skill))))))))
+           (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root)))))))
   (it "treats skill resources as opaque and ignores implementation-specific command metadata"
       (let
         [root

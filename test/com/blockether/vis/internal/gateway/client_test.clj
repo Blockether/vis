@@ -15,6 +15,32 @@
 
 (def ^:private fake-entry {:host "127.0.0.1" :port 7890 :pid 4242 :secret "s"})
 
+;; Regression: direct API debugging reimplemented registry discovery and authentication
+;; instead of using the gateway client's canonical transport.
+(deftest request-uses-the-canonical-authenticated-client
+  (let
+    [calls
+     (atom [])
+
+     response
+     {:status 201 :body "created"}]
+
+    (with-redefs-fn {(rv 'ensure-gateway!) (fn []
+                                             (swap! calls conj [:gateway])
+                                             fake-entry)
+                     (rv 'ensure-client!) (fn [entry]
+                                            (swap! calls conj [:client entry])
+                                            "client-id")
+                     (rv 'gw-send!) (fn [entry method path opts]
+                                      (swap! calls conj [:request entry method path opts])
+                                      response)}
+      (fn []
+        (is (= response
+               (client/request! :post "/v1/debug" {:body {:hello "world"} :timeout-ms 1200})))
+        (is (= [[:gateway] [:client fake-entry]
+                [:request fake-entry "POST" "/v1/debug" {:body {:hello "world"} :timeout-ms 1200}]]
+               @calls))))))
+
 (defn- await-value
   "Wait for a background cache refresh to publish its expected value."
   [read expected]

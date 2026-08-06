@@ -9834,7 +9834,14 @@
                                                                  :data {:user-request user-request
                                                                         :error (ex-message t)}})
                                                       nil))))]
-          (run-normal-turn! env (:text expansion) loop-opts)
+          (let
+            [turn-env (if-let [root (:project-root expansion)]
+                        (assoc env
+                          :workspace/root root
+                          :workspace (assoc (:workspace env) :root root))
+                        env)]
+            (extension/with-context {:env turn-env}
+                                    (run-normal-turn! turn-env (:text expansion) loop-opts)))
           (run-slash-turn! env user-request slash-result loop-opts))
         (run-normal-turn! env user-request loop-opts)))))
 

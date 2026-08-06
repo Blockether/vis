@@ -10,6 +10,8 @@
 
 (def ^:private skill-template-text @#'core/skill-template-text)
 
+(def ^:private skill-template-entries @#'core/skill-template-entries)
+
 (defn- skill-env
   ([ctx] (skill-env ctx 1 1))
   ([ctx turn iter]
@@ -74,17 +76,21 @@
           (expect (= (extension/sha256-hex "BODY v2")
                      (get-in @(get env :ctx-atom) ["session_active_skills" "demo" "digest"])))))))
 
-(defdescribe skill-template-text-test
-             (it "slash skill expansion injects the body and bundled resource paths"
-                 (let
-                   [s {:name "demo" :description "d" :body "BODY" :dir "/x" :resources ["ref.md"]}]
-                   (with-redefs
-                     [d/skill-by-name (fn [_]
-                                        s)]
-                     (let [text (skill-template-text {} s "do x")]
-                       (expect (str/includes? text "BODY"))
-                       (expect (str/includes? text "- /x/ref.md"))
-                       (expect (str/includes? text "Task: do x")))))))
+(defdescribe
+  skill-template-text-test
+  (it "slash skill expansion injects the body and bundled resource paths"
+      (let [s {:name "demo" :description "d" :body "BODY" :dir "/x" :resources ["ref.md"]}]
+        (with-redefs
+          [d/skill-by-name (fn [_]
+                             s)]
+          (let [text (skill-template-text {} s "do x")]
+            (expect (str/includes? text "BODY"))
+            (expect (str/includes? text "- /x/ref.md"))
+            (expect (str/includes? text "Task: do x"))))))
+  (it "carries a nested skill's owning project into its prompt template"
+      (with-redefs
+        [d/skills (constantly [{:name "demo" :description "d" :project-root "/repo/apps/demo"}])]
+        (expect (= "/repo/apps/demo" (:project-root (first (skill-template-entries))))))))
 
 (defdescribe
   skill-native-tool-test

@@ -122,12 +122,14 @@
                                                (fn []
                                                  [{:name "dyn"
                                                    :description "dynamic"
+                                                   :project-root "/repo/apps/demo"
                                                    :expand-fn (fn [env args]
                                                                 (str "ENV=" (:k env)
                                                                      " ARGS=" args))}]))
                  (try (with-redefs [templates/file-templates (constantly [])]
-                        (let [{:keys [text]} (templates/expand {:k "v"} "/dyn go")]
-                          (expect (= "ENV=v ARGS=go" text))))
+                        (let [{:keys [text project-root]} (templates/expand {:k "v"} "/dyn go")]
+                          (expect (= "ENV=v ARGS=go" text))
+                          (expect (= "/repo/apps/demo" project-root))))
                       (finally
                         ;; deregister so other tests don't see the fixture provider
                         (templates/register-provider! ::test-provider (constantly nil)))))

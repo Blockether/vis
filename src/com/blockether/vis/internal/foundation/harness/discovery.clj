@@ -17,6 +17,8 @@
    Claude before pi/agents/opencode)."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.fff :as fff]
+            [com.blockether.vis.internal.fff-index :as fff-index]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace :as workspace]))
 
@@ -289,20 +291,130 @@
 
                    e)))
 
+(defn- repository-root
+  "Nearest Git root for the active workspace, or nil outside a repository."
+  ^java.io.File []
+  (when-let [^java.io.File root (last (workspace/ancestor-roots (project-root)))]
+    (let [^java.io.File canonical-root (.getCanonicalFile root)]
+      (when (.exists (io/file canonical-root ".git")) canonical-root))))
+
+(defn- nested-skill-files
+  "Project-skill files below a repository-root session, discovered through Vis' one
+   pooled fff index. Git ignores stay enabled for the tree; only the explicit harness
+   configuration directories are reopened. Nested app sessions deliberately do not
+   scan siblings."
+  []
+  (let
+    [^java.io.File repo
+     (repository-root)
+
+     ^java.io.File active-root
+     (project-root)
+
+     ^java.io.File active
+     (.getCanonicalFile active-root)]
+
+    (when (and repo (= (.getPath repo) (.getPath active)))
+      (let
+        [specs
+         (->> skill-sources
+              (filter #(= :rel-walk (second %)))
+              distinct
+              vec)
+
+         harnesses
+         (map #(nth % 2) specs)
+
+         overlay
+         {:unignore-globs (vec (distinct (mapcat (fn [h]
+                                                   [(str h "/**") (str "**/" h "/**")])
+                                                 harnesses)))}]
+
+        (fff-index/with-index
+          [idx (fff-index/lease repo true overlay)]
+          (vec (mapcat (fn [[tool _ & parts]]
+                         (let [pattern (str "**/" (str/join "/" parts) "/*/SKILL.md")]
+                           (for
+                             [{:keys [relative-path]}
+                              (sort-by :relative-path
+                                       (:items (fff/glob idx {:pattern pattern :page-size 10000})))
+                              :let [f (io/file repo relative-path)]
+                              :when (.isFile ^java.io.File f)]
+
+                             [tool f])))
+                       specs)))))))
+
+(defn- skill-candidates
+  "Ordered `[tool SKILL.md]` candidates. Active/ancestor project definitions win,
+   then descendant projects when the session is at the Git root, then user/plugin
+   definitions."
+  []
+  (let
+    [project?
+     #(= :rel-walk (second %))
+
+     files-for
+     (fn [specs]
+       (for
+         [spec
+          specs
+
+          [tool ^java.io.File d]
+          (resolve-source spec)
+
+          ^java.io.File f
+          (skill-md-files d)]
+
+         [tool f]))]
+
+    (concat (files-for (filter project? skill-sources))
+            (nested-skill-files)
+            (files-for (remove project? skill-sources)))))
+
+(defn- skill-project-root
+  "Owning project for a repository-local skill file. The skill directory sits at
+   `<project>/<harness>/skills/<name>` (or `skill` for OpenCode). User-level and
+   plugin-cache skills return nil and never re-root a turn."
+  [^java.io.File skill-md]
+  (when-let [^java.io.File repo (repository-root)]
+    (let
+      [^java.io.File skill-dir (.getParentFile skill-md)
+       ^java.io.File skills-dir (some-> skill-dir
+                                        .getParentFile)
+       ^java.io.File harness-dir (some-> skills-dir
+                                         .getParentFile)
+       ^java.io.File owner (some-> harness-dir
+                                   .getParentFile
+                                   .getCanonicalFile)
+       harness-name (some-> harness-dir
+                            .getName)
+       leaf-name (some-> skills-dir
+                         .getName)
+       ^java.nio.file.Path owner-path (some-> owner
+                                              .toPath)
+       ^java.nio.file.Path repo-path (.toPath repo)]
+
+      (when (and owner-path
+                 (contains? #{".vis" ".claude" ".pi" ".agents" ".opencode"} harness-name)
+                 (contains? #{"skill" "skills"} leaf-name)
+                 (.startsWith owner-path repo-path))
+        (.getPath owner)))))
+
 (defn discover-skills
-  "Parse every SKILL.md across `skill-dirs`, first-name-wins, with each skill's
-   bundled resource paths attached."
+  "Parse every project, nested-project, user, and plugin SKILL.md in precedence
+   order. First name wins. Repository-local skills carry `:project-root`, which
+   makes their slash-expanded turn execute from the project that owns the skill."
   []
   (dedup-by-name
     (for
-      [[tool ^java.io.File d]
-       (skill-dirs)
-
-       ^java.io.File f
-       (skill-md-files d)
+      [[tool ^java.io.File f]
+       (skill-candidates)
 
        :let [sdir
              (.getParentFile f)
+
+             project-root
+             (skill-project-root f)
 
              e
              (try (some-> (parse-skill-meta (slurp f)
@@ -310,7 +422,10 @@
                                              :tool tool
                                              :dir (.getPath sdir)
                                              :path (.getPath f)})
-                          (assoc :resources (skill-resources sdir)))
+                          (assoc :resources (skill-resources sdir))
+                          (cond->
+                            project-root
+                            (assoc :project-root project-root)))
                   (catch Throwable _ nil))]
        :when e]
 
@@ -359,13 +474,7 @@
                    (md-files d)]
 
                   [tool (file-mark f)]))
-   :skills (vec (for
-                  [[tool ^java.io.File d]
-                   (skill-dirs)
-
-                   ^java.io.File f
-                   (skill-md-files d)]
-
+   :skills (vec (for [[tool ^java.io.File f] (skill-candidates)]
                   [tool (file-mark f)]))
    :commands (vec (for
                     [[tool ^java.io.File d]

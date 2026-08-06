@@ -468,6 +468,30 @@
           (ensure-release-hook!)))))
   @client-id)
 
+(defn request!
+  "Canonical authenticated HTTP request for gateway development and diagnostics.
+
+   Resolves or starts the registered daemon for the current DB, acquires this
+   process's client lease, adds protocol/authentication headers without exposing
+   the registry secret, JSON-encodes `:body`, and delegates to the same
+   babashka.http-client transport as every production client call.
+
+   `method` may be a keyword or string. `opts` accepts `:body`, `:as`,
+   `:timeout-ms`, and additional `:headers`; gateway-owned authentication and
+   protocol headers cannot be overridden. The raw non-throwing HTTP response map
+   is returned so callers can inspect `:status`, `:headers`, and `:body`."
+  ([method path] (request! method path {}))
+  ([method path opts]
+   (when-not (and (string? path) (str/starts-with? path "/"))
+     (throw (ex-info "gateway request path must start with /"
+                     {:type :gateway/invalid-request-path :path path})))
+   (let [entry (ensure-gateway!)]
+     (ensure-client! entry)
+     (gw-send! entry
+               (str/upper-case (if (keyword? method) (name method) (str method)))
+               path
+               opts))))
+
 (defn create-session! [opts] (send-json! "POST" "/v1/sessions" opts))
 
 (defn soul
