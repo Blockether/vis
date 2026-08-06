@@ -293,9 +293,7 @@ vis.extension(name=\"env-bad\", description=\"bad env fixture.\", env=\"PATH\")
                      (expect (= {:loaded 1 :failed 0 :changed? true} result))
                      (let [ext (registered "env-allowlist")]
                        (expect (some? ext))
-                       (expect (= [{:name "PATH" :required? true}
-                                   {:name "VIS_TEST_NEVER_SET_129" :required? true}]
-                                  (:ext/env ext)))
+                       (expect (= [{:name "PATH"} {:name "VIS_TEST_NEVER_SET_129"}] (:ext/env ext)))
                        (let
                          [probe (symbol-fn ext 'probe)
                           out (get-in (probe) [:result])]

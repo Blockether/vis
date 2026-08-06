@@ -411,23 +411,25 @@
     ;; undeclared name is unreachable no matter what the extension asks for.
     (.putMember g
                 "__vis_host_declare_env__"
-                (->executable (fn [names-json]
-                                (let
-                                  [names (try (json/read-json (str names-json) :key-fn identity)
-                                              (catch Throwable _ nil))
-                                   resolved (resolve-declared-env names)]
+                (->executable
+                  (fn [names-json]
+                    (let
+                      [names (try (json/read-json (str names-json) :key-fn identity)
+                                  (catch Throwable _ nil))
+                       resolved (resolve-declared-env names)]
 
-                                  (tel/log! {:level :debug
-                                             :id ::declared-env
-                                             :data {:ext label
-                                                    :declared (vec (map str (or names [])))
-                                                    :resolved (vec (sort (keys resolved)))}
-                                             :msg (str "extension '"
-                                                       label
-                                                       "' declared env: "
-                                                       (str/join ", " (sort (keys resolved)))
-                                                       " resolved")})
-                                  (json/write-json-str resolved)))))))
+                      ;; Log NAMES only -- env values are secrets and never appear in logs.
+                      (tel/log! {:level :debug
+                                 :id ::declared-env
+                                 :data {:ext label
+                                        :declared (vec (map str (or names [])))
+                                        :resolved (vec (sort (keys resolved)))}
+                                 :msg (str "extension '"
+                                           label
+                                           "' declared env: "
+                                           (str/join ", " (sort (keys resolved)))
+                                           " resolved")})
+                      (json/write-json-str resolved)))))))
 
 (def ^:no-doc host-member-names
   "Every `__vis_host_*` global the bootstrap reads out of a context's bindings.
@@ -1219,7 +1221,7 @@
            (comp (map str)
                  (distinct)
                  (map (fn [n]
-                        {:name n :required? true})))
+                        {:name n})))
            (get reg "env"))]
 
     (cond->
