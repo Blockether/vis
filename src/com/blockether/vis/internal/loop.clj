@@ -2774,7 +2774,7 @@
    First positional arg selects the target: a list/string of explicit scopes, or
    a `{\"through\" \"tN/iN\"}` options dict (Python kwargs don't cross `wrap-ifn`;
    `->clj` keeps dict keys as VERBATIM STRINGS, so `\"through\"` is the accessor).
-   The second arg — the gist — is OPTIONAL: pass it to KEEP a one-line takeaway,
+   The second arg — the gist — is OPTIONAL: pass it to KEEP a compact resumption handoff;
    OMIT it to simply DISCARD the step (this replaces the old `session_drop`; a
    gist-less fold collapses the step with no summary line). Intents are
    STRING-KEYED (they persist inside the ctx nippy blob — strings-only DB):
@@ -4918,7 +4918,9 @@
    (str
      "Collapse SETTLED wire steps into a breadcrumb; folding changes rendering, not storage. "
      "Settled = prior turns plus this turn's finished iterations (see `session[\"turn\"]`); fold a step "
-     "once its takeaway is captured. The live iteration and future steps are refused. "
+     "once its takeaway is captured. A retained gist is a compact resumption handoff with `Goal:`, `Previous state:`, "
+     "`Hypothesis:`, and `Next:`; its previous state cites `tN/iN` anchors for confirmed work/checks, dead ends, and "
+     "worthwhile leads. The live iteration and future steps are refused. "
      "Folded data-tool results stay recoverable at their `# saved:` coordinate (`ntr[\"tN/iM/fK\"]`, "
      "no rerun, survives restart), but "
      "`ntr` never stores fold receipts"
@@ -4940,8 +4942,10 @@
                  "be a compact anchor, exactly as the fold ledger prints it: \"t3/i89-i141\", "
                  "\"t3/i1-i2,i5\", \"t2-t4/*\", \"t*\".")}
      "gist" {:type "string"
-             :description (str "Durable one-line takeaway: finding, consequence, and a useful "
-                               "path:line/symbol/anchor. Omit when none.")}}
+             :description
+             (str
+               "Durable compact resumption handoff: `Goal:`, `Previous state:`, `Hypothesis:`, and "
+               "`Next:`. Cite useful `tN/iN` scopes or ranges. Omit when none.")}}
     :required ["target"]
     :additionalProperties false}})
 

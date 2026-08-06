@@ -107,12 +107,11 @@
           "Use `ntr[key]" "# saved:" "`ntr.describe()`" "Inspect shape before indexing"
           "status only when absent or stale" "tests-only work starts with `run_tests`"
           "interactive work uses `repl_eval`" "Keep reproduction as a suite test"
-          "rerun after the fix" "unverified until a test covers it"
-          "BATCH every tool" "Write only files the task asked" "Commit, push, publish"
-          "Treat context as a budget" "at most two targeted"
-          "named unresolved decision blocks the edit" "no repeated search/read"
-          "Fold settled work into a gist" "recorded thinking" "in-flight hidden reasoning remain"
-          "When edit-ready and headroom permits, patch first"
+          "rerun after the fix" "unverified until a test covers it" "BATCH every tool"
+          "Write only files the task asked" "Commit, push, publish" "Treat context as a budget"
+          "at most two targeted" "named unresolved decision blocks the edit"
+          "no repeated search/read" "Fold settled work into a gist" "recorded thinking"
+          "in-flight hidden reasoning remain" "When edit-ready and headroom permits, patch first"
           "Prefer folding after edit/verification" "Before an unavoidable fold, checkpoint"]]
         (expect (str/includes? text required)))
       (doseq
@@ -144,6 +143,13 @@
                   ;; op `wait`), never the tool-local prohibition.
                   "`time.sleep`" "`asyncio.sleep`" "poll in Python"]]
         (expect (not (str/includes? text surplus))))))
+  (it "requires retained fold gists to be structured resumption handoffs"
+      (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
+        (doseq
+          [required ["Fold gists are structured resumption handoffs" "`Goal:`" "`Previous state:`"
+                     "`Hypothesis:`" "`Next:`" "confirmed work, edits, and checks" "dead ends"
+                     "worth exploring" "`tN/iN`" "`t5/*`"]]
+          (expect (str/includes? text required)))))
   (it
     "advertises exact model-facing Python capabilities, never internal shim ids"
     (let

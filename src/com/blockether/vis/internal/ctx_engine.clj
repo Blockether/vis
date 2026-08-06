@@ -934,7 +934,7 @@
           "Fold settled search/tool sweeps and superseded reads NOW with one broad session_fold through the last completed scope"
           (str "Use one broad session_fold through the last completed scope"
                (when urgent? " before another large tool call")))
-        "; If the edit is ready and the next patch fits available headroom, patch first; otherwise preserve a compact actionable checkpoint: exact paths/symbols, hypothesis, intended edit/test, and dirty files; preserve decisions, edits, and verification; preserve exact physical paths—never bare or abbreviated filenames—then confirm the receipt saved tokens."))))
+        "; If the edit is ready and the next patch fits available headroom, patch first; otherwise preserve a compact structured handoff: Goal; Previous state (confirmed work, edits, and checks; dead ends; and worthwhile leads with tN/iN anchors); Hypothesis; Next edit/test/check; plus dirty files, decisions, verification, recovery IDs, and exact physical paths—never bare or abbreviated filenames—then confirm the receipt saved tokens."))))
 
 (defn session-view
   "THE single projection from engine-internal ctx to the model-facing

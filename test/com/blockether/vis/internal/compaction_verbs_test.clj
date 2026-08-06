@@ -628,6 +628,8 @@
         (expect (= "session_fold" (:name t)))
         (expect (str/starts-with? (:description t) "Collapse SETTLED wire steps"))
         (expect (str/includes? (:description t) "fold a step once its takeaway is captured"))
+        (doseq [section ["`Goal:`" "`Previous state:`" "`Hypothesis:`" "`Next:`" "`tN/iN`"]]
+          (expect (str/includes? (:description t) section)))
         (expect (str/includes? (:description t) "The live iteration and future steps are refused"))
         (expect (str/includes? (:description t) "this turn's finished iterations"))
         (expect (str/includes? (:description t) "folding changes rendering, not storage"))
@@ -927,10 +929,12 @@
           (doseq
             [text ["ACTION REQUIRED" "210k" "200k" "Fold settled search/tool sweeps"
                    "one broad session_fold" "last completed scope"
-                   "preserve decisions, edits, and verification" "preserve exact physical paths"
+                   "plus dirty files, decisions, verification" "exact physical paths"
                    "If the edit is ready and the next patch fits available headroom, patch first"
-                   "compact actionable checkpoint" "exact paths/symbols" "hypothesis"
-                   "intended edit/test" "dirty files" "never bare or abbreviated filenames"
+                   "compact structured handoff" "Goal; Previous state"
+                   "confirmed work, edits, and checks" "dead ends"
+                   "worthwhile leads with tN/iN anchors" "Hypothesis; Next edit/test/check"
+                   "dirty files" "never bare or abbreviated filenames"
                    "confirm the receipt saved tokens"]]
             (expect (str/includes? hint text)))))
     (it "never silently expires while pressure remains"
