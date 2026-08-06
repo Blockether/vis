@@ -1796,113 +1796,55 @@
 
 (defdescribe
   large-write-replay-compaction-test
-  (let
-    [payload
-     (apply str (repeat 9000 "x"))
-
-     id
-     "write-big-1"
-
-     tc
-     {:id id :name "write" :input {"path" "src/generated.clj" "content" payload}}
-
-     policies
-     {"write"
-      {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"is_dirty_ok" true}}}
-
-     target
-     {:provider :lmstudio :model "google/gemma-4-12b-qat"}
-
-     entry
-     (fn [form]
-       [1
-        {:assistant-message {:role "assistant"
-                             :content
-                             [{:type "thinking" :thinking "large write" :thinking-signature "sig"}
-                              {:type "tool_use" :id id :name "write" :input (:input tc)}]}
-         :llm-provider (:provider target)
-         :llm-model (:model target)
-         :preserved-thinking/replay? true
-         :tool-calls [tc]
-         :forms-vec [(assoc form
-                       :scope "t1/i1/f1"
-                       :svar/tool-call-id id)]}])]
-
+  (let [payload (apply str (repeat 9000 "x"))
+        id "write-big-1"
+        tc {:id id
+            :name "write"
+            :input {"path" "src/generated.clj" "content" payload}}
+        policies {"write" {:elide-args {"content" 8192}}}
+        target {:provider :lmstudio :model "google/gemma-4-12b-qat"}
+        entry (fn [form]
+                [1
+                 {:assistant-message
+                  {:role "assistant"
+                   :content [{:type "thinking"
+                              :thinking "large write"
+                              :thinking-signature "sig"}
+                             {:type "tool_use"
+                              :id id
+                              :name "write"
+                              :input (:input tc)}]}
+                  :llm-provider (:provider target)
+                  :llm-model (:model target)
+                  :preserved-thinking/replay? true
+                  :tool-calls [tc]
+                  :forms-vec [(assoc form
+                                     :scope "t1/i1/f1"
+                                     :svar/tool-call-id id)]}])]
     (it "replaces a successful oversized write protocol pair with a hashed textual receipt"
-        (let
-          [suffix
-           (conversation-suffix
-             [(entry {:result [{"path" "src/generated.clj" "op" "update" "changed" true}]})]
-             target
-             policies)
-
-           wire
-           (pr-str suffix)]
-
+        (let [suffix (conversation-suffix
+                       [(entry {:result [{"path" "src/generated.clj"
+                                          "op" "update"
+                                          "changed" true}]})]
+                       target
+                       policies)
+              wire (pr-str suffix)]
           (expect (= ["assistant" "user"] (mapv :role suffix)))
           (expect (str/includes? (get-in suffix [0 :content 0 :text]) "sha256="))
           (expect (str/includes? (get-in suffix [0 :content 0 :text]) "9000 chars"))
           (expect (not (str/includes? wire payload)))
           (expect (not (str/includes? wire "tool_use")))))
-    (it "keeps a dirty oversized write retryable without replaying its content"
-        (let
-          [suffix
-           (conversation-suffix [(entry {:error {:type :editing/write-failed
-                                                 :data {:reason :dirty}}})]
-                                target
-                                policies)
+    (it "keeps every failed oversized write verbatim"
+        (doseq [reason [:dirty :stale]]
+          (let [suffix (conversation-suffix
+                         [(entry {:error {:type :editing/write-failed
+                                          :data {:reason reason}}})]
+                         target
+                         policies)
+                wire (pr-str suffix)]
+            (expect (str/includes? wire payload))
+            (expect (not (str/includes? wire "retry_native"))))))))
 
-           wire
-           (pr-str suffix)]
-
-          (expect (not (str/includes? wire payload)))
-          (expect (str/includes? wire "retry_native"))
-          (expect (str/includes? wire id))))
-    (it "keeps an unrelated failure verbatim because no safe retry reference exists"
-        (let
-          [suffix (conversation-suffix [(entry {:error {:type :editing/write-failed
-                                                        :data {:reason :stale}}})]
-                                       target
-                                       policies)]
-          (expect (str/includes? (pr-str suffix) payload))))))
-
-(defdescribe
-  retry-native-resolution-test
-  (let
-    [resolve-retry
-     @#'lp/resolve-native-retry
-
-     id
-     "write-dirty-1"
-
-     content
-     "exact payload"
-
-     tc
-     {:id id :name "write" :input {"path" "x.clj" "content" content}}
-
-     policies
-     {"write"
-      {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"is_dirty_ok" true}}}
-
-     prior
-     [[1
-       {:tool-calls [tc]
-        :forms-vec [{:svar/tool-call-id id
-                     :error {:type :editing/write-failed :data {:reason :dirty}}}]}]]]
-
-    (it "reuses the exact prior path/content and changes only is_dirty_ok"
-        (let [resolved (:tool-call (resolve-retry prior policies {"tool_call_id" id}))]
-          (expect (= "write" (:name resolved)))
-          (expect (= content (get-in resolved [:input "content"])))
-          (expect (true? (get-in resolved [:input "is_dirty_ok"])))))
-    (it "rejects a non-dirty target"
-        (let [clean-prior (assoc-in prior [0 1 :forms-vec 0 :error :data :reason] :stale)]
-          (expect (str/includes? (:error (resolve-retry clean-prior policies {"tool_call_id" id}))
-                                 "is not retryable"))))
-    (it "rejects an unknown id without guessing"
-        (expect (str/includes? (:error (resolve-retry prior policies {"tool_call_id" "missing"}))
-                               "cannot find")))))
 
 ;; 1x1 red PNG — REAL pixels. Every image block the loop emits is decoded at
 ;; SEND time, so a placeholder payload is (correctly) refused and never reaches
@@ -3810,11 +3752,12 @@
        by-name
        (into {} (map (juxt :name identity)) tools)]
 
-      (expect (= ["apropos" "doc" "retry_native" "session_fold" "python_execution"]
+      (expect (= ["apropos" "doc" "session_fold" "python_execution"]
                  (->> tools
                       (mapv :name)
-                      (take-last 5)
+                      (take-last 4)
                       vec)))
+      (expect (not (contains? by-name "retry_native")))
       (doseq [tool tools]
         (expect (= 1 (count (re-seq #"Raw result:" (:description tool)))))
         (expect (not (contains? tool :result))))
@@ -3825,7 +3768,6 @@
       (doseq [tool-name ["apropos" "doc"]]
         (expect (str/includes? (get-in by-name [tool-name :description])
                                "never preflight visible tools")))
-      (expect (= ["tool_call_id"] (get-in by-name ["retry_native" :schema :required])))
       (let [python-description (get-in by-name ["python_execution" :description])]
         (doseq
           [fact ["project packages need a project REPL" "ntr[\"t5/i1/f2\"]" "bare snake_case"
@@ -3867,9 +3809,6 @@
                     nil
                     (catch clojure.lang.ExceptionInfo e e))]
           (expect (= expected-type (:type (ex-data err)))))))
-  (it "does not advertise retry_native when no active tool owns a replay policy"
-      (expect (= ["apropos" "doc" "session_fold" "python_execution"]
-                 (mapv :name (@#'lp/native-tools [] nil nil)))))
   ;; Regression: `github-copilot`/`gpt-5.6-terra` 400ed the WHOLE request over a
   ;; `:strict true` flag Vis derived from Anthropic's own grammar subset, so every
   ;; turn failed before a token. No native tool is advertised strict on any wire.
@@ -4138,7 +4077,7 @@
   (it "carries the call input on the synthesized-python branch too"
       (let
         [tc {:id "c1" :name "shell" :input {"op" "wait" "id" "dev" "until" "ready"}}
-         block (native-tool-call-block {} nil tc tc nil)]
+         block (native-tool-call-block {} nil tc)]
 
         (expect (= "python" (:lang block)))
         (expect (= {"op" "wait" "id" "dev" "until" "ready"} (:vis/native-input block)))))
@@ -4148,19 +4087,10 @@
          block (native-tool-call-block {}
                                        (fn [_ _]
                                          {})
-                                       tc
-                                       tc
-                                       nil)]
+                                       tc)]
 
         (expect (= "native" (:lang block)))
         (expect (= {"query" "vis"} (:vis/native-input block)))))
-  (it "gives a REJECTED call no input — its only display is the synthesized raise"
-      (let
-        [tc {:id "c3" :name "retry_native" :input {"tool_call_id" "nope"}}
-         block (native-tool-call-block {} nil tc tc "unknown tool_call_id")]
-
-        (expect (not (contains? block :vis/native-input)))
-        (expect (str/includes? (:source block) "raise ValueError("))))
   (it "renders a pending `shell` wait as the op-card it becomes, not the call JSON"
       ;; End to end over the real seam: the block's input reaches the tool's own
       ;; `:render-call`, so the running form is the shell CARD its result card
@@ -4170,7 +4100,7 @@
          tc {:id "c4"
              :name "shell"
              :input {"op" "wait" "id" "svar-verify" "until" "VERIFY_EXIT=" "timeout_secs" 600}}
-         block (native-tool-call-block {} nil tc tc nil)
+         block (native-tool-call-block {} nil tc)
          display (pending-call-display renderers
                                        (:vis/tool-name block)
                                        (:vis/native-input block))]
@@ -6061,7 +5991,7 @@
   ;; FAITHFUL — it hands whatever JSON value it read straight back, so
   ;; `"\"</invoke>\""` arrives as a String and `"[1,2]"` as a vector — while
   ;; every consumer past this door (call synthesis, oversized-arg receipts,
-  ;; persistence, `retry_native`) reads a string-keyed map.
+  ;; persistence) reads a string-keyed map.
   (describe "an arguments payload that is not an object at all"
     (it "drops a bare string payload and runs the call the model meant"
       (let [[tc] (#'lp/normalize-tool-calls [{:id "a" :name "apropos" :input "</invoke>"}])]

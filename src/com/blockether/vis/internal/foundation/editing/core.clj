@@ -6792,8 +6792,7 @@
      :result
      "One-row array: `path`, `op`, `changed`, `diff`, plus optional small-region `anchors` (`{\"lineno:hash\":{\"text\":line}}`) reusable as the next `from_anchor`."
      :description "Create or wholly replace a clean file; dirty targets require `is_dirty_ok`."
-     :replay
-     {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"is_dirty_ok" true}}
+     :replay {:elide-args {"content" 8192}}
      :render render-patch-result
      :color-role :tool-color/edit
      :schema

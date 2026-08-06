@@ -26,19 +26,18 @@
     ":native-tool? + symbol-level :schema/:name/:handler/:render produce the whole native surface"
     (let
       [sym
-       (extension/symbol
-         #'flat-native-tool
-         {:tag :observation
-          :native-tool? true
-          :name "flat_tool"
-          :description "Compact routing and result semantics."
-          :result "A map with boolean `ok`."
-          :schema {:type "object" :properties {"x" {:type "string"}}}
-          :replay {:elide-args {"x" 1024} :retry-on #{:too-large} :retry-overrides {"force" true}}
-          :handler (fn [_env _in]
-                     {:ok true})
-          :render a-render
-          :color-role :tool-color/meta})
+       (extension/symbol #'flat-native-tool
+                         {:tag :observation
+                          :native-tool? true
+                          :name "flat_tool"
+                          :description "Compact routing and result semantics."
+                          :result "A map with boolean `ok`."
+                          :schema {:type "object" :properties {"x" {:type "string"}}}
+                          :replay {:elide-args {"x" 1024}}
+                          :handler (fn [_env _in]
+                                     {:ok true})
+                          :render a-render
+                          :color-role :tool-color/meta})
 
        ext
        (ext-with sym)
@@ -52,7 +51,7 @@
       (expect (= "Compact routing and result semantics.\n\nRaw result: A map with boolean `ok`."
                  (:description schema)))
       (expect (= {:type "object" :properties {"x" {:type "string"}}} (:schema schema)))
-      (expect (= {:elide-args {"x" 1024} :retry-on #{:too-large} :retry-overrides {"force" true}}
+      (expect (= {:elide-args {"x" 1024}}
                  (get (extension/native-tool-replay-policies [ext]) "flat_tool")))
       (expect (fn? (get (extension/native-tool-handlers [ext]) "flat_tool")))
       (expect (= a-render (get (extension/native-tool-renderers [ext]) "flat_tool")))

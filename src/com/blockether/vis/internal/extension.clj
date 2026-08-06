@@ -474,28 +474,20 @@
 ;; The op-card BADGE colour role for this symbol's result (`:tool-color/search`…).
 (s/def :ext.symbol/color-role keyword?)
 ;; Optional agent-context policy for large native arguments. `:elide-args` maps
-;; string input keys to replay thresholds. A failed call is retryable by id only
-;; when its nested error carries one of `:retry-on`; `:retry-overrides` is merged
-;; onto the original input before the engine re-executes it.
+;; string input keys to replay thresholds. Only successful calls are compacted;
+;; failures retain their complete arguments and error context.
 (s/def :ext.symbol/replay
   (s/and map?
          #(let
-            [{:keys [elide-args retry-on retry-overrides]}
-             %]
+            [elide-args
+             (:elide-args %)]
 
-            (and (map? elide-args)
+            (and (= #{:elide-args} (set (keys %)))
+                 (map? elide-args)
                  (seq elide-args)
                  (every? (fn [[k n]]
                            (and (string? k) (pos-int? n)))
-                         elide-args)
-                 (or (nil? retry-on)
-                     (and (set? retry-on)
-                          (seq retry-on)
-                          (every? (fn [reason]
-                                    (or (keyword? reason) (string? reason)))
-                                  retry-on)))
-                 (or (nil? retry-overrides)
-                     (and (map? retry-overrides) (every? string? (keys retry-overrides))))))))
+                         elide-args)))))
 
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc :ext.symbol/arglists]
