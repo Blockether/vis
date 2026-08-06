@@ -920,6 +920,19 @@
                  (expect (threw? #(shell* {:session-id "shell-positional-id"}
                                           {"op" "send" "id" "ghost" "commands" ["nope"]})))))
 
+;; Regression, issue #shell-lifecycle-shape: lifecycle calls carrying a stale `commands`
+;; field were rejected before `logs`/`wait` could act on the requested background shell.
+(defdescribe
+  shell-lifecycle-coercion-test
+  (it "ignores commands on lifecycle operations"
+      (let [sid (str "shell-coercion-" (System/nanoTime))]
+        (try (shell* {:session-id sid}
+                     {"commands" ["echo ready; sleep 30"] "op" "background" "id" sid})
+             (let
+               [r (:result (shell* {:session-id sid}
+                                   {"op" "logs" "id" sid "commands" [{"op" "wait" "id" "wrong"}]}))]
+               (expect (= "logs" (get r "stage"))))
+             (finally (resources/stop-all! sid))))))
 (defdescribe
   shell-render-test
   (it "renders the run op like a REPL-style collapsible card"

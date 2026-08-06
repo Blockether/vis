@@ -1720,39 +1720,45 @@
     (throw (ex-info "shell takes one options map, e.g. await shell({\"commands\": [\"ls\"]})."
                     {:type ::bad-options})))
   (let
-    [opts
+    [raw-opts
      (into {}
            (remove (fn [[_ v]]
                      (or (nil? v) (and (string? v) (str/blank? v)) (and (coll? v) (empty? v)))))
            opts)
 
-     commands
-     (opt opts :commands)
-
      text
-     (opt opts :text)
+     (opt raw-opts :text)
 
      _
-     (when (some? (opt opts :cmd))
+     (when (some? (opt raw-opts :cmd))
        (throw (ex-info "shell has no `cmd` option — put bash lines in {\"commands\": [...]}."
                        {:type ::legacy-command-carrier})))
 
      until
-     (opt opts :until)
+     (opt raw-opts :until)
 
      id
-     (some-> (opt opts :id)
+     (some-> (opt raw-opts :id)
              str
              str/trim
              not-empty)
 
      op
-     (or (some-> (opt opts :op)
+     (or (some-> (opt raw-opts :op)
                  str
                  str/trim
                  str/lower-case
                  not-empty)
          (if id "background" "run"))
+
+     ;; Lifecycle stages operate on an existing background shell.  A caller that
+     ;; mechanically reuses the start shape may still carry `commands`; it is not
+     ;; relevant to these stages and must not make an otherwise valid call fail.
+     opts
+     (if (#{"logs" "wait" "send" "stop"} op) (dissoc raw-opts "commands" :commands) raw-opts)
+
+     commands
+     (opt opts :commands)
 
      _
      ;; `until` is the WAIT predicate, not a global filter: accepting it silently on
