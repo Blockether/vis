@@ -30,9 +30,9 @@ Read only the section relevant to the change. Keep this file for durable, repo-w
 
 ## Fixing a reported bug: reproduce, RED, then GREEN
 
-- Reproduce first, from the report's own steps, before touching the implementation. If it does not reproduce, that IS the finding: narrow or refute the report instead of fixing something adjacent.
+- Reproduce first, from the report's own steps, with the smallest faithful check. For tests-only verification, call `run_tests` directly; its runner owns runtime setup. Use a managed REPL when the reproduction needs interactive inspection or exploration. If it does not reproduce, that IS the finding: narrow or refute the report instead of fixing something adjacent.
 - Turn the reproduction into a test in the suite and watch it **fail against the unfixed code** (RED), for the reported reason — not for a typo, a missing require, or a different error. A regression test nobody saw red proves nothing.
-- Then apply the fix and rerun the same test unchanged (GREEN). In a managed REPL: load the pre-fix namespace, run the test, keep the failure text, reload the fixed namespace, rerun. Report both.
+- Then apply the fix and rerun the same test unchanged (GREEN). For tests-only verification, rerun via `run_tests`; when an interactive managed REPL is part of the workflow, reload the pre-fix namespace, run the test, keep the failure text, reload the fixed namespace, rerun, and report both.
 - Every regression test names its issue in a comment **on the test** — `;; Regression, issue #N: <what used to happen>` directly above the `defdescribe`/`it` (or a section banner carrying `(issue #N)`). The comment describes the wrong behavior, not what the code now does; it is the only link back to the report after the branch is merged.
 - The fix and its test ship in the same commit. A fix without a red-then-green test is unfinished and stays uncommitted.
 - **Keep extension layers proven and separate.** For a reported defect, begin in the language and layer implicated by the reproduction. Clojure host code, Python bootstrap code, and user-extension code are separate contracts; do not edit a second layer merely because it appears related. Before crossing a language boundary, identify the existing host callback, wire payload, or failing end-to-end test that requires it, and add a test that exercises the complete boundary. Never delete an existing semantic key, validation rule, or requiredness marker from an inference that one path does not use it: trace its declaration, consumers, and governing contract first.
@@ -42,7 +42,8 @@ Read only the section relevant to the change. Keep this file for durable, repo-w
 
 - Prefer the smallest relevant `run_tests` namespace; `only` takes fully qualified top-level Lazytest vars.
 - Never require `clojure.test`: it is silently undiscovered. Use `[lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]` when that style is useful, and use `lazytest.core/set-ns-context!` plus `around-each` instead of `use-fixtures`.
-- A managed REPL retains Vars. After editing, reload every changed production namespace, then every changed test namespace, before tests; there is no restart op — `stop` then `start` a fresh REPL when a clean load is safer.
+- For tests-only verification, call `run_tests` directly; use `repl_eval` when interactive inspection, exploration, or stateful evaluation is part of the task.
+- A managed REPL retains Vars. When interactive evaluation is part of the workflow, reload every changed production namespace, then every changed test namespace, before rerunning; there is no restart op — `stop` then `start` a fresh REPL when a clean load is safer.
 - Clean JVM commands from the owning project: `clojure -M:test`, `clojure -M:test --namespace my.ns-test`, or `clojure -M:test --var my.ns-test/my-test`.
 
 ## Companion UI (`apps/vis-companion`)
