@@ -6,6 +6,7 @@ import { docKindLabel, isPdfMedia } from '../lib/artifacts';
 import { useAttachImage } from '../lib/attach-image';
 import { ImageViewer } from './ImageViewer';
 import { Button } from './ui';
+import { ChevronIcon } from './icons';
 
 // A PDF or an HTML page is a DOCUMENT, not a picture and not data: nothing in it
 // is worth spending a model's context on, so `vis_attach` clamps it to
@@ -172,7 +173,7 @@ export function DocAnnotateBar({
             disabled={page <= 1}
             aria-label="Previous page"
           >
-            ‹
+            <ChevronIcon className="size-3" aria-hidden />
           </Button>
           <span
             className="flex min-h-7 min-w-24 items-center justify-center border-y border-edge-strong px-2 text-chip text-muted sm:min-h-8"
@@ -186,7 +187,7 @@ export function DocAnnotateBar({
             disabled={page >= pageCount}
             aria-label="Next page"
           >
-            ›
+            <ChevronIcon className="size-3" aria-hidden />
           </Button>
         </div>
       )}

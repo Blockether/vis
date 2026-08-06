@@ -10,6 +10,7 @@ import {
   reachOf,
 } from '../lib/endpoints';
 import { Banner, Button, Input } from '../components/ui';
+import { ChevronIcon } from '../components/icons';
 
 // The QR scanner drags in jsqr (~250 kB of source, a fifth of the launch chunk)
 // plus the getUserMedia/canvas plumbing, and it is only ever mounted after an
@@ -352,8 +353,9 @@ export function ConnectScreen({
                     className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-dialog-hint"
                     aria-hidden="true"
                   >
-                    Settings ›
+                    Settings
                   </span>
+                  <ChevronIcon className="size-3 text-dialog-hint" aria-hidden />
                 </button>
               );
             })}

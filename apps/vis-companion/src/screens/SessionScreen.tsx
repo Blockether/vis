@@ -20,6 +20,7 @@ import { Banner, Spinner } from "../components/ui";
 import {
   ArrowDownIcon,
   CameraIcon,
+  ChevronIcon,
   CloseIcon,
   ImageIcon,
   MicIcon,
@@ -4356,7 +4357,7 @@ export function SessionScreen({
             onClick={onBack}
             aria-label="Back to sessions"
           >
-            <span aria-hidden="true">‹</span>
+            <ChevronIcon className="size-4" aria-hidden />
           </button>
           <div className="min-w-0 flex-1 self-center px-3 py-1.5">
             <h1 className="truncate font-mono text-body font-bold text-white">

@@ -235,7 +235,7 @@ export function SwitchProjectSheet({
               {shown.map((crumb, index) => (
                 <span key={crumb.path} className="flex min-w-0 items-center gap-1">
                   <span aria-hidden className="shrink-0 font-mono text-meta text-dialog-hint">
-                    ›
+                    <ChevronIcon className="size-3 text-dialog-hint" aria-hidden />
                   </span>
                   <button
                     type="button"

@@ -1240,7 +1240,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
         )}
 
         <div className="flex min-h-10 items-center border-y border-dialog-edge bg-panel px-3 mouse:min-h-9 sm:px-4">
-          <span className="shrink-0 font-mono text-ui text-accent-ink">›</span>
+          <ChevronIcon className="size-3.5 text-accent-ink" />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -1544,7 +1544,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                   aria-label={`Back to actions for ${machineLabel(target)}`}
                   onClick={() => setStartFlow(startFlowBack)}
                 >
-                  <span aria-hidden>‹</span>
+                  <ChevronIcon className="size-3" aria-hidden />
                   Start the session in
                   {machines.length > 1 ? ` · ${machineLabel(target)}` : ''}
                 </button>
@@ -2114,7 +2114,7 @@ const SessionRow = memo(function SessionRow({
             </span>
             {isStarred && (
               <span className="mt-px shrink-0">
-                <StarIcon filled />
+                <StarIcon filled className="size-3" />
                 <span className="sr-only">Favorite</span>
               </span>
             )}
@@ -2428,7 +2428,7 @@ function NavigatorSkeleton() {
                   key={row}
                   className="flex min-h-14 w-full items-start gap-2 px-3 py-2.5 [&+&]:border-t [&+&]:border-dialog-edge mouse:min-h-12 sm:px-4 mouse:py-2"
                 >
-                  <span className="mt-0.5 invisible shrink-0 font-mono text-body">›</span>
+                  <ChevronIcon className="mt-0.5 invisible size-3" />
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-start justify-between gap-3">
                       <SkeletonBar type="text-ui" width={width} baz="h-2.5" tone="bg-muted/30" />
