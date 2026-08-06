@@ -145,3 +145,28 @@
         (with-fs-context
           d
           (expect (= 0 (ev python-context "import ruff\nruff.console_main(['--version'])")))))))
+(defdescribe ruff-shim-fix-test
+             ;; Regression, issue #131: `check --fix` used to be rejected by the shim.
+             (it "check --fix applies safe fixes"
+                 (let [d (tmp-dir)]
+                   (spit (str d "/fix.py") "import os\nx = 1\n")
+                   (with-fs-context
+                     d
+                     (expect (= 0
+                                (ev python-context
+                                    (str "import ruff\nruff.console_main(['check', '--fix', "
+                                         (pr-str (str d "/fix.py"))
+                                         "])"))))
+                     (expect (= "x = 1\n" (slurp (str d "/fix.py")))))))
+             ;; Regression, issue #131: directory checks used to lint files excluded by Ruff config.
+             (it "honours exclude for directory targets"
+                 (let [d (tmp-dir)]
+                   (spit (str d "/ruff.toml") "exclude = [\"ignored.py\"]\n")
+                   (spit (str d "/ignored.py") "import os\n")
+                   (spit (str d "/included.py") "import os\n")
+                   (with-fs-context d
+                                    (expect (= 1
+                                               (ev python-context
+                                                   (str "import ruff\nruff.console_main(['check', "
+                                                        (pr-str (str d))
+                                                        "])"))))))))

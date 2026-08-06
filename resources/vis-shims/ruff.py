@@ -30,6 +30,7 @@ def __vis_install_ruff__():
 
     _host_format = __vis_ruff_format__
     _host_lint = __vis_ruff_lint__
+    _host_fix = __vis_ruff_fix__
     _host_config = __vis_ruff_config__
     _host_version = __vis_ruff_version__
 
@@ -123,6 +124,30 @@ def __vis_install_ruff__():
             )
         )
 
+    def fix_str(
+        source,
+        path=None,
+        config=None,
+        line_length=0,
+        select=None,
+        ignore=None,
+        preview=False,
+        unsafe_fixes=False,
+    ):
+        """Apply Ruff's safe fixes, plus unsafe fixes when explicitly enabled."""
+        return _unwrap(
+            _host_fix(
+                source,
+                path or "",
+                config or "",
+                int(line_length or 0),
+                select or "",
+                ignore or "",
+                bool(preview),
+                bool(unsafe_fixes),
+            )
+        )
+
     # -- files ---------------------------------------------------------------
 
     _SKIP_DIRS = {
@@ -150,8 +175,50 @@ def __vis_install_ruff__():
     def _is_python(name):
         return name.endswith(".py") or name.endswith(".pyi")
 
-    def iter_files(paths):
-        """Every Python file under `paths` (files kept as-is), noise dirs skipped."""
+    def _config_settings(config_path):
+        """Read only the directory-walking options from Ruff's TOML config."""
+        if not config_path:
+            return {}
+        try:
+            import tomllib
+
+            with open(config_path, "rb") as handle:
+                data = tomllib.load(handle)
+            if os.path.basename(config_path) == "pyproject.toml":
+                data = data.get("tool", {}).get("ruff", {})
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            # The native engine remains authoritative and reports malformed TOML.
+            return {}
+
+    def _patterns(settings):
+        patterns = []
+        for key in ("exclude", "extend-exclude"):
+            value = settings.get(key, [])
+            if isinstance(value, str):
+                value = [value]
+            if isinstance(value, list):
+                patterns.extend(str(item) for item in value)
+        return patterns
+
+    def _excluded(path, config_path, settings):
+        if not config_path:
+            return False
+        root = os.path.dirname(config_path)
+        relative = os.path.relpath(path, root).replace(os.sep, "/")
+        import fnmatch
+
+        for pattern in _patterns(settings):
+            pattern = pattern.replace(os.sep, "/").lstrip("./")
+            candidates = (relative, os.path.basename(relative), "**/" + relative)
+            if any(fnmatch.fnmatch(candidate, pattern) for candidate in candidates):
+                return True
+            if relative == pattern or relative.startswith(pattern.rstrip("/") + "/"):
+                return True
+        return False
+
+    def iter_files(paths, explicit_config=None):
+        """Every Python file under `paths`, honoring Ruff excludes for directory targets."""
         out = []
         seen = set()
         for target in paths:
@@ -163,10 +230,19 @@ def __vis_install_ruff__():
                 continue
             for root, dirs, files in os.walk(target):
                 dirs[:] = sorted(d for d in dirs if d not in _SKIP_DIRS)
+                config_path = explicit_config or config_for(root)
+                settings = _config_settings(config_path)
+                dirs[:] = [
+                    d
+                    for d in dirs
+                    if not _excluded(os.path.join(root, d), config_path, settings)
+                ]
                 for name in sorted(files):
                     if not _is_python(name):
                         continue
                     full = os.path.join(root, name)
+                    if _excluded(full, config_path, settings):
+                        continue
                     if full not in seen:
                         seen.add(full)
                         out.append(full)
@@ -182,6 +258,17 @@ def __vis_install_ruff__():
         return check_str(
             _read(path), path=path, config=config or config_for(path), **kwargs
         )
+
+    def fix_file(path, config=None, write=True, **kwargs):
+        """Apply Ruff fixes to one file. Returns (changed, fixed_source)."""
+        path = os.path.abspath(path)
+        source = _read(path)
+        fixed = fix_str(source, path=path, config=config or config_for(path), **kwargs)
+        changed = fixed != source
+        if changed and write:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(fixed)
+        return changed, fixed
 
     def format_file(path, config=None, write=True, line_length=0):
         """Format one file on disk. Returns (changed, formatted_source)."""
@@ -212,6 +299,8 @@ def __vis_install_ruff__():
             "",
             "options:",
             "  --config PATH     ruff configuration file to use for every file",
+            "  --fix             apply safe lint fixes",
+            "  --unsafe-fixes    also apply fixes Ruff marks unsafe",
             "  --line-length N   override the configured line length",
             "  --select RULES    check: replace the selected rule set (e.g. E,F)",
             "  --ignore RULES    check: disable these rules on top of the selection",
@@ -222,9 +311,7 @@ def __vis_install_ruff__():
             "  -q, --quiet       suppress the summary line",
             "  -h, --help        this message",
             "",
-            "Configuration is ruff's own: the nearest .ruff.toml / ruff.toml /",
-            "pyproject.toml [tool.ruff] above each file. Not supported: --fix,",
-            "--watch, --output-format, --show-settings.",
+            "This is Vis's in-process Ruff shim; it uses the bundled Ruff engine, not a wheel.",
         ]
     )
 
@@ -238,6 +325,8 @@ def __vis_install_ruff__():
             "ignore": None,
             "preview": False,
             "statistics": False,
+            "fix": False,
+            "unsafe_fixes": False,
             "check": False,
             "diff": False,
             "quiet": False,
@@ -256,6 +345,10 @@ def __vis_install_ruff__():
                 opts["quiet"] = True
             elif arg == "--preview":
                 opts["preview"] = True
+            elif arg == "--fix":
+                opts["fix"] = True
+            elif arg == "--unsafe-fixes":
+                opts["unsafe_fixes"] = True
             elif arg == "--statistics":
                 opts["statistics"] = True
             elif arg == "--check":
@@ -304,15 +397,27 @@ def __vis_install_ruff__():
         sys.stderr.write(_NO_CONFIG_HINT.format(where) + _NL)
 
     def _check_main(paths, opts):
-        files = iter_files(paths or ["."])
+        files = iter_files(paths or ["."], opts["config"])
         _warn_missing_config(files, opts["quiet"])
         found = 0
         counts = {}
         for path in files:
             try:
+                config = opts["config"] or config_for(path)
+                if opts["fix"]:
+                    settings = _config_settings(config)
+                    fix_file(
+                        path,
+                        config=config,
+                        select=opts["select"],
+                        ignore=opts["ignore"],
+                        preview=opts["preview"],
+                        unsafe_fixes=opts["unsafe_fixes"]
+                        or bool(settings.get("unsafe-fixes", False)),
+                    )
                 diagnostics = check_file(
                     path,
-                    config=opts["config"],
+                    config=config,
                     line_length=opts["line_length"],
                     select=opts["select"],
                     ignore=opts["ignore"],
@@ -452,13 +557,15 @@ def __vis_install_ruff__():
         pass
     module.format_str = format_str
     module.check_str = check_str
+    module.fix_str = fix_str
     module.format_file = format_file
     module.check_file = check_file
+    module.fix_file = fix_file
     module.iter_files = iter_files
     module.console_main = console_main
     module.main = console_main
     module.__doc__ = (
-        "vis shim: in-process ruff (format + lint), no pip, no PATH binary."
+        "Vis shim: in-process Ruff formatter/linter/fixer; no pip or PATH binary."
     )
     sys.modules["ruff"] = module
     try:
