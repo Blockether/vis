@@ -113,7 +113,6 @@ export function AnnotationLayer({
     const point = canvasPoint(canvas, event.clientX, event.clientY);
     if (!point) return;
     event.preventDefault();
-    event.stopPropagation();
     canvas.setPointerCapture(event.pointerId);
     const stroke: Stroke = {
       color: paletteColor(color),

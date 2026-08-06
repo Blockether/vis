@@ -302,7 +302,7 @@ function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
 
       <div
         className={`absolute inset-0 grid cursor-grab place-items-center overflow-hidden overscroll-none px-4 pt-20 active:cursor-grabbing [touch-action:none] ${drawing ? 'pb-36' : 'pb-24'}`}
-        onPointerDown={beginGesture}
+        onPointerDownCapture={beginGesture}
         onPointerMove={moveGesture}
         onPointerUp={endGesture}
         onPointerCancel={endGesture}

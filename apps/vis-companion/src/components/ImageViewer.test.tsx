@@ -171,13 +171,11 @@ it('suspends the snap transition while a pinch or pan is live, and restores it o
   expect(transformed.style.transitionDuration).toBe('');
 });
 
-// Regression: beginGesture returned immediately for ANY pointer while drawing
-// was active, before a second finger was ever registered — so a pinch could
-// never start once the pen was out. AnnotationLayer's own stroke handlers
-// also called stopPropagation() on every move/up, which would have blocked a
-// second finger's move from ever reaching the container even once the guard
-// above was fixed. Both had to give a second, non-primary pointer a path
-// through.
+// Regression, iOS draw pinch: the canvas drew the primary finger but stopped it
+// before the viewport's bubble handler registered the first point. The second
+// finger then looked like the only pointer, so pinch-to-zoom could not start.
+// The viewport must record its pointers in capture phase while the annotation
+// layer lets the second finger reach its move handler.
 it('still pinch-zooms with a second finger while a stroke is in progress', () => {
   Element.prototype.setPointerCapture = vi.fn();
   // Draw resets the transform to fitted, so zoom AFTER entering drawing mode
