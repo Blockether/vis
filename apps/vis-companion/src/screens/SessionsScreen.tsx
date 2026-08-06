@@ -1065,7 +1065,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
           Machines (which floats its cards below a gap) wore 1px. Bottom edge only;
           the full box comes back once the panel detaches at `sm`. */}
       <div className="flex h-full min-h-0 flex-col overflow-hidden border-b border-dialog-edge bg-panel sm:border">
-        <div className="bg-panel-2 px-3 py-2 sm:px-4">
+        <div className="border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate font-mono text-ui font-bold text-white">
@@ -1173,7 +1173,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
             nothing else on the screen changes: multi-machine costs the solo user
             nothing. */}
         {hasScopeStrip && (
-          <div className="flex items-center gap-1.5 overflow-x-auto border-t border-dialog-edge bg-panel px-3 py-2 sm:px-4">
+          <div className="flex items-center gap-1.5 overflow-x-auto bg-panel px-3 py-2 sm:px-4">
             <button
               type="button"
               aria-pressed={scope === null}
@@ -1252,7 +1252,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
             </p>
           </div>
         ) : (
-          <div className="border-t border-dialog-edge">
+          <div>
             {sections.map(({ machine, groups }, index) => {
               const key = machineKey(machine.conn);
               return (
@@ -1860,7 +1860,7 @@ const ProjectGroup = memo(function ProjectGroup({
       className={`${firstProject ? '' : 'border-t'} border-dialog-edge`}
       aria-label={`${project} sessions`}
     >
-      <header className="flex items-stretch bg-panel-2">
+      <header className="flex items-stretch border-b border-dialog-edge bg-panel-2">
         <button
           type="button"
           onClick={() => onToggle(groupKey)}
@@ -1911,7 +1911,7 @@ const ProjectGroup = memo(function ProjectGroup({
         )}
       </header>
       {rows.length > 0 && (
-        <div className="border-t border-dialog-edge">
+        <div>
           {rows.map((session) => (
             <SessionRow
               key={session.id}

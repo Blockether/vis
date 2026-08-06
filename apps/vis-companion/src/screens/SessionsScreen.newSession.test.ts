@@ -37,11 +37,14 @@ describe('where "New session" lives', () => {
     expect(source).not.toContain('sm:translate-x-0');
   });
 
-  it('keeps machine and project boundaries to one rule', () => {
-    expect(source).toContain('border-b border-dialog-edge bg-panel px-3 mouse:min-h-9');
-    expect(source).toContain('firstProject={groupIndex === 0}');
+  // Regression (reported: adjacent bottom/top rules made the filter and session rows render as a doubled divider).
+  it('uses one rule at each filter, project, and session boundary', () => {
+    expect(source).toContain('className="border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4"');
+    expect(source).toContain('className="flex min-h-10 items-center border-b border-dialog-edge bg-panel px-3 mouse:min-h-9');
+    expect(source).toContain('        ) : (\n          <div>\n            {sections.map');
+    expect(source).toContain('      {rows.length > 0 && (\n        <div>');
     expect(source).toContain("className={`${firstProject ? '' : 'border-t'} border-dialog-edge`}");
-    expect(source.match(/border-t border-dialog-edge first:border-t-0/g)?.length).toBe(1);
+    expect(source).toContain('firstProject={groupIndex === 0}');
   });
 
   // Regression: the session count used to flash from empty to the cached total on
