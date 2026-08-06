@@ -160,104 +160,121 @@ function CopyButton({
   );
 }
 
-type DiffCellKind = 'add' | 'del' | 'ctx';
-type DiffCell = { line: number | null; text: string; kind: DiffCellKind };
-type DiffRow =
+type DiffLineKind = 'add' | 'del' | 'ctx';
+type DiffLine =
   | { kind: 'meta'; text: string }
-  | { kind: 'code'; before: DiffCell | null; after: DiffCell | null };
+  | {
+      kind: DiffLineKind;
+      beforeLine: number | null;
+      afterLine: number | null;
+      marker: '+' | '-' | ' ';
+      text: string;
+    };
 
-function sideBySideDiff(value: string): DiffRow[] {
-  const rows: DiffRow[] = [];
+function unifiedDiff(value: string): DiffLine[] {
+  const rows: DiffLine[] = [];
   let beforeLine: number | null = null;
   let afterLine: number | null = null;
-  let removed: DiffCell[] = [];
-  let added: DiffCell[] = [];
-
-  const flushChanges = () => {
-    for (let index = 0; index < Math.max(removed.length, added.length); index += 1) {
-      rows.push({ kind: 'code', before: removed[index] ?? null, after: added[index] ?? null });
-    }
-    removed = [];
-    added = [];
-  };
 
   for (const line of value.split('\n')) {
     const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
     if (hunk) {
-      flushChanges();
       beforeLine = Number(hunk[1]);
       afterLine = Number(hunk[2]);
       rows.push({ kind: 'meta', text: line });
-    } else if (line.startsWith('-') && !line.startsWith('---')) {
-      removed.push({ line: beforeLine, text: line.slice(1), kind: 'del' });
+    } else if (line.startsWith('---') || line.startsWith('+++')) {
+      rows.push({ kind: 'meta', text: line });
+    } else if (line.startsWith('-')) {
+      rows.push({
+        kind: 'del',
+        beforeLine,
+        afterLine: null,
+        marker: '-',
+        text: line.slice(1),
+      });
       beforeLine = beforeLine === null ? null : beforeLine + 1;
-    } else if (line.startsWith('+') && !line.startsWith('+++')) {
-      added.push({ line: afterLine, text: line.slice(1), kind: 'add' });
+    } else if (line.startsWith('+')) {
+      rows.push({
+        kind: 'add',
+        beforeLine: null,
+        afterLine,
+        marker: '+',
+        text: line.slice(1),
+      });
       afterLine = afterLine === null ? null : afterLine + 1;
     } else if (line.startsWith(' ')) {
-      flushChanges();
       rows.push({
-        kind: 'code',
-        before: { line: beforeLine, text: line.slice(1), kind: 'ctx' },
-        after: { line: afterLine, text: line.slice(1), kind: 'ctx' },
+        kind: 'ctx',
+        beforeLine,
+        afterLine,
+        marker: ' ',
+        text: line.slice(1),
       });
       beforeLine = beforeLine === null ? null : beforeLine + 1;
       afterLine = afterLine === null ? null : afterLine + 1;
     } else {
-      flushChanges();
       rows.push({ kind: 'meta', text: line });
     }
   }
-  flushChanges();
+
   return rows;
 }
 
-function diffCellClass(cell: DiffCell | null): string {
-  if (!cell) return 'bg-code';
-  if (cell.kind === 'add') return 'bg-code-ok text-code-success';
-  if (cell.kind === 'del') return 'bg-code-err text-code-error';
+function diffLineClass(kind: DiffLineKind): string {
+  if (kind === 'add') return 'bg-code-ok text-code-success';
+  if (kind === 'del') return 'bg-code-err text-code-error';
   return 'bg-code text-code-foreground';
 }
 
 // A diff cell NEVER clips its own text: the block's horizontal scroller (below) is
 // what reveals a long line, and `overflow-hidden`/`text-ellipsis` here silently ate
 // the tail of every wide hunk with nothing left to scroll to.
-function DiffCellView({ cell, className = '' }: { cell: DiffCell | null; className?: string }) {
+// Unified diffs spend the narrow companion viewport on ONE content column. The
+// two fixed gutters retain both source coordinates without halving every line.
+function DiffLineView({ line, className = '' }: { line: Exclude<DiffLine, { kind: 'meta' }>; className?: string }) {
+  const lineNumber = line.kind === 'add' ? line.afterLine : line.beforeLine;
+  const label = `${line.kind === 'add' ? 'Added' : line.kind === 'del' ? 'Removed' : 'Unchanged'} line ${lineNumber ?? ''}`.trim();
+
   return (
-    <span className={`flex whitespace-pre px-3 py-px ${diffCellClass(cell)} ${className}`}>
-      <span className="mr-2 w-8 shrink-0 select-none text-right text-code-duration">{cell?.line ?? ''}</span>
-      <span>{cell?.text || ' '}</span>
+    <span
+      className={`flex w-max min-w-full whitespace-pre py-px ${diffLineClass(line.kind)} ${className}`}
+      aria-label={label}
+    >
+      <span className="w-8 shrink-0 select-none pr-1 text-right text-code-duration">{line.beforeLine ?? ''}</span>
+      <span className="w-8 shrink-0 select-none pr-1 text-right text-code-duration">{line.afterLine ?? ''}</span>
+      <span className="w-4 shrink-0 select-none text-center" aria-hidden="true">{line.marker}</span>
+      <span className="pr-3">{line.text || ' '}</span>
     </span>
   );
 }
 
 const DiffBlock = memo(function DiffBlock({ value, compact, frameless = false }: { value: string; compact: boolean; frameless?: boolean }) {
-  const rows = sideBySideDiff(value);
+  const rows = unifiedDiff(value);
   return (
     <div
       className={`${compact ? 'my-2' : 'my-3'} relative overflow-hidden bg-code ${frameless ? '' : 'border border-code-edge'}`}
-      aria-label="Side-by-side diff"
+      aria-label="Unified diff"
     >
       {!frameless && <CopyButton value={value} />}
       <div className={`${compact ? 'text-meta' : 'text-ui'} max-w-full overflow-x-auto overscroll-x-contain py-2 font-mono`}>
-        {/* ONE grid for the whole hunk (rows are fragments, not nested grids) so both
-            columns share a track sizing pass: `w-max` lets those tracks grow to the
-            widest line and hands the real content width to the scroller, `min-w-full`
-            keeps the row backgrounds spanning the viewport when the diff is narrow. */}
-        <div className="grid w-max min-w-full grid-cols-2">
+        <div className="w-max min-w-full">
           {rows.map((row, index) => {
-            // The copy chip floats over the top-right corner; only the FIRST row needs
-            // to keep its tail out from under it.
+            // The copy chip floats over the top-right corner; only the first row keeps
+            // its tail clear. Long lines remain available through this block's scroller.
             const clearance = !frameless && index === 0 ? ' pr-16' : '';
             return row.kind === 'meta' ? (
-              <span className={`col-span-2 whitespace-pre px-3 py-px text-code-syntax-keyword${clearance}`} key={`${index}-${row.text}`}>
+              <span
+                className={`flex w-max min-w-full whitespace-pre px-2 py-px text-code-syntax-keyword${clearance}`}
+                key={`${index}-${row.text}`}
+              >
                 {row.text || ' '}
               </span>
             ) : (
-              <Fragment key={`${index}-${row.before?.text}-${row.after?.text}`}>
-                <DiffCellView cell={row.before} />
-                <DiffCellView cell={row.after} className={`border-l border-code-edge${clearance}`} />
-              </Fragment>
+              <DiffLineView
+                line={row}
+                className={clearance}
+                key={`${index}-${row.kind}-${row.text}`}
+              />
             );
           })}
         </div>

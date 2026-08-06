@@ -76,6 +76,21 @@ describe('Markdown tool card body', () => {
   });
 });
 
+// Regression, companion transcript report: PATCH and WRITE diffs used a two-column
+// desktop layout, leaving each side unreadably narrow in the web and native apps.
+describe('compact diff blocks', () => {
+  it('renders one unified column with explicit removed and added lines', () => {
+    const html = renderToStaticMarkup(
+      <Markdown compact>{'```diff\n--- a/file.ts\n+++ b/file.ts\n@@ -1,2 +1,2 @@\n keep\n-old\n+new\n```'}</Markdown>,
+    );
+
+    expect(html).toContain('aria-label="Unified diff"');
+    expect(html).not.toContain('grid-cols-2');
+    expect(html).toContain('aria-label="Removed line 2"');
+    expect(html).toContain('aria-label="Added line 2"');
+  });
+});
+
 // Regression, iOS scroll jump: a pasted picture used to be laid out at whatever
 // its own decoded pixels measured (`max-h-[min(28rem,60dvh)] w-auto`), so the
 // bubble reserved NOTHING for it until the decode landed — which, with
