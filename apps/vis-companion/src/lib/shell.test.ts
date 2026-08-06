@@ -75,6 +75,18 @@ describe('shell screen', () => {
   });
 });
 
+// Regression, issue #6830218b-c00d-497a-86b9-1a8966cd92ca: returning from a
+// session used to unmount the cached fleet, replay its entrance animation, and
+// visibly reflow every machine's sessions instead of restoring the previous frame.
+describe('retained session list', () => {
+  it('keeps the sessions screen mounted and hides it behind an open session', () => {
+    expect(appSource).toContain('shellView === "sessions" || shellView === "session"');
+    expect(appSource).toContain('className={shellView === "session" ? "hidden" : "h-full"}');
+    expect(appSource).toContain('<SessionScreen');
+    expect(appSource).toContain('<SessionsScreen');
+  });
+});
+
 // The chrome is allowed to disappear on exactly one screen, so that screen has
 // to bring the status-bar padding itself: the session's own header is the first
 // child of its section, and everything else there (the scroller and the loading

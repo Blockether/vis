@@ -1276,7 +1276,6 @@ export function SessionScreen({
   const pendingVoiceRef = useRef<Blob | null>(null);
   // Scroll ownership is explicit: a pin is one correction, never a timed fight with
   // the browser's layout or the reader's finger.
-  const settleUntilRef = useRef(0);
   const followingRef = useRef(true);
   // A wake after a real absence owes the reader the newest turn, not the pixel
   // they left on. The wake pins immediately, but the catch-up transcript lands

@@ -934,28 +934,36 @@ export function App() {
               setTab("connect");
             }}
           />
-        ) : shellView === "session" && openTarget && client && subscriptions ? (
-          <SessionScreen
-            key={`${openTarget.conn.url}:${openTarget.sid}`}
-            client={client}
-            subscriptions={subscriptions}
-            sid={openTarget.sid}
-            fresh={openTarget.fresh}
-            onBack={leaveSession}
-            onOpenSession={(sid, fresh) =>
-              void openGatewaySession(openTarget.conn, sid, fresh)
-            }
-            onManageProviders={() => openSettings(openTarget.conn)}
-          />
-        ) : (
-          <SessionsScreen
-            conns={conns}
-            subscriptions={subscriptions}
-            onUnreachable={handleUnreachable}
-            onOpen={openGatewaySession}
-            onMachineSettings={openSettings}
-          />
-        )}
+        ) : shellView === "sessions" || shellView === "session" ? (
+          <>
+            {/* Keep the fleet mounted behind a session. Its cached rows, scope, scroll
+                position, and expanded projects are the previous screen, not a loading
+                state to recreate when the user comes back. */}
+            <div className={shellView === "session" ? "hidden" : "h-full"}>
+              <SessionsScreen
+                conns={conns}
+                subscriptions={subscriptions}
+                onUnreachable={handleUnreachable}
+                onOpen={openGatewaySession}
+                onMachineSettings={openSettings}
+              />
+            </div>
+            {openTarget && client && subscriptions && (
+              <SessionScreen
+                key={`${openTarget.conn.url}:${openTarget.sid}`}
+                client={client}
+                subscriptions={subscriptions}
+                sid={openTarget.sid}
+                fresh={openTarget.fresh}
+                onBack={leaveSession}
+                onOpenSession={(sid, fresh) =>
+                  void openGatewaySession(openTarget.conn, sid, fresh)
+                }
+                onManageProviders={() => openSettings(openTarget.conn)}
+              />
+            )}
+          </>
+        ) : null}
       </main>
 
       {hasConn && isChromeVisible && <TabBar tab={tab} onTab={setTab} />}
