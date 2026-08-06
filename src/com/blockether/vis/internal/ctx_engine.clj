@@ -7,11 +7,12 @@
   (:require [clojure.string :as str]))
 
 (def DEFAULT_PROMPT_BUDGET_TOKENS
-  "Soft per-call request-size guardrail surfaced to the model as
-   `session_utilization.auto_compress_above`. ~72% of a typical 200k window,
-   leaving headroom for the model's own output. Compared against PROVIDER-reported
-   input tokens (no local tokenizer) — see `utilization`."
-  144000)
+  "Soft per-call operating budget surfaced to the model as
+   `session_utilization.auto_compress_above`. It keeps routine work below a
+   200k-token handled-context allowance while the provider-reported input
+   limit remains the hard ceiling. Compared against provider-reported input
+   tokens (no local tokenizer) — see `utilization`."
+  200000)
 ;; =============================================================================
 ;; Scope parsing — deterministic, regex-driven
 ;; =============================================================================

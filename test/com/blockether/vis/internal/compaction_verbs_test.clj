@@ -884,36 +884,38 @@
   (let
     [required
      {"last_request_tokens" 210000
-      "auto_compress_above" 144000
+      "auto_compress_above" 200000
       "model_input_limit" 1000000
       "saturation" 21}
 
      urgent
-     {"last_request_tokens" 132000
-      "auto_compress_above" 144000
+     {"last_request_tokens" 180000
+      "auto_compress_above" 200000
       "model_input_limit" 1000000
-      "saturation" 13}
+      "saturation" 18}
 
      advisory
-     {"last_request_tokens" 110000
-      "auto_compress_above" 144000
+     {"last_request_tokens" 150000
+      "auto_compress_above" 200000
       "model_input_limit" 1000000
-      "saturation" 11}
+      "saturation" 15}
 
      under
-     {"last_request_tokens" 100000
-      "auto_compress_above" 144000
+     {"last_request_tokens" 140000
+      "auto_compress_above" 200000
       "model_input_limit" 1000000
-      "saturation" 10}
+      "saturation" 14}
 
      stamp
      #'lp/stamp-utilization!]
 
+    (it "uses a 200k default compaction budget"
+        (expect (= 200000 eng/DEFAULT_PROMPT_BUDGET_TOKENS)))
     (it "starts advisory pressure at 75% of the operating budget"
         (let [hint (eng/over-budget-hint advisory 6 6)]
           (expect (str/includes? hint "FOLD SOON"))
-          (expect (str/includes? hint "110k"))
-          (expect (str/includes? hint "144k"))
+          (expect (str/includes? hint "150k"))
+          (expect (str/includes? hint "200k"))
           (expect (str/includes? hint "session_fold"))))
     (it "escalates at 90% and requires folding before more large tool calls"
         (let [hint (eng/over-budget-hint urgent 6 6)]
@@ -923,7 +925,7 @@
     (it "is imperative above budget and prescribes one broad verified fold"
         (let [hint (eng/over-budget-hint required 6 6)]
           (doseq
-            [text ["ACTION REQUIRED" "210k" "144k" "Fold settled search/tool sweeps"
+            [text ["ACTION REQUIRED" "210k" "200k" "Fold settled search/tool sweeps"
                    "one broad session_fold" "last completed scope"
                    "preserve decisions, edits, and verification" "preserve exact physical paths"
                    "If the edit is ready and the next patch fits available headroom, patch first"

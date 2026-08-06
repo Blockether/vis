@@ -103,63 +103,22 @@
          ["Host project default" "`vis_docs()`" "runtime > source > docs > assumption"
           "Native descriptions and JSON Schemas are authoritative" "follow the documented contract"
           "hard preconditions" "`python_execution`" "`await gather(...)` only for independent calls"
-          "Direct native tools: single operations" "simple edits" "small fixed call sets"
-          "default for most Python/data work" "YAML/JSON/TOML/CSV" "over shell." "background shells"
-          "`shell` op `wait`" "REQUIRED `until` regex" "`logs` snapshots"
-          "functions that accept or return callables"
-          ;; The helper rule is imperative, not a preference: a bare "prefer small helpers"
-          ;; left copy-pasted loops fully compliant, so the trigger (second occurrence) and
-          ;; the prohibition are pinned here.
-          "NEVER paste a near-identical loop or block twice in" "defined once"
-          "on the second occurrence factor it out and call the helper"
-          "Call advertised native tools directly" "for unadvertised sandbox" "read-only `session`"
-          "raw data, not rendered text" "Use documented keys" "never a `session_fold` receipt"
-          ;; The transcript HEADS every result with its coordinate AND stamps that same
-          ;; coordinate under it (`# saved:`), so the coordinate — never the opaque
-          ;; `toolu_…` id — is the `ntr` key the core teaches.
-          "# saved:" "Before re-running or scanning transcript" "recover raw result"
-          "the `# saved:` coordinate" "under it (`ntr[\"t5/i1/f2\"]`)" "`ntr.describe()`"
-          "labelled candidates" "not `ntr.keys()`/`items()` to discover results"
-          "shape before indexing" "inspect keys/types" "then adapt"
-          "do not print it or call `repl` status merely to" "reproduce before editing"
-          ;; Reproduction is REPL-first and the reproduction SURVIVES as a suite test:
-          ;; a bare "reproduce" was read as an ad-hoc check that vanished with the session,
-          ;; leaving fixed bugs with nothing pinning them.
-          "a failing `repl_eval` snippet first" "keep that reproduction as a test in the suite"
-          "rerun it after the fix" "unverified until a test covers it"
-          "reads, `shell`/`git` `commands`" "Batch independent" "plural args"
-          "Write only files the task asked" "Python extensions" "`run_tests(\"python\")`" "native"
-          "CLI: `vis-agent python -m pytest <paths>`" "on your own and report what you did"
-          "Keep secrets out of answers" "Commit, push, publish" "Treat context as a budget"
-          "act before the provider fails" "Fold obsolete settled work"
-          "one broad `through`/range fold"
+          "Direct native tools: single operations" "default for most Python/data work"
+          "`shell` op `wait`" "REQUIRED `until` regex"
+          "functions that accept or return\n  callables"
+          "NEVER paste a near-identical loop or block twice" "define once and reuse"
+          "second occurrence factor it out and call it" "raw data, not rendered text"
+          "Use `ntr[key]" "# saved:" "`ntr.describe()`" "Inspect shape before indexing"
+          "status only when absent or stale" "a failing `repl_eval` snippet first"
+          "keep that reproduction as a test in the suite" "unverified until a test covers it"
+          "BATCH every tool" "Write only files the task asked" "Commit, push, publish"
+          "Treat context as a budget" "at most two targeted"
+          "named unresolved decision blocks the edit" "no repeated search/read"
+          "Fold settled work into a gist" "recorded thinking" "in-flight hidden reasoning remain"
           "When edit-ready and headroom permits, patch before folding"
-          "Before unavoidable folds, checkpoint"
-          "paths/symbols, hypothesis, edit/test, and dirty files"
-          "decisions, verification, recovery IDs" "exact paths; confirm reduction"
-          "Fold only settled steps through the last completed scope"
-          ;; REPL lifecycle: the core keeps only what no tool description owns — that the
-          ;; visible session map IS the read. `repl`'s own description owns the op menu and
-          ;; the stop-what-you-started contract; §7 owns end-of-turn teardown. No third copy.
-          "REPL state in `session` is a read already" "Reuse a live REPL across turns"
-          ;; Anchor MECHANICS (which files a write invalidates) belong to the `patch` and
-          ;; `cat` descriptions — see editing core_test. The core keeps only the ordering rule.
-          "Re-read a file you already wrote before editing it again"
-          ;; `ls` is a first-class INSPECTION move, not a footnote: the core used to name it
-          ;; only as "`ls` lists directories", and the shape of an unfamiliar tree got guessed
-          ;; (or paid for with a wide `grep`) instead of listed in one cheap batched call.
-          "`ls` FIRST maps an unknown tree's shape in ONE" "so no path is guessed"
-          ;; One batching rule for EVERY tool — reads, shell/git commands and edits.
-          "BATCH every tool" "`patch`/`struct_patch` `edits`" "one call, never one per file"
-          "re-read that one target and retry"
-          "Lead with the answer. Be terse; depth only when earned."
-          ;; End-of-turn teardown: without this the session leaks every REPL and
-          ;; background shell the agent spawned. The TRIGGER (before the final answer)
-          ;; and the ctx cue (`can_stop`, which `resources/model-view` keeps in every
-          ;; leaf) are part of the rule — a bare "finish clean" got skipped.
-          "Finish clean: stop every session resource you started" "`shell` op \"stop\""
-          "BEFORE your final answer" "live `can_stop` entry" "nothing of yours running"
-          "Confirm destructive actions."]]
+          "Prefer folding after edit/verification" "Before an unavoidable fold, checkpoint"
+          "exact paths; confirm reduction" "Fold only settled steps"
+          "Finish clean: stop every session resource you started" "Confirm destructive actions."]]
         (expect (str/includes? text required)))
       ;; Python's native-result retrieval contract belongs in the execution-surface
       ;; guidance because it controls context shaping across every native tool.

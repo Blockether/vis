@@ -412,6 +412,9 @@
           [out (run (str "print(apropos('session_fold')['session_fold'])\n"
                          "print(doc('session_fold'))"))]
           (expect (str/includes? out "session_fold(target, gist=None) -> str"))
+          (expect (str/includes? out "replaces eligible settled transcript text"))
+          (expect (str/includes? out "including recorded thinking and tool results"))
+          (expect (str/includes? out "cannot erase an in-flight model's hidden reasoning"))
           (expect (str/includes? out "there is no destructive unfold command"))
           (expect (str/includes? out "`ntr` never stores a `session_fold` receipt"))
           (expect (str/includes? out "s = await session_state()"))

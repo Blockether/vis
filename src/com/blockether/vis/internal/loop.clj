@@ -3353,7 +3353,7 @@
      ;; Human-facing enrichment for the fold card: how much wire THIS fold
      ;; reclaims — in ~tokens (summed from `engine_iter_weights`) AND as a
      ;; fraction of the OPERATING ceiling (`~P% of budget`): `auto_compress_above`
-     ;; (the 144k soft compaction guardrail), or the live handled context when a
+     ;; (the 200k soft compaction guardrail), or the live handled context when a
      ;; bigger task has already floated above it. That figure
      ;; is deliberately the fold's OWN contribution (a REDUCTION), never a
      ;; derived "how full am I" level: `last_request_tokens` grows with every
@@ -3420,7 +3420,7 @@
             (get util "model_input_limit")
 
             ;; Denominator for `% of budget` is the OPERATING ceiling, NOT the
-            ;; 1M hard per-call max. `auto_compress_above` (the 144k soft
+            ;; hard per-call max. `auto_compress_above` (the 200k soft
             ;; guardrail = the budget we actually work within) is what a fold's
             ;; reclaim is relevant against; dividing by the 1M ceiling read every
             ;; fold ~7x smaller than its real weight, so compaction looked like
