@@ -2070,6 +2070,23 @@
         (expect (false? (#'state/failure-transient?
                          {:result {:status :error :trace [{:error auth}]}})))
         (expect (false? (#'state/failure-transient? {:result {:status :error}})))))
+  ;; Regression: a stalled turn carrying a non-retryable provider failure
+  ;; (quota exhausted, auth) was re-queued forever because `stalled?` returned
+  ;; `true` unconditionally, ignoring the terminal error underneath. After
+  ;; credits ran out, one session re-queued the same doomed request 94 times.
+  (it "a stall carrying a non-retryable provider error is terminal, not re-queued forever"
+      (let
+        [quota {:message "Exceptional status code: 429"
+                :data {:status 429
+                       :body "{\"error\":{\"message\":\"You exceeded your current quota\"}}"}}]
+        (expect (false? (#'state/failure-transient?
+                         {:stalled? true :result {:status :error :trace [{:error quota}]}})))))
+  ;; A stall with a genuinely transient error (transport, bare rate-limit)
+  ;; is still transient — only terminal provider failures break the loop.
+  (it "a stall carrying a transport error is still transient"
+      (let [transport {:message "Connection reset" :data {:status 0 :body "refused"}}]
+        (expect (true? (#'state/failure-transient?
+                        {:stalled? true :result {:status :error :trace [{:error transport}]}})))))
   (it
     "auto-retries a provider TIMEOUT — the wedge of issue #65"
     (let

@@ -2706,7 +2706,16 @@
          (= :needs-input (:vis/answer-mode answer))
 
          content-blocks
-         (answer-content answer)
+         (try (answer-content answer)
+              (catch Throwable _
+                ;; answer-content threw — the loop's terminal fallback didn't
+                ;; pass content validation. Build readable content from the
+                ;; result error so the user sees the real provider failure
+                ;; (429, quota exhausted) instead of the misleading
+                ;; "Final answer must be canonical content or Markdown prose".
+                (let [err (or (:error result) (some :error (reverse (:trace result))))]
+                  (or (when (some? err) (seq (provider-error/provider-error-content err)))
+                      [(content/error "turn_failed" "Turn failed" false)]))))
 
          stalled?
          (boolean (and stall (:stalled? @stall)))
@@ -3227,11 +3236,20 @@
    queued behind the failure never drained — the session looked wedged."
   [{:keys [stalled?] :as failure}]
   (let [err (terminal-failure-error failure)]
-    (boolean (cond stalled? true
-                   (nil? err) false
-                   :else (or (and (instance? Throwable err)
-                                  (provider-error/transport-throwable? err))
-                             (provider-error/provider-error-retryable? err))))))
+    (boolean (cond
+               ;; A non-retryable provider failure (quota exhausted, auth
+               ;; rejection, billing) is terminal EVEN when it surfaced as a
+               ;; stall. Re-queuing it indefinitely is what spun sessions
+               ;; through dozens of identical turns after credits ran out —
+               ;; the gateway re-queued the same doomed request forever.
+               (and (some? err)
+                    (provider-error/provider-failure? err)
+                    (not (provider-error/provider-error-retryable? err)))
+               false
+               stalled? true
+               (nil? err) false
+               :else (or (and (instance? Throwable err) (provider-error/transport-throwable? err))
+                         (provider-error/provider-error-retryable? err))))))
 
 (defn- count-queued [entry] (count (filter #(= "queued" (:status %)) (vals (:turns entry)))))
 

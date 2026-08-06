@@ -827,8 +827,14 @@
 (def ^:private RETRYABLE_KINDS
   "Kinds vis knows are worth another attempt even when svar has no opinion —
    its own typed outcomes (an empty 200 body, a stream watchdog) plus the
-   transport/timeout families it words itself."
-  #{:rate-limit :transport :overloaded :empty-content :stream-timeout :upstream-timeout})
+   transport/timeout families it words itself.
+
+   `:rate-limit` is NOT here: a 429 status is ambiguous — svar reads the BODY
+   and distinguishes a genuine rate-limit (retryable) from quota exhaustion
+   (terminal). Keeping `:rate-limit` here overrode svar's `:retryable? false`
+   verdict for quota-exhausted 429s, so the gateway re-queued credits-out
+   failures forever. Now kind `:rate-limit` falls through to svar's verdict."
+  #{:transport :overloaded :empty-content :stream-timeout :upstream-timeout})
 
 (def ^:private TERMINAL_KINDS
   "Kinds where an identical retry fails identically: the request, the key, the

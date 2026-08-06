@@ -573,7 +573,30 @@
                          :data {:status 400
                                 :body
                                 "{\"error\":{\"message\":\"messages must not be empty\"}}"}}))))
+  ;; Regression: a 429 whose body says "quota exceeded" was classified kind
+  ;; :rate-limit, and :rate-limit sat in RETRYABLE_KINDS, so provider-error-retryable?
+  ;; returned true WITHOUT consulting svar — svar reads the body and knows it is
+  ;; quota-exhausted (non-retryable). The gateway then re-queued the same doomed
+  ;; request forever after credits ran out.
+  (it
+    "a quota-exhausted 429 is terminal even though kind is :rate-limit"
+    (let
+      [quota-429
+       {:message "Exceptional status code: 429"
+        :data
+        {:status 429
+         :body
+         "{\"error\":{\"message\":\"You exceeded your current quota, please check your plan and billing details.\"}}"}}]
+      (expect (= :rate-limit (perr/provider-error-kind quota-429)))
+      (expect (false? (perr/provider-error-retryable? quota-429)))))
+  ;; And a bare 429 with no quota body IS still retryable — svar classifies it
+  ;; :rate-limited (genuine throttle), not :quota-exhausted.
+  (it "a bare 429 with no quota body is still retryable"
+      (let [bare-429 {:message "Exceptional status code: 429" :data {:status 429}}]
+        (expect (= :rate-limit (perr/provider-error-kind bare-429)))
+        (expect (true? (perr/provider-error-retryable? bare-429)))))
   (it "no classification can soften a terminal kind"
+      (expect (false? (perr/provider-error-retryable? resource-mismatch-err)))
       (expect (false? (perr/provider-error-retryable? resource-mismatch-err)))))
 
 (def ^:private all-auth-exhausted-err
