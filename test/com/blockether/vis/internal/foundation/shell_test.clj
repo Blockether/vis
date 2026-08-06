@@ -832,6 +832,16 @@
                    ;; `until` on `run` would promise a condition nothing evaluates — and it
                    ;; must be refused BEFORE the command runs.
                    (expect (threw? #(shell* env {"commands" ["true"] "until" "x"})))
+                   ;; Regression: a start may carry a stale wait predicate, but `background`
+                   ;; owns no `until`; coercion must remove it before dispatch.
+                   (let
+                     [r (:result (shell* env
+                                         {"commands" ["printf READY"]
+                                          "op" "background"
+                                          "id" "job"
+                                          "until" "READY"}))]
+                     (expect (= "background" (get r "stage")))
+                     (expect (not (contains? r "until"))))
                    (expect (threw? #(shell* env {"op" "logs" "id" "job" "until" "x"})))
                    (finally (resources/stop-all! sid)))))))))
 

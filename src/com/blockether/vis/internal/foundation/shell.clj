@@ -1734,9 +1734,6 @@
        (throw (ex-info "shell has no `cmd` option — put bash lines in {\"commands\": [...]}."
                        {:type ::legacy-command-carrier})))
 
-     until
-     (opt raw-opts :until)
-
      id
      (some-> (opt raw-opts :id)
              str
@@ -1755,7 +1752,16 @@
      ;; mechanically reuses the start shape may still carry `commands`; it is not
      ;; relevant to these stages and must not make an otherwise valid call fail.
      opts
-     (if (#{"logs" "wait" "send" "stop"} op) (dissoc raw-opts "commands" :commands) raw-opts)
+     (cond->
+       (if (#{"logs" "wait" "send" "stop"} op) (dissoc raw-opts "commands" :commands) raw-opts)
+       ;; `background` starts a process; `until` belongs only to the later `wait`
+       ;; predicate.  Drop a stale predicate rather than rejecting an otherwise
+       ;; valid start shape.
+       (= "background" op)
+       (dissoc "until" :until))
+
+     until
+     (opt opts :until)
 
      commands
      (opt opts :commands)
