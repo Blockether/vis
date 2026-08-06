@@ -30,7 +30,8 @@
     3. `vis-agent providers status opencode-go` shows the source without
        exposing the key.
     4. `vis-agent providers logout opencode-go` deletes the persisted key."
-  (:require [charred.api :as json]
+  (:require [babashka.http-client :as http]
+            [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
@@ -55,16 +56,57 @@
 
 (def ^:private ENV_KEYS "Env-var chain, highest priority first." ["OPENCODE_API_KEY"])
 
+(def ^:private ANTHROPIC_PATTERN
+  "Model IDs served over the Anthropic Messages wire (/messages). Everything else
+   rides svar's default OpenAI chat wire (/chat/completions)."
+  #"(?i)(minimax|qwen)")
+
+(defn- anthropic-model? [^String model-id] (boolean (re-find ANTHROPIC_PATTERN model-id)))
+
+(defn- catalog-entry
+  "Convert a raw model ID from the `/models` endpoint to a `:default-models` ref —
+   a bare string for OpenAI-wire models, a `{:name … :api-style :anthropic}` map
+   for MiniMax/Qwen so svar routes them to `/messages`."
+  [model-id]
+  (if (anthropic-model? model-id) {:name model-id :api-style :anthropic} model-id))
+
+(def ^:private SEED_MODELS
+  "Fallback when the live catalog is unreachable at load time. Kept current with
+   the last known catalog so the picker still shows plausible models offline."
+  ["kimi-k2.7-code" "glm-5.2" "deepseek-v4-flash" "deepseek-v4-pro" "kimi-k2.6" "mimo-v2.5-pro"
+   "mimo-v2.5" "hy3" {:name "minimax-m3" :api-style :anthropic}
+   {:name "minimax-m2.7" :api-style :anthropic} {:name "qwen3.7-max" :api-style :anthropic}
+   {:name "qwen3.7-plus" :api-style :anthropic}])
+
+(defn- fetch-live-catalog!
+  "GET the PUBLIC OpenCode Go `/models` endpoint — no API key required. Returns a
+   vector of model refs (bare strings + `:api-style` maps) built from the live
+   catalog, or nil on any failure (timeout, non-200, parse error, offline)."
+  []
+  (try (let
+         [resp (http/get (str BASE_URL "/models")
+                         {:headers {"Accept" "application/json"} :timeout 5000 :throw false})]
+         (when (<= 200 (:status resp) 299)
+           (->> (json/read-json (:body resp) :key-fn keyword)
+                (:data)
+                (keep :id)
+                (filter string?)
+                (map catalog-entry)
+                seq)))
+       (catch Throwable _ nil)))
+
+;; `defonce` + `delay`: the catalog is fetched ONCE per process. `reload!` in
+;; tests preserves the realized delay, so repeated reloads don't repeat the HTTP
+;; call. For native-image this extension namespace is loaded dynamically at
+;; runtime, so the fetch happens then — not at image-build time.
+(defonce ^:private live-catalog (delay (fetch-live-catalog!)))
+
 (def ^:private DEFAULT_MODELS
-  "Curated model list for the 'Add Provider' picker. Models served on the
-   Anthropic Messages wire carry `:api-style :anthropic` so svar routes them to
-   `/messages`; every other model rides svar's default OpenAI chat wire
-   (`/chat/completions`). One provider, one key, two wires."
-  ["kimi-k2.7-code" "glm-5.2" "deepseek-v4-flash" "deepseek-v4-pro" "glm-5.1" "kimi-k2.6"
-   "mimo-v2.5-pro" "mimo-v2.5" "hy3" {:name "minimax-m3" :api-style :anthropic}
-   {:name "qwen3.7-max" :api-style :anthropic} {:name "qwen3.7-plus" :api-style :anthropic}
-   {:name "minimax-m2.7" :api-style :anthropic} {:name "minimax-m2.5" :api-style :anthropic}
-   {:name "qwen3.6-plus" :api-style :anthropic}])
+  "Live OpenCode Go model catalog (fetched from the public `/models` endpoint at
+   registration) or seed fallback. The gateway's catalog endpoint is public — no
+   key needed — so the LIVE catalog is the source of truth, not a hand-curated
+   list. Falls back to `SEED_MODELS` when the network is unreachable."
+  (or (force live-catalog) SEED_MODELS))
 
 ;; =============================================================================
 ;; Persistence

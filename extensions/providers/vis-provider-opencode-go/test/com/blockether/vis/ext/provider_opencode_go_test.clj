@@ -56,6 +56,27 @@
                    (expect (some #(re-find #"minimax" (:name %)) styled))
                    (expect (some #(re-find #"qwen" (:name %)) styled)))))
 
+(defdescribe catalog-entry-test
+             (it "routes MiniMax/Qwen to Anthropic Messages wire, everything else to OpenAI chat"
+                 (expect (= "glm-5.2" (#'opencode-go/catalog-entry "glm-5.2")))
+                 (expect (= "kimi-k3" (#'opencode-go/catalog-entry "kimi-k3")))
+                 (expect (= {:name "minimax-m3" :api-style :anthropic}
+                            (#'opencode-go/catalog-entry "minimax-m3")))
+                 (expect (= {:name "qwen3.8-max" :api-style :anthropic}
+                            (#'opencode-go/catalog-entry "qwen3.8-max")))))
+
+;; Regression, issue #N: DEFAULT_MODELS was a stale hardcoded constant. The
+;; `/models` endpoint is public (no key), so the catalog is now fetched live and
+;; includes models the old list never had (kimi-k3, grok-4.5, mimo-v2-omni).
+(defdescribe live-catalog-test
+             (it "fetches the live catalog from the public /models endpoint"
+                 (when-let [catalog (#'opencode-go/fetch-live-catalog!)]
+                   (let [ids (set (map #(if (map? %) (:name %) %) catalog))]
+                     ;; The live catalog has more models than the seed fallback.
+                     (expect (> (count catalog) (count @#'opencode-go/SEED_MODELS)))
+                     ;; The live catalog includes models the stale constant never had.
+                     (expect (some #(contains? ids %) ["kimi-k3" "grok-4.5" "mimo-v2-omni"]))))))
+
 (defdescribe
   shared-key-auth-test
   (it "resolves the key + endpoint for the single provider"
@@ -80,14 +101,14 @@
                           nil
                           (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
 
-(defdescribe auth-prompt-test
-             (it "exposes static API-key guidance"
-                 (reload!)
-                 (let [lines ((:provider/auth-prompt-fn (vis/provider-by-id :opencode-go)))]
-                   (expect (some #(= "  OpenCode Go requires a static API key." %) lines))
-                   (expect (some #(= "         export OPENCODE_API_KEY=<your-opencode-go-api-key>" %)
-                                 lines))
-                   (expect (some #(= "  Endpoint: https://opencode.ai/zen/go/v1" %) lines)))))
+(defdescribe
+  auth-prompt-test
+  (it "exposes static API-key guidance"
+      (reload!)
+      (let [lines ((:provider/auth-prompt-fn (vis/provider-by-id :opencode-go)))]
+        (expect (some #(= "  OpenCode Go requires a static API key." %) lines))
+        (expect (some #(= "         export OPENCODE_API_KEY=<your-opencode-go-api-key>" %) lines))
+        (expect (some #(= "  Endpoint: https://opencode.ai/zen/go/v1" %) lines)))))
 
 (defdescribe limits-test
              (it "reports :ok and a flat-rate note when authenticated"
