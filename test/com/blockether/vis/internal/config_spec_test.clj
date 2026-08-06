@@ -6,6 +6,13 @@
             [lazytest.core :refer [defdescribe expect it]]
             [yamlstar.core :as yamlstar]))
 
+(defdescribe per-model-api-style-config-test
+             (it "accepts provider-generated wire routing metadata for a model"
+                 (expect (config-spec/valid? {"providers" [{"id" "opencode-go"
+                                                            "models" [{"name" "minimax-m3"
+                                                                       "api_style"
+                                                                       "anthropic"}]}]}))))
+
 (def full-config
   {"default_provider" "anthropic"
    "default_model" "claude"
@@ -15,8 +22,11 @@
                  "api_key" "secret"
                  ;; Command-backed credential: argv whose trimmed stdout is the key.
                  "api_key_command" ["vault-token" "--env" "sbox"]
-                 "models"
-                 [{"name" "claude" "context" 200000 "output_limit" 8192 "is_tool_call" true}]
+                 "models" [{"name" "claude"
+                            "context" 200000
+                            "output_limit" 8192
+                            "is_tool_call" true
+                            "api_style" "anthropic"}]
                  "base_url" "https://api.anthropic.com"
                  "compatibility" "anthropic"
                  "api_style" "anthropic"

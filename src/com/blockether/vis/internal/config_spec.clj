@@ -80,7 +80,7 @@
 
 ;; Provider/model contract -----------------------------------------------------
 
-(def model-keys #{"name" "context" "output_limit" "is_tool_call"})
+(def model-keys #{"name" "context" "output_limit" "is_tool_call" "api_style"})
 (def provider-keys
   #{"id" "api_key" "api_key_command" "models" "base_url" "compatibility" "api_style"
     "responses_path" "llm_headers" "extra_body" "is_stateless"})
@@ -94,7 +94,8 @@
   {"name" non-blank-string?
    "context" positive-int?
    "output_limit" positive-int?
-   "is_tool_call" boolean?})
+   "is_tool_call" boolean?
+   "api_style" non-blank-string?})
 
 (s/def ::api-key-command
   ;; Structured argv, never a shell string: the helper is exec'd directly, so a
