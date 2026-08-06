@@ -115,7 +115,10 @@ import {
   shellViewportHeight,
   useSafeBottomStyle,
 } from "../lib/viewport";
-import { answeredTurnCount, markSessionRead } from "../lib/unread";
+import {
+  markSessionRead,
+  visibleAnsweredTurnCount,
+} from "../lib/unread";
 import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 
@@ -1146,19 +1149,18 @@ export function SessionScreen({
   // Both halves must count answers only: `turn_count` includes the turn that is
   // running right now (the gateway persists it at submit), and marking that as
   // read would pre-read the answer before it exists.
+  //
+  // The terminal event settles the live bubble before its transcript row has been
+  // persisted. That visible bubble is already read, so count it during that gap;
+  // `settle` batches the persisted row and bubble removal into one render, which
+  // keeps the same answer from being counted twice.
   // This can be a much larger held history than the eight mounted rows after the
   // reader pages upward. Keep the completed-turn scan off the composer render path:
   // keystrokes do not change `turns`, and the read marker only needs to move when
-  // the transcript or its meta row changes.
+  // the transcript, its meta row, or the live bubble changes.
   const readTurns = useMemo(
-    () =>
-      Math.max(
-        answeredTurnCount(session),
-        turns.filter(
-          (turn) => turn.status !== "running" && turn.status !== "pending",
-        ).length,
-      ),
-    [session, turns],
+    () => visibleAnsweredTurnCount(session, turns, liveTurn?.status),
+    [session, turns, liveTurn],
   );
   useEffect(() => {
     if (document.visibilityState !== "hidden") markSessionRead(sid, readTurns);

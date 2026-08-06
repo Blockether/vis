@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { Session } from './types';
+import type { Session, TranscriptTurn } from './types';
 
 /**
  * Per-session READ MARKS — "how many turns had this session finished the last
@@ -78,6 +78,25 @@ export function answeredTurnCount(session: Session | null | undefined): number {
   const total = Number.isFinite(count) && count > 0 ? count : 0;
   const inFlight = session.live === true || session.status === 'running' ? 1 : 0;
   return Math.max(0, total - inFlight);
+}
+
+/**
+ * Answers the reader can currently see, including a settled live bubble whose
+ * transcript row has not reached the gateway response yet.
+ */
+export function visibleAnsweredTurnCount(
+  session: Session | null | undefined,
+  turns: readonly TranscriptTurn[],
+  liveStatus: string | null | undefined,
+): number {
+  const settledTranscriptTurns = turns.filter(
+    (turn) => turn.status !== 'running' && turn.status !== 'pending',
+  ).length;
+  const settledLiveTurn = liveStatus != null && liveStatus !== 'running' ? 1 : 0;
+  return Math.max(
+    answeredTurnCount(session),
+    settledTranscriptTurns + settledLiveTurn,
+  );
 }
 
 /**
