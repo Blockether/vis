@@ -1,10 +1,14 @@
 (ns com.blockether.vis.internal.gateway.web-push
-  "Gateway-local Web Push.
+  "Gateway-local Web Push (RFC 8291 and RFC 8292).
 
-   Every gateway owns one generated VAPID P-256 key pair in its own `~/.vis`
+   Each gateway owns one generated VAPID P-256 key pair in its own `~/.vis`
    home. The browser gets this gateway's public key, registers its subscription
    here, and this gateway encrypts and sends notifications directly to the
-   browser's push service. There is no publisher URL or shared web relay."
+   browser's push service. There is no publisher URL or shared web relay.
+
+   Java interop is kept at the cryptographic, file, and HTTP boundaries. The
+   rest of the namespace passes ordinary Clojure maps and byte arrays between
+   small helpers so the protocol steps remain visible and testable."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.wire :as wire]
@@ -13,10 +17,11 @@
            [java.math BigInteger]
            [java.net URI]
            [java.net.http HttpClient HttpClient$Version HttpRequest HttpRequest$BodyPublishers
-            HttpResponse HttpResponse$BodyHandlers]
+            HttpRequest$Builder HttpResponse HttpResponse$BodyHandlers]
            [java.nio ByteBuffer]
            [java.nio.charset StandardCharsets]
-           [java.security KeyFactory KeyPairGenerator PrivateKey SecureRandom Signature]
+           [java.nio.file Files]
+           [java.security KeyFactory KeyPair KeyPairGenerator PrivateKey SecureRandom Signature]
            [java.security.interfaces ECPublicKey]
            [java.security.spec ECGenParameterSpec X509EncodedKeySpec PKCS8EncodedKeySpec]
            [java.time Duration]
@@ -24,6 +29,9 @@
            [javax.crypto Cipher KeyAgreement Mac]
            [javax.crypto.spec GCMParameterSpec SecretKeySpec]))
 
+;; The aes128gcm content-coding reserves a two-byte delimiter and a 16-byte
+;; GCM authentication tag. Keep the protocol's limits in one place rather than
+;; scattering magic numbers through the encryption and dispatch paths.
 (def ^:private MAX_PAYLOAD_BYTES 4079)
 (def ^:private RECORD_SIZE 4096)
 (def ^:private KEY_FILE "vapid.p8")
@@ -32,58 +40,106 @@
 (def ^:private KEY_INFO_PREFIX "WebPush: info\0")
 (def ^:private AES_INFO "Content-Encoding: aes128gcm\0")
 (def ^:private NONCE_INFO "Content-Encoding: nonce\0")
+
+;; SubjectPublicKeyInfo for an uncompressed P-256 public key. Browsers hand us
+;; the 65-byte `04 || x || y` form; JCA wants this DER prefix around it.
 (def ^:private PUBLIC_KEY_PREFIX
   (byte-array [0x30 0x59 0x30 0x13 0x06 0x07 0x2a 0x86 0x48 0xce 0x3d 0x02 0x01 0x06 0x08 0x2a 0x86
                0x48 0xce 0x3d 0x03 0x01 0x07 0x03 0x42 0x00]))
+
 (defonce ^:private key-lock (Object.))
 
 (defn- env-val
+  "Return a trimmed, non-blank environment variable, or nil."
   [name]
-  (let [value (System/getenv name)]
-    (when-not (str/blank? value) (str/trim value))))
+  (some-> (System/getenv name)
+          str/trim
+          not-empty))
 
 (defn- web-home
+  "Resolve the Vis home used for gateway-owned push state.
+
+   Tests override `vis.push.home`; normal gateways use `VIS_HOME` or the
+   conventional `~/.vis` directory."
   ^File []
   (io/file (or (System/getProperty "vis.push.home")
                (env-val "VIS_HOME")
                (str (System/getProperty "user.home") File/separator ".vis"))))
 
-(defn key-file ^File [] (io/file (web-home) "web-push" KEY_FILE))
-(defn- public-file ^File [] (io/file (web-home) "web-push" PUBLIC_FILE))
+(defn- web-push-dir
+  "Return the directory containing this gateway's Web Push identity."
+  ^File []
+  (io/file (web-home) "web-push"))
+
+(defn key-file
+  "Return the private VAPID key path owned by this gateway.
+
+   The companion never receives this file; only the derived public key is
+   exposed through the gateway capability response."
+  ^File []
+  (io/file (web-push-dir) KEY_FILE))
+
+(defn- public-file
+  "Return the persisted SubjectPublicKeyInfo for the VAPID public key."
+  ^File []
+  (io/file (web-push-dir) PUBLIC_FILE))
+
+(defn- key-files
+  "Return the two persisted files as named data for key loading/writing."
+  []
+  {:private-file (key-file) :public-file (public-file)})
 
 (defn- b64url
+  "Encode bytes as unpadded RFC 4648 base64url."
   ^String [^bytes bytes]
   (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) bytes))
 
-(defn- b64url-decode ^bytes [^String value] (.decode (Base64/getUrlDecoder) value))
+(defn- b64url-decode
+  "Decode an unpadded browser base64url value."
+  ^bytes [^String value]
+  (.decode (Base64/getUrlDecoder) value))
 
-(defn- base64-decode ^bytes [^String value] (.decode (Base64/getDecoder) value))
+(defn- base64-decode
+  "Decode regular base64, as used inside a PEM document."
+  ^bytes [^String value]
+  (.decode (Base64/getDecoder) value))
 
-(defn- utf8 ^bytes [^String value] (.getBytes value StandardCharsets/UTF_8))
+(defn- utf8
+  "Encode a protocol string with the protocol's required UTF-8 charset."
+  ^bytes [^String value]
+  (.getBytes value StandardCharsets/UTF_8))
 
-(defn- array-length ^long [^bytes array] (alength array))
-
-(defn- bytes-concat
+(defn- concat-bytes
+  "Concatenate byte arrays without converting them through Clojure sequences."
   ^bytes [& arrays]
   (let
-    [out (byte-array (reduce (fn [^long total ^bytes array]
-                               (+ total (array-length array)))
-                             0
-                             arrays))]
+    [length
+     (reduce (fn [^long total ^bytes array]
+               (+ total (alength array)))
+             0
+             arrays)
+
+     output
+     (byte-array length)]
+
     (loop
-      [offset 0
-       remaining arrays]
+      [offset
+       0
+
+       remaining
+       arrays]
 
       (if-let [array (first remaining)]
         (let
           [^bytes array array
-           length (array-length array)]
+           length (alength array)]
 
-          (System/arraycopy array 0 out offset length)
+          (System/arraycopy array 0 output offset length)
           (recur (+ offset length) (next remaining)))
-        out))))
+        output))))
 
 (defn- fixed32
+  "Represent a positive EC coordinate as exactly 32 unsigned bytes."
   ^bytes [^BigInteger value]
   (let
     [raw
@@ -95,88 +151,120 @@
      length
      (min 32 (alength raw))
 
-     out
+     output
      (byte-array 32)]
 
-    (System/arraycopy raw source-offset out (- 32 length) length)
-    out))
+    (System/arraycopy raw source-offset output (- 32 length) length)
+    output))
 
 (defn- public-key-bytes
+  "Encode a JCA P-256 public key as the browser's uncompressed point form."
   ^bytes [^ECPublicKey key]
-  (bytes-concat (byte-array [4])
+  (concat-bytes (byte-array [4])
                 (fixed32 (.getAffineX (.getW key)))
                 (fixed32 (.getAffineY (.getW key)))))
 
 (defn- pem
+  "Serialize a PKCS#8 byte array as the PEM form used on disk."
   [^bytes der]
   (str "-----BEGIN PRIVATE KEY-----\n"
        (.encodeToString (Base64/getMimeEncoder 64 (.getBytes "\n")) der)
        "\n-----END PRIVATE KEY-----\n"))
 
 (defn- private-key
+  "Parse a PKCS#8 EC private key from PEM text."
   ^PrivateKey [^String pem-text]
   (let
     [der (-> pem-text
              (str/replace #"-----(BEGIN|END)[^-]+-----" "")
              (str/replace #"\s" "")
-             (base64-decode))]
+             base64-decode)]
     (.generatePrivate (KeyFactory/getInstance "EC") (PKCS8EncodedKeySpec. der))))
 
+(defn- read-bytes
+  "Read a complete binary key file."
+  ^bytes [^File file]
+  (Files/readAllBytes (.toPath file)))
+
 (defn- write-bytes!
+  "Write bytes to a file, creating its parent directory first."
   [^File file ^bytes bytes]
   (io/make-parents file)
   (with-open [out (io/output-stream file)]
     (.write out bytes))
   file)
 
-(defn- generate-key-pair!
+(defn- ec-key-pair
+  "Generate one fresh P-256 key pair for the gateway's VAPID identity."
   []
+  (.generateKeyPair (doto (KeyPairGenerator/getInstance "EC")
+                      (.initialize (ECGenParameterSpec. "secp256r1")))))
+
+(defn- ec-public-key
+  "Parse a SubjectPublicKeyInfo-encoded EC public key from disk."
+  ^ECPublicKey [^File file]
+  (.generatePublic (KeyFactory/getInstance "EC") (X509EncodedKeySpec. (read-bytes file))))
+
+(defn- write-key-pair!
+  "Persist a generated key pair, restricting the private file to its owner."
+  [^KeyPair pair]
   (let
-    [pair
-     (.generateKeyPair (doto (KeyPairGenerator/getInstance "EC")
-                         (.initialize (ECGenParameterSpec. "secp256r1"))))
+    [{:keys [private-file public-file]}
+     (key-files)
 
-     private-file
-     (key-file)
+     ^PrivateKey private-key-value
+     (.getPrivate pair)
 
-     public-file
-     (public-file)]
+     ^ECPublicKey public-key-value
+     (.getPublic pair)]
 
     (io/make-parents private-file)
-    (spit private-file (pem (.getEncoded (.getPrivate pair))))
-    (write-bytes! public-file (.getEncoded (.getPublic pair)))
-    (.setReadable private-file false false)
-    (.setReadable private-file true true)
-    {:private (.getPrivate pair) :public (.getPublic pair) :file private-file}))
+    (spit private-file (pem (.getEncoded private-key-value)))
+    (write-bytes! public-file (.getEncoded public-key-value))
+    (.setReadable ^File private-file false false)
+    (.setReadable ^File private-file true true)
+    {:private private-key-value :public public-key-value :file private-file}))
 
 (defn- load-key-pair
+  "Load the persisted VAPID pair, or nil when either half is absent/invalid."
   []
-  (let
-    [private-file
-     (key-file)
-
-     public-file
-     (public-file)]
-
-    (when (and (.isFile private-file) (.isFile public-file))
+  (let [{:keys [private-file public-file]} (key-files)]
+    (when (every? #(.isFile ^File %) [private-file public-file])
       (try {:private (private-key (slurp private-file))
-            :public (.generatePublic (KeyFactory/getInstance "EC")
-                                     (X509EncodedKeySpec. (java.nio.file.Files/readAllBytes
-                                                            (.toPath public-file))))
+            :public (ec-public-key public-file)
             :file private-file}
            (catch Throwable t
              (tel/log! {:level :warn :id ::invalid-vapid-key :data {:error (ex-message t)}})
              nil)))))
 
 (defn- load-or-generate-key-pair
+  "Load the stable gateway identity, generating it once when needed.
+
+   The second load inside the lock closes the startup race between gateway
+   threads that first ask for capability data at the same time."
   []
-  (or (load-key-pair)
-      (locking key-lock
-        (or (load-key-pair)
-            (when-not (and (.isFile (key-file)) (.isFile (public-file))) (generate-key-pair!))))))
+  (or (load-key-pair) (locking key-lock (or (load-key-pair) (write-key-pair! (ec-key-pair))))))
+
+(defn- valid-subject?
+  "Whether a VAPID subject is a permitted mailto or HTTPS contact URI."
+  [subject]
+  (or (str/starts-with? subject "mailto:") (str/starts-with? subject "https://")))
+
+(defn- missing-config
+  "Describe the public configuration pieces that are not usable."
+  [pair subject-valid?]
+  (cond-> []
+    (nil? pair)
+    (conj "vapid_key")
+
+    (not subject-valid?)
+    (conj "subject")))
 
 (defn config
-  "Return public Web Push configuration without private key material."
+  "Return public Web Push configuration without private key material.
+
+   Calling this ensures that a gateway has a stable VAPID identity. The
+   private key remains on disk and is only used by `send!`."
   []
   (let
     [pair
@@ -185,29 +273,28 @@
      subject
      (or (env-val "VIS_WEB_PUSH_SUBJECT") DEFAULT_SUBJECT)
 
-     valid-subject?
-     (or (str/starts-with? subject "mailto:") (str/starts-with? subject "https://"))]
+     subject-valid?
+     (valid-subject? subject)]
 
-    {:is-configured (boolean (and pair valid-subject?))
+    {:is-configured (boolean (and pair subject-valid?))
      :application-server-key (when pair (b64url (public-key-bytes (:public pair))))
      :subject subject
      :source (when pair "generated")
-     :missing (cond-> []
-                (nil? pair)
-                (conj "vapid_key")
+     :missing (missing-config pair subject-valid?)}))
 
-                (not valid-subject?)
-                (conj "subject"))}))
-
-(defn configured? [] (:is-configured (config)))
+(defn configured?
+  "True when this gateway can encrypt and authenticate Web Push requests."
+  []
+  (:is-configured (config)))
 
 (defn- hmac
+  "Compute HMAC-SHA256, the primitive used by VAPID and Web Push HKDF."
   ^bytes [^bytes key ^bytes data]
-  (let [mac (Mac/getInstance "HmacSHA256")]
-    (.init mac (SecretKeySpec. key "HmacSHA256"))
+  (let [mac (doto (Mac/getInstance "HmacSHA256") (.init (SecretKeySpec. key "HmacSHA256")))]
     (.doFinal mac data)))
 
 (defn- hkdf-expand
+  "Expand an HKDF pseudorandom key to exactly `length` bytes."
   ^bytes [^bytes prk ^bytes info ^long length]
   (loop
     [previous
@@ -221,10 +308,18 @@
 
     (if (>= (alength output) length)
       (Arrays/copyOf output length)
-      (let [block (hmac prk (bytes-concat previous info (byte-array [(unchecked-byte counter)])))]
-        (recur block (bytes-concat output block) (inc counter))))))
+      (let [block (hmac prk (concat-bytes previous info (byte-array [(unchecked-byte counter)])))]
+        (recur block (concat-bytes output block) (inc counter))))))
+
+(defn- sign
+  "Sign UTF-8 text with the requested JCA signature algorithm."
+  ^bytes [^PrivateKey private ^String algorithm ^String input]
+  (let
+    [signature (doto (Signature/getInstance algorithm) (.initSign private) (.update (utf8 input)))]
+    (.sign signature)))
 
 (defn- jose-signature
+  "Convert JCA's DER ECDSA signature into the JOSE `r || s` form."
   ^bytes [^bytes der]
   (let
     [r-length
@@ -242,9 +337,10 @@
      s
      (fixed32 (BigInteger. 1 (Arrays/copyOfRange der s-offset (+ s-offset s-length))))]
 
-    (bytes-concat r s)))
+    (concat-bytes r s)))
 
 (defn- vapid-token
+  "Build the short-lived VAPID JWT for one push-service origin."
   [cfg ^PrivateKey private ^String audience]
   (let
     [header
@@ -259,11 +355,27 @@
      (str header "." claims)
 
      signature
-     (doto (Signature/getInstance "SHA256withECDSA") (.initSign private) (.update (utf8 input)))]
+     (sign private "SHA256withECDSA" input)]
 
-    (str input "." (b64url (jose-signature (.sign signature))))))
+    (str input "." (b64url (jose-signature signature)))))
+
+(defn- subscription-key
+  "Decode one browser subscription key and enforce its RFC byte length."
+  [keys name length]
+  (let
+    [encoded
+     (some-> (get keys name)
+             str
+             str/trim)
+
+     decoded
+     (some-> encoded
+             b64url-decode)]
+
+    (when (and decoded (= length (alength ^bytes decoded))) decoded)))
 
 (defn- subscription
+  "Parse and validate the JSON subscription stored as a device token."
   [^String token]
   (try (let
          [value
@@ -277,50 +389,46 @@
           keys
           (get value "keys")
 
-          public-key
-          (some-> (get keys "p256dh")
-                  str
-                  b64url-decode)
+          client-public
+          (subscription-key keys "p256dh" 65)
 
           auth
-          (some-> (get keys "auth")
-                  str
-                  b64url-decode)]
+          (subscription-key keys "auth" 16)]
 
-         (when (and (str/starts-with? endpoint "https://")
-                    (= 65 (alength public-key))
-                    (= 16 (alength auth)))
-           {:endpoint endpoint :public-key public-key :auth auth}))
+         (when (and (str/starts-with? endpoint "https://") client-public auth)
+           {:endpoint endpoint :public-key client-public :auth auth}))
        (catch Throwable _ nil)))
 
-(defn- public-key
+(defn- client-public-key
+  "Convert a browser's uncompressed P-256 point into a JCA public key."
   ^ECPublicKey [^bytes raw]
   (.generatePublic (KeyFactory/getInstance "EC")
-                   (X509EncodedKeySpec. (bytes-concat PUBLIC_KEY_PREFIX raw))))
+                   (X509EncodedKeySpec. (concat-bytes PUBLIC_KEY_PREFIX raw))))
 
-(defn- encrypted-payload
-  ^bytes [^bytes client-public ^bytes auth ^bytes plaintext]
+(defn- key-agreement
+  "Generate an ephemeral server key and derive its ECDH secret."
+  [^bytes client-public]
   (let
     [client-key
-     (public-key client-public)
+     (client-public-key client-public)
 
-     ephemeral
-     (.generateKeyPair (doto (KeyPairGenerator/getInstance "EC")
-                         (.initialize (ECGenParameterSpec. "secp256r1"))))
+     ^KeyPair ephemeral
+     (ec-key-pair)
 
      agreement
      (doto (KeyAgreement/getInstance "ECDH")
        (.init (.getPrivate ephemeral))
-       (.doPhase client-key true))
+       (.doPhase client-key true))]
 
-     shared
-     (.generateSecret agreement)
+    {:shared-secret (.generateSecret agreement)
+     :server-public (public-key-bytes (.getPublic ephemeral))}))
 
-     server-public
-     (public-key-bytes (.getPublic ephemeral))
-
-     key-info
-     (bytes-concat (utf8 KEY_INFO_PREFIX) client-public server-public)
+(defn- content-keys
+  "Derive the aes128gcm content-encryption key and nonce from ECDH output."
+  [^bytes client-public ^bytes server-public ^bytes auth ^bytes shared]
+  (let
+    [key-info
+     (concat-bytes (utf8 KEY_INFO_PREFIX) client-public server-public)
 
      ikm
      (hkdf-expand (hmac auth shared) key-info 32)
@@ -332,92 +440,128 @@
      (doto (SecureRandom.) (.nextBytes salt))
 
      prk
-     (hmac salt ikm)
+     (hmac salt ikm)]
 
-     cek
-     (hkdf-expand prk (utf8 AES_INFO) 16)
+    {:salt salt
+     :cek (hkdf-expand prk (utf8 AES_INFO) 16)
+     :nonce (hkdf-expand prk (utf8 NONCE_INFO) 12)}))
 
-     nonce
-     (hkdf-expand prk (utf8 NONCE_INFO) 12)
+(defn- encrypted-payload
+  "Encrypt a notification and frame it as one RFC 8188/8291 record."
+  ^bytes [^bytes client-public ^bytes auth ^bytes plaintext]
+  (let
+    [agreement
+     (key-agreement client-public)
+
+     ^bytes shared-secret
+     (:shared-secret agreement)
+
+     ^bytes server-public
+     (:server-public agreement)
+
+     {:keys [salt cek nonce]}
+     (content-keys client-public server-public auth shared-secret)
 
      cipher
      (doto (Cipher/getInstance "AES/GCM/NoPadding")
        (.init Cipher/ENCRYPT_MODE (SecretKeySpec. cek "AES") (GCMParameterSpec. 128 nonce)))
 
      ciphertext
-     (.doFinal cipher (bytes-concat plaintext (byte-array [2])))
+     (.doFinal cipher (concat-bytes plaintext (byte-array [2])))
 
      record-size
      (doto (ByteBuffer/allocate 4) (.putInt RECORD_SIZE))]
 
-    (bytes-concat salt
+    (concat-bytes salt
                   (.array record-size)
                   (byte-array [(unchecked-byte (alength server-public))])
                   server-public
                   ciphertext)))
 
 (defn- notification-json
+  "Encode the browser notification envelope using the gateway wire encoder."
   [{:keys [title body data collapse-id]}]
   (wire/json-str (cond-> {:title (or title "Vis") :body (or body "") :data (or data {})}
                    collapse-id
                    (assoc :tag (str collapse-id)))))
 
 (defn- origin
+  "Return the scheme and authority used as the VAPID JWT audience."
   ^String [^String endpoint]
   (let [uri (URI/create endpoint)]
     (str (.getScheme uri) "://" (.getAuthority uri))))
 
-(defonce ^:private http-client
-  (delay (-> (HttpClient/newBuilder)
-             (.version HttpClient$Version/HTTP_2)
-             (.connectTimeout (Duration/ofSeconds 10))
-             (.build))))
+(defn- build-http-client
+  "Build the shared HTTP/2 client used for push-service requests."
+  []
+  (-> (HttpClient/newBuilder)
+      (.version HttpClient$Version/HTTP_2)
+      (.connectTimeout (Duration/ofSeconds 10))
+      (.build)))
+
+(defonce ^:private http-client (delay (build-http-client)))
+
+(defn- header
+  "Add one string-valued header while keeping builder interop in one helper."
+  ^HttpRequest$Builder [^HttpRequest$Builder request name value]
+  (.header request name (str value)))
+
+(defn- push-request
+  "Build the authenticated encrypted request sent to a browser push service."
+  [cfg pair subscription ^bytes body]
+  (let
+    [endpoint
+     (:endpoint subscription)
+
+     jwt
+     (vapid-token cfg (:private pair) (origin endpoint))]
+
+    (-> (HttpRequest/newBuilder (URI/create endpoint))
+        (header "authorization" (str "vapid t=" jwt ", k=" (:application-server-key cfg)))
+        (header "ttl" "86400")
+        (header "content-encoding" "aes128gcm")
+        (header "content-type" "application/octet-stream")
+        (.timeout (Duration/ofSeconds 15))
+        (.POST (HttpRequest$BodyPublishers/ofByteArray body))
+        (.build))))
+
+(defn- response-result
+  "Convert a JDK response into the gateway's stable push result map."
+  [^HttpResponse response]
+  {:status (.statusCode response) :reason (if (str/blank? (.body response)) "" (.body response))})
+
+(defn- send-http-request
+  "Send one request through the shared JDK HTTP client."
+  [^HttpRequest request]
+  (let [^HttpClient client @http-client]
+    (.send client request (HttpResponse$BodyHandlers/ofString))))
 
 (defn- post!
+  "Send one encrypted request and turn transport failures into status zero."
   [cfg pair subscription ^bytes body]
-  (try (let
-         [audience
-          (origin (:endpoint subscription))
-
-          jwt
-          (vapid-token cfg (:private pair) audience)
-
-          request
-          (-> (HttpRequest/newBuilder (URI/create (:endpoint subscription)))
-              (.header "authorization" (str "vapid t=" jwt ", k=" (:application-server-key cfg)))
-              (.header "ttl" "86400")
-              (.header "content-encoding" "aes128gcm")
-              (.header "content-type" "application/octet-stream")
-              (.timeout (Duration/ofSeconds 15))
-              (.POST (HttpRequest$BodyPublishers/ofByteArray body))
-              (.build))
-
-          ^HttpResponse response
-          (.send ^HttpClient @http-client request (HttpResponse$BodyHandlers/ofString))]
-
-         {:status (.statusCode response)
-          :reason (if (str/blank? (.body response)) "" (.body response))})
+  (try (-> (push-request cfg pair subscription body)
+           send-http-request
+           response-result)
        (catch Throwable t {:status 0 :reason (or (ex-message t) "transport-error")})))
 
 (defn send!
-  "Encrypt and send one browser notification directly from this gateway."
+  "Encrypt and send one browser notification directly from this gateway.
+
+   `token` is the JSON subscription stored by `push/register-device!`.
+   Returns `{:status int :reason string}` and never lets a provider or
+   transport exception escape into the gateway event loop."
   [token notification]
-  (let
-    [cfg
-     (config)
-
-     pair
-     (load-or-generate-key-pair)
-
-     target
-     (subscription token)
-
-     payload
-     (utf8 (notification-json notification))]
-
+  (let [cfg (config)]
     (cond (not (:is-configured cfg)) {:status 0 :reason "not-configured"}
-          (nil? target) {:status 400 :reason "invalid-subscription"}
-          (> (long (alength ^bytes payload)) (long MAX_PAYLOAD_BYTES)) {:status 413
-                                                                        :reason "payload-too-large"}
-          :else
-          (post! cfg pair target (encrypted-payload (:public-key target) (:auth target) payload)))))
+          :else (let [target (subscription token)]
+                  (cond (nil? target) {:status 400 :reason "invalid-subscription"}
+                        :else (let [payload (utf8 (notification-json notification))]
+                                (if (> (long (alength ^bytes payload)) (long MAX_PAYLOAD_BYTES))
+                                  {:status 413 :reason "payload-too-large"}
+                                  (let [pair (load-or-generate-key-pair)]
+                                    (post! cfg
+                                           pair
+                                           target
+                                           (encrypted-payload (:public-key target)
+                                                              (:auth target)
+                                                              payload))))))))))
