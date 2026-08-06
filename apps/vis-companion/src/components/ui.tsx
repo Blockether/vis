@@ -270,7 +270,7 @@ export function MachineGap() {
  */
 export function MachineBanner({ children }: { children: ReactNode }) {
   return (
-    <header className="sticky top-0 z-10 mr-2 flex items-center justify-between gap-3 border-b border-edge-strong bg-panel px-3 py-2 font-bold uppercase tracking-[0.12em] sm:mr-0 sm:px-4">
+    <header className="sticky top-0 z-10 mr-2 flex min-h-11 items-center justify-between gap-3 border-b border-edge-strong bg-panel px-3 py-2 font-bold uppercase tracking-[0.12em] sm:mr-0 sm:px-4">
       {children}
     </header>
   );

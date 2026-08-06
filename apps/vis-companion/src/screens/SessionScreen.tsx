@@ -4816,16 +4816,17 @@ export function SessionScreen({
                         src={attachment.previewUrl}
                         alt={attachment.filename}
                         loading="eager"
-                        className="size-8 object-cover"
-                        frameClassName="shrink-0"
+                        className="size-8 shrink-0 object-cover"
+                        frameClassName="min-w-0 flex-1"
                         onApply={(edited) =>
                           applyAttachmentEdit(attachment.id, edited)
                         }
-                      />
+                      >
+                        <span className="truncate font-mono text-chip text-dialog-hint-key">
+                          {attachment.filename}
+                        </span>
+                      </ExpandableImage>
                     )}
-                    <span className="truncate font-mono text-chip text-dialog-hint-key">
-                      {attachment.filename}
-                    </span>
                     <button
                       type="button"
                       onMouseDown={keepKeyboard}

@@ -137,6 +137,12 @@ describe('MachineBanner', () => {
     expect(html).not.toContain('border-dialog-edge');
   });
 
+  it('matches a project header’s 44px minimum touch height', () => {
+    const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
+
+    expect(html).toContain('min-h-11');
+  });
+
   // A machine can hold hundreds of sessions; scrolled past, the name is the
   // only thing that answers "which computer is this row on".
   it('sticks to the top of the scroller', () => {

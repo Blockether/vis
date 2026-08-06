@@ -2,7 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ImageViewer } from './ImageViewer';
+import { ExpandableImage, ImageViewer } from './ImageViewer';
 
 // The viewer is now a COMPOSITION: the geometry comes from `lib/zoom-pan`, the
 // strokes from `AnnotationLayer`, the sheets from `lib/image-share`. These
@@ -57,6 +57,27 @@ describe('ImageViewer', () => {
     const dialog = document.querySelector('[role="dialog"]');
     expect(dialog?.getAttribute('aria-label')).toBe('chart.png image viewer');
     expect(control('Reset zoom').textContent).toBe('100%');
+  });
+
+  // Regression, reported attachment filename click: an image edit could only be opened
+  // by striking its thumbnail; the adjacent filename looked like part of the same chip
+  // but was not a trigger.
+  it('opens when the attachment filename is clicked', () => {
+    act(() =>
+      root.render(
+        <ExpandableImage src="blob:picture" alt="chart.png" className="size-8">
+          <span>chart.png</span>
+        </ExpandableImage>,
+      ),
+    );
+
+    const trigger = control('Open chart.png full screen');
+    const filename = [...trigger.querySelectorAll('span')].find(
+      (element) => element.textContent === 'chart.png',
+    );
+    expect(filename).toBeTruthy();
+    act(() => filename?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   });
 
   // The readout is written straight to the DOM rather than through state — a

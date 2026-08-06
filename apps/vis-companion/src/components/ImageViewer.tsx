@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   type WheelEvent as ReactWheelEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -34,6 +35,7 @@ interface ExpandableImageProps {
   src: string;
   alt: string;
   className: string;
+  children?: ReactNode;
   /** Extra classes for the zoom trigger itself, e.g. `shrink-0` inside a flex row. */
   frameClassName?: string;
   loading?: 'eager' | 'lazy';
@@ -65,6 +67,7 @@ export function ExpandableImage({
   src,
   alt,
   className,
+  children,
   frameClassName = '',
   loading = 'lazy',
   decoding = 'async',
@@ -77,7 +80,9 @@ export function ExpandableImage({
     <>
       <button
         type="button"
-        className={`block max-w-full cursor-zoom-in appearance-none border-0 bg-transparent p-0 text-left ${frameClassName}`}
+        className={`${
+          children ? 'flex min-w-0 items-center gap-1.5' : 'block'
+        } max-w-full cursor-zoom-in appearance-none border-0 bg-transparent p-0 text-left ${frameClassName}`}
         onClick={() => setOpen(true)}
         aria-label={`Open ${alt} full screen`}
       >
@@ -89,6 +94,7 @@ export function ExpandableImage({
           onError={onError}
           className={className}
         />
+        {children}
       </button>
       {open && (
         <ImageViewer

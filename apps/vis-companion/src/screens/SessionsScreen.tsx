@@ -1273,7 +1273,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                           {machineLabel(machine.conn)}
                         </span>
                       </span>
-                      <span className="flex shrink-0 items-center gap-2 font-mono text-chip text-dialog-hint">
+                      <span className="flex w-40 shrink-0 translate-x-2 items-center justify-start gap-2 font-mono text-chip text-dialog-hint sm:translate-x-0">
                         {machine.error ? (
                           <>
                             <span>offline</span>
@@ -1840,7 +1840,7 @@ const ProjectGroup = memo(function ProjectGroup({
               </span>
             </span>
           </span>
-          <span className="flex shrink-0 items-center gap-2 font-mono text-chip text-dialog-hint">
+          <span className="flex w-40 shrink-0 items-center justify-start gap-2 font-mono text-chip text-dialog-hint">
             <span>{sessions.length} {sessions.length === 1 ? 'session' : 'sessions'}</span>
             {liveCount > 0 && (
               <>
