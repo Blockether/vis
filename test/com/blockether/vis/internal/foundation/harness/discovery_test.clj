@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.foundation.harness.discovery-test
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.foundation.harness.discovery :as d]
+            [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe it expect]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -183,3 +184,73 @@
              (it "every discovered entry has a non-blank name"
                  (expect (every? #(seq (:name %))
                                  (concat (d/discover-agents) (d/discover-skills))))))
+
+(defdescribe
+  nested-project-discovery-test
+  ;; Regression: a session rooted in a monorepo app only saw the gateway's launch-root
+  ;; skills, and gitignored harness directories were incorrectly assumed undiscoverable.
+  (it
+    "walks explicit project sources to the nearest git root, nearest first, regardless of gitignore"
+    (let
+      [root
+       (.toFile (Files/createTempDirectory "vis-nested-project" (make-array FileAttribute 0)))
+
+       app
+       (io/file root "apps" "companion")
+
+       root-skill
+       (io/file root ".agents" "skills" "inherited" "SKILL.md")
+
+       root-shadow
+       (io/file root ".agents" "skills" "layered" "SKILL.md")
+
+       app-shadow
+       (io/file app ".agents" "skills" "layered" "SKILL.md")]
+
+      (try (.mkdirs (io/file root ".git"))
+           (spit (io/file root ".gitignore") ".agents/\n")
+           (doseq [f [root-skill root-shadow app-shadow]]
+             (io/make-parents f))
+           (spit root-skill "---\nname: inherited\ndescription: root\n---\nROOT")
+           (spit root-shadow "---\nname: layered\ndescription: root\n---\nROOT-SHADOW")
+           (spit app-shadow "---\nname: layered\ndescription: app\n---\nAPP-SHADOW")
+           (binding [workspace/*workspace-root* (.getCanonicalPath app)]
+             (with-redefs [d/skill-sources [[:agents :rel-walk ".agents" "skills"]]]
+               (let
+                 [skills (d/discover-skills)
+                  by-name (into {} (map (juxt :name identity)) skills)]
+
+                 (expect (= #{"inherited" "layered"} (set (keys by-name))))
+                 (expect (= "app" (:description (by-name "layered"))))
+                 (expect (.startsWith ^String (:path (by-name "layered"))
+                                      (.getCanonicalPath app))))))
+           (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root)))))))
+  (it "uses ancestor walking for every project-local harness source"
+      (doseq [sources [d/agent-sources d/skill-sources d/command-sources]]
+        (expect (not-any? #(= :rel (second %)) sources))))
+  (it
+    "reads optional skill subcommand metadata from the skill directory"
+    (let
+      [root
+       (.toFile (Files/createTempDirectory "vis-skill-commands" (make-array FileAttribute 0)))
+
+       skill-md
+       (io/file root ".agents" "skills" "demo" "SKILL.md")
+
+       metadata
+       (io/file root ".agents" "skills" "demo" "scripts" "command-metadata.json")]
+
+      (try
+        (.mkdirs (io/file root ".git"))
+        (io/make-parents skill-md)
+        (io/make-parents metadata)
+        (spit skill-md "---\nname: demo\ndescription: Demo\n---\nBODY")
+        (spit
+          metadata
+          "{\"init\":{\"description\":\"Initialize\",\"argumentHint\":\"\"},\"audit\":{\"description\":\"Audit it\",\"argumentHint\":\"[target]\"}}")
+        (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+          (with-redefs [d/skill-sources [[:agents :rel-walk ".agents" "skills"]]]
+            (expect (= [{:name "init" :description "Initialize" :argument-hint ""}
+                        {:name "audit" :description "Audit it" :argument-hint "[target]"}]
+                       (:commands (first (d/discover-skills)))))))
+        (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))

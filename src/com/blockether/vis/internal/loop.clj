@@ -9812,24 +9812,28 @@
        env')
 
      slash-result
-     (try (slash/dispatch env (slash-ctx-for-env env user-request) user-request)
-          (catch Throwable t
-            (tel/log! {:level :warn
-                       :id ::slash-dispatch-threw
-                       :data {:user-request user-request :error (ex-message t)}})
-            {:handled? false}))]
+     (extension/with-context
+       {:env env}
+       (try (slash/dispatch env (slash-ctx-for-env env user-request) user-request)
+            (catch Throwable t
+              (tel/log! {:level :warn
+                         :id ::slash-dispatch-threw
+                         :data {:user-request user-request :error (ex-message t)}})
+              {:handled? false})))]
 
     (if-let [bang (parse-bang user-request)]
       (run-bang-turn! env user-request bang loop-opts)
       (if (:handled? slash-result)
         (if-let
           [expansion (when (= :unknown (:reason slash-result))
-                       (try (prompt-templates/expand env user-request)
-                            (catch Throwable t
-                              (tel/log! {:level :warn
-                                         :id ::template-expand-threw
-                                         :data {:user-request user-request :error (ex-message t)}})
-                              nil)))]
+                       (extension/with-context {:env env}
+                                               (try (prompt-templates/expand env user-request)
+                                                    (catch Throwable t
+                                                      (tel/log! {:level :warn
+                                                                 :id ::template-expand-threw
+                                                                 :data {:user-request user-request
+                                                                        :error (ex-message t)}})
+                                                      nil))))]
           (run-normal-turn! env (:text expansion) loop-opts)
           (run-slash-turn! env user-request slash-result loop-opts))
         (run-normal-turn! env user-request loop-opts)))))

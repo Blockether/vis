@@ -959,11 +959,17 @@
    {:name "/clear" :doc "Start a fresh session without deleting this transcript."}])
 
 (defn- slashes-handler
-  "GET /v1/slashes — the canonical engine/template slash palette for the web
-   channel plus commands implemented by the companion UI. Function-valued slash
-   specs never cross the wire."
-  [_]
-  (json-response {:commands (slash/slash-palette :web web-native-slashes)}))
+  "GET /v1/sessions/:sid/slashes — resolve dynamic slash/template discovery in
+   the active session workspace, then add commands implemented by Companion."
+  [request]
+  (if-let [sid (path-sid request)]
+    (if-let [info (state/session-workspace-info sid)]
+      (let [root (or (get info "root") (:root info))]
+        (extension/with-context {:env {:session-id sid :workspace/root root}}
+                                (json-response {:commands
+                                                (slash/slash-palette :web web-native-slashes)})))
+      (session-404 (get-in request [:path-params :sid])))
+    (session-404 (get-in request [:path-params :sid]))))
 
 (defn- configured-provider
   [provider-id]
@@ -3335,7 +3341,7 @@
         ["/mcp/servers/:name/auth/logout" {:post mcp-auth-logout-handler}]
         ["/settings/:id" {:get get-setting-handler}]
         ["/theme" {:get get-theme-handler :post set-theme-handler}]
-        ["/slashes" {:get slashes-handler}] ["/providers" {:post add-provider-handler}]
+        ["/providers" {:post add-provider-handler}]
         ["/provider-presets" {:get provider-presets-handler}]
         ["/providers/:provider-id" {:delete remove-provider-handler}]
         ["/providers/:provider-id/status" {:get provider-status-handler}]
@@ -3360,6 +3366,7 @@
         ["/projects/:pid/sessions" {:patch reorder-project-sessions-handler}]
         [(sid-route "")
          {:get soul-handler :patch patch-session-handler :delete delete-session-handler}]
+        [(sid-route "/slashes") {:get slashes-handler}]
         [(sid-route "/release") {:post release-session-handler}]
         [(sid-route "/human-input") {:get list-human-input-handler}]
         [(sid-route "/human-input/:request-id/actions/submit") {:post submit-human-input-handler}]

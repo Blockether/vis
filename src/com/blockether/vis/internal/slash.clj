@@ -82,21 +82,9 @@
          true)))
 
 (defn slash-palette
-  "THE canonical typed-`/` palette for a channel — the single source every
-   channel's `/` autocomplete / command menu consumes, so skills and file
-   prompts appear uniformly instead of each channel re-deriving the set.
-   Returns `[{:name \"/path\" :doc str} …]`:
-
-     • LEAF registered slashes available in `channel` — group roots dropped
-       (a spec whose path is some other visible spec's `:slash/parent`) and
-       hidden / channel-unavailable specs filtered out — then
-     • prompt-template entries: `.vis/prompts/*.md` file prompts and harness
-       `/<name>` skill commands, minus any name a registered slash already
-       claimed (registered slashes always win).
-
-   `extra` are CHANNEL-NATIVE entries (`{:name :doc}`) the channel handles
-   itself (e.g. a channel's own `/new-session`); they PREPEND and win name
-   collisions against templates."
+  "THE canonical typed-`/` palette for a channel. Registered slash leaves,
+   channel-native entries, prompt templates, and template subcommands all become
+   complete `{:name :doc}` rows. Registered/channel-native names always win."
   ([channel] (slash-palette channel nil))
   ([channel extra]
    (let
@@ -134,9 +122,19 @@
 
       templates
       (try (->> (prompt-templates/templates)
-                (keep (fn [{:keys [name description]}]
-                        (let [nm (str "/" name)]
-                          (when-not (contains? taken nm) {:name nm :doc (str description)})))))
+                (mapcat
+                  (fn [{:keys [name description subcommands]}]
+                    (let [parent-name (str "/" name)]
+                      (cons
+                        {:name parent-name :doc (str description)}
+                        (for
+                          [{child-name :name child-description :description :keys [argument-hint]}
+                           subcommands]
+                          (cond->
+                            {:name (str parent-name " " child-name) :doc (str child-description)}
+                            (some? argument-hint)
+                            (assoc :argument-hint argument-hint)))))))
+                (remove #(contains? taken (:name %))))
            (catch Throwable _ nil))]
 
      (vec (concat specs templates)))))

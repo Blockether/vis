@@ -73,3 +73,23 @@ describe('GatewayClient session-list validators', () => {
     expect(secondFetch).toHaveBeenCalledOnce();
   });
 });
+
+// Regression: slash discovery used a gateway-global route, so the palette was resolved
+// against the daemon's launch directory instead of the open session's nested project.
+describe('GatewayClient session slash palette', () => {
+  it('requests slash commands in the session scope', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ commands: [{ name: '/impeccable init', doc: 'Initialize' }] })),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    await client.slashes('session-1');
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      '/v1/sessions/session-1/slashes',
+    );
+  });
+});

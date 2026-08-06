@@ -23,3 +23,11 @@ describe('slash-command completion caret', () => {
     expect(completeSlash).toContain('setCaret');
   });
 });
+
+// Regression: the screen fetched a gateway-global slash palette instead of the
+// active session's project-relative palette.
+describe('session-scoped slash discovery', () => {
+  it('passes the active session id to the gateway client', () => {
+    expect(source).toContain('.slashes(sid, signal)');
+  });
+});

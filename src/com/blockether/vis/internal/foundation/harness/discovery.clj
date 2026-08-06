@@ -15,7 +15,8 @@
    known source roots. Precedence is source ORDER, first-name-wins
    (vis project-local > other harnesses' project > user > plugin; Vis and
    Claude before pi/agents/opencode)."
-  (:require [clojure.java.io :as io]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace :as workspace]))
@@ -133,37 +134,12 @@
   (try (.getCanonicalFile (workspace/cwd))
        (catch Throwable _ (io/file (System/getProperty "user.dir")))))
 
-(defn- git-boundary
-  "Nearest ancestor of `start` (inclusive) containing `.git`, or nil
-   when not inside a repository."
-  ^java.io.File [^java.io.File start]
-  (loop [d start]
-    (when d (if (.exists (io/file d ".git")) d (recur (.getParentFile d))))))
 
 (defn- walk-dirs
-  "`<d>/<parts…>` for `d` = workspace root, then each ancestor, up to
-   the git repo root (or the filesystem root when not in a repo) —
-   nearest first, so nearer definitions win the name dedup. pi-style
-   `.agents/skills` ancestor discovery."
+  "`<d>/<parts…>` for the active workspace and its project ancestors, nearest
+   first, bounded by `workspace/ancestor-roots`."
   [parts]
-  (let
-    [start
-     (project-root)
-
-     stop
-     (git-boundary start)]
-
-    (loop
-      [d
-       start
-
-       acc
-       []]
-
-      (if (nil? d)
-        acc
-        (let [acc (conj acc (apply dir d parts))]
-          (if (and stop (= d stop)) acc (recur (.getParentFile d) acc)))))))
+  (mapv #(apply dir % parts) (workspace/ancestor-roots (project-root))))
 
 (defn- plugin-leaf-dirs
   "Every `<cache>/<plugin>/<version>/<leaf>` directory that exists under the
@@ -186,42 +162,34 @@
 ;; `[tool ^File dir]` pairs. Precedence = ORDER (project → user → plugins; Claude
 ;; before opencode). Supporting another harness is one more row — no code change.
 (def agent-sources
-  [[:vis :rel ".vis" "agents"]            ; vis project-local (highest precedence)
-   [:claude :rel ".claude" "agents"]      ; project
+  [[:vis :rel-walk ".vis" "agents"]       ; vis project-local (highest precedence)
+   [:claude :rel-walk ".claude" "agents"] ; project
    [:claude :home ".claude" "agents"]     ; user
-   [:claude :plugins "agents"]            ; installed plugin caches
-   [:pi :rel ".pi" "agents"]              ; pi project
+   [:claude :plugins "agents"] ; installed plugin caches
+   [:pi :rel-walk ".pi" "agents"]         ; pi project
    [:pi :home ".pi" "agent" "agents"]     ; pi user
-   [:agents :rel-walk ".agents" "agents"] ; agents-standard project (+ ancestors up to git root)
+   [:agents :rel-walk ".agents" "agents"] ; agents-standard project
    [:agents :home ".agents" "agents"]     ; agents-standard user
-   [:opencode :rel ".opencode" "agents"]  ; opencode project (SPEL/generated plural layout)
-   [:opencode :rel ".opencode" "agent"]   ; opencode project (legacy/singular layout)
+   [:opencode :rel-walk ".opencode" "agents"] [:opencode :rel-walk ".opencode" "agent"]
    [:opencode :home ".config" "opencode" "agents"] [:opencode :home ".config" "opencode" "agent"]])
 
 (def skill-sources
-  [[:vis :rel ".vis" "skills"]            ; vis project-local (highest precedence)
-   [:claude :rel ".claude" "skills"] [:claude :home ".claude" "skills"] [:claude :plugins "skills"]
-   [:pi :rel ".pi" "skills"]              ; pi project
-   [:pi :home ".pi" "agent" "skills"]     ; pi user (~/.pi/agent/skills)
-   [:agents :rel-walk ".agents" "skills"] ; agents-standard project (+ ancestors up to git root)
-   [:agents :home ".agents" "skills"]     ; agents-standard user (~/.agents/skills)
-   [:opencode :rel ".opencode" "skills"]  ; opencode project (SPEL/generated plural layout)
-   [:opencode :rel ".opencode" "skill"]   ; opencode project (legacy/singular layout)
-   [:opencode :home ".config" "opencode" "skills"] [:opencode :home ".config" "opencode" "skill"]])
+  [[:vis :rel-walk ".vis" "skills"] [:claude :rel-walk ".claude" "skills"]
+   [:claude :home ".claude" "skills"] [:claude :plugins "skills"] [:pi :rel-walk ".pi" "skills"]
+   [:pi :home ".pi" "agent" "skills"] [:agents :rel-walk ".agents" "skills"]
+   [:agents :home ".agents" "skills"] [:opencode :rel-walk ".opencode" "skills"]
+   [:opencode :rel-walk ".opencode" "skill"] [:opencode :home ".config" "opencode" "skills"]
+   [:opencode :home ".config" "opencode" "skill"]])
 
 (def command-sources
   "Cross-HARNESS COMMAND (prompt-template) dirs — markdown prompts a user
    invokes as `/<name> [args]`, `$ARGUMENTS`-substituted. Vis' OWN commands are
    the `.vis/prompts` FILE templates (prompt-templates ns, highest precedence);
    these rows add the OTHER harnesses' command dirs. Precedence = ORDER."
-  [[:claude :rel ".claude" "commands"]      ; claude project
-   [:claude :home ".claude" "commands"]     ; claude user
-   [:pi :rel ".pi" "commands"]              ; pi project
-   [:pi :home ".pi" "agent" "commands"]     ; pi user
-   [:agents :rel-walk ".agents" "commands"] ; agents-standard project (+ ancestors up to git root)
-   [:agents :home ".agents" "commands"]     ; agents-standard user
-   [:opencode :rel ".opencode" "command"]   ; opencode project (singular layout)
-   [:opencode :rel ".opencode" "commands"]  ; opencode project (plural layout)
+  [[:claude :rel-walk ".claude" "commands"] [:claude :home ".claude" "commands"]
+   [:pi :rel-walk ".pi" "commands"] [:pi :home ".pi" "agent" "commands"]
+   [:agents :rel-walk ".agents" "commands"] [:agents :home ".agents" "commands"]
+   [:opencode :rel-walk ".opencode" "command"] [:opencode :rel-walk ".opencode" "commands"]
    [:opencode :home ".config" "opencode" "command"]
    [:opencode :home ".config" "opencode" "commands"]])
 
@@ -299,6 +267,33 @@
          (sort)
          (vec))))
 
+(defn- json-object-pairs
+  "Ordered key/value pairs from Charred's raw JSON object representation."
+  [value]
+  (when (instance? charred.JSONReader$JSONObj value)
+    (mapv vec (partition 2 (.-data ^charred.JSONReader$JSONObj value)))))
+
+(defn- skill-commands
+  "Optional nested slash-command metadata shipped by a skill. The convention is
+   Impeccable's ordered `scripts/command-metadata.json` object; malformed or
+   incomplete rows are ignored so metadata can never hide an otherwise valid skill."
+  [^java.io.File skill-dir]
+  (let [f (io/file skill-dir "scripts" "command-metadata.json")]
+    (when (.isFile f)
+      (try (let [rows (json-object-pairs (json/read-json (slurp f) :profile :raw))]
+             (into []
+                   (keep (fn [[command raw-details]]
+                           (when-let [detail-pairs (json-object-pairs raw-details)]
+                             (let [details (into {} detail-pairs)]
+                               (when (and (string? command) (not (str/blank? command)))
+                                 (when-let [description (non-blank (get details "description"))]
+                                   (cond-> {:name command :description description}
+                                     (contains? details "argumentHint")
+                                     (assoc :argument-hint
+                                       (or (non-blank (get details "argumentHint")) "")))))))))
+                   rows))
+           (catch Throwable _ nil)))))
+
 ;; =============================================================================
 ;; Discovery (filesystem → deduped entries)
 ;; =============================================================================
@@ -325,7 +320,7 @@
 
 (defn discover-skills
   "Parse every SKILL.md across `skill-dirs`, first-name-wins, with each
-   skill's bundled resource paths attached."
+   skill's bundled resource paths and optional nested command metadata attached."
   []
   (dedup-by-name
     (for
@@ -338,13 +333,19 @@
        :let [sdir
              (.getParentFile f)
 
+             commands
+             (skill-commands sdir)
+
              e
              (try (some-> (parse-skill-meta (slurp f)
                                             {:name-default (.getName sdir)
                                              :tool tool
                                              :dir (.getPath sdir)
                                              :path (.getPath f)})
-                          (assoc :resources (skill-resources sdir)))
+                          (assoc :resources (skill-resources sdir))
+                          (cond->
+                            (seq commands)
+                            (assoc :commands commands)))
                   (catch Throwable _ nil))]
        :when e]
 
@@ -378,7 +379,7 @@
 ;; stat pass over the candidate files; content is re-parsed only on change.
 ;; =============================================================================
 
-(defonce ^:private cache (atom nil))
+(defonce ^:private cache (atom {}))
 
 (defn- file-mark [^java.io.File f] [(.getPath f) (.lastModified f) (.length f)])
 
@@ -398,9 +399,12 @@
                    (skill-dirs)
 
                    ^java.io.File f
-                   (skill-md-files d)]
+                   (skill-md-files d)
 
-                  [tool (file-mark f)]))
+                   :let [metadata
+                         (io/file (.getParentFile f) "scripts" "command-metadata.json")]]
+
+                  [tool (file-mark f) (when (.isFile metadata) (file-mark metadata))]))
    :commands (vec (for
                     [[tool ^java.io.File d]
                      (command-dirs)
@@ -416,20 +420,27 @@
     [m
      (source-marker)
 
+     root
+     (:root m)
+
      c
-     @cache]
+     (get @cache root)]
 
     (if (and c (= m (:marker c)))
       c
-      (reset! cache {:marker m
-                     :agents (vec (discover-agents))
-                     :skills (vec (discover-skills))
-                     :commands (vec (discover-commands))}))))
+      (let
+        [fresh {:marker m
+                :agents (vec (discover-agents))
+                :skills (vec (discover-skills))
+                :commands (vec (discover-commands))}]
+        (swap! cache assoc root fresh)
+        fresh))))
 
 (defn reload!
-  "Rescan the source dirs and refresh the cache. Returns `{:agents :skills}`."
+  "Rescan every workspace-root cache on its next access, then return the active
+   workspace's `{:agents :skills :commands}` discovery result."
   []
-  (reset! cache nil)
+  (reset! cache {})
   (select-keys (ensure!) [:agents :skills :commands]))
 
 (defn agents [] (:agents (ensure!)))

@@ -14,6 +14,8 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.prompt-templates :as prompt-templates]
+            [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-store
@@ -113,7 +115,28 @@
                                    ;; to "done"; prior_outcome stays NULL).
                                    {:answer nil :iteration-count 0 :duration-ms 0})]
               (lp/run-turn! env "hello world" {}))
-            (expect (true? @fell-through?)))))))
+            (expect (true? @fell-through?))))))
+  (it "binds the session workspace while provider templates are discovered and expanded"
+      (with-store
+        (fn [store]
+          (let
+            [env
+             (slash-env store [])
+
+             seen
+             (atom nil)]
+
+            (prompt-templates/register-provider! ::workspace-template
+                                                 (fn []
+                                                   (reset! seen (.getPath (workspace/cwd)))
+                                                   [{:name "scoped-template" :body "expanded"}]))
+            (try (with-redefs
+                   [lp/iteration-loop (fn [& _]
+                                        {:answer "done" :iteration-count 0 :duration-ms 0})]
+                   (lp/run-turn! env "/scoped-template" {}))
+                 (expect (= (workspace/workspace-root "/tmp") @seen))
+                 (finally (prompt-templates/register-provider! ::workspace-template
+                                                               (constantly nil)))))))))
 
 ;; =============================================================================
 ;; IR-shaped :slash/body persists as Markdown

@@ -100,18 +100,28 @@
                [#{} []])
        second))
 
+(defn- discover-project-dirs
+  [project-dirs global-dir]
+  (dedup-by-name (vec (concat (mapcat (fn [project-dir]
+                                        (keep #(parse-template-file :project %)
+                                              (when project-dir (md-files project-dir))))
+                                      project-dirs)
+                              (keep #(parse-template-file :global %)
+                                    (when global-dir (md-files global-dir)))))))
+
 (defn discover-in
   "Parse every `*.md` template under `project-dir` then `global-dir`
    (project wins on a name collision). Pure I/O; exposed for testing
    against fixture roots. Either dir may be nil/missing."
   [^java.io.File project-dir ^java.io.File global-dir]
-  (dedup-by-name
-    (vec (concat (keep #(parse-template-file :project %) (when project-dir (md-files project-dir)))
-                 (keep #(parse-template-file :global %) (when global-dir (md-files global-dir)))))))
+  (discover-project-dirs (cond-> []
+                           project-dir
+                           (conj project-dir))
+                         global-dir))
 
-(defn- project-prompts-dir
-  ^java.io.File []
-  (try (io/file (workspace/cwd) ".vis" "prompts") (catch Throwable _ nil)))
+(defn- project-prompts-dirs
+  []
+  (mapv #(io/file % ".vis" "prompts") (workspace/ancestor-roots (workspace/cwd))))
 
 (defn- global-prompts-dir
   ^java.io.File []
@@ -119,7 +129,7 @@
 
 ;; ── marker cache: stat-only revalidation, content re-read on change ─────────
 
-(defonce ^:private cache (atom nil))
+(defonce ^:private cache (atom {}))
 
 (defn- dir-marker
   [^java.io.File d]
@@ -129,29 +139,42 @@
              [(.getName f) (.lastModified f) (.length f)])
            (or (md-files d) []))]))
 
-(defn- template-marker [] [(dir-marker (project-prompts-dir)) (dir-marker (global-prompts-dir))])
+(defn- template-marker
+  [project-dirs]
+  {:root (workspace/workspace-root (workspace/cwd))
+   :projects (mapv dir-marker project-dirs)
+   :global (dir-marker (global-prompts-dir))})
 
 (defn file-templates
-  "Discovered file templates, marker-cached: re-parsed only when the
-   prompts dirs (or any file in them) change."
+  "Discovered file templates, nearest project first through the Git root, then
+   user-global. Caches are isolated by canonical workspace root and marker-checked
+   so alternating nested sessions cannot overwrite one another's discovery view."
   []
   (let
-    [m
-     (template-marker)
+    [project-dirs
+     (project-prompts-dirs)
+
+     m
+     (template-marker project-dirs)
+
+     root
+     (:root m)
 
      c
-     @cache]
+     (get @cache root)]
 
     (if (and c (= m (:marker c)))
       (:templates c)
-      (:templates (reset! cache {:marker m
-                                 :templates (discover-in (project-prompts-dir)
-                                                         (global-prompts-dir))})))))
+      (let
+        [fresh {:marker m
+                :templates (discover-project-dirs project-dirs (global-prompts-dir))}]
+        (swap! cache assoc root fresh)
+        (:templates fresh)))))
 
 (defn reload!
-  "Drop the file-template cache and rescan. Returns the template vec."
+  "Drop every workspace's file-template cache and rescan the active workspace."
   []
-  (reset! cache nil)
+  (reset! cache {})
   (file-templates))
 
 ;; =============================================================================

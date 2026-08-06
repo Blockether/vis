@@ -2256,14 +2256,14 @@ export function SessionScreen({
   const refreshSlashCommands = useCallback(
     (signal?: AbortSignal) => {
       return client
-        .slashes(signal)
+        .slashes(sid, signal)
         .then((commands) => setSlashCommands(mergeSlashCommands(commands)))
         .catch(() => {
           if (signal?.aborted) return;
           setSlashCommands(mergeSlashCommands([]));
         });
     },
-    [client],
+    [client, sid],
   );
 
   // The palette is derived on the gateway and MOVES at runtime: `/reload`

@@ -4,6 +4,7 @@
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [com.blockether.vis.internal.prompt-templates :as templates]
+            [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-tmp-dir*
@@ -66,6 +67,31 @@
                          ;; non-colliding global templates still discovered
                          (expect (= "RELEASE-BODY" (:body (by-name "release")))))))))
              (it "missing dirs are fine" (expect (= [] (templates/discover-in nil nil)))))
+
+;; Regression: a nested project session saw only its own `.vis/prompts` directory,
+;; dropping root-level commands shared by the enclosing repository.
+(defdescribe ancestor-project-template-test
+             (it "inherits prompts through the nearest Git root with the closest definition winning"
+                 (with-tmp-dir*
+                   (fn [^java.io.File root]
+                     (let
+                       [app
+                        (doto (java.io.File. root "apps/demo") .mkdirs)
+
+                        root-prompts
+                        (doto (java.io.File. root ".vis/prompts") .mkdirs)
+
+                        app-prompts
+                        (doto (java.io.File. app ".vis/prompts") .mkdirs)]
+
+                       (.mkdirs (java.io.File. root ".git"))
+                       (spit (java.io.File. root-prompts "shared.md") "ROOT")
+                       (spit (java.io.File. root-prompts "inherited.md") "INHERITED")
+                       (spit (java.io.File. app-prompts "shared.md") "APP")
+                       (binding [workspace/*workspace-root* (.getCanonicalPath app)]
+                         (let [by-name (into {} (map (juxt :name identity)) (templates/reload!))]
+                           (expect (= "APP" (:body (by-name "shared"))))
+                           (expect (= "INHERITED" (:body (by-name "inherited")))))))))))
 
 (defdescribe
   expansion-test

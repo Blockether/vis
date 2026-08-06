@@ -1687,10 +1687,10 @@ export class GatewayClient {
     return this.request<GatewayTheme>("POST", "/v1/theme", { id });
   }
 
-  async slashes(signal?: AbortSignal): Promise<SlashCommand[]> {
+  async slashes(sid: string, signal?: AbortSignal): Promise<SlashCommand[]> {
     const response = await this.request<{ commands: SlashCommand[] }>(
       "GET",
-      "/v1/slashes",
+      `/v1/sessions/${encodeURIComponent(sid)}/slashes`,
       undefined,
       signal,
     );

@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.gateway.server-test
   (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [babashka.http-client :as http]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp-core]
@@ -13,6 +14,7 @@
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.slash :as slash]
+            [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.theme :as theme]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.voice :as voice]
@@ -808,20 +810,47 @@
         (is (= 404 (:status response)))
         (is (false? @saved?))))))
 
-(deftest slashes-handler-uses-the-web-palette-and-includes-native-commands
-  (let [seen (atom nil)]
+;; Regression: the global slash endpoint resolved project skills against the gateway
+;; process cwd, so nested-project sessions neither saw their own skills nor their children.
+(deftest slashes-handler-uses-the-session-workspace-and-includes-native-commands
+  (let
+    [seen
+     (atom nil)
+
+     sid
+     (java.util.UUID/randomUUID)
+
+     root
+     "/tmp/vis-companion-project"]
+
     (with-redefs
-      [slash/slash-palette (fn [channel extra]
-                             (reset! seen [channel extra])
-                             (conj (vec extra) {:name "/rename" :doc "Rename"}))]
+      [state/session-workspace-info
+       (fn [actual-sid]
+         (is (= sid actual-sid))
+         {"root" root})
+
+       slash/slash-palette
+       (fn [channel extra]
+         (reset! seen [channel extra (.getPath (workspace/cwd))])
+         (conj (vec extra) {:name "/rename" :doc "Rename"}))]
+
       (let
-        [response ((rv 'slashes-handler) {})
-         body (wire/parse-json (:body response))]
+        [response
+         ((rv 'slashes-handler) {:path-params {:sid (str sid)}})
+
+         body
+         (wire/parse-json (:body response))]
 
         (is (= 200 (:status response)))
         (is (= :web (first @seen)))
         (is (some #(= "/help" (:name %)) (second @seen)))
+        (is (= (.getCanonicalPath (io/file root)) (nth @seen 2)))
         (is (some #(= "/rename" (get % "name")) (get body "commands")))))))
+
+(deftest slashes-handler-refuses-an-unknown-session
+  (let [sid (java.util.UUID/randomUUID)]
+    (with-redefs [state/session-workspace-info (constantly nil)]
+      (is (= 404 (:status ((rv 'slashes-handler) {:path-params {:sid (str sid)}})))))))
 
 (deftest wrap-auth-accepts-gateway-secret-header
   (testing "a token-gated gateway authenticates the internal client's X-Vis-Gateway-Secret"

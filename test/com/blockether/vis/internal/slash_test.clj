@@ -7,6 +7,7 @@
    `dispatch` walk that env exactly the same way the live engine
    does at turn start."
   (:require [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.slash :as slash]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -191,3 +192,24 @@
 
         (expect (true? (:handled? out)))
         (expect (= :no-run-fn (:reason out))))))
+
+(defdescribe
+  prompt-template-palette-test
+  ;; Regression: a skill with its own command vocabulary appeared as only one opaque
+  ;; slash root, so `/impeccable init` and its siblings were absent from autocomplete.
+  (it "flattens template subcommands into complete slash palette entries"
+      (with-redefs
+        [slash/registered-slashes
+         (constantly [])
+
+         prompt-templates/templates
+         (constantly
+           [{:name "impeccable"
+             :description "Design skill"
+             :subcommands
+             [{:name "init" :description "Initialize the project" :argument-hint ""}
+              {:name "audit" :description "Audit a surface" :argument-hint "[target]"}]}])]
+
+        (let [by-name (into {} (map (juxt :name identity)) (slash/slash-palette :web))]
+          (expect (= #{"/impeccable" "/impeccable init" "/impeccable audit"} (set (keys by-name))))
+          (expect (= "[target]" (:argument-hint (by-name "/impeccable audit"))))))))

@@ -68,6 +68,28 @@
   [env-or-root]
   (normalize-root (if (map? env-or-root) (:workspace/root env-or-root) env-or-root)))
 
+(defn ancestor-roots
+  "Canonical workspace root followed by each parent through the nearest ancestor
+   containing `.git` (inclusive). Outside a Git repository, continue through the
+   filesystem root. This is topology, not Git indexing: explicit project config
+   remains visible even when its directory is gitignored."
+  [env-or-root]
+  (if-let [root (workspace-root env-or-root)]
+    (let
+      [start (.getCanonicalFile (io/file root))
+       stop (loop [d start]
+              (when d (if (.exists (io/file d ".git")) d (recur (.getParentFile d)))))]
+
+      (loop
+        [d start
+         acc []]
+
+        (if (nil? d)
+          acc
+          (let [acc (conj acc d)]
+            (if (and stop (= d stop)) acc (recur (.getParentFile d) acc))))))
+    []))
+
 (defn- backend-id
   [value]
   (cond (keyword? value) value
