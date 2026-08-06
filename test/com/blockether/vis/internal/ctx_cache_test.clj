@@ -88,6 +88,20 @@
         (expect (= ["~/vis" "~/spel"] (get-in m ["access" "filesystem" "read_write"])))
         (expect (= "reload" (get-in m ["access" "changes_require"])))
         (expect (not (contains? m "session_access")))))
+  ;; Regression, issue #gateway-restart-resources: a resumed turn used to leave
+  ;; the previous gateway's shell/REPL entries in the live session binding.
+  (it "refreshes resources at the turn boundary, including clearing a restart's stale list"
+      (let
+        [with-resources
+         (cr/render-turn-boundary {:ctx (assoc base-ctx
+                                          "session_turn" 7
+                                          "session_resources" [{"id" "shell-1"}])})
+
+         without-resources
+         (cr/render-turn-boundary {:ctx (assoc base-ctx "session_turn" 8)})]
+
+        (expect (str/includes? with-resources "session[\"resources\"] = [{\"id\": \"shell-1\"}]"))
+        (expect (str/includes? without-resources "session[\"resources\"] = []"))))
   (it "renders turn and utilization explicitly for iteration 1"
       (let
         [boundary (cr/render-turn-boundary {:ctx (assoc base-ctx

@@ -167,10 +167,18 @@
      (get view "session_turn")
 
      utilization
-     (get view "session_utilization")]
+     (get view "session_utilization")
+
+     ;; Resources are live gateway state. Re-assign them at the turn boundary so
+     ;; a resumed turn cannot carry a stale shell/REPL list across a gateway
+     ;; restart. The empty vector is intentional: it also clears a prior value.
+     resources
+     (or (get view "session_resources") [])]
 
     (str "session[\"turn\"] = "
          (env/ctx->python-str turn)
+         "\nsession[\"resources\"] = "
+         (env/ctx->python-str resources)
          (when utilization
            (str "\nsession[\"utilization\"] = " (env/ctx->python-str utilization))))))
 
