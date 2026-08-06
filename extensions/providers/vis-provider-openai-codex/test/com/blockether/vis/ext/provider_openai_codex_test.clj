@@ -243,6 +243,7 @@
                                     defaults)]
 
                      ;; svar-catalog models ride as bare strings.
+                     (expect (contains? by-name "gpt-5.6-luna"))
                      (expect (contains? by-name "gpt-5.6-sol"))
                      ;; gpt-5.6-terra rides as a bare name; svar's catalog
                      ;; (>= 0.7.59) supplies its 272k window, so it is no longer
