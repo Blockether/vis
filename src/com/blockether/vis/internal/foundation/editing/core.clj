@@ -7967,6 +7967,11 @@
                 (str/join " " (remove nil? [(not-empty (str action)) (str n " paths")])))
      :body (fs-batch-body entries status)}))
 
+(defn- fs-pair-body
+  "One expandable markdown row for a copy or move result."
+  [r]
+  (str "\n- `" (disp-path (get r "src")) "` → `" (disp-path (get r "dest")) "`"))
+
 (defn- render-fs-result
   "fs → `{:summary :body?}`, read off the canonical fs result. copy/move return
    `src`+`dest`; target operations return an ordered `paths` collection. The
@@ -7984,12 +7989,13 @@
       (render-fs-batch-result action entries)
       {:summary (case action
                   "copy"
-                  (str "copied `" (disp-path (get r "src")) "` → `" (disp-path (get r "dest")) "`")
+                  "copied 1 path"
 
                   "move"
-                  (str "moved `" (disp-path (get r "src")) "` → `" (disp-path (get r "dest")) "`")
+                  "moved 1 path"
 
-                  (str/join " " (remove nil? ["fs" (not-empty (str action))])))})))
+                  (str/join " " (remove nil? ["fs" (not-empty (str action))])))
+       :body (when (contains? #{"copy" "move"} action) (fs-pair-body r))})))
 
 (defn- fs-paths-success
   "ONE envelope for a target fs op run over N paths. `entries` are canonical

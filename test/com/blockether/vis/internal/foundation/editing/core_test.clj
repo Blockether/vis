@@ -6196,10 +6196,10 @@
           (expect (= (str base "/a/x.txt") (get-in r ["paths" 0 "path"]))))
         (let [r (res "copy" [(str base "/a/x.txt") (str base "/y.txt")])]
           (expect (= {"action" "copy" "src" (str base "/a/x.txt") "dest" (str base "/y.txt")} r))
-          (expect (= (str "copied `" base "/a/x.txt` → `" base "/y.txt`") (:summary (render r)))))
+          (expect (= "copied 1 path" (:summary (render r)))))
         (let [r (res "move" [(str base "/y.txt") (str base "/z.txt")])]
           (expect (= {"action" "move" "src" (str base "/y.txt") "dest" (str base "/z.txt")} r))
-          (expect (= (str "moved `" base "/y.txt` → `" base "/z.txt`") (:summary (render r)))))
+          (expect (= "moved 1 path" (:summary (render r)))))
         (let [r (res "delete" [(str base "/z.txt")])]
           (expect (= true (get-in r ["paths" 0 "is_deleted"])))
           (expect (= "deleted 1 path" (:summary (render r)))))
@@ -6272,6 +6272,16 @@
                   (expect (throws? clojure.lang.ExceptionInfo #(call "copy" ["a"])))
                   (expect (throws? clojure.lang.ExceptionInfo #(call "move" ["a" "b" "c"])))
                   (expect (throws? clojure.lang.ExceptionInfo #(call "delete" []))))))
+  ;; Regression, issue #fs-card: copy and move used to put both paths in the
+  ;; summary, so the TUI rendered them inline instead of as expandable path bodies.
+  (it "renders copy and move as expandable path bodies"
+      (let [render (private-fn "render-fs-result")]
+        (let [card (render {"op" "fs" "action" "copy" "src" "a" "dest" "b"})]
+          (expect (= "copied 1 path" (:summary card)))
+          (expect (= "\n- `a` → `b`" (:body card))))
+        (let [card (render {"op" "fs" "action" "move" "src" "a" "dest" "b"})]
+          (expect (= "moved 1 path" (:summary card)))
+          (expect (= "\n- `a` → `b`" (:body card))))))
   (describe "the engine's canonical `op` stamp"
             (it "keeps the action under `action`, so the card never degrades to `fs fs`"
                 (let [render (private-fn "render-fs-result")]
@@ -6279,7 +6289,7 @@
                              (:summary (render {"op" "fs"
                                                 "action" "delete"
                                                 "paths" [{"path" "a/b.txt" "is_deleted" true}]}))))
-                  (expect (= "copied `a` → `b`"
+                  (expect (= "copied 1 path"
                              (:summary (render {"op" "fs" "action" "copy" "src" "a" "dest" "b"}))))
                   (expect (= "fs" (:summary (render {"op" "fs"}))))))))
 
