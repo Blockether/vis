@@ -454,4 +454,23 @@
             (expect (= 1 @b-stops))
             (expect (nil? (resources/get-resource sid-a "a")))
             (expect (nil? (resources/get-resource sid-b "b")))))
-        (finally (deliver release true) (resources/stop-all! sid-a) (resources/stop-all! sid-b))))))
+        (finally (deliver release true) (resources/stop-all! sid-a) (resources/stop-all! sid-b)))))
+  (it "clears non-stoppable and failed resources after process shutdown"
+      ;; Regression, issue #gateway-restart-resources: a gateway restart used to
+      ;; expose shell/REPL generations left in the registry after teardown.
+      (let
+        [sid
+         (fresh-sid)
+
+         failed
+         (fresh-sid)]
+
+        (resources/register! sid {:id "external" :kind :repl :status :running})
+        (resources/register! failed
+                             {:id "broken" :kind :shell :status :running}
+                             {:stop-fn #(throw (ex-info "cannot stop" {}))})
+        (try (resources/shutdown!)
+             (expect (nil? (resources/get-resource sid "external")))
+             (expect (nil? (resources/get-resource failed "broken")))
+             (finally (resources/unregister! sid "external")
+                      (resources/unregister! failed "broken"))))))

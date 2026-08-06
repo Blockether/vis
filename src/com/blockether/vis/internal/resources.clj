@@ -647,9 +647,17 @@
   "Process-wide teardown spout (daemon/engine shutdown): stop EVERY registered
    resource across ALL sessions, so no background child (a background `shell`, a
    REPL) outlives the process that owns its stop-fn. Sessions registered during
-   teardown are chased too. Best-effort; returns `{session-id [stop! results]}`."
+   teardown are chased too. Best-effort; returns `{session-id [stop! results]}`.
+
+   Once teardown has completed, the process is going away and no resource can be
+   retried. Clear the registry and its persisted snapshot even when a resource
+   was not stoppable or its stop callback failed; retaining either would expose
+   dead resources to the next gateway session."
   []
-  (teardown-sessions! (constantly true)))
+  (let [result (teardown-sessions! (constantly true))]
+    (reset! registry {})
+    (persist-snapshot!)
+    result))
 
 ;; ---------------------------------------------------------------------------
 ;; Agent surface — B-dispatch. The sandbox gets ONE engine-builtin tool,
