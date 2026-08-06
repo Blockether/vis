@@ -15,8 +15,7 @@
    known source roots. Precedence is source ORDER, first-name-wins
    (vis project-local > other harnesses' project > user > plugin; Vis and
    Claude before pi/agents/opencode)."
-  (:require [charred.api :as json]
-            [clojure.java.io :as io]
+  (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace :as workspace]))
@@ -266,34 +265,6 @@
          (map #(paths/unixify (.relativize root (.toPath ^java.io.File %))))
          (sort)
          (vec))))
-
-(defn- json-object-pairs
-  "Ordered key/value pairs from Charred's raw JSON object representation."
-  [value]
-  (when (instance? charred.JSONReader$JSONObj value)
-    (mapv vec (partition 2 (.-data ^charred.JSONReader$JSONObj value)))))
-
-(defn- skill-commands
-  "Optional nested slash-command metadata shipped by a skill. The convention is
-   Impeccable's ordered `scripts/command-metadata.json` object; malformed or
-   incomplete rows are ignored so metadata can never hide an otherwise valid skill."
-  [^java.io.File skill-dir]
-  (let [f (io/file skill-dir "scripts" "command-metadata.json")]
-    (when (.isFile f)
-      (try (let [rows (json-object-pairs (json/read-json (slurp f) :profile :raw))]
-             (into []
-                   (keep (fn [[command raw-details]]
-                           (when-let [detail-pairs (json-object-pairs raw-details)]
-                             (let [details (into {} detail-pairs)]
-                               (when (and (string? command) (not (str/blank? command)))
-                                 (when-let [description (non-blank (get details "description"))]
-                                   (cond-> {:name command :description description}
-                                     (contains? details "argumentHint")
-                                     (assoc :argument-hint
-                                       (or (non-blank (get details "argumentHint")) "")))))))))
-                   rows))
-           (catch Throwable _ nil)))))
-
 ;; =============================================================================
 ;; Discovery (filesystem → deduped entries)
 ;; =============================================================================
@@ -319,8 +290,8 @@
                    e)))
 
 (defn discover-skills
-  "Parse every SKILL.md across `skill-dirs`, first-name-wins, with each
-   skill's bundled resource paths and optional nested command metadata attached."
+  "Parse every SKILL.md across `skill-dirs`, first-name-wins, with each skill's
+   bundled resource paths attached."
   []
   (dedup-by-name
     (for
@@ -333,19 +304,13 @@
        :let [sdir
              (.getParentFile f)
 
-             commands
-             (skill-commands sdir)
-
              e
              (try (some-> (parse-skill-meta (slurp f)
                                             {:name-default (.getName sdir)
                                              :tool tool
                                              :dir (.getPath sdir)
                                              :path (.getPath f)})
-                          (assoc :resources (skill-resources sdir))
-                          (cond->
-                            (seq commands)
-                            (assoc :commands commands)))
+                          (assoc :resources (skill-resources sdir)))
                   (catch Throwable _ nil))]
        :when e]
 
@@ -399,12 +364,9 @@
                    (skill-dirs)
 
                    ^java.io.File f
-                   (skill-md-files d)
+                   (skill-md-files d)]
 
-                   :let [metadata
-                         (io/file (.getParentFile f) "scripts" "command-metadata.json")]]
-
-                  [tool (file-mark f) (when (.isFile metadata) (file-mark metadata))]))
+                  [tool (file-mark f)]))
    :commands (vec (for
                     [[tool ^java.io.File d]
                      (command-dirs)

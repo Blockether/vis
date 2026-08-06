@@ -186,20 +186,16 @@
          task)))
 
 (defn- skill-template-entries
-  "Every discovered skill as a dynamic prompt template named `<name>`, with any
-   nested command vocabulary retained for slash-palette autocomplete."
+  "Every discovered skill as one dynamic prompt template named `<name>`."
   []
   (mapv (fn [s]
-          (cond->
-            {:name (:name s)
-             :description (str "Load skill "
-                               (:name s)
-                               (when-let [d (not-empty (str (:description s)))]
-                                 (str " — " (clip d 140))))
-             :expand-fn (fn [env args]
-                          (skill-template-text env s args))}
-            (seq (:commands s))
-            (assoc :subcommands (:commands s))))
+          {:name (:name s)
+           :description (str "Load skill "
+                             (:name s)
+                             (when-let [d (not-empty (str (:description s)))]
+                               (str " — " (clip d 140))))
+           :expand-fn (fn [env args]
+                        (skill-template-text env s args))})
         (d/skills)))
 
 (prompt-templates/register-provider! ::skills skill-template-entries)

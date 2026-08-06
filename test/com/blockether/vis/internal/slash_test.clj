@@ -193,23 +193,19 @@
         (expect (true? (:handled? out)))
         (expect (= :no-run-fn (:reason out))))))
 
-(defdescribe
-  prompt-template-palette-test
-  ;; Regression: a skill with its own command vocabulary appeared as only one opaque
-  ;; slash root, so `/impeccable init` and its siblings were absent from autocomplete.
-  (it "flattens template subcommands into complete slash palette entries"
-      (with-redefs
-        [slash/registered-slashes
-         (constantly [])
+(defdescribe prompt-template-palette-test
+             ;; A skill's internal command vocabulary is model context, not a second slash API.
+             ;; The palette advertises one project-relative root and leaves its argument tail intact.
+             (it "keeps prompt templates as root slash entries"
+                 (with-redefs
+                   [slash/registered-slashes
+                    (constantly [])
 
-         prompt-templates/templates
-         (constantly
-           [{:name "impeccable"
-             :description "Design skill"
-             :subcommands
-             [{:name "init" :description "Initialize the project" :argument-hint ""}
-              {:name "audit" :description "Audit a surface" :argument-hint "[target]"}]}])]
+                    prompt-templates/templates
+                    (constantly [{:name "impeccable"
+                                  :description "Design skill"
+                                  :subcommands [{:name "init" :description "Initialize the project"}
+                                                {:name "audit" :description "Audit a surface"}]}])]
 
-        (let [by-name (into {} (map (juxt :name identity)) (slash/slash-palette :web))]
-          (expect (= #{"/impeccable" "/impeccable init" "/impeccable audit"} (set (keys by-name))))
-          (expect (= "[target]" (:argument-hint (by-name "/impeccable audit"))))))))
+                   (expect (= [{:name "/impeccable" :doc "Design skill"}]
+                              (slash/slash-palette :web))))))

@@ -228,29 +228,25 @@
   (it "uses ancestor walking for every project-local harness source"
       (doseq [sources [d/agent-sources d/skill-sources d/command-sources]]
         (expect (not-any? #(= :rel (second %)) sources))))
-  (it
-    "reads optional skill subcommand metadata from the skill directory"
-    (let
-      [root
-       (.toFile (Files/createTempDirectory "vis-skill-commands" (make-array FileAttribute 0)))
+  (it "treats skill resources as opaque and ignores implementation-specific command metadata"
+      (let
+        [root
+         (.toFile (Files/createTempDirectory "vis-skill-resources" (make-array FileAttribute 0)))
 
-       skill-md
-       (io/file root ".agents" "skills" "demo" "SKILL.md")
+         skill-md
+         (io/file root ".agents" "skills" "demo" "SKILL.md")
 
-       metadata
-       (io/file root ".agents" "skills" "demo" "scripts" "command-metadata.json")]
+         metadata
+         (io/file root ".agents" "skills" "demo" "scripts" "command-metadata.json")]
 
-      (try
-        (.mkdirs (io/file root ".git"))
-        (io/make-parents skill-md)
-        (io/make-parents metadata)
-        (spit skill-md "---\nname: demo\ndescription: Demo\n---\nBODY")
-        (spit
-          metadata
-          "{\"init\":{\"description\":\"Initialize\",\"argumentHint\":\"\"},\"audit\":{\"description\":\"Audit it\",\"argumentHint\":\"[target]\"}}")
-        (binding [workspace/*workspace-root* (.getCanonicalPath root)]
-          (with-redefs [d/skill-sources [[:agents :rel-walk ".agents" "skills"]]]
-            (expect (= [{:name "init" :description "Initialize" :argument-hint ""}
-                        {:name "audit" :description "Audit it" :argument-hint "[target]"}]
-                       (:commands (first (d/discover-skills)))))))
-        (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
+        (try (.mkdirs (io/file root ".git"))
+             (io/make-parents skill-md)
+             (io/make-parents metadata)
+             (spit skill-md "---\nname: demo\ndescription: Demo\n---\nBODY")
+             (spit metadata "{\"audit\":{\"description\":\"Audit it\"}}")
+             (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+               (with-redefs [d/skill-sources [[:agents :rel-walk ".agents" "skills"]]]
+                 (let [skill (first (d/discover-skills))]
+                   (expect (nil? (:commands skill)))
+                   (expect (some #{"scripts/command-metadata.json"} (:resources skill))))))
+             (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))

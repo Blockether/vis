@@ -83,8 +83,8 @@
 
 (defn slash-palette
   "THE canonical typed-`/` palette for a channel. Registered slash leaves,
-   channel-native entries, prompt templates, and template subcommands all become
-   complete `{:name :doc}` rows. Registered/channel-native names always win."
+   channel-native entries, and prompt templates become complete `{:name :doc}`
+   rows. Registered/channel-native names always win."
   ([channel] (slash-palette channel nil))
   ([channel extra]
    (let
@@ -122,18 +122,8 @@
 
       templates
       (try (->> (prompt-templates/templates)
-                (mapcat
-                  (fn [{:keys [name description subcommands]}]
-                    (let [parent-name (str "/" name)]
-                      (cons
-                        {:name parent-name :doc (str description)}
-                        (for
-                          [{child-name :name child-description :description :keys [argument-hint]}
-                           subcommands]
-                          (cond->
-                            {:name (str parent-name " " child-name) :doc (str child-description)}
-                            (some? argument-hint)
-                            (assoc :argument-hint argument-hint)))))))
+                (map (fn [{:keys [name description]}]
+                       {:name (str "/" name) :doc (str description)}))
                 (remove #(contains? taken (:name %))))
            (catch Throwable _ nil))]
 

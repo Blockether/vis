@@ -116,7 +116,7 @@
                                    {:answer nil :iteration-count 0 :duration-ms 0})]
               (lp/run-turn! env "hello world" {}))
             (expect (true? @fell-through?))))))
-  (it "binds the session workspace while provider templates are discovered and expanded"
+  (it "binds the session workspace and preserves the root template's argument tail"
       (with-store
         (fn [store]
           (let
@@ -126,15 +126,19 @@
              seen
              (atom nil)]
 
-            (prompt-templates/register-provider! ::workspace-template
-                                                 (fn []
-                                                   (reset! seen (.getPath (workspace/cwd)))
-                                                   [{:name "scoped-template" :body "expanded"}]))
+            (prompt-templates/register-provider!
+              ::workspace-template
+              (fn []
+                [{:name "scoped-template"
+                  :expand-fn (fn [_ args]
+                               (reset! seen {:root (.getPath (workspace/cwd)) :args args})
+                               "expanded")}]))
             (try (with-redefs
                    [lp/iteration-loop (fn [& _]
                                         {:answer "done" :iteration-count 0 :duration-ms 0})]
-                   (lp/run-turn! env "/scoped-template" {}))
-                 (expect (= (workspace/workspace-root "/tmp") @seen))
+                   (lp/run-turn! env "/scoped-template audit apps/companion" {}))
+                 (expect (= {:root (workspace/workspace-root "/tmp") :args "audit apps/companion"}
+                            @seen))
                  (finally (prompt-templates/register-provider! ::workspace-template
                                                                (constantly nil)))))))))
 
