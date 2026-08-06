@@ -1,17 +1,23 @@
 import tailwindcss from '@tailwindcss/vite';
 import babel from '@rolldown/plugin-babel';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 import pkg from './package.json' with { type: 'json' };
+import {
+  devConnectionStorageScript,
+  discoverDevGatewayConnections,
+} from './scripts/dev-gateway.ts';
 
 // https://vite.dev/config/
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '');
-  const gatewayProxyToken = env.VIS_COMPANION_GATEWAY_TOKEN;
-  // The gateway binds whatever `vis-agent gateway start --host` was given. When that is
-  // a Tailscale/LAN IP (not loopback), point the dev proxy at it via this env var,
-  // e.g. VIS_COMPANION_GATEWAY_TARGET=http://100.109.18.77:7890
-  const gatewayTarget = env.VIS_COMPANION_GATEWAY_TARGET || 'http://127.0.0.1:7890';
+export default defineConfig(async ({ command }) => {
+  const devGateways = command === 'serve' ? await discoverDevGatewayConnections() : [];
+  if (command === 'serve') {
+    console.info(
+      devGateways.length > 0
+        ? `[vis] auto-connecting ${devGateways.length} local gateway${devGateways.length === 1 ? '' : 's'}`
+        : '[vis] no live local gateway found; starting unpaired',
+    );
+  }
 
   return {
     // The app stamps its release version on every gateway request and shows it
@@ -22,24 +28,13 @@ export default defineConfig(({ mode }) => {
     define: { __VIS_APP_VERSION__: JSON.stringify(pkg.version) },
     plugins: [
       {
-        name: 'vis-gateway-proxy-auth',
-        configureServer(server) {
-          server.middlewares.use('/gateway', (req, res, next) => {
-            if (!gatewayProxyToken) {
-              res.statusCode = 503;
-              res.end('gateway proxy token is not configured');
-              return;
-            }
-
-            if (req.headers.authorization !== `Bearer ${gatewayProxyToken}`) {
-              res.statusCode = 401;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: { message: 'missing or invalid bearer token' } }));
-              return;
-            }
-
-            next();
-          });
+        name: 'vis-dev-gateway-autoconnect',
+        apply: 'serve',
+        transformIndexHtml() {
+          const children = devConnectionStorageScript(devGateways);
+          return children
+            ? [{ tag: 'script', children, injectTo: 'head-prepend' as const }]
+            : [];
         },
       },
       react(),
@@ -76,15 +71,10 @@ export default defineConfig(({ mode }) => {
       ],
     },
     server: {
-      host: true,
+      // The injected bearer tokens make the dev page privileged. Keep the default
+      // on loopback; a deliberate CLI --host may still override it.
+      host: '127.0.0.1',
       port: 5273,
-      proxy: {
-        '/gateway': {
-          target: gatewayTarget,
-          changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/gateway/, ''),
-        },
-      },
     },
   };
 });
