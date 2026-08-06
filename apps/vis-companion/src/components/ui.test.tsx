@@ -234,8 +234,11 @@ describe('NewSessionButton', () => {
     expect(html()).not.toContain('active:scale');
   });
 
-  it('is compact only for a mouse, while touch keeps the hit box', () => {
-    expect(html()).toContain('mouse:min-h-7');
+  // Reported visual defect: `mouse:min-h-7` only set a floor, so the project header's
+  // `items-stretch` still pulled the yellow action to the full two-line row height.
+  it('pins the compact mouse height instead of stretching with the project row', () => {
+    expect(html()).toContain('mouse:h-7');
+    expect(html()).not.toContain('mouse:min-h-7');
     expect(html()).toContain('mouse:text-meta');
   });
 
