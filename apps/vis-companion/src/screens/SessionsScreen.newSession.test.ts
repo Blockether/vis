@@ -43,25 +43,25 @@ describe('where "New session" lives', () => {
     expect(source).not.toContain('sm:translate-x-0');
   });
 
-  // Regression, user report: the clickable project header itself had no top or bottom
-  // border classes; the rules lived only on its parent <header>, so inspecting the
-  // actual project control showed neither edge.
-  it('gives every clickable project header both edges without doubling adjacent rules', () => {
-    expect(source).toContain('className="border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4"');
-    expect(source).toContain('className="flex min-h-10 items-center -mb-px border-b border-dialog-edge bg-panel px-3 mouse:min-h-9');
-    expect(source).toContain('        ) : (\n          <div>\n            {sections.map');
-    expect(source).toContain('      {rows.length > 0 && (\n        <div>');
-    expect(source).toContain('<section className="-mt-px" aria-label={`${project} sessions`}>');
-    expect(source).toContain(
-      'className="-my-px flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 border-y border-dialog-edge',
-    );
-    expect(source).not.toContain('firstProject');
+  // Regression, user report: every project seam was painted by the section's negative
+  // margin, the header's two borders, and the toggle's two more borders. Adjacent rows
+  // therefore overlapped by a pixel and the same line had as many as three DOM owners.
+  it('assigns every list boundary to one outgoing edge without negative overlap', () => {
+    expect(source).toContain('className="flex min-h-10 items-center border-b border-dialog-edge bg-panel px-3 mouse:min-h-9');
+    expect(source).toContain('<section aria-label={`${project} sessions`}>');
+    expect(source).toContain('<header className="flex items-stretch border-b border-dialog-edge bg-panel-2 mouse:h-9">');
+    expect(source).toContain('className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2');
+    expect(source).toContain('      {rows.length > 0 && (\n        <div className="border-b border-dialog-edge">');
+    expect(source).not.toContain('-mt-px');
+    expect(source).not.toContain('-mb-px');
+    expect(source).not.toContain('-my-px');
+    expect(source).not.toContain('items-stretch border-y border-dialog-edge');
   });
 
-  // Regression, user report: making New session 28px tall exposed an 11px band of bare
-  // project-header paper above and below it because the mouse project row stayed 50px.
-  it('compacts the mouse project row around its compact create button', () => {
-    expect(source).toContain('<header className="flex items-stretch border-y border-dialog-edge bg-panel-2 mouse:h-9">');
+  // Regression, user report: making New session 28px still left it visibly taller than
+  // the neighboring 24px small action even after the project row itself was compacted.
+  it('keeps the two-line project row compact without stretching its actions', () => {
+    expect(source).toContain('bg-panel-2 mouse:h-9');
     expect(source).toContain('motion-reduce:transition-none mouse:min-h-0 mouse:py-0 sm:px-4');
     expect(source).toContain('motion-reduce:transition-none mouse:min-h-0 sm:px-4');
   });

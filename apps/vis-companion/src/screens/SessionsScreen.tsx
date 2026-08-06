@@ -1198,7 +1198,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
           </div>
         )}
 
-        <div className="flex min-h-10 items-center -mb-px border-b border-dialog-edge bg-panel px-3 mouse:min-h-9 sm:px-4">
+        <div className="flex min-h-10 items-center border-b border-dialog-edge bg-panel px-3 mouse:min-h-9 sm:px-4">
           <ChevronIcon className="size-3.5 text-accent-ink" />
           <input
             value={query}
@@ -1830,13 +1830,13 @@ const ProjectGroup = memo(function ProjectGroup({
 
   return (
     <>
-    <section className="-mt-px" aria-label={`${project} sessions`}>
-      <header className="flex items-stretch border-y border-dialog-edge bg-panel-2 mouse:h-9">
+    <section aria-label={`${project} sessions`}>
+      <header className="flex items-stretch border-b border-dialog-edge bg-panel-2 mouse:h-9">
         <button
           type="button"
           onClick={() => onToggle(groupKey)}
           aria-expanded={isOpen}
-          className="-my-px flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 border-y border-dialog-edge px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:min-h-0 mouse:py-0 sm:px-4"
+          className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:min-h-0 mouse:py-0 sm:px-4"
         >
           <span className="flex min-w-0 items-center gap-2">
             <ChevronIcon open={isOpen} className="size-3.5 text-dialog-hint" />
@@ -1882,7 +1882,7 @@ const ProjectGroup = memo(function ProjectGroup({
         )}
       </header>
       {rows.length > 0 && (
-        <div>
+        <div className="border-b border-dialog-edge">
           {rows.map((session) => (
             <SessionRow
               key={session.id}
@@ -2339,22 +2339,14 @@ function formatDuration(value?: number): string {
 //    separates from every gateway surface, and the Braille spinner says it in
 //    words — the same one the transcript and the TUI use.
 // 2. GEOMETRY: a placeholder that is not the exact height of the thing it
-//    stands for makes the whole list jump when data lands. So the skeleton
-//    mirrors `ProjectGroup`'s header and `SessionRow` class for class
-//    (`min-h-11` / `min-h-14` with the very same `mouse:` step, same padding,
-//    same `mt-*`), and each
-//    bar is centred inside an INVISIBLE glyph of the real type step. That sizer
-//    is what makes the line box identical — a bare `h-2` bar is 8px where a
-//    `text-ui` line is not, and three such rows per group is a visible lurch.
-//    Measured in a browser at 390/768/1200px: header 46px and rows 48/49/49px
-//    on both sides, group total 193px.
-// 3. NOTHING EXTRA IN THE FLOW. The skeleton used to lead with its own
-//    "Loading sessions…" strip — 37px plus a hairline that the loaded list does
-//    not have, so every group below it slid up the moment data arrived. That
-//    was the only remaining mismatch. The strip is gone; the panel header above
-//    already says "Reading sessions..." in a line that exists in BOTH states, so
-//    the signal costs zero pixels. The skeleton root carries the `border-t` the
-//    loaded list's wrapper carries, so the top hairline matches too.
+//    stands for makes the whole list jump when data lands. The skeleton mirrors
+//    the compact 36px mouse project header and the session rows' density steps.
+//    Each bar is centred inside an INVISIBLE glyph of the real type step, so its
+//    line box — not a bare decorative bar — determines the same vertical rhythm.
+// 3. ONE OWNER PER SEAM. The filter owns the line above the list, each skeleton
+//    header owns the line below itself, sibling rows own their internal lines,
+//    and the rows wrapper closes the group. No top border or negative margin is
+//    needed, so loading and loaded states cannot stack adjacent rules.
 function SkeletonBar({
   type,
   width,
@@ -2380,13 +2372,12 @@ function NavigatorSkeleton() {
       role="status"
       aria-live="polite"
       aria-label="Loading sessions"
-      className="border-t border-dialog-edge"
     >
       <div className="animate-pulse motion-reduce:animate-none" aria-hidden="true">
         {SKELETON_GROUPS.map((rows, group) => (
-          <div key={group} className="border-t border-dialog-edge first:border-t-0">
+          <div key={group}>
             {/* mirrors ProjectGroup's <header> */}
-            <div className="flex min-h-11 items-center justify-between gap-3 bg-panel-2 px-3 py-2 sm:px-4">
+            <div className="flex min-h-11 items-center justify-between gap-3 border-b border-dialog-edge bg-panel-2 px-3 py-2 mouse:h-9 mouse:min-h-0 mouse:py-0 sm:px-4">
               <div className="min-w-0">
                 <SkeletonBar type="text-ui" width="w-28" baz="h-2.5" tone="bg-muted/40" />
                 <div className="mt-0.5">
@@ -2398,7 +2389,7 @@ function NavigatorSkeleton() {
               </div>
             </div>
             {/* mirrors SessionRow's <button> */}
-            <div className="border-t border-dialog-edge">
+            <div className="border-b border-dialog-edge">
               {rows.map((width, row) => (
                 <div
                   key={row}

@@ -255,7 +255,7 @@ export function UnreadBadge({ count }: { count: number }) {
  * one never pays it.
  */
 export function MachineGap() {
-  return <div className="h-3 -mb-px border-y border-edge-strong bg-ink" aria-hidden="true" />;
+  return <div className="h-3 bg-ink" aria-hidden="true" />;
 }
 
 /**
@@ -267,7 +267,7 @@ export function MachineGap() {
  */
 export function MachineBanner({ children }: { children: ReactNode }) {
   return (
-    <header className="sticky top-0 z-10 flex min-h-11 items-center justify-between gap-3 border-y border-dialog-edge bg-panel px-3 py-2 sm:px-4">
+    <header className="sticky top-0 z-10 flex min-h-11 items-center justify-between gap-3 border-b border-dialog-edge bg-panel px-3 py-2 sm:px-4">
       {children}
     </header>
   );
@@ -325,7 +325,7 @@ export function NewSessionButton({
       disabled={disabled}
       aria-label={`New session on ${machine}`}
       title={where ? `New session on ${machine}, in ${where}` : `New session on ${machine}`}
-      className="shrink-0 whitespace-nowrap mouse:h-7 mouse:min-h-7 mouse:self-center mouse:text-meta"
+      className="shrink-0 whitespace-nowrap mouse:h-6 mouse:min-h-6 mouse:self-center mouse:text-meta"
       onClick={(event) => onPress(event.currentTarget)}
     >
       New session

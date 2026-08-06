@@ -108,14 +108,13 @@ describe('UnreadBadge', () => {
 
 // A machine gap separates computers with space; the banner supplies the promoted name.
 describe('MachineGap', () => {
-  it('is a band of the page ink, not another hairline', () => {
+  it('is a band of page ink, not another pair of overlapping rules', () => {
     const html = renderToStaticMarkup(<MachineGap />);
 
     expect(html).toContain('h-3');
-    expect(html).toContain('-mb-px');
     expect(html).toContain('bg-ink');
-    expect(html).toContain('border-edge-strong');
-    expect(html).not.toContain('border-dialog-edge');
+    expect(html).not.toContain('border-');
+    expect(html).not.toContain('-mb-px');
   });
 
   it('is decoration, so a screen reader never stops on it', () => {
@@ -131,17 +130,20 @@ describe('MachineBanner', () => {
     const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
 
     expect(html).toContain('<header');
-    expect(html).toContain('border-y border-dialog-edge');
+    expect(html).toContain('border-b border-dialog-edge');
     expect(html).not.toContain('border-edge-strong');
     expect(html).not.toContain('mr-2');
     expect(html).not.toContain('sm:mr-0');
   });
 
-  // Regression, issue: adjacent list edges rendered as two visible rules when the machine banner followed the filter or machine gap.
-  it('keeps both edges visible without a sticky negative margin', () => {
+  // Regression, user report: the banner's top rule stacked on the filter or machine-gap
+  // boundary, so one visual seam had multiple DOM owners and rendered heavier than the next.
+  it('owns only its outgoing edge and never overlaps a neighboring band', () => {
     const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
 
-    expect(html).toContain('border-y border-dialog-edge');
+    expect(html).toContain('border-b border-dialog-edge');
+    expect(html).not.toContain('border-y');
+    expect(html).not.toContain('border-t');
     expect(html).not.toContain('-mt-px');
   });
 
@@ -234,13 +236,14 @@ describe('NewSessionButton', () => {
     expect(html()).not.toContain('active:scale');
   });
 
-  // Reported visual defect: after the stretched button was given `mouse:h-7`, the inherited
-  // `sm:min-h-8` still held it at 32px and flex-start pinned it to the project's top edge.
-  it('uses a compact line-safe mouse box centered in the project row', () => {
-    expect(html()).toContain('mouse:h-7');
-    expect(html()).toContain('mouse:min-h-7');
+  // Regression, user report: the 28px desktop box still read as a tall slab beside the
+  // 24px machine action. The shared 16px line box fits safely inside a 24px control.
+  it('uses the same compact mouse height as the neighboring small action', () => {
+    expect(html()).toContain('mouse:h-6');
+    expect(html()).toContain('mouse:min-h-6');
     expect(html()).toContain('mouse:self-center');
     expect(html()).toContain('mouse:text-meta');
+    expect(html()).not.toContain('mouse:h-7');
   });
 
   it('is refused while the machine is busy or not answering', () => {
