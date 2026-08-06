@@ -388,6 +388,27 @@
           (expect (= "provider_billing" (get block "code")))
           (expect (false? (get block "retryable")))))))
 
+;; Regression, issue #105: Anthropic's exhausted extra-usage 400 was parsed again in Vis while
+;; svar treated it as transient, so nested retries hid the account-limit error.
+(defdescribe
+  quota-exhausted-presentation-test
+  (let
+    [err {:message "Exceptional status code: 400"
+          :data {:status 400
+                 :body (str "{\"type\":\"error\",\"error\":{\"type\":"
+                            "\"invalid_request_error\",\"message\":"
+                            "\"Third-party apps now draw from your extra usage.\"}}")}}]
+    (it "presents svar's canonical quota verdict as a terminal account-limit error"
+        (expect (= :quota-exhausted (:category (perr/svar-classification err))))
+        (expect (= :quota-exhausted (perr/provider-error-kind err)))
+        (expect (= "Provider quota exhausted" (perr/provider-error-title err)))
+        (expect (str/includes? (perr/provider-error-explanation err) "no usable quota or credits"))
+        (expect (false? (perr/provider-error-retryable? err))))
+    (it "does not independently recognize Anthropic's provider prose"
+        (with-redefs
+          [perr/svar-classification (constantly {:category :invalid-request :retryable? false})]
+          (expect (= :generic (perr/provider-error-kind err)))))))
+
 (def ^:private bedrock-timeout-err
   "A gateway timeout that reaches Vis ONLY as prose on the routing attempts —
    the wrapper still says the generic `Provider unavailable` (issue #60)."
@@ -573,13 +594,10 @@
                          :data {:status 400
                                 :body
                                 "{\"error\":{\"message\":\"messages must not be empty\"}}"}}))))
-  ;; Regression: a 429 whose body says "quota exceeded" was classified kind
-  ;; :rate-limit, and :rate-limit sat in RETRYABLE_KINDS, so provider-error-retryable?
-  ;; returned true WITHOUT consulting svar — svar reads the body and knows it is
-  ;; quota-exhausted (non-retryable). The gateway then re-queued the same doomed
-  ;; request forever after credits ran out.
+  ;; Regression: Vis used to label every 429 `:rate-limit`; svar's canonical
+  ;; quota verdict must drive both the presentation kind and terminal retry policy.
   (it
-    "a quota-exhausted 429 is terminal even though kind is :rate-limit"
+    "a quota-exhausted 429 is presented as terminal quota exhaustion"
     (let
       [quota-429
        {:message "Exceptional status code: 429"
@@ -587,7 +605,7 @@
         {:status 429
          :body
          "{\"error\":{\"message\":\"You exceeded your current quota, please check your plan and billing details.\"}}"}}]
-      (expect (= :rate-limit (perr/provider-error-kind quota-429)))
+      (expect (= :quota-exhausted (perr/provider-error-kind quota-429)))
       (expect (false? (perr/provider-error-retryable? quota-429)))))
   ;; And a bare 429 with no quota body IS still retryable — svar classifies it
   ;; :rate-limited (genuine throttle), not :quota-exhausted.

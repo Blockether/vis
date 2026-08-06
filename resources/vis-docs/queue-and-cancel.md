@@ -22,44 +22,19 @@ Only a **clean success advances** the queue.
 
 ## When the provider fails
 
-A queue that blindly fired the next message after every failure would empty itself
-into a sick provider — one 429/503/stall after another, each burning a real turn.
-Vis does not do that. On a terminal **failure** the queue **pauses** instead of
-advancing, and a `Queue paused` / `Provider unhealthy` banner shows how many
-messages are held.
+Svar owns provider retry, failover, and failure classification. Once Svar returns a
+failure to Vis, the gateway records and renders that terminal result **once**. Vis
+does not classify it again, replay the failed request, or add another retry ladder.
 
-- **Transient failure** (rate-limit, transport error, stream stall) — the failed
-  message is **re-queued at the head** and retried after a short backoff
-  (2s → 8s → 30s), honouring the provider's `Retry-After` when it sends one. The
-  retry re-runs the **same** message; nothing is skipped.
-- **Circuit breaker** — after **3** consecutive transient failures the breaker
-  trips **open**: it stops the fast backoff and instead probes once a minute
-  (a *half-open* probe). A lasting outage still self-heals when the provider
-  recovers, but a persistently sick provider is probed once a minute, never
-  hammered.
-- **Terminal failure** (auth, bad request, tool-schema) — retrying can't help, so
-  the dead message is dropped and the **rest of the backlog is held** for you to
-  decide.
+If distinct messages were queued while the failed request was running, Vis pauses
+that backlog instead of sending it into the same failure. The failed request stays
+failed and is never put back at the head. An explicit resume starts only the next
+queued request; there is no gateway backoff timer or automatic resume.
 
-Press **Retry now** (web) or resume the session to clear the pause immediately; an
-explicit resume also re-arms the breaker.
-
-## Tuning the failure handling
-
-The breaker and backoff numbers are gateway config, set in `vis.yml` under a
-`message_queue:` block. Every value is a number; omit the block or any key to keep the
-default. A `/reload` applies changes.
-
-```yaml
-message_queue:
-  breaker_threshold: 3        # consecutive fails before the breaker holds the backlog
-  retry_backoff_ms: [2000, 8000, 30000]  # head-retry backoff (ms) after a transient fail
-  halfopen_probe_ms: 60000    # half-open probe cadence (ms) once the breaker is OPEN
-  retry_after_cap_ms: 120000  # clamp (ms) on a provider-supplied Retry-After
-```
-
-The backlog itself is per-session runtime state, not config; only the tuning
-above is read from `vis.yml`.
+This boundary prevents one submitted message from appearing twice in the transcript
+or causing repeated provider calls. It also means there is no `message_queue` retry
+tuning in `vis.yml`: provider retry policy belongs to Svar, while Vis owns only the
+queue of distinct user requests.
 
 ## Seeing & editing the queue
 

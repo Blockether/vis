@@ -109,10 +109,6 @@
                                "auth" {"client_id" "vis"
                                        "scope" "openid profile offline_access"
                                        "authorization_timeout_ms" 300000}}}}
-   "message_queue" {"breaker_threshold" 3
-                    "retry_backoff_ms" [2000 8000 30000]
-                    "halfopen_probe_ms" 60000
-                    "retry_after_cap_ms" 120000}
    "titling" {"mode" "llm" "provider" "rbi_genai" "model" "gpt-5.4-mini"}})
 
 (defdescribe
@@ -204,15 +200,6 @@
     ;; Runner: a closed enum of the two execution backends.
     (expect (config-spec/valid? (assoc-in full-config ["python" "runner"] "graalpy")))
     (expect (not (config-spec/valid? (assoc-in full-config ["python" "runner"] "uv"))))
-    ;; Queue tuning: a closed block of positive numbers; the backoff is a non-empty list.
-    (expect (config-spec/valid? (assoc-in full-config ["message_queue" "breaker_threshold"] 5)))
-    (expect (not (config-spec/valid?
-                   (assoc-in full-config ["message_queue" "breaker_threshold"] 0))))
-    (expect (not (config-spec/valid?
-                   (assoc-in full-config ["message_queue" "retry_backoff_ms"] []))))
-    (expect (not (config-spec/valid?
-                   (assoc-in full-config ["message_queue" "retry_backoff_ms"] ["2s"]))))
-    (expect (not (config-spec/valid? (assoc-in full-config ["message_queue" "unknown"] 1))))
     ;; Titling: a closed block with one enum (Blockether/vis#71). There is no
     ;; `scheduling` key any more — the LLM upgrade is ALWAYS after the turn.
     (expect (config-spec/valid? (assoc-in full-config ["titling" "mode"] "first_sentence")))
@@ -433,8 +420,6 @@
         [config-spec/tui-keys config-spec/tui-schema (set (keys (get full-config "tui_settings")))]
         [config-spec/mcp-keys config-spec/mcp-schema (set (keys mcp))]
         [config-spec/python-keys config-spec/python-schema (set (keys (get full-config "python")))]
-        [config-spec/message-queue-keys config-spec/message-queue-schema
-         (set (keys (get full-config "message_queue")))]
         [config-spec/titling-keys config-spec/titling-schema
          (set (keys (get full-config "titling")))]
         [config-spec/mcp-server-keys config-spec/mcp-server-schema

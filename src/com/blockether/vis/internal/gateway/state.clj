@@ -16,7 +16,6 @@
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.cancellation :as cancellation]
-            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.format :as fmt]
@@ -368,14 +367,6 @@
      [captured
       (volatile! nil)
 
-      ;; One tid can start MORE THAN ONCE: a stalled or transiently failed turn is
-      ;; re-queued under its ORIGINAL id and relaunched. Truncating the journal on
-      ;; that SECOND `turn.started` deleted the first run's terminal along with it,
-      ;; so a client attaching after the retry could only ever read "started, still
-      ;; running" and had nothing to reconcile the retry against.
-      restart?
-      (volatile! false)
-
       ;; Canonicalize the payload ONCE, OUTSIDE the swap!. `wire/canonical` is a
       ;; FULL recursive walk of the payload, and tool results reach megabytes —
       ;; while a `swap!` body is re-run from scratch on EVERY CAS retry. There is
@@ -434,9 +425,6 @@
               "session_id" stamp-sid
               "type" stamp-type)]
 
-           (when (= type "turn.started")
-             (vreset! restart?
-                      (boolean (get-in entry [:turns (:turn_id payload) :event_start_seq]))))
            (vreset! captured event)
            (cond->
              (assoc entry
@@ -449,12 +437,9 @@
              (update :events #(trim-ring (conj (or % []) event)))))))
      (let [event @captured]
        (fan-out! sid event)
-       ;; Mirror to sibling processes. The FIRST `turn.started` truncates the
-       ;; journal so a file only ever holds the current turn's live deltas; a
-       ;; RELAUNCH of the same turn must keep the previous run's terminal.
-       (bus/publish! sid
-                     event
-                     {:store? store? :truncate? (and (= type "turn.started") (not @restart?))})
+       ;; A turn id is single-use. Its only `turn.started` begins a fresh journal;
+       ;; Vis never re-queues or relaunches the failed request under that id.
+       (bus/publish! sid event {:store? store? :truncate? (= type "turn.started")})
        (run-event-taps! sid event)
        event))))
 
@@ -2032,14 +2017,10 @@
      key
      (:idempotency_key turn)
 
-     ;; A FAILED turn ships its SETTLED content and reason too, so the terminal
-     ;; event ALONE describes the failure. A channel that reconciles the terminal
-     ;; independently of the blocking worker has nothing else to paint, so it
-     ;; fabricated a bare "Turn failed." row — the ugly duplicate next to (or
-     ;; instead of) the styled provider card the worker delivers. The ROW is no
-     ;; durable source either: a transient failure is re-queued for the automatic
-     ;; retry in the same breath, and `re-queue-turn!` strips exactly these two
-     ;; fields off the row this event just settled.
+     ;; A failed turn ships its settled content and reason too, so the terminal
+     ;; event alone describes the failure. A channel that reconciles the terminal
+     ;; independently of the blocking worker has nothing else to paint, and the
+     ;; persisted row remains the durable source for later readers.
      content
      (when (= "failed" status) (not-empty (vec (:content turn))))
 
@@ -2118,50 +2099,7 @@
          next-drainable-turn
          pause-queue!
          resume-queue!
-         schedule-auto-resume!
-         after-turn-terminal!
-         failure-transient?
-         failure-retry-after-ms
-         re-queue-turn!)
-
-(def ^:private QUEUE_TUNING_DEFAULTS
-  "Built-in queue failure-handling tuning. Every value is overridable per-gateway
-   via the `queue:` block in vis.yml (snake_case string keys → these kebab
-   keywords); `queue-tuning` merges the validated config over these and a
-   `/reload` picks it up without a recompile.
-
-     :breaker-threshold   consecutive failure-pauses after which the breaker trips
-                          OPEN — it stops auto-retrying the head and holds the
-                          whole backlog for an explicit user resume, so a sick
-                          provider can't burn the backlog on a backoff timer.
-     :retry-backoff-ms    exponential backoff (ms) for auto-retrying a queue head
-                          after a TRANSIENT failure, indexed by consecutive fails.
-     :halfopen-probe-ms   half-open probe delay once the breaker is OPEN: auto-
-                          resume ONE head retry this long after each pause so a
-                          lasting outage still self-heals, probed once a minute.
-     :retry-after-cap-ms  upper clamp on a provider-supplied Retry-After so a
-                          bogus/huge value can't wedge the queue for hours."
-  {:breaker-threshold 3
-   :retry-backoff-ms [2000 8000 30000]
-   :halfopen-probe-ms 60000
-   :retry-after-cap-ms 120000})
-
-(defn- queue-tuning
-  "The effective queue tuning: the validated `queue:` config slice merged over
-   [[QUEUE_TUNING_DEFAULTS]]. Read lazily from `config/current-config`, so an
-   operator tunes the breaker/backoff in vis.yml and a `/reload` applies it; an
-   unset key keeps its default."
-  []
-  (merge QUEUE_TUNING_DEFAULTS (:message-queue (config/current-config))))
-
-(defn- queue-breaker-threshold ^long [] (long (:breaker-threshold (queue-tuning))))
-
-(defn- queue-retry-backoff-ms [] (:retry-backoff-ms (queue-tuning)))
-
-(defn- queue-halfopen-probe-ms ^long [] (long (:halfopen-probe-ms (queue-tuning))))
-
-(defn- queue-retry-after-cap-ms ^long [] (long (:retry-after-cap-ms (queue-tuning))))
-
+         after-turn-terminal!)
 (def ^:private TURN_STALL_TIMEOUT_MS
   "Daemon backstop: force-cancel a turn wedged with NO meaningful progress for
    this long. Set ABOVE svar's 5-minute semantic stream timeout so it fires ONLY
@@ -2293,15 +2231,9 @@
 
 
 (defonce ^:private turn-terminal-claims
-  ;; `[sid tid]` -> the claim key of the RUN that owns that turn's one terminal
-  ;; landing. Deliberately not a plain set of `[sid tid]`: one tid can run more
-  ;; than once — a stalled or transiently-failed turn is put back on the queue
-  ;; under its ORIGINAL id by `re-queue-turn!` and drained again — and a set
-  ;; entry left behind by the previous run made EVERY terminal path of the retry
-  ;; a silent no-op. The session then stayed pinned to `:current-turn` forever:
-  ;; the worker could not land, the cancel hook could not land, the 30s backstop
-  ;; could not land, so a user cancel did nothing at all and the UI sat in
-  ;; "cancelling" for good.
+  ;; `[sid tid]` -> the claim key of the run that owns the turn's one terminal
+  ;; landing. The token identity prevents racing worker/watchdog/cancel paths
+  ;; from publishing more than one terminal event.
   (java.util.concurrent.ConcurrentHashMap.))
 
 (defn- turn-terminal-claim-key
@@ -2312,11 +2244,8 @@
   (or (cancellation/cancellation-atom cancel-token) ::untokened-turn))
 
 (defn- current-turn-run?
-  "True when `cancel-token` belongs to the turn's LIVE run. `re-queue-turn!` is
-   the only thing that drops a turn's `:cancel-token`, so a worker that thaws
-   after its run was re-queued fails this check and can no longer land a
-   terminal over the run that replaced it. A turn that is no longer in the
-   registry cannot pin a session, so it is treated as live."
+  "True when `cancel-token` belongs to the turn's live run. A turn removed from
+   the registry cannot pin a session and is treated as live."
   [sid tid cancel-token]
   (if-let [turn (turn-record sid tid)]
     (= (turn-terminal-claim-key cancel-token) (turn-terminal-claim-key (:cancel-token turn)))
@@ -2332,9 +2261,8 @@
    the engine unwinding and its terminal append can be overtaken: the backstop
    lands the terminal, and if the worker ever thaws its landing is a no-op.
 
-   A RETRY of the same tid is a NEW run and gets its own claim — the previous
-   run's key is CAS-replaced — because a stalled turn is re-queued under its
-   ORIGINAL id. Only the run that is current per the registry may take over."
+   A turn id is single-use. Only the run whose token is current in the registry
+   may claim its terminal."
   [sid tid cancel-token]
   (if-not (current-turn-run? sid tid cancel-token)
     false
@@ -2355,10 +2283,10 @@
             (= prev claim) false
             :else (.replace claims k prev claim)))))
 
+#_{:clj-kondo/ignore [:unused-private-var]}
 (defn- release-turn-terminal-claim!
-  "Forget `tid`'s terminal claim. Called when a turn is put BACK on the queue for
-   a retry, so the retry starts from a clean slate and the spent token is not
-   retained."
+  "Forget `tid`'s terminal claim. Used only to isolate tests; production turns are
+   single-use and are never re-queued under the same id."
   [sid tid]
   (.remove ^java.util.concurrent.ConcurrentHashMap turn-terminal-claims [sid tid])
   nil)
@@ -2457,9 +2385,9 @@
   "Land `turn.failed` for a turn nobody else finished. Claim-guarded, so it is a
    no-op the instant a real terminal exists.
 
-   Reported as a STALL-class failure (`:stalled? true`), never a user stop: the
-   backlog drains and the message this turn never ran is re-queued for the
-   automatic retry instead of being silently dropped."
+   Reported as a STALL-class failure (`:stalled? true`), never a user stop. The
+   failed request remains terminal and any distinct queued backlog is held for an
+   explicit resume."
   [sid tid cancel-token reason]
   (when (claim-turn-terminal! sid tid cancel-token)
     (tel/log! :error ["gateway: orphaned turn — landing turn.failed" tid reason])
@@ -2472,10 +2400,7 @@
                    :completed_at (System/currentTimeMillis)})
     (append-event! sid "turn.failed" (turn-terminal-payload sid tid "failed"))
     (emit-context-updated! sid)
-    (after-turn-terminal!
-      sid
-      tid
-      {:failed? true :transient? true :cancel-token cancel-token :stalled? true})
+    (after-turn-terminal! sid tid {:failed? true :cancel-token cancel-token :stalled? true})
     true))
 
 (defn- start-turn-stall-watchdog!
@@ -2806,14 +2731,10 @@
           ;; and drains the moment this worker unwinds.
           ;; A STALL force-cancel, though, is a FAILURE not a user stop — the token
           ;; is cancelled either way, so distinguish on the stall flag and drain.
-          (after-turn-terminal! sid
-                                tid
-                                {:failed? (= "failed" status)
-                                 :transient? (failure-transient? {:stalled? stalled?
-                                                                  :result result})
-                                 :cancel-token cancel-token
-                                 :stalled? stalled?
-                                 :retry-after-ms (failure-retry-after-ms {:result result})})))
+          (after-turn-terminal!
+            sid
+            tid
+            {:failed? (= "failed" status) :cancel-token cancel-token :stalled? stalled?})))
       (catch Throwable t
         (let
           [stalled?
@@ -2889,15 +2810,10 @@
                            (if user-cancel? "turn.cancelled" "turn.failed")
                            (turn-terminal-payload sid tid status))
             (emit-context-updated! sid)
-            (after-turn-terminal! sid
-                                  tid
-                                  {:failed? (not user-cancel?)
-                                   :transient? (and (not user-cancel?)
-                                                    (failure-transient? {:stalled? stalled?
-                                                                         :throwable t}))
-                                   :cancel-token cancel-token
-                                   :stalled? stalled?
-                                   :retry-after-ms (failure-retry-after-ms {:throwable t})})))))))
+            (after-turn-terminal!
+              sid
+              tid
+              {:failed? (not user-cancel?) :cancel-token cancel-token :stalled? stalled?})))))))
 
 (def ^:private WATCHDOG_CANCEL_REASONS
   "Cancel reasons that mean \"nobody ever ran this turn\", never \"the user stopped
@@ -2938,24 +2854,18 @@
                      :completed_at (System/currentTimeMillis)})
       (append-event! sid "turn.cancelled" (turn-terminal-payload sid tid "cancelled"))
       (emit-context-updated! sid)
-      (after-turn-terminal!
-        sid
-        tid
-        {:failed? false :transient? false :cancel-token cancel-token :stalled? false}))))
+      (after-turn-terminal! sid tid {:failed? false :cancel-token cancel-token :stalled? false}))))
 
 (defn- launch-turn-worker!
   [sid tid request
    {:keys [messages model reasoning-default cancel-token queued? extra-body turn-features workspace
            engine-opts attachments display-request]}]
-  ;; `turn.started` is the point of no return: from there on the turn is PUBLIC
-  ;; and `:current-turn` points at `tid`, while EVERYTHING that could finish it is
-  ;; still being wired up below. The announcement itself used to sit OUTSIDE this
+  ;; `turn.started` is the point of no return: from there on the turn is public
+  ;; and `:current-turn` points at `tid`, while everything that could finish it is
+  ;; still being wired up below. The announcement itself used to sit outside this
   ;; guard, so a throw in its fan-out — like any throw before the watchdog was
-  ;; armed — left a turn nobody runs and nobody ends. Every caller here is an HTTP
-  ;; handler or a daemon thread that swallows Throwables (the auto-resume timer
-  ;; that relaunches a re-queued turn is one), so the failure was invisible and
-  ;; the session sat on a spinner that could not even be cancelled. One try covers
-  ;; the WHOLE launch, and the watchdog is armed before the turn is announced.
+  ;; armed — left a turn nobody runs and nobody ends. One try covers the whole
+  ;; launch, and the watchdog is armed before the turn is announced.
   (try
     (let
       [stall
@@ -3068,9 +2978,9 @@
    — the wall-clock of the last USER cancel, stamped on the entry as
    `:cancel-floor` by [[drop-cancelled-backlog!]]. Such a turn was deliberately
    stopped (the user pressed Esc while it sat in the backlog) so it must NEVER
-   auto-start again, no matter which path reaches the queue: a later terminal
-   drain, an attach/resume kick, or a breaker auto-resume. This is the ONE
-   provenance gate; [[drain-next-queued!]] enforces it for every caller.
+   auto-start again, no matter which path reaches the queue: a later terminal or
+   an attach/resume kick. This is the ONE provenance gate;
+   [[drain-next-queued!]] enforces it for every caller.
 
    The floor is read from ONE entry-level key rather than scanning per-turn
    `:cancelling_at` stamps, because a STALL force-cancel stamps `:cancelling_at`
@@ -3130,9 +3040,8 @@
    THE single place a queued turn becomes running — so it is also the single
    place the cancel provenance gate lives ([[next-drainable-turn]] /
    [[left-queued-by-cancel?]]): a turn queued BEFORE the session's last user
-   cancel NEVER auto-starts. Without that gate any later terminal (a fresh turn
-   completing minutes afterwards, an attach kick, a breaker resume) resurrected
-   the stopped backlog and fired it as an uninterruptible follow-up — the
+   cancel NEVER auto-starts. Without that gate a later terminal or attach kick
+   could resurrect the stopped backlog and fire it as an uninterruptible follow-up — the
    queue-storm bug. `:force?` is the explicit user resume that deliberately
    overrides the gate."
   ([sid] (drain-next-queued! sid nil))
@@ -3223,165 +3132,32 @@
   [sid]
   (drain-next-queued! sid))
 
-(defn- terminal-failure-error
-  [{:keys [throwable result]}]
-  (or throwable (:error result) (some :error (reverse (:trace result)))))
-
-(defn- failure-transient?
-  "Classify a terminal FAILURE as transient (worth an automatic retry of the head)
-   vs terminal (held for an explicit resume). Accepts `{:stalled? :throwable
-   :result}` — one of the three, whichever the failing path carries.
-
-   The verdict comes from [[provider-error/provider-error-retryable?]], i.e. from
-   svar's classification plus the kinds vis types itself. The gateway used to keep
-   its OWN three-kind list (`:rate-limit`/`:transport`/`:stream-timeout`), which
-   drifted: a provider timeout (`:upstream-timeout` — the Bedrock/LiteLLM connect
-   timeout of issue #65) and an overloaded upstream both read as DEAD, so the card
-   was followed by a `provider_error` pause with no auto-resume and a message
-   queued behind the failure never drained — the session looked wedged."
-  [{:keys [stalled?] :as failure}]
-  (let [err (terminal-failure-error failure)]
-    (boolean (cond
-               ;; A non-retryable provider failure (quota exhausted, auth
-               ;; rejection, billing) is terminal EVEN when it surfaced as a
-               ;; stall. Re-queuing it indefinitely is what spun sessions
-               ;; through dozens of identical turns after credits ran out —
-               ;; the gateway re-queued the same doomed request forever.
-               (and (some? err)
-                    (provider-error/provider-failure? err)
-                    (not (provider-error/provider-error-retryable? err)))
-               false
-               stalled? true
-               (nil? err) false
-               :else (or (and (instance? Throwable err) (provider-error/transport-throwable? err))
-                         (provider-error/provider-error-retryable? err))))))
-
 (defn- count-queued [entry] (count (filter #(= "queued" (:status %)) (vals (:turns entry)))))
-
-(defn- failure-retry-after-ms
-  "Best-effort provider Retry-After, in ms, for a transient failure — read from an
-   explicit `:retry-after-ms`/`:retry_after_ms` on the error data, or a numeric
-   `retry_after`/`retryAfter` (seconds) in the provider's JSON error body. nil when
-   absent (the caller falls back to the fixed backoff). Header-level Retry-After is
-   not surfaced by the provider layer today, so the error data/body is the only
-   source. Accepts `{:throwable :result}` — whichever the failing path carries."
-  [{:keys [throwable result]}]
-  (let
-    [err
-     (terminal-failure-error {:throwable throwable :result result})
-
-     data
-     (or (:data err) (ex-data err) err)
-
-     direct
-     (or (:retry-after-ms data) (:retry_after_ms data))
-
-     body
-     (some-> (:body data)
-             str)
-
-     secs
-     (when body
-       (some-> (re-find #"(?i)retry[_-]?after\"?\s*[:=]\s*\"?(\d+(?:\.\d+)?)" body)
-               second
-               parse-double))]
-
-    (cond direct (long direct)
-          secs (long (* 1000.0 (double secs)))
-          :else nil)))
-
-(defn- re-queue-turn!
-  "Reset a just-FAILED turn back to QUEUED at the head of `sid`'s backlog so a
-   transient failure RETRIES the same message rather than advancing past it (and
-   losing it). Clears stale failure fields AND the spent cancellation token: the
-   stall watchdog cancels that token to unwind the worker, so carrying it into
-   `drain-next-queued!` would make every retry start already cancelled. The tid
-   keeps its original front slot in `:turn-order`, so `next-drainable-turn`
-   re-selects it ahead of the rest of the backlog. No-op when the turn is gone."
-  [sid tid]
-  ;; The retry is a NEW run of this tid and must be able to land its own
-  ;; terminal; the previous run's claim would otherwise gag it forever.
-  (release-turn-terminal-claim! sid tid)
-  (update-session!
-    sid
-    (fn [entry]
-      (if (and entry (get-in entry [:turns tid]))
-        (update-in
-          entry
-          [:turns tid]
-          (fn [turn]
-            (->
-              turn
-              (dissoc :content :error :eval :completed_at :duration_ms :cancel-token :cancelling_at)
-              (assoc :status "queued"
-                     :queued_at (System/currentTimeMillis)))))
-        entry))))
-
-(defn- schedule-auto-resume!
-  "After `delay-ms`, auto-resume `sid` IFF it is STILL paused at the same
-   `gen`. Any newer failure or explicit resume bumps `:queue-paused :gen`, so
-   this timer becomes a no-op — no double drain, no resurrecting a stale pause."
-  [sid gen delay-ms]
-  (future (let [d (long delay-ms)]
-            (try (Thread/sleep (max 0 d)) (catch InterruptedException _ nil)))
-          (when (= gen (get-in (session-entry sid) [:queue-paused :gen]))
-            (resume-queue! sid {:auto? true}))))
-
 (defn- pause-queue!
-  "Hold `sid`'s queued backlog after a FAILURE instead of cascading the next
-   message into a sick provider. Bumps the consecutive-failure counter, stamps a
-   `:queue-paused` marker, emits `queue.paused`, and — for a TRANSIENT failure —
-   schedules ONE auto-resume, honouring a provider `retry-after-ms` when present
-   (clamped by [[queue-retry-after-cap-ms]]), else the exponential backoff. At/above
-   [[queue-breaker-threshold]] the breaker is OPEN: it drops the short backoff and
-   probes once per [[queue-halfopen-probe-ms]] so a lasting outage still self-heals
-   without a human. A TERMINAL failure schedules nothing — it waits for a resume."
-  [sid {:keys [reason transient? retry-after-ms]}]
+  "Hold the distinct queued backlog after a failed turn. The failed turn remains
+   terminal and is never re-queued; only an explicit resume may start the next
+   user request."
+  [sid {:keys [reason]}]
   (let [captured (volatile! nil)]
-    (update-session! sid
-                     (fn [entry]
-                       (when entry
-                         (let
-                           [held (count-queued entry)
-                            fails (inc (long (:queue-fails entry 0)))
-                            gen (inc (long (get-in entry [:queue-paused :gen] 0)))]
+    (update-session!
+      sid
+      (fn [entry]
+        (when entry
+          (let [held (count-queued entry)]
+            (if (pos? (long held))
+              (let
+                [gen (inc (long (get-in entry [:queue-paused :gen] 0)))
+                 paused {:reason reason :held held :gen gen :at (System/currentTimeMillis)}]
 
-                           (vreset! captured {:held held :fails fails :gen gen})
-                           (-> entry
-                               (assoc :queue-fails fails)
-                               (assoc :queue-paused {:reason reason
-                                                     :is_transient (boolean transient?)
-                                                     :held held
-                                                     :fails fails
-                                                     :gen gen
-                                                     :at (System/currentTimeMillis)}))))))
-    (when-let [{:keys [held fails gen]} @captured]
-      (when (pos? (long held))
-        (let
-          [breaker-open? (>= (long fails) (queue-breaker-threshold))
-           backoff (queue-retry-backoff-ms)
-           delay-ms (when transient?
-                      (long
-                        (cond retry-after-ms (min (long retry-after-ms) (queue-retry-after-cap-ms))
-                              breaker-open? (queue-halfopen-probe-ms)
-                              :else (nth backoff (min (dec (long fails)) (dec (count backoff)))))))
-           retry-at (when delay-ms (+ (System/currentTimeMillis) (long delay-ms)))]
-
-          (append-event! sid
-                         "queue.paused"
-                         {:reason reason
-                          :held held
-                          :fails fails
-                          :is_transient (boolean transient?)
-                          :is_breaker_open breaker-open?
-                          :retry_at retry-at})
-          (when delay-ms (schedule-auto-resume! sid gen delay-ms)))))))
+                (vreset! captured paused)
+                (assoc entry :queue-paused paused))
+              entry)))))
+    (when-let [{:keys [held]} @captured]
+      (append-event! sid "queue.paused" {:reason reason :held held}))))
 
 (defn resume-queue!
-  "Clear a paused backlog and start its head. `:auto?` marks a breaker/backoff
-   auto-resume; an explicit (user) resume ALSO resets the consecutive-failure
-   counter so the breaker re-arms. No-op when the queue is not paused. Returns
-   the started turn, or nil."
+  "Clear a paused backlog and start its head. A failed turn is never replayed;
+   resume advances only to a distinct queued request. No-op when not paused."
   [sid {:keys [auto?]}]
   (let [was (volatile! false)]
     (update-session! sid
@@ -3389,21 +3165,15 @@
                        (when entry
                          (when (:queue-paused entry) (vreset! was true))
                          (cond-> (dissoc entry :queue-paused)
-                           ;; explicit = the user says "go": re-arm the breaker AND lift the
-                           ;; cancel floor, so the whole remaining backlog may drain, not just
-                           ;; the forced head.
                            (not auto?)
-                           (dissoc :queue-fails :cancel-floor)))))
+                           (dissoc :cancel-floor)))))
     (when @was
       (append-event! sid "queue.resumed" {:is_auto (boolean auto?)})
-      ;; An EXPLICIT (user) resume is deliberate intent, so it overrides the
-      ;; cancel provenance gate; a breaker/backoff auto-resume does not — it
-      ;; retries the head the failure re-queued (freshly stamped `:queued_at`).
       (drain-next-queued! sid {:force? (not auto?)}))))
 
 (defn queue-paused-info
-  "The live `:queue-paused` marker for `sid` (`{:reason :held :fails :gen …}`),
-   or nil when the queue is running."
+  "The live `:queue-paused` marker for `sid` (`{:reason :held :gen …}`), or nil
+   when the queue is running."
   [sid]
   (:queue-paused (session-entry sid)))
 
@@ -3464,22 +3234,13 @@
     @dropped))
 
 (defn- after-turn-terminal!
-  "Post-terminal queue decision, replacing the old blind drain-on-both-paths.
-   Clean success/suspend advances the backlog and re-arms the breaker. A TRANSIENT
-   failure RE-QUEUES the failed message at the head and PAUSES — the backoff/breaker
-   auto-resume then retries THAT same message, so a sick provider never burns the
-   backlog and no message is skipped. A TERMINAL failure (auth/bad-request) is dead:
-   it holds the REST for an explicit resume.
+  "Choose what happens after one terminal turn. Success advances the backlog.
+   Failure remains terminal and holds any distinct queued requests for explicit
+   resume; Vis never retries or replays a provider request after svar returns.
 
-   A USER CANCEL kills the pre-cancel backlog outright ([[drop-cancelled-backlog!]])
-   — stop means stop, with no ghost rows left to resurrect — and then drains only
-   what was queued AFTER the cancel (\"stop that, run THIS\"). A cancelled token is
-   NOT enough to identify one: a STALL force-cancel is a failure, and shutdown's
-   `cancel-all-running!` fires every token at once. A user stop is exactly a
-   cancelled token that is not a stall AND carries the `:cancelling_at` stamp
-   `cancel-turn!` writes; anything else cancelled drains nothing (a dying JVM must
-   not launch one more turn on its way out)."
-  [sid tid {:keys [failed? transient? cancel-token stalled? retry-after-ms]}]
+   A user cancel drops work queued before the cancel and may drain only requests
+   submitted afterward. Shutdown cancellation drains nothing."
+  [sid tid {:keys [failed? cancel-token stalled?]}]
   (let
     [cancelled?
      (cancellation/cancelled? cancel-token)
@@ -3487,10 +3248,6 @@
      user-cancel?
      (and cancelled? (not stalled?) (some? (:cancelling_at (turn-record sid tid))))
 
-     ;; A user stop is NEVER a provider failure. The worker unwinds a cancel by
-     ;; throwing, so a caller can still hand us `:failed? true`; taking that at
-     ;; face value paused the queue (`provider_error`, no auto-resume) and left
-     ;; the session frozen behind a single Esc.
      failed?
      (and failed? (not user-cancel?))
 
@@ -3510,16 +3267,10 @@
                                              (when entry
                                                (when (:queue-paused entry)
                                                  (vreset! was-paused true))
-                                               (dissoc entry :queue-fails :queue-paused))))
+                                               (dissoc entry :queue-paused))))
                           (when @was-paused (append-event! sid "queue.resumed" {:is_auto true}))
                           (drain-next-queued! sid))
-          transient? (do (re-queue-turn! sid tid)
-                         (pause-queue! sid
-                                       {:reason "provider_unhealthy"
-                                        :transient? true
-                                        :retry-after-ms retry-after-ms}))
-          (next-drainable-turn (session-entry sid) false)
-          (pause-queue! sid {:reason "provider_error" :transient? false})
+          (next-drainable-turn (session-entry sid) false) (pause-queue! sid {:reason "turn_failed"})
           :else nil)))
 
 (defn submit-turn!
@@ -3752,12 +3503,9 @@
      message
      (when sid (get-turn sid turn-id))
 
-     ;; The ROW is the primary source but is NOT durable: a transient failure is
-     ;; re-queued for the automatic retry the moment its terminal is appended,
-     ;; and `re-queue-turn!` strips `:content`/`:error` off the row for the fresh
-     ;; run. A waiter that read the row after that lost the styled failure card
-     ;; and reported a bare "turn failed", which is why the terminal event carries
-     ;; its own copy (`turn-terminal-payload`).
+     ;; The persisted row is the primary settled source. The terminal event also
+     ;; carries the failure content so a listener can render it without racing a
+     ;; registry lookup.
      blocks
      (or (not-empty (get message "content")) (not-empty (get event "content")) [])]
 

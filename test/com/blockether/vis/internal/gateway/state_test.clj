@@ -1161,62 +1161,34 @@
              (expect (= "ornith" (get (state/get-turn sid "q1") "model")))
              (finally (swap! registry dissoc sid))))))
 
-(defdescribe turn-terminal-claim-per-run-test
-             ;; A stalled turn is put back on the queue under its ORIGINAL id, so ONE tid
-             ;; can run more than once. The terminal claim used to be a permanent
-             ;; `#{[sid tid]}` entry consumed by the FIRST run, so every terminal path of
-             ;; the retry — both worker arms, the cancel hook and the 30s backstop — became
-             ;; a silent no-op: the session stayed pinned to `:current-turn`, and a user
-             ;; cancel stamped `cancelling_at` that nothing could ever clear, leaving the
-             ;; session "cancelling" for good.
-             (it
-               "grants one terminal per RUN and re-grants it to the retry"
-               (let
-                 [sid
-                  (str "terminal-claim-" (java.util.UUID/randomUUID))
+(defdescribe turn-terminal-claim-once-test
+             (it "allows exactly one terminal landing for a turn"
+                 (let
+                   [sid
+                    (str "terminal-claim-" (java.util.UUID/randomUUID))
 
-                  tid
-                  "retried"
+                    tid
+                    "one-run"
 
-                  registry
-                  @#'state/registry
+                    registry
+                    @#'state/registry
 
-                  claim!
-                  #'state/claim-turn-terminal!
+                    claim!
+                    #'state/claim-turn-terminal!
 
-                  release!
-                  #'state/release-turn-terminal-claim!
+                    release!
+                    #'state/release-turn-terminal-claim!
 
-                  first-run
-                  (cancellation/cancellation-token)
+                    token
+                    (cancellation/cancellation-token)]
 
-                  retry-run
-                  (cancellation/cancellation-token)
-
-                  live!
-                  (fn [token]
-                    (swap! registry assoc
-                      sid
-                      {:current-turn tid
-                       :turns {tid {:turn_id tid :status "running" :cancel-token token}}}))]
-
-                 (try (live! first-run)
-                      ;; one run: exactly one winner, every later path is a no-op
-                      (expect (true? (claim! sid tid first-run)))
-                      (expect (false? (claim! sid tid first-run)))
-                      ;; re-queued for a retry: `re-queue-turn!` releases the spent claim
-                      ;; and drops the spent token
-                      (release! sid tid)
-                      (swap! registry update-in [sid :turns tid] dissoc :cancel-token)
-                      ;; a worker of the SPENT run thawing now must not land on the retry
-                      (expect (false? (claim! sid tid first-run)))
-                      ;; the retry is a new run and lands its own terminal — the cancel
-                      ;; the user asked for finally has somewhere to go
-                      (live! retry-run)
-                      (expect (true? (claim! sid tid retry-run)))
-                      (expect (false? (claim! sid tid retry-run)))
-                      (expect (false? (claim! sid tid first-run)))
-                      (finally (swap! registry dissoc sid) (release! sid tid))))))
+                   (try (swap! registry assoc
+                          sid
+                          {:current-turn tid
+                           :turns {tid {:turn_id tid :status "running" :cancel-token token}}})
+                        (expect (true? (claim! sid tid token)))
+                        (expect (false? (claim! sid tid token)))
+                        (finally (swap! registry dissoc sid) (release! sid tid))))))
 
 (defdescribe
   release-session-busy-test
@@ -2049,92 +2021,11 @@
              (expect (nil? (state/running-turn-start-cursor sid)))
              (finally (reset! registry saved))))))
 
-(defdescribe
-  failure-classification-test
-  "Gateway retries must classify the structured error stored in the loop trace,
-   rather than treating every status-error result with no top-level :error as transient."
-  (it "auto-retries typed stream timeouts from the real loop result shape"
-      (let
-        [err
-         {:message "Stream semantic timeout (300000ms without model/progress event): closed"
-          :data {:type :svar.core/stream-semantic-timeout :semantic-timeout-ms 300000}}
-
-         result
-         {:status :error :trace [{:thinking "still reasoning" :error err}]}]
-
-        (expect (true? (#'state/failure-transient? {:result result})))))
-  (it "does not auto-retry terminal or unclassified failures"
-      (let
-        [auth {:message "Exceptional status code: 401"
-               :data {:status 401 :body "invalid authentication credentials"}}]
-        (expect (false? (#'state/failure-transient?
-                         {:result {:status :error :trace [{:error auth}]}})))
-        (expect (false? (#'state/failure-transient? {:result {:status :error}})))))
-  ;; Regression: a stalled turn carrying a non-retryable provider failure
-  ;; (quota exhausted, auth) was re-queued forever because `stalled?` returned
-  ;; `true` unconditionally, ignoring the terminal error underneath. After
-  ;; credits ran out, one session re-queued the same doomed request 94 times.
-  (it "a stall carrying a non-retryable provider error is terminal, not re-queued forever"
-      (let
-        [quota {:message "Exceptional status code: 429"
-                :data {:status 429
-                       :body "{\"error\":{\"message\":\"You exceeded your current quota\"}}"}}]
-        (expect (false? (#'state/failure-transient?
-                         {:stalled? true :result {:status :error :trace [{:error quota}]}})))))
-  ;; A stall with a genuinely transient error (transport, bare rate-limit)
-  ;; is still transient — only terminal provider failures break the loop.
-  (it "a stall carrying a transport error is still transient"
-      (let [transport {:message "Connection reset" :data {:status 0 :body "refused"}}]
-        (expect (true? (#'state/failure-transient?
-                        {:stalled? true :result {:status :error :trace [{:error transport}]}})))))
-  (it
-    "auto-retries a provider TIMEOUT — the wedge of issue #65"
-    (let
-      [litellm
-       (str "litellm.Timeout: BedrockException: Timeout Error - litellm.Timeout: Connection timed "
-            "out. Timeout passed=Timeout(connect=5.0, read=600.0, write=600.0, pool=600.0), time "
-            "taken=0.001 seconds. Received Model Group=claude-opus-4-8 Available Model Group "
-            "Fallbacks=None")]
-      ;; The gateway kept its own three-kind transient list, so this card was
-      ;; TERMINAL: the queue paused with `provider_error` and no auto-resume,
-      ;; and the follow-up queued behind it never drained.
-      (expect (true? (#'state/failure-transient?
-                      {:throwable (ex-info litellm {:status 408 :body litellm})})))
-      ;; Same failure once svar's router has wrapped it.
-      (expect (true? (#'state/failure-transient?
-                      {:throwable (ex-info "Provider unavailable"
-                                           {:type :svar.llm/provider-unavailable
-                                            :attempts [{:provider :bedrock
-                                                        :model "claude-opus-4-8"
-                                                        :status 408
-                                                        :reason :transient-error
-                                                        :error litellm}]})})))
-      ;; And through the loop trace shape the worker actually stores.
-      (expect (true? (#'state/failure-transient?
-                      {:result {:status :error
-                                :trace [{:error {:message litellm
-                                                 :data {:status 408 :body litellm}}}]}})))
-      ;; An overloaded upstream is an outage too, never a dead request.
-      (expect (true? (#'state/failure-transient?
-                      {:throwable (ex-info "Overloaded"
-                                           {:status 529
-                                            :body
-                                            "{\"error\":{\"type\":\"overloaded_error\"}}"})})))))
-  (it "reads Retry-After data from the failing trace entry"
-      (expect (= 2500
-                 (#'state/failure-retry-after-ms
-                  {:result {:status :error
-                            :trace [{:error {:message "rate limited"
-                                             :data {:retry-after-ms 2500}}}]}})))))
 
 (defdescribe
   queue-failure-pause-test
-  "The provider-health queue: a FAILURE with a queued backlog PAUSES instead of
-   cascading the next message into a sick provider; an explicit resume drains and
-   re-arms the breaker; clean completion advances without pausing; and three
-   straight transient failures trip the breaker (no auto-retry, waits for resume)."
   (it
-    "pauses on failure, resumes explicitly, drains cleanly, and trips the breaker"
+    "holds only later requests after a failure and resumes them explicitly"
     (let
       [sid
        "queue-pause-test"
@@ -2145,138 +2036,39 @@
        evs
        (atom [])
 
-       saved
-       (into {}
-             (for
-               [v [#'state/append-event! #'state/drain-next-queued! #'state/schedule-auto-resume!
-                   #'state/left-queued-by-cancel? #'cancellation/cancelled?]]
-               [v @v]))
-
        seed!
        (fn []
          (reset! reg {sid {:next-seq 0
                            :current-turn nil
                            :turn-order ["q1" "q2"]
-                           :turns {"q1" {:turn_id "q1" :status "queued" :queued_at 1}
+                           :turns {"q1" {:turn_id "q1" :status "failed"}
                                    "q2" {:turn_id "q2" :status "queued" :queued_at 2}}}})
-         (reset! evs []))
+         (reset! evs []))]
 
-       types
-       #(mapv first @evs)]
-
-      (try (alter-var-root #'state/append-event!
-                           (constantly (fn [_ t p & _]
-                                         (swap! evs conj [t p]))))
-           (alter-var-root #'state/drain-next-queued!
-                           (constantly (fn [_ & _]
-                                         (swap! evs conj [:drained]))))
-           (alter-var-root #'state/schedule-auto-resume!
-                           (constantly (fn [& _]
-                                         nil)))
-           (alter-var-root #'state/left-queued-by-cancel?
-                           (constantly (fn [_ _]
-                                         false)))
-           (alter-var-root #'cancellation/cancelled?
-                           (constantly (fn [_]
-                                         false)))
-           ;; a transient failure with a backlog HOLDS it — no drain
-           (seed!)
-           (#'state/after-turn-terminal!
-            sid
-            "t"
-            {:failed? true :transient? true :cancel-token :c :stalled? false})
-           (expect (= ["queue.paused"] (types)))
-           (expect (some? (state/queue-paused-info sid)))
-           ;; explicit resume emits queue.resumed then drains the head, clearing the pause
-           (reset! evs [])
-           (state/resume-queue! sid {:auto? false})
-           (expect (= ["queue.resumed" :drained] (types)))
-           (expect (nil? (state/queue-paused-info sid)))
-           ;; clean completion clears a stale provider hold before advancing
-           (seed!)
-           (swap! reg update
-             sid
-             assoc
-             :queue-fails 2
-             :queue-paused {:reason "provider_error" :held 2 :fails 2 :gen 1})
-           (#'state/after-turn-terminal!
-            sid
-            "t"
-            {:failed? false :transient? false :cancel-token :c :stalled? false})
-           (expect (= ["queue.resumed" :drained] (types)))
-           (expect (true? (get-in @evs [0 1 :is_auto])))
-           (expect (nil? (state/queue-paused-info sid)))
-           (expect (nil? (get-in @reg [sid :queue-fails])))
-           ;; three straight transient failures trip the breaker; it stays OPEN
-           (seed!)
-           (dotimes [_ 3]
-             (#'state/after-turn-terminal!
-              sid
-              "t"
-              {:failed? true :transient? true :cancel-token :c :stalled? false}))
-           (let [third (second (last @evs))]
-             (expect (= 3 (:fails third)))
-             (expect (true? (:is_breaker_open third)))
-             ;; breaker-open no longer waits forever: a half-open probe is
-             ;; scheduled so a lasting outage still self-heals when it recovers.
-             (expect (some? (:retry_at third))))
-           (finally (doseq [[v orig] saved]
-                      (alter-var-root v (constantly orig)))
-                    (swap! reg dissoc sid))))))
-
-(defdescribe
-  queue-retry-renews-cancel-token-test
-  "A stall retry must not inherit the token the watchdog cancelled to unwind the
-   failed worker. The real queue drain must mint and install a live token."
-  (it
-    "requeues with no spent token and drains with a fresh cancellable lifetime"
-    (let
-      [sid
-       "queue-retry-token-test"
-
-       tid
-       "retry-1"
-
-       reg
-       @#'state/registry
-
-       old-token
-       (cancellation/cancellation-token)
-
-       queued-after-reset
-       (atom nil)
-
-       launched
-       (atom nil)]
-
-      (cancellation/cancel! old-token)
-      (reset! reg {sid {:next-seq 0
-                        :current-turn nil
-                        :turn-order [tid]
-                        :turns {tid {:turn_id tid
-                                     :status "failed"
-                                     :request "retry me"
-                                     :messages []
-                                     :content [{:type "error"}]
-                                     :error "provider stream stalled"
-                                     :cancel-token old-token
-                                     :cancelling_at 1}}}})
-      (try (with-redefs-fn {#'state/append-event! (fn [& _]
-                                                    nil)
-                            #'state/launch-turn-worker! (fn [_ _ _ opts]
-                                                          (reset! launched opts))}
-             #(do (#'state/re-queue-turn! sid tid)
-                  (reset! queued-after-reset (get-in @reg [sid :turns tid]))
-                  (#'state/drain-next-queued! sid)))
-           (let [retry-token (:cancel-token @launched)]
-             (expect (nil? (:cancel-token @queued-after-reset)))
-             (expect (nil? (:cancelling_at @queued-after-reset)))
-             (expect (some? retry-token))
-             (expect (not (identical? old-token retry-token)))
-             (expect (false? (cancellation/cancelled? retry-token)))
-             (expect (identical? retry-token (get-in @reg [sid :turns tid :cancel-token])))
-             (expect (= "running" (get-in @reg [sid :turns tid :status]))))
+      (try (with-redefs-fn {#'state/append-event! (fn [_ type payload & _]
+                                                    (swap! evs conj [type payload]))
+                            #'state/drain-next-queued! (fn [_ & _]
+                                                         (swap! evs conj [:drained nil]))
+                            #'state/left-queued-by-cancel? (fn [_ _]
+                                                             false)
+                            #'cancellation/cancelled? (fn [_]
+                                                        false)}
+             (fn []
+               (seed!)
+               (#'state/after-turn-terminal!
+                sid
+                "q1"
+                {:failed? true :cancel-token :token :stalled? false})
+               (expect (= [["queue.paused" {:reason "turn_failed" :held 1}]] @evs))
+               (expect (= "failed" (get-in @reg [sid :turns "q1" :status])))
+               (expect (= "queued" (get-in @reg [sid :turns "q2" :status])))
+               (expect (some? (state/queue-paused-info sid)))
+               (reset! evs [])
+               (state/resume-queue! sid {:auto? false})
+               (expect (= ["queue.resumed" :drained] (mapv first @evs)))
+               (expect (nil? (state/queue-paused-info sid)))))
            (finally (swap! reg dissoc sid))))))
+
 
 (defdescribe gateway-resource-bounds-test
              (it "retains only the configured replay tail"
@@ -3304,51 +3096,15 @@
            (expect (ifn? (:land @armed)))
            (finally (swap! registry dissoc sid))))))
 
-(defdescribe
-  turn-restart-keeps-journal-test
-  ;; Regression, issue #105: EVERY `turn.started` published with
-  ;; `:truncate? true`, and a stalled or transiently failed turn is re-queued
-  ;; under its ORIGINAL id. The relaunch therefore wiped the journal that held
-  ;; the first run's terminal, so a client attaching afterwards replayed a turn
-  ;; that had started and never ended — the session read as permanently busy.
-  (it "truncates the mirrored journal on a turn's FIRST start only"
-      (let
-        [sid
-         (str "turn-restart-" (java.util.UUID/randomUUID))
-
-         tid
-         "relaunched"
-
-         registry
-         @#'state/registry
-
-         published
-         (atom [])]
-
-        (try (swap! registry assoc
-               sid
-               (assoc (#'state/fresh-entry sid) :turns {tid {:turn_id tid :status "running"}}))
-             (with-redefs-fn {#'bus/publish! (fn [_sid _event opts]
-                                               (swap! published conj (boolean (:truncate? opts))))}
-               (fn []
-                 (#'state/append-event! sid "turn.started" {:turn_id tid})
-                 (#'state/append-event! sid "turn.completed" {:turn_id tid})
-                 ;; the stall retry: same tid, second launch
-                 (#'state/append-event! sid "turn.started" {:turn_id tid})))
-             (expect (= [true false false] @published))
-             (finally (swap! registry dissoc sid))))))
 
 (defdescribe
-  stall-force-cancel-requeues-test
-  ;; Regression, issue #105: a stall force-cancel has TWO landing paths racing on
-  ;; the same grace, and only the watchdog's own knew it was a stall. When the
-  ;; backstop (or the launch's cancel hook) won, the turn landed `turn.cancelled`
-  ;; — cancelled but neither stalled nor stopped by the user — which drains
-  ;; nothing, re-queues nothing and pauses nothing: the request was silently
-  ;; dropped and every later message sat `queued` behind a session with no current
-  ;; turn, permanently, however many times it was re-sent.
+  stall-force-cancel-does-not-replay-test
+  ;; Regression, issue #105: a watchdog cancellation used to mark the turn failed,
+  ;; then re-queue and auto-resume that same user request. One provider failure
+  ;; therefore appeared as a duplicate user bubble and triggered another provider
+  ;; call without any new user action.
   (it
-    "lands a stall-class failure and re-queues the message the turn never ran"
+    "lands the stall once and holds later queued work without replaying it"
     (let
       [sid
        (str "stall-backstop-" (java.util.UUID/randomUUID))
@@ -3378,20 +3134,17 @@
                                                     nil)
                             #'state/emit-context-updated! (fn [_sid]
                                                             nil)
-                            #'state/schedule-auto-resume! (fn [& _]
-                                                            nil)
                             #'state/launch-turn-worker! (fn [_sid tid & _]
                                                           (swap! launched conj tid)
                                                           nil)}
              (fn []
                (#'state/cancel-waiting-turn! sid "t1" token)))
-           ;; a watchdog force-cancel is a FAILURE, never a user stop
+           ;; A watchdog force-cancel is one terminal failure, never a replay.
            (expect (= ["turn.failed" "queue.paused"] @events))
-           ;; and the message it never ran is back on the queue for the retry
-           (expect (= "queued" (get-in @registry [sid :turns "t1" :status])))
+           (expect (= "failed" (get-in @registry [sid :turns "t1" :status])))
            (expect (= "one" (get-in @registry [sid :turns "t1" :request])))
            (expect (some? (get-in @registry [sid :queue-paused])))
-           ;; the backlog is HELD for the auto-resume, not drained past t1
+           ;; The later, distinct request is held for an explicit resume.
            (expect (= [] @launched))
            (expect (= "queued" (get-in @registry [sid :turns "t2" :status])))
            (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid "t1"))))))
@@ -3442,22 +3195,21 @@
 ;; Regression: a GitHub-Copilot turn stalled 123507ms in `:provider-call`, landed its
 ;; styled stall card, and the gateway re-queued it for the automatic retry — after
 ;; which the blocking submit result came back as a bare `ERROR: turn failed` with no
-;; blocks at all, because `re-queue-turn!` strips `:content`/`:error` off the very row
-;; `terminal-event->result` reads while the waiter is still on that terminal event.
+;; Regression: a terminal event must carry its own styled failure content so a
+;; blocking submit can settle from that event without a separate registry read.
 (defdescribe
-  terminal-event-survives-retry-requeue-test
+  terminal-event-settled-failure-test
   (it
-    "keeps the settled failure card after the turn was re-queued for a retry"
+    "returns the settled failure card from the terminal turn"
     (let
       [sid
-       (str "terminal-requeue-" (java.util.UUID/randomUUID))
+       (str "terminal-failure-" (java.util.UUID/randomUUID))
 
        tid
        "t-stalled"
 
        reason
-       (str "Provider stream stalled: no output at all for 123507ms since the"
-            " turn started, in phase :provider-call")
+       "Provider stream stalled: no output"
 
        registry
        @#'state/registry]
@@ -3482,21 +3234,12 @@
                              :type "turn.failed"
                              :session_id sid))
 
-              block-message
-              (fn [m]
-                (some-> (first (get m "content"))
-                        (get "message")))]
+              result
+              (#'state/terminal-event->result event tid)]
 
-             ;; the terminal event describes the failure ON ITS OWN
-             (expect (= reason (get event "error")))
-             (expect (= reason (block-message event)))
-             ;; the automatic retry wipes the row the waiter would read
-             (#'state/re-queue-turn! sid tid)
-             (expect (= "queued" (:status (get-in @registry [sid :turns tid]))))
-             (let [result (#'state/terminal-event->result event tid)]
-               (expect (= reason (get result "error")))
-               (expect (= 1 (count (get result "content"))))
-               (expect (= reason (block-message result)))))
+             (expect (= reason (get result "error")))
+             (expect (= 1 (count (get result "content"))))
+             (expect (= "failed" (:status (get-in @registry [sid :turns tid])))))
            (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid tid))))))
 
 (defdescribe

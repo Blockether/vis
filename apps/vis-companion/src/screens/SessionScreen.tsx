@@ -2791,12 +2791,8 @@ export function SessionScreen({
             break;
           case "queue.paused":
             setQueuePaused({
-              reason: stringField(event, "reason") || "provider_unhealthy",
+              reason: stringField(event, "reason") || "turn_failed",
               held: Number(event.held ?? 0),
-              fails: Number(event.fails ?? 0),
-              isTransient: event.is_transient !== false,
-              isBreakerOpen: event.is_breaker_open === true,
-              retryAt: event.retry_at != null ? Number(event.retry_at) : null,
             });
             break;
           case "queue.resumed":
@@ -4586,17 +4582,9 @@ export function SessionScreen({
                 className="size-1.5 shrink-0 bg-warn-strong"
                 aria-hidden="true"
               />
-              <span className="font-bold text-warn-strong">
-                {queuePaused.isBreakerOpen
-                  ? "Provider unhealthy"
-                  : "Queue paused"}
-              </span>
+              <span className="font-bold text-warn-strong">Queue paused</span>
               <span className="min-w-0 flex-1 truncate">
-                {queuePaused.held} held ·{" "}
-                {queuePaused.reason.replace(/_/g, " ")}
-                {queuePaused.fails > 0
-                  ? ` · ${queuePaused.fails} fail${queuePaused.fails > 1 ? "s" : ""}`
-                  : ""}
+                {queuePaused.held} held · {queuePaused.reason.replace(/_/g, " ")}
               </span>
               <button
                 type="button"
@@ -4610,7 +4598,7 @@ export function SessionScreen({
                     .finally(() => setResumingQueue(false));
                 }}
               >
-                {resumingQueue ? "Retrying…" : "Retry now"}
+                {resumingQueue ? "Continuing…" : "Continue queue"}
               </button>
             </div>
           )}

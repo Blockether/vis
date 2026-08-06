@@ -42,8 +42,8 @@
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
-  (:import [java.util.concurrent CancellationException ExecutionException ExecutorService Future
-            SynchronousQueue ThreadFactory ThreadPoolExecutor TimeUnit]
+  (:import [java.util.concurrent ExecutionException ExecutorService Future SynchronousQueue
+            ThreadFactory ThreadPoolExecutor TimeUnit]
            [java.util.concurrent.atomic AtomicLong]
            [org.graalvm.polyglot Context Value]))
 
@@ -197,258 +197,30 @@
 (defn- format-exception
   [^Throwable t & [{:keys [context]}]]
   (merge (format-exception-short t) {:data (ex-data t) :context context}))
-
-(defn- interrupted-cause?
-  [^Throwable t]
-  (boolean (some (fn [^Throwable x]
-                   (or (instance? InterruptedException x)
-                       (instance? CancellationException x)
-                       (= "java.lang.InterruptedException" (ex-message x))))
-                 (throwable-chain t))))
-
-(def ^:private PROVIDER_INTERRUPT_RETRIES 1)
-
-(def ^:private PROVIDER_STREAM_REWIND_RETRIES 3)
-
-(def ^:private CONSECUTIVE_PROVIDER_ERROR_LIMIT
-  "Circuit breaker for the iteration loop: after this many CONSECUTIVE
-   provider-generate failures (e.g. :svar.llm/empty-content that survived
-   svar's in-call same-model re-sends) the turn fails fast as a provider error
-   instead of burning the whole iteration budget re-sending the same request
-   (session burned 15/15 iterations on identical empty-content failures).
-   Any successful iteration or non-provider error resets the streak."
-  3)
-
 (def ^:private CONSECUTIVE_EMPTY_REPLY_LIMIT
-  "Circuit breaker for EMPTY replies — a turn where the model returns a clean
-   stop (Anthropic `end_turn` / OpenAI `stop`) with no text and no tool call.
-   svar treats a clean-stop empty as a LEGITIMATE completion, not an error
-   (`empty-reply-anomaly-type`), so these no longer surface as provider errors
-   nor feed `CONSECUTIVE_PROVIDER_ERROR_LIMIT`. We still auto-continue (re-invoke)
-   so a mid-task thinking-only blip recovers, but cap consecutive empties here so
-   a model that keeps \"finishing\" with nothing finalizes on its best sticky
-   answer instead of spinning the whole iteration budget. Any non-empty iteration
-   resets the streak."
+  "Maximum consecutive clean-stop replies with no text or tool call. Svar treats
+   those as legitimate completions, so Vis may continue a thinking-only blip, but
+   caps the sequence to avoid consuming the full iteration budget without output."
   3)
-
-(defn- next-provider-error-streak
-  "Next consecutive provider-generate failure count. Increments only when the
-   iteration error is :llm-provider/generate (model produced no usable
-   content); any other error kind resets to 0 - those are RLM-correctable."
-  [prev-streak llm-provider-error]
-  (if (= :llm-provider/generate (:phase llm-provider-error)) (inc (long (or prev-streak 0))) 0))
-
-(defn- provider-error-breaker-tripped?
-  "True when the consecutive provider-generate failure streak has reached
-   CONSECUTIVE_PROVIDER_ERROR_LIMIT - the iteration loop fails the turn fast
-   instead of re-sending the same doomed request."
-  [streak]
-  (>= (long streak) (long CONSECUTIVE_PROVIDER_ERROR_LIMIT)))
-
-(def ^:private MAX_PROVIDER_UNAVAILABLE_RETRIES
-  "Transparent retries for svar's terminal `:svar.llm/provider-unavailable`
-   when the provider DID reach the HTTP layer (a transient 5xx svar gave up
-   on). A provider-SIDE fault: re-send the SAME request a few times (widening
-   backoff) then end the turn with the provider-error card so the user can hop
-   providers — which, for a genuine upstream fault, actually helps.
-   3 retries = 4 total attempts.
-
-   A CONNECT-LEVEL provider-unavailable (`:status` nil — ConnectException /
-   DNS / connect-timeout) is deliberately EXCLUDED from this retry (see
-   `provider-unavailable-retry?`): SVAR owns that decision. svar health-gates
-   the ride-out — it retries a host it has proven reachable and FAST-FAILS a
-   host that never connected (dead endpoint / wrong port). Stacking a blanket
-   vis retry on top would re-slow the very dead-endpoint case svar fast-fails,
-   so vis surfaces the card immediately and lets svar's decision stand."
-  3)
-
-(def ^:private PROVIDER_UNAVAILABLE_RETRY_DELAYS_MS
-  "Widening backoff (ms) before each provider-5xx retry, indexed by attempt.
-   A momentary upstream outage realistically takes a few seconds to clear, so
-   the delay grows 1s -> 2s -> 4s rather than re-hitting the same blip on a
-   fixed cadence."
-  [1000 2000 4000])
-
-(defn- provider-unavailable-error?
-  "True when an exception is svar's terminal `:svar.llm/provider-unavailable`
-   (a single-provider turn whose upstream call failed before any usable
-   response). Retry-able (provider 5xx only), then terminal."
-  [^Throwable e]
-  (= :svar.llm/provider-unavailable (:type (ex-data e))))
-
-(defn- provider-unavailable-retry?
-  "True while a terminal provider-unavailable represents an HTTP 5xx and still
-   has retry budget left (`pu-attempt` below the cap). 4xx responses, especially
-   429, are terminal here: svar has already applied its rate-limit policy, so a
-   Vis retry would stack a second retry ladder on top of it. Connect-level PU
-   (`:status` nil) is likewise excluded; svar already decided it."
-  [^Throwable e pu-attempt]
-  (let [status (:status (ex-data e))]
-    (and (provider-unavailable-error? e)
-         (integer? status)
-         (<= 500 (long status) 599)
-         (< (long pu-attempt) (long MAX_PROVIDER_UNAVAILABLE_RETRIES)))))
-
-(defn- provider-unavailable-retry-delay-ms
-  "Widening backoff (ms) before the `pu-attempt`-th (0-based) provider-unavailable
-   retry; clamps past the vector's end to its final value (4000)."
-  [pu-attempt]
-  (long (nth PROVIDER_UNAVAILABLE_RETRY_DELAYS_MS pu-attempt 4000)))
-
 (defn- next-retry-counters
-  "Pure counter-threading for the iteration retry loop's recur arms. Given the
-   retry decision `result` and the current `:attempt`/`:max-tokens-attempt`/
-   `:pu-attempt`, returns the next `[attempt max-tokens-attempt pu-attempt]` with
-   ONLY the budget owned by that retry class advanced — the others stay flat so
-   the policies never starve each other (provider-unavailable's 1s→2s→4s backoff
-   always starts at pu-attempt=0 no matter how many stream/auth retries preceded
-   it). Returns nil when `result` is not a retry signal (a real iteration result)."
-  [result
-   {:keys [attempt max-tokens-attempt pu-attempt]
-    :or {attempt 0 max-tokens-attempt 0 pu-attempt 0}}]
+  "Pure counter-threading for retry policies Vis still owns: context overflow,
+   max-token recovery, and auth refresh/fallback. Provider transport and
+   availability are deliberately absent: svar owns those retries and returns one
+   terminal result to Vis. Returns nil for a real iteration result."
+  [result {:keys [attempt max-tokens-attempt] :or {attempt 0 max-tokens-attempt 0}}]
   (let
     [attempt
      (long attempt)
 
      max-tokens-attempt
-     (long max-tokens-attempt)
+     (long max-tokens-attempt)]
 
-     pu-attempt
-     (long pu-attempt)]
-
-    (cond (= result ::retry-stream) [(inc attempt) max-tokens-attempt pu-attempt]
-          (= result ::retry-context-overflow) [attempt max-tokens-attempt pu-attempt]
-          (= result ::retry-provider-unavailable) [attempt max-tokens-attempt (inc pu-attempt)]
-          (and (map? result) (contains? result ::retry-max-tokens))
-          [attempt (inc max-tokens-attempt) pu-attempt]
-          (and (map? result) (contains? result ::retry-auth-fallback)) [attempt max-tokens-attempt
-                                                                        pu-attempt]
-          (= result ::retry-auth-refresh) [(inc attempt) max-tokens-attempt pu-attempt]
-          (= result ::retry-auth-backoff) [(inc attempt) max-tokens-attempt pu-attempt])))
-
-(def ^:private PROVIDER_STREAM_REWIND_DELAYS_MS [1000 2000 4000])
-
-(defn- provider-call-cancelled?
-  "True when the in-flight provider call was cancelled by the user.
-
-   Reads TWO signals because on Esc they race:
-     1. `:cancel-atom` - the cooperative flag `vis/cancel!` flips.
-     2. the worker thread's own interrupt status - set synchronously when
-        the SSE read is aborted / the worker future is interrupted.
-
-   The interrupt (2) can land BEFORE the atom write (1) becomes visible, so
-   reading the atom alone yields a false negative and a genuine user Esc gets
-   misclassified as a retryable spurious blip (issue #13). A real cancel
-   leaves the thread interrupted; a spurious TTFT-watchdog blip surfaces as a
-   NAKED InterruptedException (interrupt flag clear), so consulting the thread
-   status closes the race without suppressing the legitimate retry."
-  [environment]
-  (or (boolean (some-> environment
-                       :cancel-atom
-                       deref))
-      (.isInterrupted (Thread/currentThread))))
-
-(def ^:private INTERRUPT_RETRY_MAX_ELAPSED_MS
-  "Ceiling on how long a provider call may have run and still have its interrupt
-   treated as a retryable spurious blip. svar's TTFT watchdog (300s, see
-   `rt/ASK_CODE_TTFT_TIMEOUT_MS`) can surface a naked `InterruptedException` on a
-   cold-start / queue spike — worth ONE retry.
-   But an interrupt that lands well AFTER the TTFT budget is svar's idle/semantic
-   watchdog firing on a genuinely wedged stream: the provider already got its full
-   budget, so retrying just RESETS every stall clock and doubles the wall-clock
-   hang (2×semantic = 10min) before the failure finally surfaces — and it surfaces
-   as a bare interrupt that reads downstream like an Esc cancel. Past this ceiling
-   we do NOT retry; let the timeout propagate as a real error fast."
-  (+ (long rt/ASK_CODE_TTFT_TIMEOUT_MS) 30000))
-
-(defn- retryable-provider-interrupt?
-  "True for provider-thread interrupts that were not caused by Vis user cancel
-   AND arrived early enough to be a spurious blip rather than a stream-watchdog
-   timeout. svar's TTFT watchdog currently can surface as a naked
-   InterruptedException; retry once instead of letting router treat it like Esc
-   cancellation — but only when the call had not already burned past the TTFT
-   budget (see [[INTERRUPT_RETRY_MAX_ELAPSED_MS]]), so a genuinely stalled stream
-   fails fast instead of being re-sent into another multi-minute wedge."
-  [^Throwable t environment elapsed-ms]
-  (and (interrupted-cause? t)
-       (not (provider-call-cancelled? environment))
-       (< (long elapsed-ms) (long INTERRUPT_RETRY_MAX_ELAPSED_MS))))
-
-(defn- call-provider-with-interrupt-retry!
-  [environment iteration-position f]
-  (loop [attempt 0]
-    (let
-      [start-ns (System/nanoTime)
-       outcome (try {:ok? true :value (f)} (catch Throwable t {:ok? false :throwable t}))]
-
-      (if (:ok? outcome)
-        (:value outcome)
-        (let
-          [t (:throwable outcome)
-           elapsed-ms (long (/ (- (System/nanoTime) start-ns) 1000000))]
-
-          (if (and (< (long attempt) (long PROVIDER_INTERRUPT_RETRIES))
-                   (retryable-provider-interrupt? t environment elapsed-ms))
-            (do
-              ;; Router restores interrupt status before rethrowing. Clear it
-              ;; before retry or next HTTP call can fail immediately.
-              (Thread/interrupted)
-              (tel/log! {:level :warn
-                         :data (assoc (format-exception-short t)
-                                 :iteration iteration-position
-                                 :attempt (inc attempt)
-                                 :elapsed-ms elapsed-ms
-                                 :max-retries PROVIDER_INTERRUPT_RETRIES
-                                 :cancelled? (provider-call-cancelled? environment))}
-                        "Provider call interrupted without user cancel; retrying")
-              (recur (inc attempt)))
-            (throw t)))))))
-
-(defn- stream-transport-error?
-  [^Throwable t]
-  (let
-    [data
-     (ex-data t)
-
-     msg-lower
-     (str/lower-case (or (ex-message t) ""))
-
-     cause
-     (ex-cause t)
-
-     cause-lower
-     (str/lower-case (or (some-> cause
-                                 ex-message)
-                         ""))]
-
-    (and (= :svar.core/http-error (:type data))
-         (:stream? data)
-         (not (interrupted-cause? t))
-         (or (str/includes? msg-lower "stream connection error")
-             (str/includes? msg-lower "connection reset")
-             (str/includes? msg-lower "connection closed")
-             (str/includes? msg-lower "closed")
-             (str/includes? msg-lower "eof")
-             (str/includes? msg-lower "timed out")
-             ;; the wrapper socket died before any response bytes arrived (e.g.
-             ;; "HTTP/1.1 header parser received no bytes") — a transient blip, retry.
-             (str/includes? msg-lower "received no bytes")
-             (str/includes? msg-lower "header parser")
-             (str/includes? msg-lower "no bytes")
-             ;; transient TLS blip — the server tore down the connection mid-handshake
-             ;; (javax.net.ssl.SSLHandshakeException "Remote host terminated the
-             ;; handshake"); retry / fall back instead of failing the turn.
-             (str/includes? msg-lower "handshake")
-             (str/includes? cause-lower "connection reset")
-             (str/includes? cause-lower "connection closed")
-             (str/includes? cause-lower "closed")
-             (str/includes? cause-lower "eof")
-             (str/includes? cause-lower "timed out")
-             (str/includes? cause-lower "received no bytes")
-             (str/includes? cause-lower "header parser")
-             (str/includes? cause-lower "no bytes")
-             (str/includes? cause-lower "handshake")))))
-
+    (cond (= result ::retry-context-overflow) [attempt max-tokens-attempt]
+          (and (map? result) (contains? result ::retry-max-tokens)) [attempt
+                                                                     (inc max-tokens-attempt)]
+          (and (map? result) (contains? result ::retry-auth-fallback)) [attempt max-tokens-attempt]
+          (= result ::retry-auth-refresh) [(inc attempt) max-tokens-attempt]
+          (= result ::retry-auth-backoff) [(inc attempt) max-tokens-attempt])))
 (defn- provider-retry-event
   [{:keys [provider model reason attempt delay-ms error status]}]
   (cond->
@@ -555,75 +327,6 @@
   (if (seq retry-events)
     (update result :routed/trace #(vec (concat retry-events (or % []))))
     result))
-
-(defn- add-routing-trace-to-ex
-  [^Throwable t retry-events]
-  (if (seq retry-events)
-    (ex-info (ex-message t)
-             (update (or (ex-data t) {}) :routed/trace #(vec (concat retry-events (or % []))))
-             t)
-    t))
-
-(defn- call-provider-with-stream-rewind-retry!
-  "Retry provider-stream transport failures at Vis level. This wrapper owns
-   UI rewind because svar cannot retract chunks it already delivered through
-   on-chunk. Safe boundary: wraps only the provider call, before response parse
-   and before any Python/tool eval."
-  [environment {:keys [iteration-position provider model on-chunk reset-stream-state!]} f]
-  (loop
-    [attempt
-     0
-
-     retry-events
-     []]
-
-    (let [outcome (try {:ok? true :value (f)} (catch Throwable t {:ok? false :throwable t}))]
-      (if (:ok? outcome)
-        (prepend-routing-trace (:value outcome) retry-events)
-        (let
-          [t (:throwable outcome)
-           can-retry? (and (< (long attempt) (long PROVIDER_STREAM_REWIND_RETRIES))
-                           (not (provider-call-cancelled? environment))
-                           ;; `stream-transport-error?` covers MID-stream drops (chunks
-                           ;; delivered, needs the UI rewind); `perr/transport-throwable?`
-                           ;; covers PRE-response connection failures (no bytes / reset /
-                           ;; refused / DNS / TLS) that never started a stream — the safest,
-                           ;; most idempotent retry, and the case the old `:stream?` gate
-                           ;; silently dropped even while telling the user "just retry".
-                           ;; `:svar.llm/empty-content` and stream watchdog timeouts are
-                           ;; deliberately NOT here: svar owns their bounded same-provider
-                           ;; policy, so retrying again here would stack retry ladders.
-                           (or (stream-transport-error? t) (perr/transport-throwable? t)))]
-
-          (if can-retry?
-            (let
-              [delay-ms (long (nth PROVIDER_STREAM_REWIND_DELAYS_MS attempt 2000))
-               chunk (provider-retry-progress-chunk iteration-position
-                                                    t
-                                                    {:provider provider
-                                                     :model model
-                                                     :reason :stream-connection-error
-                                                     :attempt (inc attempt)
-                                                     :max-retries PROVIDER_STREAM_REWIND_RETRIES
-                                                     :delay-ms delay-ms})
-               event (:event chunk)]
-
-              (reset-stream-state!)
-              (when on-chunk (on-chunk chunk))
-              (tel/log! {:level :warn
-                         :data (assoc (format-exception-short t)
-                                 :iteration iteration-position
-                                 :attempt (inc attempt)
-                                 :max-retries PROVIDER_STREAM_REWIND_RETRIES
-                                 :delay-ms delay-ms
-                                 :provider provider
-                                 :model model
-                                 :rewind? true)}
-                        "Provider stream failed after live output; rewinding progress and retrying")
-              (when (pos? delay-ms) (Thread/sleep delay-ms))
-              (recur (inc attempt) (conj retry-events event)))
-            (throw (add-routing-trace-to-ex t retry-events))))))))
-
 ;; ---------------------------------------------------------------------------
 
 (defn- log-stage-level
@@ -1333,34 +1036,13 @@
   [ex-data-map]
   (contains? INFRASTRUCTURE_ERROR_TYPES (:type ex-data-map)))
 
-(def ^:private NON_CORRECTABLE_PROVIDER_KINDS
-  "Provider failure kinds the MODEL cannot fix by trying again inside the turn.
-
-   The iteration catch feeds a non-fatal error back as a synthetic user message
-   so the model can self-correct (bad tool args, malformed code, a schema the
-   provider rejected). That contract is meaningless for a 429 / 401 / spend cap:
-   the request never reached the model, nothing about the conversation is wrong,
-   and the feedback message is itself another billed request to the SAME provider
-   that just refused. Observed live as the reported 'it asks and answers twice'
-   — three question/answer pairs against a rate-limited provider before
-   `CONSECUTIVE_PROVIDER_ERROR_LIMIT` finally ended the turn.
-
-   In-call recovery (auth refresh, stream retry, max-tokens bump, provider
-   fallback) has ALREADY run by the time an exception escapes to the loop, so an
-   error of these kinds is terminal by construction: fail the turn once, with the
-   styled provider card, and let the user retry or switch provider."
-  #{:rate-limit :auth :billing :anthropic-extra-usage :resource-mismatch :output-budget-too-small})
-
 (defn- non-correctable-provider-error?
-  "True when this provider failure, or a bounded cause, has a kind in
-   `NON_CORRECTABLE_PROVIDER_KINDS`. HTTP clients commonly wrap the typed
-   provider exception; classifying only the outer exception would re-prompt a
-   provider that has already rejected the request."
+  "True when a provider failure escaped svar. Svar has already classified it and
+   exhausted every retry/fallback policy it owns, so feeding it back to the model
+   would issue a second provider request from Vis. HTTP clients may wrap the typed
+   exception, so inspect bounded causes without reclassifying the error here."
   [^Throwable e]
-  (boolean (some (fn [^Throwable cause]
-                   (and (perr/provider-failure? cause)
-                        (contains? NON_CORRECTABLE_PROVIDER_KINDS
-                                   (perr/provider-error-kind cause))))
+  (boolean (some perr/provider-failure?
                  (->> (iterate #(.getCause ^Throwable %) e)
                       (take-while some?)
                       (take 8)))))
@@ -1374,11 +1056,9 @@
   "True for a failure the USER must fix outside the conversation.
 
    `:vis/user-error` marks exactly that class: an unset `${API_KEY}` env var,
-   a router with no usable provider, a bad CLI/config value. The model cannot
-   export a shell variable, so feeding such an error back as a synthetic user
-   message just replays the identical failure `CONSECUTIVE_PROVIDER_ERROR_LIMIT`
-   times before the turn dies anyway — the reported 'it asks and answers twice'
-   with nothing to show for it. Fail once, with the actionable message intact."
+   a router with no usable provider, or a bad CLI/config value. The model cannot
+   repair any of those inside the conversation, so fail once with the actionable
+   message intact."
   [^Throwable e ex-data-map]
   (boolean (or (user-error-data? ex-data-map)
                (some user-error-data?
@@ -5946,20 +5626,9 @@
                         [svar-llm/*log-context* (assoc svar-llm/*log-context*
                                                   :session-turn-id (:environment-id environment)
                                                   :iteration iteration-position)]
-                        (call-provider-with-stream-rewind-retry!
-                          environment
-                          {:iteration-position iteration-position
-                           :provider (some-> (:provider resolved-model)
-                                             name)
-                           :model (some-> (:name resolved-model)
-                                          str)
-                           :on-chunk on-chunk
-                           :reset-stream-state! reset-stream-state!}
-                          #(call-provider-with-interrupt-retry!
-                             environment
-                             iteration-position
-                             (fn []
-                               (svar/ask-code! (:router environment) ask-opts)))))
+                        ;; Svar is the single owner of provider classification and retries.
+                        ;; Once this call returns or throws, Vis must not issue it again.
+                        (svar/ask-code! (:router environment) ask-opts))
        ask-result (prepend-routing-trace ask-result-raw @empty-reply-resend-events)
        code-observation (ask-code-block-observation ask-result)
        provider-duration-ms (elapsed-ms provider-start-ns)
@@ -6588,20 +6257,6 @@
   (let [data (:data err)]
     (and (= :svar.core/stream-incomplete (:type data))
          (= "max_output_tokens" (str (:reason data))))))
-
-(def ^:private stream-truncated-types
-  "Error types that indicate the provider dropped the SSE stream before
-   emitting content or the terminal `[DONE]` marker. These are transient
-   server-side failures — the model never saw the request fail, so
-   retrying the identical call is safe and cheap."
-  #{:svar.core/stream-truncated})
-
-(def ^:private MAX_STREAM_TRUNCATED_RETRIES
-  "Maximum transparent retries for stream-truncated errors per iteration.
-   Each retry re-sends the identical messages; reasoning starts fresh on
-   the provider side. 2 retries = 3 total attempts."
-  2)
-
 (def ^:private MAX_AUTH_REFRESH_RETRIES
   "Max transparent auth-401 retries per iteration. Attempt 0 forces ONE OAuth
    refresh-token exchange (the stored access token was invalidated server-side,
@@ -6610,20 +6265,6 @@
    not a dead credential — so the remaining attempts back off and retry the
    SAME token (no re-mint) to let it settle, per [[auth-propagation-backoff-ms]]."
   4)
-
-(defn- stream-truncated-error?
-  "True when an exception represents a provider stream that was cut
-   before any content arrived. Safe to retry transparently."
-  [^Throwable e]
-  (let
-    [data
-     (ex-data e)
-
-     content-acc-len
-     (long (or (:content-acc-len data) 0))]
-
-    (and (contains? stream-truncated-types (:type data)) (zero? content-acc-len))))
-
 (def ^:private MAX_MAX_TOKENS_EXCEEDED_RETRIES
   "Max transparent retries for `:svar.llm/max-tokens-exceeded` per
    iteration. Each retry bumps `:extra-body {:max_tokens N}` by
@@ -8904,24 +8545,12 @@
                  ;; Mutates once only when exhausted auth recovery releases a dead provider.
                  iteration-routing (atom effective-routing)
                  iteration-result
-                 ;; Per-iteration retry state.
-                 ;;   `:attempt`              — generic counter shared by every retry policy.
-                 ;;   `:max-tokens-attempt`   — separate counter so a stream-truncated retry
-                 ;;                              earlier in the call doesn't burn the max-tokens
-                 ;;                              quota (and vice versa).
-                 ;;   `:current-extra-body`   — carries any caller-supplied extra-body PLUS the
-                 ;;                              max_tokens bumps applied so far. Re-merged with
-                 ;;                              svar's auto-params downstream; explicit override
-                 ;;                              wins per `preserve-auto-params` merge order.
+                 ;; Per-iteration retry state. `:max-tokens-attempt` is separate
+                 ;; from auth/context recovery so those policies do not consume
+                 ;; the max-token budget; `:current-extra-body` carries its bump.
                  (loop
                    [attempt 0
                     max-tokens-attempt 0
-                    ;; PU (provider-unavailable) gets its OWN retry budget,
-                    ;; independent of the stream-rewind / auth retries that
-                    ;; also thread through `attempt` — else its "1s->2s->4s,
-                    ;; 3 retries" story only holds when PU is the FIRST
-                    ;; failure in the turn.
-                    pu-attempt 0
                     current-extra-body extra-body
                     ;; `env` is threaded so the auth-refresh retry can
                     ;; reseat its `:router` to the rebuilt one (the
@@ -8953,30 +8582,6 @@
                            :extra-body current-extra-body})
                         (catch Exception e
                           (cond
-                            (and (stream-truncated-error? e)
-                                 (< (long attempt) (long MAX_STREAM_TRUNCATED_RETRIES)))
-                            (let
-                              [attempt-number (inc (long attempt))
-                               chunk (provider-retry-progress-chunk
-                                       (inc (long iteration))
-                                       e
-                                       {:provider (:provider resolved-model)
-                                        :model (or (:name resolved-model) (:model resolved-model))
-                                        :reason :stream-truncated
-                                        :attempt attempt-number
-                                        :max-retries MAX_STREAM_TRUNCATED_RETRIES
-                                        :delay-ms 0})]
-
-                              (emit-hook! on-chunk chunk "Stream retry progress hook failed")
-                              (tel/log! {:level :warn
-                                         :id ::stream-truncated-retry
-                                         :data {:iteration iteration
-                                                :attempt attempt-number
-                                                :max-retries MAX_STREAM_TRUNCATED_RETRIES
-                                                :type (:type (ex-data e))}}
-                                        (str "Stream truncated, transparent retry " attempt-number
-                                             "/" MAX_STREAM_TRUNCATED_RETRIES))
-                              ::retry-stream)
                             ;; Max-tokens cap: model burnt the entire output
                             ;; budget on hidden reasoning before emitting a
                             ;; tool call. Double the budget and try once more so the
@@ -9008,9 +8613,7 @@
                                              "/" MAX_MAX_TOKENS_EXCEEDED_RETRIES
                                              " with max_tokens=" (:max_tokens bumped)))
                               ;; Bump max-tokens-attempt so a second cap-hit
-                              ;; doesn't loop forever; keep `attempt` flat so a
-                              ;; subsequent stream-truncated still has its own
-                              ;; quota.
+                              ;; cannot loop forever.
                               {::retry-max-tokens bumped})
                             ;; Post-refresh auth 401: the token we
                             ;; JUST force-refreshed 401'd AGAIN. Almost
@@ -9063,44 +8666,6 @@
                                                 :status (:status (ex-data e))}}
                                         "Provider auth recovery exhausted; falling back")
                               {::retry-auth-fallback fallback-routing})
-                            ;; svar gave up on the single pinned
-                            ;; provider with a transient 5xx and threw
-                            ;; its terminal `provider-unavailable`. On
-                            ;; the MAIN turn we don't hop providers, but
-                            ;; a momentary upstream blip usually clears:
-                            ;; back off (widening delay) and re-send the
-                            ;; SAME request a few times before the turn
-                            ;; fails with the card. NB a CONNECT-level PU
-                            ;; (`:status` nil) is EXCLUDED by the gate —
-                            ;; svar health-gates that decision, so it
-                            ;; falls straight through to the card below.
-                            (provider-unavailable-retry? e pu-attempt)
-                            (let
-                              [delay-ms (provider-unavailable-retry-delay-ms pu-attempt)
-                               attempt-number (inc (long pu-attempt))
-                               chunk (provider-retry-progress-chunk
-                                       (inc (long iteration))
-                                       e
-                                       {:provider (:provider resolved-model)
-                                        :model (or (:name resolved-model) (:model resolved-model))
-                                        :reason :provider-unavailable
-                                        :attempt attempt-number
-                                        :max-retries MAX_PROVIDER_UNAVAILABLE_RETRIES
-                                        :delay-ms delay-ms})]
-
-                              (emit-hook! on-chunk chunk "Provider retry progress hook failed")
-                              (tel/log! {:level :warn
-                                         :id ::provider-unavailable-retry
-                                         :data {:iteration iteration
-                                                :attempt attempt-number
-                                                :max-retries MAX_PROVIDER_UNAVAILABLE_RETRIES
-                                                :delay-ms delay-ms
-                                                :status (:status (ex-data e))}}
-                                        (str "Provider unavailable, transparent retry "
-                                             attempt-number
-                                             "/" MAX_PROVIDER_UNAVAILABLE_RETRIES))
-                              (Thread/sleep (long delay-ms))
-                              ::retry-provider-unavailable)
                             :else
                             (if-let
                               [recovery
@@ -9136,46 +8701,30 @@
                                                             :reasoning-level reasoning-level})))))]
 
                      (if-let
-                       [[attempt* max-tokens-attempt* pu-attempt*]
-                        (next-retry-counters result
-                                             {:attempt attempt
-                                              :max-tokens-attempt max-tokens-attempt
-                                              :pu-attempt pu-attempt})]
+                       [[attempt* max-tokens-attempt*] (next-retry-counters result
+                                                                            {:attempt attempt
+                                                                             :max-tokens-attempt
+                                                                             max-tokens-attempt})]
                        (let
                          [attempt* (long attempt*)
-                          max-tokens-attempt* (long max-tokens-attempt*)
-                          pu-attempt* (long pu-attempt*)]
+                          max-tokens-attempt* (long max-tokens-attempt*)]
 
-                         (cond
-                           (and (map? result) (contains? result ::retry-max-tokens))
-                           (recur attempt*
-                                  max-tokens-attempt*
-                                  pu-attempt*
-                                  (::retry-max-tokens result)
-                                  env)
-                           (and (map? result) (contains? result ::retry-auth-fallback))
-                           (do (reset! iteration-routing (::retry-auth-fallback result))
-                               (recur attempt*
-                                      max-tokens-attempt*
-                                      pu-attempt*
-                                      current-extra-body
-                                      env))
-                           (= result ::retry-auth-refresh)
-                           ;; Storage changed (or a peer already changed it). The
-                           ;; next loop pass hydrates this same persistent router
-                           ;; immediately before dispatch.
-                           (recur attempt* max-tokens-attempt* pu-attempt* current-extra-body env)
-                           (= result ::retry-auth-backoff)
-                           ;; Retry the same fresh token; propagation may still be settling.
-                           (do (Thread/sleep (long (auth-propagation-backoff-ms attempt)))
-                               (recur attempt*
-                                      max-tokens-attempt*
-                                      pu-attempt*
-                                      current-extra-body
-                                      env))
-                           ;; Stream/provider-unavailable retry: same route and env.
-                           :else
-                           (recur attempt* max-tokens-attempt* pu-attempt* current-extra-body env)))
+                         (cond (and (map? result) (contains? result ::retry-max-tokens))
+                               (recur attempt* max-tokens-attempt* (::retry-max-tokens result) env)
+                               (and (map? result) (contains? result ::retry-auth-fallback))
+                               (do (reset! iteration-routing (::retry-auth-fallback result))
+                                   (recur attempt* max-tokens-attempt* current-extra-body env))
+                               (= result ::retry-auth-refresh)
+                               ;; Storage changed (or a peer already changed it). The
+                               ;; next loop pass hydrates this same persistent router
+                               ;; immediately before dispatch.
+                               (recur attempt* max-tokens-attempt* current-extra-body env)
+                               (= result ::retry-auth-backoff)
+                               ;; Retry the same fresh token; propagation may still be settling.
+                               (do (Thread/sleep (long (auth-propagation-backoff-ms attempt)))
+                                   (recur attempt* max-tokens-attempt* current-extra-body env))
+                               ;; Stream retry: same route and env.
+                               :else (recur attempt* max-tokens-attempt* current-extra-body env)))
                        result)))]
 
                 (if-let [iteration-error-data (::iteration-error iteration-result)]
@@ -9211,15 +8760,6 @@
                     (let
                       [llm-provider-error (llm-provider-error-context iteration
                                                                       iteration-error-data)
-                       ;; Consecutive provider-generate failure streak.
-                       ;; Counts only :llm-provider/generate errors (the
-                       ;; model never produced usable content); any other
-                       ;; error kind resets - those are RLM-correctable.
-                       provider-error-streak (next-provider-error-streak (:provider-error-streak
-                                                                           loop-state)
-                                                                         llm-provider-error)
-                       provider-breaker-tripped? (provider-error-breaker-tripped?
-                                                   provider-error-streak)
                        error-feedback
                        (iteration-error-feedback iteration iteration-error-data user-request)
                        trace-entry {:iteration iteration :error iteration-error-data :final? false}
@@ -9291,8 +8831,7 @@
                       ;; Terminal failures instead produce exactly one canonical provider
                       ;; card below; emitting this raw chunk first made the TUI show an
                       ;; unformatted error followed by the formatted terminal card.
-                      (when-not (or (::fatal-iteration-error iteration-result)
-                                    provider-breaker-tripped?)
+                      (when-not (::fatal-iteration-error iteration-result)
                         (emit-hook! on-chunk
                                     {:phase :iteration-error
                                      :iteration (inc (long iteration))
@@ -9300,11 +8839,7 @@
                                      :error iteration-error-data
                                      :done? true}
                                     "on-chunk (iteration error)"))
-                      (if (or (::fatal-iteration-error iteration-result)
-                              ;; Circuit breaker: N consecutive provider-generate
-                              ;; failures - feeding the same request back cannot
-                              ;; help; fail the turn as a provider error.
-                              provider-breaker-tripped?)
+                      (if (::fatal-iteration-error iteration-result)
                         (let
                           [trace' (conj trace trace-entry)
                            fallback
@@ -9326,7 +8861,6 @@
                           result)
                         (recur (assoc loop-state
                                  :iteration (inc (long iteration))
-                                 :provider-error-streak provider-error-streak
                                  :empty-iteration-streak 0
                                  :messages (conj messages {:role "user" :content error-feedback})
                                  :llm-provider {:error llm-provider-error}
@@ -9594,7 +9128,6 @@
                             ;; thinking-only blip turns into real output next round.
                             (recur (merge loop-state
                                           {:iteration (inc (long iteration))
-                                           :provider-error-streak 0
                                            :empty-iteration-streak empty-streak
                                            :trace (conj trace trace-entry)}))))
                         (do
@@ -9689,7 +9222,6 @@
                                          :done? false}))
                             (recur (merge (dissoc loop-state :llm-provider)
                                           {:iteration (inc (long iteration))
-                                           :provider-error-streak 0
                                            :empty-iteration-streak 0
                                            :messages messages
                                            :trace (conj trace trace-entry)

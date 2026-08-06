@@ -167,16 +167,6 @@
   [status]
   (= 402 status))
 
-(defn- anthropic-extra-usage-error?
-  "True for Anthropic's 'third-party apps now draw from your extra usage' 400 —
-   a quota/billing gate that svar retries transiently but that persists when the
-   user's extra-usage allowance is genuinely exhausted."
-  [status message wrapper-message]
-  (let [text (str/lower-case (str (or message "") "\n" (or wrapper-message "")))]
-    (boolean (and (= 400 status)
-                  (or (str/includes? text "draw from your extra usage")
-                      (str/includes? text "third-party apps now draw")
-                      (str/includes? text "extra usage"))))))
 
 (defn- rate-limit-error?
   [status message wrapper-message]
@@ -559,10 +549,9 @@
       (billing-required-error? status)
       (str "WHAT HAPPENED: the provider requires payment or has no usable credits."
            (when (seq provider-message) (str " " provider-message)))
-      (anthropic-extra-usage-error? status provider-message message)
-      (str "WHAT HAPPENED: your Claude extra-usage allowance is exhausted — third-party "
-           "apps draw from extra usage, not your plan. "
-           (or provider-message "Third-party apps now draw from your extra usage"))
+      (= :quota-exhausted (:category (svar-classification err)))
+      (str "WHAT HAPPENED: the provider says this account has no usable quota or credits."
+           (when (seq provider-message) (str " " provider-message)))
       (or (transport-error? status provider-message message) (unanswered-request? err))
       "WHAT HAPPENED: the connection dropped before any response came back. The model never saw the request."
       (rate-limit-error? status provider-message message)
@@ -642,8 +631,8 @@
       :billing
       "Provider billing required"
 
-      :anthropic-extra-usage
-      "Claude subscription quota exhausted"
+      :quota-exhausted
+      "Provider quota exhausted"
 
       :rate-limit
       "Provider rate-limited"
@@ -716,8 +705,8 @@
       :billing
       "NEXT STEP: check the provider's billing and available credits, then retry."
 
-      :anthropic-extra-usage
-      "NEXT STEP: add extra-usage credits at https://claude.ai/settings/usage, then retry."
+      :quota-exhausted
+      "NEXT STEP: check the provider plan, usage limits, and available credits, then retry."
 
       :rate-limit
       (rate-limit-next-step)
@@ -816,7 +805,7 @@
           (or (auth-provider-error? status provider-message message) (auth-exhausted-attempts? err))
           :auth
           (billing-required-error? status) :billing
-          (anthropic-extra-usage-error? status provider-message message) :anthropic-extra-usage
+          (= :quota-exhausted (:category (svar-classification err))) :quota-exhausted
           (rate-limit-error? status provider-message message) :rate-limit
           (or (transport-error? status provider-message message) (unanswered-request? err))
           :transport
@@ -839,8 +828,8 @@
 (def ^:private TERMINAL_KINDS
   "Kinds where an identical retry fails identically: the request, the key, the
    plan or the pinned resource is wrong. No classification may soften these."
-  #{:auth :billing :tool-schema :context-overflow :resource-mismatch :output-budget-too-small
-    :invalid-thinking-signature :anthropic-extra-usage})
+  #{:auth :billing :quota-exhausted :tool-schema :context-overflow :resource-mismatch
+    :output-budget-too-small :invalid-thinking-signature})
 
 (defn provider-error-retryable?
   "Whether retrying the SAME request can plausibly succeed. Surfaces read this

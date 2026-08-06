@@ -135,8 +135,8 @@
    queue head leaving the queue because the gateway auto-STARTED it, so
    mirrors drop the entry and a replayed history nets to zero
    (`turn.queued` … `turn.queued.drained`). `queue.paused`/`queue.resumed` carry
-   the provider-health lane state (held count, breaker) so every sibling shows
-   the same paused banner and unpauses together."
+   the held count so every sibling shows the same paused banner and unpauses
+   together."
   #{"turn.queued" "turn.queued.updated" "turn.queued.deleted" "turn.queued.drained" "queue.paused"
     "queue.resumed"})
 

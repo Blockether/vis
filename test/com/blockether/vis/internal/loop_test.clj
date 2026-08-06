@@ -316,11 +316,7 @@
 
 (def ^:private max-tokens-exceeded-error? (deref #'lp/max-tokens-exceeded-error?))
 
-(def ^:private provider-unavailable-error? (deref #'lp/provider-unavailable-error?))
 
-(def ^:private provider-unavailable-retry? (deref #'lp/provider-unavailable-retry?))
-
-(def ^:private provider-unavailable-retry-delay-ms (deref #'lp/provider-unavailable-retry-delay-ms))
 
 (def ^:private next-retry-counters (deref #'lp/next-retry-counters))
 
@@ -334,7 +330,6 @@
 
 (def ^:private provider-output-chunk? (deref #'lp/provider-output-chunk?))
 
-(def ^:private MAX_PROVIDER_UNAVAILABLE_RETRIES (deref #'lp/MAX_PROVIDER_UNAVAILABLE_RETRIES))
 
 (def ^:private bumped-max-tokens-extra-body (deref #'lp/bumped-max-tokens-extra-body))
 
@@ -343,163 +338,31 @@
 (def ^:private previous-turn-context (deref #'lp/previous-turn-context))
 
 (def ^:private previous-request-usage (deref #'lp/previous-request-usage))
-
-(def ^:private call-provider-with-interrupt-retry! (deref #'lp/call-provider-with-interrupt-retry!))
-
-(def ^:private retryable-provider-interrupt? (deref #'lp/retryable-provider-interrupt?))
-
-(def ^:private INTERRUPT_RETRY_MAX_ELAPSED_MS (deref #'lp/INTERRUPT_RETRY_MAX_ELAPSED_MS))
-
-(def ^:private call-provider-with-stream-rewind-retry!
-  (deref #'lp/call-provider-with-stream-rewind-retry!))
-
 (def ^:private run-normal-turn! (deref #'lp/run-normal-turn!))
 
 (def ^:private maybe-auto-title! (deref #'titling/maybe-auto-title!))
 
-(defdescribe
-  provider-stream-rewind-retry-test
-  (it
-    "rewinds streamed reasoning and retries the provider call before eval"
-    (let
-      [env
-       (lp/create-environment ::router {:db :memory})
-
-       calls
-       (atom 0)
-
-       chunks
-       (atom [])]
-
-      (try
-        (with-redefs
-          [svar/ask-code! (fn [_router opts]
-                            (case (swap! calls inc)
-                              1
-                              (do ((:on-chunk opts)
-                                    {:reasoning "dead thinking" :content "```clojure\n(dead)"})
-                                  (throw (ex-info "Stream connection error: closed"
-                                                  {:type :svar.core/http-error
-                                                   :stream? true
-                                                   :content-acc-len 19
-                                                   :reasoning-acc-len 13
-                                                   :reasoning "dead thinking"
-                                                   :partial-content "```clojure\n(dead)"})))
-
-                              2
-                              (do ((:on-chunk opts) {:reasoning "fresh thinking"})
-                                  ;; Native tool calling: a reply with NO tool call
-                                  ;; (`:stop-reason :end`) is the answer (`:content`)
-                                  ;; — finalizes the turn.
-                                  {:stop-reason :end
-                                   :tool-calls []
-                                   :content "ok"
-                                   :reasoning "fresh thinking"
-                                   :tokens {}})))]
-          (let
-            [result (lp/run-iteration env
-                                      []
-                                      {:iteration 0
-                                       :resolved-model {:provider :zai-coding-plan :name "glm-5.1"}
-                                       :on-chunk #(swap! chunks conj %)})
-             reset-chunk (first (filter #(= :provider-retry-reset (:phase %)) @chunks))
-             fresh-reasoning (last (filter #(= :reasoning (:phase %)) @chunks))]
-
-            (expect (= 2 @calls))
-            (expect (= "ok" (get-in result [:final-result :answer :answer])))
-            (expect (some? reset-chunk))
-            (expect (= {:attempt 1 :max-retries 3 :delay-ms 1000}
-                       (select-keys reset-chunk [:attempt :max-retries :delay-ms])))
-            (expect (= :svar.core/http-error (get-in reset-chunk [:error :type])))
-            (expect (= :stream-connection-error (get-in reset-chunk [:event :reason])))
-            (expect (= "fresh thinking" (:thinking fresh-reasoning)))
-            (expect (= "fresh thinking" (:delta fresh-reasoning)))
-            (expect (= [:llm.routing/provider-retry]
-                       (mapv :event/type (:llm-routing-trace result))))))
-        (finally (lp/dispose-environment! env)))))
-  (it "uses three capped exponential rewind retries for transient stream failures"
-      (let
-        [calls
-         (atom 0)
-
-         chunks
-         (atom [])]
-
-        (with-redefs [lp/PROVIDER_STREAM_REWIND_DELAYS_MS [0 0 0]]
-          (let
-            [result (call-provider-with-stream-rewind-retry!
-                      {:cancel-atom (atom false)}
-                      {:iteration-position 1
-                       :provider "openai"
-                       :model "gpt-x"
-                       :on-chunk #(swap! chunks conj %)
-                       :reset-stream-state! (fn [])}
-                      (fn []
-                        (if (<= (swap! calls inc) 3)
-                          (throw (ex-info "Stream TTFT timeout (60000ms with no response headers)"
-                                          {:type :http-error :stream? true}))
-                          {:routed/trace []})))]
-            (expect (= 4 @calls))
-            (expect (= [1 2 3]
-                       (mapv :attempt (filter #(= :provider-retry-reset (:phase %)) @chunks))))
-            (expect (= [1 2 3] (mapv :attempt (:routed/trace result))))))))
-  (it "does NOT retry an empty reply — svar owns the same-model re-send ladder"
-      (let [calls (atom 0)]
-        (expect (throws? clojure.lang.ExceptionInfo
-                         #(call-provider-with-stream-rewind-retry!
-                            {:cancel-atom (atom false)}
-                            {:iteration-position 1
-                             :provider "anthropic"
-                             :model "claude-x"
-                             :on-chunk (fn [_])
-                             :reset-stream-state! (fn [])}
-                            (fn []
-                              (swap! calls inc)
-                              (throw (ex-info "The model produced neither text nor a tool call."
-                                              {:type :svar.llm/empty-content}))))))
-        (expect (= 1 @calls))))
-  (it
-    "surfaces svar's empty-reply re-sends as :empty-content routing-trace events"
-    (let
-      [env
-       (lp/create-environment ::router {:db :memory})
-
-       calls
-       (atom 0)]
-
-      (try
-        (with-redefs
-          [svar/ask-code!
-           (fn [_router opts]
-             (swap! calls inc)
-             ;; simulate svar healing ONE empty reply in-call: the
-             ;; resend ladder fires the observability hook, then
-             ;; the re-sent identical request succeeds.
-             (when-let [on-resend (:on-empty-reply-resend opts)]
-               (on-resend {:model "claude-x"
-                           :provider-id :anthropic
-                           :attempt 1
-                           :max-resends 3
-                           :delay-ms 2000
-                           :error (ex-info "empty" {:type :svar.llm/empty-content})}))
-             {:stop-reason :end :tool-calls [] :content "ok" :empty-reply-resends 1 :tokens {}})]
-          (let
-            [result (lp/run-iteration env
-                                      []
-                                      {:iteration 0
-                                       :resolved-model {:provider :anthropic :name "claude-x"}
-                                       :on-chunk (fn [_])})
-             trace (:llm-routing-trace result)
-             ev (first (filter #(= :empty-content (:reason %)) trace))]
-
-            ;; ONE provider call from vis's perspective — the heal happened
-            ;; inside svar — but the trace still shows what it cost.
-            (expect (= 1 @calls))
-            (expect (some? ev))
-            (expect (= :llm.routing/provider-retry (:event/type ev)))
-            (expect (= 1 (:attempt ev)))
-            (expect (= 2000 (:delay-ms ev)))))
-        (finally (lp/dispose-environment! env))))))
+;; Regression, issue #105: Vis retried a provider stream failure after Svar had already
+;; finished its own policy, issuing the same user request more than once.
+(defdescribe provider-stream-failure-is-terminal-test
+  (it "does not retry a provider failure that escapes Svar"
+      (let [env (lp/create-environment ::router {:db :memory})
+            calls (atom 0)]
+        (try
+          (with-redefs [svar/ask-code! (fn [_router _opts]
+                                         (swap! calls inc)
+                                         (throw (ex-info "Stream connection error: closed"
+                                                         {:type :svar.core/http-error
+                                                          :stream? true})))]
+            (expect (throws? clojure.lang.ExceptionInfo
+                             #(lp/run-iteration env
+                                                []
+                                                {:iteration 0
+                                                 :resolved-model {:provider :openai
+                                                                  :name "gpt-x"}
+                                                 :on-chunk (fn [_])})))
+            (expect (= 1 @calls)))
+          (finally (lp/dispose-environment! env))))))
 
 ;; Regression, issue #116: svar's empty-reply resend ladder was only collected in
 ;; an atom and prepended to the routing trace AFTER `ask-code!` returned, so a turn
@@ -879,80 +742,7 @@
                           (expect (str/includes? (str (:stdout form-res)) "42"))))
                       (finally (lp/dispose-environment! env))))))
 
-(defdescribe stream-watchdog-no-retry-test
-             ;; Svar intentionally treats its watchdog aborts as terminal for the current
-             ;; provider call. Retrying here would stack another multi-minute retry ladder.
-             (doseq [error-type [:svar.core/stream-semantic-timeout :svar.core/stream-idle-timeout]]
-               (it (str error-type " is surfaced after exactly one provider call")
-                   (let [calls (atom 0)]
-                     (expect (throws? clojure.lang.ExceptionInfo
-                                      #(call-provider-with-stream-rewind-retry!
-                                         {:cancel-atom (atom false)}
-                                         {:iteration-position 1
-                                          :provider "openai"
-                                          :model "gpt-x"
-                                          :on-chunk (fn [_])
-                                          :reset-stream-state! (fn [])}
-                                         (fn []
-                                           (swap! calls inc)
-                                           (throw (ex-info "Stream watchdog timeout"
-                                                           {:type error-type :stream? true}))))))
-                     (expect (= 1 @calls))))))
 
-(defdescribe provider-interrupt-retry-test
-             (it "retries a provider interrupt once when user did not cancel"
-                 (let
-                   [calls
-                    (atom 0)
-
-                    out
-                    (call-provider-with-interrupt-retry!
-                      {:cancel-atom (atom false)}
-                      6
-                      (fn []
-                        (if (= 1 (swap! calls inc))
-                          (throw (InterruptedException. "java.lang.InterruptedException"))
-                          ::ok)))]
-
-                   (expect (= ::ok out))
-                   (expect (= 2 @calls))))
-             (it "does not retry a provider interrupt after user cancel"
-                 (let [calls (atom 0)]
-                   (try (call-provider-with-interrupt-retry! {:cancel-atom (atom true)}
-                                                             6
-                                                             (fn []
-                                                               (swap! calls inc)
-                                                               (throw (InterruptedException.
-                                                                        "cancel"))))
-                        (expect false)
-                        (catch InterruptedException _ (expect (= 1 @calls))))))
-             (it "treats a live thread interrupt as user cancel even when the atom lost the race"
-                 ;; Issue #13: on Esc the worker-thread interrupt can land BEFORE
-                 ;; `vis/cancel!` flips the cancel-atom. The atom still reads false
-                 ;; here, but the live interrupt must classify this as a user cancel
-                 ;; (NOT a retryable blip).
-                 (let [verdict (atom nil)]
-                   (try (.interrupt (Thread/currentThread))
-                        (reset! verdict (retryable-provider-interrupt?
-                                          (InterruptedException. "java.lang.InterruptedException")
-                                          {:cancel-atom (atom false)}
-                                          500))
-                        (finally
-                          ;; clear the interrupt we set so it cannot leak into later tests
-                          (Thread/interrupted)))
-                   (expect (false? @verdict))))
-             (it "retries a spurious interrupt that fired before the TTFT budget"
-                 (expect (retryable-provider-interrupt? (InterruptedException.
-                                                          "java.lang.InterruptedException")
-                                                        {:cancel-atom (atom false)}
-                                                        500)))
-             (it "does NOT retry a watchdog interrupt that fired past the TTFT budget"
-                 ;; svar idle/semantic watchdog: the call already burned its full
-                 ;; budget, so retrying just doubles the wall-clock hang. Surface it.
-                 (expect (not (retryable-provider-interrupt?
-                                (InterruptedException. "java.lang.InterruptedException")
-                                {:cancel-atom (atom false)}
-                                (inc (long INTERRUPT_RETRY_MAX_ELAPSED_MS)))))))
 
 (defdescribe
   previous-turn-context-test
@@ -3855,162 +3645,19 @@
             (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error result))))))))
 
 (defdescribe
-  provider-unavailable-retry-test
-  "svar's terminal `:svar.llm/provider-unavailable` (a single pinned provider
-   whose upstream call failed before any usable response) gets a few transparent
-   re-sends (widening backoff) at the provider-call boundary; if it still fails the turn ends fatal
-   with the provider-error card — never fed back to the model as an
-   unactionable outage, never a silent cross-provider hop."
-  (let [ctx {:iteration 1 :messages [] :routing {} :reasoning-level nil}]
-    (it "recognises :svar.llm/provider-unavailable as retry-able"
-        (let [e (ex-info "Provider unavailable" {:type :svar.llm/provider-unavailable :status 500})]
-          (expect (true? (provider-unavailable-error? e)))))
-    (it "does not confuse other svar errors with the provider-unavailable variant"
-        (let [e (ex-info "blank" {:type :svar.llm/empty-content})]
-          (expect (false? (provider-unavailable-error? e))))
-        (let [e (ex-info "max" {:type :svar.llm/max-tokens-exceeded})]
-          (expect (false? (provider-unavailable-error? e)))))
-    (it "is fatal once retries are exhausted — fails the turn, not fed back"
-        ;; After the single transparent retry the same error reaches
-        ;; handle-iteration-exception!, which must mark it fatal so the turn
-        ;; surfaces the informative card instead of re-prompting the model
-        ;; with an outage it cannot fix.
-        (let
-          [result (lp/handle-iteration-exception! (ex-info "Provider unavailable"
-                                                           {:type :svar.llm/provider-unavailable
-                                                            :status 500})
-                                                  ctx)]
-          (expect (contains? result :com.blockether.vis.internal.loop/iteration-error))
-          (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error result)))))))
-
-(defdescribe
-  provider-unavailable-retry-loop-test
-  "Drives the per-iteration retry machinery the loop actually recurs on
-   (`provider-unavailable-retry?` gate, `provider-unavailable-retry-delay-ms`
-   backoff, `next-retry-counters` counter-threading) end-to-end — proving the
-   1s->2s->4s / 3-retry budget AND that provider-unavailable's budget is
-   independent of any stream/auth retries that ran earlier in the same iteration."
-  (let
-    [pu
-     (fn []
-       (ex-info "Provider unavailable" {:type :svar.llm/provider-unavailable :status 503}))
-
-     ;; Same, but a connect-level failure: no HTTP response reached us. svar owns
-     ;; its retry policy, so Vis surfaces it immediately without an outer retry.
-     pu-connect
-     (fn []
-       (ex-info "Provider unavailable" {:type :svar.llm/provider-unavailable :status nil}))
-
-     ;; Faithful stand-in for the real recur: re-run `attempt-fn` (which
-     ;; either throws or returns a value) threading the SAME counters the
-     ;; production loop threads, recording each backoff slept. Returns
-     ;; {:delays [...] :pu-attempt N :outcome ...}.
-     drive
-     (fn [init attempt-fn]
-       (loop
-         [{:keys [attempt max-tokens-attempt pu-attempt]}
-          init
-
-          delays
-          []]
-
-         (let [result (try (attempt-fn) (catch Exception e e))]
-           (cond
-             ;; Not a throwable — a real iteration result: done.
-             (not (instance? Throwable result))
-             {:delays delays :pu-attempt pu-attempt :outcome result}
-             ;; provider-unavailable with budget left: sleep the indexed
-             ;; backoff and recur bumping ONLY pu-attempt, exactly like
-             ;; the ::retry-provider-unavailable arm.
-             (provider-unavailable-retry? result pu-attempt)
-             (let
-               [d (provider-unavailable-retry-delay-ms pu-attempt)
-                [a m p] (next-retry-counters ::lp/retry-provider-unavailable
-                                             {:attempt attempt
-                                              :max-tokens-attempt max-tokens-attempt
-                                              :pu-attempt pu-attempt})]
-
-               (recur {:attempt a :max-tokens-attempt m :pu-attempt p} (conj delays d)))
-             ;; Budget exhausted (or a different error): the loop's
-             ;; :else arm hands it to handle-iteration-exception!.
-             :else {:delays delays :pu-attempt pu-attempt :outcome :fatal}))))
-
-     zero
-     {:attempt 0 :max-tokens-attempt 0 :pu-attempt 0}]
-
-    (it "gate retries while budget remains and stops exactly at the cap"
-        (expect (= [true true true false]
-                   (mapv #(provider-unavailable-retry? (pu) %)
-                         (range (inc MAX_PROVIDER_UNAVAILABLE_RETRIES))))))
-    (it "only retries HTTP 5xx; 429 and all other 4xx responses are terminal"
-        (expect (= [false false true true false]
-                   (mapv #(provider-unavailable-retry?
-                            (ex-info "Provider unavailable"
-                                     {:type :svar.llm/provider-unavailable :status %})
-                            0)
-                         [400 429 500 503 nil]))))
-    (it "backoff widens 1s -> 2s -> 4s and clamps past the vector"
-        (expect (= [1000 2000 4000 4000 4000]
-                   (mapv provider-unavailable-retry-delay-ms (range 5)))))
-    (it
-      "connect-level (:status nil) is NOT retried by vis — svar owns it, card surfaces immediately"
-      (expect (false? (provider-unavailable-retry? (pu-connect) 0)))
-      (let [{:keys [delays outcome pu-attempt]} (drive zero pu-connect)]
-        (expect (= [] delays))
-        (expect (= 0 pu-attempt))
-        (expect (= :fatal outcome))))
-    (it "a persistent outage: exactly 3 retries at 1s/2s/4s, then fatal"
-        (let [{:keys [delays outcome pu-attempt]} (drive zero pu)]
-          (expect (= [1000 2000 4000] delays))
-          (expect (= MAX_PROVIDER_UNAVAILABLE_RETRIES pu-attempt))
-          (expect (= :fatal outcome))))
-    (it "recovers transparently when a retry finally succeeds (no fatal)"
-        (let
-          [calls
-           (atom 0)
-
-           flaky
-           (fn []
-             (if (< (swap! calls inc) 3) (throw (pu)) {:final-result :answer}))
-
-           {:keys [delays outcome]}
-           (drive zero flaky)]
-
-          ;; two failures -> two backoffs -> third call returns the result
-          (expect (= [1000 2000] delays))
-          (expect (= {:final-result :answer} outcome))))
-    (it "PU budget is INDEPENDENT of a preceding stream retry (turn-8 fix)"
-        ;; Enter as if two stream-rewinds already burned `attempt` to 2. PU must
-        ;; still get its FULL 1s/2s/4s budget — not start mid-backoff / short.
-        (let
-          [{:keys [delays pu-attempt]} (drive {:attempt 2 :max-tokens-attempt 0 :pu-attempt 0} pu)]
-          (expect (= [1000 2000 4000] delays))
-          (expect (= MAX_PROVIDER_UNAVAILABLE_RETRIES pu-attempt))))
-    (it "next-retry-counters advances ONLY the owning policy's budget"
-        (let [base {:attempt 2 :max-tokens-attempt 1 :pu-attempt 1}]
-          (expect (= [3 1 1] (next-retry-counters ::lp/retry-stream base)))
-          (expect (= [2 1 2] (next-retry-counters ::lp/retry-provider-unavailable base)))
-          (expect (= [2 2 1] (next-retry-counters {::lp/retry-max-tokens {:max_tokens 9}} base)))
-          (expect (= [3 1 1] (next-retry-counters ::lp/retry-auth-refresh base)))
-          (expect (= [3 1 1] (next-retry-counters ::lp/retry-auth-backoff base)))))
-    (it "next-retry-counters returns nil for a real iteration result (loop exits)"
-        (expect (nil? (next-retry-counters {:blocks [] :final-result :answer} zero))))))
-
-(defdescribe
-  provider-error-circuit-breaker-test
-  (describe
-    "next-provider-error-streak"
-    (it "increments on consecutive :llm-provider/generate errors"
-        (expect (= 1 ((deref #'lp/next-provider-error-streak) nil {:phase :llm-provider/generate})))
-        (expect (= 3 ((deref #'lp/next-provider-error-streak) 2 {:phase :llm-provider/generate}))))
-    (it "resets on any non-provider-generate error so RLM self-correction keeps its budget"
-        (expect (= 0 ((deref #'lp/next-provider-error-streak) 2 {:phase :python/syntax})))
-        (expect (= 0 ((deref #'lp/next-provider-error-streak) 7 nil)))))
-  (describe "provider-error-breaker-tripped?"
-            (it "trips only at CONSECUTIVE_PROVIDER_ERROR_LIMIT (3)"
-                (expect (not ((deref #'lp/provider-error-breaker-tripped?) 2)))
-                (expect ((deref #'lp/provider-error-breaker-tripped?) 3)))))
-
+  provider-unavailable-is-terminal-test
+  ;; Regression, issue #105: Vis used to retry svar's terminal provider-unavailable
+  ;; result three more times, stacking a second retry ladder above svar.
+  (it "surfaces svar's provider-unavailable result without an outer Vis retry"
+      (let [ctx {:iteration 1 :messages [] :routing {} :reasoning-level nil}
+            result (lp/handle-iteration-exception!
+                     (ex-info "Provider unavailable"
+                              {:type :svar.llm/provider-unavailable :status 503})
+                     ctx)]
+        (expect
+          (contains? result :com.blockether.vis.internal.loop/iteration-error))
+        (expect
+          (true? (:com.blockether.vis.internal.loop/fatal-iteration-error result))))))
 ;; The reply is ONE program: multiple fences a provider splits out collapse to a
 ;; single code-entry so the form cap spans the whole reply and r["…/fF"] numbers
 ;; continuously (no per-fence f1 collision).
@@ -5001,11 +4648,10 @@
       (let
         [next-counters
          @#'lp/next-retry-counters
-
          base
-         {:attempt 2 :max-tokens-attempt 1 :pu-attempt 1}]
+         {:attempt 2 :max-tokens-attempt 1}]
 
-        (expect (= [2 1 1] (next-counters {::lp/retry-auth-fallback {}} base))))))
+        (expect (= [2 1] (next-counters {::lp/retry-auth-fallback {}} base))))))
 
 (defdescribe
   auth-cooldown-routing-test
@@ -5426,7 +5072,7 @@
   "Push `entry`'s :last-active `ms` into the past so it reads as idle."
   [entry ms]
   (let [^java.util.concurrent.atomic.AtomicLong la (:last-active entry)]
-    (.set la (- (System/currentTimeMillis) ms))))
+    (.set la (- (System/currentTimeMillis) (long ms)))))
 
 (defdescribe
   env-reaper-test
@@ -6032,9 +5678,9 @@
         (expect (= 20000 (get-in @ctx-atom ["engine_utilization" "last_request_tokens"])))
         (expect (= 10000 (get-in @ctx-atom ["engine_utilization" "model_input_limit"])))))
     (it "has an independent retry budget"
-        (expect (= [2 1 1]
+        (expect (= [2 1]
                    (next-retry-counters ::lp/retry-context-overflow
-                                        {:attempt 2 :max-tokens-attempt 1 :pu-attempt 1}))))))
+                                        {:attempt 2 :max-tokens-attempt 1}))))))
 
 (defdescribe attachment-reinspection-wire-test
              (it "renders a reinspection image as a canonical vision message"
@@ -6132,6 +5778,14 @@
                                   :body "{\"error\":{\"type\":\"rate_limit_error\"}}"}))))
     (it "fails the turn on an auth failure"
         (expect (fatal? (ex-info "unauthorized" {:status 401 :provider :openai-codex}))))
+    (it "fails the turn when svar classifies an account limit as quota exhausted"
+        (expect (fatal? (ex-info
+                          "Exceptional status code: 400"
+                          {:status 400
+                           :provider :anthropic-coding-plan
+                           :body (str "{\"type\":\"error\",\"error\":{\"type\":"
+                                      "\"invalid_request_error\",\"message\":"
+                                      "\"Third-party apps now draw from your extra usage.\"}}") }))))
     (it "still feeds a correctable model/code failure back for self-correction"
         (expect (not (fatal? (ex-info "Syntax error in generated code" {:type :vis/code-error})))))
     (it "still feeds a plain internal bug back for self-correction"

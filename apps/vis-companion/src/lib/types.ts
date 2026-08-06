@@ -814,14 +814,10 @@ export interface QueuedTurn {
   attachments: QueuedAttachment[];
 }
 
-/** The gateway paused this session's queue after a provider failure. */
+/** The gateway paused distinct queued requests after a turn failed. */
 export interface QueuePausedInfo {
   reason: string;
   held: number;
-  fails: number;
-  isTransient: boolean;
-  isBreakerOpen: boolean;
-  retryAt: number | null;
 }
 
 export interface SseEvent {

@@ -21,6 +21,7 @@
 (defn- port-list? [x] (and (or (vector? x) (set? x)) (every? port? x)))
 (defn- scalar? [x] (or (string? x) (boolean? x) (number? x) (nil? x)))
 (defn- string-list? [x] (and (vector? x) (every? non-blank-string? x)))
+(defn- non-empty-string-list? [x] (and (string-list? x) (seq x)))
 (def ^:private env-var-name-re #"[A-Za-z_][A-Za-z0-9_]*")
 (defn- env-var-name? [x] (and (string? x) (boolean (re-matches env-var-name-re x))))
 (defn- env-var-name-list? [x] (and (vector? x) (every? env-var-name? x)))
@@ -101,7 +102,7 @@
   ;; Structured argv, never a shell string: the helper is exec'd directly, so a
   ;; bare string is ONE argument and is never word-split. Both spellings are the
   ;; same value shape; there is no shell to quote for.
-  (s/or :argv (s/coll-of non-blank-string? :kind vector? :min-count 1)
+  (s/or :argv non-empty-string-list?
         :program non-blank-string?))
 
 (s/def ::model-map #(closed-map? model-schema #{"name"} %))
@@ -313,13 +314,11 @@
   #{"transport" "command" "args" "cwd" "env" "url" "headers" "enabled" "timeout_ms" "listen"
     "auth"})
 (def python-keys #{"resource_cache" "source_paths" "interpreter" "runner"})
-(def message-queue-keys
-  #{"breaker_threshold" "retry_backoff_ms" "halfopen_probe_ms" "retry_after_cap_ms"})
 (def titling-keys #{"mode" "provider" "model"})
 (def config-keys
   #{"providers" "default_provider" "default_model" "fallback_provider" "fallback_model" "router"
     "system_prompt" "workspace" "jail" "environment" "db_spec" "grep" "toggles" "tui_settings" "mcp"
-    "python" "message_queue" "titling"})
+    "python" "titling"})
 
 (def prompt-schema {"text" string? "is_replace" boolean?})
 (s/def ::prompt-map #(closed-map? prompt-schema #{"text"} %))
@@ -341,7 +340,7 @@
 (s/def ::python-interpreter
   ;; Same value shape as a provider's `api_key_command`: an argv vector, or a
   ;; bare program/path that is ONE argument and is never word-split.
-  (s/or :argv (s/coll-of non-blank-string? :kind vector? :min-count 1)
+  (s/or :argv non-empty-string-list?
         :program non-blank-string?))
 
 (def python-schema
@@ -366,14 +365,6 @@
    "runner" (one-of #{"graalpy" "project"})})
 (s/def ::python #(closed-map? python-schema %))
 
-(def message-queue-schema
-  ;; Gateway turn-queue failure handling. Every value is a plain number so it
-  ;; round-trips through ->yaml-safe/runtime-config as a snake_case string key.
-  {"breaker_threshold" positive-int?
-   "retry_backoff_ms" #(and (vector? %) (seq %) (every? positive-int? %))
-   "halfopen_probe_ms" positive-int?
-   "retry_after_cap_ms" positive-int?})
-(s/def ::message-queue #(closed-map? message-queue-schema %))
 
 (def mcp-auth-schema
   {"client_id" non-blank-string?
@@ -454,7 +445,6 @@
    "tui_settings" (spec-pred ::tui-settings)
    "mcp" (spec-pred ::mcp)
    "python" (spec-pred ::python)
-   "message_queue" (spec-pred ::message-queue)
    "titling" (spec-pred ::titling)})
 
 (s/def ::config #(closed-map? config-schema %))
@@ -478,7 +468,6 @@
                   "tui_settings" [tui-schema #{} :map]
                   "mcp" [mcp-schema #{} :map]
                   "python" [python-schema #{} :map]
-                  "message_queue" [message-queue-schema #{} :map]
                   "titling" [titling-schema #{} :map]}
    provider-schema {"models" [model-schema #{"name"} :vector]}
    router-schema {"rate_limit" [rate-limit-schema #{} :map]

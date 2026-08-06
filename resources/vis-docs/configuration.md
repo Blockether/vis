@@ -78,7 +78,7 @@ Config is YAML only, validated exactly as parsed:
 contract for the original string-keyed YAML representation. It covers these closed
 top-level blocks: `providers`, `default_provider`, `default_model`, `fallback_provider`,
 `fallback_model`, `router`, `system_prompt`, `workspace`, `jail`, `environment`,
-`db_spec`, `grep`, `toggles`, `tui_settings`, `mcp`, `python`, `titling`, and `message_queue`. Filesystem
+`db_spec`, `grep`, `toggles`, `tui_settings`, `mcp`, `python`, and `titling`. Filesystem
 admission is a closed block at `jail.filesystem`, and egress policy is a closed block at `jail.network`.
 
 Nested maps are also closed except maps whose keys are user-defined, such as environment
