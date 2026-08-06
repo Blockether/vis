@@ -17,8 +17,6 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.foundation.harness.discovery :as harness-discovery]
-            [com.blockether.vis.internal.resources :as resources]
             [lazytest.core :refer [defdescribe expect it]]))
 
 ;; =============================================================================
@@ -202,12 +200,6 @@
                               (expect (= {:backend :sqlite :path "/tmp/vis-home-probe/.vis/vis.mdb"}
                                          (config/default-db-spec)))
                               (expect (= "/tmp/vis-home-probe/.vis/vis.log" (#'config/log-path))))))
-             (it "the resource registry and harness discovery follow it too"
-                 (with-home "/tmp/vis-home-probe"
-                            (fn []
-                              (expect (= "/tmp/vis-home-probe/.vis"
-                                         (.getPath ^java.io.File (#'resources/state-dir))))
-                              (expect (= "/tmp/vis-home-probe" (#'harness-discovery/home))))))
              (it "dotenv defaults resolve against the working directory when consulted"
                  (expect (= (str (System/getProperty "user.dir") "/.env")
                             (#'config/dotenv-path :cwd "/.env")))

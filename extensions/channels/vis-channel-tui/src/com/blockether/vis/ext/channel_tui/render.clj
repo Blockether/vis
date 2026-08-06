@@ -4799,7 +4799,9 @@
                         (when show-header? [(line-entry (str iteration-pad-marker ""))])
                         (when show-header? [(line-entry hdr-line)])
                         [(line-entry (str code-err-pad-marker ""))]
-                        (or provider-rows err-message-rows)
+                        (if (> repeat-count 1)
+                          (into err-message-rows provider-rows)
+                          (or provider-rows err-message-rows))
                         (when (seq raw-rows) [(line-entry (str code-err-pad-marker ""))])
                         (or raw-rows [])
                         [(line-entry (str code-err-pad-marker ""))])))))

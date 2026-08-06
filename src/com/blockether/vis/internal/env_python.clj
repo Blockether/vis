@@ -1306,6 +1306,22 @@
           (when (= (get e "hash") expected-hash) (decode-trigger-map (get e "map"))))
         (read-cache-entries)))
 
+(defn- valid-shim-trigger-map?
+  "A cache entry is usable only when every declared import was observed as a provided module.
+   Older probes can miss modules already loaded by the shared engine; reject those entries so
+   the next lookup recaptures and repairs the disk cache."
+  [entries m]
+  (and (map? m)
+       (every? (fn [{:keys [sid shim]}]
+                 (let
+                   [imports
+                    (vec (:shim/imports shim))
+
+                    provides
+                    (vec (get-in m [sid :provides]))]
+
+                   (or (empty? imports) (seq provides))))
+               entries)))
 (defn- write-shim-triggers-cache!
   "Best-effort persist of the trigger map under `expected-hash`, moved to FRONT
    of a capped, hash-keyed set (multi-project safe). Never throws."
@@ -1384,10 +1400,15 @@
                                        (map top)
                                        (remove #{"builtins"})
                                        set)
-                         autoload (vec (sort (set/difference (set (get after "b"))
-                                                             (set (get before "b")))))
-                         keep? (into #{sid} autoload)
-                         provides (vec (sort (filter keep? new-mods)))]
+                         autoload0 (vec (sort (set/difference (set (get after "b"))
+                                                              (set (get before "b")))))
+                         keep? (into #{sid} autoload0)
+                         provides0 (vec (sort (filter keep? new-mods)))
+                         ;; Declared imports are the shim's owned public modules. Use them
+                         ;; when the probe cannot observe a new sys.modules entry (for
+                         ;; example a module already initialized by the shared engine).
+                         autoload (if (seq autoload0) autoload0 (vec (:shim/imports shim)))
+                         provides (if (seq provides0) provides0 (vec (:shim/imports shim)))]
 
                         (assoc acc sid {:provides provides :autoload autoload})))))
                 {}
@@ -1414,7 +1435,8 @@
                                       (vec (cons {:h h :m m} (remove #(= (:h %) h) v)))))
           m)
         (let
-          [m (try (or (read-shim-triggers-cache h)
+          [m (try (or (let [cached (read-shim-triggers-cache h)]
+                        (when (valid-shim-trigger-map? entries cached) cached))
                       (let [computed (capture-shim-triggers entries)]
                         (write-shim-triggers-cache! h computed)
                         computed))
