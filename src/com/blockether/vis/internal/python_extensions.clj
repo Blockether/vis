@@ -206,6 +206,55 @@
 ;; =============================================================================
 ;; Trusted extension context
 ;; =============================================================================
+
+;; =============================================================================
+;; Declared host environment (`vis.extension(env=["NAME", ...])`)
+;;
+;; An extension DECLARES the environment variables it needs; the host resolves
+;; them from the process environment (`System/getenv`) and injects ONLY those
+;; into the extension context. There is no blanket passthrough — that would
+;; hand every third-party extension the user's AWS/Gerrit/GitHub credentials.
+;; =============================================================================
+
+(defn- config-env-passthrough
+  "Extra env var names the USER allowed in `vis.yml`:
+
+     extensions:
+       env-passthrough: [RBI_GENAI_API_KEY]"
+  []
+  (try (let [cfg (config/current-config)]
+         (into #{}
+               (comp (map str) (remove str/blank?))
+               (or (get-in cfg [:extensions :env-passthrough])
+                   (get-in cfg [:extensions "env-passthrough"])
+                   [])))
+       (catch Throwable _ #{})))
+
+(def ^:private env-name-re #"^[A-Za-z_][A-Za-z0-9_]*$")
+
+(defn ^:no-doc resolve-declared-env
+  "Values for the env var names an extension DECLARED, resolved from the host
+   process environment (`System/getenv`). Names that are unset are simply
+   absent from the result (never an empty string, so an extension's
+   `os.environ.get(...) or default` still works).
+
+   `declared` is the raw Python list; malformed names are dropped."
+  [declared]
+  (let
+    [extra
+     (config-env-passthrough)
+
+     names
+     (into []
+           (comp (map str) (filter #(re-matches env-name-re %)) (distinct))
+           (concat (or declared []) extra))]
+
+    (into {}
+          (keep (fn [n]
+                  (when-let [v (System/getenv n)]
+                    (when-not (str/blank? v) [n v]))))
+          names)))
+
 (defn ^:no-doc build-context
   "Build one trusted extension context on the shared Engine. Extensions have
    real filesystem, network, environment, thread, and subprocess access; only
@@ -356,7 +405,29 @@
                 (->executable (fn [handle]
                                 (boolean ((requiring-resolve
                                             'com.blockether.vis.internal.human-input/forget-secret!)
-                                           (str handle))))))))
+                                           (str handle))))))
+    ;; DECLARED ENV: one JSON list of names in, one JSON object of the values
+    ;; the host could resolve out. Backed by `resolve-declared-env`, so an
+    ;; undeclared name is unreachable no matter what the extension asks for.
+    (.putMember g
+                "__vis_host_declare_env__"
+                (->executable (fn [names-json]
+                                (let
+                                  [names (try (json/read-json (str names-json) :key-fn identity)
+                                              (catch Throwable _ nil))
+                                   resolved (resolve-declared-env names)]
+
+                                  (tel/log! {:level :debug
+                                             :id ::declared-env
+                                             :data {:ext label
+                                                    :declared (vec (map str (or names [])))
+                                                    :resolved (vec (sort (keys resolved)))}
+                                             :msg (str "extension '"
+                                                       label
+                                                       "' declared env: "
+                                                       (str/join ", " (sort (keys resolved)))
+                                                       " resolved")})
+                                  (json/write-json-str resolved)))))))
 
 (def ^:no-doc host-member-names
   "Every `__vis_host_*` global the bootstrap reads out of a context's bindings.
@@ -368,7 +439,7 @@
   ["__vis_host_state_get__" "__vis_host_state_put__" "__vis_host_state_del__" "__vis_host_log__"
    "__vis_host_notify__" "__vis_host_shell__" "__vis_host_jailed_shell__"
    "__vis_host_jailed_shell_session__" "__vis_host_request_input__" "__vis_host_check_input__"
-   "__vis_host_reveal_secret__" "__vis_host_forget_secret__"])
+   "__vis_host_reveal_secret__" "__vis_host_forget_secret__" "__vis_host_declare_env__"])
 
 (defn ^:no-doc bind-inert-host!
   "Bind every host member as a REFUSAL, so the `vis` module can be BUILT without
@@ -389,13 +460,12 @@
      (doseq [member host-member-names]
        (.putMember g
                    ^String member
-                   (->executable (or (get overrides member)
-                                     (fn [& _]
-                                       (throw (ex-info (str "host call "
-                                                            member
-                                                            " is not available while checking")
-                                                       {:type :vis/extension-check-inert
-                                                        :member member}))))))))))
+                   (->executable
+                     (or (get overrides member)
+                         (fn [& _]
+                           (throw (ex-info
+                                    (str "host call " member " is not available while checking")
+                                    {:type :vis/extension-check-inert :member member}))))))))))
 
 ;; =============================================================================
 ;; Adapters — Python callables wrapped as the Clojure fns the extension
@@ -1142,7 +1212,15 @@
      network-filters
      (mapv (fn [rf]
              (network-filter-adapter ext-name ctx (get rf "fn")))
-           (get reg "network_filters"))]
+           (get reg "network_filters"))
+
+     declared-env
+     (into []
+           (comp (map str)
+                 (distinct)
+                 (map (fn [n]
+                        {:name n :required? true})))
+           (get reg "env"))]
 
     (cond->
       {:ext/name ext-name
@@ -1177,7 +1255,10 @@
       (assoc :ext/providers providers)
 
       (seq network-filters)
-      (assoc :ext/network-filters network-filters))))
+      (assoc :ext/network-filters network-filters)
+
+      (seq declared-env)
+      (assoc :ext/env declared-env))))
 
 ;; =============================================================================
 ;; Loader

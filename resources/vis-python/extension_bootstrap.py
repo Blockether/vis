@@ -7,7 +7,8 @@ _registration = {'spec': None}
 
 def extension(name=None, description=None, version=None, kind=None, alias=None,
               activation=None, symbols=None, prompt=None, slash_commands=None,
-              op_hooks=None, ctx=None, providers=None, network_filters=None):
+              op_hooks=None, ctx=None, providers=None, network_filters=None,
+              env=None):
     if _registration['spec'] is not None:
         raise ValueError('vis.extension() may only be called once per file')
     if not name or not isinstance(name, str):
@@ -18,6 +19,27 @@ def extension(name=None, description=None, version=None, kind=None, alias=None,
         raise ValueError('vis.extension(...) requires alias=<string> when symbols= is declared')
     if ctx is not None and not callable(ctx):
         raise ValueError('vis.extension(...) ctx= must be a callable (env) -> dict of session contributions')
+    # DECLARED HOST ENV ALLOWLIST. The extension names the environment
+    # variables it needs; the host resolves them from its own process
+    # environment and injects ONLY those into this context's os.environ. No
+    # blanket passthrough: an undeclared variable stays invisible to
+    # extension code.
+    if env is not None:
+        if isinstance(env, str) or not hasattr(env, '__iter__'):
+            raise ValueError('vis.extension(...) env= must be a list of environment variable names')
+        env = [str(n) for n in env]
+        for n in env:
+            if not n or not all(c.isalnum() or c == '_' for c in n) or n[0].isdigit():
+                raise ValueError(
+                    'vis.extension(...) env= entries must be environment variable names, got %r' % (n,))
+        # Resolve NOW, not at registration: the host reads the declared names
+        # out of its own process environment and hands back only those it
+        # found, so `os.environ[...]` works for the rest of this file (module
+        # level included) and for every later detect/status callback.
+        if env:
+            import json as _json, os as _os
+            for _k, _v in (_json.loads(_host['declare_env'](_json.dumps(env))) or {}).items():
+                _os.environ[str(_k)] = str(_v)
     _registration['spec'] = {
         'name': name, 'description': description, 'version': version,
         'kind': kind, 'alias': alias, 'activation': activation,
@@ -26,7 +48,16 @@ def extension(name=None, description=None, version=None, kind=None, alias=None,
         'op_hooks': list(op_hooks or []), 'ctx': ctx,
         'providers': list(providers or []),
         'network_filters': list(network_filters or []),
+        'env': list(env or []),
     }
+
+
+def host_env(name, default=None):
+    # Value of a host environment variable DECLARED in vis.extension(env=[...]).
+    # Undeclared names always return `default` -- declaring is the only way in.
+    import os as _os
+    v = _os.environ.get(str(name))
+    return default if v is None else v
 
 def _kwargs_dict(x):
     # The folded-kwargs map crosses the host boundary as a FOREIGN hash map, not a
@@ -609,6 +640,7 @@ _vis_mod.__dict__["_host"] = {
     "check_input": __vis_host_check_input__,
     "reveal_secret": __vis_host_reveal_secret__,
     "forget_secret": __vis_host_forget_secret__,
+    "declare_env": __vis_host_declare_env__,
 }
 exec(compile(_vis_body, "<vis-bootstrap>", "exec"), _vis_mod.__dict__)
 _vis_sys.modules["vis"] = _vis_mod

@@ -234,6 +234,84 @@ vis.extension(
                        (expect (= 2 (get-in result [:result "payload" "b"]))))))))
 
 ;; =============================================================================
+;; Declared host environment -- issue #129
+;; =============================================================================
+
+(def ^:private env-py
+  "\"\"\"Declared host env allowlist fixture.\"\"\"
+import os
+import vis
+
+
+def env_probe():
+    \"\"\"await env_probe() -> {\"has_path\", \"has_unset\", \"host_path\", \"host_default\"} -- report declared env reachability.\"\"\"
+    return {\"has_path\": os.environ.get(\"PATH\") is not None,
+            \"has_unset\": os.environ.get(\"VIS_TEST_NEVER_SET_129\") is not None,
+            \"host_path\": vis.host_env(\"PATH\") is not None,
+            \"host_default\": vis.host_env(\"VIS_TEST_NEVER_SET_129\", \"fallback\")}
+
+
+vis.extension(
+    name=\"env-allowlist\",
+    description=\"Declared env allowlist fixture.\",
+    version=\"0.1.0\",
+    kind=\"integration\",
+    alias=\"env\",
+    symbols=[vis.symbol(env_probe, tag=\"observation\")],
+    env=[\"PATH\", \"VIS_TEST_NEVER_SET_129\"],
+)
+")
+
+(def ^:private env-bad-py
+  "\"\"\"Bad env= fixture -- not a list.\"\"\"
+import vis
+
+
+vis.extension(name=\"env-bad\", description=\"bad env fixture.\", env=\"PATH\")
+")
+
+;; Regression, issue #129: a Python extension could not read host env vars.
+;; `vis.extension(...)` did not accept `env=`, so any extension declaring the
+;; variables it needed raised at load and its provider was silently absent.
+;; Now `env=` declares an allowlist the host resolves from the process
+;; environment (`System/getenv`), and the declaration lands on `:ext/env` so
+;; doctor/the TUI can surface a declared-but-unset variable instead of failing
+;; silently.
+(defdescribe
+  declared-host-env-test
+  (it "resolve-declared-env reads System/getenv and drops unset/malformed names"
+      (let [path (System/getenv "PATH")]
+        (expect (some? path))
+        (expect (= path (get (pyx/resolve-declared-env ["PATH"]) "PATH")))
+        (expect (= {} (pyx/resolve-declared-env ["VIS_TEST_NEVER_SET_129"])))
+        (expect (= {"PATH" path} (pyx/resolve-declared-env ["9BAD" "" "BAD-NAME" "PATH"])))
+        (expect (= {} (pyx/resolve-declared-env nil)))
+        (expect (= {} (pyx/resolve-declared-env [])))))
+  (it "accepts env=, injects declared vars, and registers :ext/env"
+      (with-loaded {"env_allowlist.py" env-py}
+                   (fn [result _]
+                     (expect (= {:loaded 1 :failed 0 :changed? true} result))
+                     (let [ext (registered "env-allowlist")]
+                       (expect (some? ext))
+                       (expect (= [{:name "PATH" :required? true}
+                                   {:name "VIS_TEST_NEVER_SET_129" :required? true}]
+                                  (:ext/env ext)))
+                       (let
+                         [probe (symbol-fn ext 'probe)
+                          out (get-in (probe) [:result])]
+
+                         (expect (true? (get out "has_path")))
+                         (expect (false? (get out "has_unset")))
+                         (expect (true? (get out "host_path")))
+                         (expect (= "fallback" (get out "host_default"))))))))
+  (it "rejects env= that is not a list of variable names"
+      (with-loaded {"env_bad.py" env-bad-py}
+                   (fn [result _]
+                     (expect (= 1 (:failed result)))
+                     (let [errs (map :error (pyx/load-failures))]
+                       (expect (some #(str/includes? (str/lower-case %) "env") errs)))))))
+
+;; =============================================================================
 ;; State — durable across reloads
 ;; =============================================================================
 
