@@ -64,13 +64,9 @@
   (it
     "keeps the sectioned core contract explicit and non-contradictory"
     (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-      ;; Context safety is worth a small fixed prompt cost; keep the whole core below 4.7k.
-      ;; The ratchet must never squeeze out §7's teardown rule again: compressing it to a
-      ;; bare "finish clean" is how sessions started leaking REPLs. The budget moved 4.5k →
-      ;; 4.7k exactly once, when REPL-first reproduction and the "unverified until a test
-      ;; covers it" rule landed: those rules pay for themselves, and paying for them by
-      ;; shaving other rules' wording is the squeeze this lock exists to stop.
-      (expect (< (count text) 4700))
+      ;; Context safety is worth a small fixed prompt cost; keep the whole core below 5.2k.
+      ;; The lifecycle checkpoint and full pre-fold recovery record must not squeeze out §7 teardown.
+      (expect (< (count text) 5200))
       (let
         [steps (mapv #(str/index-of text %)
                      ["`grep` locates unknown code" "`struct_index` every known file"
@@ -115,10 +111,19 @@
           "Treat context as a budget" "at most two targeted"
           "named unresolved decision blocks the edit" "no repeated search/read"
           "Fold settled work into a gist" "recorded thinking" "in-flight hidden reasoning remain"
-          "When edit-ready and headroom permits, patch before folding"
-          "Prefer folding after edit/verification" "Before an unavoidable fold, checkpoint"
-          "exact paths; confirm reduction" "Fold only settled steps"
-          "Finish clean: stop every session resource you started" "Confirm destructive actions."]]
+          "When edit-ready and headroom permits, patch first"
+          "Prefer folding after edit/verification" "Before an unavoidable fold, checkpoint"]]
+        (expect (str/includes? text required)))
+      (doseq
+        [required ["exact paths; confirm reduction" "Fold only settled steps"
+                   "completed-task/unrelated-task boundary" "decision/change" "files/symbols"
+                   "verification" "risks/follow-up" "dirty/clean state" "audit/recovery"
+                   "fresh reasoning" "new task + only the relevant checkpoint"
+                   "Do not auto-fold an immediate related follow-up"]]
+        (expect (str/includes? text required)))
+      (doseq
+        [required ["Finish clean: stop every session resource you started"
+                   "Confirm destructive actions."]]
         (expect (str/includes? text required)))
       ;; Python's native-result retrieval contract belongs in the execution-surface
       ;; guidance because it controls context shaping across every native tool.
