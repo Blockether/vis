@@ -9,6 +9,7 @@ import {
 import type { GatewayClient } from '../lib/gateway';
 import { mediaFrameClass } from '../lib/media-frame';
 import type { TranscriptTurn } from '../lib/types';
+import chatContentSource from './ChatContent.tsx?raw';
 
 /** Visible text of a rendered chunk: tags out, entities back. */
 const text = (html: string) =>
@@ -176,5 +177,13 @@ describe('the attachment rail', () => {
     const html = rail(3, 64 * 1024);
     expect(html).toContain('report-2.pdf');
     expect(text(html)).not.toContain('more');
+  });
+});
+
+// Regression, live reasoning scroll jump: the trace ramp used to pin its own scrollTop while SessionScreen's content observer pinned the same scroller again, making streamed thinking visibly jump.
+describe('transcript scroll ownership', () => {
+  it('leaves scroll correction to the session screen owner', () => {
+    expect(chatContentSource).not.toMatch(/scroller\\.scrollTop/u);
+    expect(chatContentSource).not.toMatch(/rampFromRef/u);
   });
 });

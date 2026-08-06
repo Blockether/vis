@@ -41,9 +41,6 @@ import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { parseUserMessage } from '../lib/paste';
-import {
-  readerOwnsScroll,
-} from '../lib/reader-gesture';
 import { formatCost, formatTokens, turnUsage } from '../lib/usage';
 import { isViewportRotating, onViewportRotation } from '../lib/viewport';
 import type {
@@ -1656,14 +1653,6 @@ function releaseRamp(id: symbol): void {
  * scroller in the same layout pass — the drift it measures is already zero.
  */
 
-/** The scroller this trace lives in, or the document's, so the ramp can hold it. */
-function scrollParent(node: HTMLElement | null): HTMLElement | null {
-  for (let el = node?.parentElement ?? null; el; el = el.parentElement) {
-    const overflowY = window.getComputedStyle(el).overflowY;
-    if (overflowY === 'auto' || overflowY === 'scroll') return el;
-  }
-  return (document.scrollingElement as HTMLElement | null) ?? null;
-}
 
 function traceEntry(iteration: TranscriptIteration, index: number) {
   return {
@@ -1792,14 +1781,6 @@ export const IterationTrace = memo(function IterationTrace({
   sid?: string;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const scrollerRef = useRef<HTMLElement | null>(null);
-  // What this trace measured in the frame that asks for more segments: its own
-  // height, and how far the reader was from the end. `null` means this render
-  // was not a ramp step.
-  const rampFromRef = useRef<{
-    own: number;
-    gap: number;
-  } | null>(null);
   // Identity in the ramp queue, so only the bottom-most trace backfills at once.
   const [rampId] = useState(() => Symbol('trace-ramp'));
   useEffect(() => () => releaseRamp(rampId), [rampId]);
@@ -1812,39 +1793,6 @@ export const IterationTrace = memo(function IterationTrace({
 
   const rampDone = mountedSegments >= segments.length;
 
-  // Before the browser paints the segments the ramp just mounted: a reader at
-  // the bottom stays at the bottom. Holding anyone ELSE's line is deliberately
-  // not done here — see `lib/reader-gesture`; `SessionScreen` anchors the whole
-  // scroller once, and a second opinion in this effect double-billed every
-  // frame a "↑ Load earlier" shared with a ramp step.
-  useLayoutEffect(() => {
-    const from = rampFromRef.current;
-    rampFromRef.current = null;
-    const scroller = scrollerRef.current;
-    const root = rootRef.current;
-    // Reading this height forces the layout of everything the step just mounted:
-    // the honest price of this batch, charged to it below instead of leaking into
-    // the next frame.
-    const grew = from && root ? root.offsetHeight - from.own : 0;
-    if (from && scroller && root && (grew !== 0 || from.gap <= 8)) {
-      // Whether the reader was following the end is measured BEFORE the batch
-      // lands, in the frame that scheduled it. Deriving it afterwards by
-      // subtracting this trace's growth silently assumed the growth was appended
-      // below the reader — true for the newest trace, false for the 400 traces a
-      // "load earlier" prepends ABOVE them. That assumption turned every 2 000 px
-      // batch into "they are within 2 000 px of the end, so pin them there" and
-      // fired 16 unwanted jumps worth 46 000 px in one load.
-      // Pin only a reader who was already at the end AND is not touching the
-      // scroller: a slow drag travels less than this tolerance in one frame, so
-      // the pin would otherwise swallow the drag itself.
-      if (from.gap <= 8 && !readerOwnsScroll()) scroller.scrollTop = scroller.scrollHeight;
-    }
-
-    // Price this batch: everything above is its render and its forced layout.
-    // The frame it lands in is judged separately, in the next ramp frame.
-    const step = stepRef.current;
-    if (step.startedAt > 0) step.work = performance.now() - step.startedAt;
-  }, [mountedSegments]);
 
   // A chunk per frame, so the work the first paint skipped never lands as one
   // long frame either.
@@ -1876,18 +1824,6 @@ export const IterationTrace = memo(function IterationTrace({
         step.size = Math.min(SEGMENT_RAMP_MAX, Math.max(SEGMENT_RAMP_MIN, next));
       }
 
-      const scroller = scrollerRef.current ?? scrollParent(rootRef.current);
-      scrollerRef.current = scroller;
-      const root = rootRef.current;
-      rampFromRef.current =
-        scroller && root
-          ? {
-              own: root.offsetHeight,
-              // Measured here, before the batch lands, because only now does it
-              // mean "the reader is following the end".
-              gap: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
-            }
-          : null;
       step.startedAt = performance.now();
       setMountedSegments((count) => count + step.size);
     };
