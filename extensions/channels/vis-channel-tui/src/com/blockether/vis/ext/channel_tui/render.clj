@@ -6144,12 +6144,12 @@
 
      ans-entries
      (if (markdown-non-empty? answer)
-       (vec (layout/ast->entries (vis/markdown->ast answer)
-                                 (max 1 (- (long fill-w) 2))
-                                 {:session-id (:session-id opts)
-                                  :session-turn-id (:session-turn-id opts)
-                                  :detail-expansions (:detail-expansions opts)
-                                  :section :answer}))
+       (vec (paste-aware-ast->entries (vis/markdown->ast answer)
+                                      (max 1 (- (long fill-w) 2))
+                                      {:session-id (:session-id opts)
+                                       :session-turn-id (:session-turn-id opts)
+                                       :detail-expansions (:detail-expansions opts)
+                                       :section :answer}))
        [])
 
      ans-pad
