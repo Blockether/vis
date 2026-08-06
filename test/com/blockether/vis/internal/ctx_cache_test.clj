@@ -21,6 +21,11 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.ctx-renderer :as cr]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.ctx-loop :as ctx-loop]
+            [com.blockether.vis.internal.prompt :as prompt]
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.env-digest :as env-digest]
+            [com.blockether.vis.internal.resources :as resources]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private base-ctx
@@ -102,6 +107,39 @@
 
         (expect (str/includes? with-resources "session[\"resources\"] = [{\"id\": \"shell-1\"}]"))
         (expect (str/includes? without-resources "session[\"resources\"] = []"))))
+  ;; Regression, issue #gateway-restart-resources: a resumed ctx snapshot used to
+  ;; retain the previous gateway's persisted resource view when the live registry was empty.
+  (it "replaces persisted resources with the empty live registry on resume"
+      (with-redefs
+        [prompt/active-extensions
+         (fn [_]
+           [])
+
+         extension/ctx-contributions
+         (fn [_ _]
+           {})
+
+         env-digest/base-digest
+         (fn [_]
+           {})
+
+         env-digest/deep-merge
+         (fn [& xs]
+           (apply merge xs))
+
+         resources/list-resources
+         (fn [_]
+           [])
+
+         resources/model-view
+         (fn [_ _]
+           {})]
+
+        (expect (= {}
+                   (get (ctx-loop/enrich-ctx {:session-id "s1"}
+                                             {"session_resources" {"repls" {"clojure"
+                                                                            {"." {"id" "old"}}}}})
+                        "session_resources")))))
   (it "renders turn and utilization explicitly for iteration 1"
       (let
         [boundary (cr/render-turn-boundary {:ctx (assoc base-ctx

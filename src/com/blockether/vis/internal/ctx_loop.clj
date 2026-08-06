@@ -227,7 +227,7 @@
       (seq env-block)
       (assoc "session_env" env-block)
 
-      (seq rsrc-view)
+      true
       (assoc "session_resources" rsrc-view)
 
       (seq access-view)
