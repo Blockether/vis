@@ -368,7 +368,6 @@
              [result-cards form/result-cards]
              [native-tool-form? form/native-tool-form?]
              [hide-tool-code? form/hide-tool-code?]
-             [show-running-tool-code? form/show-running-tool-code?]
              [coalesce-forms form/coalesce-forms])
 
 (import-vars [markdown->ast ir/markdown->ast])

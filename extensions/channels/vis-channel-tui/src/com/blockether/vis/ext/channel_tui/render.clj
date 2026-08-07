@@ -5547,19 +5547,15 @@
             (mapv #(line-entry (str err-result-marker %))
                   (wrap-text (form-error-headline error) fill-w)))
 
-          ;; Completed native invocation source is redundant beside its op-card.
-          ;; While a call is still RUNNING only `vis/show-running-tool-code?`
-          ;; tools (shell / python_execution) keep their submitted source on
-          ;; screen — for everything else a 200ms cat/grep would flash a code
-          ;; frame nobody reads, so it just spins behind its badge. Python is
-          ;; user-relevant evidence in every state; failed native calls retain
-          ;; only their compact error message. `vis/hide-tool-code?` owns the
-          ;; completed policy.
+          ;; A native invocation's source is redundant beside its op-card, running
+          ;; or finished: every long-running tool (`python_execution`,
+          ;; `shell_run`/`shell_background`) authors its own pending card body, so
+          ;; the submitted program is already on screen while it runs. Python keeps
+          ;; its source in every state; failed native calls retain only their
+          ;; compact error message. `vis/hide-tool-code?` owns the whole policy.
           ;; Blank non-tool code also drops empty chrome.
           hide-code-chrome?
-          (or (and (not is-error?) (str/blank? code-text))
-              (and (vis/hide-tool-code? form)
-                   (not (and running? (vis/show-running-tool-code? form)))))
+          (or (and (not is-error?) (str/blank? code-text)) (vis/hide-tool-code? form))
 
           code-block
           (cond hide-code-chrome?
@@ -6777,45 +6773,7 @@
 ;; `bubble-w = cols - MESSAGE_SIDE_PAD`. Both this file's painter and
 ;; `screen.clj`'s height calculator MUST use this exact derivation.
 
-(def welcome-message-lines
-  "The FIRST message vis says, and the only one — there is no welcome dialog.
-   It is prose in the transcript band, bottom-anchored just above the composer, so
-   the very first thing on screen is the thing you type into. Line 0 is the
-   wordmark (accent); the rest is hint ink."
-  ["◆  v i s — your terminal, now agentic."
-   "Type below to begin. C-x o opens Settings › Providers; F1 lists every key."])
 
-(defn draw-welcome-message!
-  "Paint `welcome-message-lines` centered at the BOTTOM of the transcript band, so
-   it sits directly above the input box and is pushed off by the first real
-   message. No border, no chrome — the band's own paper."
-  [^TextGraphics g cols box-top box-bottom]
-  (let
-    [cols
-     (long cols)
-
-     box-top
-     (long box-top)
-
-     box-bottom
-     (long box-bottom)
-
-     lines
-     welcome-message-lines
-
-     start
-     (long (max box-top (- box-bottom (long (count lines)))))]
-
-    (doseq
-      [[i line]
-       (map-indexed vector lines)
-
-       :let [row
-             (+ start (long i))]
-       :when (< row box-bottom)]
-
-      (p/set-colors! g (if (zero? (long i)) t/header-active-tab-accent t/dialog-hint) t/terminal-bg)
-      (p/put-str! g 0 row (p/center-text line cols)))))
 
 (defn draw-messages-area!
   "Draw structured chat messages as left-aligned blocks inside a clean,

@@ -179,37 +179,7 @@
 
     (boolean (and (native-tool-form? form) (not errored?) (not= tool-name "python_execution")))))
 
-(def running-code-tools
-  "Native tools whose SUBMITTED invocation stays visible while the call is STILL
-   RUNNING — the command/program itself is the payload a user needs to judge a
-   long-running op. Every other native tool just spins behind its badge: a 200ms
-   `cat`/`grep` must not flash a bordered code frame with a copy control for
-   something nobody reads. `python_execution` additionally keeps its source after
-   completion (see `hide-tool-code?`); `shell_run`/`shell_background` only while
-   they run, because the finished command is already carried by its op-card
-   headline."
-  #{"python_execution" "shell_run" "shell_background"})
-
-(defn show-running-tool-code?
-  "Should a channel show a STILL-RUNNING form's invocation source even though
-   `hide-tool-code?` would drop it once the call completes? Only for
-   `running-code-tools` (and non-tool forms, which have no op-card to hide
-   behind) — and never when the tool AUTHORED its own pending card body
-   (`:pending-render`): that body already IS the submitted command, rendered as
-   the card renders it, so the raw invocation beside it would say the same thing
-   twice in JSON. This is the shared TUI/channel policy; web mirrors it."
-  [form]
-  (boolean (and (str/blank? (str (:pending-render form)))
-                (or (not (native-tool-form? form))
-                    (contains? running-code-tools
-                               (some-> (:vis/tool-name form)
-                                       name))))))
-
-(def ^:private same-path-coalescable-tools
-  "Native tools whose ADJACENT op-cards fold only when they target the SAME file."
-  #{"cat" "patch"})
-
-(def ^:private same-tool-coalescable-tools
+(def ^:private coalescable-tools
   "Native tools whose ADJACENT op-cards fold by tool name, even across files.
    `format_code` often runs once per file from the agent workflow; two
    back-to-back no-op format acks should read as ONE FORMAT_CODE roll-up, not a
@@ -236,64 +206,6 @@
       (cond (contains? r k) (get r k)
             (contains? r (name k)) (get r (name k))))))
 
-(defn- same-path-form-path
-  "The file PATH a same-path coalescable op-card (`cat`/`patch`) acted on — from
-   the raw `:result` `:path` when present, else parsed out of the first
-   `` `path` `` chip of the summary (which survives a DB round-trip that flattens
-   `:result` to a string). nil for a non-coalescable / pathless form."
-  [form]
-  (when (contains? same-path-coalescable-tools (tool-name-s form))
-    (or (result-field form :path)
-        (some-> (:result-summary form)
-                str
-                (->> (re-find #"`([^`]+)`"))
-                second))))
-
-(defn- split-summary-parts [summary] (str/split (str summary) #" · "))
-
-(defn- merge-same-path-summaries
-  "Fold N same-file op-card summaries into ONE. Splits each on ` · `, keeps the
-   shared leading chip (`` `path` `` for cat, including legacy `` update `path` ``
-   patch records), then appends every DISTINCT tail. For cat, that means the read
-   LINE SPANS plus the SUMMED line count when every merged read carried one.
-   `merge-run` removes legacy mutation verbs before exposing the merged card."
-  [summaries]
-  (let
-    [parts
-     (map split-summary-parts summaries)
-
-     chip
-     (ffirst parts)
-
-     tails
-     (mapcat rest parts)
-
-     count-re
-     #"^(\d+) lines?$"
-
-     counts
-     (keep #(some-> (re-matches count-re %)
-                    second
-                    parse-long)
-           tails)
-
-     spans
-     (remove #(re-matches count-re %) tails)
-
-     total
-     (reduce + 0 counts)
-
-     span-str
-     (str/join " · " (distinct spans))
-
-     count-str
-     (when (and (seq counts) (= (count counts) (count summaries)))
-       (str total " line" (when (not= 1 total) "s")))
-
-     tail
-     (str/join " · " (remove str/blank? [span-str count-str]))]
-
-    (if (str/blank? tail) chip (str chip " · " tail))))
 
 (defn- format-summary-entries
   "Recover every per-file row from a `format_code` form. Current language packs
@@ -354,56 +266,29 @@
      :body (when (seq body) (str "```\n" body "\n```"))}))
 
 (defn- merge-run
-  "Collapse a RUN of adjacent op-cards into one synthesized form: for same-file
-   read/edit tools, the combined multi-span/multi-diff summary plus every card's
-   body slice; for per-file format acks, one format roll-up body. Channels render
-   the synthesized form as ONE card/bubble."
+  "Collapse a RUN of adjacent per-file `format_code` acks into one synthesized
+   form carrying a single roll-up headline and body. Channels render the
+   synthesized form as ONE card/bubble."
   [forms]
-  (let
-    [f0
-     (first forms)
-
-     tool
-     (tool-name-s f0)
-
-     merged
-     (if (= "format_code" tool)
-       (merge-format-forms forms)
-       {:summary (merge-same-path-summaries (map :result-summary forms))
-        :body (str/join "\n" (keep (comp not-empty str :result-render) forms))})
-
-     anchors
-     (reduce merge {} (map #(result-field % :anchors) forms))
-
-     r0
-     (:result f0)]
-
-    (cond->
-      (assoc f0
-        :result-summary (compact-tool-summary (:summary merged) tool)
-        :result-render (:body merged))
-      ;; Only merge anchors onto a genuine MAP result. After a DB round-trip
-      ;; `:result` comes back as the rendered string (anchors flattened) and the
-      ;; path/spans already live in the merged summary, so a non-map result
-      ;; carries through untouched (assoc'ing onto a string throws).
-      (map? r0)
-      (assoc :result (assoc r0 :anchors anchors)))))
+  (let [merged (merge-format-forms forms)]
+    (assoc (first forms)
+      :result-summary (compact-tool-summary (:summary merged) (tool-name-s (first forms)))
+      :result-render (:body merged))))
 
 (defn- coalesce-key
   [form]
   (when-not (coalesce-error-form? form)
     (let [tool (tool-name-s form)]
-      (cond (contains? same-path-coalescable-tools tool) (when-let [p (same-path-form-path form)]
-                                                           [::same-path tool p])
-            (contains? same-tool-coalescable-tools tool) [::same-tool tool]))))
+      (when (contains? coalescable-tools tool) [::same-tool tool]))))
 
 (defn coalesce-forms
   "Merge each maximal run of ADJACENT, successful coalescable native op-cards into
-   a single card. `cat`/`patch` coalesce only for the SAME file; `format_code`
-   coalesces adjacent per-file acks into one roll-up across files. Every other
-   form passes through untouched. The ONE projection both channels apply before
-   rendering an iteration's forms, so repeated tool acks never render as a stack
-   of look-alike sibling bubbles. Always returns a vector."
+   a single card: `format_code` folds adjacent per-file acks into one roll-up
+   across files. Every other form passes through untouched — batching tools such
+   as cat, patch and grep already carry every path of one call in ONE card, so
+   two adjacent cards are two genuinely distinct calls. The ONE projection both
+   channels apply before rendering an iteration's forms, so repeated tool acks
+   never render as a stack of look-alike sibling bubbles. Always returns a vector."
   [forms]
   (let
     [key-fn (fn [f]

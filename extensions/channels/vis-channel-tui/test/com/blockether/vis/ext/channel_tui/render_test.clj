@@ -291,14 +291,10 @@
 
 (defdescribe
   coalesce-forms-test
-  ;; Regression: a DB-restored session whose trailer had >=2 adjacent `cat`
-  ;; reads of the SAME file froze the whole TUI. `coalesce-forms` groups them by
-  ;; the summary chip (it recovers the path from the summary PRECISELY because
-  ;; the DB round-trip flattens `:result` from a map to the rendered STRING),
-  ;; then a naive merge did `(assoc (:result f0) :anchors …)` on that string
-  ;; -> ClassCastException every frame -> the render loop keeps re-throwing on
-  ;; the last frame and never repaints.
-  (it "merges adjacent same-path cat forms whose :result is a flattened STRING (no throw)"
+  ;; `cat`/`patch`/`grep` batch every path of one call into ONE card, so two
+  ;; adjacent cards are two genuinely distinct calls and are never folded: only
+  ;; `format_code`, which the workflow still runs once per file, rolls up.
+  (it "leaves adjacent same-path cat forms alone (each card is its own call)"
       (let
         [forms
          [{:vis/tool-name "cat"
@@ -313,28 +309,26 @@
          out
          (coalesce-forms forms)]
 
-        (expect (= 1 (count out))) ; the run collapsed
-        (expect (str/includes? (:result-summary (first out)) "L1-10"))
-        (expect (str/includes? (:result-summary (first out)) "L40-50"))
-        ;; a string result carries through untouched (no anchors assoc'd onto it)
-        (expect (string? (:result (first out))))))
-  (it "still merges anchors when :result is a MAP (live, pre-DB-roundtrip)"
+        (expect (= 2 (count out)))
+        (expect (= forms out))))
+  (it "leaves adjacent same-file patch forms alone"
       (let
         [forms
-         [{:vis/tool-name "cat"
-           :result-summary "`a.clj` · L1-10"
-           :result-render "x"
-           :result {:path "a.clj" :anchors {"1:aa" "x"}}}
-          {:vis/tool-name "cat"
-           :result-summary "`a.clj` · L40-50"
-           :result-render "y"
-           :result {:path "a.clj" :anchors {"40:bb" "y"}}}]
+         [{:vis/tool-name "patch"
+           :success? true
+           :result-summary "`a.clj`"
+           :result-render "```diff\n+ one\n```"
+           :result {:path "a.clj"}}
+          {:vis/tool-name "patch"
+           :success? true
+           :result-summary "`a.clj`"
+           :result-render "```diff\n+ two\n```"
+           :result {:path "a.clj"}}]
 
          out
          (coalesce-forms forms)]
 
-        (expect (= 1 (count out)))
-        (expect (= {"1:aa" "x" "40:bb" "y"} (get-in (first out) [:result :anchors])))))
+        (expect (= 2 (count out)))))
   (it "leaves a solo cat form and non-cat forms untouched"
       (let
         [forms
@@ -345,27 +339,6 @@
          (coalesce-forms forms)]
 
         (expect (= 2 (count out)))))
-  (it "folds adjacent same-file patch forms into one multi-diff card"
-      (let
-        [forms
-         [{:vis/tool-name "patch"
-           :success? true
-           :result-summary "update `a.clj`"
-           :result-render "```diff\n+ one\n```"
-           :result {:path "a.clj"}}
-          {:vis/tool-name "patch"
-           :success? true
-           :result-summary "update `a.clj`"
-           :result-render "```diff\n+ two\n```"
-           :result {:path "a.clj"}}]
-
-         out
-         (coalesce-forms forms)]
-
-        (expect (= 1 (count out)))
-        (expect (= "`a.clj`" (:result-summary (first out))))
-        (expect (str/includes? (:result-render (first out)) "+ one"))
-        (expect (str/includes? (:result-render (first out)) "+ two"))))
   (it "folds adjacent format_code path acks into one roll-up card"
       (let
         [forms
@@ -397,42 +370,6 @@
            :success? true
            :result-summary "`test/a_test.clj` (no change)"
            :result {"path" "test/a_test.clj" "changed" false}}]
-
-         out
-         (coalesce-forms forms)]
-
-        (expect (= 2 (count out)))))
-  (it "keeps a failed patch separate from an adjacent successful one on the same file"
-      (let
-        [forms
-         [{:vis/tool-name "patch"
-           :success? false
-           :result-summary "update `a.clj`"
-           :result-render "boom"
-           :result {:path "a.clj"}}
-          {:vis/tool-name "patch"
-           :success? true
-           :result-summary "update `a.clj`"
-           :result-render "ok"
-           :result {:path "a.clj"}}]
-
-         out
-         (coalesce-forms forms)]
-
-        (expect (= 2 (count out)))))
-  (it "does not merge a cat and a patch on the same file"
-      (let
-        [forms
-         [{:vis/tool-name "cat"
-           :success? true
-           :result-summary "`a.clj` · L1-10"
-           :result-render "body"
-           :result {:path "a.clj"}}
-          {:vis/tool-name "patch"
-           :success? true
-           :result-summary "update `a.clj`"
-           :result-render "```diff\n+ x\n```"
-           :result {:path "a.clj"}}]
 
          out
          (coalesce-forms forms)]
@@ -782,58 +719,31 @@
         (expect (not (str/includes? body "RECAP")))
         (expect (str/includes? body "NEXT STEP: wait and retry, or switch provider/model."))
         (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 429")))))
-  (it "shows the exact native invocation while a call the tool does not render is running"
+  (it "hides a running native tool's invocation, but keeps a running python program"
+      ;; A native tool spins behind its badge in every state: the long-running ones
+      ;; (`shell_run`/`shell_background`) author their own pending card body, so
+      ;; nothing has to fall back to raw invocation JSON while the call runs.
       (let
-        [code
-         "shell({\"commands\":[\"sleep 30\"]})"
+        [entry-lines
+         (fn [form]
+           (format-iteration-entry {:iteration 0
+                                    :forms [(merge {:started-at-ms 1000 :success? nil} form)]}
+                                   80
+                                   1
+                                   {:now-ms 2500}))
 
-         display-code
-         "shell({\"commands\": [\"sleep 30\"]})"
+         shell-lines
+         (entry-lines {:vis/tool-name "shell_run"
+                       :code "shell_run({\"commands\": [\"sleep 30\"]})"
+                       :display-code "sleep 30"
+                       :display-language "bash"})
 
-         lines
-         (format-iteration-entry {:iteration 0
-                                  :forms [{:vis/tool-name "shell"
-                                           :code code
-                                           :display-code display-code
-                                           :started-at-ms 1000
-                                           :success? nil}]}
-                                 80
-                                 1
-                                 {:now-ms 2500})
+         python-lines
+         (entry-lines {:vis/tool-name "python_execution" :code "print(1)"})]
 
-         code-line
-         (first (filter #(str/includes? (strip-ansi %) code) lines))
-
-         display-code-line
-         (first (filter #(str/includes? (strip-ansi %) display-code) lines))]
-
-        (expect (some? code-line))
-        (expect (nil? display-code-line))
-        (expect (= p/MARKER_CODE (marker-of code-line)))))
-  (it "shows a tool-authored pending block instead of the raw invocation JSON"
-      (let
-        [lines
-         (format-iteration-entry {:iteration 0
-                                  :forms [{:vis/tool-name "shell"
-                                           :code "shell({\"commands\": [\"sleep 30\"]})"
-                                           ;; what `shell`'s own `:render-start-call-fn` produced
-                                           :display-code "sleep 30"
-                                           :display-language "bash"
-                                           :started-at-ms 1000
-                                           :success? nil}]}
-                                 80
-                                 1
-                                 {:now-ms 2500})
-
-         command-line
-         (first (filter #(str/includes? (strip-ansi %) "sleep 30") lines))
-
-         json-line
-         (first (filter #(str/includes? (strip-ansi %) "commands") lines))]
-
-        (expect (some? command-line))
-        (expect (nil? json-line))
-        (expect (= p/MARKER_CODE (marker-of command-line)))))
+        (expect (nil? (first (filter #(str/includes? (strip-ansi %) "sleep 30") shell-lines))))
+        (expect (nil? (first (filter #(str/includes? (strip-ansi %) "commands") shell-lines))))
+        (expect (some? (first (filter #(str/includes? (strip-ansi %) "print(1)") python-lines))))))
   (it "wears its op-card HEADLINE above the tool-authored card body while running"
       ;; REGRESSION: a running `shell` painted a naked bash band and only grew its
       ;; badge once the result landed — the same call reading as two different
@@ -3632,10 +3542,10 @@
      #'render/form-fingerprint
 
      base
-     {:code "shell({\"op\": \"wait\", \"id\": \"verify\"})" :vis/tool-name "shell"}]
+     {:code "shell_logs({\"id\": \"verify\"})" :vis/tool-name "shell_logs"}]
 
     (it "display-code busts the fingerprint"
-        (expect (not= (fp base) (fp (assoc base :display-code "# shell wait verify"))))
+        (expect (not= (fp base) (fp (assoc base :display-code "# shell logs verify"))))
         (expect (not= (fp (assoc base :display-code "# a")) (fp (assoc base :display-code "# b")))))
     (it "display-language busts the fingerprint"
         (expect (not= (fp base) (fp (assoc base :display-language "bash")))))
@@ -4567,34 +4477,3 @@
           (expect (str/includes? text "turn_failed Provider stream stalled"))
           (expect (not (str/includes? text "**")))
           (expect (not (str/includes? text "ERROR:")))))))
-
-;; Regression (user report): the first-run welcome DIALOG stood between the user
-;; and the composer — one modal, one Enter, before anything could be typed. There
-;; is no welcome screen any more: the greeting is a message bottom-anchored in
-;; the transcript band, directly above the input box.
-(defdescribe
-  welcome-message-test
-  (it "paints on the last rows of the transcript band, just above the input"
-      (let
-        [captured
-         (cap/capture! {:cols 80
-                        :rows 12
-                        :paint! (fn [{:keys [screen]}]
-                                  (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
-                                    (render/draw-welcome-message! (.newTextGraphics s) 80 1 9)
-                                    (.refresh s)))})
-
-         grid
-         (first (:frames captured))
-
-         row-text
-         (fn [i]
-           (str/trim (apply str (map :ch (nth grid i)))))
-
-         n
-         (count render/welcome-message-lines)]
-
-        (expect (nil? (:error captured)))
-        ;; The block ENDS on the band's last row, so the first message pushes it off.
-        (expect (= (mapv str/trim render/welcome-message-lines) (mapv row-text (range (- 9 n) 9))))
-        (expect (str/blank? (row-text (- 9 n 1)))))))
