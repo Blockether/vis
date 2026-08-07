@@ -295,6 +295,12 @@
              (tel/log! :debug ["gateway-bus: writer start failed" (ex-message t)])))))
   nil)
 
+(def ^:private durable-write-timeout-ms
+  "Ceiling a producer thread will spend handing ONE durable event to the writer:
+   the enqueue wait plus the acknowledgement wait. Named so a wedged-writer test
+   can lower the ceiling it is proving, instead of paying it twice per case."
+  5000)
+
 (defn- enqueue-write!
   [sid event {:keys [store?] :as opts}]
   (start-writer!)
@@ -306,9 +312,9 @@
       ;; Bounded: never park a turn/provider thread forever on a wedged writer.
       (if (.offer writer-queue
                   {:sid sid :event event :opts opts :done done}
-                  5000
+                  durable-write-timeout-ms
                   TimeUnit/MILLISECONDS)
-        (deref done 5000 false)
+        (deref done durable-write-timeout-ms false)
         (tel/log! :debug
                   ["gateway-bus: dropped durable event; writer queue wedged" (get event "type")]))
       nil)

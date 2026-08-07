@@ -1650,7 +1650,9 @@
         (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
              (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
                (watchdog sid tid token stall)
-               (expect (false? (await-cancel token 1200))))
+               ;; The watchdog polls every 25ms here, so 400ms is a dozen-plus
+               ;; decisions past the 150ms ceiling — proof, not a longer nap.
+               (expect (false? (await-cancel token 400))))
              (expect (nil? (:stalled? @stall)))
              (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     (it "leaves a turn alone once it is no longer the current turn"
@@ -1670,7 +1672,7 @@
             (swap! registry assoc sid {:next-seq 0 :current-turn "other"})
             (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
               (watchdog sid "t1" token stall)
-              (expect (false? (await-cancel token 1200))))
+              (expect (false? (await-cancel token 400))))
             (expect (nil? (:stalled? @stall)))
             (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     (it "lands a terminal for a launched turn whose worker body never began"
@@ -1743,7 +1745,7 @@
                   300000]
 
                  (watchdog sid tid token stall)
-                 (expect (false? (await-cancel token 1500))))
+                 (expect (false? (await-cancel token 500))))
                (expect (nil? (:stalled? @stall)))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     (it "counts the bare :provider-call marker as a lifecycle stamp, not output"
@@ -1811,7 +1813,7 @@
                   300000]
 
                  (watchdog sid tid token stall)
-                 (expect (false? (await-cancel token 1200))))
+                 (expect (false? (await-cancel token 400))))
                (expect (nil? (:stalled? @stall)))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     (it "never applies the first-output ceiling to a turn queueing for a permit"
@@ -1841,7 +1843,7 @@
                   300000]
 
                  (watchdog sid tid token stall)
-                 (expect (false? (await-cancel token 1200))))
+                 (expect (false? (await-cancel token 400))))
                (expect (nil? (:stalled? @stall)))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     (it "guards a turn whose record is still running after the pin moved on"

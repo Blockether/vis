@@ -588,16 +588,16 @@
                       (/ (double (- (cpu-ns) before)) (* 1.0e6 (double ms)))))
 
                   baseline
-                  (busy-cores 750)]
+                  (busy-cores 400)]
 
                  (try (let
-                        [result (binding [rt/*eval-timeout-ms* 1500]
+                        [result (binding [rt/*eval-timeout-ms* 800]
                                   ((deref #'lp/run-python-code) pc "while True:\n    pass"))]
                         (expect (true? (:timeout? result)))
                         ;; The guest is GONE: no EXTRA core is spinning after the timeout.
                         ;; Take the quieter of two samples so one unlucky GC/JIT burst
                         ;; cannot decide the verdict.
-                        (expect (< (- (min (busy-cores 1500) (busy-cores 1500)) baseline) 0.75))
+                        (expect (< (- (min (busy-cores 500) (busy-cores 500)) baseline) 0.75))
                         ;; ...and the interrupt did not poison the context.
                         (expect (= 42 (:result ((deref #'lp/run-python-code) pc "40 + 2")))))
                       (finally (try (.close ^org.graalvm.polyglot.Context pc true)
@@ -617,7 +617,7 @@
                   (:python-context (env/create-python-context {}))]
 
                  (try (let
-                        [result (binding [rt/*eval-timeout-ms* 1000]
+                        [result (binding [rt/*eval-timeout-ms* 500]
                                   ((deref #'lp/run-python-code) pc "print('fetched 1')\nwhile True:\n    pass"))]
 
                         (expect (true? (:timeout? result)))
@@ -687,7 +687,7 @@
                                                              :booted))
                                                          ;; Still inside the OUTER park: work well past the
                                                          ;; base wall must stay parked, not time out.
-                                                         (Thread/sleep 1500)
+                                                         (Thread/sleep 300)
                                                          :ran)))
 
                     result

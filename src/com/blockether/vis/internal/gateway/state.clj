@@ -2511,7 +2511,7 @@
                        (long TURN_FIRST_OUTPUT_TIMEOUT_MS)
                        (long TURN_LAUNCH_TIMEOUT_MS))
                   (quot 8)
-                  (max 1000)
+                  (max 25)
                   (min 20000))]
     (doto
       (Thread.
@@ -4396,7 +4396,8 @@
       ordered
       (cond->> (session-order channel stats)
         (and db (seq root))
-        (filterv (fn [id] (= root (session-project-root db id)))))
+        (filterv (fn [id]
+                   (= root (session-project-root db id)))))
 
       total
       (count ordered)

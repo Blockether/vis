@@ -777,6 +777,9 @@
      _
      (spit script multiprocess-child-code)
 
+     ;; Measured: the child's ~5s is Clojure class-loading, and throttling the JIT
+     ;; (`-XX:TieredStopAtLevel=1`, serial GC) makes it SLOWER (7.4s), because that
+     ;; loading is what C2 parallelises. Leave the defaults alone.
      ^java.util.List cmd
      [(java-command) (str "-Dvis.test.db-dir=" (norm dir)) (str "-Dvis.test.marker=" (norm marker))
       (str "-Dvis.test.release=" (norm release)) (str "-Dvis.test.title=" title) "clojure.main"

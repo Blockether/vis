@@ -239,38 +239,43 @@
    leaving that sentinel behind wedges the gate FOREVER: no later `start-writer!`
    ever passes it, so every durable `publish!` for the rest of the process burns
    the full 5 s queue timeout and then vanishes — journalling silently dead."
-  (it "recovers when the writer thread cannot be created"
-      (with-temp-journal
-        (fn [_capture _write!]
-          (let [cur @(var-get #'bus/writer)]
-            (when (instance? Thread cur) (.interrupt ^Thread cur))
-            (Thread/sleep 100)
-            (reset! (var-get #'bus/writer) nil))
-          (with-redefs
-            [bus/spawn-writer-thread! (fn []
-                                        (throw (OutOfMemoryError.
-                                                 "unable to create native thread")))]
-            (bus/publish! "sid-start-fail" {"type" "turn.started" "seq" 1} {:store? true}))
-          ;; the gate must be released, not stranded
-          (expect (not= ::bus/starting @(var-get #'bus/writer)))
-          (let
-            [t0
-             (System/currentTimeMillis)
+  (it
+    "recovers when the writer thread cannot be created"
+    (with-temp-journal
+      (fn [_capture _write!]
+        (let [cur @(var-get #'bus/writer)]
+          (when (instance? Thread cur) (.interrupt ^Thread cur))
+          (Thread/sleep 100)
+          (reset! (var-get #'bus/writer) nil))
+        (with-redefs
+          [bus/durable-write-timeout-ms
+           400
 
-             _
-             (bus/publish! "sid-start-fail" {"type" "turn.completed" "seq" 2} {:store? true})
+           bus/spawn-writer-thread!
+           (fn []
+             (throw (OutOfMemoryError. "unable to create native thread")))]
 
-             ms
-             (- (System/currentTimeMillis) t0)]
+          (bus/publish! "sid-start-fail" {"type" "turn.started" "seq" 1} {:store? true}))
+        ;; the gate must be released, not stranded
+        (expect (not= ::bus/starting @(var-get #'bus/writer)))
+        (let
+          [t0
+           (System/currentTimeMillis)
 
-            (expect (< ms 2000))
-            (expect (.isAlive ^Thread @(var-get #'bus/writer)))
-            (Thread/sleep 200)
-            (expect (= ["turn.started" "turn.completed"]
-                       (mapv #(get (wire/parse-json %) "type")
-                             (remove str/blank?
-                               (str/split-lines (slurp (#'bus/session-file
-                                                        "sid-start-fail"))))))))))))
+           _
+           (bus/publish! "sid-start-fail" {"type" "turn.completed" "seq" 2} {:store? true})
+
+           ms
+           (- (System/currentTimeMillis) t0)]
+
+          (expect (< ms 2000))
+          (expect (.isAlive ^Thread @(var-get #'bus/writer)))
+          (Thread/sleep 200)
+          (expect (= ["turn.started" "turn.completed"]
+                     (mapv #(get (wire/parse-json %) "type")
+                           (remove str/blank?
+                             (str/split-lines (slurp (#'bus/session-file
+                                                      "sid-start-fail"))))))))))))
 
 (defdescribe
   journal-generation-test
