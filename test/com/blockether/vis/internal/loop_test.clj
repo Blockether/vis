@@ -3658,8 +3658,11 @@
         ;; the un-stripped summary DOES carry the diff (human card keeps it)
         (expect (contains? summary "diff"))
         ;; struct_patch wraps it as `[summary]` — the echo diff is stripped on the
-        ;; model wire, but the fresh `anchors` survive (they replace a re-read).
-        (expect (= [{"path" "a.clj" "op" "update" "changed" true "anchors" (get summary "anchors")}]
+        ;; model wire, but the line COUNTS and the fresh `anchors` survive (the
+        ;; counts are then the only statement of how big the edit was).
+        (expect (= [{"path" "a.clj" "op" "update" "changed" true
+                     "lines" {"added" 0 "removed" 0 "modified" 1}
+                     "anchors" (get summary "anchors")}]
                    (strip [summary])))
         (expect (= {"1:467" {"text" "(defn foo [a] (* a 2))"}} (into {} (get summary "anchors"))))))
     (it "leaves a non-edit result untouched"

@@ -2526,7 +2526,8 @@
          (summary (first (:plans r)))]
 
         (expect (true? (:success? r)))
-        (expect (= #{"path" "op" "changed" "diff" "anchors"} (set (keys s))))
+        (expect (= #{"path" "op" "changed" "lines" "diff" "anchors"} (set (keys s))))
+        (expect (= {"added" 0 "removed" 0 "modified" 1} (get s "lines")))
         ;; The fresh anchors describe the REWRITTEN region and are reusable
         ;; as the next `:from_anchor` with no re-read.
         (expect (= {(patch/line-anchor 1 "ALPHA") {"text" "ALPHA"}} (into {} (get s "anchors"))))
@@ -4044,6 +4045,55 @@
 
         (expect (clojure.string/includes? (:body card) "````diff\n"))
         (expect (clojure.string/ends-with? (clojure.string/trim (:body card)) "````"))))))
+
+(defdescribe
+  patch-summary-line-counts-test
+  ;; A patch/write/struct_patch summary states HOW BIG the edit was: the model
+  ;; wire strips the `"diff"` and the card caps it hunk-wise, so without the
+  ;; counts nothing said whether one line or four hundred moved.
+  (let
+    [summary
+     (private-fn "patch-result-file-summary")
+
+     counts
+     (fn [before after]
+       (get (summary {:op :update :path "a.txt" :before before :after after}) "lines"))]
+
+    (it "counts added, removed and modified lines from the content"
+        (expect (= {"added" 0 "removed" 0 "modified" 1} (counts "a\nb\nc\n" "a\nB\nc\n")))
+        (expect (= {"added" 2 "removed" 0 "modified" 0} (counts "a\nb\n" "a\nx\ny\nb\n")))
+        (expect (= {"added" 0 "removed" 1 "modified" 0} (counts "a\nb\nc\n" "a\nc\n")))
+        ;; A replaced chunk is modified for the overlap, added for the surplus.
+        (expect (= {"added" 1 "removed" 0 "modified" 1} (counts "a\nb\nc\n" "a\nX\nY\nc\n"))))
+    (it "a new file is all additions and a no-op carries no counts"
+        (expect (= {"added" 2 "removed" 0 "modified" 0}
+                   (get (summary {:op :add :path "a.txt" :before nil :after "a\nb\n"}) "lines")))
+        (expect (not (contains? (summary {:op :update :path "a.txt" :before "a\n" :after "a\n"})
+                                "lines"))))
+    (it "stays exact for a big file whose rendered diff is capped"
+        (let
+          [before
+           (string/join "\n" (map #(str "line-" %) (range 1500)))
+
+           after
+           (-> before
+               (string/replace "line-750\n" "LINE-750\n")
+               (string/replace "line-900\n" "LINE-900\n"))]
+
+          (expect (= {"added" 0 "removed" 0 "modified" 2} (counts before after)))))
+    (it "the card headline reports the size next to the path"
+        (let
+          [render
+           @#'editing/render-patch-result
+
+           card
+           (render [{"path" "src/a.clj"
+                     "op" "update"
+                     "changed" true
+                     "lines" {"added" 12 "removed" 3 "modified" 4}}
+                    {"path" "src/b.clj" "op" "update" "changed" false}])]
+
+          (expect (= "`src/a.clj` +12 -3 ~4, `src/b.clj`" (:summary card)))))))
 
 (defdescribe
   render-cat-result-spans-test

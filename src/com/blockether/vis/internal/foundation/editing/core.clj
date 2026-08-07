@@ -55,6 +55,7 @@
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture])
   (:import (com.github.difflib DiffUtils UnifiedDiffUtils)
+           (com.github.difflib.patch AbstractDelta Chunk Patch)
            (java.io File)))
 
 ;; Tools in this namespace (cat/patch/write/move/…) can execute DEFERRED on a
@@ -4997,6 +4998,68 @@
                                          [(inc (long i)) (nth b i)])
                                        (range pre end)))))))
 
+(defn- window-line-counts
+  "Line counts from the common prefix/suffix WINDOW alone — the fallback for a
+   pair too expensive for a real Myers diff. The overlapping part of the window
+   counts as modified, the surplus on either side as added or removed."
+  [a b]
+  (let
+    [pre
+     (long (common-prefix-count a b))
+
+     suf
+     (long (common-suffix-count a b pre))
+
+     removed
+     (- (long (count a)) pre suf)
+
+     added
+     (- (long (count b)) pre suf)
+
+     both
+     (min removed added)]
+
+    {"added" (- added both) "removed" (- removed both) "modified" both}))
+
+(defn- delta-line-counts
+  "Line counts from the real edit script: every delta is a source chunk replaced
+   by a target chunk, so the overlapping lines are MODIFIED and only the surplus
+   on one side is a pure addition or deletion."
+  [a b]
+  (let [^Patch patch (DiffUtils/diff a b)]
+    (reduce (fn [acc ^AbstractDelta delta]
+              (let
+                [src (long (count (.getLines ^Chunk (.getSource delta))))
+                 tgt (long (count (.getLines ^Chunk (.getTarget delta))))
+                 both (min src tgt)]
+
+                (-> acc
+                    (update "modified" + both)
+                    (update "removed" + (- src both))
+                    (update "added" + (- tgt both)))))
+            {"added" 0 "removed" 0 "modified" 0}
+            (.getDeltas patch))))
+
+(defn- line-change-counts
+  "`{\"added\" a \"removed\" r \"modified\" m}` for one file's before→after, or nil
+   when nothing changed. The `:diff` is capped hunk-wise for rendering, so these
+   counts are computed from the content itself and stay exact for the whole file
+   even when the rendered diff is truncated. A new file is all additions, a
+   deleted one all removals."
+  [before after]
+  (cond (= before after) nil
+        (nil? before)
+        {"added" (long (count (str/split-lines (or after "")))) "removed" 0 "modified" 0}
+        (nil? after) {"added" 0 "removed" (long (count (str/split-lines before))) "modified" 0}
+        :else (let
+                [a
+                 (vec (str/split-lines before))
+
+                 b
+                 (vec (str/split-lines after))]
+
+                (if (java-diff-affordable? a b) (delta-line-counts a b) (window-line-counts a b)))))
+
 (defn- patch-result-file-summary
   "Build a per-file summary map that lives on `:result` of `patch` /
    `write`.
@@ -5006,12 +5069,14 @@
      {:path     <rel-path>
      :op       :update | :add
      :changed? <bool>            — false on no-op edits
+     :lines    {added removed modified}
+                                 — the SIZE of the change, omitted on a no-op
      :diff     <unified-diff>    — the WRITE evidence; omitted only
                                     when both before+after are nil}
 
-   Line counts (`:lines-before` / `:lines-after` / `:delta-lines`) were
-   intentionally dropped: the `:diff` carries the exact change and the
-   scalars duplicated that information at the cost of trailer bloat."
+   `:lines` is computed from the content, not from the rendered `:diff`: the
+   diff is capped hunk-wise and the model wire strips it entirely, so the counts
+   are the only thing that always states how big the edit was."
   [{:keys [op path before after]}]
   ;; Model-facing per-file summary (patch/write/struct_patch result) — string
   ;; keys, enum values stringified to snake_case.
@@ -5019,10 +5084,16 @@
     [diff-text
      (unified-diff-text before after)
 
+     counts
+     (line-change-counts before after)
+
      anchors
      (changed-region-anchors before after)]
 
     (cond-> {"path" path "op" (name (or op :update)) "changed" (not= before after)}
+      counts
+      (assoc "lines" counts)
+
       diff-text
       (assoc "diff" diff-text)
 
@@ -5030,20 +5101,30 @@
       (assoc "anchors" anchors))))
 
 (defn refresh-file-summary
-  "Recompute a per-file summary's \"diff\"/\"changed\" from the ORIGINAL `before`
-   and the FINAL on-disk `after`. A language pack that rewrites a just-edited
-   file in an :after op-hook (parinfer paren-repair + cljfmt) calls this so the
-   MODEL-FACING diff shows the bytes actually written, not the pre-hook
-   intermediate the raw edit produced. All other summary keys are preserved."
+  "Recompute a per-file summary's \"diff\"/\"lines\"/\"changed\" from the ORIGINAL
+   `before` and the FINAL on-disk `after`. A language pack that rewrites a
+   just-edited file in an :after op-hook (parinfer paren-repair + cljfmt) calls
+   this so the MODEL-FACING diff and counts show the bytes actually written, not
+   the pre-hook intermediate the raw edit produced. All other summary keys are
+   preserved."
   [summary before after]
   (let
     [diff-text
      (unified-diff-text before after)
 
+     counts
+     (line-change-counts before after)
+
      anchors
      (changed-region-anchors before after)]
 
     (cond-> (assoc summary "changed" (not= before after))
+      counts
+      (assoc "lines" counts)
+
+      (nil? counts)
+      (dissoc "lines")
+
       diff-text
       (assoc "diff" diff-text)
 
@@ -5956,12 +6037,13 @@
 
 (defn- render-patch-result
   "patch/write/struct_patch → `{:summary :body}`. The badge already states the
-   operation, so the compact headline contains only affected paths
-   (`` `a.clj`, `b.clj` ``), never redundant `update`/`add` verbs. Large fan-out
-   collapses to the first two paths plus a count. The body is the unified diff(s);
-   a single-file body omits a repeated path heading, while multi-file bodies use
-   path-only headings to disambiguate each diff. `r` is a vector of per-file
-   summaries `[{:path :op :changed :diff}]`."
+   operation, so the compact headline contains only affected paths and the SIZE
+   of each change (`` `a.clj` +12 -3 ~4 ``) — added, removed and modified lines,
+   each part omitted when zero and the whole suffix omitted on a no-op. Large
+   fan-out collapses to the first two paths plus a count. The body is the unified
+   diff(s); a single-file body omits a repeated path heading, while multi-file
+   bodies use path-only headings to disambiguate each diff. `r` is a vector of
+   per-file summaries `[{:path :op :changed :lines :diff}]`."
   [r]
   (let
     [summaries
@@ -5973,9 +6055,22 @@
      n
      (count summaries)
 
+     counts-label
+     (fn [lines]
+       (let
+         [part
+          (fn [sigil k]
+            (let [v (long (or (get lines k) 0))]
+              (when (pos? v) (str sigil v))))
+
+          parts
+          (keep identity [(part "+" "added") (part "-" "removed") (part "~" "modified")])]
+
+         (when (seq parts) (str " " (str/join " " parts)))))
+
      file-label
-     (fn [{:strs [path]}]
-       (str "`" (disp-path path) "`"))
+     (fn [{:strs [path lines]}]
+       (str "`" (disp-path path) "`" (counts-label lines)))
 
      labels
      (mapv file-label summaries)]
