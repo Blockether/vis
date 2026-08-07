@@ -5,6 +5,9 @@ import {
   DialogFrame,
   HeaderActions,
   HeaderMeta,
+  HeaderTally,
+  HeaderTitle,
+  HeaderToggle,
   Input,
   KebabButton,
   LiveCount,
@@ -15,6 +18,7 @@ import {
   MachineRail,
   Modal,
   NewSessionButton,
+  SectionHeader,
   Spinner,
   UnreadBadge,
 } from '../components/ui';
@@ -1250,16 +1254,14 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                   {/* The machine panel is always rendered for the machine whose projects
                       follow, whether this is the whole fleet or a scoped view. */}
                     <MachineBanner>
-                      <span className="flex min-w-0 items-center gap-2">
-                        {/* The machine's hue, not its health: health is a WORD
-                            here (`offline`, with a Retry beside it), while the
-                            colour is the only thing tying this banner to the
-                            rail below it and to the chip above it. */}
-                        <MachineMark color={machineColor(machineColors, key)} />
-                        <span className="truncate font-mono text-ui font-bold text-white">
-                          {machineLabel(machine.conn)}
-                        </span>
-                      </span>
+                      {/* The machine's hue, not its health: health is a WORD
+                          here (`offline`, with a Retry beside it), while the
+                          colour is the only thing tying this banner to the
+                          rail below it and to the chip above it. */}
+                      <HeaderTitle
+                        mark={<MachineMark color={machineColor(machineColors, key)} />}
+                        name={machineLabel(machine.conn)}
+                      />
                       {/* The trailing half of the header is ONE component, shared with every
                           project header below it: the same gap in front of it, the same gap
                           between its controls, the same right edge. What this machine reports,
@@ -1271,9 +1273,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                           {machine.error ? (
                             <span>offline</span>
                           ) : (
-                            <span>
-                              {groups.length} {groups.length === 1 ? 'project' : 'projects'}
-                            </span>
+                            <HeaderTally count={groups.length} unit="project" />
                           )}
                           {/* The strip above carries this machine's live and unread counts,
                               and it does NOT scroll away with the list, so a section header
@@ -1781,36 +1781,25 @@ const ProjectGroup = memo(function ProjectGroup({
   return (
     <>
     <section aria-label={`${project} sessions`}>
-      <header className="flex items-stretch border-b border-dialog-edge bg-panel-2 mouse:h-9">
-        <button
-          type="button"
-          onClick={() => onToggle(groupKey)}
-          aria-expanded={isOpen}
-          className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:min-h-0 mouse:py-0 sm:px-4"
-        >
-          <span className="flex min-w-0 items-center gap-2">
-            <ChevronIcon open={isOpen} className="size-3.5 text-dialog-hint" />
-            <span className="min-w-0">
-              <span className="block truncate font-mono text-ui font-bold text-white">{project}</span>
-              <span className="mt-0.5 block truncate font-mono text-chip text-dialog-hint" title={root}>
-                {homeifyPath(root) || 'No workspace path'}
-              </span>
-            </span>
-          </span>
-          <span className="flex w-40 shrink-0 items-center justify-start gap-2 font-mono text-chip text-dialog-hint">
-            <span>{sessions.length} {sessions.length === 1 ? 'session' : 'sessions'}</span>
-            {liveCount > 0 && (
-              <>
-                <span className="opacity-40" aria-hidden="true">·</span>
-                <LiveCount count={liveCount} />
-              </>
-            )}
-          </span>
-        </button>
-        {/* The same trailing cluster the machine header above wears: the yellow verb
-            gets its gap, the `⋯` gets the same box, and both stop at the same right
-            edge as every other header in the list. */}
+      <SectionHeader tone="project">
+        {/* The pressable leading half: the disclosure, the project's name, and the path
+            it is checked out at. It takes the width the trailing cluster leaves — a
+            fixed count column here is what truncated `~/vis` to `~/v…` on a phone. */}
+        <HeaderToggle
+          isOpen={isOpen}
+          onToggle={() => onToggle(groupKey)}
+          name={project}
+          path={homeifyPath(root) || 'No workspace path'}
+          pathTitle={root}
+        />
+        {/* The same trailing cluster the machine header above wears: what this group
+            reports, then what it offers — the yellow verb gets its gap, the `⋯` gets
+            the same box, and both stop at the same right edge as every other header. */}
         <HeaderActions>
+          <HeaderMeta>
+            <HeaderTally count={sessions.length} unit="session" isCrowded />
+            <LiveCount count={liveCount} />
+          </HeaderMeta>
           <NewSessionButton
             machine={machineLabel(conn)}
             where={project}
@@ -1827,7 +1816,7 @@ const ProjectGroup = memo(function ProjectGroup({
             />
           )}
         </HeaderActions>
-      </header>
+      </SectionHeader>
       {rows.length > 0 && (
         <div className="border-b border-dialog-edge">
           {rows.map((session) => (
@@ -2293,18 +2282,23 @@ function NavigatorSkeleton() {
       <div className="animate-pulse motion-reduce:animate-none" aria-hidden="true">
         {SKELETON_GROUPS.map((rows, group) => (
           <div key={group}>
-            {/* mirrors ProjectGroup's <header> */}
-            <div className="flex min-h-11 items-center justify-between gap-3 border-b border-dialog-edge bg-panel-2 px-3 py-2 mouse:h-9 mouse:min-h-0 mouse:py-0 sm:px-4">
-              <div className="min-w-0">
-                <SkeletonBar type="text-ui" width="w-28" baz="h-2.5" tone="bg-muted/40" />
-                <div className="mt-0.5">
-                  <SkeletonBar type="text-chip" width="w-40" baz="h-1.5" tone="bg-muted/20" />
-                </div>
-              </div>
-              <div className="shrink-0">
+            {/* The list's OWN header band, so a loading screen can never stand at a
+                different height from the screen it turns into. */}
+            <SectionHeader tone="project">
+              <HeaderTitle
+                name={
+                  <span className="block">
+                    <SkeletonBar type="text-ui" width="w-28" baz="h-2.5" tone="bg-muted/40" />
+                    <span className="mt-0.5 block">
+                      <SkeletonBar type="text-chip" width="w-40" baz="h-1.5" tone="bg-muted/20" />
+                    </span>
+                  </span>
+                }
+              />
+              <HeaderActions>
                 <SkeletonBar type="text-chip" width="w-14" baz="h-1.5" tone="bg-muted/25" />
-              </div>
-            </div>
+              </HeaderActions>
+            </SectionHeader>
             {/* mirrors SessionRow's <button> */}
             <div className="border-b border-dialog-edge">
               {rows.map((width, row) => (

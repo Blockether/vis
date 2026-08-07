@@ -51,8 +51,13 @@ describe('where "New session" lives', () => {
   // against the screen, so the two identical buttons still sat at two different
   // distances from the same edge — and the yellow verb touched the words beside it.
   it('gives both headers the same trailing cluster, so both edges are one decision', () => {
-    expect(source.match(/<HeaderActions>/g)?.length).toBe(2);
-    expect(source.match(/<HeaderMeta>/g)?.length).toBe(1);
+    // Machine header, project header, and the skeleton that stands in for a project
+    // header while the list loads — one cluster, so the loading screen cannot be a
+    // different shape from the screen it becomes.
+    expect(source.match(/<HeaderActions>/g)?.length).toBe(3);
+    // Both headers now REPORT in the same voice too: the project's counts moved out of
+    // the toggle's fixed column and into the cluster the machine header already used.
+    expect(source.match(/<HeaderMeta>/g)?.length).toBe(2);
     expect(source).not.toContain('flex shrink-0 items-center justify-end gap-2 font-mono');
   });
   // Regression, user report: the project header reused a home-shortened display path as
@@ -77,8 +82,9 @@ describe('where "New session" lives', () => {
   it('assigns every list boundary to one outgoing edge without negative overlap', () => {
     expect(source).toContain('className="flex min-h-10 items-center border-b border-dialog-edge bg-panel px-3 mouse:min-h-9');
     expect(source).toContain('<section aria-label={`${project} sessions`}>');
-    expect(source).toContain('<header className="flex items-stretch border-b border-dialog-edge bg-panel-2 mouse:h-9">');
-    expect(source).toContain('className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2');
+    // The header's own band — its rule, its paper, its height — belongs to
+    // `SectionHeader`, and is pinned once in `ui.test.tsx`.
+    expect(source).toContain('<SectionHeader tone="project">');
     expect(source).toContain('      {rows.length > 0 && (\n        <div className="border-b border-dialog-edge">');
     expect(source).not.toContain('-mt-px');
     expect(source).not.toContain('-mb-px');
@@ -88,13 +94,13 @@ describe('where "New session" lives', () => {
 
   // Regression, user report: making New session 28px still left it visibly taller than
   // the neighboring 24px small action even after the project row itself was compacted.
-  it('keeps the two-line project row compact without stretching its actions', () => {
-    expect(source).toContain('bg-panel-2 mouse:h-9');
-    expect(source).toContain('motion-reduce:transition-none mouse:min-h-0 mouse:py-0 sm:px-4');
+  it('leaves every header metric to the component that owns it', () => {
     // The ⋯ no longer spells its own metrics: `IconButton` is `Button` at the
     // header's own compact desktop density, so it cannot drift from the yellow
-    // button it stands next to.
+    // button it stands next to — and the row it sits in is `SectionHeader`.
     expect(source).not.toContain('motion-reduce:transition-none mouse:min-h-0 sm:px-4');
+    expect(source).not.toContain('mouse:min-h-0 mouse:py-0');
+    expect(source).not.toContain('bg-panel-2 mouse:h-9');
   });
 
   // Regression, issue: the machine panel disappeared when only one machine was paired.
@@ -105,6 +111,23 @@ describe('where "New session" lives', () => {
     expect(source).not.toContain('showMachineHeaders');
   });
 
+
+  // Regression, user report ("THEY LOOK FUCKING SHITTY ON THE IPHONE. See the machine
+  // height project heights etc margin rights etc"): measured at 390px, the machine
+  // banner stood 61px tall — its own `py-2` wrapped around a 44px control — while the
+  // project header one row below it, with the very same controls, stood 49px. The
+  // project header also hid its own name behind a fixed 160px count column, so `~/vis`
+  // rendered as `~/v…` on a phone. Every header in the list is ONE component now.
+  it('builds both list headers from one band, so neither spells its own box', () => {
+    expect(source).toContain('<SectionHeader tone="project">');
+    expect(source).toContain('<HeaderToggle');
+    expect(source.match(/<HeaderTally/g)?.length).toBe(2);
+    // Not one height, padding or paper spelled at a call site.
+    expect(source).not.toContain('<header className=');
+    expect(source).not.toContain('min-h-11 min-w-0 flex-1');
+    expect(source).not.toContain('w-40 shrink-0');
+    expect(source).not.toContain('mouse:h-9');
+  });
 
   // Regression: the session count used to flash from empty to the cached total on
   // every cold start while the async native connection store was loading.

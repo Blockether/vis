@@ -8,7 +8,7 @@ import {
 import type { MachineColor } from '../lib/machine-colors';
 import { createPortal } from 'react-dom';
 
-import { CloseIcon, DotsIcon } from './icons';
+import { ChevronIcon, CloseIcon, DotsIcon } from './icons';
 
 // Ref-forwarding: a button that ANCHORS something (a popover, a focus return) has
 // to be measurable by its owner, and cloning the element's classes at the call site
@@ -436,17 +436,104 @@ export function MachineGap() {
 }
 
 /**
- * A machine header is a sticky banner: its rail and boundary distinguish the
- * computer from its projects while its title and tally retain the same
- * monospace hierarchy those project headers use. It fills the machine block just
- * like a session row; leaving a scrollbar-sized side margin made the machine
- * boundary look clipped and introduced a false horizontal edge on narrow screens.
+ * ONE band, and every header in this list is it.
+ *
+ * Measured on a 390px iPhone: the machine banner stood 61px tall — a `py-2` of its own
+ * wrapped around a 44px control — while the project header directly below it, wearing
+ * the very same yellow verb and the very same `⋯`, stood 49px. Two headers that mean
+ * the same thing must not be two boxes, so the height, the paper, the outgoing rule and
+ * the `items-stretch` that lets a pressable half fill the band are decided HERE. A
+ * control inside centres itself (`HeaderActions`); it never sets the row's height, and
+ * a header never pads itself vertically around a control that is already 44px tall.
+ *
+ * Neither horizontal edge is spelled here: the leading one belongs to `HeaderTitle` /
+ * `HeaderToggle` (a toggle's hover has to reach the edge of the screen) and the trailing
+ * one to `HeaderActions`, so each edge stays one decision instead of two.
+ */
+const HEADER_BAND = 'flex min-h-12 items-stretch border-b border-dialog-edge mouse:min-h-9';
+
+/** The leading edge of a header, worn by whichever half starts it. */
+const HEADER_EDGE = 'pl-3 sm:pl-4';
+
+export function SectionHeader({
+  tone,
+  children,
+}: {
+  tone: 'machine' | 'project';
+  children: ReactNode;
+}) {
+  // A machine ORGANIZES everything under it, so its band sticks to the top of the
+  // scroller and wears the panel's own paper; a project is a section inside that
+  // machine and sits one step deeper on `panel-2`. That is the whole difference.
+  const paper = tone === 'machine' ? 'sticky top-0 z-10 bg-panel' : 'bg-panel-2';
+  return <header className={`${HEADER_BAND} ${paper}`}>{children}</header>;
+}
+
+/**
+ * A machine header is the sticky `SectionHeader`: its rail and hue distinguish the
+ * computer from its projects while its band, its edges and its trailing cluster are
+ * the same ones every project header below it wears. It fills the machine block just
+ * like a session row; leaving a scrollbar-sized side margin made the machine boundary
+ * look clipped and introduced a false horizontal edge on narrow screens.
  */
 export function MachineBanner({ children }: { children: ReactNode }) {
+  return <SectionHeader tone="machine">{children}</SectionHeader>;
+}
+
+/**
+ * The leading half of a header that only NAMES its section: an optional mark, then the
+ * name, truncated. It takes the width the trailing cluster leaves and no more.
+ */
+export function HeaderTitle({ mark, name }: { mark?: ReactNode; name: ReactNode }) {
   return (
-    <header className="sticky top-0 z-10 flex min-h-11 items-center justify-between gap-3 border-b border-dialog-edge bg-panel py-2 pl-3 sm:pl-4">
-      {children}
-    </header>
+    <span className={`flex min-w-0 flex-1 items-center gap-2 ${HEADER_EDGE}`}>
+      {mark}
+      <span className="truncate font-mono text-ui font-bold text-white">{name}</span>
+    </span>
+  );
+}
+
+/**
+ * The leading half of a header that OPENS its section: the same title voice as
+ * `HeaderTitle`, plus a disclosure and the path the name alone cannot give.
+ *
+ * It is a BUTTON that fills the band, so the hover reaches both the screen edge and the
+ * band's own rules, and it is `flex-1 min-w-0` so the NAME gets whatever the trailing
+ * cluster leaves. It used to carry a fixed 160px count column inside it, which on a
+ * phone left `~/vis` rendering as `~/v…`; counts report through `HeaderActions` now,
+ * exactly as the machine header above it reports its own.
+ */
+export function HeaderToggle({
+  isOpen,
+  onToggle,
+  name,
+  path,
+  pathTitle,
+}: {
+  isOpen: boolean;
+  onToggle: () => void;
+  name: ReactNode;
+  path: ReactNode;
+  pathTitle?: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={isOpen}
+      onClick={onToggle}
+      className={`flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:py-0 ${HEADER_EDGE}`}
+    >
+      <ChevronIcon open={isOpen} className="size-3.5 shrink-0 text-dialog-hint" />
+      <span className="min-w-0">
+        <span className="block truncate font-mono text-ui font-bold text-white">{name}</span>
+        <span
+          className="mt-0.5 block truncate font-mono text-chip text-dialog-hint"
+          title={pathTitle}
+        >
+          {path}
+        </span>
+      </span>
+    </button>
   );
 }
 
@@ -475,6 +562,44 @@ export function HeaderMeta({ children }: { children: ReactNode }) {
     <span className="flex items-center gap-2 font-mono text-chip text-dialog-hint">
       {children}
     </span>
+  );
+}
+
+/**
+ * A header's own count, in `HeaderMeta`'s voice.
+ *
+ * The NUMBER is the fact and never leaves the screen; the noun is a courtesy. A
+ * project header carries a yellow verb and a `⋯` beside it, so on a phone it is
+ * `isCrowded` and the noun waits for `sm` — printing "699 sessions" in a fixed 160px
+ * column is what truncated that project's own name to `~/v…`. A machine header has
+ * the room and says the phrase.
+ *
+ * A screen reader always hears the whole phrase: the visible half is decoration.
+ */
+export function HeaderTally({
+  count,
+  unit,
+  isCrowded = false,
+}: {
+  count: number;
+  unit: string;
+  /**
+   * This header also carries a yellow verb and a `⋯`, so on a phone the NUMBER holds
+   * the line alone and the noun waits for `sm`. A header with room says the phrase.
+   */
+  isCrowded?: boolean;
+}) {
+  const noun = count === 1 ? unit : `${unit}s`;
+  return (
+    <>
+      <span className="sr-only">
+        {count} {noun}
+      </span>
+      <span className="whitespace-nowrap" aria-hidden="true">
+        {count}
+        <span className={isCrowded ? 'hidden sm:inline' : ''}> {noun}</span>
+      </span>
+    </>
   );
 }
 

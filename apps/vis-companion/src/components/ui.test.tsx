@@ -7,6 +7,9 @@ import {
   DialogClose,
   HeaderActions,
   HeaderMeta,
+  HeaderTally,
+  HeaderTitle,
+  HeaderToggle,
   IconButton,
   KebabButton,
   LiveCount,
@@ -16,6 +19,7 @@ import {
   MachineMark,
   MachineRail,
   NewSessionButton,
+  SectionHeader,
   UnreadBadge,
 } from './ui';
 
@@ -161,10 +165,23 @@ describe('MachineBanner', () => {
     expect(html).not.toContain('font-bold');
   });
 
-  it('matches a project header’s 44px minimum touch height', () => {
-    const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
+  // Regression, user report ("THEY LOOK FUCKING SHITTY ON THE IPHONE — see the machine
+  // height project heights"): measured at 390px this banner stood 61px tall, because it
+  // padded itself (`py-2`) around a control that is already 44px, while the project
+  // header directly below it stood 49px. Both are one band now.
+  it('is the list’s one header band, at the project header’s exact height', () => {
+    const machine = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
+    const project = renderToStaticMarkup(<SectionHeader tone="project">vis</SectionHeader>);
 
-    expect(html).toContain('min-h-11');
+    const band = (html: string) => html.slice(0, html.indexOf('>') + 1);
+    expect(band(machine).replace('sticky top-0 z-10 bg-panel', 'bg-panel-2')).toBe(band(project));
+    for (const html of [machine, project]) {
+      expect(html).toContain('min-h-12');
+      expect(html).toContain('mouse:min-h-9');
+      expect(html).toContain('items-stretch');
+      expect(html).not.toContain('min-h-11');
+      expect(html).not.toContain('py-2');
+    }
   });
 
   // A machine can hold hundreds of sessions; scrolled past, the name is the
@@ -396,10 +413,12 @@ describe('HeaderActions', () => {
 
   it('is the only one padding that side, so the header stops doing it', () => {
     const banner = renderToStaticMarkup(<MachineBanner>machine</MachineBanner>);
-    expect(banner).toContain('pl-3');
-    expect(banner).toContain('sm:pl-4');
-    expect(banner).not.toContain('px-3');
     expect(banner).not.toContain('pr-');
+    expect(banner).not.toContain('px-');
+    // The leading edge belongs to whichever half starts the header, so a pressable
+    // one can reach the screen edge with its hover.
+    expect(renderToStaticMarkup(<HeaderTitle name="tower" />)).toContain('pl-3');
+    expect(renderToStaticMarkup(<HeaderTitle name="tower" />)).toContain('sm:pl-4');
   });
 });
 
@@ -412,5 +431,66 @@ describe('LiveCount', () => {
     const html = renderToStaticMarkup(<LiveCount count={3} />);
     expect(html).toContain('animate-pulse bg-ok motion-reduce:animate-none');
     expect(html).toContain('3 live');
+  });
+});
+
+// Regression, same report: the project header carried a FIXED 160px count column inside
+// its own toggle, so on a 390px iPhone the name it exists to show was truncated to
+// `~/v…` while "699 sessions" kept every pixel it asked for.
+describe('HeaderToggle', () => {
+  const html = renderToStaticMarkup(
+    <HeaderToggle
+      isOpen
+      onToggle={() => {}}
+      name="vis"
+      path="~/vis"
+      pathTitle="/Users/dev/vis"
+    />,
+  );
+
+  it('gives the name every pixel the trailing cluster leaves', () => {
+    expect(html).toContain('min-w-0');
+    expect(html).toContain('flex-1');
+    expect(html).not.toContain('w-40');
+    expect(html).not.toContain('session');
+  });
+
+  it('is a button that fills the band, so its hover reaches the screen edge', () => {
+    expect(html).toContain('<button');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('pl-3');
+    expect(html).toContain('hover:bg-hover');
+    expect(html).not.toContain('min-h-');
+  });
+
+  it('shows the path it is checked out at, with the full one on its title', () => {
+    expect(html).toContain('~/vis');
+    expect(html).toContain('title="/Users/dev/vis"');
+  });
+});
+
+describe('HeaderTally', () => {
+  it('says the whole phrase in a header that has the room for it', () => {
+    const html = renderToStaticMarkup(<HeaderTally count={2} unit="project" />);
+    expect(html).not.toContain('hidden sm:inline');
+    expect(html).toContain('2');
+  });
+
+  it('keeps the number alone on a phone where a yellow verb shares the row', () => {
+    const html = renderToStaticMarkup(<HeaderTally count={699} unit="session" isCrowded />);
+    expect(html).toContain('hidden sm:inline');
+    expect(html).toContain('699');
+  });
+
+  it('always says the whole phrase to a screen reader', () => {
+    const html = renderToStaticMarkup(<HeaderTally count={699} unit="session" />);
+    expect(html).toContain('<span class="sr-only">699 sessions</span>');
+    expect(html).toContain('aria-hidden="true"');
+  });
+
+  it('counts one of a thing in the singular', () => {
+    expect(renderToStaticMarkup(<HeaderTally count={1} unit="project" />)).toContain(
+      '<span class="sr-only">1 project</span>',
+    );
   });
 });
