@@ -38,7 +38,11 @@
    :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
               "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
               "-Dvis.drafts.dir=target/vis-drafts-test"]
-   :main-opts ["-m" "lazytest.main" "--dir" "test" "--dir"
+   :main-opts ["-m" "lazytest.main"
+               ;; Refuse non-loopback HTTP for the whole run: see
+               ;; com.blockether.vis.test-network-guard.
+               "--hook" "com.blockether.vis.test-network-guard/no-network"
+               "--dir" "test" "--dir"
                "extensions/persistance/vis-persistance-sqlite/test" "--dir"
                "extensions/providers/vis-provider-github-copilot/test" "--dir"
                "extensions/providers/vis-provider-openai-codex/test" "--dir"

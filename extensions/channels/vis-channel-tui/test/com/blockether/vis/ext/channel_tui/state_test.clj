@@ -3554,7 +3554,7 @@
           ;; …and the row still lands, painted from the gateway ACK. Polled, not
           ;; slept: the contract is that it arrives, not how long the stub napped.
           (loop [n 0]
-            (when (and (< n 300) (empty? (:pending-sends @state/app-db)))
+            (when (and (< n 300) (not= ["t-slow"] (mapv :turn-id (:pending-sends @state/app-db))))
               (Thread/sleep 10)
               (recur (inc n))))
           (expect (= ["t-slow"] (mapv :turn-id (:pending-sends @state/app-db)))))))
