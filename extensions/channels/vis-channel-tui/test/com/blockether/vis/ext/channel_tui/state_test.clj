@@ -1015,6 +1015,28 @@
                {:scroll {:mode :at :offset 1840 :pos 1849}}
                [:reanchor-scroll 1399 -450])]
           (expect (= {:mode :at :offset 1390 :pos 1399} (:scroll r)))))
+    ;; Regression (TUI "resizing the terminal during a live turn reflows the
+    ;; whole turn, as if it scrolled down"): a resize re-wraps every bubble, so
+    ;; the bottom row moved in one step while `:pos` still pointed at the OLD
+    ;; bottom — the following `:ease-scroll` ticks then walked the view down to
+    ;; it, a second of self-scrolling after every drag of the window edge.
+    (it "terminal-resized lands the view on the new geometry instead of easing"
+        (let [resized (ev :terminal-resized)]
+          ;; mid-turn FOLLOW ease in flight -> clean auto-bottom lock, nothing to animate
+          (expect (= scroll/follow
+                     (:scroll (resized {:scroll (assoc scroll/follow :pos 800)}
+                                       [:terminal-resized]))))
+          (expect (false? (scroll/animating? (:scroll (resized {:scroll (assoc scroll/follow
+                                                                          :pos 800)}
+                                                               [:terminal-resized]))
+                                             1200)))
+          ;; a reader parked in history keeps their row, with the ease dropped
+          (expect (= (scroll/parked 300)
+                     (:scroll (resized {:scroll {:mode :at :offset 300 :pos 900}}
+                                       [:terminal-resized]))))
+          ;; nothing moved -> db identity survives (the render fast paths diff by identical?)
+          (let [db {:scroll scroll/follow}]
+            (expect (identical? db (resized db [:terminal-resized]))))))
     (it "message-received settles the view instead of easing to the new tail"
         ;; Regression (TUI "when a turn ends the content reflows, as if it
         ;; scrolled"): the final result used to re-pin FOLLOW to the OLD tail

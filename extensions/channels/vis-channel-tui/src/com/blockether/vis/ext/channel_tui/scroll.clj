@@ -112,6 +112,23 @@
   (let [sc (norm sc)]
     (if (= :at (:mode sc)) sc follow)))
 
+(defn resettle
+  "Land the view after a GEOMETRY change (the terminal was resized).
+
+   A resize re-wraps every bubble, so the total height — and with it the bottom
+   row — changes in ONE step. Easing across that step is what the reader sees as
+   the whole transcript reflowing/self-scrolling for several frames after every
+   drag of the window edge, and it is worst mid-turn, when the ease is already in
+   flight toward the old bottom.
+
+   So NOTHING eases across a resize: a FOLLOW reader is re-pinned to the clean
+   auto-bottom lock (no `:pos`), and a PARKED reader keeps their committed row
+   with any in-flight `:pos` dropped, so the new layout is painted at that row
+   instead of being animated toward it."
+  [sc]
+  (let [sc (norm sc)]
+    (if (= :at (:mode sc)) (parked (long (:offset sc))) follow)))
+
 (defn bottom-hidden?
   "True when the live bottom sits BELOW the current viewport — i.e. there is
    content to jump DOWN to. FALSE when following at the bottom, AND false when

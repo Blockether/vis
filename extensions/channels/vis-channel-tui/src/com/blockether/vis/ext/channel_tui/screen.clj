@@ -2281,14 +2281,6 @@
        (when (tab-content-loading? db)
          (paint-content-loading! g cols messages-top messages-bottom now-ms))
 
-       ;; Empty transcript and nothing hydrating: vis introduces itself HERE,
-       ;; one message directly above the composer. It replaces the first-run
-       ;; welcome DIALOG entirely — a modal in front of the app was one Enter
-       ;; between the user and the thing they came to type into.
-       _
-       (when (and (empty? messages) (not (tab-content-loading? db)))
-         (render/draw-welcome-message! g cols messages-top messages-bottom))
-
        _
        (header/draw-header! g db header-top cols)
 
@@ -3628,10 +3620,7 @@
                ;; Re-read AFTER acquiring the lock - dialog state
                ;; could have flipped while we were waiting.
                (let
-                 [db
-                  @state/app-db
-
-                  size
+                 [size
                   (screen-size screen)
 
                   cols
@@ -3639,6 +3628,19 @@
 
                   rows
                   (.getRows size)
+
+                  ;; Geometry changed under a live view: re-wrapping moves the
+                  ;; bottom row in one step, and an ease across that step is the
+                  ;; "whole turn reflows/scrolls by itself after a resize" bug.
+                  ;; Land the scroll on the new geometry BEFORE reading app-db,
+                  ;; so this very frame paints the settled position. Skipped on
+                  ;; the first frame (last-cols -1) — nothing was painted yet.
+                  _
+                  (when (and (pos? (long last-cols)) (or (not= last-cols cols) (not= last-rows rows)))
+                    (state/dispatch [:terminal-resized]))
+
+                  db
+                  @state/app-db
 
                   now-ms
                   (System/currentTimeMillis)
@@ -4892,9 +4894,6 @@
                                      ;; — the very dialog C-x o and the palette open. It
                                      ;; persists what it saves and dispatches
                                      ;; `:set-config`, so the freshest config is read
-                                     ;; back off app-db. The one-time greeting is a
-                                     ;; message above the composer
-                                     ;; (`render/draw-welcome-message!`), not a modal.
                                      (open-settings-modal! screen "Providers")
                                      (let [c (or (:config @state/app-db) (vis/load-config))]
                                        (when (seq (:providers c)) c))))))]

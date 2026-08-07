@@ -3067,6 +3067,19 @@
                   ;; identity — and the fast path — survive.
                   (if (= sc cur) db (assoc db :scroll sc)))))
 
+(reg-event-db :terminal-resized
+              ;; The terminal changed size. Every bubble re-wraps, so the transcript's
+              ;; total height — and the bottom row a FOLLOW view is pinned to — jumps in
+              ;; ONE step. Left alone, the next `:ease-scroll` ticks walk the on-screen
+              ;; `:pos` from the OLD bottom to the new one: the whole turn appears to
+              ;; scroll by itself for a second after every resize, worst of all while a
+              ;; turn is streaming. Land the view on the new geometry instead of
+              ;; animating to it (see `scroll/resettle`); the resize frame is a full
+              ;; repaint anyway.
+              (fn [db _]
+                (let [sc (scroll/resettle (:scroll db))]
+                  (if (= sc (:scroll db)) db (assoc db :scroll sc)))))
+
 ;; ── In-session search ──────────────────────────────────────────────────────
 ;; The render side already exists (paint-search-hits! highlights bubbles whose
 ;; index is in `:search :hits`, and reads `:active?`/`:query`). These events are
