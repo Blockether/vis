@@ -178,7 +178,7 @@ describe('where "New session" lives', () => {
   // rendered as `~/v…` on a phone. Every header in the list is ONE component now.
   it('builds both list headers from one band, so neither spells its own box', () => {
     expect(source).toContain('<SectionHeader tone="project">');
-    expect(source).toContain('<HeaderToggle');
+    expect(source).toContain('<HeaderTitle');
     expect(source.match(/<HeaderTally/g)?.length).toBe(2);
     // Not one height, padding or paper spelled at a call site.
     expect(source).not.toContain('<header className=');

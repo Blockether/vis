@@ -1718,7 +1718,7 @@
   ^String [payload]
   (let
     [stable
-     (wire/json-str [(:total payload) (:offset payload) (:limit payload)
+     (wire/json-str [(:total payload) (:offset payload) (:limit payload) (:root payload)
                      (mapv #(dissoc % "server_time_ms") (:sessions payload))])
 
      raw
@@ -1727,7 +1727,7 @@
     (str "W/\"" (subs (.formatHex (java.util.HexFormat/of) ^bytes raw) 0 32) "\"")))
 
 (defn- list-sessions-handler
-  "GET /v1/sessions[?limit=&offset=] — sessions in navigator order, WINDOWED on
+  "GET /v1/sessions[?limit=&offset=&root=] — sessions in navigator order, WINDOWED on
    request, with a validator so a poller can revalidate instead of re-downloading.
 
    Without `limit` this is still the whole fleet, so every existing client keeps
@@ -1752,16 +1752,24 @@
      (query-long request "limit")
 
      offset
-     (query-long request "offset")]
+     (query-long request "offset")
+
+     ;; One PROJECT's window. The companion pages a project header in place, and a
+     ;; page it slices locally is not a page: it needs the whole fleet downloaded
+     ;; first. With `root` the gateway cuts the ordering to that project, so
+     ;; `total`/`has_more` describe the project the pager is printing.
+     root
+     (some-> (get-in request [:query-params "root"]) str not-empty)]
 
     (if (or (and (given? "limit") (nil? limit)) (and (given? "offset") (nil? offset)))
       (error-response 400 :invalid-window "limit and offset must be integers")
       (let
         [page
-         (state/list-sessions-page :all {:limit limit :offset offset})
+         (state/list-sessions-page :all {:limit limit :offset offset :root root})
 
          payload
          {:sessions (:sessions page)
+          :root root
           :total (:total page)
           :offset (:offset page)
           :limit (:limit page)

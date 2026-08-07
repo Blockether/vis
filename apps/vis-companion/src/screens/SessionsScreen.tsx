@@ -7,7 +7,7 @@ import {
   HeaderMeta,
   HeaderTally,
   HeaderTitle,
-  HeaderToggle,
+  Pager,
   IconButton,
   Input,
   KebabButton,
@@ -83,7 +83,6 @@ import type { PendingAttachment } from '../lib/attachments';
 import { favoriteKey, forgetFavorites, toggleFavorite, useFavorites } from '../lib/favorites';
 import {
   groupByWorkDir,
-  pageSessions,
   draftsRead,
   draftsReadKey,
   fleetError,
@@ -100,11 +99,9 @@ import {
   searchTally,
   sessionIsListed,
   sessionIsLive,
-  sessionIsPeeked,
   sessionOrder,
   timeLabel,
   withSearchHits,
-  RECENT_WINDOW_MS,
   showsScopeStrip,
   isDraftWorkspace,
   projectPath,
@@ -139,8 +136,7 @@ const STALE_POLL_MS = 20_000;
 // unloaded hits is one GET each, so the tail is cut rather than paid for.
 const SEARCH_HYDRATE_MAX = 40;
 
-// Each project is a collapsible section: collapsed peeks the rows `sessionIsPeeked`
-// keeps (capped), expanded pages the rest of its history in place — so the DOM is
+// Each project PAGES its own history, a gateway-cut window at a time — so the DOM is
 // bounded without a global window over the fleet.
 
 // Same frames as the session transcript's spinner and the TUI's
@@ -206,18 +202,6 @@ function useSessionsPerPage(): number {
     };
   }, []);
   return pageSize;
-}
-
-// `Date.now()` that advances on an interval, so time-windowed filters age out on
-// their own without a manual refresh. Keep the interval coarse (>= 1s): each tick
-// recomputes everything that depends on it.
-function useNow(intervalMs: number): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), intervalMs);
-    return () => window.clearInterval(timer);
-  }, [intervalMs]);
-  return now;
 }
 
 /**
@@ -1062,20 +1046,6 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
 
   const pageSize = useSessionsPerPage();
 
-  // Projects collapse to their live sessions and page their history independently,
-  // so there is no global window to grow. A search flattens every project open so
-  // matches are never hidden behind a collapse.
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
-  const forceExpand = searching;
-  const toggleProject = useCallback((key: string) => {
-    setExpanded((previous) => {
-      const next = new Set(previous);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
-
   // Machine → project → sessions. The machine is the organizer, so its sections
   // are built from ITS rows only.
   const sections = useMemo(
@@ -1446,7 +1416,6 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                     : groups.map(([groupRoot, projectSessions]) => (
                         <ProjectGroup
                           key={`${key}\u0000${groupRoot}`}
-                          groupKey={`${key}\u0000${groupRoot}`}
                           project={projectLabel(projectSessions[0]!)}
                           sessions={projectSessions}
                           conn={machine.conn}
@@ -1459,9 +1428,6 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                           // A draft is not a preference: every project header offers
                           // the private copy beside its own "New session".
                           onNewDraft={(anchor, root) => openDraftsAt(anchor, machine.conn, root)}
-                          expanded={expanded.has(`${key}\u0000${groupRoot}`)}
-                          forceExpand={forceExpand}
-                          onToggle={toggleProject}
                           pageSize={pageSize}
                           drafts={draftMessages}
                         />
@@ -1813,7 +1779,6 @@ function rowActionCopy(
 // (`reconcileSessions`), so an unchanged group must not re-render its rows.
 const ProjectGroup = memo(function ProjectGroup({
   project,
-  groupKey,
   sessions,
   conn,
   matches,
@@ -1824,14 +1789,9 @@ const ProjectGroup = memo(function ProjectGroup({
   onDelete,
   onNewSession,
   onNewDraft,
-  expanded,
-  forceExpand,
-  onToggle,
   pageSize,
 }: {
   project: string;
-  /** Collapse identity, scoped to the MACHINE: project names repeat across them. */
-  groupKey: string;
   sessions: Session[];
   conn: GatewayConn;
   matches: Map<string, SessionMatch> | null;
@@ -1844,74 +1804,71 @@ const ProjectGroup = memo(function ProjectGroup({
   onNewSession: (root: string) => void;
   /** Opens the private-copy question for this project, anchored on the button. */
   onNewDraft?: (anchor: HTMLElement, root: string) => void;
-  expanded: boolean;
-  forceExpand: boolean;
-  onToggle: (groupKey: string) => void;
   pageSize: number;
 }) {
   const root = projectRoot(sessions);
   const base = useMemo(() => clientFor(conn).base, [conn]);
-  // Unread answers survive collapsing (`sessionIsPeeked`), so this group's peek
-  // has to repaint when a read mark moves.
-  const readMarks = useReadMarks();
-  const liveSessions = useMemo(() => sessions.filter(sessionIsLive), [sessions]);
-  const liveCount = liveSessions.length;
-  const isOpen = expanded || forceExpand;
+  const liveCount = useMemo(() => sessions.filter(sessionIsLive).length, [sessions]);
   // Row actions must reach the machine that OWNS the row. Bound here so a
   // memoized row does not re-render on every paint of its parent.
   const renameRow = useCallback((session: Session) => onRename(session, conn), [onRename, conn]);
   const deleteRow = useCallback((session: Session) => onDelete(session, conn), [onDelete, conn]);
 
-  // A coarse clock ages the recency window: an hour past its last activity a session
-  // that is idle, answered and read leaves the collapsed peek on its own, no refresh
-  // needed.
-  const now = useNow(RECENT_WINDOW_MS / 60);
-  const favorites = useFavorites();
-  const isFavorite = useCallback(
-    (session: Session) => favoriteKey(base, session.id) in favorites,
-    [base, favorites],
-  );
-  const collapsedSessions = useMemo(
-    () =>
-      sessions.filter((session) =>
-        sessionIsPeeked(session, now, {
-          isUnread: unreadTurnCount(session) > 0,
-          hasUnsentDraft: draftMessageHasUnsent(drafts[draftMessageKey(base, session.id)]),
-          isFavorite: isFavorite(session),
-        }),
-      ),
-    // `readMarks` is the store version: marks move outside React, and a row that
-    // survives collapsing only because it is UNREAD has to leave the peek on the
-    // paint that reads it.
-    [sessions, now, drafts, base, readMarks, isFavorite],
-  );
-
-  // Expanded pages its own history in place; collapsing exposes the live few plus
-  // everything `sessionIsPeeked` refuses to age out.
-  const [shown, setShown] = useState(pageSize);
+  // A project is WALKED, page by page, and the gateway cuts the pages
+  // (`listProjectPage`, `root=`). Page 1 is painted from rows the fleet poll has
+  // already delivered, so the first screen costs no request; every later page is
+  // the server's own window of this project, which is the only way a project with
+  // a thousand sessions can be read at all.
+  const [page, setPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(sessions.length / pageSize));
   useEffect(() => {
-    setShown(pageSize);
-  }, [pageSize]);
+    // The fleet moved under the pager (a deletion, a filter, a smaller step): the
+    // page that no longer exists becomes the first one rather than an empty band.
+    if (page > pageCount) setPage(1);
+  }, [page, pageCount]);
 
-  // A star is never paged away: whichever page it fell on, `pageSessions` keeps it.
-  const rows = isOpen
-    ? pageSessions(sessions, shown, isFavorite)
-    : pageSessions(collapsedSessions, pageSize, isFavorite);
-  const remaining = isOpen ? Math.max(0, sessions.length - rows.length) : 0;
+  const localRows = useMemo(
+    () => sessions.slice((page - 1) * pageSize, page * pageSize),
+    [sessions, page, pageSize],
+  );
+
+  const [serverRows, setServerRows] = useState<Session[] | null>(null);
+  useEffect(() => {
+    // A search is a FLEET question answered client-side over rows already held;
+    // asking the gateway for an unfiltered window would page past the matches.
+    if (page === 1 || needle) {
+      setServerRows(null);
+      return;
+    }
+    let alive = true;
+    const controller = new AbortController();
+    void clientFor(conn)
+      .listProjectPage(root, (page - 1) * pageSize, pageSize, controller.signal)
+      .then((window) => {
+        if (alive) setServerRows(window.rows);
+      })
+      // The locally sliced page is a truthful fallback: same ordering, same rows.
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [conn, root, page, pageSize, needle]);
+
+  const rows = serverRows ?? localRows;
 
   return (
     <>
     <section aria-label={`${project} sessions`}>
       <SectionHeader tone="project">
-        {/* The pressable leading half: the disclosure, the project's name, and the path
-            it is checked out at. It takes the width the trailing cluster leaves — a
-            fixed count column here is what truncated `~/vis` to `~/v…` on a phone. */}
-        <HeaderToggle
-          isOpen={isOpen}
-          onToggle={() => onToggle(groupKey)}
+        {/* The leading half only NAMES the project now: its folder name and the path
+            that tells two `vis` checkouts apart. It was a disclosure button, which
+            hid a whole project's history behind a tap and said nothing about how
+            much of it there was; the history is PAGED below instead. */}
+        <HeaderTitle
           name={project}
-          path={homeifyPath(root) || 'No workspace path'}
-          pathTitle={root}
+          qualifier={homeifyPath(root) || 'No workspace path'}
+          qualifierTitle={root}
         />
         {/* The same trailing cluster the machine header above wears: what this group
             reports, then what it offers — the yellow verb gets its gap, the `⋯` gets
@@ -1944,15 +1901,7 @@ const ProjectGroup = memo(function ProjectGroup({
               onDelete={deleteRow}
             />
           ))}
-          {remaining > 0 && (
-            <button
-              type="button"
-              onClick={() => setShown((current) => current + pageSize)}
-              className="flex w-full items-center justify-center gap-2 border-t border-dialog-edge px-3 py-2.5 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint transition-colors duration-150 hover:bg-hover hover:text-white focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:px-4"
-            >
-              Show {remaining} more
-            </button>
-          )}
+          <Pager page={page} pageCount={pageCount} onPage={setPage} label={`${project} sessions`} />
         </div>
       )}
     </section>

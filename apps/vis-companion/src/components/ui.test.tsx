@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import uiSource from "./ui.tsx?raw";
 import storageSource from "../lib/storage.ts?raw";
 import sessionsListSource from "../screens/SessionsScreen.tsx?raw";
+import gatewaySource from "../lib/gateway.ts?raw";
 import settingsSource from "../screens/SettingsScreen.tsx?raw";
 
 import { MACHINE_COLORS } from "../lib/machine-colors";
@@ -15,7 +16,8 @@ import {
   HeaderMeta,
   HeaderTally,
   HeaderTitle,
-  HeaderToggle,
+  Pager,
+  pageWindow,
   IconButton,
   KebabButton,
   LiveCount,
@@ -513,35 +515,58 @@ describe("LiveCount", () => {
 // Regression, same report: the project header carried a FIXED 160px count column inside
 // its own toggle, so on a 390px iPhone the name it exists to show was truncated to
 // `~/v…` while "699 sessions" kept every pixel it asked for.
-describe("HeaderToggle", () => {
-  const html = renderToStaticMarkup(
-    <HeaderToggle
-      isOpen
-      onToggle={() => {}}
-      name="vis"
-      path="~/vis"
-      pathTitle="/Users/dev/vis"
-    />,
-  );
-
-  it("gives the name every pixel the trailing cluster leaves", () => {
-    expect(html).toContain("min-w-0");
-    expect(html).toContain("flex-1");
-    expect(html).not.toContain("w-40");
-    expect(html).not.toContain("session");
+// Regression, user report ("the project should never have the chevron, and never
+// a 'Show more' — it should have paging, supported by the backend"): a project
+// header used to hide its whole history behind a disclosure, and the history grew
+// one endless column through "Show more" over rows the client had downloaded.
+describe("Pager", () => {
+  it("renders nothing for a project that fits on one page", () => {
+    expect(
+      renderToStaticMarkup(
+        <Pager page={1} pageCount={1} onPage={() => {}} label="vis sessions" />,
+      ),
+    ).toBe("");
   });
 
-  it("is a button that fills the band, so its hover reaches the screen edge", () => {
-    expect(html).toContain("<button");
-    expect(html).toContain('aria-expanded="true"');
-    expect(html).toContain("pl-3");
-    expect(html).toContain("hover:bg-hover");
-    expect(html).not.toContain("min-h-");
+  // Regression, user report ("on page one there should be no `<`; and what if I
+  // want to jump to page 5?"): the band painted a dead disabled step at each end
+  // and offered nothing but one-page steps, so page 5 of 73 cost four taps.
+  it("drops the step it cannot take", () => {
+    const first = renderToStaticMarkup(
+      <Pager page={1} pageCount={7} onPage={() => {}} label="vis sessions" />,
+    );
+    expect(first).toContain('aria-label="Pages of vis sessions"');
+    expect(first).toContain("Page 1 of 7");
+    expect(first).not.toContain('aria-label="Previous page"');
+    expect(first).toContain('aria-label="Next page"');
+    expect(first).not.toContain('disabled=""');
+
+    const last = renderToStaticMarkup(
+      <Pager page={7} pageCount={7} onPage={() => {}} label="vis sessions" />,
+    );
+    expect(last).toContain('aria-label="Previous page"');
+    expect(last).not.toContain('aria-label="Next page"');
   });
 
-  it("shows the path it is checked out at, with the full one on its title", () => {
-    expect(html).toContain("~/vis");
-    expect(html).toContain('title="/Users/dev/vis"');
+  it("makes every printed page a one-tap jump, current one marked", () => {
+    const html = renderToStaticMarkup(
+      <Pager page={5} pageCount={73} onPage={() => {}} label="vis sessions" />,
+    );
+    for (const n of [1, 4, 5, 6, 73]) {
+      expect(html).toContain(`aria-label="Page ${n}"`);
+    }
+    expect(html).toContain('aria-current="page"');
+  });
+
+  // A strip of 73 numbers does not fit a 390px phone, and a gap marker that hides
+  // exactly one page is a lie that costs a tap.
+  it("windows the numbers around the current page and pins both ends", () => {
+    expect(pageWindow(1, 1)).toEqual([1]);
+    expect(pageWindow(3, 5)).toEqual([1, 2, 3, 4, 5]);
+    expect(pageWindow(5, 73)).toEqual([1, null, 4, 5, 6, null, 73]);
+    expect(pageWindow(1, 73)).toEqual([1, 2, null, 73]);
+    expect(pageWindow(72, 73)).toEqual([1, null, 71, 72, 73]);
+    expect(pageWindow(4, 73)).toEqual([1, 2, 3, 4, 5, null, 73]);
   });
 });
 
@@ -596,40 +621,32 @@ describe("the list grid", () => {
         ),
       ),
     ).toBe(true);
+    // Both levels are the same component now: the project header stopped being a
+    // disclosure when its history moved onto a pager.
     expect(
       leading(
         renderToStaticMarkup(
-          <HeaderToggle
-            isOpen={false}
-            onToggle={() => {}}
+          <HeaderTitle
             name="vis"
-            path="~/vis"
+            qualifier="~/vis"
+            qualifierTitle="/Users/dev/vis"
           />,
         ),
       ),
     ).toBe(true);
   });
 
-  // The last 8px of the same misalignment: a 6px machine mark and a 14px project
-  // chevron each sized to its own ink put the two header NAMES 8px apart.
-  it("gives a machine mark and a project chevron one glyph column", () => {
-    const title = renderToStaticMarkup(
-      <HeaderTitle
-        mark={<MachineMark color={MACHINE_COLORS[0]!} />}
-        name="tower"
-      />,
-    );
-    const toggle = renderToStaticMarkup(
-      <HeaderToggle
-        isOpen={false}
-        onToggle={() => {}}
-        name="vis"
-        path="~/vis"
-      />,
-    );
-    for (const html of [title, toggle]) {
-      expect(html).toContain("grid size-3.5 shrink-0 place-items-center");
-    }
+  // The last 8px of the same misalignment: a mark sized to its own ink moved the
+  // header NAME beside it.
+  it("gives a machine mark its own glyph column", () => {
+    expect(
+      renderToStaticMarkup(
+        <HeaderTitle
+          mark={<MachineMark color={MACHINE_COLORS[0]!} />}
+          name="tower"
+        />,
+      ),
+    ).toContain("grid size-3.5 shrink-0 place-items-center");
   });
 
   // The trailing gutter lives INSIDE the last control, not on the cluster: a box
@@ -864,5 +881,27 @@ describe("NewSessionButton, split", () => {
     // The parked drafts read belongs to the project that was tapped, not to whatever
     // the machine happened to touch last.
     expect(sessionsListSource).toContain("projectPath(session) === draftRoot");
+  });
+});
+
+// Regression, user report ("it should have paging, and it should be supported by
+// the backend"): the pages were sliced out of a fleet the client had already
+// downloaded, so a project's history could only be read by growing one column.
+describe("a project's pages are cut by the gateway", () => {
+  const sessions = sessionsListSource;
+  const gateway = gatewaySource;
+
+  it("asks the gateway for the window, with the project as `root`", () => {
+    expect(gateway).toContain("async listProjectPage(");
+    expect(gateway).toContain("&root=${encodeURIComponent(root)}");
+    expect(sessions).toContain(
+      ".listProjectPage(root, (page - 1) * pageSize, pageSize",
+    );
+  });
+
+  it("keeps no disclosure and no 'Show more'", () => {
+    expect(sessions).not.toContain("HeaderToggle");
+    expect(sessions).not.toContain("Show {remaining} more");
+    expect(sessions).toContain("<Pager");
   });
 });

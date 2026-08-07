@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   groupByWorkDir,
   creatableMachines,
-  pageSessions,
   draftsRead,
   draftsReadKey,
   fleetError,
@@ -21,7 +20,6 @@ import {
   scopedSessions,
   sessionIsEmpty,
   sessionIsListed,
-  sessionIsPeeked,
   sessionOrder,
   timeLabel,
   withSearchHits,
@@ -355,59 +353,6 @@ describe('timeLabel', () => {
 // still wearing its unread badge, the very thing the push notification was about —
 // disappeared an hour later, and a session merely waiting for human input went
 // with it. Age may only ever hide a session that is idle, answered and read.
-describe('sessionIsPeeked', () => {
-  const HOUR = 60 * 60 * 1000;
-  const now = 1_700_000_000_000;
-  const aged = (ms: number, extra: Partial<Session> = {}): Session =>
-    session('s1', { modified_at: new Date(now - ms).toISOString(), ...extra });
-  const peek = (
-    row: Session,
-    flags: Partial<{ isUnread: boolean; hasUnsentDraft: boolean; isFavorite: boolean }> = {},
-  ): boolean =>
-    sessionIsPeeked(row, now, {
-      isUnread: false,
-      hasUnsentDraft: false,
-      isFavorite: false,
-      ...flags,
-    });
-
-  it('never hides a session the human starred, however old it is', () => {
-    expect(peek(aged(400 * 24 * HOUR))).toBe(false);
-    expect(peek(aged(400 * 24 * HOUR), { isFavorite: true })).toBe(true);
-  });
-
-  it('never hides an unread answer, however old the session is', () => {
-    expect(peek(aged(5 * HOUR), { isUnread: true })).toBe(true);
-    expect(peek(aged(400 * 24 * HOUR), { isUnread: true })).toBe(true);
-  });
-
-  it('never hides a running session, whatever its clock says', () => {
-    expect(peek(aged(5 * HOUR, { live: true }))).toBe(true);
-    expect(peek(aged(5 * HOUR, { status: 'running' }))).toBe(true);
-    // A gateway that reports liveness explicitly wins over a stale status.
-    expect(peek(aged(5 * HOUR, { live: true, status: 'idle' }))).toBe(true);
-  });
-
-  it('never hides a session that is waiting for the human', () => {
-    expect(peek(aged(5 * HOUR, { status: 'suspended' }))).toBe(true);
-  });
-
-  it('keeps unsent words and anything touched within the hour', () => {
-    expect(peek(aged(5 * HOUR), { hasUnsentDraft: true })).toBe(true);
-    expect(peek(aged(59 * 60 * 1000))).toBe(true);
-  });
-
-  it('hides only what is old, idle and already read', () => {
-    expect(peek(aged(2 * HOUR))).toBe(false);
-    expect(peek(session('s1'))).toBe(false);
-    expect(peek(session('s1', { modified_at: 'not a date' }))).toBe(false);
-  });
-
-  it('ages off the created/last-active fallbacks too', () => {
-    expect(peek(session('s1', { last_active_at: new Date(now - 2 * HOUR).toISOString() }))).toBe(false);
-    expect(peek(session('s1', { created_at: new Date(now - 30 * 1000).toISOString() }))).toBe(true);
-  });
-});
 
 describe('showsScopeStrip', () => {
   it('is the strip, and therefore who states the tallies', () => {
@@ -486,25 +431,6 @@ describe('sessionOrder', () => {
 // Paging shortens a long list, and "show more" must never be the thing that hides
 // a favorite: stars sort to the front of their own machine, but a project group
 // concatenates machines, so a star CAN land past the page boundary.
-describe('pageSessions', () => {
-  const rows = ['a', 'b', 'c', 'd', 'e'].map((id) => session(id));
-
-  it('returns the list untouched when it fits', () => {
-    expect(pageSessions(rows, 5, () => false)).toBe(rows);
-  });
-
-  it('cuts to the page when nothing starred is below it', () => {
-    expect(pageSessions(rows, 2, () => false).map((row) => row.id)).toEqual(['a', 'b']);
-  });
-
-  it('keeps the stars the cut would have eaten, after the page', () => {
-    expect(pageSessions(rows, 2, (row) => row.id === 'e').map((row) => row.id)).toEqual([
-      'a',
-      'b',
-      'e',
-    ]);
-  });
-});
 
 // Regression: the start menu's "Or a draft you parked" list never arrived on a
 // phone — it sat on "Reading drafts..." forever, and a menu opened before that

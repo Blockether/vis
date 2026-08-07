@@ -4356,6 +4356,16 @@
                    (str (get session "id"))]))
        vec))
 
+(defn- session-project-root
+  "The PROJECT a session belongs to: its workspace `repo-root` when there is one,
+   else its `root`. The same key clients group the list by (a draft is a clone
+   under ~/.vis/drafts and reports the repo it was forked from), so a `root=`
+   window is exactly one project's column of the navigator."
+  [db id]
+  (try (when-let [w (resolve-workspace db id)]
+         (or (:repo-root w) (:root w)))
+       (catch Throwable _ nil)))
+
 (defn list-sessions-page
   "A WINDOW of `list-sessions`, in the same gateway-owned navigator order:
    `{:sessions rows :total n :offset o :limit l :order-digest s :has-more bool}`.
@@ -4363,13 +4373,18 @@
    `nil` limit means \"the rest\", so `(list-sessions-page channel nil)` is the
    whole fleet and older callers keep their full list.
 
+   `:root` narrows the whole listing to ONE project before the window is cut, so a
+   client paging a project asks the gateway for that project's page instead of
+   downloading the fleet and slicing it locally. `total`/`has-more` then describe
+   that project, which is what a pager prints.
+
    The window is cut BEFORE decoration: `session-order` ranks every session from
    cheap facts, and only the ids that survive the cut pay for `soul` + workspace
    resolution. A 100-row page of a 448-session store therefore costs about a
    fifth of the full build (~257ms) and a fifth of its ~300KB, which is what
    makes a polled session list affordable."
   ([opts] (list-sessions-page :all opts))
-  ([channel {:keys [limit offset]}]
+  ([channel {:keys [limit offset root]}]
    (let
      [db
       (try (lp/db-info) (catch Throwable _ nil))
@@ -4379,7 +4394,9 @@
       (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {})
 
       ordered
-      (session-order channel stats)
+      (cond->> (session-order channel stats)
+        (and db (seq root))
+        (filterv (fn [id] (= root (session-project-root db id)))))
 
       total
       (count ordered)

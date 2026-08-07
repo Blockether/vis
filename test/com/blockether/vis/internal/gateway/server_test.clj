@@ -2195,3 +2195,35 @@
                     (json-body {:path (.getAbsolutePath (fs-child root "nowhere")) :name "delta"}))]
         (is (= 404 (:status response)))
         (is (= "not-a-directory" (get-in (wire/parse-json (:body response)) ["error" "type"])))))))
+
+;; Regression, user report ("the project should have paging, and it should be
+;; supported by the backend"): a client could only page the WHOLE fleet, so a
+;; project's pages were sliced out of a list it had already downloaded in full.
+(deftest sessions-window-narrows-to-one-project
+  (testing "GET /v1/sessions?root= hands the project down to the windowing engine"
+    (let
+      [seen
+       (atom nil)]
+      (with-redefs [state/list-sessions-page (fn [channel opts]
+                                               (reset! seen [channel opts])
+                                               {:sessions [] :total 0 :offset 0 :limit 20
+                                                :order-digest "x" :has-more false})]
+        (let
+          [response
+           ((rv 'list-sessions-handler)
+             {:query-params {"limit" "20" "offset" "0" "root" "/Users/dev/vis"}})
+
+           body
+           (wire/parse-json (:body response))]
+
+          (is (= 200 (:status response)))
+          (is (= [:all {:limit 20 :offset 0 :root "/Users/dev/vis"}] @seen))
+          (is (= "/Users/dev/vis" (get body "root")))))
+
+      (testing "and a listing with no `root` is still the whole fleet"
+        (with-redefs [state/list-sessions-page (fn [channel opts]
+                                                 (reset! seen [channel opts])
+                                                 {:sessions [] :total 0 :offset 0 :limit nil
+                                                  :order-digest "x" :has-more false})]
+          ((rv 'list-sessions-handler) {:query-params {}})
+          (is (nil? (:root (second @seen)))))))))

@@ -198,40 +198,6 @@ export function sessionIsLive(session: Session): boolean {
   return session.live ?? session.status === 'running';
 }
 
-/** How long an idle session lingers in a collapsed project's peek. */
-export const RECENT_WINDOW_MS = 60 * 60 * 1000;
-
-/**
- * Does this row survive collapsing its project?
- *
- * Collapsing is a way to shorten HISTORY, so age may only ever hide a session
- * that is finished, answered and READ. Anything else stays, whatever its clock
- * says: a STARRED session, which is a human's own decision and outranks every
- * heuristic here; a session with a turn running, a session suspended waiting
- * for the human to answer, an unread answer that landed while the app was shut
- * — that badge is what the notification was about, and hiding the only row
- * carrying it an hour later loses the work — and unsent words, which exist on
- * THIS device alone and cannot be recovered from any other machine.
- */
-export function sessionIsPeeked(
-  session: Session,
-  now: number,
-  flags: { isUnread: boolean; hasUnsentDraft: boolean; isFavorite: boolean },
-): boolean {
-  if (flags.isFavorite) return true;
-  if (sessionIsLive(session) || session.status === 'suspended') return true;
-  if (flags.isUnread || flags.hasUnsentDraft) return true;
-  const millis = sessionActivityMillis(session);
-  return millis > 0 && now - millis <= RECENT_WINDOW_MS;
-}
-
-/** The same timestamp chain the row displays, so "recent" == "its clock reads < 1h ago". */
-function sessionActivityMillis(session: Session): number {
-  const value = session.modified_at ?? session.last_active_at ?? session.created_at;
-  if (!value) return 0;
-  const millis = new Date(value).getTime();
-  return Number.isFinite(millis) ? millis : 0;
-}
 
 /**
  * Nothing has happened in this session yet: no name, no turns, nothing running.
@@ -294,25 +260,6 @@ export function sessionOrder(
     return a.index - b.index;
   });
   return rows.map((row) => row.session);
-}
-
-/**
- * The first `size` rows, plus every starred row the cut would have eaten.
- *
- * Paging shortens a long list, and "show more" must never be the thing that
- * hides a favorite. Starred rows sort to the front of their own machine, but a
- * project group concatenates machines, so a star on a second gateway can still
- * land past the page boundary.
- */
-export function pageSessions(
-  sessions: Session[],
-  size: number,
-  isFavorite: (session: Session) => boolean,
-): Session[] {
-  if (sessions.length <= size) return sessions;
-  const kept = sessions.slice(size).filter(isFavorite);
-  const head = sessions.slice(0, size);
-  return kept.length === 0 ? head : [...head, ...kept];
 }
 
 /**

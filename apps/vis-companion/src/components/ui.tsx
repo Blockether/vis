@@ -595,7 +595,7 @@ export function MachineGap() {
  * a header never pads itself vertically around a control that is already 44px tall.
  *
  * Neither horizontal edge is spelled here: the leading one belongs to `HeaderTitle` /
- * `HeaderToggle` (a toggle's hover has to reach the edge of the screen) and the trailing
+ * `HeaderTitle` (a header's hover has to reach the edge of the screen) and the trailing
  * one to `HeaderActions`, so each edge stays one decision instead of two.
  */
 /**
@@ -784,7 +784,7 @@ export function HeaderTitle({
 }) {
   const tone = useContext(HeaderTone);
   return (
-    // The glyph centres against the LINE (`items-center`, as `HeaderToggle` does it)
+    // The glyph centres against the LINE (`items-center`)
     // while the name and its qualifier share a BASELINE inside it. Baseline-aligning
     // the mark alongside them drops a 10px block below the ink it belongs to.
     <span className={`flex min-w-0 flex-1 items-center gap-2 ${LIST_EDGE}`}>
@@ -809,57 +809,115 @@ export function HeaderTitle({
 }
 
 /**
- * The leading half of a header that OPENS its section: the same title voice as
- * `HeaderTitle`, plus a disclosure and the path the name alone cannot give.
+ * The page numbers a pager PAINTS: always the first, the last, and a window
+ * around the current one, with a gap marker (`null`) wherever the run breaks.
  *
- * It is a BUTTON that fills the band, so the hover reaches both the screen edge and the
- * band's own rules, and it is `flex-1 min-w-0` so the NAME gets whatever the trailing
- * cluster leaves. It used to carry a fixed 160px count column inside it, which on a
- * phone left `~/vis` rendering as `~/v…`; counts report through `HeaderActions` now,
- * exactly as the machine header above it reports its own.
+ * A pair of steps can only ever walk: reaching page 5 of 73 cost four taps and
+ * page 40 was unreachable in practice. Numbers make the jump one tap — but 73 of
+ * them do not fit on a 390px phone, so the strip is windowed, and both ends stay
+ * pinned because "back to the start" and "the oldest sessions" are the two jumps
+ * a reader actually asks for.
  */
-export function HeaderToggle({
-  isOpen,
-  onToggle,
-  name,
-  path,
-  pathTitle,
+export function pageWindow(page: number, pageCount: number, span = 1): (number | null)[] {
+  const shown = new Set<number>([1, pageCount]);
+  for (let n = page - span; n <= page + span; n += 1) {
+    if (n >= 1 && n <= pageCount) shown.add(n);
+  }
+  // A gap marker that hides exactly ONE page is a lie that costs a tap: print the
+  // number instead, which also keeps the strip's width from jumping by a whole
+  // cell as the reader walks it.
+  for (const n of [...shown]) {
+    if (shown.has(n + 2)) shown.add(n + 1);
+  }
+  const numbers = [...shown].sort((a, b) => a - b);
+  const out: (number | null)[] = [];
+  numbers.forEach((n, index) => {
+    const previous = numbers[index - 1];
+    if (previous !== undefined && n - previous > 1) out.push(null);
+    out.push(n);
+  });
+  return out;
+}
+
+/**
+ * THE PAGER, and there is only one of it.
+ *
+ * A project's history is walked a PAGE at a time, and the page is cut by the
+ * gateway — never by hiding rows a client already downloaded. "Show more" grew
+ * one endless column that could only ever get longer, could not be walked
+ * backwards, and left the reader with no idea how much history there was; a
+ * disclosure chevron on the header hid the whole project behind a tap for the
+ * same reason. A page number answers both: where you are, and how much there is.
+ *
+ * It is a BAND, like every other row-wide strip in this list: the list's own
+ * edges, the section rule above it, the steps at its ends and the NUMBERS between
+ * them — every one of them pressable, so page 5 of 73 is ONE tap and not four.
+ * Below one page it renders nothing at all — a pager for a project with four
+ * sessions is a control that can never be pressed.
+ *
+ * A step that cannot be taken is not painted. It used to render disabled, so page
+ * one wore a `<` that answered nothing and the eye still had to check it.
+ */
+export function Pager({
+  page,
+  pageCount,
+  onPage,
+  label,
 }: {
-  isOpen: boolean;
-  onToggle: () => void;
-  name: ReactNode;
-  path: ReactNode;
-  pathTitle?: string;
+  /** 1-based, so it reads the way it is printed. */
+  page: number;
+  pageCount: number;
+  onPage: (page: number) => void;
+  /** What is being paged, for the screen reader: "vis sessions". */
+  label: string;
 }) {
+  if (pageCount <= 1) return null;
   return (
-    <button
-      type="button"
-      aria-expanded={isOpen}
-      onClick={onToggle}
-      className={`flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:py-0 ${LIST_EDGE} ${LIST_EDGE_END}`}
+    <nav
+      aria-label={`Pages of ${label}`}
+      className={`flex items-center justify-center gap-1 border-t border-dialog-edge py-1 ${LIST_EDGE} ${LIST_EDGE_END}`}
     >
-      <span className={HEADER_GLYPH}>
-        <ChevronIcon open={isOpen} className="size-3.5 text-dialog-hint" />
-      </span>
-      {/* Name and path on ONE line, sharing a baseline. Stacked, this header stood two
-          lines tall while the machine header directly above it — the same band, the
-          same job — stood one, so the two never read as peers; and the path, which is
-          the thing that tells two `vis` projects apart, was the smaller of two lines
-          in a row already crowded by a count, a yellow verb and a `⋯`.
-          The NAME holds its ground and the PATH gives way: the name is the identity
-          and the path only qualifies it, so the path is the one that truncates — with
-          the whole thing on `title` for the row that needs it spelled out. */}
-      <span className="flex min-w-0 items-baseline gap-2">
-        <span
-          className={`max-w-[60%] shrink-0 truncate font-mono font-bold text-white ${HEADER_TYPE.project}`}
-        >
-          {name}
+      {page > 1 && (
+        <IconButton label="Previous page" variant="quiet" onClick={() => onPage(page - 1)}>
+          <ChevronIcon back className="size-3" />
+        </IconButton>
+      )}
+      {/* The strip is LIVE: pressing a number changes nothing else on the band, so
+          without this a screen reader hears silence after the press. */}
+      <span aria-live="polite" className="flex items-center gap-1">
+        <span className="sr-only">
+          Page {page} of {pageCount}
         </span>
-        <span className="min-w-0 truncate font-mono text-chip text-dialog-hint" title={pathTitle}>
-          {path}
-        </span>
+        {pageWindow(page, pageCount).map((entry, index) =>
+          entry === null ? (
+            <span
+              key={`gap-${index}`}
+              aria-hidden
+              className="px-1 font-mono text-chip text-dialog-hint"
+            >
+              &#8230;
+            </span>
+          ) : (
+            <Button
+              key={entry}
+              variant={entry === page ? 'solid' : 'quiet'}
+              density="compact"
+              aria-label={`Page ${entry}`}
+              aria-current={entry === page ? 'page' : undefined}
+              onClick={() => onPage(entry)}
+              className="min-w-7 px-1 font-mono tabular-nums sm:min-w-8 sm:px-1.5"
+            >
+              {entry}
+            </Button>
+          ),
+        )}
       </span>
-    </button>
+      {page < pageCount && (
+        <IconButton label="Next page" variant="quiet" onClick={() => onPage(page + 1)}>
+          <ChevronIcon className="size-3" />
+        </IconButton>
+      )}
+    </nav>
   );
 }
 
