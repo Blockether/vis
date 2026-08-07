@@ -53,4 +53,17 @@ describe('desktop header', () => {
     expect(cog).toContain('ml-auto');
     expect(cog).toContain('sm:ml-0');
   });
+
+  // Reported: the trailing controls sit at the wrong margin. On a phone the app bar
+  // and the sessions list are one column down the right edge, but the list wears a
+  // 2px frame (`border-r-2`) the bar does not, so a cog CENTRED in its 48px cell put
+  // its ink 16px from the screen while every `⋯` and chevron below it sat at 14px.
+  it('pads the cog to the list’s own content edge instead of centring it', () => {
+    const cog = classes(openingTag(app, 'Open application settings'));
+    expect(cog).not.toContain('place-items-center');
+    expect(cog).toContain('justify-items-end');
+    // The list gutter (`pl-3`/`sm:pl-4`) plus the panel's own 2px frame.
+    expect(cog).toContain('pr-3.5');
+    expect(cog).toContain('sm:pr-4.5');
+  });
 });

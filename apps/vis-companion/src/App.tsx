@@ -1113,11 +1113,16 @@ export function Header({
             font whose advance width and baseline differ per platform, so it never sat
             centred in its 48px cell. A stroked `size-4` icon matches `NavIcon` exactly.
             The negative right margin cancels the header's own gutter so the tap target
-            reaches the physical edge while the icon's right edge lines up with the
-            content edge of everything below it. */}
+            reaches the physical edge; the icon is then PADDED away from that edge
+            rather than centred in its own 48px cell, because the list below is not
+            flush with the screen — it wears a 2px frame (`border-r-2`, the match for
+            the machine rail on its left), so its trailing ink lands 14px in while a
+            centred cog landed 16px in. Two glyphs in one column, 2px apart, is a kink
+            you can see straight down the right edge of a phone. `pr-3.5`/`sm:pr-4.5`
+            is the list's own gutter plus that frame. */}
         <button
           type="button"
-          className="-mr-3 ml-auto grid min-h-12 min-w-12 place-items-center text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent sm:-mr-4 sm:ml-0"
+          className="-mr-3 ml-auto grid min-h-12 min-w-12 items-center justify-items-end pr-3.5 text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent sm:-mr-4 sm:ml-0 sm:pr-4.5"
           onClick={onAppSettings}
           aria-label="Open application settings"
         >

@@ -368,9 +368,13 @@ describe('KebabButton', () => {
     );
   });
 
-  it('wears no resting border: a header glyph is ink, not a rival box', () => {
+  // Reported: the `⋯` and the row chevrons "have borders". They did — the frame
+  // arrived on hover, and on a touch screen a tap counts as hover, so the glyph
+  // boxed itself and stayed boxed with no pointer to leave.
+  it('wears no border in ANY state: a header glyph is ink, not a rival box', () => {
     expect(html()).toContain('border-transparent');
-    expect(html().replaceAll('hover:border-edge-strong', '')).not.toContain('border-edge-strong');
+    expect(html()).not.toContain('border-edge-strong');
+    expect(html()).not.toContain('hover:border');
   });
 
   it('carries the popup semantics itself, so no call site can forget them', () => {

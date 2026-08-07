@@ -63,9 +63,13 @@ export const Button = forwardRef<
     ghost: `border-edge-strong bg-transparent text-white hover:bg-hover ${dimmed}`,
     // For a SECONDARY action sitting next to a solid primary: two bordered boxes
     // side by side read as rivals, so this one keeps the button's box (transparent
-    // border, identical metrics) and only draws a frame on hover/focus.
+    // border, identical metrics) and NEVER draws a frame — not at rest and not on
+    // hover. A frame that arrives under the pointer is a box appearing out of
+    // nowhere around a glyph that was never a box; on touch there is no pointer at
+    // all, so tapping the `⋯` simply boxed it and left it boxed. The surface moving
+    // already says "you are on it", and the keyboard still gets its own ring.
     quiet:
-      'border-transparent bg-transparent text-dialog-hint hover:border-edge-strong hover:bg-hover disabled:border-transparent disabled:bg-transparent disabled:text-muted',
+      'border-transparent bg-transparent text-dialog-hint hover:bg-hover disabled:border-transparent disabled:bg-transparent disabled:text-muted',
     // The red stays INK and the fill stays a wash, exactly as `MenuItem`'s danger
     // row does — one destructive language in both.
     danger: `border-err/40 bg-err/10 text-err hover:border-err hover:bg-err/20 ${dimmed}`,
@@ -75,7 +79,7 @@ export const Button = forwardRef<
     // `bg-transparent` and `bg-ink/80` are decided by Tailwind's emission order, never
     // by which of the two the call site happened to type last.
     overlay:
-      'border-transparent bg-ink/80 text-dialog-hint hover:border-edge-strong hover:bg-hover hover:text-accent-ink disabled:border-transparent disabled:bg-panel-2 disabled:text-muted',
+      'border-transparent bg-ink/80 text-dialog-hint hover:bg-hover hover:text-accent-ink disabled:border-transparent disabled:bg-panel-2 disabled:text-muted',
     // A split button's caret half is NOT a second variant: it is `solid` with a
     // hairline in `accent-foreground`. Dark chrome next to an amber primary reads
     // as a disabled slab, and nobody presses a control that looks switched off.
