@@ -2281,8 +2281,8 @@
 
 (defdescribe
   ask-code-idle-timeout-test
-  (it "uses one shared 300s budget for the TTFT and idle watchdogs by default"
-      (expect (= 300000 rt/ASK_CODE_TTFT_TIMEOUT_MS))
+  (it "gives the first token 120s and the idle watchdog its own 300s by default"
+      (expect (= 120000 rt/ASK_CODE_TTFT_TIMEOUT_MS))
       (expect (= 300000 rt/ASK_CODE_IDLE_TIMEOUT_MS))
       (let [{:keys [router opts]} (captured-ask-code-opts {:lang "clojure" :messages []})]
         (expect (= ::router router))

@@ -59,14 +59,16 @@
 (def ASK_CODE_TTFT_TIMEOUT_MS
   "Default time-to-first-token timeout for Vis `svar/ask-code!` calls (ms).
 
-   300s = CODEX PARITY. The Codex CLI has NO separate first-token budget:
-   its single `stream_idle_timeout_ms` (default
-   `DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000`) governs the wait for the
-   FIRST event exactly like every later transport gap. Matching that 300s
-   budget avoids hanging up first on a queued or cold-starting provider; a
-   genuinely dead connection still fails on its own transport error. Model-
-   progress silence is a separate, opt-in semantic watchdog below."
-  300000)
+   120s. The wait for the FIRST response header, and nothing else: no bytes
+   were sent, no tool ran, no output was streamed, so the request can simply be
+   made again somewhere else. Two minutes is generous for a queued or cold-
+   starting provider and short enough that a wedged connection does not eat five
+   minutes of a turn — which is exactly what a 300s budget did before it failed
+   the turn outright. svar's own `router/DEFAULT_TTFT_TIMEOUT_MS` is the same
+   two minutes, and the typed abort it raises is transient there, so the router
+   falls back to another provider instead. Model-progress silence is a separate,
+   opt-in semantic watchdog below."
+  120000)
 
 (def ASK_CODE_IDLE_TIMEOUT_MS
   "Default inter-chunk idle timeout for Vis `svar/ask-code!` calls (ms).
