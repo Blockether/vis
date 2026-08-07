@@ -198,6 +198,10 @@ export function ManageProjectsSheet({
     : null;
   const target = exact?.path ?? here;
 
+  // Naming a new folder always aims somewhere that does not exist yet, so the check is
+  // only about the folder currently AIMED at while browsing.
+  const alreadyProject = folder === null && !!target && knownRoots.has(target);
+
   const commit = useCallback(async () => {
     if (folder === null) {
       if (target) onChoose(target);
@@ -451,21 +455,25 @@ export function ManageProjectsSheet({
             thumb already is and where every other footer in this app commits. Thrown
             to opposite ends of a 384px panel they read as two unrelated screens. */}
         <div className="flex items-center justify-end gap-2">
-          {/* `ghost` beside `solid`, `justify-end gap-2`: the exact footer every other
-              dialog in this app commits with. It was the one surface pairing `quiet`
-              with the primary — and `quiet` is frameless until it is hovered, which on
-              a phone is never, so the secondary read as a caption rather than a
-              button. `quiet` is for a control inside a line of METADATA (the machine
-              header's Retry), not for one of the two verbs a dialog ends on. */}
+          {/* The answer, not a dead button: a folder this machine ALREADY runs sessions in
+              cannot be added again, so both verbs go down and the reason takes the empty
+              leading half of the footer — the one place the eye lands after the tap that
+              did nothing. Regression: "Use project" used to accept an existing root and
+              silently re-add it. */}
+          {alreadyProject && (
+            <p className="mr-auto text-meta text-dialog-hint">It’s already a project</p>
+          )}
           <Button
             variant="ghost"
-            disabled={saving || !here}
+            disabled={saving || !here || alreadyProject}
             onClick={() => setFolder(folder === null ? '' : null)}
           >
             {folder === null ? 'New folder' : 'Cancel'}
           </Button>
           <Button
-            disabled={saving || !target || (folder !== null && !folder.trim())}
+            disabled={
+              saving || !target || alreadyProject || (folder !== null && !folder.trim())
+            }
             onClick={() => void commit()}
           >
             {folder === null ? 'Use project' : 'Create project'}

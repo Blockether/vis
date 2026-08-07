@@ -109,3 +109,27 @@ describe('browsing opens one level above the current project', () => {
     expect(source).toContain("entry.path === startAt");
   });
 });
+
+// Regression, user report ("Use project + New folder should be disabled and say it's
+// already a project"). Aiming at a folder this machine ALREADY runs sessions in left
+// both verbs live: "Use project" re-added an existing root and said nothing.
+describe('a folder that is already a project offers no verb', () => {
+  it('reads the aim against the machine\u2019s known roots, browsing only', () => {
+    expect(source).toContain(
+      'const alreadyProject = folder === null && !!target && knownRoots.has(target);',
+    );
+  });
+
+  it('takes both footer buttons down', () => {
+    expect(source).toContain('disabled={saving || !here || alreadyProject}');
+    expect(source).toContain(
+      "saving || !target || alreadyProject || (folder !== null && !folder.trim())",
+    );
+  });
+
+  it('says why, on the leading edge of the footer', () => {
+    expect(source).toContain(
+      '<p className="mr-auto text-meta text-dialog-hint">It\u2019s already a project</p>',
+    );
+  });
+});
