@@ -208,7 +208,7 @@ describe('where "New session" lives', () => {
       "<MachineRail color={machineColor(machineColors, key)}>",
     );
     expect(source).toContain(
-      "border border-dialog-edge bg-panel sm:mx-0 sm:border-r-2",
+      "border-y border-dialog-edge bg-panel sm:mx-0 sm:h-auto sm:max-h-full sm:border-x sm:border-r-2",
     );
     // A card is a CLOSED frame at every width. It used to carry `border-b border-r-2`
     // alone, so on a 390px phone it had no top edge for the tab to join into and its
@@ -223,9 +223,26 @@ describe('where "New session" lives', () => {
   // empty paper between it and the pager at y=554 — a border drawn around nothing — and
   // the list's own `border-b` doubled the line right under the pager.
   it("ends the card where its content ends, with one rule under the pager", () => {
-    expect(source).toContain("mx-3 flex max-h-full min-h-0 flex-col overflow-hidden");
-    expect(source).not.toContain("mx-3 flex h-full min-h-0 flex-col overflow-hidden");
+    expect(source).toContain("sm:h-auto sm:max-h-full");
+    expect(source).not.toContain("mx-3 flex");
     expect(source).not.toContain('<div className="border-b border-dialog-edge">');
+  });
+
+  // Regression, user report ("switching tabs is jumping ... the width of the container
+  // should be full and there should be no border left right. ALSO THE SHELL MAKES THE
+  // DOWN OF IT UNACCESSIBLE"): on a phone the card was `mx-3` with a full box and a
+  // content-sized height, so each pager page resized the frame (the screen jumped), two
+  // side rules ate 12px of a 390px glass, and the home indicator covered the last row.
+  it("gives the phone a full-bleed card with a fixed height and a reachable bottom", () => {
+    expect(source).toContain(
+      'className="flex h-full min-h-0 flex-col overflow-hidden border-y border-dialog-edge bg-panel sm:mx-0 sm:h-auto sm:max-h-full sm:border-x sm:border-r-2"',
+    );
+    // No horizontal margin and no side rules below `sm`.
+    expect(source).not.toContain("mx-3 flex");
+    expect(source).not.toContain("border border-dialog-edge bg-panel");
+    // The section clears the home indicator instead of ending under it.
+    expect(source).toContain("pb-[env(safe-area-inset-bottom)]");
+    expect(source).not.toContain("flex-col pb-0");
   });
 
   // Regression, user report ("THEY LOOK BAD ON THE IPHONE. See the machine
@@ -393,7 +410,7 @@ describe("the machine is a chip, not a second band", () => {
   it("stands the chips outside the machine card, joined to it as tabs", () => {
     // The switcher is ABOVE the card, on the page's own paper.
     expect(source.indexOf('aria-label="Machines"')).toBeLessThan(
-      source.indexOf("flex max-h-full min-h-0 flex-col overflow-hidden"),
+      source.indexOf("flex h-full min-h-0 flex-col overflow-hidden border-y"),
     );
     // The selected chip's bottom edge is open, so it merges into the card below it.
     expect(source).toContain("-mb-px");

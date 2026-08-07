@@ -1103,7 +1103,7 @@ export function SessionsScreen({
   if (loadError) return null;
 
   return (
-    <section aria-label="Sessions" className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col pb-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:pb-6 sm:pt-6">
+    <section aria-label="Sessions" className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:pb-6 sm:pt-6">
       {/* On phones this panel sits FLUSH under the app header, whose own `border-b`
           already draws the rule below the Vis mark. A `border-y` here stacked a
           second hairline on top of it, so the Sessions tab wore a 2px seam while
@@ -1166,12 +1166,17 @@ export function SessionsScreen({
             </Button>
           )}
       </div>
-        {/* The card is a CLOSED frame on every width, and it ENDS where its content
-            ends: `h-full` stretched it to the viewport, so on a desktop the bottom
-            rule floated ~300px under the pager with nothing between them - a border
-            around emptiness. `max-h-full` keeps the scroll containment and puts the
-            bottom edge directly under the last row. */}
-        <div className="mx-3 flex max-h-full min-h-0 flex-col overflow-hidden border border-dialog-edge bg-panel sm:mx-0 sm:border-r-2">
+        {/* ON A PHONE THE CARD IS THE PAGE, AND IT DOES NOT BREATHE.
+            It used to be `mx-3` with a full box and a height that followed its content,
+            so every page of the pager resized the frame under the finger (page 74 has 1
+            row) and the whole screen jumped; its two side rules also stole 12px of a
+            390px glass for nothing. Full bleed, no vertical rules, and `h-full` so the
+            frame is fixed and the rows scroll inside it. The section's own
+            `env(safe-area-inset-bottom)` keeps the last row and the pager clear of the
+            home indicator, which used to swallow them.
+            At `sm` the card detaches again and ENDS where its content ends (`max-h-full`
+            + `h-auto`), so the desktop never draws a border around empty paper. */}
+        <div className="flex h-full min-h-0 flex-col overflow-hidden border-y border-dialog-edge bg-panel sm:mx-0 sm:h-auto sm:max-h-full sm:border-x sm:border-r-2">
         <div className={`border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4 ${LIST_FRAME}`}>
           <div className="mt-1.5 flex items-center justify-between gap-3">
             <div className="min-w-0">
