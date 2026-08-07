@@ -821,14 +821,19 @@
       ;; A checkbox row already carries its own label — a separate bold label row
       ;; above it would say the same word twice, which no other dialog does — so
       ;; there its description follows the box instead, with no gap to open.
+      ;;
+      ;; The prose is its own block too: when a field has one, another blank
+      ;; follows it, so the sentence that explains the field is not butted against
+      ;; the box it explains and cannot be read as part of it.
       (cond->
         (if (= :checkbox type)
           (into (vec rows) description)
-          (into (into [{:kind :label
-                        :text (label-text field)
-                        :is-required (boolean (:is-required field))
-                        :is-active-field is-active-field} {:kind :blank}]
-                      description)
+          (into (into (into [{:kind :label
+                              :text (label-text field)
+                              :is-required (boolean (:is-required field))
+                              :is-active-field is-active-field} {:kind :blank}]
+                            description)
+                      (when (seq description) [{:kind :blank}]))
                 rows))
         (get errors id)
         (conj {:kind :error :text (get errors id)})

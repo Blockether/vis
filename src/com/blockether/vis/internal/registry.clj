@@ -185,7 +185,7 @@
 
 (s/def :provider/enrich-models-fn ifn?) ;; (svar-provider router-opts) -> models-vec (resolve :context/:tool-call? at router-build, e.g. LM Studio native endpoint)
 
-(s/def :provider/preset map?)         ;; extension-owned UI/runtime defaults: :base-url, :default-models, :api-style, :hidden?
+(s/def :provider/preset map?)         ;; extension-owned UI/runtime defaults: :base-url, :default-models, :api-style, :is-hidden
 
 (s/def :provider/on-selected-fn ifn?) ;; ({:provider :previous-provider :config :source}) -> nil
 

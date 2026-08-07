@@ -1037,10 +1037,11 @@ vis.extension(
         vis.provider(
             id='acme',
             label='Acme AI',
-            preset={'base-url': 'https://acme.test/v1',
+            preset={'base_url': 'https://acme.test/v1',
                     'api_style': 'openai',
                     'default_models': ['acme-large', 'acme-small'],
                     'responses_path': '/responses',
+                    'llm_headers': {'X-Initiator': 'agent'},
                     'extra_body': {'temperature': 0.6, 'top_p': 0.95}},
             get_token_fn=_token,
             status_fn=_status,
@@ -1086,15 +1087,18 @@ vis.extension(
           (expect (some? p))
           (expect (= :acme (:provider/id p)))
           (expect (= "Acme AI" (:provider/label p)))
-          ;; preset: dash/underscore keys accepted, api-style -> keyword
+          ;; preset: one snake_case spelling per key, api-style -> keyword
           (let [preset (:provider/preset p)]
             (expect (= "https://acme.test/v1" (:base-url preset)))
             (expect (= :openai (:api-style preset)))
             (expect (= ["acme-large" "acme-small"] (:default-models preset)))
-            ;; unknown preset keys pass through to svar: responses-path (dash-
-            ;; normalized) + extra-body (nested API-literal keys kept verbatim).
+            ;; An UNDECLARED preset key is named through `wire/engine-key` and
+            ;; its VALUE is never entered: `extra_body`/`llm_headers` are the
+            ;; author's own API payloads and reach svar exactly as written —
+            ;; string-keyed, like `runtime-settings/AGENT_INITIATOR_HEADERS`.
             (expect (= "/responses" (:responses-path preset)))
-            (expect (= {:temperature 0.6 :top_p 0.95} (:extra-body preset))))
+            (expect (= {"X-Initiator" "agent"} (:llm-headers preset)))
+            (expect (= {"temperature" 0.6 "top_p" 0.95} (:extra-body preset))))
           ;; get-token-fn marshals: snake_case -> kebab keys, string values
           (expect (= {:token "sk-test-123" :api-url "https://acme.test/v1"}
                      ((:provider/get-token-fn p))))
@@ -2064,3 +2068,50 @@ vis.extension(
                                   (let [summary (limits-format/dynamic-summary report)]
                                     (expect (some? summary))
                                     (expect (str/includes? summary "Daily tokens"))))))))
+
+;; Regression, issue #118 (same defect, general form): a Python provider's `is_*`
+;; keys crossed under a hand-written `:<foo>?` rule guarded by a two-entry
+;; allow-list, so every key the list did not name arrived as `:<foo>?` — a name
+;; no host schema reads. That is how `:unlimited?` silenced the TUI footer, and
+;; any NEW `is_*` key was one more silent miss. Keys now take `wire/engine-key`,
+;; the single inverse of the gateway's `wire-key`, with no allow-list to forget.
+(def ^:private provider-is-keys-py
+  "'''Provider fixture pinning `is_*` key spelling across the boundary.'''
+import vis
+
+
+def _status():
+    return {'is_authenticated': True, 'is_stale': False, 'source': 'env-var'}
+
+
+vis.extension(
+    name='provider-iskeys',
+    description='is_* key spelling fixture.',
+    providers=[
+        vis.provider(
+            id='iskeys',
+            label='Is Keys',
+            preset={'base_url': 'https://iskeys.test/v1', 'is_hidden': True},
+            status_fn=_status,
+        ),
+    ],
+)
+")
+
+(defdescribe python-provider-is-key-test
+             (it "every `is_*` key crosses as `:is-*` — one mechanical inverse, no allow-list"
+                 (with-loaded {"iskeys.py" provider-is-keys-py}
+                              (fn [_ _]
+                                (let
+                                  [p
+                                   (registry/provider-by-id :iskeys)
+
+                                   status
+                                   ((:provider/status-fn p))]
+
+                                  (expect (true? (:is-authenticated status)))
+                                  ;; the key no allow-list ever named
+                                  (expect (false? (:is-stale status)))
+                                  (expect (nil? (:stale? status)))
+                                  (expect (true? (:is-hidden (:provider/preset p))))
+                                  (expect (nil? (:hidden? (:provider/preset p)))))))))

@@ -909,8 +909,11 @@
         (expect (= {:kind :description :text "Free text"}
                    (select-keys (nth rows (+ (long i) 2)) [:kind :text])))
         (expect (contains? (nth rows (+ (long i) 2)) :is-active-field))
-        (expect (= :input (:kind (nth rows (+ (long i) 3)))))
-        (expect (= "note" (:field-id (nth rows (+ (long i) 3)))))))
+        ;; And the input is its own block too: prose ends, one row of air, then the
+        ;; box. Butted straight under the sentence, the field read as part of it.
+        (expect (= :blank (:kind (nth rows (+ (long i) 3)))))
+        (expect (= :input (:kind (nth rows (+ (long i) 4)))))
+        (expect (= "note" (:field-id (nth rows (+ (long i) 4)))))))
   (it "leaves a field with no description with just its label, the gap, and its input"
       (let
         [rows
@@ -956,6 +959,48 @@
         (expect (= #{SGR/ITALIC} (modifiers-of screen "Free text")))
         ;; The label above it is the bold one — the two must not read alike.
         (expect (= #{SGR/BOLD} (modifiers-of screen "Note"))))))
+
+(defdescribe
+  toggle-indent-test
+  "A TOGGLE paints no field surface, so it may not wear a field surface's inner
+   padding either: the pad exists to keep text off a coloured edge, and on the
+   dialog's own paper it is just a margin nobody asked for. A checkbox IS its own
+   label, so that margin made the one row that should line up with the other
+   labels the only row indented away from them."
+  (it "starts a checkbox and an option one ring cell in, not two"
+      (let
+        [{:keys [screen g]}
+         (virtual-screen)
+
+         _
+         (hi/paint! g
+                    80
+                    30
+                    (hi/init-form
+                      {:id "r"
+                       :title "T"
+                       :fields
+                       [{:id "env"
+                         :type :select
+                         :label "Environment"
+                         :options [{:value "stg" :label "Staging"}]}
+                        {:id "ok" :type :checkbox :label "I have read the diff"}]}))
+
+         col-of
+         (fn [needle]
+           (some (fn [r]
+                   (let [line (screen-row screen r)
+                         at (str/index-of line needle)]
+                     (when at at)))
+                 (range 30)))
+
+         label-col
+         (col-of "Environment")]
+
+        (expect (some? label-col))
+        ;; The ring cell is the ONLY gutter a focusable row gets.
+        (expect (= (inc (long label-col)) (col-of "●")))
+        (expect (= (inc (long label-col)) (col-of "[ ]"))))))
 
 (def ^:private prose
   "Two sentences of dialog prose — wider than any dialog row, so it reaches the

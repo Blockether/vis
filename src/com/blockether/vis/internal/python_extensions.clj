@@ -45,6 +45,7 @@
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.extension-aggregate :as aggregate]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.notifications :as notifications]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
@@ -916,113 +917,133 @@
             {:op (keyword (str op)) :phase (if before? :around :after) :fn f})
           (get spec "ops"))))
 
-;; ── Providers ────────────────────────────────────────────────────────────────
-;; A `vis.provider(...)` dict -> a canonical provider descriptor entry. The
-;; provider CALLABLES (get-token/detect/status/limits/…) run in the extension's
-;; trusted context; their return maps are plainified and deep-keywordized —
-;; provider descriptors are author-declared config (same trust as a Clojure
-;; provider extension), so minting keys / enum keywords here is sanctioned,
-;; unlike model data. base-url/api-style/default-models in `:preset` flow through
+;; ── Providers: DECODED against a declared shape, never walked ────────────────
+;; A `vis.provider(...)` dict -> a canonical provider descriptor entry, and a
+;; provider CALLABLE's return -> the map the host schema behind it already
+;; declares. There is ONE mechanism: `decode`, driven by a per-contract table of
+;; engine key -> the coercion that key's spec demands (`token-fields`,
+;; `status-fields`, `limits-fields`, `preset-fields`). A key the table does not
+;; name keeps its Python spelling through `wire/engine-key` — the gateway's own
+;; `wire-key` inverse, so this namespace owns no second spelling rule — and its
+;; VALUE UNTOUCHED.
+;;
+;; Nothing recurses into data we did not declare. That is the whole point: an
+;; author's `llm_headers` / `extra_body` reach svar exactly as written, in the
+;; same string-keyed shape a Clojure provider returns
+;; (`runtime-settings/AGENT_INITIATOR_HEADERS` is `{"X-Initiator" "agent"}`), and
+;; a key nobody declared can never be re-typed behind the author's back — which
+;; is how `is_unlimited` once became `:unlimited?` and made every Python limits
+;; report fail `provider-limits/::limit-row`.
+;;
+;; base-url/api-style/default-models in `:preset` flow through
 ;; `config/known-provider-base-url` into svar's router, so a pure-Python provider
 ;; actually serves model calls once the user configures it.
 
-(def ^:private provider-enum-keys
-  #{:provider-id :id :source :status :kind :scope :precision :api-style :unit})
+(defn- as-str [v] (when (some? v) (str v)))
 
-(def ^:private verbatim-is-keys
-  "Boolean keys the HOST schema itself spells `is-<foo>`, kept VERBATIM instead of
-   taking the `:<foo>?` convention.
+(defn- as-kw [v] (when (some? v) (clojure.core/keyword (str v))))
 
-   `is-authenticated` is the shared connection verdict (wire, dot, status dialog,
-   routing). `is-unlimited` is required by `provider-limits/::limit-row`, the
-   schema behind the TUI footer's live usage line — renaming it to `:unlimited?`
-   made EVERY Python `limits-fn` report fail validation, so the footer only ever
-   said `limits: error`."
-  #{"is-authenticated" "is-unlimited"})
+(defn- as-bool [v] (when (some? v) (boolean v)))
 
-(defn- py-key->kw
-  "A Python provider-map key -> Clojure keyword. Underscores become dashes, and a
-   boolean-predicate `is_foo` / `is-foo` becomes the Clojure `:foo?` convention
-   (Python identifiers can't carry the trailing `?`, so `is_default` -> `:default?`,
-   etc.). A bare `is` / `is_` is left as-is. The exceptions are `verbatim-is-keys`,
-   the `is-<foo>` names the host's own schemas require end-to-end."
-  [k]
-  (let [s (str/replace (str k) "_" "-")]
-    (cond (verbatim-is-keys s) (keyword s)
-          (and (str/starts-with? s "is-") (> (count s) 3)) (keyword (str (subs s 3) "?"))
-          :else (keyword s))))
+(defn- as-long [v] (when (number? v) (long v)))
 
-(defn- keywordize
-  "Deep-convert a Python string-keyed provider map to keyword keys, coercing a
-   bounded allow-list of enum-ish values to keywords too. Keys follow
-   `py-key->kw` (so `is_authenticated` -> `:is-authenticated`)."
-  [x]
-  (cond (map? x)
-        (into
-          {}
-          (map (fn [[k v]]
-                 (let [kk (py-key->kw k)]
-                   [kk (if (and (string? v) (provider-enum-keys kk)) (keyword v) (keywordize v))])))
-          x)
-        (sequential? x) (mapv keywordize x)
-        :else x))
+(defn- as-num [v] (when (number? v) v))
 
-(defn- plain-keywordize
-  "Keywordize map keys recursively WITHOUT dash-normalization — so a preset
-   pass-through value (`:extra-body`, `:llm-headers`) keeps its API-literal
-   nested keys (`top_p`, `min_p`) exactly as the OpenAI-style wire expects,
-   unlike the top-level preset keys which follow the kebab Clojure convention."
-  [x]
-  (cond (map? x) (into {}
-                       (map (fn [[k v]]
-                              [(keyword (str k)) (plain-keywordize v)]))
-                       x)
-        (sequential? x) (mapv plain-keywordize x)
-        (set? x) (mapv plain-keywordize x)
-        :else x))
+(defn- as-strs [v] (when (sequential? v) (mapv str v)))
 
-(def ^:private preset-known-keys
-  #{"base-url" "base_url" "api-style" "api_style" "default-models" "default_models" "is-hidden"
-    "is_hidden"})
+(defn- decode
+  "Decode ONE map against `fields` (engine key -> 1-arg coercion). Every key is
+   named through `wire/engine-key`; a key `fields` declares is coerced, and every
+   other entry's value passes through as-is. One level, by declaration — this is
+   deliberately not a walker."
+  [fields m]
+  (when (map? m)
+    (reduce-kv (fn [acc k v]
+                 (let
+                   [kk
+                    (wire/engine-key k)
 
-(defn- ->preset
-  "UI/runtime defaults from a `vis.provider(preset=...)` dict. The four common
-   keys are coerced precisely (`:base-url` string, `:api-style` keyword,
-   `:default-models` vec of strings, `:hidden?` boolean — authored `is_hidden`,
-   accepted). Every OTHER key is passed through verbatim (top-level name
-   dash-normalized to the kebab preset convention, values kept as-is) so a
-   Python provider can set `:extra-body`, `:responses-path`, `:context`,
-   `:llm-headers` — exactly the extra preset keys `config/registered-provider-metadata`
-   merges into svar for a first-party provider."
-  [preset]
-  (let
-    [preset
-     (into {} preset)
+                    f
+                    (get fields kk)]
 
-     g
-     (fn [& ks]
-       (some #(get preset %) ks))
+                   (assoc acc kk (if f (f v) v))))
+               {}
+               (into {} m))))
 
-     passthrough
-     (reduce-kv (fn [m k v]
-                  (if (preset-known-keys (str k))
-                    m
-                    (assoc m (keyword (str/replace (str k) "_" "-")) (plain-keywordize v))))
-                {}
-                preset)]
+(defn- decoder
+  "`fields` as a coercion, for a declared SUBMAP."
+  [fields]
+  (fn [v]
+    (decode fields v)))
 
-    (cond-> passthrough
-      (g "base-url" "base_url")
-      (assoc :base-url (str (g "base-url" "base_url")))
+(defn- decoder-rows
+  "`fields` as a coercion, for a declared vector of submaps."
+  [fields]
+  (fn [v]
+    (when (sequential? v) (mapv (decoder fields) v))))
 
-      (g "api-style" "api_style")
-      (assoc :api-style (keyword (str (g "api-style" "api_style"))))
+(defn- decoded-result
+  "A provider callable's return: decoded when it is a map, untouched otherwise
+   (`get_token_fn` may answer a bare token string, `detect_fn` a credential)."
+  [fields v]
+  (if (map? v) (decode fields v) v))
 
-      (g "default-models" "default_models")
-      (assoc :default-models (mapv str (g "default-models" "default_models")))
+(def ^:private token-fields
+  "`get_token_fn` / `refresh_token_fn` / `detect_fn` -> the credential map
+   `config/->svar-provider` and `loop/hydrate-router-credentials` destructure.
+   `llm-headers` is deliberately NOT declared: a header map is string-keyed on
+   the wire and stays exactly as the author wrote it."
+  {:token as-str :api-url as-str :responses-path as-str :source as-kw})
 
-      (some? (g "is-hidden" "is_hidden"))
-      (assoc :hidden? (boolean (g "is-hidden" "is_hidden"))))))
+(def ^:private status-fields
+  "`status_fn` -> the shared connection verdict (`providers/safe-provider-status`,
+   the status dot, the status dialog, routing)."
+  {:is-authenticated as-bool
+   :error as-str
+   :source as-kw
+   :provider-id as-kw
+   :status as-kw
+   :base-url as-str
+   :label as-str
+   :config-path as-str})
+
+(def ^:private window-fields
+  "`provider-limits/::window`."
+  {:kind as-kw :unit as-kw :size as-long :resets-at-ms as-long})
+
+(def ^:private limit-row-fields
+  "`provider-limits/::limit-row`, key for key."
+  {:id as-kw
+   :label as-str
+   :scope as-kw
+   :kind as-kw
+   :precision as-kw
+   :source as-kw
+   :is-unlimited as-bool
+   :subject (decoder {})
+   :window (decoder window-fields)
+   :used as-num
+   :limit as-num
+   :remaining as-num
+   :note as-str})
+
+(def ^:private limits-fields
+  "`limits_fn` -> `provider-limits/::report`. The host backfills the rest."
+  {:provider-id as-kw
+   :status as-kw
+   :fetched-at-ms as-long
+   :static (decoder {:rpm as-long :tpm as-long})
+   :dynamic (decoder {:limits (decoder-rows limit-row-fields) :note as-str})
+   :error (decoder {:type as-kw :message as-str :data (decoder {})})})
+
+(def ^:private preset-fields
+  "The preset keys the host owns. ONE spelling per key: a Python author writes
+   snake_case, the same as every other wire surface. Every OTHER preset key —
+   `extra_body`, `responses_path`, `context`, `llm_headers` — is named and passed
+   through verbatim, exactly the extra preset keys
+   `config/registered-provider-metadata` merges into svar for a first-party
+   provider."
+  {:base-url as-str :api-style as-kw :default-models as-strs :is-hidden as-bool})
 
 (defn- call-provider-fn
   "Invoke a Python provider callable with `args`, tolerating an arg-count
@@ -1042,11 +1063,12 @@
 
 (defn- provider-fn-adapter
   "Wrap a Python provider callable as a Clojure provider fn. Args marshal in; the
-   result is plainified + keywordized. A raised Python error is logged and
-   surfaces as nil so a broken provider fn never bricks router build / auth."
-  [ext-name ^Context ctx ^Value pyfn]
+   result is plainified and DECODED against `fields`, the shape that slot's host
+   schema declares. A raised Python error is logged and surfaces as nil so a
+   broken provider fn never bricks router build / auth."
+  [ext-name ^Context ctx ^Value pyfn fields]
   (fn [& args]
-    (try (keywordize (plainify (call-provider-fn ext-name ctx pyfn args)))
+    (try (decoded-result fields (plainify (call-provider-fn ext-name ctx pyfn args)))
          (catch Throwable t
            (tel/log! {:level :warn
                       :id ::provider-fn-failed
@@ -1097,16 +1119,27 @@
                       :data {:extension ext-name :error (ex-message t)}})
            nil))))
 
+(defn- ->svar-model
+  "One enriched model row from Python -> the shape svar's router reads. Keys take
+   the mechanical `wire/engine-key` inverse; the handful svar itself spells with a
+   trailing `?` then move through `config/svar-wire->runtime`, svar's OWN named
+   table (`is_tool_call` -> `:tool-call?`). A foreign contract gets an explicit
+   table at one seam — it never gets a convention applied to every other key."
+  [row]
+  (reduce-kv
+    (fn [m wire-k runtime-k]
+      (let [mechanical (wire/engine-key wire-k)]
+        (if (contains? m mechanical) (assoc (dissoc m mechanical) runtime-k (get m mechanical)) m)))
+    (decode {} row)
+    config/svar-wire->runtime))
+
 (defn- enrich-models-fn-adapter
   "Wrap a Python `enrich_models(provider, router_opts)` callable as
    `:provider/enrich-models-fn`. The host hands the svar-shaped provider and
    the router opts INTO Python as plain string-keyed dicts (`stringify-deep`);
-   the returned model list is keywordized, so each model's `is_tool_call`
-   predicate becomes the `:tool-call?` key the router reads (the `is_<name>` ->
-   `:<name>?` convention `py-key->kw` applies everywhere). A non-sequential
-   return or any error yields nil, which the loop's `enrich-provider-models`
-   treats as 'no enrichment' — the router still builds on svar's conservative
-   defaults."
+   each returned model goes through `->svar-model`. A non-sequential return or
+   any error yields nil, which the loop's `enrich-provider-models` treats as 'no
+   enrichment' — the router still builds on svar's conservative defaults."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [svar-provider router-opts]
     (try (let
@@ -1115,7 +1148,7 @@
                            ctx
                            pyfn
                            [(stringify-deep svar-provider) (stringify-deep router-opts)])]
-           (when (sequential? r) (mapv keywordize r)))
+           (when (sequential? r) (mapv ->svar-model r)))
          (catch Throwable t
            (tel/log! {:level :warn
                       :id ::provider-fn-failed
@@ -1139,16 +1172,17 @@
     nil))
 
 (defn- ->provider-entry
-  "`spec` is a Python `vis.provider(...)` dict — STRING keys."
+  "`spec` is a Python `vis.provider(...)` dict — STRING keys. Each callable slot
+   is adapted with the field table its own host schema declares."
   [ext-name ^Context ctx spec]
   (let
     [adapt
-     (fn [pk]
+     (fn [pk fields]
        (let [v (get spec pk)]
-         (when (instance? Value v) (provider-fn-adapter ext-name ctx v))))
+         (when (instance? Value v) (provider-fn-adapter ext-name ctx v fields))))
 
      preset
-     (->preset (get spec "preset"))]
+     (decode preset-fields (get spec "preset"))]
 
     (cond->
       {:provider/id (clojure.core/keyword (str (get spec "id")))
@@ -1156,23 +1190,23 @@
       (seq preset)
       (assoc :provider/preset preset)
 
-      (adapt "get_token_fn")
-      (assoc :provider/get-token-fn (adapt "get_token_fn"))
+      (adapt "get_token_fn" token-fields)
+      (assoc :provider/get-token-fn (adapt "get_token_fn" token-fields))
 
-      (adapt "detect_fn")
-      (assoc :provider/detect-fn (adapt "detect_fn"))
+      (adapt "detect_fn" token-fields)
+      (assoc :provider/detect-fn (adapt "detect_fn" token-fields))
 
-      (adapt "status_fn")
-      (assoc :provider/status-fn (adapt "status_fn"))
+      (adapt "status_fn" status-fields)
+      (assoc :provider/status-fn (adapt "status_fn" status-fields))
 
-      (adapt "logout_fn")
-      (assoc :provider/logout-fn (adapt "logout_fn"))
+      (adapt "logout_fn" nil)
+      (assoc :provider/logout-fn (adapt "logout_fn" nil))
 
-      (adapt "limits_fn")
-      (assoc :provider/limits-fn (adapt "limits_fn"))
+      (adapt "limits_fn" limits-fields)
+      (assoc :provider/limits-fn (adapt "limits_fn" limits-fields))
 
-      (adapt "refresh_token_fn")
-      (assoc :provider/refresh-token-fn (adapt "refresh_token_fn"))
+      (adapt "refresh_token_fn" token-fields)
+      (assoc :provider/refresh-token-fn (adapt "refresh_token_fn" token-fields))
 
       (instance? Value (get spec "auth_fn"))
       (assoc :provider/auth-fn (auth-fn-adapter ext-name ctx (get spec "auth_fn")))
@@ -1868,13 +1902,7 @@
     ;; Resolve them lazily so THIS loader ns carries no compile-time dependency
     ;; on the runner (which itself depends on this ns's trusted-context builder
     ;; — the one seam that would otherwise be a require cycle).
-    (let
-      [test-slash
-       (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-slash)
-
-       test-cli!
-       (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-cli!)]
-
+    (let [test-cli! (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-cli!)]
       (extension/register-extension!
         {:ext/name "python-extensions"
          :ext/description
@@ -1886,9 +1914,6 @@
            :slash/doc
            "Reload configuration, Python extensions, skills/agents, prompt templates, and context files."
            :slash/run-fn reload-slash}
-          {:slash/name "test"
-           :slash/doc "Run Python extension tests (test_*.py / *_test.py) and report pass/fail."
-           :slash/run-fn test-slash}
           {:slash/name "net-probe"
            :slash/doc
            "Debug network filters: run the host allow/deny gate + every registered network_filter over a synthetic request, showing each verdict and any Python traceback."

@@ -156,9 +156,13 @@ vis.symbol(fn, name=None, tag="observation", is_hidden=False,
   House style: `await name(args) -> shape` on the first line.
 - Parameter names are read from the real signature and shown to the model.
 - `is_hidden=True` hides the tool from the model-facing listing (still callable).
-  This follows the bridge-wide convention: a Python boolean spelled `is_<name>`
-  maps to the Clojure `:<name>?` predicate key (Python identifiers can't carry a
-  trailing `?`), so `is_hidden` → `:hidden?`, `is_authenticated` → `:is-authenticated`.
+- Boolean keys keep **one spelling** across the boundary: a Python `is_<name>` key
+  is the Clojure `:is-<name>` keyword — the same mechanical `_` ↔ `-` mirror the
+  gateway wire uses (`wire-key` / `engine-key` in `gateway/wire.clj`). A provider's
+  `is_authenticated` → `:is-authenticated`, `is_unlimited` → `:is-unlimited`,
+  `is_hidden` → `:is-hidden`. The only exceptions are the few keys svar's router
+  itself spells with a trailing `?` (`is_tool_call` → `:tool-call?`); those map
+  through one named table instead of by convention.
 
 **Envelope semantics — Python authors never construct envelopes:**
 

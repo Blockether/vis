@@ -712,17 +712,18 @@
 
    Geometry is shared so a form's rows line up whatever they are; the SURFACE is
    the caller's, because only a row you can type into is an input."
-  [g left row inner-w focused? bg content]
+  [g left row inner-w focused? bg pad content]
   (let
     [content-w
      (field-content-w inner-w)
 
-     ;; ring cell, then the inner pad, then the text.
+     ;; ring cell, then the surface's own pad (none when there is no surface),
+     ;; then the text.
      field-left
      (inc (long left))
 
      text-left
-     (+ (long field-left) 1 (long field-pad))
+     (+ (long field-left) 1 (long pad))
 
      shown
      (ellipsize (str content) content-w)]
@@ -730,7 +731,7 @@
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc (long left)) row inner-w 1)
     (p/set-colors! g (if focused? t/box-fg t/dialog-hint) bg)
-    (p/fill-rect! g field-left row (+ content-w 1 (* 2 (long field-pad))) 1)
+    (p/fill-rect! g field-left row (+ content-w 1 (* 2 (long pad))) 1)
     (if focused?
       (p/styled g [p/BOLD] (p/put-str! g text-left row shown))
       (p/put-str! g text-left row shown))
@@ -768,6 +769,7 @@
                      inner-w
                      focused?
                      (if focused? t/input-field-bg (t/field-resting-bg))
+                     field-pad
                      content))
 
 (defn draw-toggle-row!
@@ -778,9 +780,15 @@
    take a character is a lie about what the keyboard will do.
 
    Focus is then the accent ring `▎` and the bold ink alone, and the status glyph
-   ([[choice-mark]]) says what the toggle currently IS."
+   ([[choice-mark]]) says what the toggle currently IS.
+
+   It also carries NO field padding: the pad keeps typed text off a coloured
+   field edge, and there is no edge here — on the dialog's own paper it is only a
+   margin. A checkbox IS its own label, so that margin left the one row that must
+   line up with the other labels indented away from them; the ring cell is the
+   whole gutter a focusable row gets."
   [g left row inner-w focused? content]
-  (draw-row-surface! g left row inner-w focused? t/dialog-bg content))
+  (draw-row-surface! g left row inner-w focused? t/dialog-bg 0 content))
 
 (defn draw-input-item!
   "A form's TYPED row: `draw-field-row!` plus what typing needs — the horizontal

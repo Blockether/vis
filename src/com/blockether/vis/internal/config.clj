@@ -299,8 +299,8 @@
           (:extra-body provider-md)
           (assoc :extra-body (:extra-body provider-md))
 
-          (:hidden? provider-md)
-          (assoc :hidden? true))))))
+          (:is-hidden provider-md)
+          (assoc :is-hidden true))))))
 
 (defn provider-presets
   "All known provider presets, sorted for the 'Add Provider' picker."
@@ -317,7 +317,7 @@
     (->> ids
          (remove removed-provider-ids)
          (keep provider-template)
-         (remove :hidden?)
+         (remove :is-hidden)
          ;; Drop presets with no human label. A label is only set when a vis
          ;; provider extension is registered for the id; svar `KNOWN_PROVIDERS`
          ;; keys with no matching extension (e.g. :github-copilot-enterprise,
@@ -716,11 +716,14 @@
   "Known scalar fields whose internal runtime representation is a keyword."
   #{"id" "backend" "api_style" "compatibility"})
 
-(def ^:private svar-yaml->runtime
+(def svar-wire->runtime
   "svar owns these ?-suffixed keyword contracts (`:tool-call?`, `:check-context?`,
-   `:respect-retry-after?`, `:fallback-provider?`); the vis.yml surface spells them
-   `is_*` — config keys carry no `?` — so they break the plain `_`↔`-` mirror and map
-   explicitly. The internal keyword is unchanged, so svar's router still reads it."
+   `:respect-retry-after?`, `:fallback-provider?`); every wire surface that feeds
+   svar — vis.yml and a `vis.provider(...)` extension alike — spells them `is_*`,
+   because a wire key carries no `?`. They are the ONE place the mechanical
+   `wire/engine-key` mirror does not apply, so they map through this table
+   EXPLICITLY, at whatever seam decodes them. A foreign contract earns a named
+   table; it never earns a convention that rewrites every other key with it."
   {"is_tool_call" :tool-call?
    "is_check_context" :check-context?
    "is_respect_retry_after" :respect-retry-after?
@@ -728,7 +731,7 @@
    "is_stateless" :stateless-items?})
 
 (def ^:private runtime->svar-yaml
-  "Write-path inverse of `svar-yaml->runtime`."
+  "Write-path inverse of `svar-wire->runtime`."
   {:tool-call? "is_tool_call"
    :check-context? "is_check_context"
    :respect-retry-after? "is_respect_retry_after"
@@ -755,7 +758,7 @@
                  :method :text :is-replace :include-gitignored-paths :always-exclude :backend
                  :theme-name :contributors-disabled :servers :transport :command :args :cwd :env
                  :url :headers :python :resource-cache :source-paths :titling :mode :provider})
-         svar-yaml->runtime))
+         svar-wire->runtime))
 
 (defn runtime-config
   "Adapt an already-validated string-keyed YAML map to Vis' internal domain maps.

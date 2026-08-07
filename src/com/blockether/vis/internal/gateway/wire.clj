@@ -39,6 +39,32 @@
         (nil? k) "null"
         :else (str k)))
 
+(defn engine-key
+  "Wire key -> engine keyword: THE inverse of [[wire-key]], and the only one.
+   `is_foo` -> `:is-foo`, `foo_bar` -> `:foo-bar`.
+
+   It is total only because the engine spells a boolean `:is-foo` and never
+   `:foo?`: [[wire-key]] collapses BOTH spellings onto `is_foo`, so while a
+   `:foo?` key exists no rule can tell which one a wire key came from. That
+   ambiguity is why every inbound seam used to grow its own hand-written list of
+   exceptions, and why forgetting one entry was silent. A FOREIGN contract that
+   insists on `?` (svar's `:tool-call?`) maps through its own named table at its
+   own seam — never by convention here."
+  [k]
+  (keyword (str/replace (if (keyword? k) (name k) (str k)) "_" "-")))
+
+(defn ->engine
+  "Recursively convert decoded wire data into the engine's keyword-keyed shape —
+   the mirror of [[->wire]]. Only KEYS are converted (via [[engine-key]]); values
+   are data and are never re-typed."
+  [x]
+  (cond (map? x) (into {}
+                       (map (fn [[k v]]
+                              [(engine-key k) (->engine v)]))
+                       x)
+        (sequential? x) (mapv ->engine x)
+        :else x))
+
 (defn ->wire
   "Recursively convert an engine value into JSON-encodable data."
   [x]
