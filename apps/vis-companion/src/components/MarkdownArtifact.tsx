@@ -19,23 +19,32 @@ const QUOTABLE_BLOCKS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,pre,td,th";
  * ONE COLOUR PER COMMENT, AND THE SAME COLOUR IN BOTH PLACES.
  *
  * A remark is identified by its ORDINAL and by its hue: the passage it is about
- * is underlined in that hue and carries the number, and the card below wears the
- * very same chip. Six remarks on one note are then six threads a reader can
+ * is marked in that hue and carries the number, and the card below wears the
+ * very same ordinal. Six remarks on one note are then six threads a reader can
  * follow, instead of six identical grey boxes under a page of untouched prose.
- * The palette is spelled here because it is DATA the DOM is painted with, not a
- * class list: an underline colour has to be handed to `text-decoration-color`.
+ *
+ * The palette is spelled as THEME VARIABLES, never as hard-coded hex: the app's
+ * paper is whatever `/v1/theme` sent, so an ink chosen for a cream light theme
+ * is unreadable the moment the gateway ships a dark one. Every token below is
+ * part of the shared Blockether palette (`index.css`) and is re-published by
+ * every theme, so the marks move with it.
  */
 export const ANNOTATION_COLORS = [
-  "#b45309",
-  "#1d4ed8",
-  "#047857",
-  "#be185d",
-  "#6d28d9",
-  "#0e7490",
+  "var(--warning)",
+  "var(--link-fg)",
+  "var(--ok)",
+  "var(--code-syntax-special)",
+  "var(--code-syntax-number)",
+  "var(--code-syntax-string)",
 ];
 
 export function annotationColor(index: number): string {
   return ANNOTATION_COLORS[index % ANNOTATION_COLORS.length];
+}
+
+/** The paper a marked passage sits on: the same hue, thinned to a wash. */
+export function annotationWash(index: number): string {
+  return `color-mix(in oklab, ${annotationColor(index)} 16%, transparent)`;
 }
 
 /**
@@ -59,6 +68,7 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
   name,
   mediaType,
   url,
+  plain,
 }: {
   client: GatewayClient;
   sid: string;
@@ -66,6 +76,8 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
   name: string;
   mediaType: string;
   url: string;
+  /** A `.txt`/`.log` note: the same annotator, reading the file verbatim. */
+  plain?: boolean;
 }) {
   const [loaded, setLoaded] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -92,12 +104,12 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
         sid,
         iterationId,
         name,
-        mediaType || "text/markdown",
+        mediaType || (plain ? "text/plain" : "text/markdown"),
         text,
       );
       return saved.version;
     },
-    [client, sid, iterationId, name, mediaType],
+    [client, sid, iterationId, name, mediaType, plain],
   );
 
   if (failed || loaded === null) {
@@ -107,7 +119,27 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
       </p>
     );
   }
-  return <MarkdownAnnotator text={loaded} onSave={save} />;
+  return <MarkdownAnnotator text={loaded} onSave={save} plain={plain} />;
+});
+
+/**
+ * PLAIN TEXT IS A DOCUMENT TOO.
+ *
+ * A `.txt` or a `.log` has no headings to render, but it has the same thing to
+ * say back: each LINE is a block, so one tap quotes it exactly as a paragraph is
+ * quoted in a note. The lines are `<p>` for that reason — `QUOTABLE_BLOCKS` and
+ * the mark painter then need no branch for plain text at all.
+ */
+const PlainText = memo(function PlainText({ text }: { text: string }) {
+  return (
+    <div className="font-mono text-body text-foreground">
+      {text.split("\n").map((line, at) => (
+        <p key={at} className="min-h-[18px] break-words whitespace-pre-wrap">
+          {line}
+        </p>
+      ))}
+    </div>
+  );
 });
 
 /**
@@ -117,10 +149,13 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
 export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   text,
   onSave,
+  plain,
 }: {
   text: string;
   /** Persists the document and answers with the version it became. */
   onSave: (text: string) => Promise<number | undefined>;
+  /** Read the file verbatim, line by line, instead of rendering markdown. */
+  plain?: boolean;
 }) {
   const parsed = parseAnnotated(text);
   const proseRef = useRef<HTMLDivElement | null>(null);
@@ -180,10 +215,13 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   // THE PASSAGE WEARS ITS OWN COMMENT.
   //
   // A remark that only exists in a list at the bottom leaves the reader guessing
-  // which line it is about — so the quoted block is UNDERLINED in that comment's
-  // colour and carries its ordinal, painted straight onto the rendered markdown
-  // (the prose comes from the shared `Markdown`, so there is no React node here
-  // to decorate). The cleanup removes exactly what this pass added.
+  // which line it is about — so the quoted block is MARKED in that comment's
+  // colour: a thin wash of the same hue behind it, a rule under it, and the
+  // ordinal at its end. The colours are theme variables, so the mark is as
+  // legible on the gateway's dark paper as on its light one. It is painted
+  // straight onto the rendered markdown (the prose comes from the shared
+  // `Markdown`, so there is no React node here to decorate), and the cleanup
+  // removes exactly what this pass added.
   useEffect(() => {
     const prose = proseRef.current;
     if (!prose) return;
@@ -201,8 +239,12 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
       if (hits.length === 0) continue;
       block.style.textDecorationLine = "underline";
       block.style.textDecorationColor = annotationColor(hits[0]);
-      block.style.textDecorationThickness = "2px";
-      block.style.textUnderlineOffset = "3px";
+      block.style.textDecorationThickness = "1px";
+      block.style.textUnderlineOffset = "4px";
+      block.style.backgroundColor = annotationWash(hits[0]);
+      block.style.boxShadow = `inset 2px 0 0 0 ${annotationColor(hits[0])}`;
+      block.style.borderRadius = "2px";
+      block.style.paddingInline = "0.375rem";
       painted.push(block);
       for (const at of hits) {
         const mark = document.createElement("sup");
@@ -211,6 +253,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         mark.style.color = annotationColor(at);
         mark.style.fontWeight = "700";
         mark.style.marginInlineStart = "0.25em";
+        mark.style.textDecoration = "none";
         block.appendChild(mark);
         marks.push(mark);
       }
@@ -222,6 +265,10 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         block.style.textDecorationColor = "";
         block.style.textDecorationThickness = "";
         block.style.textUnderlineOffset = "";
+        block.style.backgroundColor = "";
+        block.style.boxShadow = "";
+        block.style.borderRadius = "";
+        block.style.paddingInline = "";
       }
     };
   }, [comments, body]);
@@ -249,7 +296,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         onMouseUp={pickSelection}
         className="min-h-0 min-w-0 flex-1 touch-manipulation overflow-y-auto bg-panel px-3 py-3 font-sans text-body [-webkit-touch-callout:none] text-foreground select-none sm:px-4 mouse:select-text"
       >
-        <Markdown>{body}</Markdown>
+        {plain ? <PlainText text={body} /> : <Markdown>{body}</Markdown>}
       </div>
 
       {quote ? (
@@ -293,8 +340,11 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
           {comments.map((comment, at) => (
             <li
               key={`${at}:${comment.quote}`}
-              className="flex items-start gap-2 border-l-2 border-dialog-edge bg-panel py-1 pl-2"
-              style={{ borderLeftColor: annotationColor(at) }}
+              className="flex items-start gap-2 rounded-[2px] border-l-2 border-dialog-edge py-1 pr-1 pl-2"
+              style={{
+                borderLeftColor: annotationColor(at),
+                backgroundColor: annotationWash(at),
+              }}
             >
               <span
                 aria-hidden="true"

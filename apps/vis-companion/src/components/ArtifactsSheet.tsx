@@ -43,7 +43,6 @@ import { DocFrame } from "./DocArtifact";
 import { ImageViewer } from "./ImageViewer";
 import { MarkdownArtifact } from "./MarkdownArtifact";
 import { PdfAnnotator } from "./PdfArtifact";
-import { TextFrame } from "./TextArtifact";
 import { AlertIcon, ArrowDownIcon, ClipIcon, PlayIcon } from "./icons";
 import { DialogClose, DialogHeader, KebabButton } from "./ui";
 
@@ -514,10 +513,10 @@ function ArtifactDetail({
     );
   }
 
-  // A markdown note is the one artifact the human can ANSWER: it is rendered as
-  // prose and a selected passage can be commented on, which saves the whole
-  // document back as the next version of the same filename.
-  if (isMarkdownMedia(artifact.mediaType, artifact.name)) {
+  // A note and a log are the same document: markdown is RENDERED, plain text is
+  // read verbatim line by line, and either one can be commented on — the whole
+  // document saves back as the next version of the same filename.
+  if (isTextMedia(artifact.mediaType, artifact.name)) {
     return (
       <DetailOverlay name={artifact.name} onClose={onClose} fill>
         <MarkdownArtifact
@@ -527,22 +526,7 @@ function ArtifactDetail({
           name={artifact.name}
           mediaType={artifact.mediaType}
           url={url}
-        />
-      </DetailOverlay>
-    );
-  }
-
-  // Other text is read by the APP, not by a sandboxed frame: an iframe would
-  // paint `# Heading` as `# Heading`, which is the artifact's source rather
-  // than the artifact.
-  if (isTextMedia(artifact.mediaType, artifact.name)) {
-    return (
-      <DetailOverlay name={artifact.name} onClose={onClose} fill>
-        <TextFrame
-          url={url}
-          mime={artifact.mediaType}
-          name={artifact.name}
-          fill
+          plain={!isMarkdownMedia(artifact.mediaType, artifact.name)}
         />
       </DetailOverlay>
     );

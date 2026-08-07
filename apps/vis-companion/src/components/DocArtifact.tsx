@@ -280,7 +280,7 @@ export const DocOverlay = memo(function DocOverlay({
         {/* Opened, the artifact is not only READ: a note can be commented on and a
             PDF drawn on, and either one saves as the next version of the same
             filename. */}
-        {annotate && url && !failed && isMarkdownMedia(mime, name) ? (
+        {annotate && url && !failed && isTextMedia(mime, name) ? (
           <MarkdownArtifact
             client={annotate.client}
             sid={annotate.sid}
@@ -288,6 +288,7 @@ export const DocOverlay = memo(function DocOverlay({
             name={name}
             mediaType={mime}
             url={url}
+            plain={!isMarkdownMedia(mime, name)}
           />
         ) : annotate && url && !failed && isPdfMedia(mime) ? (
           <PdfAnnotator

@@ -4,7 +4,12 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { annotationColor, MarkdownAnnotator } from "./MarkdownArtifact";
+import {
+  ANNOTATION_COLORS,
+  annotationColor,
+  annotationWash,
+  MarkdownAnnotator,
+} from "./MarkdownArtifact";
 
 const html = (node: Parameters<typeof renderToStaticMarkup>[0]) =>
   renderToStaticMarkup(node);
@@ -159,5 +164,36 @@ describe("marking up the passages a comment is about", () => {
       root.unmount();
     });
     host.remove();
+  });
+});
+
+describe("the annotation palette", () => {
+  // A mark painted in a hex chosen for the cream light theme is invisible the
+  // moment the gateway ships a dark one: every hue is a shared theme token.
+  it("is spelled in theme variables, never in hard-coded hex", () => {
+    for (const colour of ANNOTATION_COLORS) {
+      expect(colour).toMatch(/^var\(--[a-z0-9-]+\)$/);
+    }
+    expect(annotationWash(0)).toContain(annotationColor(0));
+    expect(annotationWash(0)).toContain("color-mix");
+  });
+});
+
+describe("an opened plain-text artifact", () => {
+  it("reads the file verbatim, one quotable line per block", () => {
+    const markup = html(
+      <MarkdownAnnotator
+        text={"# not a heading\nsecond line\n"}
+        onSave={noop}
+        plain
+      />,
+    );
+    // Plain text has no markdown to render: the hash is ink, not a heading.
+    expect(markup).not.toContain("<h1");
+    expect(markup).toContain("# not a heading");
+    expect(markup).toContain("second line");
+    // Each line is a <p>, so a tap quotes it exactly as a paragraph is quoted.
+    expect(markup.match(/<p /g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    expect(markup).toContain("Tap a passage to comment on it.");
   });
 });
