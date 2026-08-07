@@ -155,7 +155,10 @@ describe('where "New session" lives', () => {
       '      {rows.length > 0 && (\n        <div className="border-b border-dialog-edge">',
     );
     expect(source).not.toContain("-mt-px");
-    expect(source).not.toContain("-mb-px");
+    // The ONE deliberate overlap on the screen is the chosen machine tab merging
+    // into its card, and it lives in `chipClass`, above the list entirely.
+    expect(source.match(/-mb-px/g)).toHaveLength(1);
+    expect(source).toMatch(/chipClass[\s\S]{0,400}-mb-px/);
     expect(source).not.toContain("-my-px");
     expect(source).not.toContain("items-stretch border-y border-dialog-edge");
   });
@@ -361,13 +364,28 @@ describe("the machine is a chip, not a second band", () => {
   // the fucking HEADER" — paraphrased: the machine verbs were glyph-only, and the
   // machines themselves stood in a strip of their own BELOW the header band, so the
   // one question the screen answers first was not part of the header that answers it.
-  it("carries the machine chips inside the header band itself", () => {
-    // The chips come before the header's own report line, in the same band.
-    expect(source.indexOf("aria-pressed={scope === null}")).toBeLessThan(
-      source.indexOf("Reading sessions..."),
+  // Regression, user report ("the MACHINE SHOULD BE BOXED DULLY AND THOSE SWITCHERS
+  // SHOULD BE OUTSIDE OF IT ... BUT THERE SHOULD NOT BE ALL"): the chips stood INSIDE
+  // the same frame as the machine they switch, so the switcher looked like part of its
+  // own answer; and an "All" chip offered a fleet-wide scope nobody asked for.
+  it("stands the chips outside the machine card, joined to it as tabs", () => {
+    // The switcher is ABOVE the card, on the page's own paper.
+    expect(source.indexOf('aria-label="Machines"')).toBeLessThan(
+      source.indexOf("flex h-full min-h-0 flex-col overflow-hidden"),
     );
-    // ...and the separate strip row is gone.
-    expect(source).not.toContain("overflow-x-auto bg-panel px-3 py-2");
+    // The selected chip's bottom edge is open, so it merges into the card below it.
+    expect(source).toContain("-mb-px");
+    expect(source).toContain("border-b-transparent");
+  });
+
+  it("scopes to exactly one machine — this one or that one, never All", () => {
+    expect(source).not.toContain("selectScope(null)");
+    expect(source).not.toContain("fleetUnread");
+    expect(source).not.toContain("fleetLive");
+    // Scope always names a paired machine: an unknown or unset scope falls back to
+    // the first one rather than meaning "the whole fleet".
+    expect(source).toContain("const scope = machines.some(");
+    expect(source).toContain("onClick={() => selectScope(key)}");
   });
 
   it("spells the machine's verbs instead of drawing glyphs", () => {

@@ -179,7 +179,11 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
 // less than the line above it.
 function chipClass(isOn: boolean): string {
   return `inline-flex min-h-6 shrink-0 items-center gap-1.5 border px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none ${
-    isOn ? 'border-accent bg-hover font-bold text-white' : 'border-edge text-dialog-hint hover:text-white'
+    isOn
+      ? // The chosen chip's bottom edge is OPEN and it overlaps the card's own top
+        // rule, so the tab and the machine it names are visibly one shape.
+        '-mb-px border-dialog-edge border-b-transparent bg-panel-2 font-bold text-white'
+      : 'border-transparent text-dialog-hint hover:text-white'
   }`;
 }
 
@@ -252,9 +256,15 @@ export function SessionsScreen({
   // returning to this tab repaints the previous frame instantly; the effects
   // below revalidate each machine independently and reconcile on top.
   const [machines, setMachines] = useState<FleetMachine[]>(() => hydrateMachines(conns, []));
-  // `null` is the whole fleet; a scope is one machine's URL, picked in the strip.
-  // It narrows BOTH what the list shows and where a new session is created.
-  const [scope, setScope] = useState<string | null>(null);
+  // THE SCOPE IS ALWAYS EXACTLY ONE MACHINE — this one or that one, never "all".
+  // A fleet-wide scope made every count, every verb and every create ask "which
+  // machine?" all over again one row later; the switcher answers it once, up front.
+  // The pick is only a PREFERENCE: it falls back to the first paired machine when it
+  // names one that is gone, so `scope` below is null only while nothing is paired.
+  const [scopePick, setScopePick] = useState<string | null>(null);
+  const scope = machines.some((machine) => machineKey(machine.conn) === scopePick)
+    ? scopePick
+    : (machines[0] ? machineKey(machines[0].conn) : null);
   // Keep keystrokes immediate even when a large session fleet is regrouped.
   const deferredQuery = useDeferredValue(query);
   const [transcriptMatches, setTranscriptMatches] = useState<Map<string, SessionMatch> | null>(null);
@@ -664,17 +674,6 @@ export function SessionsScreen({
       ),
     [machines, readMarks],
   );
-  const fleetLive = useMemo(
-    () => [...tallies.values()].reduce((sum, tally) => sum + tally.live, 0),
-    [tallies],
-  );
-  // Unscoped, the strip is the only place the fleet can say "something new
-  // arrived on a machine you are not looking at": without this the All chip
-  // counts what is running and stays silent about what is waiting.
-  const fleetUnread = useMemo(
-    () => [...tallies.values()].reduce((sum, tally) => sum + tally.unread, 0),
-    [tallies],
-  );
   const scopeMachine = scope
     ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
     : null;
@@ -684,7 +683,7 @@ export function SessionsScreen({
   // inside the first. The chip strip answers "which machine", the chrome above the
   // list NAMES the one in scope and carries its verbs, and the list below holds one
   // header kind. `null` only while the bar speaks for several machines at once.
-  const scopeChrome = scopeMachine ?? (machines.length === 1 ? (machines[0] ?? null) : null);
+  const scopeChrome = scopeMachine;
 
   // One hue per paired machine, assigned from the machine's own key, so a rail
   // keeps its colour across reloads and reorderings and two machines side by side
@@ -699,8 +698,8 @@ export function SessionsScreen({
   // the fleet hidden, that machine's failure IS the screen.
   const scopedError = scopeError(machines, scope);
 
-  const selectScope = useCallback((next: string | null) => {
-    setScope(next);
+  const selectScope = useCallback((next: string) => {
+    setScopePick(next);
     // Drafts are repo-scoped ON a machine, and the scope is what decides which
     // machine the next session lands on: the open order asks a question that just
     // changed underneath it, so it ends rather than answering the old one.
@@ -1113,58 +1112,43 @@ export function SessionsScreen({
           lines doing one job, and a rail that is a BORDER also steals 2px of layout
           the trailing edge has no match for. Both sides are 2px now, so the ink
           lands symmetrically whichever one is painting. */}
+      {/* THE SWITCHER STANDS OUTSIDE WHAT IT SWITCHES.
+          The chips used to sit inside the machine card's own header, so the control
+          that picks a machine looked like part of that machine's own answer. They are
+          tabs on the page's paper now, and the chosen one's bottom edge is open onto
+          the card below it. There is no "All": a scope is one machine, always. */}
+      <div
+        role="group"
+        aria-label="Machines"
+        className="relative z-10 flex items-center gap-1.5 overflow-x-auto px-3 sm:px-4"
+      >
+          {machines.map((machine) => {
+            const key = machineKey(machine.conn);
+            const tally = tallies.get(key);
+            return (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={scope === key}
+                className={chipClass(scope === key)}
+                onClick={() => selectScope(key)}
+              >
+                <MachineMark color={machineColor(machineColors, key)} />
+                {machineLabel(machine.conn)}
+                {machine.error ? (
+                  <span className="opacity-70">offline</span>
+                ) : (
+                  <>
+                    <LiveTally count={tally?.live ?? 0} />
+                    <UnreadBadge count={tally?.unread ?? 0} />
+                  </>
+                )}
+              </button>
+            );
+          })}
+      </div>
         <div className="flex h-full min-h-0 flex-col overflow-hidden border-b border-r-2 border-dialog-edge bg-panel sm:border-y sm:border-r-2">
         <div className={`border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4 ${LIST_FRAME}`}>
-          {/* THE MACHINES ARE THE HEADER.
-              They used to stand in a strip of their own, one band BELOW the chrome that
-              named them — the first question the screen answers, parked under its own
-              answer. All plus one chip per machine now open this header, the same way
-              whether one machine is paired or six, and the line beneath reports what
-              the chosen scope holds. */}
-          <div className="flex items-center gap-2">
-            <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
-            <button
-              type="button"
-              aria-pressed={scope === null}
-              className={chipClass(scope === null)}
-              onClick={() => selectScope(null)}
-            >
-              All
-              <LiveTally count={fleetLive} />
-              {/* Unread is the one count that ARRIVES on its own, so the fleet
-                  total stays a live region now that the header line above no
-                  longer says it. `contents` keeps the chip's own layout. */}
-              <span role="status" aria-live="polite" className="contents">
-                <UnreadBadge count={fleetUnread} />
-              </span>
-            </button>
-            {machines.map((machine) => {
-              const key = machineKey(machine.conn);
-              const tally = tallies.get(key);
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  aria-pressed={scope === key}
-                  className={chipClass(scope === key)}
-                  onClick={() => selectScope(scope === key ? null : key)}
-                >
-                  <MachineMark color={machineColor(machineColors, key)} />
-                  {machineLabel(machine.conn)}
-                  {machine.error ? (
-                    <span className="opacity-70">offline</span>
-                  ) : (
-                    <>
-                      <LiveTally count={tally?.live ?? 0} />
-                      <UnreadBadge count={tally?.unread ?? 0} />
-                    </>
-                  )}
-                </button>
-              );
-            })}
-            </div>
-          </div>
-
           <div className="mt-1.5 flex items-center justify-between gap-3">
             <div className="min-w-0">
               {/* The machine in scope is NAMED here, once, and the name is the rename
@@ -1203,17 +1187,9 @@ export function SessionsScreen({
                         <span className="whitespace-nowrap font-bold text-accent-ink">
                           {searchCounts.matches} {searchCounts.matches === 1 ? 'match' : 'matches'}
                         </span>
-                        {machines.length > 1 && !scopeMachine && (
-                          <span className="whitespace-nowrap">
-                            across {searchCounts.machines} of {machines.length} machines
-                          </span>
-                        )}
                       </>
                     ) : (
                       <>
-                        {machines.length > 1 && !scopeMachine && (
-                          <span className="whitespace-nowrap">{machines.length} machines</span>
-                        )}
                         <span className="whitespace-nowrap">
                           {totals.projects} {totals.projects === 1 ? 'project' : 'projects'}
                           <span className="px-1 opacity-40">·</span>
