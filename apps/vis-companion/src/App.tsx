@@ -41,10 +41,6 @@ import {
 } from "./lib/share-intake";
 import { applyTheme, resolveLocalTheme } from "./lib/theme";
 import { getThemePalette, getThemePref } from "./lib/storage";
-import {
-  PlusIcon,
-  SettingsIcon,
-} from "./components/icons";
 import { ConnectScreen } from "./screens/ConnectScreen";
 import { SessionsScreen } from "./screens/SessionsScreen";
 import { IncompatibleScreen } from "./screens/IncompatibleScreen";
@@ -1086,15 +1082,16 @@ export function Header({
             place, beside the app's own cog, whether nothing is paired or ten things
             are — and the strip below is left to answer "which machine" and nothing
             else. */}
+        {/* A VERB IS A WORD.
+            `+` and `⚙` said "add… what?" and "settings of what?" in an `aria-label`
+            an eye never reads, on a screen whose loudest control ("New session") was
+            already spelled out. Every verb is written now; nothing here is a glyph. */}
         <button
           type="button"
-          className="ml-auto grid min-h-12 min-w-12 place-items-center text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+          className="ml-auto inline-flex min-h-12 items-center px-3 font-mono text-meta text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
           onClick={onPair}
           aria-label="Pair a machine"
-          title="Pair a machine"
-        >
-          <PlusIcon className="size-4" />
-        </button>
+        >Pair machine</button>
         {/* ONE SCREEN, ONE COG.
             The app used to carry a two-item tab bar whose second item existed for a
             verb used twice a year — pairing — and a nav duplicating it at `sm:`. The
@@ -1112,12 +1109,10 @@ export function Header({
             below wears a 2px frame and its trailing ink lands 14px in. */}
         <button
           type="button"
-          className="-mr-3 grid min-h-12 min-w-12 items-center justify-items-end pr-3.5 text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent sm:-mr-4 sm:pr-4.5"
+          className="-mr-3 inline-flex min-h-12 items-center pl-3 pr-3.5 font-mono text-meta text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent sm:-mr-4 sm:pr-4.5"
           onClick={onAppSettings}
           aria-label="Open preferences"
-        >
-          <SettingsIcon className="size-4" />
-        </button>
+        >Preferences</button>
       </div>
     </header>
   );

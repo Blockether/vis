@@ -62,7 +62,9 @@ describe('app bar', () => {
   // its ink 16px from the screen while every `⋯` and chevron below it sat at 14px.
   it('pads the cog to the list’s own content edge instead of centring it', () => {
     expect(cog).not.toContain('place-items-center');
-    expect(cog).toContain('justify-items-end');
+    // A WORD is as wide as its word, so the trailing edge is its padding alone —
+    // `justify-items-end` was the grid cell a lone glyph had to be pushed to.
+    expect(cog).toContain('inline-flex');
     // The list gutter (`pl-3`/`sm:pl-4`) plus the panel's own 2px frame.
     expect(cog).toContain('pr-3.5');
     expect(cog).toContain('sm:pr-4.5');

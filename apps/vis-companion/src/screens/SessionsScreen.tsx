@@ -62,7 +62,6 @@ import {
   CloseIcon,
   PencilIcon,
   ProjectsIcon,
-  PlusIcon,
   SettingsIcon,
   StarIcon,
   TrashIcon,
@@ -1139,7 +1138,57 @@ export function SessionsScreen({
           lands symmetrically whichever one is painting. */}
         <div className="flex h-full min-h-0 flex-col overflow-hidden border-b border-r-2 border-dialog-edge bg-panel sm:border-y sm:border-r-2">
         <div className={`border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4 ${LIST_FRAME}`}>
-          <div className="flex items-center justify-between gap-3">
+          {/* THE MACHINES ARE THE HEADER.
+              They used to stand in a strip of their own, one band BELOW the chrome that
+              named them — the first question the screen answers, parked under its own
+              answer. All plus one chip per machine now open this header, the same way
+              whether one machine is paired or six, and the line beneath reports what
+              the chosen scope holds. */}
+          <div className="flex items-center gap-2">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
+            <button
+              type="button"
+              aria-pressed={scope === null}
+              className={chipClass(scope === null)}
+              onClick={() => selectScope(null)}
+            >
+              All
+              <LiveTally count={fleetLive} />
+              {/* Unread is the one count that ARRIVES on its own, so the fleet
+                  total stays a live region now that the header line above no
+                  longer says it. `contents` keeps the chip's own layout. */}
+              <span role="status" aria-live="polite" className="contents">
+                <UnreadBadge count={fleetUnread} />
+              </span>
+            </button>
+            {machines.map((machine) => {
+              const key = machineKey(machine.conn);
+              const tally = tallies.get(key);
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={scope === key}
+                  className={chipClass(scope === key)}
+                  onClick={() => selectScope(scope === key ? null : key)}
+                >
+                  <MachineMark color={machineColor(machineColors, key)} />
+                  {machineLabel(machine.conn)}
+                  {machine.error ? (
+                    <span className="opacity-70">offline</span>
+                  ) : (
+                    <>
+                      <LiveTally count={tally?.live ?? 0} />
+                      <UnreadBadge count={tally?.unread ?? 0} />
+                    </>
+                  )}
+                </button>
+              );
+            })}
+            </div>
+          </div>
+
+          <div className="mt-1.5 flex items-center justify-between gap-3">
             <div className="min-w-0">
               {/* The machine in scope is NAMED here, once, and the name is the rename
                   control: the band that used to carry it is gone, so this is where a
@@ -1215,10 +1264,10 @@ export function SessionsScreen({
                   several machines speaking at once there is no machine to act on — a
                   workspace only exists on one — so the chip is asked first. */}
               {scopeChrome && !scopeChrome.error && (
-                <IconButton
+                <Button
                   variant="quiet"
-                  label={`Add a project on ${machineLabel(scopeChrome.conn)}`}
-                  title="Add a project"
+                  density="compact"
+                  aria-label={`Add a project on ${machineLabel(scopeChrome.conn)}`}
                   onClick={(event) => {
                     const at = menuPosition(
                       event.currentTarget.getBoundingClientRect(),
@@ -1227,19 +1276,15 @@ export function SessionsScreen({
                     if (!at) return;
                     setManageProjects({ machine: scopeChrome, at });
                   }}
-                >
-                  <PlusIcon className="size-4" />
-                </IconButton>
+                >Add project</Button>
               )}
               {scopeChrome && onMachineSettings && (
-                <IconButton
+                <Button
                   variant="quiet"
-                  label={`Settings for ${machineLabel(scopeChrome.conn)}`}
-                  title="Machine settings"
+                  density="compact"
+                  aria-label={`Settings for ${machineLabel(scopeChrome.conn)}`}
                   onClick={() => onMachineSettings(scopeChrome.conn)}
-                >
-                  <SettingsIcon className="size-4" />
-                </IconButton>
+                >Machine settings</Button>
               )}
             </div>
           </div>
@@ -1249,54 +1294,6 @@ export function SessionsScreen({
             </div>
           )}
         </div>
-
-        {/* The scope strip. It answers "which machine", and it answers it the SAME WAY
-            whether one machine is paired or six: All plus one chip per machine, each
-            carrying that machine's live and unread. It used to appear only above two
-            machines, so a solo user met a different screen — no chips, counts moved up
-            into the header line — and pairing a second machine rearranged the app.
-            Pairing itself is app chrome now and lives in the bar. */}
-        <div className={`flex items-center gap-1.5 overflow-x-auto bg-panel px-3 py-2 sm:px-4 ${LIST_FRAME}`}>
-            <button
-              type="button"
-              aria-pressed={scope === null}
-              className={chipClass(scope === null)}
-              onClick={() => selectScope(null)}
-            >
-              All
-              <LiveTally count={fleetLive} />
-              {/* Unread is the one count that ARRIVES on its own, so the fleet
-                  total stays a live region now that the header line above no
-                  longer says it. `contents` keeps the chip's own layout. */}
-              <span role="status" aria-live="polite" className="contents">
-                <UnreadBadge count={fleetUnread} />
-              </span>
-            </button>
-            {machines.map((machine) => {
-              const key = machineKey(machine.conn);
-              const tally = tallies.get(key);
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  aria-pressed={scope === key}
-                  className={chipClass(scope === key)}
-                  onClick={() => selectScope(scope === key ? null : key)}
-                >
-                  <MachineMark color={machineColor(machineColors, key)} />
-                  {machineLabel(machine.conn)}
-                  {machine.error ? (
-                    <span className="opacity-70">offline</span>
-                  ) : (
-                    <>
-                      <LiveTally count={tally?.live ?? 0} />
-                      <UnreadBadge count={tally?.unread ?? 0} />
-                    </>
-                  )}
-                </button>
-              );
-            })}
-          </div>
 
         {/* THE BAND IS THE FIELD.
             It wore a `›` first — this app's disclosure glyph, borrowed as a terminal

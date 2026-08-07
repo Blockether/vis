@@ -36,14 +36,13 @@ describe('where "New session" lives', () => {
       "label={`Actions for ${machineLabel(machine.conn)}`}",
     );
     expect(source).toContain(
-      "label={`Add a project on ${machineLabel(scopeChrome.conn)}`}",
+      "aria-label={`Add a project on ${machineLabel(scopeChrome.conn)}`}",
     );
-    expect(source).toContain('title="Add a project"');
-    expect(source).toContain('<PlusIcon className="size-4" />');
+    expect(source).toContain(">Add project</Button>");
     expect(source).toContain(
-      "label={`Settings for ${machineLabel(scopeChrome.conn)}`}",
+      "aria-label={`Settings for ${machineLabel(scopeChrome.conn)}`}",
     );
-    expect(source).toContain('title="Machine settings"');
+    expect(source).toContain(">Machine settings</Button>");
     expect(source).toContain("onMachineSettings(scopeChrome.conn)");
     // The `+` opens the SAME sheet the menu row opened, aimed at this machine.
     expect(source).toContain("setManageProjects({ machine: scopeChrome, at })");
@@ -73,7 +72,8 @@ describe('where "New session" lives', () => {
     // what this row can do". (The filter's own clear IS a plain icon button — it
     // opens no menu, so it must not wear the control that promises one.)
     expect(source).not.toContain("<DotsIcon");
-    expect(source.match(/<IconButton/g)?.length).toBe(3);
+    // Only the filter's own Clear is glyph-only now; every verb is a word.
+    expect(source.match(/<IconButton/g)?.length).toBe(1);
     expect(source).toContain('label="Clear filter"');
     expect(source.match(/<Menu[\s>]/g)?.length).toBe(1);
     expect(source.match(/<MenuHeading>/g)?.length).toBe(2);
@@ -324,9 +324,11 @@ describe("the machine header's own verbs", () => {
   // them — the frame arrives on hover and focus (`quiet`), never at rest.
   it("paints the header's two glyphs as ink, not as bordered boxes", () => {
     expect(source).toMatch(
-      /<IconButton\s+variant="quiet"\s+label=\{`Add a project on/,
+      /<Button\s+variant="quiet"\s+density="compact"\s+aria-label=\{`Add a project on/,
     );
-    expect(source).toMatch(/<IconButton\s+variant="quiet"\s+label=\{`Settings for/);
+    expect(source).toMatch(
+      /<Button\s+variant="quiet"\s+density="compact"\s+aria-label=\{`Settings for/,
+    );
   });
 });
 
@@ -346,11 +348,34 @@ describe("the machine is a chip, not a second band", () => {
   });
 
   it("gives the machine's verbs to the chrome that names it", () => {
-    // One `+` and one gear on the screen, both acting on the machine in scope.
-    expect(source.match(/<PlusIcon className="size-4" \/>/g)?.length).toBe(1);
-    expect(source).toContain("label={`Add a project on ${machineLabel(scopeChrome.conn)}`}");
-    expect(source).toContain("label={`Settings for ${machineLabel(scopeChrome.conn)}`}");
+    // One Add project and one Machine settings on the screen, both acting on the
+    // machine in scope, and both spelled out.
+    expect(source).toContain(
+      "aria-label={`Add a project on ${machineLabel(scopeChrome.conn)}`}",
+    );
+    expect(source).toContain(
+      "aria-label={`Settings for ${machineLabel(scopeChrome.conn)}`}",
+    );
     expect(source).toContain("onRenameMachine(scopeChrome.conn, next)");
+  });
+
+  // Regression, user report: "Everything labeled, no icons and the MACHINES are in
+  // the fucking HEADER" — paraphrased: the machine verbs were glyph-only, and the
+  // machines themselves stood in a strip of their own BELOW the header band, so the
+  // one question the screen answers first was not part of the header that answers it.
+  it("carries the machine chips inside the header band itself", () => {
+    // The chips come before the header's own report line, in the same band.
+    expect(source.indexOf("aria-pressed={scope === null}")).toBeLessThan(
+      source.indexOf("Reading sessions..."),
+    );
+    // ...and the separate strip row is gone.
+    expect(source).not.toContain("overflow-x-auto bg-panel px-3 py-2");
+  });
+
+  it("spells the machine's verbs instead of drawing glyphs", () => {
+    expect(source).not.toContain('<PlusIcon className="size-4" />');
+    expect(source).toContain(">Add project</Button>");
+    expect(source).toContain(">Machine settings</Button>");
   });
 
   it("keeps a dead machine's Retry where its sessions would have been", () => {

@@ -138,6 +138,15 @@ describe('one screen, pairing is a chip', () => {
     expect(appSource).toContain('aria-label="Open preferences"');
   });
 
+  // Regression, user report: "Everything labeled, no icons" — the bar's two verbs
+  // were bare glyphs whose meaning lived only in an `aria-label` an eye never sees.
+  it('spells its verbs and paints no icon', () => {
+    expect(appSource).toContain('>Pair machine</button>');
+    expect(appSource).toContain('>Preferences</button>');
+    expect(appSource).not.toContain('<PlusIcon');
+    expect(appSource).not.toContain('<SettingsIcon');
+  });
+
   it('pairs from the app bar and gives Machines a way back', () => {
     expect(appSource).toContain('aria-label="Pair a machine"');
     expect(appSource).toContain('onPair={() => setTab("connect")}');
