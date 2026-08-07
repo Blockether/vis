@@ -1262,11 +1262,17 @@ export function SessionsScreen({
               {/* The machine's two verbs, on the chrome that names it rather than on a
                   band of its own: ADD a project, and open this machine's settings. With
                   several machines speaking at once there is no machine to act on — a
-                  workspace only exists on one — so the chip is asked first. */}
+                  workspace only exists on one — so the chip is asked first.
+                  Both are BUTTONS with a face. They were `quiet`, which is deliberately
+                  frameless, so two words sat on the chrome as bare ink beside an amber
+                  `New session` slab and nothing said they could be pressed. ADD is the
+                  amber primary here, the same fill the list's own create verb wears;
+                  settings is the framed sibling, so one amber never rivals another. */}
               {scopeChrome && !scopeChrome.error && (
                 <Button
-                  variant="quiet"
+                  variant="solid"
                   density="compact"
+                  className="shrink-0 whitespace-nowrap"
                   aria-label={`Add a project on ${machineLabel(scopeChrome.conn)}`}
                   onClick={(event) => {
                     const at = menuPosition(
@@ -1280,8 +1286,9 @@ export function SessionsScreen({
               )}
               {scopeChrome && onMachineSettings && (
                 <Button
-                  variant="quiet"
+                  variant="ghost"
                   density="compact"
+                  className="shrink-0 whitespace-nowrap"
                   aria-label={`Settings for ${machineLabel(scopeChrome.conn)}`}
                   onClick={() => onMachineSettings(scopeChrome.conn)}
                 >Machine settings</Button>

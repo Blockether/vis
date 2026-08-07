@@ -46,27 +46,27 @@ describe('app bar', () => {
     const preferences = app.indexOf('aria-label="Open preferences"');
     expect(pair).toBeGreaterThan(0);
     expect(pair).toBeLessThan(preferences);
-    expect(classes(openingTag(app, 'Pair a machine'))).toContain('ml-auto');
   });
 
-  it('hands the free space to the trailing cluster', () => {
-    expect(classes(openingTag(app, 'Pair a machine'))).toContain('ml-auto');
+  // Regression, user report ("make them nice buttons like the fucking New Session"):
+  // the bar's two verbs were hand-rolled `<button className=…>` slabs of bare text.
+  // They are the app's own `Button` now, so the CLUSTER holds the free space and the
+  // component owns every metric — a call site may only position.
+  it('hands the free space to the trailing cluster, not to a control', () => {
+    expect(app).toContain('<div className="ml-auto flex items-center gap-2">');
+    expect(classes(openingTag(app, 'Pair a machine'))).not.toContain('ml-auto');
     // Nothing else competes for that space now, so there is no breakpoint at which
-    // the cog gives it up.
+    // the cluster gives it up.
     expect(cog).not.toContain('sm:ml-0');
   });
 
-  // Reported: the trailing controls sit at the wrong margin. On a phone the app bar
-  // and the sessions list are one column down the right edge, but the list wears a
-  // 2px frame (`border-r-2`) the bar does not, so a cog CENTRED in its 48px cell put
-  // its ink 16px from the screen while every `⋯` and chevron below it sat at 14px.
-  it('pads the cog to the list’s own content edge instead of centring it', () => {
+  // Reported earlier: the trailing controls sat at the wrong margin, a lone cog glyph
+  // centred in a 48px cell while every `⋯` below it sat at 14px. A button is not
+  // centred in a cell and does not bleed past the paper: it wears the bar's own gutter
+  // and re-spells none of its own face at the call site.
+  it('leaves the cog’s face to the component', () => {
     expect(cog).not.toContain('place-items-center');
-    // A WORD is as wide as its word, so the trailing edge is its padding alone —
-    // `justify-items-end` was the grid cell a lone glyph had to be pushed to.
-    expect(cog).toContain('inline-flex');
-    // The list gutter (`pl-3`/`sm:pl-4`) plus the panel's own 2px frame.
-    expect(cog).toContain('pr-3.5');
-    expect(cog).toContain('sm:pr-4.5');
+    expect(cog).not.toContain('-mr-3');
+    expect(cog.every((c) => ['shrink-0', 'whitespace-nowrap'].includes(c))).toBe(true);
   });
 });

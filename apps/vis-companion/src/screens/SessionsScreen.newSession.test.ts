@@ -319,15 +319,16 @@ describe("the machine header's own verbs", () => {
     expect(source).toContain("label={`Rename ${machineLabel(scopeChrome.conn)}`}");
   });
 
-  // Regression, user report: the `+` and the gear on a machine header were boxes.
-  // A header is chrome, so its glyphs are INK at rest like every other `⋯` beside
-  // them — the frame arrives on hover and focus (`quiet`), never at rest.
-  it("paints the header's two glyphs as ink, not as bordered boxes", () => {
+  // Regression, user report: the `+` and the gear on a machine header were bordered
+  // boxes around a glyph. They are WORDS in buttons now (the later report "make them
+  // nice buttons like New Session" reversed the frameless `quiet` face this test used
+  // to pin), so what is left of the original complaint is that neither draws a glyph.
+  it("paints the header's two verbs as words, not as glyphs", () => {
     expect(source).toMatch(
-      /<Button\s+variant="quiet"\s+density="compact"\s+aria-label=\{`Add a project on/,
+      /<Button\s+variant="solid"\s+density="compact"[\s\S]{0,120}aria-label=\{`Add a project on/,
     );
     expect(source).toMatch(
-      /<Button\s+variant="quiet"\s+density="compact"\s+aria-label=\{`Settings for/,
+      /<Button\s+variant="ghost"\s+density="compact"[\s\S]{0,120}aria-label=\{`Settings for/,
     );
   });
 });
@@ -376,6 +377,22 @@ describe("the machine is a chip, not a second band", () => {
     expect(source).not.toContain('<PlusIcon className="size-4" />');
     expect(source).toContain(">Add project</Button>");
     expect(source).toContain(">Machine settings</Button>");
+  });
+
+  // Regression, user report: "make them nice buttons like the fucking New Session" —
+  // both verbs were `variant="quiet"`, which is deliberately frameless, so the two
+  // words sat on the chrome as bare ink beside an amber `New session` slab.
+  it("gives the machine's verbs a real button face", () => {
+    const start = source.indexOf("The machine's two verbs");
+    const verbs = source.slice(start, source.indexOf("Machine settings</Button>", start));
+    expect(verbs).not.toContain('variant="quiet"');
+    // ADD is the amber primary, its settings sibling the framed one.
+    expect(verbs.slice(0, verbs.indexOf("Add project</Button>"))).toContain(
+      'variant="solid"',
+    );
+    expect(verbs.slice(0, verbs.indexOf("Machine settings</Button>"))).toContain(
+      'variant="ghost"',
+    );
   });
 
   it("keeps a dead machine's Retry where its sessions would have been", () => {

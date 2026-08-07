@@ -41,6 +41,7 @@ import {
 } from "./lib/share-intake";
 import { applyTheme, resolveLocalTheme } from "./lib/theme";
 import { getThemePalette, getThemePref } from "./lib/storage";
+import { Button } from "./components/ui";
 import { ConnectScreen } from "./screens/ConnectScreen";
 import { SessionsScreen } from "./screens/SessionsScreen";
 import { IncompatibleScreen } from "./screens/IncompatibleScreen";
@@ -1086,12 +1087,23 @@ export function Header({
             `+` and `⚙` said "add… what?" and "settings of what?" in an `aria-label`
             an eye never reads, on a screen whose loudest control ("New session") was
             already spelled out. Every verb is written now; nothing here is a glyph. */}
-        <button
-          type="button"
-          className="ml-auto inline-flex min-h-12 items-center px-3 font-mono text-meta text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
-          onClick={onPair}
-          aria-label="Pair a machine"
-        >Pair machine</button>
+        {/* A VERB IS A BUTTON, not a word on the paper.
+            These two were hand-rolled `<button className=…>` slabs: bare text on the
+            bar, no box, no border, no press — so the only control on the whole screen
+            that looked pressable was the amber `New session` in the list. They are the
+            app's own `Button` now, on its own rhythm, and the FILL says which is which:
+            pairing ADDS a machine, so it is the amber primary exactly like `New
+            session`; preferences is its framed sibling, because a second amber would
+            make the rarest verb on the screen as loud as the commonest. */}
+        <div className="ml-auto flex items-center gap-2">
+          <Button
+            type="button"
+            variant="solid"
+            density="compact"
+            className="shrink-0 whitespace-nowrap"
+            onClick={onPair}
+            aria-label="Pair a machine"
+          >Pair machine</Button>
         {/* ONE SCREEN, ONE COG.
             The app used to carry a two-item tab bar whose second item existed for a
             verb used twice a year — pairing — and a nav duplicating it at `sm:`. The
@@ -1101,18 +1113,20 @@ export function Header({
             this device's own settings, never a gateway's. A machine's settings hang
             off that machine (the list's own ⚙), so two gears can no longer sit 40px
             apart meaning different things.
-            The cog is an ICON, not the `⚙` character: the glyph falls back to an emoji
-            font whose advance width and baseline differ per platform, so it never sat
-            centred in its 48px cell. The negative right margin cancels the header's own
-            gutter so the tap target reaches the physical edge; the icon is then PADDED
-            away from that edge rather than centred in its own cell, because the list
-            below wears a 2px frame and its trailing ink lands 14px in. */}
-        <button
-          type="button"
-          className="-mr-3 inline-flex min-h-12 items-center pl-3 pr-3.5 font-mono text-meta text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent sm:-mr-4 sm:pr-4.5"
-          onClick={onAppSettings}
-          aria-label="Open preferences"
-        >Preferences</button>
+            It is a WORD in a button now rather than a cog: the `⚙` glyph falls back to
+            an emoji font whose advance width and baseline differ per platform, so it
+            never sat centred in its own cell. The button keeps the bar's gutter instead
+            of the old negative margin — a bordered box that bleeds off the paper reads
+            as a cropped control, and the list below stops its ink 14px in too. */}
+          <Button
+            type="button"
+            variant="ghost"
+            density="compact"
+            className="shrink-0 whitespace-nowrap"
+            onClick={onAppSettings}
+            aria-label="Open preferences"
+          >Preferences</Button>
+        </div>
       </div>
     </header>
   );

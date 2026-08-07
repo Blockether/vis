@@ -141,10 +141,22 @@ describe('one screen, pairing is a chip', () => {
   // Regression, user report: "Everything labeled, no icons" — the bar's two verbs
   // were bare glyphs whose meaning lived only in an `aria-label` an eye never sees.
   it('spells its verbs and paints no icon', () => {
-    expect(appSource).toContain('>Pair machine</button>');
-    expect(appSource).toContain('>Preferences</button>');
+    expect(appSource).toContain('>Pair machine</Button>');
+    expect(appSource).toContain('>Preferences</Button>');
     expect(appSource).not.toContain('<PlusIcon');
     expect(appSource).not.toContain('<SettingsIcon');
+  });
+
+  // Regression, user report: "make them nice buttons like the fucking New Session" —
+  // the bar's two verbs were hand-rolled `<button className=…>` slabs of bare text,
+  // so the one control on the screen that looked pressed-able was `New session`.
+  it('wears the app\'s own Button, not a hand-rolled slab', () => {
+    expect(appSource).toContain('import { Button } from "./components/ui";');
+    expect(appSource).not.toMatch(/<button\s+type="button"/);
+    // The verb that ADDS is the amber primary, exactly like `New session`; the
+    // preferences cog beside it is its framed sibling, never a second amber.
+    expect(appSource).toContain('variant="solid"');
+    expect(appSource).toContain('variant="ghost"');
   });
 
   it('pairs from the app bar and gives Machines a way back', () => {
