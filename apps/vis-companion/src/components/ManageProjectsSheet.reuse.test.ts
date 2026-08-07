@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import source from './ManageProjectsSheet.tsx?raw';
+import { startingDir } from './ManageProjectsSheet';
 
 // Regression, user report ("the fucking manage projects looks absolutely fucking awful
 // on the desktop and iphone too — buttons are not canonicalized, components are not
@@ -78,5 +79,33 @@ describe('ManageProjectsSheet paints no box of its own', () => {
   it('takes the rows out of play with inert, never with aria-hidden alone', () => {
     expect(source).toContain('inert={folder !== null}');
     expect(source).not.toContain('aria-hidden={folder !== null}');
+  });
+});
+
+// Regression, user report ("let it start ../ from the current project"). Browsing
+// opened INSIDE the machine's current project, so adding the next checkout beside it
+// began with a tap on the parent crumb, and the first list you saw was that project's
+// own `src/`.
+describe('browsing opens one level above the current project', () => {
+  it('lists the project’s siblings, not its contents', () => {
+    expect(startingDir('/Users/me/code/vis')).toBe('/Users/me/code');
+    expect(startingDir('/Users/me/code/vis/')).toBe('/Users/me/code');
+  });
+
+  it('stays put where there is no `..`', () => {
+    expect(startingDir(null)).toBe(null);
+    expect(startingDir('/')).toBe('/');
+    expect(startingDir('vis')).toBe('vis');
+  });
+
+  it('is what the sheet opens on', () => {
+    expect(source).toContain('startingDir(startAt)');
+  });
+
+  // ...and the project you came from is named in that listing, so a folder one level
+  // up is still recognisable as where you already are.
+  it('badges the current project in both lists', () => {
+    expect(source).toContain("entry.root === startAt ? 'current'");
+    expect(source).toContain("entry.path === startAt");
   });
 });

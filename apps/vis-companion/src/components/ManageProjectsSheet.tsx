@@ -72,6 +72,20 @@ export function splitTyped(typed: string): { dir: string; leaf: string } {
   return { dir: typed.slice(0, cut) || '/', leaf: typed.slice(cut + 1) };
 }
 
+/**
+ * Where browsing OPENS: one level above the machine's current project, never inside
+ * it. A project's siblings are the folders you are actually looking for — the next
+ * checkout, the next worktree — and they live in `../`, so opening on the project
+ * itself listed its own `src/` and made every add start with a tap on `‹` first.
+ * A root (or nothing) stays where it is: `/` has no `..`.
+ */
+export function startingDir(startAt: string | null): string | null {
+  if (!startAt) return null;
+  const cut = startAt.replace(/\/+$/, '').lastIndexOf('/');
+  if (cut < 0) return startAt;
+  return startAt.slice(0, cut) || '/';
+}
+
 function entryHint(entry: BrowseEntry): string {
   const count = `${entry.entry_count} ${entry.entry_count === 1 ? 'entry' : 'entries'}`;
   return entry.branch ? `${count} · ${entry.branch}` : count;
@@ -118,7 +132,7 @@ export function ManageProjectsSheet({
   // "Manage projects", which could add a project and never showed you the ones you
   // had, let alone remove one.
   const [adding, setAdding] = useState(projects.length === 0);
-  const [dir, setDir] = useState<string>(startAt ?? '~');
+  const [dir, setDir] = useState<string>(startingDir(startAt) ?? '~');
   const [listing, setListing] = useState<{
     path: string;
     parent: string | null;
@@ -264,6 +278,7 @@ export function ManageProjectsSheet({
                   hint={`${entry.count} ${entry.count === 1 ? 'transcript' : 'transcripts'}${
                     entry.live > 0 ? `, ${entry.live} running` : ''
                   } · ${homeify(entry.root, home) || entry.root}`}
+                  badge={entry.root === startAt ? 'current' : undefined}
                   onSelect={() => onChoose(entry.root)}
                   action={
                     <IconButton
@@ -413,7 +428,13 @@ export function ManageProjectsSheet({
                 title={`${entry.name}/`}
                 hint={entryHint(entry)}
                 badge={
-                  knownRoots.has(entry.path) ? 'project' : entry.is_repo ? 'git' : undefined
+                  entry.path === startAt
+                    ? 'current'
+                    : knownRoots.has(entry.path)
+                      ? 'project'
+                      : entry.is_repo
+                        ? 'git'
+                        : undefined
                 }
                 onSelect={() => enter(entry.path)}
               />
