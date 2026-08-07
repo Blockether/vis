@@ -3,8 +3,11 @@ import {
   Banner,
   Button,
   DialogFrame,
-  IconButton,
+  HeaderActions,
+  HeaderMeta,
   Input,
+  KebabButton,
+  LiveCount,
   LiveTally,
   MachineBanner,
   MachineGap,
@@ -36,7 +39,7 @@ import {
 } from '../lib/list-scroll';
 import { SwipeActions } from '../components/SwipeActions';
 import { ManageProjectsSheet } from '../components/ManageProjectsSheet';
-import { ChevronIcon, DotsIcon, PencilIcon, StarIcon, TrashIcon } from '../components/icons';
+import { ChevronIcon, PencilIcon, StarIcon, TrashIcon } from '../components/icons';
 import { DEFAULT_SESSION_PAGE_SIZE, getOfferDrafts, getSessionsPerPage, subscribeOfferDrafts, subscribeSessionsPerPage } from '../lib/storage';
 import { hostOf } from '../lib/endpoints';
 import {
@@ -1257,53 +1260,45 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                           {machineLabel(machine.conn)}
                         </span>
                       </span>
-                      {/* The machine's own column, measured from the RIGHT edge it is
-                          pinned to: what it reports, the verb, and the `⋯`. The fixed
-                          10rem box that used to align the counts is gone — the button is
-                          what the eye and the thumb aim at now, and the machine's name
-                          keeps whatever is left. */}
-                      <span className="flex shrink-0 items-center justify-end gap-2 font-mono text-chip text-dialog-hint">
-                        {machine.error ? (
-                          <>
+                      {/* The trailing half of the header is ONE component, shared with every
+                          project header below it: the same gap in front of it, the same gap
+                          between its controls, the same right edge. What this machine reports,
+                          then what it offers — and everything rarer than reading the list (its
+                          files, the machine itself) lives behind the `⋯`, so the header never
+                          grows a second bespoke word-button beside it. */}
+                      <HeaderActions>
+                        <HeaderMeta>
+                          {machine.error ? (
                             <span>offline</span>
-                            {/* Retrying is a button, so it is THE button: the same box
-                                and rhythm as the `⋯` beside it, quiet because it sits
-                                inside a line of metadata. */}
-                            <Button
-                              type="button"
-                              variant="quiet"
-                              density="compact"
-                              pressEffect="none"
-                              onClick={() => void loadMachine(machine.conn)}
-                            >
-                              Retry
-                            </Button>
-                          </>
-                        ) : (
-                          <>
+                          ) : (
                             <span>
                               {groups.length} {groups.length === 1 ? 'project' : 'projects'}
                             </span>
-                            {/* The strip above carries this machine's live and
-                                unread counts, and it does NOT scroll away with
-                                the list, so a section header that repeated them
-                                only printed the same two numbers a second
-                                time. */}
-                          </>
+                          )}
+                          {/* The strip above carries this machine's live and unread counts,
+                              and it does NOT scroll away with the list, so a section header
+                              that repeated them only printed the same two numbers a second
+                              time. */}
+                        </HeaderMeta>
+                        {/* Retrying is a button, so it is THE button: the same box and rhythm
+                            as the `⋯` beside it, quiet because it sits inside a line of
+                            metadata. */}
+                        {machine.error && (
+                          <Button
+                            type="button"
+                            variant="quiet"
+                            density="compact"
+                            pressEffect="none"
+                            onClick={() => void loadMachine(machine.conn)}
+                          >
+                            Retry
+                          </Button>
                         )}
-                        {/* One control, and it is the app's icon button: the same box,
-                            border and focus ring the project header's `⋯` wears one row
-                            below it. Everything rarer than reading the list — the machine's
-                            files, the machine itself — lives behind it, so the header never
-                            grows a second bespoke word-button beside it. */}
-                        <IconButton
-                          aria-haspopup="menu"
+                        <KebabButton
                           label={`Actions for ${machineLabel(machine.conn)}`}
                           onClick={(event) => openStartMenuAt(event.currentTarget, machine.conn)}
-                        >
-                          <DotsIcon className="size-3" />
-                        </IconButton>
-                      </span>
+                        />
+                      </HeaderActions>
                     </MachineBanner>
                   {groups.length === 0
                     ? (
@@ -1807,32 +1802,31 @@ const ProjectGroup = memo(function ProjectGroup({
             {liveCount > 0 && (
               <>
                 <span className="opacity-40" aria-hidden="true">·</span>
-                <span className="inline-flex items-center gap-1 font-bold text-ok">
-                  <span className="size-1.5 animate-pulse bg-ok motion-reduce:animate-none" />
-                  {liveCount} live
-                </span>
+                <LiveCount count={liveCount} />
               </>
             )}
           </span>
         </button>
-        <NewSessionButton
-          machine={machineLabel(conn)}
-          where={project}
-          onPress={() => onNewSession(root)}
-        />
-        {/* Gone while a query is live: a group showing 3 of 40 matches must never
-            offer a control that deletes 40. */}
-        {!needle && (
-          <IconButton
-            ref={kebabRef}
-            aria-haspopup="menu"
-            aria-expanded={menu !== null}
-            label={`Actions for ${project}`}
-            onClick={() => (menu ? closeMenu() : openMenu())}
-          >
-            <DotsIcon className="size-3" />
-          </IconButton>
-        )}
+        {/* The same trailing cluster the machine header above wears: the yellow verb
+            gets its gap, the `⋯` gets the same box, and both stop at the same right
+            edge as every other header in the list. */}
+        <HeaderActions>
+          <NewSessionButton
+            machine={machineLabel(conn)}
+            where={project}
+            onPress={() => onNewSession(root)}
+          />
+          {/* Gone while a query is live: a group showing 3 of 40 matches must never
+              offer a control that deletes 40. */}
+          {!needle && (
+            <KebabButton
+              ref={kebabRef}
+              isOpen={menu !== null}
+              label={`Actions for ${project}`}
+              onClick={() => (menu ? closeMenu() : openMenu())}
+            />
+          )}
+        </HeaderActions>
       </header>
       {rows.length > 0 && (
         <div className="border-b border-dialog-edge">

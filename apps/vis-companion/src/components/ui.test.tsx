@@ -5,7 +5,11 @@ import { MACHINE_COLORS } from '../lib/machine-colors';
 import {
   Button,
   DialogClose,
+  HeaderActions,
+  HeaderMeta,
   IconButton,
+  KebabButton,
+  LiveCount,
   LiveTally,
   MachineBanner,
   MachineGap,
@@ -318,5 +322,95 @@ describe('DialogClose', () => {
 
   it('is named for what it closes', () => {
     expect(html()).toContain('aria-label="Close artifacts"');
+  });
+});
+
+// Regression, user report ("still the ⋯ between the machine and project are different
+// fix it! MARGIN RIGHT DIFFERS AND ALSO WHY THERE ARE FUCKING BORDERS"): the two
+// kebabs had become the same Button, but each call site still spelled out its own
+// popup semantics and glyph, and the app's default bordered box turned a header
+// glyph into a second rival to the yellow verb standing beside it.
+describe('KebabButton', () => {
+  const html = (props: Partial<Parameters<typeof KebabButton>[0]> = {}) =>
+    renderToStaticMarkup(<KebabButton label="Actions for tower" {...props} />);
+
+  it('is one control: the machine’s and the project’s render the same box', () => {
+    expect(html({ label: 'Actions for tower' }).replace('Actions for tower', 'X')).toBe(
+      html({ label: 'Actions for vis' }).replace('Actions for vis', 'X'),
+    );
+  });
+
+  it('wears no resting border: a header glyph is ink, not a rival box', () => {
+    expect(html()).toContain('border-transparent');
+    expect(html().replaceAll('hover:border-edge-strong', '')).not.toContain('border-edge-strong');
+  });
+
+  it('carries the popup semantics itself, so no call site can forget them', () => {
+    expect(html()).toContain('aria-haspopup="menu"');
+    expect(html({ isOpen: true })).toContain('aria-expanded="true"');
+    expect(html()).toContain('aria-label="Actions for tower"');
+  });
+
+  it('keeps the header’s compact rhythm and one glyph size', () => {
+    expect(html()).toContain('h-11');
+    expect(html()).toContain('mouse:h-6');
+    expect(html()).not.toContain('active:scale');
+  });
+
+  // Over a thumbnail the app's paper is not underneath it, so the same control brings
+  // its own ink instead of a call-site `bg-*` that Tailwind's emission order decides.
+  it('has an overlay face for the artifact tile, with no height of its own', () => {
+    const over = html({ variant: 'overlay', density: 'default' });
+    expect(over).toContain('bg-ink/80');
+    expect(over).not.toContain('h-11');
+  });
+});
+
+// Regression, user report ("MARGIN RIGHT DIFFERS AND ALSO WHY THERE IS NO MARGIN
+// BEFORE NEW SESSION"): the machine header padded its own right edge while the project
+// header one row below ended flush against the screen, and the yellow verb was welded
+// to the words beside it. The trailing cluster is one component now, so all three gaps
+// are decided once.
+describe('HeaderActions', () => {
+  const html = renderToStaticMarkup(
+    <HeaderActions>
+      <HeaderMeta>2 projects</HeaderMeta>
+      <KebabButton label="Actions for tower" />
+    </HeaderActions>,
+  );
+
+  it('owns the right edge of every header in the list', () => {
+    expect(html).toContain('pr-3');
+    expect(html).toContain('sm:pr-4');
+  });
+
+  it('puts a gap in front of the cluster and between its controls', () => {
+    expect(html).toContain('pl-2');
+    expect(html).toContain('gap-2');
+  });
+
+  it('never stretches: a header control is centred in whatever row it landed in', () => {
+    expect(html).toContain('shrink-0');
+    expect(html).toContain('self-center');
+  });
+
+  it('is the only one padding that side, so the header stops doing it', () => {
+    const banner = renderToStaticMarkup(<MachineBanner>machine</MachineBanner>);
+    expect(banner).toContain('pl-3');
+    expect(banner).toContain('sm:pl-4');
+    expect(banner).not.toContain('px-3');
+    expect(banner).not.toContain('pr-');
+  });
+});
+
+describe('LiveCount', () => {
+  it('says nothing when nothing is running', () => {
+    expect(renderToStaticMarkup(<LiveCount count={0} />)).toBe('');
+  });
+
+  it('wears the same pulse a live session row does', () => {
+    const html = renderToStaticMarkup(<LiveCount count={3} />);
+    expect(html).toContain('animate-pulse bg-ok motion-reduce:animate-none');
+    expect(html).toContain('3 live');
   });
 });

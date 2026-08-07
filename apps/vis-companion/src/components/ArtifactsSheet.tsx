@@ -40,8 +40,8 @@ import type { GatewayClient } from '../lib/gateway';
 import { DocFrame } from './DocArtifact';
 import { ImageViewer } from './ImageViewer';
 import { TextFrame } from './TextArtifact';
-import { AlertIcon, ArrowDownIcon, ClipIcon, DotsIcon, PlayIcon } from './icons';
-import { DialogClose } from './ui';
+import { AlertIcon, ArrowDownIcon, ClipIcon, PlayIcon } from './icons';
+import { DialogClose, KebabButton } from './ui';
 
 /**
  * Two documents produced by the same turn have to stay distinguishable at a
@@ -281,14 +281,13 @@ function Tile({
   // sibling of the tile rather than a child: a button inside a button is invalid
   // HTML, and the browser would hand the version menu's clicks to the tile.
   const dots = versions.length > 1 && (
-    <button
-      type="button"
+    <KebabButton
+      label={`Show ${versions.length} versions of ${artifact.name}`}
+      variant="overlay"
+      density="default"
+      className="absolute top-1 right-1 size-8 mouse:size-7"
       onClick={() => onVersions(artifact)}
-      aria-label={`Show ${versions.length} versions of ${artifact.name}`}
-      className="absolute right-1 top-1 flex size-8 items-center justify-center border border-dialog-edge bg-ink/80 text-dialog-hint hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent mouse:size-7"
-    >
-      <DotsIcon />
-    </button>
+    />
   );
 
   if (artifact.kind === "file") {

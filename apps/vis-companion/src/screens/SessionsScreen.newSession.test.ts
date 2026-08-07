@@ -35,13 +35,25 @@ describe('where "New session" lives', () => {
   // of different widths, one with an accent band and one with none, opened by two
   // hand-built buttons of different heights wearing two different glyph sizes.
   it('opens both overflow menus with the same button and the same Menu', () => {
-    expect(source.match(/<IconButton/g)?.length).toBe(2);
-    expect(source.match(/<DotsIcon className="size-3" \/>/g)?.length).toBe(2);
+    expect(source.match(/<KebabButton/g)?.length).toBe(2);
+    expect(source).not.toContain('<IconButton');
+    expect(source).not.toContain('<DotsIcon');
     expect(source.match(/<Menu[\s>]/g)?.length).toBe(2);
     expect(source.match(/<MenuHeading>/g)?.length).toBe(3);
     expect(source).toContain('label={`Actions for ${project}`}');
     expect(source).not.toContain('<StartOption');
     expect(source).not.toContain('createPortal(');
+  });
+
+  // Regression, user report ("still the ⋯ between the machine and project are different
+  // fix it! MARGIN RIGHT DIFFERS AND ALSO WHY THERE IS NO MARGIN BEFORE NEW SESSION"):
+  // the machine banner padded its own right edge and the project header ended flush
+  // against the screen, so the two identical buttons still sat at two different
+  // distances from the same edge — and the yellow verb touched the words beside it.
+  it('gives both headers the same trailing cluster, so both edges are one decision', () => {
+    expect(source.match(/<HeaderActions>/g)?.length).toBe(2);
+    expect(source.match(/<HeaderMeta>/g)?.length).toBe(1);
+    expect(source).not.toContain('flex shrink-0 items-center justify-end gap-2 font-mono');
   });
   // Regression, user report: the project header reused a home-shortened display path as
   // both its name and the root sent back to the gateway. On a gateway that resolved `~`

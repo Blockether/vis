@@ -8,7 +8,7 @@ import {
 import type { MachineColor } from '../lib/machine-colors';
 import { createPortal } from 'react-dom';
 
-import { CloseIcon } from './icons';
+import { CloseIcon, DotsIcon } from './icons';
 
 // Ref-forwarding: a button that ANCHORS something (a popover, a focus return) has
 // to be measurable by its owner, and cloning the element's classes at the call site
@@ -16,7 +16,7 @@ import { CloseIcon } from './icons';
 export const Button = forwardRef<
   HTMLButtonElement,
   ButtonHTMLAttributes<HTMLButtonElement> & {
-    variant?: 'solid' | 'ghost' | 'quiet' | 'danger';
+    variant?: 'solid' | 'ghost' | 'quiet' | 'danger' | 'overlay';
     /**
      * Press feedback. `scale` is the default nudge; `none` is for a button that
      * ANCHORS something (a popover) or sits in a segmented group — a transform
@@ -50,6 +50,13 @@ export const Button = forwardRef<
     quiet:
       'border-transparent bg-transparent text-dialog-hint hover:border-edge-strong hover:bg-hover hover:text-accent-ink disabled:border-transparent disabled:bg-transparent disabled:text-muted',
     danger: `border-err/40 bg-err/10 text-err hover:border-err hover:bg-err hover:text-white ${dimmed}`,
+    // A control that floats over CONTENT — a thumbnail, a picture — rather than over
+    // chrome. It carries its own ink because whatever is under it is not the app's
+    // paper, and it is a VARIANT rather than a class at the call site because
+    // `bg-transparent` and `bg-ink/80` are decided by Tailwind's emission order, never
+    // by which of the two the call site happened to type last.
+    overlay:
+      'border-transparent bg-ink/80 text-dialog-hint hover:border-edge-strong hover:bg-hover hover:text-accent-ink disabled:border-transparent disabled:bg-panel-2 disabled:text-muted',
     // A split button's caret half is NOT a second variant: it is `solid` with a
     // hairline in `accent-foreground`. Dark chrome next to an amber primary reads
     // as a disabled slab, and nobody presses a control that looks switched off.
@@ -92,22 +99,71 @@ export const IconButton = forwardRef<
   ButtonHTMLAttributes<HTMLButtonElement> & {
     /** Icon-only, so the name is not optional. */
     label: string;
-    variant?: 'solid' | 'ghost' | 'quiet' | 'danger';
+    variant?: 'solid' | 'ghost' | 'quiet' | 'danger' | 'overlay';
+    /** Passed through: a control over a thumbnail is not on a header's rhythm. */
+    density?: 'default' | 'compact';
   }
->(function IconButton({ label, className = '', variant = 'ghost', children, ...props }, ref) {
+>(function IconButton(
+  { label, className = '', variant = 'ghost', density = 'compact', children, ...props },
+  ref,
+) {
   return (
     <Button
       ref={ref}
       type="button"
       variant={variant}
       pressEffect="none"
-      density="compact"
+      density={density}
       aria-label={label}
       className={`grid min-w-7 shrink-0 place-items-center px-0 sm:min-w-8 sm:px-0 mouse:min-w-6 ${className}`}
       {...props}
     >
       {children}
     </Button>
+  );
+});
+
+/**
+ * THE OVERFLOW CONTROL, and there is only one of it.
+ *
+ * Every `⋯` in the app is this: the machine header's, the project header's one row
+ * below it, the one on an artifact tile. They kept drifting apart because each call
+ * site spelled out its own box, its own glyph size and its own popup semantics —
+ * different borders, a different right edge, a different height — while all three
+ * mean exactly "the rarer half of what this row can do".
+ *
+ * `quiet` on purpose: a header is chrome, and a bordered box around a glyph reads as
+ * a second rival to the yellow verb beside it. The frame arrives on hover and focus,
+ * where it answers "can I press this"; `overlay` is the same control over a picture,
+ * which has to bring its own ink to stay legible.
+ */
+export const KebabButton = forwardRef<
+  HTMLButtonElement,
+  ButtonHTMLAttributes<HTMLButtonElement> & {
+    /** It carries no word, so it names what it acts on: `Actions for tower`. */
+    label: string;
+    /** Whether the menu it owns is open right now. */
+    isOpen?: boolean;
+    variant?: 'quiet' | 'overlay';
+    density?: 'default' | 'compact';
+  }
+>(function KebabButton(
+  { label, isOpen, variant = 'quiet', density = 'compact', className = '', ...props },
+  ref,
+) {
+  return (
+    <IconButton
+      ref={ref}
+      label={label}
+      variant={variant}
+      density={density}
+      className={className}
+      aria-haspopup="menu"
+      aria-expanded={isOpen}
+      {...props}
+    >
+      <DotsIcon className="size-3" />
+    </IconButton>
   );
 });
 
@@ -388,9 +444,51 @@ export function MachineGap() {
  */
 export function MachineBanner({ children }: { children: ReactNode }) {
   return (
-    <header className="sticky top-0 z-10 flex min-h-11 items-center justify-between gap-3 border-b border-dialog-edge bg-panel px-3 py-2 sm:px-4">
+    <header className="sticky top-0 z-10 flex min-h-11 items-center justify-between gap-3 border-b border-dialog-edge bg-panel py-2 pl-3 sm:pl-4">
       {children}
     </header>
+  );
+}
+
+/**
+ * The trailing half of a section header: what the row REPORTS, then what it OFFERS.
+ *
+ * It owns the right edge of every header in the list — which is why the header itself
+ * no longer pads that side. A machine header padded its own right edge while the
+ * project header one row below it ended flush, so the two `⋯` that were finally the
+ * same button still sat at two different distances from the same screen edge, and the
+ * yellow verb was welded to the words beside it with no gap at all. One component now
+ * decides all three: the gap in front of the cluster, the gap between its controls,
+ * and where it stops.
+ */
+export function HeaderActions({ children }: { children: ReactNode }) {
+  return (
+    <span className="flex shrink-0 items-center gap-2 self-center pl-2 pr-3 sm:pr-4">
+      {children}
+    </span>
+  );
+}
+
+/** A header's own quiet voice: what it counts, in the list's monospace hint ink. */
+export function HeaderMeta({ children }: { children: ReactNode }) {
+  return (
+    <span className="flex items-center gap-2 font-mono text-chip text-dialog-hint">
+      {children}
+    </span>
+  );
+}
+
+/**
+ * "3 live", with the same pulse a live session row wears. Nothing is said when
+ * nothing is running: an idle project must not print a zero next to a green dot.
+ */
+export function LiveCount({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span className="inline-flex items-center gap-1 font-bold text-ok">
+      <span className="size-1.5 animate-pulse bg-ok motion-reduce:animate-none" aria-hidden="true" />
+      {count} live
+    </span>
   );
 }
 
