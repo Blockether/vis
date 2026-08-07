@@ -473,4 +473,18 @@ describe('the machine strip', () => {
     expect(source).toMatch(/onClick=\{onPair\}[\s\S]{0,60}Add machine/);
     expect(source).not.toContain("<PlusIcon");
   });
+
+  // Regression, user report ("I would add a little bit more margin too for the fleet
+  // and the add machine I would add the regular button on the right please and the
+  // left side should be those machine tabs and they should have the same regular
+  // height of the button"): the strip sat flush against the bar above it, the verb
+  // followed the last tab instead of ending the row, and a 24px tab stood beside a
+  // 32px button.
+  it('is tabs on the left and the verb on the trailing edge, on one control height', () => {
+    expect(source).toMatch(/aria-label="Machines"[\s\S]{0,200}pt-3/);
+    expect(source).toContain("className=\"ml-auto shrink-0 whitespace-nowrap\"");
+    // `Button` density="compact" is exactly `h-8` with `mouse:h-6`.
+    expect(source).toMatch(/inline-flex h-8 [^`]*mouse:h-6/);
+    expect(source).not.toContain('inline-flex min-h-6');
+  });
 });

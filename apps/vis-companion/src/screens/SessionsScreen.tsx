@@ -169,16 +169,16 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
   });
 }
 
-// The scope strip's chips: one per machine plus "All".
+// The scope strip's tabs: one per machine.
 //
-// A chip is a CONTROL, so it sits on the app's control scale: `min-h-6` under the
-// buttons of the bar above it, and `text-meta` — the step the header line
-// it answers is already set in. At `text-chip` inside a `min-h-7` box the label
-// was the smallest type on the screen floating in eight px of dead space on each
-// side, so every chip read as taller than the row that holds it while saying
-// less than the line above it.
+// `text-meta` is the step the header line it answers is already set in; at
+// `text-chip` the label was the smallest type on the screen.
+// A TAB IS A CONTROL ON THE BUTTON'S OWN SCALE: the strip ends in a real `Button`
+// (`Add machine`), so a tab that stands 24px beside a 32px button makes one row
+// hold two control heights. The tab wears `Button`'s `density="compact"` box
+// exactly — 32px under a finger, 24px only where a cursor earns it (`mouse:`).
 function chipClass(isOn: boolean): string {
-  return `inline-flex min-h-6 shrink-0 items-center gap-1.5 border px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none ${
+  return `inline-flex h-8 shrink-0 items-center gap-1.5 border px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none mouse:h-6 ${
     isOn
       ? // The chosen chip's bottom edge is OPEN and it overlaps the card's own top
         // rule, so the tab and the machine it names are visibly one shape.
@@ -1123,7 +1123,7 @@ export function SessionsScreen({
       <div
         role="group"
         aria-label="Machines"
-        className="relative z-10 flex items-center gap-1.5 overflow-x-auto px-3 sm:px-4"
+        className="relative z-10 flex items-end gap-1.5 overflow-x-auto px-3 pt-3 sm:px-4 sm:pt-4"
       >
           {machines.map((machine) => {
             const key = machineKey(machine.conn);
@@ -1150,16 +1150,18 @@ export function SessionsScreen({
             );
           })}
           {/* ADDING A MACHINE IS THE TAB STRIP'S OWN VERB, AND IT IS A WORD.
+
               The strip answers "which machine", so "one more machine" belongs at its
               end, not buried in Preferences. A bare `+` beside named tabs asks the
               reader to guess what it adds - a project? a session? - so the control
               says `Add machine`, on the page's own paper, never inside the card it
-              would add a sibling to. */}
+              would add a sibling to. `ml-auto` puts it on the row's TRAILING edge:
+              tabs read left to right and the verb is not one of them. */}
           {onPair && (
             <Button
               variant="quiet"
               density="compact"
-              className="shrink-0 self-center whitespace-nowrap"
+              className="ml-auto shrink-0 whitespace-nowrap"
               onClick={onPair}
             >
               Add machine
