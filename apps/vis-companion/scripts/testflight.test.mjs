@@ -14,7 +14,7 @@ vi.mock('./asc.mjs', () => ({
   }),
 }));
 
-import { retryingApi, retryUnauthorized } from './testflight.mjs';
+import { linkTargets, retryingApi, retryUnauthorized } from './testflight.mjs';
 
 const asc = (status) => Object.assign(new Error(`ASC POST /v1/betaAppReviewSubmissions → ${status}`), { status });
 
@@ -98,5 +98,23 @@ describe('retryingApi', () => {
 
     await api('POST', '/v1/betaGroups', { data: 1 });
     expect(calls.at(-1)).toEqual({ token: 't3', method: 'POST', path: '/v1/betaGroups', body: { data: 1 } });
+  });
+});
+
+// Regression: an old TestFlight invitation served 0.1.14 (build 2804) while the Public link
+// served 0.1.32 (build 3774), because only the named group ever got the new build linked.
+describe('linkTargets', () => {
+  const groups = [{ id: 'public' }, { id: 'external' }, { id: 'internal' }];
+
+  it('carries the build to EVERY beta group, named one first', () => {
+    expect(linkTargets(groups, 'public')).toEqual(['public', 'external', 'internal']);
+  });
+
+  it('never links the named group twice', () => {
+    expect(linkTargets(groups, 'external')).toEqual(['external', 'public', 'internal']);
+  });
+
+  it('is just the named group when it is the only one', () => {
+    expect(linkTargets([{ id: 'public' }], 'public')).toEqual(['public']);
   });
 });

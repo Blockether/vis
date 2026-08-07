@@ -48,6 +48,14 @@ const isDuplicate = (err) =>
   err.status === 409 || /already/i.test(err.message) || /not in a valid processing state/i.test(err.message);
 
 /**
+ * Every beta group that must carry this build, named group FIRST.
+ *
+ * A tester sees the newest build of the group their invitation belongs to, so a build that only
+ * reaches the named group leaves every other invitation serving whatever it last got.
+ */
+export const linkTargets = (groups, namedId) => [namedId, ...groups.map((g) => g.id).filter((id) => id && id !== namedId)];
+
+/**
  * Run `call` with a token, and on 401 mint a fresh one and run it exactly once more.
  *
  * Apple answered a perfectly good token with 401 on POST /v1/betaAppReviewSubmissions
@@ -202,13 +210,21 @@ export const distribute = async ({
       }
     }
 
-    // Linking is idempotent server-side, but a duplicate POST still 409s on some paths.
-    try {
-      await api('POST', `/v1/betaGroups/${grp.id}/relationships/builds`, { data: [{ type: 'builds', id: found.id }] });
-      log(`linked build ${build} to "${group}"`);
-    } catch (err) {
-      if (!isDuplicate(err)) throw err;
-      log(`build ${build} was already in "${group}"`);
+    // EVERY invitation must serve the SAME build. TestFlight shows a tester the newest build of
+    // the group their link belongs to, so linking only the named group leaves every other public
+    // link handing out whatever it last got — an old invitation served 0.1.14 (build 2804) while
+    // Public was on 0.1.32 (build 3774).
+    const everyGroup = (await api('GET', `/v1/betaGroups?filter[app]=${appId}&limit=200`))?.data ?? [];
+    for (const id of linkTargets(everyGroup, grp.id)) {
+      const name = everyGroup.find((g) => g.id === id)?.attributes?.name ?? id;
+      // Linking is idempotent server-side, but a duplicate POST still 409s on some paths.
+      try {
+        await api('POST', `/v1/betaGroups/${id}/relationships/builds`, { data: [{ type: 'builds', id: found.id }] });
+        log(`linked build ${build} to "${name}"`);
+      } catch (err) {
+        if (!isDuplicate(err)) throw err;
+        log(`build ${build} was already in "${name}"`);
+      }
     }
 
     const fresh = await api('GET', `/v1/betaGroups/${grp.id}`);
