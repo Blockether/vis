@@ -131,7 +131,7 @@
       ;; headline AND the body its own `:render-start-call-fn` authored (`$ npm test
       ;; (running)` over a COMMAND section) instead of collapsing to a bare band.
       (let
-        [running (form/result-card {:vis/tool-name "shell"
+        [running (form/result-card {:vis/tool-name "shell_run"
                                     :pending-summary "$ npm test (running)"
                                     :pending-render "**COMMAND**\n```bash\nnpm test\n```"})]
         (expect (= "$ npm test (running)" (:summary running)))
@@ -139,12 +139,13 @@
         (expect (:collapsible? running)))
       ;; Summary-only pending card: nothing to fold under it yet.
       (let
-        [bare (form/result-card {:vis/tool-name "shell" :pending-summary "◷ `dev` reading logs"})]
+        [bare (form/result-card {:vis/tool-name "shell_logs"
+                                 :pending-summary "◷ `dev` reading logs"})]
         (expect (nil? (:body bare)))
         (expect (not (:collapsible? bare))))
       ;; The moment the result lands it wins — a finished card never says "running".
       (let
-        [done (form/result-card {:vis/tool-name "shell"
+        [done (form/result-card {:vis/tool-name "shell_run"
                                  :pending-summary "$ npm test (running)"
                                  :pending-render "**COMMAND**\n```bash\nnpm test\n```"
                                  :result-summary "exit 0 · 12 lines"
@@ -159,17 +160,17 @@
 
 (defdescribe form-authored-display-code-test
              (it "keeps a tool-authored pending display instead of re-deriving it from the call"
-                 ;; `shell`'s `:render-start-call-fn` already rendered the bash this call is about to run;
+                 ;; `shell_run`'s `:render-start-call-fn` already rendered the bash this call is about to run;
                  ;; `with-display-code` must not overwrite it with the invocation's own formatting.
                  (let
-                   [form (form/with-display-code {:code "shell({\"commands\": [\"sleep 30\"]})"
+                   [form (form/with-display-code {:code "shell_run({\"commands\": [\"sleep 30\"]})"
                                                   :display-code "sleep 30"
                                                   :display-language "bash"
-                                                  :vis/tool-name "shell"})]
+                                                  :vis/tool-name "shell_run"})]
                    (expect (= "sleep 30" (:display-code form)))
                    (expect (= "bash" (:display-language form)))
                    ;; the raw invocation is still carried for the model-facing surfaces
-                   (expect (= "shell({\"commands\": [\"sleep 30\"]})" (:code form)))))
+                   (expect (= "shell_run({\"commands\": [\"sleep 30\"]})" (:code form)))))
              (it "still derives the display for a form that authored none"
                  (let [form (form/with-display-code {:code "x=1"})]
                    (expect (seq (:display-code form)))

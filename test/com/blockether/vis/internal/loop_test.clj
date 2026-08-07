@@ -3679,7 +3679,7 @@
              ;; a printed edit silently loses its card.
              (let [op @#'lp/printed-result-op]
                (it "reads the stamped op off a map result"
-                   (expect (= "fs" (op {"op" "fs" "action" "delete" "path" "a.txt"})))
+                   (expect (= "delete" (op {"op" "delete" "action" "delete" "paths" ["a.txt"]})))
                    (expect (= "cat" (op {"op" "cat"}))))
                (it "resolves a list of per-file edit rows to the shared patch renderer"
                    (expect (= "patch" (op [{"path" "a.clj" "op" "update" "changed" true}])))
