@@ -1577,8 +1577,11 @@
 
 ;;; ── Key handling ───────────────────────────────────────────────────────────
 
-(defn- resolve-prefix-key
+(defn resolve-prefix-key
   "Resolve the keystroke pressed AFTER the C-x prefix (state carries `:prefix`).
+   PUBLIC because the C-x hydra band (`dialogs/prefix-band!`) reads that
+   keystroke on the screen's behalf and resolves it HERE — the band paints the
+   chord, it never re-implements it.
    The prefix is cleared either way:
      • C-x p (or C-x C-p) (`keymap/prefix-palette-key`) → the Command Palette.
      • C-x <letter> in `keymap/prefix-commands` → the vis verb.

@@ -11,6 +11,7 @@
             [com.blockether.vis.ext.channel-tui.header :as header]
             [com.blockether.vis.ext.channel-tui.human-input :as hi]
             [com.blockether.vis.ext.channel-tui.input :as input]
+            [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.mcp :as mcp]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
@@ -4470,6 +4471,26 @@
   (state/dispatch [:attach-running-turn nil session-result])
   (subscribe-session-live! id))
 
+(defn- resolve-prefix!
+  "C-x is a HYDRA, not a dead prefix: the moment `input/handle-key` arms it, the
+   band (`keymap/prefix-spec` painted by `dlg/prefix-band!`) goes up over the
+   transcript, the NEXT keystroke is read there, and `input/resolve-prefix-key`
+   turns it into the very same `{:action :state}` a blind chord produced. So the
+   verbs are visible while the chord is half-typed, and every C-x binding — the
+   letters the band lists, plus TAB, the arrows and the digits it does not —
+   still resolves in exactly one place.
+
+   `r` is the `handle-key` result; anything that did not arm the prefix passes
+   through untouched."
+  [^TerminalScreen screen db r]
+  (if-not (:prefix (:state r))
+    r
+    (if-let [key (with-dialog-lock #(dlg/prefix-band! screen
+                                                      (or (get-in db [:layout :messages-top]) 1)
+                                                      (keymap/prefix-spec db)))]
+      (input/resolve-prefix-key key (:state r))
+      {:action :continue :state (dissoc (:state r) :prefix)})))
+
 (defn- terminal-ctrl-c-behaviour
   "Lanterna's 3-arg UnixTerminal constructor defaults to
    CTRL_C_KILLS_APPLICATION. In raw mode Ctrl+C is decoded as a
@@ -6824,7 +6845,7 @@
                            {:action :escaped-typing
                             :state (:input db)
                             :character escaped-char}
-                           (input/handle-key key (:input db)))]
+                           (resolve-prefix! screen db (input/handle-key key (:input db))))]
                      ;; Apply the editor state for EVERY action except
                      ;; :clear-input. `handle-key` returns :clear-input with an
                      ;; already-empty buffer whenever the draft is non-empty, but

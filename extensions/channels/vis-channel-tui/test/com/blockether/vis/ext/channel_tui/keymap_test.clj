@@ -1,6 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.keymap-test
   (:require [clojure.set :as set]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
+            [com.blockether.vis.ext.channel-tui.transient :as tr]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe chord-label-test
@@ -107,3 +108,39 @@
                  ;; reusing `x` there is fine too (Ctrl+X is the prefix, never an editing key).
                  (expect (= \p keymap/prefix-palette-key))
                  (expect (= \x keymap/palette-meta-key))))
+
+(defdescribe
+  prefix-hydra-test
+  ;; C-x is a TRANSIENT band (an Emacs hydra / doom leader), not a dead prefix
+  ;; waiting in the echo area: the spec is what the band paints, and it may never
+  ;; offer a key the chord itself does not resolve.
+  (let
+    [spec (fn [db]
+            (keymap/prefix-spec db))]
+    (it "is a legal transient the band can paint" (expect (nil? (tr/check (spec {})))))
+    (it "every row is a real C-x chord, and every reachable verb has a row"
+        (let [items (mapcat :items (:groups (spec {})))]
+          (expect (seq items))
+          (doseq [{:keys [key id]} items]
+            (expect
+              (= id
+                 (if (= id :show-palette) :show-palette (keymap/prefix-action-for (first key))))))
+          (expect (= (set (map :action (keymap/available-prefix-commands {})))
+                     (disj (set (map :id items)) :show-palette)))))
+    (it "the palette is always the last way out"
+        (expect (= [:show-palette] (mapv :id (:items (last (:groups (spec {})))))))
+        (expect (= (str keymap/prefix-palette-key)
+                   (:key (first (:items (last (:groups (spec {})))))))))
+    (it "context-only verbs appear only where they can act"
+        (let
+          [ids (fn [db]
+                 (set (map :id (mapcat :items (:groups (spec db))))))]
+          (expect (not (contains? (ids {}) :close-tab)))
+          (expect (not (contains? (ids {}) :fork-at-turn)))
+          (expect (contains? (ids {:tabs [{:id :a} {:id :b}]}) :close-tab))
+          (expect (contains? (ids {:messages [{:role :user}]}) :fork-at-turn))
+          ;; palette-only verbs are never painted
+          (expect (not (contains? (ids {:tabs [{:id :a} {:id :b}] :messages [{:role :user}]})
+                                  :fork-session)))))
+    (it "every verb declares a heading the hydra knows"
+        (expect (every? (set keymap/prefix-groups) (map :group keymap/prefix-commands))))))

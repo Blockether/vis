@@ -6333,6 +6333,38 @@
                    (.setCursorPosition screen nil)
                    (.refresh screen Screen$RefreshType/DELTA))))))
 
+(defn prefix-band!
+  "The C-x HYDRA: paint `spec` as a band in the LIVE SESSION frame, read exactly
+   ONE keystroke, restore the frame and hand that keystroke BACK raw.
+
+   It is deliberately not a `tr/run!`: the band advertises the chord, it does not
+   own it. `input/resolve-prefix-key` still decides what the second key means, so
+   C-x TAB, C-x ←/→ and C-x 1…9 keep working even though no row lists them, and a
+   verb can never be reachable in the band but dead from the keyboard.
+
+   Returns the `KeyStroke` (Esc included — the resolver reads it as an abort), or
+   nil when the terminal had nothing to give."
+  [^TerminalScreen screen content-top spec]
+  (let
+    [size
+     (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+
+     g
+     (.newTextGraphics screen)
+
+     restore!
+     (frame-restorer screen)
+
+     region
+     (assoc (tr/band-region (.getColumns size) (.getRows size) (or content-top 1))
+       :restore! restore!)]
+
+    (try (band-frame! screen g region spec)
+         (read-modal-key! screen)
+         (finally (when restore! (restore!))
+                  (.setCursorPosition screen nil)
+                  (.refresh screen Screen$RefreshType/DELTA)))))
+
 ;;; ── Questions a band asks on its OWN hint row ───────────────────────────────
 ;; `ctx` is what `session-band!` hands its `f`: the screen, its graphics and the
 ;; band's region. These wrappers are the whole reason a band's follow-up

@@ -82,29 +82,39 @@
    app) and `Ctrl+M` == Enter (byte 0x0D). The dispatcher still ALSO accepts a
    Ctrl'd second key where it survives (so `C-x C-f` == `C-x f`), but the plain
    form is the one we advertise because it works for EVERY letter.
-   Order is the which-key / help display order. An optional `:show-when` tag
-   (`:multi-tab`, `:has-turns`) gates the verb's which-key STRIP entry to the
-   context where it can act; `:never` keeps it palette-only. The chord, palette,
-   and help still list every verb."
-  [{:action :cycle-model :key \m :label "model"} {:action :pick-model :key \c :label "choose model"}
-   {:action :cycle-reasoning :key \r :label "reasoning"}
-   {:action :cycle-verbosity :key \l :label "length" :show-when :never}
-   {:action :search-open :key \f :label "search" :show-when :never}
-   {:action :pick-file :key \a :label "attach file"}
-   {:action :toggle-voice-recording :key \v :label "voice"}
-   {:action :open-drafts :key \d :label "drafts"} {:action :toggle-help :key \h :label "help"}
-   {:action :new-session :key \n :label "new session"}
-   {:action :show-sessions :key \s :label "switch session"}
+
+   `:group` is the heading the verb sits under in the C-x HYDRA (`prefix-spec`)
+   and must be one of `prefix-groups`; order inside a group is declaration order.
+   An optional `:show-when` tag (`:multi-tab`, `:has-turns`) gates the verb's
+   HYDRA row to the context where it can act; `:never` keeps it palette-only. The
+   chord, palette, and help still list every verb."
+  [{:action :cycle-model :key \m :label "model" :group "Model"}
+   {:action :pick-model :key \c :label "choose model" :group "Model"}
+   {:action :cycle-reasoning :key \r :label "reasoning" :group "Model"}
+   {:action :cycle-verbosity :key \l :label "length" :group "Model" :show-when :never}
+   {:action :search-open :key \f :label "search" :group "Buffer" :show-when :never}
+   {:action :pick-file :key \a :label "attach file" :group "Tools"}
+   {:action :toggle-voice-recording :key \v :label "voice" :group "Tools"}
+   {:action :open-drafts :key \d :label "drafts" :group "Session"}
+   {:action :toggle-help :key \h :label "help" :group "Buffer"}
+   {:action :new-session :key \n :label "new session" :group "Session"}
+   {:action :show-sessions :key \s :label "switch session" :group "Session"}
    ;; fork: `y` = the Y-shaped split of a branch; `t` = fork AT a chosen turn.
-   {:action :fork-session :key \y :label "fork session" :show-when :never}
-   {:action :fork-at-turn :key \t :label "fork at turn" :show-when :has-turns}
-   {:action :switch-project :key \w :label "switch project"}
-   {:action :close-tab :key \k :label "close tab" :show-when :multi-tab}
-   {:action :recenter :key \j :label "jump to bottom"}
+   {:action :fork-session :key \y :label "fork session" :group "Session" :show-when :never}
+   {:action :fork-at-turn :key \t :label "fork at turn" :group "Session" :show-when :has-turns}
+   {:action :switch-project :key \w :label "switch project" :group "Session"}
+   {:action :close-tab :key \k :label "close tab" :group "Session" :show-when :multi-tab}
+   {:action :recenter :key \j :label "jump to bottom" :group "Buffer"}
    ;; `z` = vim's fold prefix — the jump-label overlay toggles folds.
-   {:action :toggle-detail-labels :key \z :label "label folds"}
-   {:action :open-magit :key \g :label "git status"}
-   {:action :providers :key \o :label "providers"}])
+   {:action :toggle-detail-labels :key \z :label "label folds" :group "Buffer"}
+   {:action :open-magit :key \g :label "git status" :group "Tools"}
+   {:action :providers :key \o :label "providers" :group "Tools"}])
+
+(def prefix-groups
+  "Heading order of the C-x hydra. A band taller than the terminal loses its LAST
+   rows (`transient/band-geometry`), so the groups are ordered by how often the
+   verb under them is the one being reached for."
+  ["Session" "Model" "Buffer" "Tools"])
 
 (def bindings
   "Direct (single-chord) app verbs — EMPTY now. Every verb moved behind the C-x
@@ -202,3 +212,61 @@
    Emacs command launcher; needs \"Use Option as Meta\" on macOS).
    `x` = `execute-extended-command`."
   \x)
+
+;; ── The C-x hydra ───────────────────────────────────────────────────────────
+;; C-x is not a dead prefix waiting in the echo area: it opens a magit-style
+;; TRANSIENT band listing every verb the next keystroke can run, exactly like an
+;; Emacs hydra / doom leader. The spec is PURE data here; `dialogs/prefix-band!`
+;; paints it and `input/resolve-prefix-key` still owns the keystroke, so the band
+;; can never bind a key the chord itself does not.
+
+(defn verb-available?
+  "Does a prefix-command's `:show-when` tag hold for the current `db`? Untagged
+   verbs always apply; the tagged ones surface in the hydra ONLY where they can
+   act — `:multi-tab` needs a second tab to close, `:has-turns` needs a turn to
+   fork at, `:never` is palette-only. The chord, palette, and help list every
+   verb regardless."
+  [db {:keys [show-when]}]
+  (case show-when
+    :multi-tab
+    (> (count (:tabs db)) 1)
+
+    :has-turns
+    (boolean (seq (:messages db)))
+
+    :never
+    false
+
+    true))
+
+(defn available-prefix-commands
+  "`prefix-commands` filtered to the verbs that can act in `db`, in declaration
+   order."
+  [db]
+  (filterv #(verb-available? db %) prefix-commands))
+
+(defn prefix-spec
+  "PURE: the `transient/run!` spec for the C-x hydra in `db` — one group per
+   `prefix-groups` heading that has a verb to show, plus the palette, which is
+   the way to every verb this band had no room or no context for.
+
+   Rows are display-only: the band paints them and hands the raw keystroke back
+   to `input/resolve-prefix-key`, so the label and the key can never drift from
+   the chord that actually fires."
+  [db]
+  (let [by-group (group-by :group (available-prefix-commands db))]
+    {:title (str (chord prefix-key) " — vis commands")
+     :groups (-> (into []
+                       (keep (fn [g]
+                               (when-let [cmds (seq (get by-group g))]
+                                 {:title g
+                                  :items (mapv
+                                           (fn [{:keys [action key label]}]
+                                             {:key (str key) :type :action :id action :label label})
+                                           cmds)})))
+                       prefix-groups)
+                 (conj {:title "Everything else"
+                        :items [{:key (str prefix-palette-key)
+                                 :type :action
+                                 :id :show-palette
+                                 :label "command palette…"}]}))}))
