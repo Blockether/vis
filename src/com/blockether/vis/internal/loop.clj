@@ -5722,8 +5722,7 @@
                   :envelope (:envelope result*)
                   :role (:role result*)
                   :timeout? (boolean (:timeout? result*))
-                  :repaired? (boolean (:repaired? result*))
-                  :auto-repaired? (boolean (:auto-repaired result*))}))
+                  :repaired? (boolean (:repaired? result*))}))
              {:block expr
               :result result*
               :result-render result-render

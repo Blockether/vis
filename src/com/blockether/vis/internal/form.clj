@@ -46,8 +46,7 @@
    [:render-segments "render_segments"] [:result-kind "result_kind"]
    [:result-detail "result_detail"] [:tag "tag"]
    ;; tool-call linkage + status flags channels surface
-   [:svar/tool-call-id "tool_call_id"] [:timeout? "is_timeout"] [:repaired? "is_repaired"]
-   [:auto-repaired? "is_auto_repaired"]])
+   [:svar/tool-call-id "tool_call_id"] [:timeout? "is_timeout"] [:repaired? "is_repaired"]])
 
 (def display-keys
   "The canonical engine keys projected by `->display` and recovered by `<-wire`."
@@ -64,7 +63,7 @@
   {"python_execution" "RESULT" "native_call" "NATIVE CALL" "repl_eval" "REPL"})
 
 
-(defn tool-label
+(defn- tool-label
   "The op-card badge LABEL for a native tool's wire name: the name uppercased,
    except the few `label-overrides` rename. ONE place both channels derive it from
    so the TUI badge and the web label never drift. nil for a non-tool form."
@@ -102,7 +101,7 @@
                                            the summary (a chevron/`<details>`)
 
    A call still RUNNING has no result yet, so the headline falls back to the
-   tool-authored `:pending-summary` (`shell`'s `$ npm test (running)`): the SAME
+   tool-authored `:pending-summary` (`shell_run`'s `$ npm test (running)`): the SAME
    card, in its awaiting state, rather than a bare unlabeled code band.
 
    `nil` for a NON-tool form (no `:vis/tool-name`) — its result rendering stays
@@ -156,7 +155,7 @@
       [c]
       [])))
 
-(defn native-tool-form?
+(defn- native-tool-form?
   "True when `form` is a NATIVE tool call (cat/rg/patch/…): it carries a
    `:vis/tool-name` and therefore renders as an op-card via `result-card`."
   [{tool-name :vis/tool-name}]

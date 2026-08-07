@@ -31,7 +31,7 @@
     [{:vis/tool-name "cat" :result-summary "read 3 lines" :result-render "```\nx\n```"}
      {:vis/tool-name "rg" :result-summary "5 hits in 1 file" :result-render "a.clj:1: x"}]
 
-    (:timeout? :repaired? :auto-repaired?)
+    (:timeout? :repaired?)
     true
 
     ;; everything else: a distinctive string
@@ -145,7 +145,7 @@
       (expect (= {} (form/->display {:result nil :vis/tool-name nil})))
       (expect (= {:vis/tool-name "rg"} (form/->display {:vis/tool-name "rg" :result-render nil}))))
   (it "labels the streaming placeholder as a native call"
-      (expect (= "NATIVE CALL" (form/tool-label "native_call")))))
+      (expect (= "NATIVE CALL" (#'form/tool-label "native_call")))))
 
 (defdescribe form-authored-display-code-test
              (it "keeps a tool-authored pending display instead of re-deriving it from the call"

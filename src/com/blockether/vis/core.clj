@@ -359,14 +359,11 @@
 ;; Canonical per-form DISPLAY contract — channels project the whole form-display
 ;; field set through ONE list (see internal/form.clj): `->display` outbound,
 ;; `<-wire` inbound (tolerant of the gateway wire's snake_case + keyword values).
-(import-vars [form-display-keys form/display-keys]
-             [form->display form/->display]
+(import-vars [form->display form/->display]
              [form-with-display-code form/with-display-code]
              [form<-wire form/<-wire]
-             [tool-label form/tool-label]
              [result-card form/result-card]
              [result-cards form/result-cards]
-             [native-tool-form? form/native-tool-form?]
              [hide-tool-code? form/hide-tool-code?]
              [coalesce-forms form/coalesce-forms])
 
