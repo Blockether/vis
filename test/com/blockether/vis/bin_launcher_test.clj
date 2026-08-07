@@ -87,8 +87,8 @@
 
       pb
       (java.lang.ProcessBuilder. ^java.util.List
-                                 (vec ["bash" (.getAbsolutePath (io/file repo "bin/vis-agent")) "--jvm"
-                                       "--version"]))
+                                 (vec ["bash" (.getAbsolutePath (io/file repo "bin/vis-agent"))
+                                       "--jvm" "--version"]))
 
       env
       (.environment pb)]
@@ -249,8 +249,8 @@
   [dir out]
   (let
     [pb (java.lang.ProcessBuilder. ^java.util.List
-                                  (vec ["tar" "-C" (.getAbsolutePath ^java.io.File dir) "-czf"
-                                        (.getAbsolutePath ^java.io.File out) "."]))]
+                                   (vec ["tar" "-C" (.getAbsolutePath ^java.io.File dir) "-czf"
+                                         (.getAbsolutePath ^java.io.File out) "."]))]
     (.redirectErrorStream pb true)
     (let [process (.start pb)]
       (slurp (.getInputStream process))

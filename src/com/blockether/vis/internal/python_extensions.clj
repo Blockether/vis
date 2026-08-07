@@ -790,18 +790,29 @@
         (sequential? x) (mapv py-schema x)
         :else x))
 
-(defn- ->color-role
-  "Op-card badge colour role for a Python `color_role='search'`, or the fully
-   qualified `'tool-color/search'`. The host vocabulary is namespaced under
-   `tool-color`."
-  [s]
-  (if (str/includes? s "/") (keyword s) (keyword "tool-color" s)))
 
-(defn- render-adapter
-  "`:ext.symbol/render` for one Python-backed symbol. The Python callable gets
-   the tool result as plain string-keyed data and returns `{'summary': str,
-   'body': str}` (a bare string counts as the summary). A failing or unusable
-   renderer yields nil, so a bad op card never breaks the tool itself."
+(defn- render-start-call-adapter
+  "`:ext.symbol/render-start-call-fn` for one Python-backed symbol."
+  [ext-name ^Context ctx ^Value pyfn]
+  (fn [input]
+    (try (let [r (call-py-ext ext-name nil ctx pyfn [(stringify-deep input)])]
+           (when (map? r)
+             (reduce
+               (fn [card [wire-key host-key]]
+                 (if (some? (get r wire-key)) (assoc card host-key (str (get r wire-key))) card))
+               {}
+               [["summary" :summary] ["render" :render] ["code" :code] ["language" :language]])))
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::render-start-call-failed
+                      :data {:extension ext-name :error (ex-message t)}})
+           nil))))
+
+(defn- render-finish-call-adapter
+  "`:ext.symbol/render-finish-call-fn` for one Python-backed symbol. The Python
+   callable gets the tool result as plain string-keyed data and returns
+   `{'summary': str, 'body': str}` (a bare string counts as the summary). A failing
+   or unusable renderer yields nil, so a bad op card never breaks the tool itself."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [result]
     (try (let [r (call-py-ext ext-name nil ctx pyfn [(stringify-deep result)])]
@@ -814,16 +825,15 @@
                             (assoc :body (get r "body")))
                  :else nil))
          (catch Throwable t
-           (tel/log!
-             {:level :warn :id ::render-failed :data {:extension ext-name :error (ex-message t)}})
+           (tel/log! {:level :warn
+                      :id ::render-finish-call-failed
+                      :data {:extension ext-name :error (ex-message t)}})
            nil))))
 
 (defn- ->symbol-entry
   "`spec` is a Python registration dict — STRING keys (strings-only boundary).
-   Native-tool metadata (`schema`, `description`, `result`, `render`,
-   `color_role`) rides through `extension/symbol-entry`, so a Python-declared
-   tool is validated, advertised, documented and rendered exactly like a
-   Clojure one."
+   Native-tool metadata rides through `extension/symbol-entry`, so a Python-declared
+   tool is validated, advertised, documented and rendered exactly like a Clojure one."
   [ext-name alias-sym ^Context ctx spec]
   (let
     [sym
@@ -838,11 +848,11 @@
        (-> (conj '&)
            (conj 'args)))
 
-     render
-     (get spec "render")
+     render-start-call-fn
+     (get spec "render_start_call_fn")
 
-     color-role
-     (get spec "color_role")
+     render-finish-call-fn
+     (get spec "render_finish_call_fn")
 
      opts
      (cond-> {:tag (get symbol-tags (str (get spec "tag")) :observation)}
@@ -856,11 +866,12 @@
          (str (get spec "description")) :result
          (str (get spec "result")))
 
-       render
-       (assoc :render (render-adapter ext-name ctx render))
+       render-start-call-fn
+       (assoc :render-start-call-fn (render-start-call-adapter ext-name ctx render-start-call-fn))
 
-       (and (string? color-role) (not (str/blank? color-role)))
-       (assoc :color-role (->color-role color-role)))]
+       render-finish-call-fn
+       (assoc :render-finish-call-fn
+         (render-finish-call-adapter ext-name ctx render-finish-call-fn)))]
 
     (extension/symbol-entry {:symbol sym
                              :fn (tool-adapter ext-name sym ctx pyfn)

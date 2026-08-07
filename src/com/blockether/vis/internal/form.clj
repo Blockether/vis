@@ -3,16 +3,11 @@
    channel reads to render an executed form, live (via the gateway) and restored
    (via the DB).
 
-   Why this exists: the SAME field set used to be hand-listed in ~7 independent
-   allowlists — the loop chunk, the persisted block, the gateway `block.output`
-   wire payload, the gateway→chunk client projection, the live progress form, the
-   DB-restored form, and the restored display form. A new field was invisible
-   until every one was edited, and whichever layer forgot it silently dropped the
-   field (the gateway dropping `:tool-color-role` so the live badge vanished was
-   exactly that). Now every layer projects the WHOLE set through `->display`
-   (outbound) / `<-wire` (inbound, tolerant of the wire's snake_case + stringified
-   keyword values), so a new display field is a ONE-line change to `display-keys`
-   and `form-roundtrip-test` fails if a boundary stops carrying it.
+   Why this exists: the SAME field set used to be hand-listed in independent
+   allowlists across the loop, persistence, gateway, progress, and restored display
+   paths. Now every layer projects the WHOLE set through `->display` (outbound) /
+   `<-wire` (inbound), so a new display field is a ONE-line change to
+   `display-keys` and `form-roundtrip-test` fails if a boundary stops carrying it.
 
    Transformed fields (`:stdout`/`:error` bounded, `:silent`/`:duration_ms`
    renamed) stay as explicit gateway overrides — they are not carried verbatim, so
@@ -28,10 +23,9 @@
    overrides). Add a new verbatim display field HERE; `->display`/`<-wire` then
    flow it across every boundary without runtime key rewriting.
 
-   Grouped: the source the model wrote, the result surfaces (raw + the
-   pre-rendered op-card), the native-tool badge identity (label + colour), the
-   per-form display projections, the tool-call linkage, and the repair/timeout
-   flags channels surface."
+   Grouped: the source the model wrote, the result surfaces, the native-tool badge
+   label, the per-form display projections, the tool-call linkage, and the
+   repair/timeout flags channels surface."
   [;; source
    [:code "code"] [:display-code "display_code"] [:display-language "display_language"]
    [:comment "comment"] [:scope "scope"] [:started-at-ms "started_at_ms"]
@@ -39,15 +33,15 @@
    ;; op-card HEADLINE (a tool-authored summary, never a first-line body slice)
    [:result "result"] [:result-render "result_render"] [:result-summary "result_summary"]
    ;; the same HEADLINE while the call is still RUNNING, authored by the tool's
-   ;; `:render-call`. Its own key: a pending card must never look like an outcome,
+   ;; `:render-start-call-fn`. Its own key: a pending card must never look like an outcome,
    ;; so channels still read "running" off the absent `:result-*` fields.
    ;; …and the BODY it paints under that headline while it runs: the tool's own
    ;; card sections, built by the same renderers its finished body uses.
    [:pending-summary "pending_summary"] [:pending-render "pending_render"]
    ;; MULTI-card: canonical MINI-FORMS, recursively normalized by `<-wire`.
    [:cards "cards"]
-   ;; native-tool op-card badge identity; wire keys intentionally drop namespaces
-   [:vis/tool-name "tool_name"] [:tool-color-role "tool_color_role"]
+   ;; native-tool op-card badge identity
+   [:vis/tool-name "tool_name"]
    ;; display projections
    [:render-segments "render_segments"] [:result-kind "result_kind"]
    [:result-detail "result_detail"] [:tag "tag"]
@@ -68,14 +62,6 @@
    ran, so its badge is the plain uppercased `SHELL`."
   {"python_execution" "RESULT" "native_call" "NATIVE CALL" "repl_eval" "REPL"})
 
-(def tool-color-roles
-  "The canonical set of native-tool op-card BADGE colour roles — the ONE list both
-   channels colour against (TUI maps each to a lanterna fg, the web to a `--tool-*`
-   CSS var). Hand-maintained per-channel maps were free to drift; a guard test in
-   each channel asserts its map covers every role here, so a new role can't be
-   added in one channel and silently forgotten in the other."
-  [:tool-color/read :tool-color/search :tool-color/preview :tool-color/edit :tool-color/create
-   :tool-color/delete :tool-color/move :tool-color/shell :tool-color/meta :tool-color/test])
 
 (defn tool-label
   "The op-card badge LABEL for a native tool's wire name: the name uppercased,
@@ -101,19 +87,17 @@
 
 (defn result-card
   "Canonical tool-result CARD descriptor — the ONE place the op-card / collapse
-   decision is made, so the TUI and web AGREE on `tool?`/label/colour/summary/
-   collapsible instead of each re-deriving it from the raw form. Given an executed
+   decision is made, so the TUI and web AGREE on `tool?`/label/summary/collapsible
+   instead of each re-deriving it from the raw form. Given an executed
    form map, returns the op-card shape for a NATIVE TOOL result:
 
      {:tool?        true
-      :label        \"RG\"                — op-card badge label (`tool-label`)
-      :color-role   :tool-color/search   — badge colour role (keyword-normalized,
-                                           since a JSON wire hop stringifies it)
-      :summary      \"5 hits in 1 file\"  — the HEADLINE (`:result-summary`), nil
+      :label        RG                  — op-card badge label (`tool-label`)
+      :summary      5 hits in 1 file    — the HEADLINE (`:result-summary`), nil
                                            when the tool authored none
-      :body         \"…markdown…\"        — the detail body (`:result-render`), nil
+      :body         …markdown…          — the detail body (`:result-render`), nil
                                            for a summary-only tool (move/delete)
-      :collapsible? true}                — true ⇔ there's a body to fold under
+      :collapsible? true}               — true ⇔ there's a body to fold under
                                            the summary (a chevron/`<details>`)
 
    A call still RUNNING has no result yet, so the headline falls back to the
@@ -123,8 +107,7 @@
    `nil` for a NON-tool form (no `:vis/tool-name`) — its result rendering stays
    channel-specific (raw value / stdout). The badge is whatever the tool's
    `:summary` already produced; no first-line-of-body heuristic."
-  [{:keys [tool-color-role result-summary pending-summary result-render pending-render]
-    tool-name :vis/tool-name}]
+  [{:keys [result-summary pending-summary result-render pending-render] tool-name :vis/tool-name}]
   (when (some? tool-name)
     (let
       [summary
@@ -153,9 +136,6 @@
 
       {:tool? true
        :label (tool-label tool-name)
-       :color-role (cond (keyword? tool-color-role) tool-color-role
-                         (string? tool-color-role) (keyword tool-color-role)
-                         :else nil)
        :summary summary
        :body body
        :collapsible? (boolean body)})))
@@ -432,11 +412,6 @@
                  (if (next grp) (merge-run grp) (first grp))))
           (partition-by key-fn (vec forms)))))
 
-(def ^:private keyword-valued
-  "Display fields whose VALUE is a keyword (`:tool-color/search`), which a JSON
-   wire stringifies — `<-wire` coerces them back so a channel's keyword dispatch
-   doesn't miss."
-  #{:tool-color-role})
 
 (defn with-display-code
   "Attach the canonical cached ruff rendering of a form's Python source.
@@ -444,7 +419,7 @@
    the same formatter. Nested result cards are normalized recursively.
 
    An AUTHORED `:display-code` is never overwritten: a native tool may render
-   its own PENDING call (`:render-call` — `shell` ships the bash it is about to
+   its own PENDING call (`:render-start-call-fn` — `shell` ships the bash it is about to
    run instead of the raw invocation JSON), and that surface, paired with its
    `:display-language`, is the one the channels must paint."
   [form]
@@ -470,15 +445,13 @@
 (defn <-wire
   "Read the canonical display fields back off a gateway WIRE event into a form,
    using the literal wire spelling declared beside each engine key in
-   `display-fields`, and re-keywording keyword-valued fields. The single inbound
-   projection channels use — the mirror of `->display`."
+   `display-fields`. The single inbound projection channels use — the mirror of
+   `->display`."
   [event]
   (reduce (fn [acc [k wire-k]]
             (let [v (get event wire-k)]
               (cond (nil? v) acc
-                    (keyword-valued k) (assoc acc k (keyword v))
-                    ;; `:cards` is a vector of canonical MINI-FORMS. Recurse so
-                    ;; each nested colour keyword survives the JSON hop too.
+                    ;; `:cards` is a vector of canonical MINI-FORMS.
                     (= k :cards) (assoc acc k (mapv <-wire v))
                     :else (assoc acc k v))))
           {}

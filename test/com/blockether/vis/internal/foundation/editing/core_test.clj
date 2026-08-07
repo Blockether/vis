@@ -103,22 +103,21 @@
       (expect (some #(= {:type "string"} %) (:oneOf include-schema)))
       (expect (some #(= {:type "array" :items {:type "string"}} %) (:oneOf include-schema)))
       (expect (every? (comp seq str :result) tools))
-      (expect (every? :render tools))
+      (expect (every? :render-finish-call-fn tools))
       (expect (every? (comp seq str :description) tools))
       (expect (not-any? :ext.symbol/native-tool ents))))
   (it
-    "native-tool-renderers-by-op keys by the result :op string (cat→\"cat\", file-exists→\"file_exists\")"
+    "native-tool-finish-call-renderers-by-op keys by result :op (cat→\"cat\", file-exists→\"file_exists\")"
     (let
       [ext
        {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
 
        by-op
-       (extension/native-tool-renderers-by-op [ext])]
+       (extension/native-tool-finish-call-renderers-by-op [ext])]
 
-      (expect (fn? (:render (get by-op "cat"))))
-      (expect (fn? (:render (get by-op "grep"))))
-      (expect (contains? by-op "file_exists")) ;; file-exists → "file_exists"
-      (expect (= :tool-color/search (:color-role (get by-op "grep")))))))
+      (expect (fn? (:render-finish-call-fn (get by-op "cat"))))
+      (expect (fn? (:render-finish-call-fn (get by-op "grep"))))
+      (expect (contains? by-op "file_exists"))))) ;; file-exists → "file_exists"
 
 (defdescribe
   rg-simplified-api-test

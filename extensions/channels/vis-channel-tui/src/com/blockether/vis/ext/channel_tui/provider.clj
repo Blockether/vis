@@ -492,7 +492,7 @@
    against the fill, and both are read on every paint, so `/theme` recolours the
    badges instead of freezing the load-time palette."
   [role]
-  (let [fill (if (= role :fallback) t/tool-color-search t/header-active-tab-accent)]
+  (let [fill (if (= role :fallback) t/link-chrome-fg t/header-active-tab-accent)]
     [(t/contrast-ink fill) fill]))
 
 (defn- draw-runs!

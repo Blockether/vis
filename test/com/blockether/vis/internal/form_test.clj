@@ -15,13 +15,9 @@
 (def ^:private chunk->event @#'gw/chunk->event)
 
 (defn- sentinel
-  "A non-nil sentinel VALUE per display key, shaped like the real thing so the
-   round-trip exercises keyword-valued fields (`:tool-color-role`) and scalars."
+  "A non-nil sentinel value per display key, shaped like the real field."
   [k]
   (case k
-    :tool-color-role
-    :tool-color/search
-
     :result-kind
     :tool
 
@@ -31,18 +27,9 @@
     :render-segments
     [{:kind :code}]
 
-    ;; A print-many block: each card is a canonical MINI-FORM carrying a NESTED
-    ;; keyword colour the JSON wire stringifies — the exact hazard `<-wire` recurses
-    ;; over so the per-card colour survives like the top-level one.
     :cards
-    [{:vis/tool-name "cat"
-      :result-summary "read 3 lines"
-      :result-render "```\nx\n```"
-      :tool-color-role :tool-color/read}
-     {:vis/tool-name "rg"
-      :result-summary "5 hits in 1 file"
-      :result-render "a.clj:1: x"
-      :tool-color-role :tool-color/search}]
+    [{:vis/tool-name "cat" :result-summary "read 3 lines" :result-render "```\nx\n```"}
+     {:vis/tool-name "rg" :result-summary "5 hits in 1 file" :result-render "a.clj:1: x"}]
 
     (:timeout? :repaired? :auto-repaired?)
     true
@@ -60,62 +47,43 @@
 
 (defdescribe
   form-gateway-roundtrip-test
-  (it
-    "every display key survives loop chunk -> gateway block.output -> wire -> <-wire"
-    (let
-      [chunk
-       (into {:phase :form-result :iteration 1 :position 0}
-             (map (fn [k]
-                    [k (sentinel k)]))
-             form/display-keys)
+  (it "every display key survives loop chunk -> gateway block.output -> wire -> <-wire"
+      (let
+        [chunk
+         (into {:phase :form-result :iteration 1 :position 0}
+               (map (fn [k]
+                      [k (sentinel k)]))
+               form/display-keys)
 
-       [type _store payload]
-       (chunk->event chunk)
+         [type _store payload]
+         (chunk->event chunk)
 
-       back
-       (form/<-wire (simulate-wire payload))]
+         back
+         (form/<-wire (simulate-wire payload))]
 
-      (expect (= "block.output" type))
-      ;; The gateway carried, and <-wire recovered, EVERY canonical display key.
-      (doseq [k form/display-keys]
-        (expect (some? (get back k))
-                (str k " was dropped on the gateway round-trip — add it to a boundary projection")))
-      ;; Keyword-valued fields come back as KEYWORDS (not the wire's strings), or
-      ;; the channel's keyword dispatch (badge colour) silently misses.
-      (expect (= :tool-color/search (:tool-color-role back)))
-      (expect (keyword? (:tool-color-role back)))
-      ;; NESTED: each card is a mini-form whose snake_case keys + stringified colour
-      ;; were recovered by `<-wire` recursing — so a print-many block's per-card
-      ;; colours survive the JSON hop the same way the singular badge does.
-      (let [cards (:cards back)]
-        (expect (= 2 (count cards)))
-        (expect (= "cat" (:vis/tool-name (first cards))))
-        (expect (= :tool-color/read (:tool-color-role (first cards))))
-        (expect (= :tool-color/search (:tool-color-role (second cards))))
-        (expect (every? (comp keyword? :tool-color-role) cards)))))
+        (expect (= "block.output" type))
+        ;; The gateway carried, and <-wire recovered, EVERY canonical display key.
+        (doseq [k form/display-keys]
+          (expect (some? (get back k))
+                  (str k
+                       " was dropped on the gateway round-trip — add it to a boundary projection")))
+        ;; Nested cards survive the same wire hop as the singular display fields.
+        (let [cards (:cards back)]
+          (expect (= 2 (count cards)))
+          (expect (= "cat" (:vis/tool-name (first cards)))))))
   (it
     "result-cards is the ONE projection: N cards for a print-many form, 1 for a native form, none for a non-tool"
     ;; print-many: each :cards mini-form → its own op-card descriptor, in order.
     (let
-      [multi (form/result-cards {:vis/tool-name "python_execution"
-                                 :cards [{:vis/tool-name "cat"
-                                          :result-summary "read 3 lines"
-                                          :result-render "x"
-                                          :tool-color-role :tool-color/read}
-                                         {:vis/tool-name "rg"
-                                          :result-summary "5 hits"
-                                          :result-render "y"
-                                          :tool-color-role :tool-color/search}]})]
+      [multi (form/result-cards
+               {:vis/tool-name "python_execution"
+                :cards [{:vis/tool-name "cat" :result-summary "read 3 lines" :result-render "x"}
+                        {:vis/tool-name "rg" :result-summary "5 hits" :result-render "y"}]})]
       (expect (= 2 (count multi)))
       (expect (= ["CAT" "RG"] (mapv :label multi)))
-      (expect (= [:tool-color/read :tool-color/search] (mapv :color-role multi)))
       (expect (every? :tool? multi)))
     ;; single native form (no :cards) → exactly its own card.
-    (let
-      [one (form/result-cards {:vis/tool-name "rg"
-                               :result-summary "5 hits"
-                               :result-render "y"
-                               :tool-color-role :tool-color/search})]
+    (let [one (form/result-cards {:vis/tool-name "rg" :result-summary "5 hits" :result-render "y"})]
       (expect (= 1 (count one)))
       (expect (= "RG" (:label (first one)))))
     ;; non-tool form → no card at all (its body stays channel-specific).
@@ -157,7 +125,7 @@
                    (:summary (form/result-card {:vis/tool-name tool :result-summary summary}))))))
   (it "falls back to the tool-authored PENDING card while a call is still running"
       ;; A running call has no result yet, but it is the SAME card: it wears the
-      ;; headline AND the body its own `:render-call` authored (`$ npm test
+      ;; headline AND the body its own `:render-start-call-fn` authored (`$ npm test
       ;; (running)` over a COMMAND section) instead of collapsing to a bare band.
       (let
         [running (form/result-card {:vis/tool-name "shell"
@@ -188,7 +156,7 @@
 
 (defdescribe form-authored-display-code-test
              (it "keeps a tool-authored pending display instead of re-deriving it from the call"
-                 ;; `shell`'s `:render-call` already rendered the bash this call is about to run;
+                 ;; `shell`'s `:render-start-call-fn` already rendered the bash this call is about to run;
                  ;; `with-display-code` must not overwrite it with the invocation's own formatting.
                  (let
                    [form (form/with-display-code {:code "shell({\"commands\": [\"sleep 30\"]})"

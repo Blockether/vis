@@ -21,8 +21,6 @@
 
 (def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
 
-(def ^:private tool-color-role->fg @#'render/tool-color-role->fg)
-
 (def ^:private result-row-bg @#'render/result-row-bg)
 
 (def ^:private code-row-bg @#'render/code-row-bg)
@@ -92,13 +90,7 @@
 
 (defn- native-form
   [tool summary render]
-  (cond->
-    {:vis/tool-name tool
-     :success? true
-     :code ""
-     :result-summary summary
-     :tool-color-role :tool-color/search
-     :result {}}
+  (cond-> {:vis/tool-name tool :success? true :code "" :result-summary summary :result {}}
     render
     (assoc :result-render render)))
 
@@ -470,14 +462,6 @@
         (expect (str/includes? (:result-render card) "test/a_test.clj (no change)"))
         (expect (not (str/includes? (:result-render card) "1 file —"))))))
 
-(defdescribe
-  tool-color-role-coverage-test
-  (it "the TUI badge colour map covers every canonical vis/tool-color-roles role"
-      ;; Guard against drift: the role list lives once in vis core; if a new role is
-      ;; added there, this fails until the TUI map handles it (mirror of the web test).
-      (doseq [role vis/tool-color-roles]
-        (expect (some? (tool-color-role->fg role))
-                (str role " has no TUI badge colour — add it to render/tool-color-role->fg")))))
 
 (defmacro ^:private with-raw-code-on
   [& body]
@@ -809,7 +793,6 @@
          lines
          (format-iteration-entry {:iteration 0
                                   :forms [{:vis/tool-name "shell"
-                                           :tool-color-role :tool-color/shell
                                            :code code
                                            :display-code display-code
                                            :started-at-ms 1000
@@ -832,9 +815,8 @@
         [lines
          (format-iteration-entry {:iteration 0
                                   :forms [{:vis/tool-name "shell"
-                                           :tool-color-role :tool-color/shell
                                            :code "shell({\"commands\": [\"sleep 30\"]})"
-                                           ;; what `shell`'s own `:render-call` produced
+                                           ;; what `shell`'s own `:render-start-call-fn` produced
                                            :display-code "sleep 30"
                                            :display-language "bash"
                                            :started-at-ms 1000
@@ -862,9 +844,8 @@
         [lines
          (format-iteration-entry {:iteration 0
                                   :forms [{:vis/tool-name "shell"
-                                           :tool-color-role :tool-color/shell
                                            :code "shell({\"commands\": [\"sleep 30\"]})"
-                                           ;; the card `shell`'s own `:render-call` authored
+                                           ;; the card `shell`'s own `:render-start-call-fn` authored
                                            :pending-summary "$ sleep 30 (running)"
                                            :pending-render "**COMMAND**\n```bash\nsleep 30\n```"
                                            :started-at-ms 1000
@@ -3924,7 +3905,6 @@
     (let
       [texts
        (entry-text (tool-card-entries {:label "REPL"
-                                       :color-role :tool-color/shell
                                        :summary "(+ 1 1) ⇒ 2"
                                        :body
                                        "**RESULT**\n```clojure\n2\n```\n\n**STDOUT**\n```\nhi\n```"}
@@ -3945,7 +3925,6 @@
        (entry-text
          (tool-card-entries
            {:label "SHELL"
-            :color-role :tool-color/shell
             :summary "$ 2 shell commands — 2 succeeded, 0 failed"
             :body
             "### 1. $ first\n\n**STATUS**\n\nstatus: success\n\n────────────\n\n### 2. $ second\n\n**STATUS**\n\nstatus: success"}
@@ -3964,7 +3943,6 @@
                    (let
                      [entries (tool-card-entries
                                 {:label "RESULT"
-                                 :color-role :tool-color/shell
                                  :body (str "````vis-image\n[Image: shot.png 1578×444, 45.7 KB]\n"
                                             "/tmp/shot.png\nimage/png\n1578x444\n45.7 KB\n````")}
                                 {:fill-w 76 :session-id nil :detail-expansions {} :node-id "n1"})
@@ -4429,7 +4407,6 @@
                (format-iteration-entry
                  {:iteration 0
                   :forms [{:vis/tool-name "git"
-                           :tool-color-role :tool-color/shell
                            :code "git({\"commands\": [[\"commit\"]]})"
                            :pending-summary "commit — feat: thing (running)"
                            :pending-render
@@ -4456,7 +4433,6 @@
                (format-iteration-entry
                  {:iteration 0
                   :forms [{:vis/tool-name "shell"
-                           :tool-color-role :tool-color/shell
                            :code "shell({\"commands\": [\"run.sh\"]})"
                            :result-summary "$ run.sh"
                            :result-render (str

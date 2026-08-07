@@ -154,25 +154,6 @@
 
 (def code-border-fg (rgb :code-border-fg))
 
-(def tool-color-read (rgb :tool-color-read))
-
-(def tool-color-search (rgb :tool-color-search))
-
-(def tool-color-preview (rgb :tool-color-preview))
-
-(def tool-color-edit (rgb :tool-color-edit))
-
-(def tool-color-create (rgb :tool-color-create))
-
-(def tool-color-delete (rgb :tool-color-delete))
-
-(def tool-color-move (rgb :tool-color-move))
-
-(def tool-color-shell (rgb :tool-color-shell))
-
-(def tool-color-meta (rgb :tool-color-meta))
-
-(def tool-color-test (rgb :tool-color-test))
 
 (def iteration-header-fg (rgb :iteration-header-fg))
 
@@ -401,16 +382,6 @@
    :result-path-bg #'result-path-bg
    :result-path-fg #'result-path-fg
    :result-highlight-fg #'result-highlight-fg
-   :tool-color-read #'tool-color-read
-   :tool-color-search #'tool-color-search
-   :tool-color-preview #'tool-color-preview
-   :tool-color-edit #'tool-color-edit
-   :tool-color-create #'tool-color-create
-   :tool-color-delete #'tool-color-delete
-   :tool-color-move #'tool-color-move
-   :tool-color-shell #'tool-color-shell
-   :tool-color-meta #'tool-color-meta
-   :tool-color-test #'tool-color-test
    :iteration-header-fg #'iteration-header-fg
    :iteration-header-bg #'iteration-header-bg
    :answer-sep-fg #'answer-sep-fg

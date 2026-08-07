@@ -312,8 +312,7 @@
    every platform's JNI libs (sherpa-onnx, onnxruntime, sqlite-jdbc), but the
    onnxruntime macOS libs drag ~16.5 MB of nested *.dSYM DWARF debug bundles
    along and its win-x64 entry drags a 286 MB *.pdb; no runtime reads either."
-  ["ai/onnxruntime/native/.*\\.dSYM/.*"
-   "ai/onnxruntime/native/.*\\.pdb"
+  ["ai/onnxruntime/native/.*\\.dSYM/.*" "ai/onnxruntime/native/.*\\.pdb"
    ;; dep-jar warts: babashka/http-client ships scratch.clj and sci ships
    ;; scratch.cljs at the classpath ROOT of their published jars
    "scratch\\.cljs?"
@@ -363,10 +362,8 @@
     ;; The pin is LOCKED: 25.1.3, nothing higher. 25.2.x's points-to analysis
     ;; never converges on this tree and OOMs the builder at every heap size, so
     ;; a bump is refused here rather than six minutes into `native`.
-    (when (and (= "true" GRAAL_PIN_LOCKED)
-               (not= GRAAL_VERSION GRAAL_MAX_VERSION))
-      (throw (ex-info (str ".graalvm-version is LOCKED at "
-                           (or GRAAL_MAX_VERSION "<unset>")
+    (when (and (= "true" GRAAL_PIN_LOCKED) (not= GRAAL_VERSION GRAAL_MAX_VERSION))
+      (throw (ex-info (str ".graalvm-version is LOCKED at " (or GRAAL_MAX_VERSION "<unset>")
                            " (NOT UPGRADABLE), but GRAAL_VERSION=" GRAAL_VERSION
                            ".\n  Move GRAAL_MAX_VERSION deliberately, or set "
                            "GRAAL_PIN_LOCKED=\"false\" — see .graalvm-version.")
@@ -413,12 +410,12 @@
    of that JDK's cacerts and never modifies the JDK itself."
   [home]
   (let [script (io/file graalvm-script)]
-    (when (and (.isFile script)
-               (or (System/getenv "VIS_CA_CERT") (System/getenv "VIS_TRUSTSTORE")))
-      (let [{:keys [exit out]}
-            (b/process (cond-> {:command-args ["bash" (.getPath script) "--truststore"]
-                                :out :capture}
-                         home (assoc :env {"JAVA_HOME" home})))]
+    (when (and (.isFile script) (or (System/getenv "VIS_CA_CERT") (System/getenv "VIS_TRUSTSTORE")))
+      (let
+        [{:keys [exit out]}
+         (b/process (cond-> {:command-args ["bash" (.getPath script) "--truststore"] :out :capture}
+                      home
+                      (assoc :env {"JAVA_HOME" home})))]
         (when (zero? exit) (not-empty (str/trim (or out ""))))))))
 
 (defn- truststore-properties
@@ -482,31 +479,31 @@
                      [(str k) (pr-str v)]))
            (dissoc opts :auto-install-graalvm))
 
-     trust (truststore-properties home)
+     trust
+     (truststore-properties home)
 
      {:keys [exit]}
-     (b/process {:command-args args
-                 :env (cond->
-                        {"JAVA_HOME" home
-                         "GRAALVM_HOME" home
-                         ;; The clojure CLI prefers JAVA_CMD over JAVA_HOME, and
-                         ;; `bin/vis-agent` exports it — without pinning it here the child
-                         ;; silently starts on the INHERITED JDK and dies on the
-                         ;; hard refusal below (VIS_GRAALVM_SWITCHED already set).
-                         "JAVA_CMD" (str home "/bin/java")
-                         "PATH"
-                         (str home "/bin" java.io.File/pathSeparator (or (System/getenv "PATH") ""))
-                         "VIS_GRAALVM_SWITCHED" "1"}
-                        ;; Corporate CA: the child resolves dependencies over TLS under a
-                        ;; JDK that trusts only the public roots. JAVA_TOOL_OPTIONS (not
-                        ;; JDK_JAVA_OPTIONS) because every JVM the child forks — clojure,
-                        ;; native-image, its builder — must inherit the same trust.
-                        (seq trust)
-                        (assoc "JAVA_TOOL_OPTIONS"
-                          (str/join " "
-                                    (remove nil?
-                                            (cons (not-empty (System/getenv "JAVA_TOOL_OPTIONS"))
-                                                  trust)))))})]
+     (b/process
+       {:command-args args
+        :env (cond->
+               {"JAVA_HOME" home
+                "GRAALVM_HOME" home
+                ;; The clojure CLI prefers JAVA_CMD over JAVA_HOME, and
+                ;; `bin/vis-agent` exports it — without pinning it here the child
+                ;; silently starts on the INHERITED JDK and dies on the
+                ;; hard refusal below (VIS_GRAALVM_SWITCHED already set).
+                "JAVA_CMD" (str home "/bin/java")
+                "PATH" (str home "/bin" java.io.File/pathSeparator (or (System/getenv "PATH") ""))
+                "VIS_GRAALVM_SWITCHED" "1"}
+               ;; Corporate CA: the child resolves dependencies over TLS under a
+               ;; JDK that trusts only the public roots. JAVA_TOOL_OPTIONS (not
+               ;; JDK_JAVA_OPTIONS) because every JVM the child forks — clojure,
+               ;; native-image, its builder — must inherit the same trust.
+               (seq trust)
+               (assoc "JAVA_TOOL_OPTIONS"
+                 (str/join " "
+                           (remove nil?
+                             (cons (not-empty (System/getenv "JAVA_TOOL_OPTIONS")) trust)))))})]
 
     (System/exit (or exit 1))))
 
@@ -588,7 +585,8 @@
   [opts]
   (let [p (keyword (or (:profile opts) the-profile))]
     (when-not (= p the-profile)
-      (throw (ex-info (str "Unknown :profile " p
+      (throw (ex-info (str "Unknown :profile "
+                           p
                            " — :community is the only distribution, and it bundles everything")
                       {:profile p :available [the-profile]})))
     p))
@@ -819,8 +817,7 @@
      srcs
      (all-source-roots)]
 
-    (println "AOT compiling every ns across" (count srcs)
-             "source roots… (profile community)")
+    (println "AOT compiling every ns across" (count srcs) "source roots… (profile community)")
     ;; copy resources (incl. META-INF/vis-extension + META-INF/native-image)
     (b/copy-dir {:src-dirs srcs :target-dir native-class-dir})
     ;; sweep agent-session state (.omc/) that lands INSIDE source trees when
@@ -845,10 +842,7 @@
     ;; advertises. The repo-root VIS_VERSION file is the ONLY version source, so
     ;; its contents ship verbatim. Which build produced an artifact is the image
     ;; tag's job, never the version string's.
-    (let
-      [vfile
-       (io/file native-class-dir "vis" "VERSION")]
-
+    (let [vfile (io/file native-class-dir "vis" "VERSION")]
       (io/make-parents vfile)
       (spit vfile version))
     ;; no :ns-compile => compile EVERY ns found in :src-dirs (extensions included)
@@ -987,31 +981,32 @@
   [basis]
   (let
     [jars
-     (->> (:classpath-roots basis)
-          (filter #(str/ends-with? % ".jar"))
-          ;; Drop the tools.deps runtime download-fallback (+ any
-          ;; cognitect.aws S3 transporter tail) from the NATIVE classpath
-          ;; ONLY. A native image bundles/locates natives explicitly and
-          ;; never downloads — and cognitect.aws is not native-image-safe
-          ;; (objects land in the image heap → build failure). The plain-JVM
-          ;; classpath (deps.edn) keeps tools.deps so download still works.
-          ;; deps.edn now also :exclusions the maven-s3-transporter, so the aws
-          ;; jars are never resolved, downloaded or logged in the first place;
-          ;; the pattern stays as belt-and-braces against a transitive re-entry.
-          ;; NOTE the AWS-scoped `/com/cognitect/aws/` (NOT /com/cognitect/):
-          ;; the broad form also stripped cognitect/transit-clj, which
-          ;; clj-kondo.impl.cache requires — that silently failed the whole
-          ;; clj-kondo build-time preload chain and left the language-clojure
-          ;; extension UNBOUND in the native binary.
-          ;; The whole tools.deps TAIL goes with it: tools.deps.edn and the
-          ;; Apache maven-resolver stack are reachable only FROM tools.deps, so
-          ;; once it is gone they are ~15 dead jars the image builder would
-          ;; still scan and build-time-initialize. slf4j-api deliberately STAYS
-          ;; (telemere-slf4j binds it).
-          (remove
-            #(re-find
-               #"/org/clojure/tools\.deps/|/org/clojure/tools\.deps\.edn/|/tools\.deps\.maven-s3-transporter/|/com/cognitect/aws/|/org/apache/maven/"
-               %)))]
+     (->>
+       (:classpath-roots basis)
+       (filter #(str/ends-with? % ".jar"))
+       ;; Drop the tools.deps runtime download-fallback (+ any
+       ;; cognitect.aws S3 transporter tail) from the NATIVE classpath
+       ;; ONLY. A native image bundles/locates natives explicitly and
+       ;; never downloads — and cognitect.aws is not native-image-safe
+       ;; (objects land in the image heap → build failure). The plain-JVM
+       ;; classpath (deps.edn) keeps tools.deps so download still works.
+       ;; deps.edn now also :exclusions the maven-s3-transporter, so the aws
+       ;; jars are never resolved, downloaded or logged in the first place;
+       ;; the pattern stays as belt-and-braces against a transitive re-entry.
+       ;; NOTE the AWS-scoped `/com/cognitect/aws/` (NOT /com/cognitect/):
+       ;; the broad form also stripped cognitect/transit-clj, which
+       ;; clj-kondo.impl.cache requires — that silently failed the whole
+       ;; clj-kondo build-time preload chain and left the language-clojure
+       ;; extension UNBOUND in the native binary.
+       ;; The whole tools.deps TAIL goes with it: tools.deps.edn and the
+       ;; Apache maven-resolver stack are reachable only FROM tools.deps, so
+       ;; once it is gone they are ~15 dead jars the image builder would
+       ;; still scan and build-time-initialize. slf4j-api deliberately STAYS
+       ;; (telemere-slf4j binds it).
+       (remove
+         #(re-find
+            #"/org/clojure/tools\.deps/|/org/clojure/tools\.deps\.edn/|/tools\.deps\.maven-s3-transporter/|/com/cognitect/aws/|/org/apache/maven/"
+            %)))]
     (->> (concat jars (native-lib-jars basis))
          (into [native-class-dir])
          (str/join java.io.File/pathSeparator))))
@@ -1086,14 +1081,15 @@
      ;; So pin a deterministic, RAM-clamped ceiling instead of inheriting the
      ;; machine's size; VIS_NATIVE_EXTRA_ARGS is spliced LAST and overrides it.
      total-ram
-     (try
-       (.getTotalMemorySize
-        ^com.sun.management.OperatingSystemMXBean
-        (java.lang.management.ManagementFactory/getOperatingSystemMXBean))
-       (catch Throwable _ 0))
+     (try (.getTotalMemorySize ^com.sun.management.OperatingSystemMXBean
+                               (java.lang.management.ManagementFactory/getOperatingSystemMXBean))
+          (catch Throwable _ 0))
 
-     heap-gib (max 6 (min 18 (long (/ (* 0.6 (double total-ram)) 1073741824.0))))
-     init-gib (max 2 (quot heap-gib 3))
+     heap-gib
+     (max 6 (min 18 (long (/ (* 0.6 (double total-ram)) 1073741824.0))))
+
+     init-gib
+     (max 2 (quot heap-gib 3))
 
      ;; Extra native-image args spliced from the environment (space-separated).
      ;; Lets CI tune the builder JVM per-runner (e.g. -J-Xmx6g -J-Xms2g to fit a
@@ -1109,7 +1105,8 @@
      ;; JVM it forks must trust the same roots as the rest of the build, or a
      ;; TLS-intercepting proxy turns a 20-minute image build into a
      ;; SunCertPathBuilderException. `-J` passes them to the builder JVM.
-     trust (mapv #(str "-J" %) (truststore-properties nil))]
+     trust
+     (mapv #(str "-J" %) (truststore-properties nil))]
 
     (cond->
       ["-cp" (native-classpath basis) "-o" native-bin
@@ -1119,8 +1116,8 @@
        ;; first paint — and a future JDK blocks the call outright. The downcall
        ;; DESCRIPTORS themselves are registered in the build Feature
        ;; (com.blockether.vis.internal.nativeimage/-duringSetup).
-       "--enable-native-access=ALL-UNNAMED"
-       "-H:IncludeResources=META-INF/vis-extension/.*" "-H:IncludeResources=.*\\.edn$"
+       "--enable-native-access=ALL-UNNAMED" "-H:IncludeResources=META-INF/vis-extension/.*"
+       "-H:IncludeResources=.*\\.edn$"
        ;; the build-written `vis/VERSION` (git sha) read by `vis-agent --version`
        "-H:IncludeResources=vis/VERSION"
        ;; Flyway migration SQL (not in the agent-traced metadata)
@@ -1259,16 +1256,14 @@
   (assert-graalvm-ce! :native-image-only opts)
   (resolve-profile opts)
   (let [basis (b/create-basis {:project (root-deps-edn) :aliases [:native]})]
-
     ;; A prior `package`/uber run can leave a target/vis DIRECTORY behind; the
     ;; builder then dies at [8/8] Creating image with "Path exists as directory".
     (b/delete {:path native-bin})
     (println "native-image (reusing target/native-classes)…")
     (let
-      [{:keys [exit]} (b/process {:command-args (into [(native-image-command)]
-                                                      (native-image-args
-                                                        basis
-                                                        (oracle-native-image? opts)))})]
+      [{:keys [exit]} (b/process {:command-args
+                                  (into [(native-image-command)]
+                                        (native-image-args basis (oracle-native-image? opts)))})]
       (if (zero? exit)
         (println "-> built" native-bin)
         (throw (ex-info "native-image build failed" {:exit exit}))))))
@@ -1295,7 +1290,6 @@
   (assert-graalvm-ce! :native opts)
   (resolve-profile opts)
   (let [basis (prepare-native-classes!)]
-
     ;; (1) Intermediate AOT uberjar for build tooling. Never shipped or selected at runtime.
     (b/delete {:path native-uber})
     (b/uber {:class-dir native-class-dir
@@ -1309,16 +1303,11 @@
     (b/delete {:path native-bin})
     ;; (2) Private native runtime. Built from a classpath of real jars (NOT the
     ;; uberjar) so polyglot/graalpy keep their module-info + native-image.properties.
-    (println "native-image:"
-             native-bin
-             "(community)"
-             "(this takes several minutes)…")
+    (println "native-image:" native-bin "(community)" "(this takes several minutes)…")
     (let
-      [{:keys [exit]}
-       (b/process {:command-args
-                   (into
-                     [(native-image-command)]
-                     (native-image-args basis (oracle-native-image? opts)))})]
+      [{:keys [exit]} (b/process {:command-args
+                                  (into [(native-image-command)]
+                                        (native-image-args basis (oracle-native-image? opts)))})]
       (if (zero? exit)
         (println "-> built" native-bin)
         (throw (ex-info "native-image build failed" {:exit exit}))))))

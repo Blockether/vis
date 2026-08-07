@@ -1037,11 +1037,6 @@
        (some? (:vis/tool-name block))
        (assoc :vis/tool-name (:vis/tool-name block))
 
-       ;; Per-tool BADGE color (read/search/edit/…) so the channel paints the
-       ;; native tool's result card in its role color — survives DB round-trip.
-       (some? (:tool-color-role block))
-       (assoc :tool-color-role (:tool-color-role block))
-
        ;; The pre-rendered display STRING (native-tool card / pretty result) so a
        ;; DB-restored trace shows the SAME card the live stream did — channels read
        ;; this instead of pr-str'ing the raw `:result` map.

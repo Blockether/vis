@@ -833,7 +833,7 @@
          pill
          (if (= bang-pfx "!&") " shell & " " shell ")]
 
-        (.setForegroundColor g t/tool-color-shell)
+        (.setForegroundColor g t/code-border-fg)
         (.setBackgroundColor g t/terminal-bg)
         (.putString g (int pad) (int box-top) ^String (embed-in-bar bar pill))
         (.putString g (int pad) (int box-bottom) ^String bar)))
@@ -867,7 +867,7 @@
          lead
          (- (count line0) (count (str/triml line0)))]
 
-        (.setForegroundColor g t/tool-color-shell)
+        (.setForegroundColor g t/code-border-fg)
         (.setBackgroundColor g t/box-bg)
         (.putString g (int (+ input-pad-x lead)) (int text-top) ^String bang-pfx)))
     ;; Cursor position (visual coords)
@@ -1771,43 +1771,6 @@
                    (or seg-start-col col-pos))))))))
 
 ;; ---------------------------------------------------------------------------
-(defn- tool-color-role->fg
-  [role]
-  (case role
-    :tool-color/read
-    t/tool-color-read
-
-    :tool-color/search
-    t/tool-color-search
-
-    :tool-color/preview
-    t/tool-color-preview
-
-    :tool-color/edit
-    t/tool-color-edit
-
-    :tool-color/create
-    t/tool-color-create
-
-    :tool-color/delete
-    t/tool-color-delete
-
-    :tool-color/move
-    t/tool-color-move
-
-    :tool-color/shell
-    t/tool-color-shell
-
-    :tool-color/meta
-    t/tool-color-meta
-
-    :tool-color/test
-    t/tool-color-test
-
-    :tool-color/error
-    t/code-error-fg
-
-    nil))
 
 (defn- result-row-bg
   "Result rows (collapsible headline + expanded body) all share the quiet
@@ -2384,13 +2347,13 @@
                        recap-kind (:recap-kind meta)
                        kind-fg (case recap-kind
                                  :task
-                                 t/tool-color-edit
+                                 t/warning-fg
 
                                  :spec
-                                 t/tool-color-meta
+                                 t/md-h2-fg
 
                                  :fact
-                                 t/tool-color-read
+                                 t/code-syntax-number-fg
 
                                  :title
                                  t/md-h1-fg
@@ -2399,7 +2362,7 @@
                                  t/dialog-hint-key
 
                                  :consult
-                                 t/tool-color-search
+                                 t/link-chrome-fg
 
                                  t/dialog-hint)
                        trimmed (str/triml raw)
@@ -2591,13 +2554,7 @@
                        hovered? (and (= :toggle-details (:kind meta))
                                      (= abs-row (:row (:bounds (cr/hovered)))))
                        row-bg (code-row-bg meta hovered? t/code-block-bg)
-                       ;; The `▸ PYTHON +N more` disclosure header wears its
-                       ;; TOOL colour, exactly like every other tool heading;
-                       ;; ordinary program rows keep the quiet code foreground.
-                       tool-fg (tool-color-role->fg (:color-role meta))
-                       row-fg (cond hovered? t/link-chrome-hover-fg
-                                    tool-fg tool-fg
-                                    :else t/code-block-fg)]
+                       row-fg (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
 
                       (p/set-colors! g row-fg row-bg)
                       (p/fill-rect! g fbx y iw 1)
@@ -2618,9 +2575,7 @@
                        hovered? (and (= :toggle-details (:kind meta))
                                      (= abs-row (:row (:bounds (cr/hovered)))))
                        row-bg (result-row-bg meta hovered?)
-                       res-fg (cond hovered? t/link-chrome-hover-fg
-                                    :else (or (tool-color-role->fg (:color-role meta))
-                                              t/code-result-fg))]
+                       res-fg (if hovered? t/link-chrome-hover-fg t/code-result-fg)]
 
                       (p/set-colors! g res-fg row-bg)
                       (p/fill-rect! g fbx y iw 1)
@@ -2781,10 +2736,7 @@
                        hovered? (and (= :toggle-details (:kind meta))
                                      (= abs-row (:row (:bounds (cr/hovered)))))
                        bg (if hovered? t/link-chrome-hover-bg t/md-summary-bg)
-                       tool-fg (tool-color-role->fg (:color-role meta))
-                       fg (cond hovered? t/link-chrome-hover-fg
-                                tool-fg tool-fg
-                                :else t/md-summary-fg)]
+                       fg (if hovered? t/link-chrome-hover-fg t/md-summary-fg)]
 
                       (p/set-colors! g fg bg)
                       (p/fill-rect! g fbx y iw 1)
@@ -3067,10 +3019,7 @@
                        hovered? (and (= :toggle-details (:kind meta))
                                      (= abs-row (:row (:bounds (cr/hovered)))))
                        bg (if hovered? t/link-chrome-hover-bg t/th-md-summary-bg)
-                       tool-fg (tool-color-role->fg (:color-role meta))
-                       fg (cond hovered? t/link-chrome-hover-fg
-                                tool-fg tool-fg
-                                :else t/th-md-summary-fg)]
+                       fg (if hovered? t/link-chrome-hover-fg t/th-md-summary-fg)]
 
                       (p/set-colors! g fg bg)
                       (p/fill-rect! g fbx y iw 1)
@@ -3659,8 +3608,7 @@
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
   [{:keys [code comment display-code display-language pending-summary pending-render render-segments
-           result-render result-summary result-kind result-detail error success? silent?
-           tool-color-role cards]
+           result-render result-summary result-kind result-detail error success? silent? cards]
     tool-name :vis/tool-name}]
   [(text-fingerprint code) (text-fingerprint comment) render-segments
    (text-fingerprint result-render) (text-fingerprint result-summary) result-kind
@@ -3669,18 +3617,18 @@
    ;; What a RUNNING native call actually paints: the tool-authored code band
    ;; (`:display-code`/`:display-language`) and its pending headline
    ;; (`:pending-summary`). `:code` alone can't stand in for them — the same
-   ;; invocation renders differently once the tool's own `:render-call` lands,
+   ;; invocation renders differently once the tool's own `:render-start-call-fn` lands,
    ;; and without these the live bubble keeps the pre-display body forever.
    (text-fingerprint display-code) display-language (text-fingerprint pending-summary)
    (text-fingerprint pending-render)
-   ;; The native-tool BADGE identity the renderer paints (label + color); without
-   ;; these in the key, a form that gains them renders from a STALE cache entry.
-   tool-name tool-color-role
-   ;; Print-many cards: a CHEAP per-card digest (name/colour/summary + a body
-   ;; fingerprint, never the raw 20KB body) so two card-forms with the same code +
-   ;; summary but different cards can't collide on a stale cache entry.
+   ;; The native-tool identity the renderer paints. Without it in the key, a form
+   ;; that gains a tool name renders from a stale cache entry.
+   tool-name
+   ;; Print-many cards: a cheap per-card digest (name/summary + a body fingerprint)
+   ;; so two card-forms with the same code + summary but different cards cannot
+   ;; collide on a stale cache entry.
    (mapv (fn [c]
-           [(:vis/tool-name c) (:tool-color-role c) (text-fingerprint (:result-summary c))
+           [(:vis/tool-name c) (text-fingerprint (:result-summary c))
             (text-fingerprint (:result-render c))])
          cards)])
 
@@ -4032,7 +3980,7 @@
             (if baseline (into [baseline] per-turn) per-turn))))
 
 (defn- detail-summary-entries
-  [{:keys [marker max-w summary collapsed? session-id node-id color-role] :as detail-ctx}]
+  [{:keys [marker max-w summary collapsed? session-id node-id] :as detail-ctx}]
   (let
     [suffix
      (detail-id-suffix detail-ctx)
@@ -4058,8 +4006,7 @@
      {:kind :toggle-details
       :session-id (str session-id)
       :node-id (str node-id)
-      :collapsed? collapsed?
-      :color-role color-role}]
+      :collapsed? collapsed?}]
 
     (mapv (fn [line]
             {:line (str marker line) :meta meta})
@@ -4195,8 +4142,7 @@
                  :meta {:kind :toggle-details
                         :session-id (str session-id)
                         :node-id (str node-id)
-                        :collapsed? (not expanded?)
-                        :color-role nil}}]
+                        :collapsed? (not expanded?)}}]
 
         ;; One neutral blank above, then the dim band: top edge, the
         ;; THINKING header, reasoning (peek or full), bottom edge — all one thinking bubble.
@@ -4885,14 +4831,11 @@
           (conj pad)))))
 
 (defn- tool-card-entries
-  "Render ONE op-card (`vis/result-card` descriptor) into TUI line entries: the tool
-   LABEL + tool-authored SUMMARY on a headline painted in the tool's colour, the
-   markdown body nested UNDER it (collapsible via `node-id`). A summary-only card
-   (no body) is a single painted headline row with no expand triangle. The per-card
-   renderer shared by a single native-tool form AND each card of a print-many block,
-   so every op-card paints identically however many results one form carries."
-  [{:keys [label color-role summary body]}
-   {:keys [fill-w session-id detail-expansions node-id] :as opts}]
+  "Render one op-card (`vis/result-card` descriptor) into TUI line entries: the tool
+   label and tool-authored summary on a neutral headline, with the markdown body
+   nested under it (collapsible via `node-id`). A summary-only card has one headline
+   row and no expand triangle."
+  [{:keys [label summary body]} {:keys [fill-w session-id detail-expansions node-id] :as opts}]
   (let
     [body-text
      (some-> body
@@ -4963,8 +4906,7 @@
                                   :hidden-entries body-entries
                                   :collapsed? (not expanded?)
                                   :session-id session-id
-                                  :node-id node-id
-                                  :color-role color-role})]
+                                  :node-id node-id})]
 
         ;; Collapsed op-card gets ONE trailing `result-bg` pad row so the
         ;; badge reads as its own background BAND (not a lone colored line).
@@ -4977,7 +4919,7 @@
                        [{:line (str result-marker "") :meta nil}]))))
       (let
         [meta
-         {:kind :result-headline :color-role color-role}
+         {:kind :result-headline}
 
          ;; No chevron to fill the slot, so the headline sits at ONE col of
          ;; breathing room (flush-painted result-headline + a single space)
@@ -5315,7 +5257,7 @@
           ;; Canonical code surface: Python uses the gateway's cached, ruff-formatted
           ;; `:display-code`. A RUNNING native call is different: the user needs the
           ;; exact invocation submitted to the tool, so prefer its raw `:code`. The
-          ;; exception is a tool that RENDERS its own pending call (`:render-call`,
+          ;; exception is a tool that RENDERS its own pending call (`:render-start-call-fn`,
           ;; flagged by `:display-language`) — `shell` ships the bash it is about to
           ;; run, and that block, not the call JSON, is the evidence on screen.
           code-text
@@ -5421,8 +5363,7 @@
                   :summary (if expanded? "PYTHON" (str "PYTHON +" (count hidden-groups) " more"))
                   :collapsed? (not expanded?)
                   :session-id session-id
-                  :node-id code-node-id
-                  :color-role :tool-color/shell})]
+                  :node-id code-node-id})]
 
               ;; Accordion HEADER at the top of the code band (same rule as the
               ;; THINKING band and every op-card): the row labels the block
@@ -5537,8 +5478,7 @@
                entries
                (vec entries)
 
-               ;; Native tools (cat/rg/patch/…) carry a tool name +
-               ;; `:tool-color-role`. The LABEL renames a few wire
+               ;; Native tools carry a tool name. The label renames a few wire
                ;; names (python_execution → CODE).
                tool-label
                (:label card)
@@ -5566,15 +5506,10 @@
                    (assoc e :line (str result-marker stripped))))]
 
               (cond
-                ;; NATIVE TOOL result: the tool LABEL + the tool-authored
-                ;; SUMMARY ride ON the headline, painted in the tool's
-                ;; colour; the WHOLE `:result-render` body nests UNDER it
-                ;; (collapsible). The op-card look — label is never mixed
-                ;; into a body line, no `[details]` decoration, and the
-                ;; headline is a REAL summary the tool returned, never a
-                ;; first-line slice of the body. A summary-only tool
-                ;; (move/delete/exists) renders a plain headline with no
-                ;; expand triangle since there's nothing beneath it.
+                ;; Native tool result: the tool label and tool-authored summary ride
+                ;; on a neutral headline; the whole `:result-render` body nests under
+                ;; it (collapsible). A summary-only tool renders a plain headline
+                ;; with no expand triangle because there is nothing beneath it.
                 tool-label (tool-card-entries card
                                               {:fill-w fill-w
                                                :session-id session-id
@@ -5598,8 +5533,7 @@
                       :hidden-entries hidden
                       :collapsed? (not expanded?)
                       :session-id session-id
-                      :node-id result-node-id
-                      :color-role nil})]
+                      :node-id result-node-id})]
 
                   (vec (concat visible summary (when expanded? hidden))))
                 :else entries)))

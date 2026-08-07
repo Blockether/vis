@@ -822,87 +822,9 @@
   (let [{:keys [exit out]} (git* dir args)]
     (if (= 0 exit) (into [] (remove str/blank?) (str/split-lines (str out))) [])))
 
-(defn committed-head?
-  "True when `root` sits in a git repository that ALREADY HAS a commit — the
-   only thing a CLEAN draft can be seeded from."
-  [root]
-  (= 0 (:exit (git* (io/file root) ["rev-parse" "--verify" "--quiet" "HEAD"]))))
-
-(defn- clean-seed-manifest
-  "Sidecar file listing the repo-relative paths a CLEAN seed dropped from
-   `clone`. It lives NEXT TO the clone, dot-prefixed: housekeeping ignores dot
-   entries, the agent never sees it inside its workspace, and it can never be
-   mistaken for repo content that `apply!` should land."
-  ^File [clone]
-  (let [f (io/file clone)]
-    (io/file (.getParentFile f) (str "." (.getName f) ".clean-seed"))))
-
-(defn- clean-seed-skips
-  "Paths the clean seed deliberately left OUT of `clone`: the user's own
-   uncommitted trunk files. They are absent from the clone by construction, so
-   `deleted-paths` must never read that absence as an agent deletion and wipe
-   them from trunk."
-  [clone]
-  (let [f (clean-seed-manifest clone)]
-    (if (.isFile f) (into #{} (remove str/blank?) (str/split-lines (slurp f))) #{})))
-
-(defn- clean-seed!
-  "Scrub `clone` back to its COMMITTED HEAD: restore every tracked file to its
-   committed content and delete the files HEAD does not carry (untracked plus
-   index-added), while leaving gitignored build/dependency trees in place so the
-   draft still builds. Returns — and records in `clean-seed-manifest` — the
-   repo-relative paths it dropped, which is exactly the set `deleted-paths` must
-   ignore forever after.
-
-   Deliberately NOT `git reset --hard`: when trunk is a LINKED WORKTREE the
-   clone's `.git` still points at the ORIGINAL repository's admin directory, so
-   a reset would rewrite the user's real index and silently unstage their work.
-   Reading HEAD into a PRIVATE index and checking that out touches only files
-   inside the clone; no shared git state is ever written."
-  [clone]
-  (let
-    [dir
-     (io/file clone)
-
-     ;; Snapshot BEFORE scrubbing — afterwards these files are gone and git can
-     ;; no longer name them. Untracked files plus files staged as ADDED but
-     ;; never committed: neither exists in HEAD, both are the user's own.
-     dropped
-     (into (sorted-set)
-           (concat (git-lines dir ["ls-files" "--others" "--exclude-standard"])
-                   (git-lines dir ["diff" "--cached" "--name-only" "--diff-filter=A" "HEAD"])))
-
-     index
-     (io/file (.getParentFile (io/file clone)) (str "." (.getName (io/file clone)) ".clean-index"))
-
-     env
-     {"GIT_INDEX_FILE" (.getCanonicalPath index)}
-
-     read-tree
-     (git* dir ["read-tree" "HEAD"] env)
-
-     checkout
-     (when (= 0 (:exit read-tree)) (git* dir ["checkout-index" "-a" "-f"] env))]
-
-    (try (when-not (and (= 0 (:exit read-tree)) (= 0 (:exit checkout)))
-           (throw (ex-info "Could not seed the draft from the committed HEAD"
-                           {:type :workspace/clean-seed-failed
-                            :root (file-path clone)
-                            :read-tree-out (:out read-tree)
-                            :checkout-out (:out checkout)})))
-         ;; `git clean` would consult the SHARED index (and so keep index-added
-         ;; files); deleting the snapshot directly is both exact and inert.
-         (doseq [rel dropped]
-           (io/delete-file (io/file dir (str rel)) true))
-         (spit (clean-seed-manifest clone) (str/join "\n" dropped))
-         (vec dropped)
-         (finally (io/delete-file index true)))))
 
 (defn- discard-root!
   [backend-id root]
-  ;; The clean-seed sidecar lives NEXT TO the clone, so Rift's own discard
-  ;; never sees it — drop it with the clone it describes.
-  (when root (io/delete-file (clean-seed-manifest root) true))
   (when (and root (not= :live backend-id)) (rift-discard! {:root (file-path root)})))
 
 (defonce ^:private discard-executor
@@ -967,42 +889,12 @@
             true
             (recur (inc i))))))))
 
-(def ^:private fork-marker-name
-  "Marker file a CoW backend writes at the root of every workspace it creates.
-   Line one names the workspace; each following `excluded <path>` line is a
-   source-relative path the fork did not copy."
-  ".rift")
-
-(defn- fork-excluded-paths
-  "Repo-relative paths a filtered fork left OUT of `clone`, as the BACKEND
-   ITSELF recorded them in `fork-marker-name`. Only the DELETION side consults
-   this. Whole trees come back collapsed (`node_modules`, `apps/web/dist`), so a
-   walk prunes the subtree on a hit instead of listing thousands of files.
-
-   A filtered fork skips regenerable artifact trees and whatever the source
-   repository ignores. vis used to MIRROR that rule set to recognize them, and
-   the copy drifted from the original — a rule only the backend knew turned a
-   never-copied tree into an apparent agent deletion, and `apply!` erases those
-   from the user's real repo. Asking the clone what it is missing cannot drift.
-
-   A workspace with no marker — a backend that writes none, or a clone made
-   before backends recorded exclusions — yields `#{}`, which leaves the
-   pre-existing behavior untouched."
+(defn- rift-excluded-paths
+  "Repo-relative paths Rift left out of `clone`. Clean and filtered clones record
+   these paths in the workspace marker; asking Rift keeps that format and its
+   semantics out of Vis."
   [clone]
-  (let
-    [f
-     (io/file clone fork-marker-name)
-
-     prefix
-     "excluded "]
-
-    (if-not (.isFile f)
-      #{}
-      (into #{}
-            (comp (keep #(when (str/starts-with? % prefix) (subs % (count prefix))))
-                  (map #(str/replace % #"/+$" ""))
-                  (remove str/blank?))
-            (str/split-lines (slurp f))))))
+  (set (rift/excluded {:of clone})))
 
 (defn- fork-ignored-paths
   "Repo-relative paths the repository at `dir` ignores and does not track —
@@ -1098,18 +990,10 @@
    trunk mtimes (epoch/pre-epoch, e.g. unpacked from a tarball) from ever
    comparing below the baseline into a real `.delete` of the user's files.
 
-   Paths a CLEAN seed dropped (`clean-seed-skips`) are excluded too: the
-   clone never received the user's UNCOMMITTED trunk files, so their absence
-   is the SEED's doing and applying it must not delete them from trunk.
-
-   Paths the FORK itself never copied are excluded on the same principle. A
-   filtered CoW clone omits regenerable artifact trees and the source
-   repository's ignored trees, and RECORDS what it skipped in its workspace
-   marker (`fork-excluded-paths`); trunk's own ignore rules
-   (`fork-ignored-paths`) still cover clones taken before backends recorded it.
-   Either way their absence from the clone is the BACKEND's doing. Reading it as
-   an agent deletion would let `apply!` erase a user's ignored files — `.env`, a
-   generated native project, build output — from their real repo."
+   Paths Rift left out are excluded on the same principle. Filtered forks omit
+   regenerable or ignored trees, and clean restores omit uncommitted paths. Rift
+   records both in its workspace marker (`rift-excluded-paths`). Reading an
+   omitted path as an agent deletion would let `apply!` erase a user's files."
   [clone trunk fork-ms]
   (if-not (pos? (long fork-ms))
     []
@@ -1123,12 +1007,8 @@
        nofollow
        (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])
 
-       skips
-       ;; Absent from the clone BY CONSTRUCTION, never by the agent.
-       (clean-seed-skips clone)
-
        omitted
-       (into (fork-ignored-paths trunk) (fork-excluded-paths clone))
+       (rift-excluded-paths clone)
 
        fork-omitted?
        (fn [^Path rel]
@@ -1153,7 +1033,6 @@
                                  (paths/unixify rel)]
 
                                 (when (and (not (fork-omitted? rel))
-                                           (not (contains? skips rel-str))
                                            (< (.toMillis (.lastModifiedTime attrs)) (long fork-ms))
                                            (not (Files/exists (.resolve croot rel) nofollow)))
                                   (.add acc rel-str)))
@@ -1507,22 +1386,14 @@
    inherit its `:repo-root` (apply target); otherwise the parent is the
    user's real cwd (trunk).
 
-   `:clean? true` forks the REAL tree and then scrubs the clone back to the
-   committed HEAD: every tracked file is present at its committed content and
-   the user's uncommitted work is left behind in trunk. The baseline is a
-   real timestamp captured AFTER the scrub, so the revert itself is not read
-   as agent edits, and the dropped paths are recorded so `deleted-paths`
-   never mistakes them for deletions. Requires a repository with a commit;
-   throws `:workspace/clean-seed-unavailable` otherwise."
+   `:clean? true` forks the REAL tree and asks Rift to restore the clone to its
+   detached HEAD. Rift owns the Git index/worktree reset, removes uncommitted
+   paths, and records those omissions in its marker. The baseline is captured
+   after that operation so the reset is not read as an agent edit."
   [db-info {:keys [session-state-id label from clean? filesystem-roots]}]
   (let
     [trunk
      (or (:repo-root from) (trunk-root))
-
-     _
-     (when (and clean? (not (committed-head? trunk)))
-       (throw (ex-info "This project has no commit to start a clean draft from"
-                       {:type :workspace/clean-seed-unavailable :root (file-path trunk)})))
 
      parent
      (or (:root from) (trunk-root))
@@ -1536,12 +1407,12 @@
      {:keys [root backend mechanism]}
      (backend-fork! parent trunk nm)
 
-     ;; BEFORE the baseline below: the revert rewrites mtimes, and a clone
-     ;; that cannot be scrubbed must never survive as a half-seeded draft.
+     ;; BEFORE the baseline below: Rift's clean rewrites mtimes, and a clone
+     ;; that cannot be cleaned must never survive as a half-seeded draft.
      _
      (when clean?
        (try
-         (clean-seed! root)
+         (rift/clean! {:at root :commit "HEAD"})
          (catch Throwable t (try (discard-root! backend root) (catch Throwable _ nil)) (throw t))))
 
      ;; Capture AFTER the clone returns: cloned files keep their (older)

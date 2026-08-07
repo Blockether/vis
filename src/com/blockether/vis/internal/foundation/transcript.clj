@@ -132,14 +132,11 @@
     (contains? envelope :error)
     (assoc :error (:error envelope))
 
-    ;; Canonical native-tool IR (`:vis/tool-name`/`:tool-color-role`/
-    ;; `:result-summary`/`:result-render`, plus any printed `:cards`) so the
-    ;; dialog renderer reuses the SAME op-card descriptors the TUI/web build
-    ;; from (`vis/result-cards`) instead of re-parsing the invocation string.
+    ;; Canonical native-tool IR so the dialog renderer reuses the SAME op-card
+    ;; descriptors the TUI/web build instead of re-parsing the invocation string.
     (:vis/tool-name envelope)
     (assoc :vis/tool-name
-      (:vis/tool-name envelope) :tool-color-role
-      (:tool-color-role envelope) :result-summary
+      (:vis/tool-name envelope) :result-summary
       (:result-summary envelope) :result-render
       (:result-render envelope))
 
@@ -1067,7 +1064,6 @@
        :summary (when-not python? (or (:summary card) (tool-summary c)))
        :python? python?
        :carded? (some? card)
-       :color-role (:color-role card)
        :body (strip-ansi (:body card))
        :status status
        :preview (some-> (dialog-result-preview result-summary)
@@ -1557,46 +1553,41 @@
 (defn- render-tool-html
   "One tool segment as HTML. Python blocks show their source verbatim with the
    result folded beneath; native tools stay a collapsible op-card."
-  [{:keys [op summary code status preview body color-role python? carded?]}]
-  (let [op-style (when color-role (str " style=\"color:var(--tool-" (name color-role) ")\""))]
-    (if python?
-      (str "<div class=\"tool-py status-"
-           (name (or status :done))
-           "\">"
-           "<div class=\"tool-op\""
-           op-style
-           ">"
-           (html-escape op)
-           "</div>"
-           "<pre class=\"tool-code\"><code class=\"language-python\">"
-           (html-escape code)
-           "</code></pre>"
-           (when-not (str/blank? body)
-             (str "<details class=\"tool-result\"><summary>Result</summary>"
-                  "<div class=\"details-body\">"
-                  (md->html body)
-                  "</div></details>"))
-           "</div>\n")
-      (str "<details class=\"tool status-"
-           (name (or status :done))
-           "\">"
-           "<summary><span class=\"tool-op\""
-           op-style
-           ">"
-           (html-escape op)
-           "</span>"
-           (when-not (str/blank? summary)
-             (str "<span class=\"tool-args\">" (render-inline summary) "</span>"))
-           "</summary>\n<div class=\"details-body\">"
-           (cond (not (str/blank? body)) (md->html body)
-                 carded? nil
-                 :else
-                 (str "<pre class=\"tool-code\"><code class=\"language-python\">" (html-escape code)
-                      "</code></pre>" (when preview
-                                        (str "<div class=\"tool-out\">"
-                                             (html-escape (str (status-label status) " " preview))
-                                             "</div>"))))
-           "</div></details>\n"))))
+  [{:keys [op summary code status preview body python? carded?]}]
+  (if python?
+    (str "<div class=\"tool-py status-"
+         (name (or status :done))
+         "\">"
+         "<div class=\"tool-op\">"
+         (html-escape op)
+         "</div>"
+         "<pre class=\"tool-code\"><code class=\"language-python\">"
+         (html-escape code)
+         "</code></pre>"
+         (when-not (str/blank? body)
+           (str "<details class=\"tool-result\"><summary>Result</summary>"
+                "<div class=\"details-body\">"
+                (md->html body)
+                "</div></details>"))
+         "</div>\n")
+    (str "<details class=\"tool status-"
+         (name (or status :done))
+         "\">"
+         "<summary><span class=\"tool-op\">"
+         (html-escape op)
+         "</span>"
+         (when-not (str/blank? summary)
+           (str "<span class=\"tool-args\">" (render-inline summary) "</span>"))
+         "</summary>\n<div class=\"details-body\">"
+         (cond (not (str/blank? body)) (md->html body)
+               carded? nil
+               :else
+               (str "<pre class=\"tool-code\"><code class=\"language-python\">" (html-escape code)
+                    "</code></pre>" (when preview
+                                      (str "<div class=\"tool-out\">"
+                                           (html-escape (str (status-label status) " " preview))
+                                           "</div>"))))
+         "</div></details>\n")))
 
 (defn- render-dialog-turn-html
   "One user->assistant exchange as styled HTML: the user bubble, then the

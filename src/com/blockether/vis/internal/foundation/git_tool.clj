@@ -483,9 +483,8 @@ Run host Git serially from the workspace root. Pass ONE map whose non-empty `com
      :description
      (str "Run SERIAL host Git only when `session[\"workspace\"]` lacks VCS facts or to act. "
           "ONE options map; non-zero exits are data; later commands still run.")
-     :render render-git-batch-result
-     :render-call render-git-call
-     :color-role :tool-color/shell
+     :render-finish-call-fn render-git-batch-result
+     :render-start-call-fn render-git-call
      ;; Native calls dispatch straight to this two-argument handler. Python keeps
      ;; the same implementation through :inject-env?, so both paths have exactly
      ;; `[env opts]` and cannot drift into a third positional argument.

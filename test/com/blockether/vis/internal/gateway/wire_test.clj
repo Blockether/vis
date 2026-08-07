@@ -29,7 +29,6 @@
                            :tag :observation
                            :src "(cat \"x\")"
                            :vis/tool-name "cat"
-                           :tool-color-role :tool-color/read
                            :result-summary "`x` · 3 lines"
                            :result {:anchors {"1:abc" "line one"}}
                            :duration-ms 5}]}]}])
@@ -47,9 +46,8 @@
   canonical-roundtrip-test
   (it "canonical == parse-json ∘ json-str for a rich engine value"
       (expect (= (wire/canonical rich-fixture) (wire/parse-json (wire/json-str rich-fixture)))))
-  (it "namespaced keyword VALUES keep their namespace across the wire"
-      (expect (= {"tool_color_role" "tool-color/search"}
-                 (wire/canonical {:tool-color-role :tool-color/search}))))
+  (it "namespaced keyword values keep their namespace across the wire"
+      (expect (= {"status_code" "http/not-found"} (wire/canonical {:status-code :http/not-found}))))
   (it "map keys canonicalize to snake STRINGS, namespaces dropped, `?` -> `is_`"
       (expect (= {"tool_name" "rg" "duration_ms" 5 "is_llm_fallback" true}
                  (wire/canonical {:vis/tool-name "rg" :duration-ms 5 :llm-fallback? true}))))

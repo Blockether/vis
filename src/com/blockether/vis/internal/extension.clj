@@ -466,13 +466,10 @@
 (s/def :ext.symbol/result non-blank-string?)
 ;; `(fn [result] -> {:summary :body})` — the op-card renderer for THIS symbol's result,
 ;; shared by every surface (native tool_result card + a Python-path surfaced value).
-(s/def :ext.symbol/render fn?)
-;; `(fn [input] -> {:code :language})` — how THIS symbol's PENDING call displays while
-;; it runs. Without one a running native call shows its raw invocation JSON; `shell`
-;; declares one so the block reads as the bash it is about to run.
-(s/def :ext.symbol/render-call fn?)
-;; The op-card BADGE colour role for this symbol's result (`:tool-color/search`…).
-(s/def :ext.symbol/color-role keyword?)
+(s/def :ext.symbol/render-finish-call-fn fn?)
+;; `(fn [input] -> {:code :language :summary :render})` — how THIS symbol's pending
+;; call displays while it runs.
+(s/def :ext.symbol/render-start-call-fn fn?)
 ;; Optional agent-context policy for large native arguments. `:elide-args` maps
 ;; string input keys to replay thresholds. Only successful calls are compacted;
 ;; failures retain their complete arguments and error context.
@@ -496,7 +493,7 @@
                 :ext.symbol/inject-env? :ext.symbol/after-fn :ext.symbol/on-error-fn
                 :ext.symbol/source :ext.symbol/native-tool? :ext.symbol/schema :ext.symbol/name
                 :ext.symbol/call :ext.symbol/handler :ext.symbol/description :ext.symbol/result
-                :ext.symbol/render :ext.symbol/render-call :ext.symbol/color-role
+                :ext.symbol/render-start-call-fn :ext.symbol/render-finish-call-fn
                 :ext.symbol/replay]))
 
 (s/def ::val-symbol-entry
@@ -1005,8 +1002,9 @@
 
 (defn native-tools-for
   "Every native tool on `active-extensions`' symbols — ONE walk, the single source
-   the schemas / handlers / renderers / colours all project from, NORMALIZED to
-  `{:symbol :name :description :result :schema :handler :render :color-role :replay :active?}`.
+   the schemas, handlers, and renderers all project from, NORMALIZED to
+  `{:symbol :name :description :result :schema :handler :render-start-call-fn
+    :render-finish-call-fn :replay :active?}`.
 
    A symbol IS a native tool IFF it declares `:native-tool? true`, which REQUIRES
    `:schema`, `:description`, and `:result`. Every field is FLAT on the symbol — no
@@ -1031,9 +1029,8 @@
                    :handler (:ext.symbol/handler e)
                    :call (:ext.symbol/call e)
                    :replay (:ext.symbol/replay e)
-                   :render (:ext.symbol/render e)
-                   :render-call (:ext.symbol/render-call e)
-                   :color-role (:ext.symbol/color-role e)
+                   :render-start-call-fn (:ext.symbol/render-start-call-fn e)
+                   :render-finish-call-fn (:ext.symbol/render-finish-call-fn e)
                    :active? (symbol-active? e env)})))
         vec)))
 
@@ -1197,46 +1194,38 @@
                  (when (and (:active? t) (:call t)) [(:name t) (:call t)]))
                (native-tools-for active-extensions env)))))
 
-(defn native-tool-renderers
-  "Map wire-name → `:render` fn for every declared native tool. A `:render` takes
-   the tool's RESULT and returns a `{:summary :body}` op-card both the TUI and web
-   paint — a clean card, never a raw args+result dump. NOT active-filtered: a
-   result that already ran must still render even if its toggle flipped after."
+(defn native-tool-finish-call-renderers
+  "Map wire-name → `:render-finish-call-fn` for every declared native tool. The
+   function takes the tool's RESULT and returns a `{:summary :body}` op-card both
+   the TUI and web paint — a clean card, never a raw args+result dump. NOT
+   active-filtered: a result that already ran must still render even if its toggle
+   flipped after."
   [active-extensions]
   (into {}
         (keep (fn [t]
-                (when (:render t) [(:name t) (:render t)]))
+                (when (:render-finish-call-fn t) [(:name t) (:render-finish-call-fn t)]))
               (native-tools-for active-extensions))))
 
-(defn native-tool-call-renderers
-  "Map wire-name → `:render-call` fn for every declared native tool. A `:render-call`
-   takes the tool's INPUT and returns `{:code :language}` — how the call DISPLAYS while
-   it is still running, so a pending `shell` block reads as the bash it is about to run
-   instead of the raw invocation JSON. NOT active-filtered (mirrors `native-tool-renderers`)."
+(defn native-tool-start-call-renderers
+  "Map wire-name → `:render-start-call-fn` for every declared native tool. The
+   function takes the tool's INPUT and returns a pending display map — how the call
+   displays while it is still running. NOT active-filtered (mirrors
+   `native-tool-finish-call-renderers`)."
   [active-extensions]
   (into {}
         (keep (fn [t]
-                (when (:render-call t) [(:name t) (:render-call t)]))
+                (when (:render-start-call-fn t) [(:name t) (:render-start-call-fn t)]))
               (native-tools-for active-extensions))))
 
-(defn native-tool-color-roles
-  "Map wire-name → `:color-role` keyword (read / search / edit / …) for every
-   declared native tool — the per-tool result-badge colour. NOT active-filtered
-   (mirrors renderers)."
-  [active-extensions]
-  (into {}
-        (keep (fn [t]
-                (when (:color-role t) [(:name t) (:color-role t)]))
-              (native-tools-for active-extensions))))
 
 (defn native-tool-tags
   "Map wire-name → `:tag` (`:observation | :mutation`) for every declared native
    tool that carries a `:tag`. The tag is the AUTHORITATIVE observation/mutation
    classification declared INLINE on each `(vis/symbol …)` opts map (never a
    hardcoded name list). Used by the loop to decide whether an all-observation
-   iteration may run its calls concurrently. NOT active-filtered (mirrors
-   `native-tool-color-roles`): the classification of a tool never depends on
-   whether its toggle is currently on."
+   iteration may run its calls concurrently. NOT active-filtered (mirrors the
+   renderer registries): the classification of a tool never depends on whether its
+   toggle is currently on."
   [active-extensions]
   (into {}
         (keep (fn [e]
@@ -1478,17 +1467,13 @@
        (:replay opts)
        (assoc :ext.symbol/replay (:replay opts))
 
-       ;; :render / :color-role — the op-card renderer the symbol owns, shared by the
-       ;; native tool_result card AND a Python-path surfaced value.
-       (:render opts)
-       (assoc :ext.symbol/render (:render opts))
+       ;; The finish callback owns the completed op card across every surface.
+       (:render-finish-call-fn opts)
+       (assoc :ext.symbol/render-finish-call-fn (:render-finish-call-fn opts))
 
-       ;; :render-call — how this symbol's call displays WHILE it runs (pending block).
-       (:render-call opts)
-       (assoc :ext.symbol/render-call (:render-call opts))
-
-       (:color-role opts)
-       (assoc :ext.symbol/color-role (:color-role opts))
+       ;; The start callback owns this symbol's pending call display.
+       (:render-start-call-fn opts)
+       (assoc :ext.symbol/render-start-call-fn (:render-start-call-fn opts))
 
        ;; :engine-bound? false → NOT bound into the GraalPy env (native-tool-only).
        ;; Stored only when explicitly set; absent means default-true (bound).
@@ -2154,12 +2139,12 @@
     (update result :result assoc "op" (op-kw->str (public-op-keyword (:symbol result))))
     result))
 
-(defn native-tool-renderers-by-op
-  "Map op-STRING (the value `stamp-public-result-op` writes into a result's `:op`,
-   e.g. \"cat\") -> `{:render :color-role}`. Resolves the op-card of a TOOL RESULT
-   the model print()ed in Python, where the only origin handle is `:op`. Mirrors
-   `native-tool-renderers` (NOT active-filtered: a printed result must still render
-   even if its toggle flipped)."
+(defn native-tool-finish-call-renderers-by-op
+  "Map op STRING (the value `stamp-public-result-op` writes into a result's `:op`,
+   e.g. `cat`) to `{:render-finish-call-fn}`. Resolves the op-card of a tool result
+   printed in Python, where the only origin handle is `:op`. Mirrors
+   `native-tool-finish-call-renderers` and is not active-filtered: a printed result
+   must still render even if its toggle flipped."
   [active-extensions]
   (into {}
         (for
@@ -2169,7 +2154,7 @@
            e
            (ext-symbols ext)
 
-           :when (:ext.symbol/render e)
+           :when (:ext.symbol/render-finish-call-fn e)
            ;; Alias-qualify via `default-tool-op-keyword` so an aliased verb's key
            ;; matches the op its RESULT actually carries (`git/status` → "git_status"),
            ;; not the bare symbol ("status"). No `:native-tool?` gate: a printed result
@@ -2178,8 +2163,7 @@
            :let [op-kw
                  (public-op-keyword (default-tool-op-keyword ext e))]]
 
-          [(op-kw->str op-kw)
-           {:render (:ext.symbol/render e) :color-role (:ext.symbol/color-role e)}])))
+          [(op-kw->str op-kw) {:render-finish-call-fn (:ext.symbol/render-finish-call-fn e)}])))
 
 (defn- enrich-tool-result-info
   "Stamp the MINIMAL tool identity on a result's metadata: symbol, call

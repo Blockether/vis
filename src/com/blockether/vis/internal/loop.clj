@@ -3818,7 +3818,7 @@
   (if (and (seq cards) (some :result-render cards)) nil (:body result-card)))
 
 (defn- pending-call-display
-  "The DISPLAY a native call carries WHILE it runs: the tool's own `:render-call`
+  "The DISPLAY a native call carries WHILE it runs: the tool's own `:render-start-call-fn`
    rendering of its INPUT, as `{:display-code :display-language :pending-summary
    :pending-render}`. `shell` hands back the very op-card its result will complete
    — the headline (`$ npm test (running)`) plus that card's BODY, built by the same
@@ -3830,7 +3830,7 @@
    a running call never looks finished to any channel. A tool that would rather
    show a plain code band still gets `:display-code`/`:display-language`.
 
-   nil for a tool without a `:render-call`; a throwing renderer degrades to that raw
+   nil for a tool without a `:render-start-call-fn`; a throwing renderer degrades to that raw
    invocation rather than failing the call it was only previewing."
   [call-renderers tool-name input]
   (when-let [render (and tool-name (get call-renderers (name tool-name)))]
@@ -3864,7 +3864,7 @@
 (defn- tool-result-display
   "The human-channel DISPLAY for one executed TOOL CALL as `{:summary :body}` —
    the ONE surface both the TUI and web render, so they're unified:
-     - native tool WITH a `:render` fn → its `{:summary :body}` card. `:summary`
+     - native tool WITH a `:render-finish-call-fn` → its `{:summary :body}` card. `:summary`
        is the op-card HEADLINE (e.g. \"5 hits in 1 file\"); `:body` is the detail
        beneath it. A renderer that returns a bare string is treated as a body.
      - native tool WITHOUT one → its `:result` pretty-printed (Python-literal,
@@ -3894,18 +3894,19 @@
                   " chars")
              s))))
 
-     ;; per-tool custom renderer (declared on the symbol's :native-tool :render)
+     ;; per-tool custom finish renderer declared on the symbol
      custom
      (when-let [rf (and tool-name (some? (:result result*)) (get renderers tool-name))]
        (try (rf (:result result*))
             (catch Throwable e
               ;; never swallow silently — a broken renderer must be visible
               ;; in the logs; the result still shows via the pretty-print path.
-              (tel/log!
-                {:level :warn
-                 :id ::native-tool-render-failed
-                 :data {:tool tool-name :error (ex-message e)}}
-                (str "native-tool :render for " tool-name " threw — falling back to pretty-print"))
+              (tel/log! {:level :warn
+                         :id ::native-tool-render-failed
+                         :data {:tool tool-name :error (ex-message e)}}
+                        (str "native-tool :render-finish-call-fn for "
+                             tool-name
+                             " threw — falling back to pretty-print"))
               nil)))
 
      ->card
@@ -5182,7 +5183,7 @@
    on `:vis/native-handler` before `:source` is ever evaluated.
 
    Both shapes carry `:vis/native-input` — the normalized input the tool was called
-   with. That input lets a tool render its own pending call (`:render-call`): carrying
+   with. That input lets a tool render its own pending call (`:render-start-call-fn`): carrying
    it only on the handler branch meant every sandbox-bound native tool — `shell`
    included — painted the raw invocation JSON while it ran instead of the bash block
    its result completes."
@@ -5539,7 +5540,7 @@
        ;; executable tool code.
        suppress-form-start? (some :vis/preflight-error code-entries)
        total-blocks (count code-entries)
-       ;; per-tool result renderers (symbol `:native-tool :render`), looked up
+       ;; per-tool finish renderers (`:render-finish-call-fn`), looked up
        ;; once for this iteration — form-result-display applies them so a native
        ;; tool's result shows as a clean card, unified across TUI + web.
        ;; `session_fold` is ENGINE-level (no extension symbol), so its card
@@ -5547,7 +5548,7 @@
        ;; — split it so the receipt (label + reclaimed tokens + utilization) is
        ;; the op-card HEADLINE and the gist the expandable body, instead of the
        ;; whole string hiding as a body-only card the user must expand.
-       native-renderers (assoc (extension/native-tool-renderers active-extensions)
+       native-renderers (assoc (extension/native-tool-finish-call-renderers active-extensions)
                           ;; `resource_stop` is ENGINE-level (no extension symbol),
                           ;; so its card renderer rides here: lift the outcome +
                           ;; stopped resource id into the HEADLINE so the label
@@ -5592,20 +5593,9 @@
        ;; per-OP renderers for TOOL RESULTS the model print()ed in Python — keyed
        ;; by the result's `:op` (the only origin handle a printed value carries),
        ;; so `print(await rg(...))` paints rg's card just like a native call.
-       printed-renderers (extension/native-tool-renderers-by-op active-extensions)
-       ;; per-tool BADGE color (symbol `:native-tool :color-role`) — the
-       ;; channels paint a native tool's result card in its role color
-       ;; (read/search/edit/…), recreating the old colored op-card.
-       native-color-roles (merge
-                            ;; `python_execution` is the engine-level tool (not an
-                            ;; extension symbol), so give its eval card a colour
-                            ;; too — extensions still override by wire name.
-                            {"python_execution" :tool-color/shell}
-                            (extension/native-tool-color-roles active-extensions))
-       ;; per-tool PENDING-call renderers (symbol `:render-call`) — how a native call
-       ;; DISPLAYS while it is still running. `shell` declares one so the running block
-       ;; is the bash about to run, not the raw invocation JSON the model submitted.
-       call-renderers (extension/native-tool-call-renderers active-extensions)
+       printed-renderers (extension/native-tool-finish-call-renderers-by-op active-extensions)
+       ;; Per-tool start renderers own how a native call displays while it runs.
+       call-renderers (extension/native-tool-start-call-renderers active-extensions)
        ;; ALL-OBSERVATION CONCURRENCY: when every code-entry is a read-only
        ;; observation (≥2 of them, no mutation / python_execution / handler /
        ;; preflight error), run the whole batch CONCURRENTLY through
@@ -5742,15 +5732,8 @@
                                                (:vis/native-input entry))
               ;; TOOL RESULTS the model print()ed (each carrying :op) → one op-card
               ;; each, rendered loop-side via the SAME symbol renderer a native call
-              ;; uses (channels paint pre-rendered strings; they have no renderer). Each
-              ;; card is a CANONICAL MINI-FORM — the exact display-field shape a single
-              ;; native-tool form carries — so the ONE projection (`form/result-card`,
-              ;; `form/->display`, `form/<-wire`) handles each card with ZERO new shape:
-              ;; the TUI/web loop `result-card` per card, the gateway round-trips them by
-              ;; recursing `<-wire` (so the nested `:tool-color-role` keyword survives the
-              ;; JSON hop the same way the singular one does), and nippy persists them.
-              ;;   {:vis/tool-name "cat", :result-summary "…", :result-render "…md…",
-              ;;    :tool-color-role :tool-color/read}
+              ;; uses. Each card is a CANONICAL MINI-FORM, so the shared form
+              ;; projection handles it without a second shape.
               printed-cards (vec
                               (keep (fn [pr]
                                       ;; `pr` crossed the boundary — STRING keys ("op"),
@@ -5759,7 +5742,7 @@
                                       (when-let [op (printed-result-op pr)]
                                         (when-let [t (get printed-renderers op)]
                                           (let
-                                            [c ((:render t) pr)
+                                            [c ((:render-finish-call-fn t) pr)
                                              c (if (map? c) c {:body (str c)})]
 
                                             {:vis/tool-name op
@@ -5768,8 +5751,7 @@
                                                                      not-empty)
                                              :result-render (some-> (:body c)
                                                                     str
-                                                                    not-empty)
-                                             :tool-color-role (:color-role t)}))))
+                                                                    not-empty)}))))
                                     (:printed-results result*)))
               ;; Printed cards replace raw stdout only when at least one carries a body.
               ;; Summary-only cards otherwise suppress the sole non-empty result surface,
@@ -5815,17 +5797,10 @@
                   ;; The op-card HEADLINE — a real tool-authored summary
                   ;; ("5 hits in 1 file"), NOT a first-line slice of the body.
                   :result-summary result-summary
-                  ;; SEPARATE colored collapsible cards (one per printed tool result).
+                  ;; Separate collapsible cards, one per printed tool result.
                   :cards cards
-                  ;; Native tool identity for the result BADGE (label + color), so the
-                  ;; LIVE gateway stream paints the same op-card the DB-restored trace does.
+                  ;; Native tool identity for the result badge.
                   :vis/tool-name (:vis/tool-name entry)
-                  ;; A TIMEOUT overrides the tool's own badge colour with the error
-                  ;; role so the card paints RED — differentiated at a glance from a
-                  ;; normal REPL/shell result, while keeping its beautiful shape.
-                  :tool-color-role (if (:timeout? result*)
-                                     :tool-color/error
-                                     (get native-color-roles (:vis/tool-name entry)))
                   ;; Raw stdout kept for model-context consumers.
                   :stdout (:stdout result*)
                   :error (:error result*)
@@ -5841,10 +5816,7 @@
               :cards cards
               :render-segments render-segments
               :svar/tool-call-id (:svar/tool-call-id entry)
-              :vis/tool-name (:vis/tool-name entry)
-              :tool-color-role (if (:timeout? result*)
-                                 :tool-color/error
-                                 (get native-color-roles (:vis/tool-name entry)))}))
+              :vis/tool-name (:vis/tool-name entry)}))
          (range)
          code-entries)
        form-sources (mapv :block executed)
@@ -5852,7 +5824,6 @@
        form-segments (mapv :render-segments executed)
        form-tool-ids (mapv :svar/tool-call-id executed)
        form-tool-names (mapv :vis/tool-name executed)
-       form-color-roles (mapv :tool-color-role executed)
        form-result-renders (mapv :result-render executed)
        form-result-summaries (mapv :result-summary executed)
        form-cards (mapv :cards executed)
@@ -5866,86 +5837,81 @@
                                      code-entries))
        blocks
        (validate-iteration-blocks!
-         (mapv (fn
-                 [idx code result segments tool-call-id tool-name tool-color-role result-render
-                  result-summary cards]
-                 (cond->
-                   {:id idx
-                    :code code
-                    :result (:result result)
-                    ;; What the block PRINTED — the python_execution
-                    ;; result (a native call's result is :result).
-                    ;; One block = one tool call, so this is the
-                    ;; call's whole stdout (no per-form split).
-                    :stdout (:stdout result)
-                    ;; Artifacts the block PRODUCED (matplotlib
-                    ;; show/savefig, vis_attach, $VIS_OUTBOX write),
-                    ;; captured at the SOURCE into the sandbox sink —
-                    ;; carried down so the DB attachment OWNS the bytes.
-                    :attachments (:attachments result)
-                    ;; Reinspection is ephemeral: it reaches the next request but
-                    ;; is never written as a duplicate iteration artifact.
-                    :reinspect-attachments (:reinspect-attachments result)
-                    :error (op-error (:error result)
-                                     {:code code :phase (get-in result [:envelope :op])})
-                    :envelope (:envelope result)
-                    :role (:role result)
-                    :timeout? (:timeout? result)
-                    :repaired? (:repaired? result)
-                    ;; Per-block resolve-symbol* LRU stamps:
-                    ;; symbol-name -> current-turn-pos for every
-                    ;; symbol the engine hook saw resolve during
-                    ;; this block's eval. Iteration writer
-                    ;; merges into the long-lived per-env LRU.
-                    :lru (or (:lru result) {})
-                    ;; If the engine auto-repaired delimiter
-                    ;; mistakes (parinferish) before eval, the
-                    ;; repaired source flows here so the trailer
-                    ;; can disclose the diff and the model can
-                    ;; correct itself if the repair was wrong.
-                    :repaired-source (:repaired-source result)}
-                   ;; Per-block render breakdown for channel display.
-                   ;; Legacy channels that only read :code fall
-                   ;; back to the full block source.
-                   (seq segments)
-                   (assoc :render-segments segments)
+         (mapv
+           (fn [idx code result segments tool-call-id tool-name result-render result-summary cards]
+             (cond->
+               {:id idx
+                :code code
+                :result (:result result)
+                ;; What the block PRINTED — the python_execution
+                ;; result (a native call's result is :result).
+                ;; One block = one tool call, so this is the
+                ;; call's whole stdout (no per-form split).
+                :stdout (:stdout result)
+                ;; Artifacts the block PRODUCED (matplotlib
+                ;; show/savefig, vis_attach, $VIS_OUTBOX write),
+                ;; captured at the SOURCE into the sandbox sink —
+                ;; carried down so the DB attachment OWNS the bytes.
+                :attachments (:attachments result)
+                ;; Reinspection is ephemeral: it reaches the next request but
+                ;; is never written as a duplicate iteration artifact.
+                :reinspect-attachments (:reinspect-attachments result)
+                :error (op-error (:error result)
+                                 {:code code :phase (get-in result [:envelope :op])})
+                :envelope (:envelope result)
+                :role (:role result)
+                :timeout? (:timeout? result)
+                :repaired? (:repaired? result)
+                ;; Per-block resolve-symbol* LRU stamps:
+                ;; symbol-name -> current-turn-pos for every
+                ;; symbol the engine hook saw resolve during
+                ;; this block's eval. Iteration writer
+                ;; merges into the long-lived per-env LRU.
+                :lru (or (:lru result) {})
+                ;; If the engine auto-repaired delimiter
+                ;; mistakes (parinferish) before eval, the
+                ;; repaired source flows here so the trailer
+                ;; can disclose the diff and the model can
+                ;; correct itself if the repair was wrong.
+                :repaired-source (:repaired-source result)}
+               ;; Per-block render breakdown for channel display.
+               ;; Legacy channels that only read :code fall
+               ;; back to the full block source.
+               (seq segments)
+               (assoc :render-segments segments)
 
-                   (:vis/silent result)
-                   (assoc :vis/silent true)
+               (:vis/silent result)
+               (assoc :vis/silent true)
 
-                   ;; Tool-call identity rides onto the block so
-                   ;; `blocks->forms` stamps each form envelope with the
-                   ;; tool_use it answers (per-call result pairing).
-                   tool-call-id
-                   (assoc :svar/tool-call-id tool-call-id)
+               ;; Tool-call identity rides onto the block so
+               ;; `blocks->forms` stamps each form envelope with the
+               ;; tool_use it answers (per-call result pairing).
+               tool-call-id
+               (assoc :svar/tool-call-id tool-call-id)
 
-                   tool-name
-                   (assoc :vis/tool-name tool-name)
+               tool-name
+               (assoc :vis/tool-name tool-name)
 
-                   tool-color-role
-                   (assoc :tool-color-role tool-color-role)
+               result-render
+               (assoc :result-render result-render)
 
-                   result-render
-                   (assoc :result-render result-render)
+               result-summary
+               (assoc :result-summary result-summary)
 
-                   result-summary
-                   (assoc :result-summary result-summary)
+               (seq cards)
+               (assoc :cards cards)
 
-                   (seq cards)
-                   (assoc :cards cards)
-
-                   (get preflight-by-idx idx)
-                   (assoc :vis/preflight? true)))
-               (range)
-               form-sources
-               form-results
-               form-segments
-               form-tool-ids
-               form-tool-names
-               form-color-roles
-               form-result-renders
-               form-result-summaries
-               form-cards))]
+               (get preflight-by-idx idx)
+               (assoc :vis/preflight? true)))
+           (range)
+           form-sources
+           form-results
+           form-segments
+           form-tool-ids
+           form-tool-names
+           form-result-renders
+           form-result-summaries
+           form-cards))]
 
       (if-let [{value :value} (:answer @turn-state-atom)]
         ;; FINAL path: a plain-text answer reply (svar `:stop-reason :end`),
@@ -9406,10 +9372,7 @@
      (try (extension/registered-extensions) (catch Throwable _ []))
 
      renderers
-     (try (extension/native-tool-renderers active-exts) (catch Throwable _ {}))
-
-     color-roles
-     (try (extension/native-tool-color-roles active-exts) (catch Throwable _ {}))
+     (try (extension/native-tool-finish-call-renderers active-exts) (catch Throwable _ {}))
 
      display
      (when (some? result-map)
@@ -9435,7 +9398,6 @@
                 (str "await shell({\"commands\": [" (pr-str cmd) "]})"))
         :svar/tool-call-id (str "bang-" (subs (str (java.util.UUID/randomUUID)) 0 8))
         :vis/tool-name tool-name
-        :tool-color-role (get color-roles tool-name)
         :envelope {:started-at-ms t0 :finished-at-ms t1}}
        (some? result-map)
        (assoc :result result-map)

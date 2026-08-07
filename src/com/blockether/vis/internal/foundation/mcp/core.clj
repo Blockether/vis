@@ -1119,9 +1119,8 @@
       "String-keyed `{op,server,tool,content,is_error,input_schema?}`; text at `block[\"text\"]`. With `tool` omitted: `{op,server,tools:[{name,description,input_schema}]}`."
       :description
       "Call a tool on an MCP server; auto-connects. Servers and their tool names are already in `session[\"env\"][\"mcp\"]`, so just name them. Omit `tool` for that server's input schemas. In `python_execution`, call `await mcp_call(...)`."
-      :render render-mcp-call-result
+      :render-finish-call-fn render-mcp-call-result
       :call {:pos ["server"] :opt-pos ["tool" "args"]}
-      :color-role :tool-color/shell
       :schema {:type "object"
                :properties
                {"server" {:type "string" :description "Server named in `env.mcp`; auto-connects."}

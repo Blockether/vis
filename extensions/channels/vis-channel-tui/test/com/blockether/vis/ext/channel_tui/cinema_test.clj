@@ -48,7 +48,8 @@
    (let [t (.getBytes tag "US-ASCII")]
      (first (for
               [i (range (long from) (- (alength ba) (alength t)))
-               :when (every? #(= (aget ba (+ (long i) (long %))) (aget t (int %))) (range (alength t)))]
+               :when (every? #(= (aget ba (+ (long i) (long %))) (aget t (int %)))
+                             (range (alength t)))]
 
               i)))))
 

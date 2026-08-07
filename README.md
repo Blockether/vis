@@ -1,6 +1,6 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="logo-dark.png">
+    <source media="(prefers-color-scheme: dark)" srcset="logo.png">
     <img src="logo.png" alt="vis logo" width="240"/>
   </picture>
 </p>

@@ -370,9 +370,6 @@
              [hide-tool-code? form/hide-tool-code?]
              [show-running-tool-code? form/show-running-tool-code?]
              [coalesce-forms form/coalesce-forms])
-;; Canonical native-tool badge colour-role set — each channel's colour map must
-;; cover every role here (guard tests lock it), so the two maps can't drift.
-(import-vars [tool-color-roles form/tool-color-roles])
 
 (import-vars [markdown->ast ir/markdown->ast])
 ;; Shared unified-diff line classifier — TUI maps the kind to ANSI, web to a CSS

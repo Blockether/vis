@@ -127,6 +127,7 @@ List Vis's OWN documentation or fetch full Markdown at `vis_docs(slug)[\"pages\"
          :body (str/join "\n" (concat header rows))}))))
 
 (def vis-docs-symbol
-  (vis/symbol #'vis-docs-tool {:symbol 'vis-docs :tag :observation :render render-vis-docs}))
+  (vis/symbol #'vis-docs-tool
+              {:symbol 'vis-docs :tag :observation :render-finish-call-fn render-vis-docs}))
 
 (def symbols [vis-docs-symbol])

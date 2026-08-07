@@ -1412,7 +1412,12 @@ def weather_lookup(input):
     return {\"city\": input[\"city\"], \"temp_c\": 21}
 
 
-def _render(result):
+def _render_start_call(input):
+    return {\"summary\": \"weather for \" + input[\"city\"] + \" (running)\",
+            \"code\": input[\"city\"], \"language\": \"text\"}
+
+
+def _render_finish_call(result):
     return {\"summary\": result[\"city\"] + \" \" + str(result[\"temp_c\"]) + \"C\",
             \"body\": \"rendered in python\"}
 
@@ -1434,8 +1439,8 @@ vis.extension(
                                             \"description\": \"City name.\"}},
                     \"required\": [\"city\"],
                     \"additionalProperties\": False},
-            render=_render,
-            color_role=\"search\",
+            render_start_call_fn=_render_start_call,
+            render_finish_call_fn=_render_finish_call,
         ),
     ],
 )
@@ -1490,11 +1495,11 @@ vis.extension(
                         :required ["city"]
                         :additionalProperties false}
                        (:ext.symbol/schema entry)))
-            (expect (= :tool-color/search (:ext.symbol/color-role entry)))
             ;; and it shows up in the ONE native-tool walk
             (let [tools (extension/native-tools-for [ext])]
               (expect (= ["lookup"] (mapv :name tools)))
-              (expect (fn? (:render (first tools)))))))))
+              (expect (fn? (:render-start-call-fn (first tools))))
+              (expect (fn? (:render-finish-call-fn (first tools)))))))))
   (it "the model-facing doc is the description + result + generated params"
       (with-loaded
         {"weather.py" weather-py}
@@ -1505,17 +1510,24 @@ vis.extension(
             (expect (str/includes? text "`city` (string, required)"))
             ;; the implementation docstring never reaches the model
             (expect (not (str/includes? text "Implementation docstring")))))))
-  (it "render= becomes the symbol's op-card renderer"
-      (with-loaded {"weather.py" weather-py}
-                   (fn [_ _]
-                     (let
-                       [render
-                        (:ext.symbol/render (symbol-entry-of (registered "weather") 'lookup))
+  (it "render_start_call_fn= and render_finish_call_fn= become the symbol's renderers"
+      (with-loaded
+        {"weather.py" weather-py}
+        (fn [_ _]
+          (let
+            [entry
+             (symbol-entry-of (registered "weather") 'lookup)
 
-                        card
-                        (render {"city" "Kraków" "temp_c" 21})]
+             render-start-call
+             (:ext.symbol/render-start-call-fn entry)
 
-                       (expect (= {:summary "Kraków 21C" :body "rendered in python"} card))))))
+             render-finish-call
+             (:ext.symbol/render-finish-call-fn entry)]
+
+            (expect (= {:summary "weather for Kraków (running)" :code "Kraków" :language "text"}
+                       (render-start-call {"city" "Kraków"})))
+            (expect (= {:summary "Kraków 21C" :body "rendered in python"}
+                       (render-finish-call {"city" "Kraków" "temp_c" 21})))))))
   (it "an incomplete native tool fails the load instead of registering"
       (with-loaded {"broken.py" broken-native-py}
                    (fn [result _]

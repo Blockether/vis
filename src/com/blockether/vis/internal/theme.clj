@@ -168,18 +168,6 @@
    :code-syntax-number-fg [30 90 180]
    :code-syntax-comment-fg [120 120 120]
    :code-border-fg [90 95 110]
-   :tool-color-read [30 120 190]
-   :tool-color-search [140 80 190]
-   :tool-color-preview [105 115 130]
-   :tool-color-edit [180 120 20]
-   :tool-color-create [40 150 75]
-   :tool-color-delete [210 45 45]
-   :tool-color-move [210 105 25]
-   ;; Shell badge: slate, not khaki/olive — terminal output is neutral
-   ;; infrastructure, not a highlight.
-   :tool-color-shell [100 116 139]
-   :tool-color-meta [20 135 135]
-   :tool-color-test [79 70 229]
    :iteration-header-fg [170 170 170]
    :iteration-header-bg [244 244 244]
    :answer-sep-fg [190 190 190]
@@ -277,17 +265,6 @@
    :code-syntax-number-fg [147 197 253]
    :code-syntax-comment-fg [148 163 184]
    :code-border-fg [100 116 139]
-   :tool-color-read [56 189 248]
-   :tool-color-search [216 180 254]
-   :tool-color-preview [148 163 184]
-   :tool-color-edit [251 191 36]
-   :tool-color-create [74 222 128]
-   :tool-color-delete [248 113 113]
-   :tool-color-move [251 146 60]
-   ;; Slate shell badge (see light palette) — no khaki.
-   :tool-color-shell [148 163 184]
-   :tool-color-meta [45 212 191]
-   :tool-color-test [129 140 248]
    :iteration-header-fg [148 148 148]
    :iteration-header-bg [30 30 30]
    :answer-sep-fg [100 116 139]
@@ -559,17 +536,6 @@
    :code-syntax-number-fg [38 139 210]
    :code-syntax-comment-fg [147 161 161]
    :code-border-fg [147 161 161]
-   :tool-color-read [38 139 210]
-   :tool-color-search [108 113 196]
-   :tool-color-preview [147 161 161]
-   :tool-color-edit [181 137 0]
-   :tool-color-create [133 153 0]
-   :tool-color-delete [220 50 47]
-   :tool-color-move [203 75 22]
-   ;; base00 ink, not khaki — shell output is neutral infrastructure.
-   :tool-color-shell [101 123 131]
-   :tool-color-meta [42 161 152]
-   :tool-color-test [108 113 196]
    :iteration-header-fg [147 161 161]
    :iteration-header-bg [238 232 213]
    :answer-sep-fg [147 161 161]
@@ -659,17 +625,6 @@
    :code-syntax-number-fg [38 139 210]
    :code-syntax-comment-fg [88 110 117]
    :code-border-fg [88 110 117]
-   :tool-color-read [38 139 210]
-   :tool-color-search [108 113 196]
-   :tool-color-preview [147 161 161]
-   :tool-color-edit [181 137 0]
-   :tool-color-create [133 153 0]
-   :tool-color-delete [220 50 47]
-   :tool-color-move [203 75 22]
-   ;; base0 ink, not khaki — shell output is neutral infrastructure.
-   :tool-color-shell [131 148 150]
-   :tool-color-meta [42 161 152]
-   :tool-color-test [108 113 196]
    :iteration-header-fg [88 110 117]
    :iteration-header-bg [7 54 66]
    :answer-sep-fg [88 110 117]
@@ -1061,17 +1016,7 @@
    "--footer-strong" :footer-fg-strong
    "--footer-spinner" :footer-spinner-fg
    "--footer-warning" :footer-warning-fg
-   "--footer-error" :footer-error-fg
-   "--tool-read" :tool-color-read
-   "--tool-search" :tool-color-search
-   "--tool-preview" :tool-color-preview
-   "--tool-edit" :tool-color-edit
-   "--tool-create" :tool-color-create
-   "--tool-delete" :tool-color-delete
-   "--tool-move" :tool-color-move
-   "--tool-shell" :tool-color-shell
-   "--tool-meta" :tool-color-meta
-   "--tool-test" :tool-color-test})
+   "--footer-error" :footer-error-fg})
 
 (def web-css-derived-tokens
   "CSS vars DERIVED from the palette as a bg->fg mix ratio, so hover/dim text

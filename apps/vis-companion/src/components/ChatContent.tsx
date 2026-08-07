@@ -102,18 +102,6 @@ export const transcriptRiseClass = 'animate-transcript-rise motion-reduce:animat
 // only INITIAL_VISIBLE_TURNS, `Load earlier` brings the rest in on demand, and
 // the iteration ramp below stages a turn's trace. None of those guess a height.
 
-const toolRoleClasses: Record<string, { border: string; text: string }> = {
-  'tool-color/read': { border: 'border-tool-read', text: 'text-tool-read' },
-  'tool-color/search': { border: 'border-tool-search', text: 'text-tool-search' },
-  'tool-color/preview': { border: 'border-tool-preview', text: 'text-tool-preview' },
-  'tool-color/edit': { border: 'border-tool-edit', text: 'text-tool-edit' },
-  'tool-color/create': { border: 'border-tool-create', text: 'text-tool-create' },
-  'tool-color/delete': { border: 'border-tool-delete', text: 'text-tool-delete' },
-  'tool-color/move': { border: 'border-tool-move', text: 'text-tool-move' },
-  'tool-color/shell': { border: 'border-tool-shell', text: 'text-tool-shell' },
-  'tool-color/meta': { border: 'border-tool-meta', text: 'text-tool-meta' },
-  'tool-color/test': { border: 'border-tool-test', text: 'text-tool-test' },
-};
 
 const toolLabelOverrides: Record<string, string> = {
   python_execution: 'RESULT',
@@ -842,10 +830,6 @@ function toolLabel(name?: string): string {
   return toolLabelOverrides[name] ?? name.toUpperCase();
 }
 
-function toolRole(role?: string): { border: string; text: string } {
-  const normalized = role?.replace(/^:/, '');
-  return (normalized && toolRoleClasses[normalized]) || { border: 'border-accent', text: 'text-accent-ink' };
-}
 
 // A fenced block must not be closable by the content it wraps: file text, tool
 // stdout, and pretty-printed JSON can all carry ``` runs of their own, and a
@@ -914,7 +898,6 @@ function ToolSummary({ children, className }: { children: string; className: str
 }
 
 const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
-  const role = toolRole(form.tool_color_role);
   const resultText = resultBody(form);
   const failed = form.error != null;
   // Once any real outcome has arrived (body/result/render/duration) a stale
@@ -953,12 +936,10 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
   // one-way, so re-collapsing keeps the parsed body for the next open, and
   // "Copy result" copies `body` (the string), never the DOM.
   const [wasOpened, setWasOpened] = useState(false);
-  // The running placeholder stays readable: the tool role colour is low-contrast
-  // on the light surface, so a running summary uses the neutral result colour.
-  const summaryClass = failed ? 'text-err' : running ? 'text-code-result' : role.text;
+  const summaryClass = failed ? 'text-err' : running ? 'text-code-result' : 'text-accent-ink';
   const headline = (
     <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
-      <span className={`shrink-0 font-mono text-chip font-extrabold tracking-[0.06em] ${failed ? 'text-err' : role.text}`}>
+      <span className={`shrink-0 font-mono text-chip font-extrabold tracking-[0.06em] ${failed ? 'text-err' : 'text-accent-ink'}`}>
         {toolLabel(form.tool_name)}
       </span>
       {summary && <ToolSummary className={summaryClass}>{summary}</ToolSummary>}
@@ -975,7 +956,7 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
 
   if (!body) {
     return (
-      <div className={`border-l-2 ${failed ? 'border-err' : role.border} bg-result px-2 py-1`}>
+      <div className={`border-l-2 ${failed ? 'border-err' : 'border-accent'} bg-result px-2 py-1`}>
         {headline}
       </div>
     );
@@ -983,13 +964,13 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
 
   return (
     <details
-      className={`group min-w-0 border-l-2 ${failed ? 'border-err' : role.border} bg-result`}
+      className={`group min-w-0 border-l-2 ${failed ? 'border-err' : 'border-accent'} bg-result`}
       onToggle={(event) => {
         if (event.currentTarget.open) setWasOpened(true);
       }}
     >
       <summary className="flex min-h-6 list-none cursor-pointer select-none items-center gap-1.5 px-2 py-1 text-code-result hover:bg-hover [&::-webkit-details-marker]:hidden">
-        <span className={`${disclosureClass} ${failed ? 'text-err' : role.text}`} aria-hidden="true">›</span>
+        <span className={`${disclosureClass} ${failed ? 'text-err' : 'text-accent-ink'}`} aria-hidden="true">›</span>
         {headline}
         {/* ONE copy control per result card: the body's code blocks are frameless
             inside this card and render no chip of their own. */}
@@ -1068,13 +1049,11 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode(
   {
     value,
     label,
-    colorRole,
     language = 'python',
     bare = false,
   }: {
     value: string;
     label: string;
-    colorRole?: string;
     language?: string;
     bare?: boolean;
   },
@@ -1084,17 +1063,11 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode(
   const hiddenLines = Math.max(0, lines.length - PYTHON_PREVIEW_LINES);
   const collapsible = hiddenLines > 0;
   const visibleValue = collapsible && !expanded ? lines.slice(0, PYTHON_PREVIEW_LINES).join('\n') : value;
-  const role = toolRole(colorRole ?? 'tool-color/shell');
-
-  // Same frame as the result cards this program produced (see `FormTrace`) and
-  // the same tool-coloured rail the TUI paints for its code band — program and
-  // results read as ONE stack. The disclosure row is a HEADER (top of the frame,
-  // content reveals below it), identical to the `ToolCard` result headline and to
-  // the TUI's THINKING accordion: one rule everywhere, so a row always labels the
-  // block beneath it and the collapse control never scrolls away with the body.
+  // Same frame as the result cards this program produced (see `FormTrace`).
+  // The disclosure row is a header for the source block beneath it.
   return (
     <div className={bare ? 'min-w-0' : 'mb-1 min-w-0 overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]'}>
-      <div className={`min-w-0 border-l-2 ${role.border} bg-code`}>
+      <div className="min-w-0 border-l-2 border-accent bg-code">
         {/* The header row OWNS the copy control (right edge), exactly like the
             `ToolCard` result headline — never a chip floating over the source.
             It is rendered even when the program is too short to collapse, so a
@@ -1109,17 +1082,17 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode(
               onClick={() => setExpanded((current) => !current)}
             >
               <span
-                className={`${disclosureClass} ${role.text} ${expanded ? 'rotate-90' : ''}`}
+                className={`${disclosureClass} text-accent-ink ${expanded ? 'rotate-90' : ''}`}
                 aria-hidden="true"
               >
                 ›
               </span>
-              <span className={`truncate font-mono text-chip font-extrabold tracking-[0.06em] ${role.text}`}>
+              <span className="truncate font-mono text-chip font-extrabold tracking-[0.06em] text-accent-ink">
                 {expanded ? label : `${label} +${hiddenLines} more`}
               </span>
             </button>
           ) : (
-            <span className={`min-w-0 flex-1 select-none truncate px-2 py-1 font-mono text-chip font-extrabold tracking-[0.06em] ${role.text}`}>
+            <span className="min-w-0 flex-1 select-none truncate px-2 py-1 font-mono text-chip font-extrabold tracking-[0.06em] text-accent-ink">
               {label}
             </span>
           )}
@@ -1186,12 +1159,12 @@ const FormTrace = memo(function FormTrace(
           belonged to the program printed BELOW it. */}
       {showCode && cards.length > 0 ? (
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
-          <CollapsibleFormCode value={code} label={codeLabel} colorRole={form.tool_color_role} language={formCodeLanguage(form)} bare />
+          <CollapsibleFormCode value={code} label={codeLabel} language={formCodeLanguage(form)} bare />
           <CardGrid cards={cards} bare />
         </div>
       ) : (
         <>
-          {showCode && <CollapsibleFormCode value={code} label={codeLabel} colorRole={form.tool_color_role} language={formCodeLanguage(form)} />}
+          {showCode && <CollapsibleFormCode value={code} label={codeLabel} language={formCodeLanguage(form)} />}
           <CardGrid cards={cards} />
         </>
       )}

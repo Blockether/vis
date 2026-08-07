@@ -45,6 +45,20 @@
       (slurp (.getInputStream p))
       (.waitFor p))))
 
+(defn- git-output!
+  [^java.io.File root & args]
+  (let [pb (ProcessBuilder. ^java.util.List (into ["git"] (map str) args))]
+    (.directory pb root)
+    (.redirectErrorStream pb true)
+    (let
+      [p (.start pb)
+       out (slurp (.getInputStream p))
+       exit (.waitFor p)]
+
+      (when-not (zero? exit)
+        (throw (ex-info "git command failed" {:args args :exit exit :out out})))
+      (.trim ^String out))))
+
 (defn- init-repo!
   "Initialise a real git repo at `root` (shells out to the git binary),
    with one committed file so it has a HEAD."
@@ -297,10 +311,12 @@
                                  (catch clojure.lang.ExceptionInfo _ true)))))))
 
 
+;; Regression, reported Rift clean issue: the clone kept the copied Git index,
+;; exposing staged and intermediate source state instead of one exact commit.
 (defdescribe
   clean-draft-roundtrip-test
   (it
-    "create! :clean? seeds from the COMMITTED HEAD and apply! never deletes the uncommitted files it left behind"
+    "create! :clean? delegates an exact clean commit to Rift and apply! preserves omitted source files"
     (let [base (temp-dir "vis-ws-clean")]
       (try
         (if-not (ws/isolated-workspaces-supported? base)
@@ -310,69 +326,72 @@
               (spit (io/file base "tracked.txt") "COMMITTED\n")
               (io/make-parents (io/file base "sub" "deep.txt"))
               (spit (io/file base "sub" "deep.txt") "NESTED\n")
-              (git! (io/file base) "add" "tracked.txt" "sub/deep.txt")
+              (spit (io/file base ".gitignore") "ignored/\n")
+              (git! (io/file base) "add" "tracked.txt" "sub/deep.txt" ".gitignore")
               (git! (io/file base) "commit" "-q" "-m" "tracked")
-              ;; the user's UNCOMMITTED work: one dirty tracked file and one
-              ;; untracked file. Neither may reach the draft, and neither may
-              ;; ever be deleted from — or overwritten in — trunk on apply!
-              (spit (io/file base "tracked.txt") "DIRTY\n")
-              (spit (io/file base "scratch.txt") "UNTRACKED\n")
-              (io/make-parents (io/file base "notes" "x.md"))
-              (spit (io/file base "notes" "x.md") "NOTES\n")
-              ;; staged but never committed — also absent from HEAD
-              (spit (io/file base "staged.txt") "STAGED\n")
-              (git! (io/file base) "add" "staged.txt")
-              (with-store
-                (fn [store]
-                  (let
-                    [seed (seed-workspace! store base)
-                     draft (ws/create! store {:from seed :clean? true})
-                     draft-id (:id draft)
-                     root (:root draft)]
+              (let [head (git-output! (io/file base) "rev-parse" "HEAD")]
+                ;; The user's UNCOMMITTED work: dirty, untracked, staged, and
+                ;; ignored state. None may reach the cleaned draft, and none may
+                ;; be deleted from or overwritten in trunk when it is applied.
+                (spit (io/file base "tracked.txt") "DIRTY\n")
+                (spit (io/file base "scratch.txt") "UNTRACKED\n")
+                (io/make-parents (io/file base "notes" "x.md"))
+                (spit (io/file base "notes" "x.md") "NOTES\n")
+                (io/make-parents (io/file base "ignored" "cache.bin"))
+                (spit (io/file base "ignored" "cache.bin") "IGNORED\n")
+                (spit (io/file base "staged.txt") "STAGED\n")
+                (git! (io/file base) "add" "staged.txt")
+                (with-store
+                  (fn [store]
+                    (let
+                      [seed (seed-workspace! store base)
+                       draft (ws/create! store {:from seed :clean? true})
+                       draft-id (:id draft)
+                       root (:root draft)]
 
-                    (try (expect (some? root))
-                         (expect (not= base root))
-                         ;; committed files, at their COMMITTED content
-                         (expect (= "COMMITTED\n" (slurp (io/file root "tracked.txt"))))
-                         (expect (.exists (io/file root "a.txt")))
-                         ;; and nothing uncommitted
-                         (expect (not (.exists (io/file root "scratch.txt"))))
-                         (expect (not (.exists (io/file root "notes" "x.md"))))
-                         (expect (not (.exists (io/file root "staged.txt"))))
-                         ;; nested committed content is restored, directories included
-                         (expect (= "NESTED\n" (slurp (io/file root "sub" "deep.txt"))))
-                         ;; a real baseline: this draft saw trunk's committed
-                         ;; files and may report deletions of them
-                         (expect (pos? (long (:fork-ms draft))))
-                         (spit (io/file root "made.txt") "MADE\n")
-                         (let [{:keys [changed]} (ws/apply! store {:workspace-id draft-id})]
-                           (expect (contains? (set (map :path changed)) "made.txt"))
-                           ;; what the SEED dropped is not an agent deletion
-                           (expect (not (some #(= :delete (:status %)) changed)))
-                           (expect (= "MADE\n" (slurp (io/file base "made.txt"))))
-                           (expect (= "UNTRACKED\n" (slurp (io/file base "scratch.txt"))))
-                           (expect (= "NOTES\n" (slurp (io/file base "notes" "x.md"))))
-                           (expect (= "STAGED\n" (slurp (io/file base "staged.txt"))))
-                           ;; the revert happened BEFORE the baseline, so trunk's
-                           ;; dirty file is left exactly as the user had it
-                           (expect (= "DIRTY\n" (slurp (io/file base "tracked.txt")))))
-                         (finally (try (ws/abandon! store {:workspace-id draft-id})
-                                       (catch Throwable _ nil)))))))))
+                      (try (expect (some? root))
+                           (expect (not= base root))
+                           ;; Exactly the requested committed state: HEAD, real
+                           ;; index, worktree, and ignored content are all clean.
+                           (expect (= head (git-output! (io/file root) "rev-parse" "HEAD")))
+                           (expect (= "" (git-output! (io/file root) "status" "--porcelain")))
+                           (expect (= "COMMITTED\n" (slurp (io/file root "tracked.txt"))))
+                           (expect (.exists (io/file root "a.txt")))
+                           (expect (not (.exists (io/file root "scratch.txt"))))
+                           (expect (not (.exists (io/file root "notes" "x.md"))))
+                           (expect (not (.exists (io/file root "staged.txt"))))
+                           (expect (not (.exists (io/file root "ignored" "cache.bin"))))
+                           (expect (= "NESTED\n" (slurp (io/file root "sub" "deep.txt"))))
+                           ;; a real baseline: this draft saw trunk's committed
+                           ;; files and may report deletions of them
+                           (expect (pos? (long (:fork-ms draft))))
+                           (spit (io/file root "made.txt") "MADE\n")
+                           (let [{:keys [changed]} (ws/apply! store {:workspace-id draft-id})]
+                             (expect (contains? (set (map :path changed)) "made.txt"))
+                             ;; What Rift omitted is not an agent deletion.
+                             (expect (not (some #(= :delete (:status %)) changed)))
+                             (expect (= "MADE\n" (slurp (io/file base "made.txt"))))
+                             (expect (= "UNTRACKED\n" (slurp (io/file base "scratch.txt"))))
+                             (expect (= "NOTES\n" (slurp (io/file base "notes" "x.md"))))
+                             (expect (= "STAGED\n" (slurp (io/file base "staged.txt"))))
+                             (expect (= "IGNORED\n" (slurp (io/file base "ignored" "cache.bin"))))
+                             (expect (= "DIRTY\n" (slurp (io/file base "tracked.txt")))))
+                           (finally (try (ws/abandon! store {:workspace-id draft-id})
+                                         (catch Throwable _ nil))))))))))
         (finally (delete-tree! base))))))
 
-(defdescribe
-  clean-draft-requires-commit-test
-  (it
-    "create! :clean? refuses a root with no committed HEAD instead of silently forking the working tree"
-    (let [base (temp-dir "vis-ws-clean-nogit")]
-      (try (with-store (fn [store]
-                         (let [seed (seed-workspace! store base)]
-                           (expect (try (ws/create! store {:from seed :clean? true})
-                                        false
-                                        (catch clojure.lang.ExceptionInfo e
-                                          (= :workspace/clean-seed-unavailable
-                                             (:type (ex-data e)))))))))
-           (finally (delete-tree! base))))))
+(defdescribe clean-draft-requires-commit-test
+             (it "create! :clean? surfaces Rift's native Git refusal when no commit exists"
+                 (let [base (temp-dir "vis-ws-clean-nogit")]
+                   (try (with-store (fn [store]
+                                      (let [seed (seed-workspace! store base)]
+                                        (expect (try (ws/create! store {:from seed :clean? true})
+                                                     false
+                                                     (catch clojure.lang.ExceptionInfo e
+                                                       (= {:type :rift/error :code "git"}
+                                                          (select-keys (ex-data e)
+                                                                       [:type :code]))))))))
+                        (finally (delete-tree! base))))))
 
 (defdescribe
   linked-worktree-source-test
@@ -591,7 +610,7 @@
              (expect (= [] (ws/deleted-paths clone trunk 0)))
              (expect (= [] (ws/deleted-paths clone trunk -5)))
              (finally (delete-tree! trunk) (delete-tree! clone)))))
-  (it "a gitignored trunk tree the fork never cloned is NEVER an agent deletion"
+  (it "a Rift-recorded ignored trunk tree is NEVER an agent deletion"
       (let
         [trunk
          (temp-dir "vis-ignguard-t")
@@ -606,8 +625,11 @@
              (spit (io/file trunk "secret.env") "TOKEN=keep-me\n")
              (spit (io/file trunk "src.txt") "source\n")
              (spit (io/file trunk "gone.txt") "the agent really deleted this\n")
-             ;; What a gitignore-aware CoW fork actually produces: every ignored
-             ;; path is absent from the clone because it was never copied.
+             ;; A gitignore-aware Rift fork omits these paths and records that
+             ;; decision in its marker. Vis consumes that native contract rather
+             ;; than rediscovering Git ignore semantics itself.
+             (spit (io/file clone ".rift")
+                   "01JRIFTWORKSPACEID\nexcluded generated\nexcluded secret.env\n")
              (spit (io/file clone ".gitignore") "generated/\nsecret.env\n")
              (spit (io/file clone "src.txt") "source\n")
              (Thread/sleep 8)

@@ -143,8 +143,8 @@ vis.extension(
 
 ```python
 vis.symbol(fn, name=None, tag="observation", is_hidden=False,
-           schema=None, description=None, result=None,
-           is_native_tool=False, render=None, color_role=None)
+           schema=None, description=None, result=None, is_native_tool=False,
+           render_start_call_fn=None, render_finish_call_fn=None)
 ```
 
 - `tag` declares what the tool does: `"observation"` (reads state) or `"mutation"`
@@ -190,7 +190,7 @@ def weather_lookup(input):
     return {"city": input["city"], "temp_c": 21}
 
 
-def _render(result):
+def _render_finish_call(result):
     return {"summary": f"{result['city']} {result['temp_c']}C"}
 
 
@@ -202,8 +202,7 @@ vis.symbol(
             "properties": {"city": {"type": "string", "description": "City name."}},
             "required": ["city"],
             "additionalProperties": False},
-    render=_render,
-    color_role="search",
+    render_finish_call_fn=_render_finish_call,
 )
 ```
 
@@ -213,8 +212,8 @@ vis.symbol(
 | `description` | **Required** with a schema: the model-facing first line. The docstring stays an implementation note. |
 | `result` | **Required** with a schema: the raw-result contract, rendered as `Raw result: …`. |
 | `is_native_tool` | Explicit opt-in; redundant when `schema` is present. |
-| `render` | `fn(result) -> dict` building the op card (e.g. `{"summary", "body"}`). |
-| `color_role` | Bare role name (`"search"`) or a full `"tool-color/search"`. |
+| `render_start_call_fn` | `fn(input) -> dict` building the pending display (`summary`, `render`, `code`, `language`). |
+| `render_finish_call_fn` | `fn(result) -> dict` building the finished op card (`summary`, optional `body`). |
 
 - JSON-Schema vocabulary keys (`type`, `properties`, `required`,
   `additionalProperties`, `items`, `enum`, …) are keywordized on the Clojure
@@ -1102,7 +1101,7 @@ The rules:
 - **Return an envelope.** `extension/success {:result value}` on success; on failure either throw (`ex-info` is converted for you) or return `extension/failure {:result nil :error {:message "…" :hint "…"}}`. The model sees only the `:result` payload — map keys convert kebab→snake automatically — and failures surface as normal Python exceptions.
 - Envelope constructors live in `com.blockether.vis.internal.extension` (`success` / `failure`); the spec/registration API is `com.blockether.vis.core` (aliased `vis`).
 
-Useful `vis/symbol` opts beyond `:symbol` and `:tag`: `:before-fn` (e.g. inject the turn's `env` as the first argument), `:render` + `:color-role` (custom TUI result card), `:hidden?` (bind but don't advertise).
+Useful `vis/symbol` opts beyond `:symbol` and `:tag`: `:before-fn` (e.g. inject the turn's `env` as the first argument), `:render-start-call-fn` + `:render-finish-call-fn` (custom pending and finished cards), `:hidden?` (bind but don't advertise).
 
 ### Native tool contracts
 

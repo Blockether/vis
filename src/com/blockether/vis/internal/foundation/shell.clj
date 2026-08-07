@@ -2707,9 +2707,8 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
        "`logs` snapshots; `send` writes `text`; `stop` kills. "
        "Live ids: `session[\"resources\"]`. Output: `r[\"commands\"][0][\"stdout\"]` for run, `r[\"lines\"]` for "
        "`logs`/`wait`; `*_omitted_chars` marks truncation.")
-     :render render-shell-result
-     :render-call render-shell-call
-     :color-role :tool-color/shell
+     :render-finish-call-fn render-shell-result
+     :render-start-call-fn render-shell-call
      :schema
      {:type "object"
       :properties

@@ -2,12 +2,10 @@
   "Wire encoding for the HTTP gateway.
 
    One dumb, deterministic boundary: engine EDN -> JSON. Keyword/symbol
-   keys become snake_case strings (namespace dropped), keyword VALUES keep
-   their full `ns/name` (a badge role like `:tool-color/search` must survive
-   the hop — dropping the namespace made the remote TUI see `:search` while
-   the hop), non-JSON leaves fall back to `str`. The walker makes zero semantic
-   or rendering decisions. Canonical message content is already a string-keyed
-   vector of typed block maps before it reaches this boundary.
+   keys become snake_case strings (namespace dropped), keyword values keep their
+   full `ns/name`, non-JSON leaves fall back to `str`. The walker makes zero
+   semantic or rendering decisions. Canonical message content is already a
+   string-keyed vector of typed block maps before it reaches this boundary.
 
    `canonical` is the SAME shape on the Clojure side: by definition what
    `parse-json` ∘ `json-str` yields — snake_case STRING keys — serve it from

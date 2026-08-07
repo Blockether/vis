@@ -716,7 +716,6 @@ export interface TranscriptForm {
   error?: JsonValue;
   stdout?: string;
   tool_name?: string;
-  tool_color_role?: string;
   silent?: boolean;
   duration_ms?: number;
   [key: string]: unknown;

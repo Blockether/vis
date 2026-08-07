@@ -10,7 +10,7 @@
 (def ^:private transparent-assets
   "Every logo that must sit on an unknown background. `logo.png` is deliberately
    absent: it is the opaque light-theme plate the dark ones replace."
-  ["logo-dark.png" "resources/vis-docs/assets/logo.png" "apps/vis-companion/public/vis-logo.png"])
+  ["resources/vis-docs/assets/logo.png" "apps/vis-companion/public/vis-logo.png"])
 
 (defn- rgba
   "`{:w :h :px}` with `:px` the raw RGBA bytes of the file on disk."
@@ -149,5 +149,4 @@
   (it "README offers the dark mark to dark-theme readers"
       (let [md (readme)]
         (expect (str/includes? md "prefers-color-scheme: dark"))
-        (expect (str/includes? md "srcset=\"logo-dark.png\""))
         (expect (str/includes? md "src=\"logo.png\"")))))

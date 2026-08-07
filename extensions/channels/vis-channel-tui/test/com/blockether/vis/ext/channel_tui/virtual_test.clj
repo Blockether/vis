@@ -134,20 +134,6 @@
                                       :tool/read
 
                                       :tool/meta)
-                 :color-role (case op
-                               (:cat :z/locators)
-                               :tool-color/read
-
-                               :rg
-                               :tool-color/search
-
-                               :patch
-                               :tool-color/edit
-
-                               :ls
-                               :tool-color/read
-
-                               :tool-color/meta)
                  :raw (when (= op :cat) (pr-str preview))}})
 
      forms

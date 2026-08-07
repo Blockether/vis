@@ -104,8 +104,8 @@ def _kwargs_call(fn):
     return _call
 
 def symbol(fn, name=None, tag='observation', is_hidden=False, schema=None,
-           description=None, result=None, is_native_tool=False, render=None,
-           color_role=None):
+           description=None, result=None, is_native_tool=False,
+           render_start_call_fn=None, render_finish_call_fn=None):
     if not callable(fn):
         raise ValueError('vis.symbol(fn, ...) requires a callable')
     if tag not in ('observation', 'mutation'):
@@ -144,15 +144,17 @@ def symbol(fn, name=None, tag='observation', is_hidden=False, schema=None,
     elif description is not None or result is not None:
         raise ValueError('vis.symbol: description=/result= describe a NATIVE tool; '
                          'pass schema= as well (%s)' % (label,))
-    if render is not None and not callable(render):
-        raise ValueError('vis.symbol render= must be a callable (result) -> dict with '
-                         'summary and optional body')
-    if color_role is not None and not isinstance(color_role, str):
-        raise ValueError('vis.symbol color_role= must be a string, e.g. search')
+    if render_start_call_fn is not None and not callable(render_start_call_fn):
+        raise ValueError('vis.symbol render_start_call_fn= must be a callable '
+                         '(input) -> pending display dict')
+    if render_finish_call_fn is not None and not callable(render_finish_call_fn):
+        raise ValueError('vis.symbol render_finish_call_fn= must be a callable '
+                         '(result) -> dict with summary and optional body')
     return {'marker': 'symbol', 'fn': _kwargs_call(fn), 'name': name or fn.__name__, 'tag': tag,
             'hidden': bool(is_hidden), 'is_native_tool': is_native,
             'schema': schema, 'description': description, 'result': result,
-            'render': render, 'color_role': color_role,
+            'render_start_call_fn': render_start_call_fn,
+            'render_finish_call_fn': render_finish_call_fn,
             'doc': doc, 'params': params, 'varargs': varargs}
 
 def slash(name, run, doc=None, usage=None):

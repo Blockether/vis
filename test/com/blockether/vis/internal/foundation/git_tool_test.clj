@@ -12,7 +12,7 @@
 
 (def ^:private render-batch #'gt/render-git-batch-result)
 
-(def ^:private render-call #'gt/render-git-call)
+(def ^:private render-start-call #'gt/render-git-call)
 
 (def ^:private verbose-add #'gt/verbose-add-tokens)
 
@@ -391,7 +391,7 @@
   ;; same section builders — exactly like `shell`. Never the raw `git({…})`
   ;; invocation JSON, and never a hand-written comment band narrating the call.
   (it "renders the pending card out of the finished card's own COMMAND section"
-      (let [{:keys [summary render]} (render-call {"commands" [["status" "--short"]]})]
+      (let [{:keys [summary render]} (render-start-call {"commands" [["status" "--short"]]})]
         (expect (= "⎇ status --short (running)" summary))
         (expect (str/includes? render "**COMMAND**"))
         (expect (str/includes? render "```bash\ngit status --short\n```"))
@@ -400,24 +400,25 @@
   (it "keeps the whole serial batch in one COMMAND block, the rest counted on the headline"
       (let
         [{:keys [summary render]}
-         (render-call {"commands" [["add" "-A"] ["commit" "-m" "feat: thing"] ["push"]]})]
+         (render-start-call {"commands" [["add" "-A"] ["commit" "-m" "feat: thing"] ["push"]]})]
         (expect (= "⎇ add -A · +2 more (running)" summary))
         (expect (str/includes? render "git add -A\ngit commit -m feat: thing\ngit push"))))
   (it "previews the commit it is about to author as the same subject + blockquote"
       (let
-        [{:keys [summary render]} (render-call {"commands" [["commit" "-m" "feat: thing" "-m"
-                                                             "body"]]})]
+        [{:keys [summary render]} (render-start-call {"commands" [["commit" "-m" "feat: thing" "-m"
+                                                                   "body"]]})]
         (expect (= "⎇ commit — feat: thing (running)" summary))
         (expect (str/includes? render "**MESSAGE**"))
         (expect (re-find #"(?m)^> feat: thing" render))
         (expect (re-find #"(?m)^> body" render))))
   (it "coerces the one-line spelling and declines a batch it cannot read"
-      (expect (str/includes? (:render (render-call {"commands" ["status --short"]}))
+      (expect (str/includes? (:render (render-start-call {"commands" ["status --short"]}))
                              "git status --short"))
       ;; A malformed batch is the CALL's error to report, not the preview's.
-      (expect (nil? (render-call {})))
-      (expect (nil? (render-call {"commands" [42]}))))
+      (expect (nil? (render-start-call {})))
+      (expect (nil? (render-start-call {"commands" [42]}))))
   (it "is what the symbol declares as its pending renderer"
-      (let [declared (:ext.symbol/render-call gt/git-symbol)]
+      (let [declared (:ext.symbol/render-start-call-fn gt/git-symbol)]
         (expect (some? declared))
-        (expect (= (render-call {"commands" [["status"]]}) (declared {"commands" [["status"]]}))))))
+        (expect (= (render-start-call {"commands" [["status"]]})
+                   (declared {"commands" [["status"]]}))))))

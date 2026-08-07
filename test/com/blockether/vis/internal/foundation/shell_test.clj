@@ -1266,7 +1266,8 @@
       ;; A malformed batch is the CALL's error to report, never this preview's.
       (expect (nil? (render-shell-call {"commands" [""]}))))
   (it "publishes the renderer under the tool's wire name so the loop can reach it"
-      (expect (fn? (get (extension/native-tool-call-renderers [shell/vis-extension]) "shell")))))
+      (expect (fn? (get (extension/native-tool-start-call-renderers [shell/vis-extension])
+                        "shell")))))
 
 (defdescribe
   macos-jailed-pty-e2e-test

@@ -9,9 +9,13 @@
 
 ;; ── STRONG flat native-tool spec (everything on the symbol) ───────────────────
 
-(def ^:private a-render
-  (fn [r]
-    {:summary (str (:hits r) " hits")}))
+(def ^:private a-render-start
+  (fn [input]
+    {:summary (str "running " (:query input))}))
+
+(def ^:private a-render-finish
+  (fn [result]
+    {:summary (str (:hits result) " hits")}))
 
 (defn- ext-with [& syms] {:ext/name "test.lift" :ext/engine {:ext.engine/symbols (vec syms)}})
 
@@ -23,7 +27,7 @@
 (defdescribe
   flat-native-tool-spec-test
   (it
-    ":native-tool? + symbol-level :schema/:name/:handler/:render produce the whole native surface"
+    ":native-tool? plus flat schema, handler, and start/finish renderers produce the native surface"
     (let
       [sym
        (extension/symbol #'flat-native-tool
@@ -36,8 +40,8 @@
                           :replay {:elide-args {"x" 1024}}
                           :handler (fn [_env _in]
                                      {:ok true})
-                          :render a-render
-                          :color-role :tool-color/meta})
+                          :render-start-call-fn a-render-start
+                          :render-finish-call-fn a-render-finish})
 
        ext
        (ext-with sym)
@@ -46,7 +50,11 @@
        (first (filter #(= "flat_tool" (:name %)) (extension/native-tool-schemas [ext])))]
 
       (expect (some? schema))
-      (expect (= 'flat-native-tool (:symbol (first (extension/native-tools-for [ext])))))
+      (let [tool (first (extension/native-tools-for [ext]))]
+        (expect (= 'flat-native-tool (:symbol tool)))
+        (expect (= #{:symbol :name :description :result :schema :handler :call :replay
+                     :render-start-call-fn :render-finish-call-fn :active?}
+                   (set (keys tool)))))
       (expect (not (contains? schema :symbol)))
       (expect (= "Compact routing and result semantics.\n\nRaw result: A map with boolean `ok`."
                  (:description schema)))
@@ -54,8 +62,12 @@
       (expect (= {:elide-args {"x" 1024}}
                  (get (extension/native-tool-replay-policies [ext]) "flat_tool")))
       (expect (fn? (get (extension/native-tool-handlers [ext]) "flat_tool")))
-      (expect (= a-render (get (extension/native-tool-renderers [ext]) "flat_tool")))
-      (expect (= :tool-color/meta (get (extension/native-tool-color-roles [ext]) "flat_tool")))))
+      (expect (= a-render-start
+                 (get (extension/native-tool-start-call-renderers [ext]) "flat_tool")))
+      (expect (= a-render-finish
+                 (get (extension/native-tool-finish-call-renderers [ext]) "flat_tool")))
+      (expect (= a-render-start (:ext.symbol/render-start-call-fn sym)))
+      (expect (= a-render-finish (:ext.symbol/render-finish-call-fn sym)))))
   (it "a symbol with neither :native-tool? nor a legacy :native-tool map is NOT a native tool"
       (let
         [sym

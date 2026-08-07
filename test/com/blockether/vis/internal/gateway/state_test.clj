@@ -391,7 +391,6 @@
                                             :position 0
                                             :code "print(4"
                                             :vis/tool-name "native_call"
-                                            :tool-color-role :tool-color/meta
                                             :result-summary "run_python"
                                             :svar/tool-call-id "call_1"})]
                    (expect (= "block.preview" type))

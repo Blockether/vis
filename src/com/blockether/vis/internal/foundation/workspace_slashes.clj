@@ -145,28 +145,19 @@
                               (workspace/isolation-unavailable-hint root))
              :slash/data {:capability-matrix (workspace/workspace-capability-matrix root)}))
       :else
-      (try
-        (let
-          [draft (workspace/create!
-                   db
-                   {:session-state-id state-id :label label :from current :clean? clean?})]
-          {:slash/status :ok
-           :slash/title (str (if clean? "Clean draft '" "Draft '")
-                             (workspace/display-label draft)
-                             "' — you're in it now")
-           :slash/body
-           (if clean?
-             "Started from your last commit — your uncommitted changes stayed in your repo, untouched. /draft apply lands this draft's changes into your repo · /draft abandon discards."
-             "Edits here stay isolated. /draft apply lands them into your repo · /draft abandon discards.")
-           :slash/data {:workspace-id (:id draft) :label (:label draft) :clean? clean?}})
-        ;; The only expected failure is "no commit to rewind to" — everything
-        ;; else is a real fault and must keep its own error path.
-        (catch clojure.lang.ExceptionInfo e
-          (if (= :workspace/clean-seed-unavailable (:type (ex-data e)))
-            (err "This project has no commit yet — there is nothing to start a clean draft from"
-                 :slash/body
-                 "Make a first commit, or use /draft new to carry your working tree in as it is.")
-            (throw e)))))))
+      (let
+        [draft (workspace/create!
+                 db
+                 {:session-state-id state-id :label label :from current :clean? clean?})]
+        {:slash/status :ok
+         :slash/title (str (if clean? "Clean draft '" "Draft '")
+                           (workspace/display-label draft)
+                           "' — you're in it now")
+         :slash/body
+         (if clean?
+           "Started from your last commit — your uncommitted changes stayed in your repo, untouched. /draft apply lands this draft's changes into your repo · /draft abandon discards."
+           "Edits here stay isolated. /draft apply lands them into your repo · /draft abandon discards.")
+         :slash/data {:workspace-id (:id draft) :label (:label draft) :clean? clean?}}))))
 
 (defn- handle-new
   "`/draft new <label>` — clone cwd into a draft named <label> and enter it."

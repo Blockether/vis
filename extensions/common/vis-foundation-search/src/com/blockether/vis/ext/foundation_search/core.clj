@@ -1721,7 +1721,7 @@
 ;; Op-card renderer — a boxed citation table + full excerpt cards
 ;; =============================================================================
 ;;
-;; Declared as `:render` on each search symbol. The channel layer
+;; Declared as `:render-finish-call-fn` on each search symbol. The channel layer
 ;; calls it with the tool's `:result` map and paints the returned
 ;; `{:summary :body}` op-card. `:body` is Markdown: a GFM table the channels
 ;; draw as a boxed grid, then one card per citation with the FULL excerpt.
@@ -1847,8 +1847,7 @@
     {:tag :observation
      :native-tool? false
      :name "search_web"
-     :color-role :tool-color/search
-     :render render-search-result
+     :render-finish-call-fn render-search-result
      :description
      "Search the live web for current facts, external documentation, or research the local project cannot answer. Returns ranked citations with excerpts."
      :schema
@@ -1873,8 +1872,7 @@
     {:tag :observation
      :native-tool? false
      :name "search_code"
-     :color-role :tool-color/search
-     :render render-search-result
+     :render-finish-call-fn render-search-result
      :description
      "Search live repositories and technical documentation when the local project and embedded docs are insufficient. Set provider to github to use GitHub Code Search directly."
      :schema
@@ -1899,8 +1897,7 @@
     {:tag :observation
      :native-tool? false
      :name "download_code"
-     :color-role :tool-color/search
-     :render render-search-result
+     :render-finish-call-fn render-search-result
      :description
      "Fetch bounded UTF-8 source excerpts from a known public GitHub owner/repo archive. Use after search, not for discovery."
      :schema
@@ -1926,8 +1923,7 @@
     {:tag :observation
      :native-tool? false
      :name "download_archive"
-     :color-role :tool-color/search
-     :render render-search-result
+     :render-finish-call-fn render-search-result
      :description
      "Download and extract a complete public GitHub repository archive into the workspace. Returns the saved absolute directory path."
      :schema
@@ -1951,8 +1947,7 @@
     {:tag :observation
      :native-tool? false
      :name "search_papers"
-     :color-role :tool-color/search
-     :render render-search-result
+     :render-finish-call-fn render-search-result
      :description
      "Search arXiv for relevant papers. Returns citations with abstracts so claims can be checked against primary research."
      :schema
@@ -1979,8 +1974,7 @@
        "String-keyed `{op,query,citations,citation_count,truncated,source,endpoint?}`; citations are "
        "normalized source objects with title, URL, and available excerpt/metadata.")
      :name "search"
-     :color-role :tool-color/search
-     :render render-search-result
+     :render-finish-call-fn render-search-result
      :description
      "Search live web, public code/docs, or arXiv; code can use GitHub. Returns ranked citations with excerpts."
      :schema

@@ -6557,8 +6557,7 @@
      (str
        "Skeleton of supported source before bodies: imports, definitions, signatures, doc gists, and "
        "fresh anchors for `cat`/`struct_patch`. `include_occurrences` traces each definition's uses.")
-     :render render-index-result
-     :color-role :tool-color/read
+     :render-finish-call-fn render-index-result
      :schema
      {:type "object"
       :properties
@@ -6648,8 +6647,7 @@
      (str
        "Read every needed region of every path as patch-ready `lineno:hash` lines; `ls` lists directories, "
        "`struct_index` maps code first. A write invalidates only that file's earlier anchors.")
-     :render render-cat-result
-     :color-role :tool-color/read
+     :render-finish-call-fn render-cat-result
      :schema cat-schema
      :before-fn (path-protected-before-fn :cat :file :read read-arg-paths)
      :tag :observation
@@ -6696,8 +6694,7 @@
           "Map an unfamiliar tree's SHAPE here first — `depth` descends — instead of guessing "
           "paths for `cat`/`grep`. "
           "Dotfiles need `is_hidden`; gitignored entries are never listed. `cat` reads files.")
-     :render render-ls-results
-     :color-role :tool-color/read
+     :render-finish-call-fn render-ls-results
      :schema ls-schema
      :before-fn (path-protected-before-fn :ls :dir :read read-arg-paths)
      :tag :observation
@@ -6717,8 +6714,7 @@
      :description
      (str "Literal smart-case content plus fuzzy filenames; use first when location is unknown. "
           "`query: \"\"` lists files; null `hits_truncated_by` means complete content.")
-     :render render-grep-result
-     :color-role :tool-color/search
+     :render-finish-call-fn render-grep-result
      :schema
      {:type "object"
       :properties
@@ -6758,8 +6754,7 @@
        "Anchor-based TEXT editor for prose, config, unsupported languages, or definition spans. "
        "ATOMIC: one bad edit writes NOTHING. Code that will not parse is refused; unbalanced Clojure "
        "delimiters are auto-repaired (`repaired`). A write invalidates only that file's earlier anchors.")
-     :render render-patch-result
-     :color-role :tool-color/edit
+     :render-finish-call-fn render-patch-result
      :schema {:type "object"
               :properties
               {"edits"
@@ -6793,8 +6788,7 @@
      "One-row array: `path`, `op`, `changed`, `diff`, plus optional small-region `anchors` (`{\"lineno:hash\":{\"text\":line}}`) reusable as the next `from_anchor`."
      :description "Create or wholly replace a clean file; dirty targets require `is_dirty_ok`."
      :replay {:elide-args {"content" 8192}}
-     :render render-patch-result
-     :color-role :tool-color/edit
+     :render-finish-call-fn render-patch-result
      :schema
      {:type "object"
       :properties
@@ -7253,8 +7247,7 @@
        "Structurally edit supported code: definition by NAME (`target`)—no stale anchors—or node by "
        "`at`/`anchor`. Renames, docs, moves, `append_child`. Writes re-parse: code that will not parse "
        "is REFUSED; unbalanced Clojure delimiters auto-repaired.")
-     :render render-patch-result
-     :color-role :tool-color/edit
+     :render-finish-call-fn render-patch-result
      :schema
      {:type "object"
       :properties
@@ -7477,8 +7470,7 @@
      :active-fn structural-supported?
      :description
      "Read nested tree-sitter node SOURCE and navigate when a named definition is too coarse."
-     :render render-nodes-result
-     :color-role :tool-color/read
+     :render-finish-call-fn render-nodes-result
      :schema
      {:type "object"
       :properties
@@ -7740,8 +7732,7 @@
        "Rename one identifier at syntactic boundaries across supported project code, re-parsing changed files. "
        "First grep candidates, then struct_index those paths for declarations/occurrences. Clojure namespace "
        "renames still require moving the defining file.")
-     :render render-symbol-rename-result
-     :color-role :tool-color/edit
+     :render-finish-call-fn render-symbol-rename-result
      :schema {:type "object"
               :properties {"name" {:type "string" :description "Current identifier or namespace."}
                            "new_name" {:type "string"
@@ -7760,8 +7751,7 @@
      :name "create_dirs"
      :description
      "Create a confined directory and any missing parents; reports whether anything changed."
-     :render render-create-dirs-result
-     :color-role :tool-color/edit
+     :render-finish-call-fn render-create-dirs-result
      :schema {:type "object"
               :properties {"path" {:type "string" :description "Directory path to create."}}
               :required ["path"]
@@ -7778,8 +7768,7 @@
      ;; copy(src, dest, {opts}) — two positionals, the rest an options dict.
      :call {:pos ["src" "dest"] :rest :opt}
      :description "Copy a confined file or directory; existing destinations require `is_overwrite`."
-     :render render-copy-result
-     :color-role :tool-color/move
+     :render-finish-call-fn render-copy-result
      :schema {:type "object"
               :properties {"src" {:type "string" :description "Source."}
                            "dest" {:type "string" :description "Destination."}
@@ -7799,8 +7788,7 @@
                :call {:pos ["src" "dest"]}
                :description
                "Move or rename a confined file or directory without reconstructing its contents."
-               :render render-move-result
-               :color-role :tool-color/move
+               :render-finish-call-fn render-move-result
                :schema {:type "object"
                         :properties {"src" {:type "string" :description "Source path."}
                                      "dest" {:type "string" :description "Destination path."}}
@@ -7818,8 +7806,7 @@
      :call {:pos ["path"]}
      :description
      "Destructively delete a confined file/directory only with explicit intent; an absent path is a non-error no-op."
-     :render render-delete-result
-     :color-role :tool-color/delete
+     :render-finish-call-fn render-delete-result
      :schema {:type "object"
               :properties {"path" {:type "string" :description "Target path."}}
               :required ["path"]
@@ -7835,8 +7822,7 @@
                :name "file_exists"
                :call {:pos ["path"]}
                :description "Check whether a confined file or directory exists without reading it."
-               :render render-exists-result
-               :color-role :tool-color/read
+               :render-finish-call-fn render-exists-result
                :schema {:type "object"
                         :properties {"path" {:type "string" :description "Path to check."}}
                         :required ["path"]
@@ -8126,8 +8112,7 @@
        "Confined filesystem ops. copy/move use exactly two ordered paths: source, then destination. "
        "delete is destructive and needs explicit intent; a missing target is a no-op (`is_deleted` false); "
        "create_dirs makes parents; exists never reads.")
-     :render render-fs-result
-     :color-role :tool-color/move
+     :render-finish-call-fn render-fs-result
      :schema
      {:type "object"
       :properties

@@ -739,6 +739,68 @@
    (let [s (str/trimr (str s))]
      (when (seq s) (str "**" label "**\n" (strutil/fenced s lang))))))
 
+(defn- render-test-call
+  "PENDING run_tests card, emitted with block.started before the pack begins. The
+   selected language/scope is visible immediately instead of leaving the previous
+   reasoning line on screen for the whole run. This is descriptive selection data,
+   never an invented shell command: each language pack owns how its tests execute."
+  [input]
+  (let
+    [many
+     (fn [k]
+       (some->> (get input k)
+                (keep #(some-> %
+                               str
+                               str/trim
+                               not-empty))
+                seq
+                (str/join ", ")))
+
+     present
+     (fn [k]
+       (some-> (get input k)
+               str
+               str/trim
+               not-empty))
+
+     language
+     (or (present "language") "auto")
+
+     namespaces
+     (many "namespaces")
+
+     paths
+     (many "paths")
+
+     only
+     (many "only")
+
+     filter*
+     (present "filter")
+
+     scope
+     (or only
+         namespaces
+         paths
+         (some-> filter*
+                 (str "filter: "))
+         "full suite")
+
+     detail
+     (->> [["language" language] ["scope" scope] ["cwd" (present "cwd")]
+           ["environment" (present "environment")] ["namespaces" namespaces] ["paths" paths]
+           ["only" only] ["filter" filter*] ["include" (many "include")]
+           ["exclude" (many "exclude")]]
+          (keep (fn [[label value]]
+                  (when value (str label ": " value))))
+          (str/join "\n"))]
+
+    {:summary (str (if (= "full suite" scope)
+                     (str language " — full suite")
+                     (clip-chip scope repl-form-inline-max))
+                   " (running)")
+     :render (sect "SELECTION" detail)}))
+
 (defn- render-repl-eval-result
   "repl_eval → a collapsed/expanded op-card modeled on the GIT band (the REPL badge
    names the tool). The COLLAPSED chip carries the evaluated FORM (clipped) plus a
@@ -985,8 +1047,7 @@
      ;; NAME(language, {payload}) — optional leading `language`, the rest a
      ;; pure options dict (always emitted so the payload stays a map).
      :call {:lead-opt "language" :rest :always}
-     :render render-format-result
-     :color-role :tool-color/edit
+     :render-finish-call-fn render-format-result
      :schema
      {:type "object"
       :properties
@@ -1014,8 +1075,7 @@
        "stdin adds `snippet`, paths add `targets`. Findings use `file,row,col,level,type,message` "
        "and optional `provider`.")
      :description "Lint code/paths without edits."
-     :render render-lint-result
-     :color-role :tool-color/read
+     :render-finish-call-fn render-lint-result
      :schema {:type "object"
               :properties {"language" {:type "string" :minLength 1}
                            "code" {:type "string" :description "Source; exclusive with `paths`."}
@@ -1044,29 +1104,30 @@
      ;; directly in Clojure so the language pack's own timeout budget wins.
      :handler (fn [env input]
                 (run-tests env input))
-     :render render-test-result
-     :color-role :tool-color/test
-     :schema {:type "object"
-              :properties
-              {"language" {:type "string" :minLength 1}
-               "namespaces" {:type "array"
-                             :items {:type "string" :minLength 1}
-                             :description "Modules; OMIT/[] discovers all `*_test`."}
-               "paths" {:type "array"
-                        :items {:type "string" :minLength 1}
-                        :description "Dirs/files; OMIT/[] uses root; non-empty miss errors."}
-               "only" {:type "array" :items {:type "string"} :description "Qualified vars."}
-               "include" {:type "array" :items {:type "string"} :description "Required tags."}
-               "exclude" {:type "array" :items {:type "string"} :description "Skipped tags."}
-               "cwd" {:type "string" :description "Project dir; root default."}
-               "filter" {:type "string" :description "Name filter if supported."}
-               "environment"
-               {:type "string"
-                :enum ["project"]
-                :description
-                "Execution environment when supported; `project` uses the project's managed toolchain and dependencies."}}
-              :required ["language"]
-              :additionalProperties false}
+     :render-finish-call-fn render-test-result
+     :render-start-call-fn render-test-call
+     :schema
+     {:type "object"
+      :properties
+      {"language" {:type "string" :minLength 1}
+       "namespaces" {:type "array"
+                     :items {:type "string" :minLength 1}
+                     :description "Modules; OMIT/[] discovers all `*_test`."}
+       "paths" {:type "array"
+                :items {:type "string" :minLength 1}
+                :description "Dirs/files; OMIT/[] uses root; non-empty miss errors."}
+       "only" {:type "array" :items {:type "string"} :description "Qualified vars."}
+       "include" {:type "array" :items {:type "string"} :description "Required tags."}
+       "exclude" {:type "array" :items {:type "string"} :description "Skipped tags."}
+       "cwd" {:type "string" :description "Project dir; root default."}
+       "filter" {:type "string" :description "Name filter if supported."}
+       "environment"
+       {:type "string"
+        :enum ["project"]
+        :description
+        "Execution environment when supported; `project` uses the project's managed toolchain and dependencies."}}
+      :required ["language"]
+      :additionalProperties false}
      :inject-env? true
      :tag :mutation}))
 
@@ -1087,8 +1148,7 @@
      ;; run_tests above).
      :handler (fn [env input]
                 (repl-eval env input))
-     :render render-repl-eval-result
-     :color-role :tool-color/shell
+     :render-finish-call-fn render-repl-eval-result
      :schema {:type "object"
               :properties {"language" {:type "string" :minLength 1}
                            "code" {:type "string" :minLength 1}
@@ -1119,8 +1179,7 @@
        "then `start`. `status` reports that "
        "directory's state; `stop` ends a managed REPL; `connect` attaches an external REPL by port and only detaches it.")
      :call {:lead-opt "language" :rest :always}
-     :render render-repl-start-result
-     :color-role :tool-color/shell
+     :render-finish-call-fn render-repl-start-result
      :schema {:type "object"
               :properties
               {"language" {:type "string" :minLength 1}
@@ -1145,8 +1204,7 @@
      :description
      "Attach an external running REPL; Vis registers it but never owns or kills it, so stop only detaches."
      :call {:lead-opt "language" :rest :always}
-     :render render-repl-start-result
-     :color-role :tool-color/shell
+     :render-finish-call-fn render-repl-start-result
      :schema {:type "object"
               :properties
               {"language" {:type "string" :minLength 1}
@@ -1168,8 +1226,7 @@
      ;; repl_stop(id) — one positional id. (lint_code intentionally has NO
      ;; :call: its fn takes the whole input dict, so the generic form fits.)
      :call {:pos ["id"]}
-     :render render-repl-stop-result
-     :color-role :tool-color/delete
+     :render-finish-call-fn render-repl-stop-result
      :schema {:type "object"
               :properties {"id" {:type "string" :minLength 1 :description "Exact resource id."}}
               :required ["id"]

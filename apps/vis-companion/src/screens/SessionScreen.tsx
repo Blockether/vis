@@ -456,7 +456,6 @@ function formFromEvent(event: SseEvent, running = false): TranscriptForm {
     display_language: stringField(event, "display_language") || undefined,
     comment: stringField(event, "comment") || undefined,
     tool_name: stringField(event, "tool_name") || undefined,
-    tool_color_role: stringField(event, "tool_color_role") || undefined,
     result_summary:
       stringField(event, "result_summary") ||
       (running ? "Running…" : undefined),

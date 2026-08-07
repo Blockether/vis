@@ -210,15 +210,11 @@
           segments
           (vis/parse-block-display src)]
 
-         ;; Project the persisted envelope's WHOLE display-key set via
-         ;; `vis/form->display` — the pre-rendered native-tool card
-         ;; (`:result-render`/`:result-summary`), the badge identity
-         ;; (`:vis/tool-name`/`:tool-color-role`), AND a print-many block's
-         ;; per-result `:cards` — so a restored bubble paints the SAME op-card(s)
-         ;; the live stream did. A hand-listed copy here is what silently dropped
-         ;; them on resume; the canonical projection can't drift. `:code` (env
-         ;; stores source under `:src`), `:scope`/`:tag`, and the computed
-         ;; `:render-segments` are layered on top.
+         ;; Project the persisted envelope's whole display-key set via
+         ;; `vis/form->display`: the pre-rendered native-tool card, its tool name,
+         ;; and a print-many block's per-result cards. A hand-listed copy silently
+         ;; dropped those fields on resume; the canonical projection cannot drift.
+         ;; `:code`, `:scope`/`:tag`, and computed render segments are layered on top.
          (cond->
            (merge (vis/form<-wire env)
                   {:position idx
@@ -930,12 +926,8 @@
               :error error
               :silent? (boolean silent)}
              (when (event-get event :duration-ms) {:duration-ms (event-get event :duration-ms)})
-             ;; The WHOLE canonical display set (code, result, the
-             ;; native-tool op-card card/label/colour, render-segments,
-             ;; …) read back tolerantly — the mirror of the gateway's
-             ;; `->display`, so a new display field flows live with no
-             ;; edit here. `<-wire` re-keywords the keyword-valued fields
-             ;; (`:tool-color-role`) the wire stringified.
+             ;; Read the whole canonical display set back tolerantly, mirroring the
+             ;; gateway's `->display`, so a new display field flows live unchanged.
              (vis/form<-wire event))
 
       "iteration.completed"

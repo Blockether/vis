@@ -155,8 +155,7 @@
               :required ["name"]
               :additionalProperties false}
      :handler skill-tool
-     :render render-skill
-     :color-role :tool-color/meta}))
+     :render-finish-call-fn render-skill}))
 
 ;; =============================================================================
 ;; /<name> — user-invokable skill templates (pi-style)

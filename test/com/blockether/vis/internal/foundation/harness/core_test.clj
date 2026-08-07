@@ -107,22 +107,20 @@
           (expect (nil? (:ext.symbol/engine-bound? entry)))
           (expect (extension/symbol-bound? entry))
           (expect (true? (:ext.symbol/inject-env? entry)))
-          ;; STRONG flat form: schema/render/colour all on the SYMBOL, no :native-tool map
+          ;; Strong flat form: schema and renderer callback live on the symbol.
           (expect (true? (:ext.symbol/native-tool? entry)))
           (expect (map? (:ext.symbol/schema entry)))
           (expect (nil? (:ext.symbol/native-tool entry)))
-          (expect (fn? (:ext.symbol/render entry)))
-          (expect (= :tool-color/meta (:ext.symbol/color-role entry)))))
-    (it "renderer/colour resolve; native description stays compact and schema owns inputs"
-        (expect (fn? (get (extension/native-tool-renderers exts) "skill")))
-        (expect (= :tool-color/meta (get (extension/native-tool-color-roles exts) "skill")))
+          (expect (fn? (:ext.symbol/render-finish-call-fn entry)))))
+    (it "renderer resolves; native description stays compact and schema owns inputs"
+        (expect (fn? (get (extension/native-tool-finish-call-renderers exts) "skill")))
         (let [schema (first (filter #(= "skill" (:name %)) (extension/native-tool-schemas exts)))]
           (expect (str/includes? (:description schema) "already-active receipt"))
           (expect (not (str/includes? (:description schema) "SKILLS block")))
           (expect (false? (get-in schema [:schema :additionalProperties])))))
     (it "renders the loaded SKILL.md as markdown instead of a fenced code block"
         (let
-          [render (get (extension/native-tool-renderers exts) "skill")
+          [render (get (extension/native-tool-finish-call-renderers exts) "skill")
            body "## Setup\n\n1. Run `context.mjs`."
            rendered (render {"name" "demo" "body" body})]
 

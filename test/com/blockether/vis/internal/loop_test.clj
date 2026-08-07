@@ -4073,7 +4073,7 @@
   native-tool-call-block-test
   ;; REGRESSION: only the `:handler` branch carried `:vis/native-input`, so every
   ;; sandbox-bound native tool — `shell` above all — lost the input its own
-  ;; `:render-call` needs and painted raw invocation JSON for the whole run.
+  ;; `:render-start-call-fn` needs and painted raw invocation JSON for the whole run.
   (it "carries the call input on the synthesized-python branch too"
       (let
         [tc {:id "c1" :name "shell" :input {"op" "wait" "id" "dev" "until" "ready"}}
@@ -4093,10 +4093,10 @@
         (expect (= {"query" "vis"} (:vis/native-input block)))))
   (it "renders a pending `shell` wait as the op-card it becomes, not the call JSON"
       ;; End to end over the real seam: the block's input reaches the tool's own
-      ;; `:render-call`, so the running form is the shell CARD its result card
+      ;; `:render-start-call-fn`, so the running form is the shell CARD its result card
       ;; completes instead of `shell({\"op\": \"wait\", …})`.
       (let
-        [renderers (extension/native-tool-call-renderers [sh/vis-extension])
+        [renderers (extension/native-tool-start-call-renderers [sh/vis-extension])
          tc {:id "c4"
              :name "shell"
              :input {"op" "wait" "id" "svar-verify" "until" "VERIFY_EXIT=" "timeout_secs" 600}}
