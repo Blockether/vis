@@ -188,7 +188,16 @@ export function ImageViewer({
     // A lone finger while drawing is a stroke owned by the annotation layer
     // above this handler, not a pan — only a SECOND finger starts a gesture
     // here, so a pinch still works while the pen is out.
-    if (drawing && !pinching) return;
+    // A lone finger while drawing is a stroke, and it is the VIEWPORT that owns
+    // the pointer: the sheet only covers the picture, so a stroke begun on the
+    // dark margin beside it would otherwise never start and the line would only
+    // appear for someone who touched down exactly inside the edge.
+    if (drawing && !pinching) {
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      annotationRef.current?.beginAt(event.clientX, event.clientY);
+      return;
+    }
     // A second finger arrived: the mark the first one was leaving belongs to a
     // pinch, not to the picture. Drop it before the zoom starts, or every
     // two-finger zoom on a phone scribbles a line across the page.
@@ -213,6 +222,11 @@ export function ImageViewer({
       y: event.clientY,
     });
     const gesture = gestureRef.current;
+    if (drawing && !gesture && pointersRef.current.size === 1) {
+      event.preventDefault();
+      annotationRef.current?.extendTo(event.clientX, event.clientY);
+      return;
+    }
     if (!gesture) return;
     const [a, b] = [...pointersRef.current.values()];
     if (gesture.kind === "pinch" && a && b) {
@@ -232,6 +246,7 @@ export function ImageViewer({
 
   function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
     pointersRef.current.delete(event.pointerId);
+    if (drawing) annotationRef.current?.endStroke();
     // Lifting one finger of a pinch continues as a pan from where the other one
     // is, instead of jumping the picture on the next move — unless the pen is
     // out, where the remaining finger belongs to the stroke, never a pan.

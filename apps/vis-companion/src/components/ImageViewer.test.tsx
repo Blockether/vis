@@ -306,3 +306,41 @@ it("abandons the stroke in progress when a second finger starts a pinch", () => 
   });
   expect(named("Undo").disabled).toBe(true);
 });
+
+// Regression, reported from the app: a stroke only appeared when the finger
+// touched down exactly on the picture's edge. Starting on the dark margin a
+// little outside it and dragging in drew nothing at all, even well past the
+// point where ink should have appeared.
+it("draws a stroke that starts beside the picture and crosses onto it", () => {
+  Element.prototype.setPointerCapture = vi.fn();
+  act(() => named("Draw").click());
+  const viewport = document.querySelector<HTMLDivElement>(
+    '[role="dialog"] .cursor-grab',
+  );
+  const canvas = document.querySelector("canvas");
+  if (!viewport || !canvas) throw new Error("viewer surface not found");
+  canvas.width = 400;
+  canvas.height = 300;
+  canvas.getBoundingClientRect = () =>
+    ({ left: 100, top: 100, width: 400, height: 300 }) as DOMRect;
+
+  const at = (type: string, x: number, y: number) =>
+    act(() => {
+      viewport.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId: 1,
+          isPrimary: true,
+          clientX: x,
+          clientY: y,
+          bubbles: true,
+        }),
+      );
+    });
+
+  // Down on the margin, left of the picture, then in.
+  at("pointerdown", 40, 200);
+  at("pointermove", 160, 200);
+  at("pointerup", 160, 200);
+
+  expect(named("Undo").disabled).toBe(false);
+});

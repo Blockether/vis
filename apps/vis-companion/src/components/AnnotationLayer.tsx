@@ -44,6 +44,15 @@ export interface AnnotationSurface {
    * a pen was the start of a pinch: the marks it left are not wanted.
    */
   cancelStroke(): void;
+  /**
+   * Draw from anywhere on screen, in client coordinates — the picture's own
+   * margin included. A stroke that starts beside the sheet and crosses onto it
+   * paints from the moment it arrives, instead of needing a first touch that
+   * lands exactly inside the edge.
+   */
+  beginAt(clientX: number, clientY: number): void;
+  extendTo(clientX: number, clientY: number): void;
+  endStroke(): void;
   /** The painted sheet, to compose over the picture it annotates. */
   canvas(): HTMLCanvasElement | null;
 }
@@ -69,8 +78,14 @@ export function AnnotationLayer({
   const strokesRef = useRef<Stroke[]>([]);
   const drawingRef = useRef<Stroke | null>(null);
   const changed = useRef(onStrokesChange);
+  // Read by the imperative surface, which is built once: a pointer that arrives
+  // from an owner must use the pen this render holds, not the first one.
+  const activeRef = useRef(active);
+  const colorRef = useRef(color);
   useEffect(() => {
     changed.current = onStrokesChange;
+    activeRef.current = active;
+    colorRef.current = color;
   });
 
   function announce(): void {
@@ -82,6 +97,48 @@ export function AnnotationLayer({
     const context = canvas?.getContext("2d");
     if (canvas && context) repaintStrokes(context, canvas, strokesRef.current);
     announce();
+  }
+
+  /**
+   * The three moves of a pen, in client coordinates and nothing else, so the
+   * sheet's own pointer handlers and an owner forwarding a gesture that started
+   * off the sheet run the SAME code. Each answers whether it did anything.
+   */
+  function startStroke(clientX: number, clientY: number): boolean {
+    const canvas = canvasRef.current;
+    if (!activeRef.current || drawingRef.current || !canvas) return false;
+    const point = canvasPoint(canvas, clientX, clientY);
+    if (!point) return false;
+    const stroke: Stroke = {
+      color: paletteColor(colorRef.current),
+      width: strokeWidthFor(canvas.width, canvas.height),
+      points: [point],
+    };
+    strokesRef.current = [...strokesRef.current, stroke];
+    drawingRef.current = stroke;
+    const context = canvas.getContext("2d");
+    if (context) paintStroke(context, stroke);
+    announce();
+    return true;
+  }
+
+  function continueStroke(clientX: number, clientY: number): boolean {
+    const canvas = canvasRef.current;
+    const stroke = drawingRef.current;
+    if (!activeRef.current || !stroke || !canvas) return false;
+    const point = canvasPoint(canvas, clientX, clientY);
+    if (!point) return false;
+    const previous = stroke.points[stroke.points.length - 1];
+    stroke.points.push(point);
+    const context = canvas.getContext("2d");
+    if (previous && context) paintSegment(context, stroke, previous, point);
+    return true;
+  }
+
+  function stopStroke(): boolean {
+    if (!drawingRef.current) return false;
+    drawingRef.current = null;
+    return true;
   }
 
   useImperativeHandle(
@@ -114,6 +171,15 @@ export function AnnotationLayer({
         drawingRef.current = null;
         repaint();
       },
+      beginAt(clientX, clientY) {
+        startStroke(clientX, clientY);
+      },
+      extendTo(clientX, clientY) {
+        continueStroke(clientX, clientY);
+      },
+      endStroke() {
+        stopStroke();
+      },
       canvas: () => canvasRef.current,
     }),
     [],
@@ -121,43 +187,25 @@ export function AnnotationLayer({
 
   function begin(event: ReactPointerEvent<HTMLCanvasElement>): void {
     const canvas = canvasRef.current;
-    if (!active || !event.isPrimary || !canvas) return;
-    const point = canvasPoint(canvas, event.clientX, event.clientY);
-    if (!point) return;
+    if (!event.isPrimary || !canvas) return;
+    // An owner may have started this very stroke in the capture phase; then the
+    // sheet has nothing to add and must not steal the pointer capture either.
+    if (!startStroke(event.clientX, event.clientY)) return;
     event.preventDefault();
     canvas.setPointerCapture(event.pointerId);
-    const stroke: Stroke = {
-      color: paletteColor(color),
-      width: strokeWidthFor(canvas.width, canvas.height),
-      points: [point],
-    };
-    strokesRef.current = [...strokesRef.current, stroke];
-    drawingRef.current = stroke;
-    const context = canvas.getContext("2d");
-    if (context) paintStroke(context, stroke);
-    announce();
   }
 
   function extend(event: ReactPointerEvent<HTMLCanvasElement>): void {
-    const canvas = canvasRef.current;
-    const stroke = drawingRef.current;
     // A second finger is a pinch, not the pen: never swallow its move, or the
     // container never sees the two points it needs to compute the pinch.
-    if (!active || !stroke || !canvas || !event.isPrimary) return;
-    const point = canvasPoint(canvas, event.clientX, event.clientY);
-    if (!point) return;
-    event.preventDefault();
-    const previous = stroke.points[stroke.points.length - 1];
-    stroke.points.push(point);
-    const context = canvas.getContext("2d");
-    if (previous && context) paintSegment(context, stroke, previous, point);
+    if (!event.isPrimary) return;
+    if (continueStroke(event.clientX, event.clientY)) event.preventDefault();
   }
 
   function finish(event: ReactPointerEvent<HTMLCanvasElement>): void {
     // A second finger lifting is a pinch ending, not the pen: never swallow it.
-    if (!drawingRef.current || !event.isPrimary) return;
-    event.preventDefault();
-    drawingRef.current = null;
+    if (!event.isPrimary) return;
+    if (stopStroke()) event.preventDefault();
   }
 
   return (
