@@ -33,27 +33,38 @@
  * Credentials: env first (VIS_ASC_KEY_ID / VIS_ASC_ISSUER_ID / VIS_ASC_KEY_PATH), then the
  * macOS login keychain (`npm run secrets asc …`). Never a file in this repo.
  */
-import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { appIdFor, asc, ascToken, waitForBuild } from './asc.mjs';
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { appIdFor, asc, ascToken, waitForBuild } from "./asc.mjs";
 
-const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // "already exists" / "already submitted" are the normal state of a re-run, not a failure.
 // A build that is already IN Beta App Review answers "not in a valid processing state" to a
 // second submission — same thing, different wording, and equally not an error for a re-run.
 const isDuplicate = (err) =>
-  err.status === 409 || /already/i.test(err.message) || /not in a valid processing state/i.test(err.message);
+  err.status === 409 ||
+  /already/i.test(err.message) ||
+  /not in a valid processing state/i.test(err.message);
 
 /**
  * Every beta group that must carry this build, named group FIRST.
  *
  * A tester sees the newest build of the group their invitation belongs to, so a build that only
  * reaches the named group leaves every other invitation serving whatever it last got.
+ *
+ * An INTERNAL group is never a target: App Store Connect answers `422 Builds cannot be assigned
+ * to this internal group` — internal testers get every build automatically — and that refusal
+ * failed the whole release job after the build had already shipped to TestFlight.
  */
-export const linkTargets = (groups, namedId) => [namedId, ...groups.map((g) => g.id).filter((id) => id && id !== namedId)];
+export const linkTargets = (groups, namedId) => [
+  namedId,
+  ...groups
+    .filter((g) => g.id && g.id !== namedId && !g.attributes?.isInternalGroup)
+    .map((g) => g.id),
+];
 
 /**
  * Run `call` with a token, and on 401 mint a fresh one and run it exactly once more.
@@ -77,30 +88,49 @@ export const retryUnauthorized = async (mint, call) => {
  * distribution gets one fresh-token retry, not just the two that happened to fail
  * in run 30766271157. The build is already uploaded by the time any of this runs.
  */
-export const retryingApi = (mint) => (method, path, body) => retryUnauthorized(mint, (token) => asc(token, method, path, body));
+export const retryingApi = (mint) => (method, path, body) =>
+  retryUnauthorized(mint, (token) => asc(token, method, path, body));
 
 /** Beta App Review refuses a submission when these are unset; they are per-app and set once. */
-const ensureBetaMeta = async (api, appId, { locale = 'en-US', feedbackEmail, description, contact = {}, log }) => {
+const ensureBetaMeta = async (
+  api,
+  appId,
+  { locale = "en-US", feedbackEmail, description, contact = {}, log },
+) => {
   const missing = [];
 
-  const locs = await api('GET', `/v1/apps/${appId}/betaAppLocalizations?limit=50`);
+  const locs = await api(
+    "GET",
+    `/v1/apps/${appId}/betaAppLocalizations?limit=50`,
+  );
   const mine = locs.data?.find((l) => l.attributes?.locale === locale);
-  const wantLoc = { ...(feedbackEmail ? { feedbackEmail } : {}), ...(description ? { description } : {}) };
+  const wantLoc = {
+    ...(feedbackEmail ? { feedbackEmail } : {}),
+    ...(description ? { description } : {}),
+  };
   if (mine && Object.keys(wantLoc).length) {
-    await api('PATCH', `/v1/betaAppLocalizations/${mine.id}`, { data: { type: 'betaAppLocalizations', id: mine.id, attributes: wantLoc } });
+    await api("PATCH", `/v1/betaAppLocalizations/${mine.id}`, {
+      data: { type: "betaAppLocalizations", id: mine.id, attributes: wantLoc },
+    });
     log(`beta localization ${locale} updated`);
   } else if (!mine) {
     if (feedbackEmail) {
-      await api('POST', '/v1/betaAppLocalizations', {
+      await api("POST", "/v1/betaAppLocalizations", {
         data: {
-          type: 'betaAppLocalizations',
-          attributes: { locale, feedbackEmail, ...(description ? { description } : {}) },
-          relationships: { app: { data: { type: 'apps', id: appId } } },
+          type: "betaAppLocalizations",
+          attributes: {
+            locale,
+            feedbackEmail,
+            ...(description ? { description } : {}),
+          },
+          relationships: { app: { data: { type: "apps", id: appId } } },
         },
       });
       log(`beta localization ${locale} created`);
     } else {
-      missing.push('beta localization (pass --feedback-email, and ideally --description)');
+      missing.push(
+        "beta localization (pass --feedback-email, and ideally --description)",
+      );
     }
   }
 
@@ -110,44 +140,68 @@ const ensureBetaMeta = async (api, appId, { locale = 'en-US', feedbackEmail, des
     ...(contact.last ? { contactLastName: contact.last } : {}),
     ...(contact.email ? { contactEmail: contact.email } : {}),
     ...(contact.phone ? { contactPhone: contact.phone } : {}),
-    ...(contact.demoRequired === undefined ? {} : { demoAccountRequired: contact.demoRequired }),
+    ...(contact.demoRequired === undefined
+      ? {}
+      : { demoAccountRequired: contact.demoRequired }),
     ...(contact.notes ? { notes: contact.notes } : {}),
   };
   if (Object.keys(wantContact).length) {
-    await api('PATCH', `/v1/betaAppReviewDetails/${appId}`, { data: { type: 'betaAppReviewDetails', id: appId, attributes: wantContact } });
-    log('beta review contact updated');
+    await api("PATCH", `/v1/betaAppReviewDetails/${appId}`, {
+      data: {
+        type: "betaAppReviewDetails",
+        id: appId,
+        attributes: wantContact,
+      },
+    });
+    log("beta review contact updated");
   } else {
-    const detail = await api('GET', `/v1/apps/${appId}/betaAppReviewDetail`);
+    const detail = await api("GET", `/v1/apps/${appId}/betaAppReviewDetail`);
     const a = detail.data?.attributes ?? {};
-    if (!a.contactEmail || !a.contactFirstName || !a.contactLastName || !a.contactPhone) {
-      missing.push('beta review contact (pass --contact-first/--contact-last/--contact-email/--contact-phone)');
+    if (
+      !a.contactEmail ||
+      !a.contactFirstName ||
+      !a.contactLastName ||
+      !a.contactPhone
+    ) {
+      missing.push(
+        "beta review contact (pass --contact-first/--contact-last/--contact-email/--contact-phone)",
+      );
     }
   }
   return missing;
 };
 
 /** The external, public-link group every public tester joins. Created once, reused after. */
-const ensurePublicGroup = async (api, appId, name, { publicLink = true, limit, log }) => {
-  const groups = await api('GET', `/v1/apps/${appId}/betaGroups?limit=200`);
+const ensurePublicGroup = async (
+  api,
+  appId,
+  name,
+  { publicLink = true, limit, log },
+) => {
+  const groups = await api("GET", `/v1/apps/${appId}/betaGroups?limit=200`);
   let group = groups.data?.find((g) => g.attributes?.name === name);
   if (!group) {
-    const created = await api('POST', '/v1/betaGroups', {
+    const created = await api("POST", "/v1/betaGroups", {
       data: {
-        type: 'betaGroups',
+        type: "betaGroups",
         attributes: {
           name,
           publicLinkEnabled: publicLink,
           publicLinkLimitEnabled: limit !== undefined,
           ...(limit !== undefined ? { publicLinkLimit: limit } : {}),
         },
-        relationships: { app: { data: { type: 'apps', id: appId } } },
+        relationships: { app: { data: { type: "apps", id: appId } } },
       },
     });
     group = created.data;
     log(`created external beta group "${name}"`);
   } else if (publicLink && !group.attributes?.publicLinkEnabled) {
-    const patched = await api('PATCH', `/v1/betaGroups/${group.id}`, {
-      data: { type: 'betaGroups', id: group.id, attributes: { publicLinkEnabled: true } },
+    const patched = await api("PATCH", `/v1/betaGroups/${group.id}`, {
+      data: {
+        type: "betaGroups",
+        id: group.id,
+        attributes: { publicLinkEnabled: true },
+      },
     });
     group = patched.data;
     log(`enabled the public link on "${name}"`);
@@ -165,7 +219,7 @@ export const distribute = async ({
   keyPem,
   bundleId,
   build,
-  group = 'Public',
+  group = "Public",
   publicLink = true,
   publicLinkLimit,
   review = true,
@@ -173,40 +227,83 @@ export const distribute = async ({
   timeoutMs = 60 * 60 * 1000,
   log = (m) => console.log(`· ${m}`),
 }) => {
-  if (!keyId || !issuerId || !keyPem) return { ok: false, reason: 'no App Store Connect API key (npm run secrets asc …)' };
+  if (!keyId || !issuerId || !keyPem)
+    return {
+      ok: false,
+      reason: "no App Store Connect API key (npm run secrets asc …)",
+    };
   const credentials = { keyId, issuerId, keyPem };
   const mint = () => ascToken(credentials);
   const api = retryingApi(mint);
   try {
-    const appId = await retryUnauthorized(mint, (token) => appIdFor(token, bundleId));
-    if (!appId) return { ok: false, reason: `no app with bundle id ${bundleId} in this API key's team` };
+    const appId = await retryUnauthorized(mint, (token) =>
+      appIdFor(token, bundleId),
+    );
+    if (!appId)
+      return {
+        ok: false,
+        reason: `no app with bundle id ${bundleId} in this API key's team`,
+      };
 
     // A build must be VALID before it can be reviewed or linked; PROCESSING is rejected.
     // Apple's JWTs expire after 20 minutes, while build ingestion can take much longer.
-    const found = await waitForBuild(mint, { appId, build, timeoutMs, requireValid: true, log });
-    if (!found?.id) return { ok: false, reason: `build ${build} not visible in App Store Connect yet` };
-    if (found.state !== 'VALID') return { ok: false, reason: `build ${build} is still ${found.state} — re-run with --build ${build} once it is VALID` };
+    const found = await waitForBuild(mint, {
+      appId,
+      build,
+      timeoutMs,
+      requireValid: true,
+      log,
+    });
+    if (!found?.id)
+      return {
+        ok: false,
+        reason: `build ${build} not visible in App Store Connect yet`,
+      };
+    if (found.state !== "VALID")
+      return {
+        ok: false,
+        reason: `build ${build} is still ${found.state} — re-run with --build ${build} once it is VALID`,
+      };
 
     // Apple validates the beta metadata against the app's PRIMARY locale, not en-US: with only an
     // en-US localization on an en-GB app, `betaAppReviewSubmissions` fails with the misleading
     // "betaAppLocalizations not found for this app". Ask the app which locale it wants.
-    const primaryLocale = (await api('GET', `/v1/apps/${appId}`))?.data?.attributes?.primaryLocale;
-    const missing = await ensureBetaMeta(api, appId, { locale: primaryLocale || 'en-US', ...meta, log });
+    const primaryLocale = (await api("GET", `/v1/apps/${appId}`))?.data
+      ?.attributes?.primaryLocale;
+    const missing = await ensureBetaMeta(api, appId, {
+      locale: primaryLocale || "en-US",
+      ...meta,
+      log,
+    });
     if (review && missing.length) {
-      return { ok: false, reason: `beta metadata incomplete: ${missing.join('; ')}` };
+      return {
+        ok: false,
+        reason: `beta metadata incomplete: ${missing.join("; ")}`,
+      };
     }
 
-    const grp = await ensurePublicGroup(api, appId, group, { publicLink, limit: publicLinkLimit, log });
+    const grp = await ensurePublicGroup(api, appId, group, {
+      publicLink,
+      limit: publicLinkLimit,
+      log,
+    });
 
     if (review) {
       try {
-        await api('POST', '/v1/betaAppReviewSubmissions', {
-          data: { type: 'betaAppReviewSubmissions', relationships: { build: { data: { type: 'builds', id: found.id } } } },
+        await api("POST", "/v1/betaAppReviewSubmissions", {
+          data: {
+            type: "betaAppReviewSubmissions",
+            relationships: {
+              build: { data: { type: "builds", id: found.id } },
+            },
+          },
         });
-        log('submitted for Beta App Review (Apple usually answers within a day)');
+        log(
+          "submitted for Beta App Review (Apple usually answers within a day)",
+        );
       } catch (err) {
         if (!isDuplicate(err)) throw err;
-        log('already submitted for Beta App Review');
+        log("already submitted for Beta App Review");
       }
     }
 
@@ -214,12 +311,16 @@ export const distribute = async ({
     // the group their link belongs to, so linking only the named group leaves every other public
     // link handing out whatever it last got — an old invitation served 0.1.14 (build 2804) while
     // Public was on 0.1.32 (build 3774).
-    const everyGroup = (await api('GET', `/v1/betaGroups?filter[app]=${appId}&limit=200`))?.data ?? [];
+    const everyGroup =
+      (await api("GET", `/v1/betaGroups?filter[app]=${appId}&limit=200`))
+        ?.data ?? [];
     for (const id of linkTargets(everyGroup, grp.id)) {
       const name = everyGroup.find((g) => g.id === id)?.attributes?.name ?? id;
       // Linking is idempotent server-side, but a duplicate POST still 409s on some paths.
       try {
-        await api('POST', `/v1/betaGroups/${id}/relationships/builds`, { data: [{ type: 'builds', id: found.id }] });
+        await api("POST", `/v1/betaGroups/${id}/relationships/builds`, {
+          data: [{ type: "builds", id: found.id }],
+        });
         log(`linked build ${build} to "${name}"`);
       } catch (err) {
         if (!isDuplicate(err)) throw err;
@@ -227,8 +328,13 @@ export const distribute = async ({
       }
     }
 
-    const fresh = await api('GET', `/v1/betaGroups/${grp.id}`);
-    return { ok: true, buildId: found.id, groupId: grp.id, publicLink: fresh.data?.attributes?.publicLink };
+    const fresh = await api("GET", `/v1/betaGroups/${grp.id}`);
+    return {
+      ok: true,
+      buildId: found.id,
+      groupId: grp.id,
+      publicLink: fresh.data?.attributes?.publicLink,
+    };
   } catch (err) {
     return { ok: false, reason: err.message };
   }
@@ -236,7 +342,10 @@ export const distribute = async ({
 
 // ── standalone CLI ────────────────────────────────────────────────────────────────────
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))
+) {
   const args = process.argv.slice(2);
   const flag = (name) => {
     const i = args.indexOf(`--${name}`);
@@ -246,40 +355,62 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
 
   // Keychain-first, same rule as ios-release.mjs: env wins so CI can inject, otherwise the
   // macOS login keychain, never a dotfile in the repo.
-  const unhex = (s) => (/^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s);
+  const unhex = (s) =>
+    /^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0
+      ? Buffer.from(s, "hex").toString("utf8")
+      : s;
   const keychain = (account) => {
-    if (process.platform !== 'darwin') return undefined;
-    const res = spawnSync('security', ['find-generic-password', '-s', 'vis-ios', '-a', account, '-w'], { encoding: 'utf8' });
-    return res.status === 0 && res.stdout.trim() ? unhex(res.stdout.trim()) : undefined;
+    if (process.platform !== "darwin") return undefined;
+    const res = spawnSync(
+      "security",
+      ["find-generic-password", "-s", "vis-ios", "-a", account, "-w"],
+      { encoding: "utf8" },
+    );
+    return res.status === 0 && res.stdout.trim()
+      ? unhex(res.stdout.trim())
+      : undefined;
   };
-  const secret = (envName, account) => process.env[envName]?.trim() || keychain(account);
+  const secret = (envName, account) =>
+    process.env[envName]?.trim() || keychain(account);
 
   const build =
-    flag('build') ??
-    spawnSync('git', ['rev-list', '--count', 'HEAD'], { encoding: 'utf8', cwd: resolve(appDir, '..', '..') }).stdout.trim();
-  const bundleId = flag('bundle') ?? JSON.parse(readFileSync(join(appDir, 'capacitor.config.json'), 'utf8')).appId;
+    flag("build") ??
+    spawnSync("git", ["rev-list", "--count", "HEAD"], {
+      encoding: "utf8",
+      cwd: resolve(appDir, "..", ".."),
+    }).stdout.trim();
+  const bundleId =
+    flag("bundle") ??
+    JSON.parse(readFileSync(join(appDir, "capacitor.config.json"), "utf8"))
+      .appId;
 
   const res = await distribute({
-    keyId: secret('VIS_ASC_KEY_ID', 'asc_key_id'),
-    issuerId: secret('VIS_ASC_ISSUER_ID', 'asc_issuer_id'),
-    keyPem: process.env.VIS_ASC_KEY_PATH ? readFileSync(process.env.VIS_ASC_KEY_PATH, 'utf8') : keychain('asc_key'),
+    keyId: secret("VIS_ASC_KEY_ID", "asc_key_id"),
+    issuerId: secret("VIS_ASC_ISSUER_ID", "asc_issuer_id"),
+    keyPem: process.env.VIS_ASC_KEY_PATH
+      ? readFileSync(process.env.VIS_ASC_KEY_PATH, "utf8")
+      : keychain("asc_key"),
     bundleId,
     build,
-    group: flag('group') ?? 'Public',
-    publicLink: !has('no-public-link'),
-    publicLinkLimit: flag('limit') ? Number(flag('limit')) : undefined,
-    review: !has('no-review'),
-    timeoutMs: Number(flag('timeout') ?? 60 * 60 * 1000),
+    group: flag("group") ?? "Public",
+    publicLink: !has("no-public-link"),
+    publicLinkLimit: flag("limit") ? Number(flag("limit")) : undefined,
+    review: !has("no-review"),
+    timeoutMs: Number(flag("timeout") ?? 60 * 60 * 1000),
     meta: {
-      feedbackEmail: flag('feedback-email'),
-      description: flag('description'),
+      feedbackEmail: flag("feedback-email"),
+      description: flag("description"),
       contact: {
-        first: flag('contact-first'),
-        last: flag('contact-last'),
-        email: flag('contact-email'),
-        phone: flag('contact-phone'),
-        notes: flag('review-notes'),
-        demoRequired: has('demo-required') ? true : has('no-demo-required') ? false : undefined,
+        first: flag("contact-first"),
+        last: flag("contact-last"),
+        email: flag("contact-email"),
+        phone: flag("contact-phone"),
+        notes: flag("review-notes"),
+        demoRequired: has("demo-required")
+          ? true
+          : has("no-demo-required")
+            ? false
+            : undefined,
       },
     },
   });
@@ -289,5 +420,9 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
     process.exit(1);
   }
   console.log(`\n✓ build ${build} is on public TestFlight.`);
-  console.log(res.publicLink ? `  Public link: ${res.publicLink}\n` : '  Public link appears once Beta App Review approves the build.\n');
+  console.log(
+    res.publicLink
+      ? `  Public link: ${res.publicLink}\n`
+      : "  Public link appears once Beta App Review approves the build.\n",
+  );
 }
