@@ -8,7 +8,6 @@ import {
   HeaderTally,
   HeaderTitle,
   Pager,
-  IconButton,
   Input,
   LIST_EDGE,
   LIST_EDGE_END,
@@ -59,7 +58,6 @@ import {
   type ManagedProject,
 } from '../components/ManageProjectsSheet';
 import {
-  CloseIcon,
   PencilIcon,
   ProjectsIcon,
   SettingsIcon,
@@ -225,6 +223,9 @@ type StartIn =
 interface Props {
   /** Every paired machine, in pairing order. This screen renders the FLEET. */
   conns: GatewayConn[];
+  /** The fleet-wide search, asked by the app bar above every machine chip. */
+  query: string;
+  onQuery: (next: string) => void;
   subscriptions: SessionSubscriptionHub | null;
   /** No machine is answering at all — the shell decides what to show instead. */
   onUnreachable?: (message: string | null) => void;
@@ -237,6 +238,8 @@ interface Props {
 
 export function SessionsScreen({
   conns,
+  query,
+  onQuery,
   subscriptions,
   onUnreachable,
   onOpen,
@@ -252,34 +255,8 @@ export function SessionsScreen({
   // `null` is the whole fleet; a scope is one machine's URL, picked in the strip.
   // It narrows BOTH what the list shows and where a new session is created.
   const [scope, setScope] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
   // Keep keystrokes immediate even when a large session fleet is regrouped.
   const deferredQuery = useDeferredValue(query);
-  // `/` jumps to the filter. It is unannounced on purpose — the band printed a `kbd`
-  // chip for it and that chip was one more thing sitting in a row whose job is to be
-  // empty until you type. The shortcut costs nothing to leave bound.
-  const filterRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return;
-      // Never steal the key from someone already typing — a `/` belongs to the
-      // field, the textarea or the contenteditable that has focus.
-      const at = document.activeElement as HTMLElement | null;
-      if (
-        at &&
-        (at.isContentEditable ||
-          at.tagName === 'INPUT' ||
-          at.tagName === 'TEXTAREA' ||
-          at.tagName === 'SELECT')
-      ) {
-        return;
-      }
-      event.preventDefault();
-      filterRef.current?.focus();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
   const [transcriptMatches, setTranscriptMatches] = useState<Map<string, SessionMatch> | null>(null);
   // Sessions a transcript hit named that this machine had not paged in yet, per
   // machine key. Kept beside the list instead of merged into it: the 10s poll
@@ -1302,57 +1279,6 @@ export function SessionsScreen({
           )}
         </div>
 
-        {/* THE BAND IS THE FIELD.
-            It wore a `›` first — this app's disclosure glyph, borrowed as a terminal
-            caret, so the one control you type into said "open me". Then it wore a
-            generic bordered `Input`, which put a box inside a box and stretched an
-            empty 1352px rectangle across the desktop.
-            A list made of bands does not need a form control dropped into one: the
-            band takes the INPUT PAPER — the only band in the list that does, so it is
-            unmistakable at rest without a frame of its own — keeps the list's leading
-            edge, and answers focus by inking its own rule amber. Its trailing cluster
-            is where every other row keeps its controls, and it earns its keep: the key
-            that focuses it while it is empty, what it found once it is not. */}
-        <div className={`flex min-h-11 items-stretch border-b border-dialog-edge bg-input transition-colors duration-150 focus-within:border-accent motion-reduce:transition-none mouse:min-h-9 ${LIST_FRAME}`}>
-          <input
-            ref={filterRef}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className={`min-w-0 flex-1 bg-transparent font-mono text-ui text-white outline-none placeholder:text-dialog-hint ${LIST_EDGE}`}
-            placeholder="Filter title, project, session"
-            aria-label="Filter sessions"
-          />
-          <HeaderActions>
-            {query ? (
-              <>
-                {/* What the filter DID, in the header's own quiet voice — and the
-                    reason the desktop footer no longer prints the same fraction. */}
-                <HeaderMeta>
-                  <span className="tabular-nums" role="status" aria-live="polite">
-                    <span className="sr-only">
-                      {totals.shown} of {totals.all} sessions match
-                    </span>
-                    <span aria-hidden="true">
-                      {totals.shown}/{totals.all}
-                    </span>
-                  </span>
-                </HeaderMeta>
-                <IconButton
-                  edge
-                  variant="quiet"
-                  label="Clear filter"
-                  onClick={() => {
-                    setQuery('');
-                    filterRef.current?.focus();
-                  }}
-                >
-                  <CloseIcon className="size-3" />
-                </IconButton>
-              </>
-            ) : null}
-          </HeaderActions>
-        </div>
-
         <div ref={listRef} className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable]">
         {sessions === null ? (
           <NavigatorSkeleton />
@@ -1374,8 +1300,19 @@ export function SessionsScreen({
               {query ? 'No matching sessions' : 'No sessions yet'}
             </p>
             <p className="mt-2 font-mono text-ui text-dialog-hint">
-              {query ? 'Clear the filter to see all sessions.' : 'Open the ⋯ menu to start one.'}
+              {query
+                ? 'Nothing on any paired machine matches that.'
+                : 'Open the ⋯ menu to start one.'}
             </p>
+            {/* The field is in the app bar now, a screen away from this sentence, so the
+                way back to a full list is offered where the dead end is. */}
+            {query && (
+              <div className="mt-4 flex justify-center">
+                <Button variant="ghost" onClick={() => onQuery('')}>
+                  Clear search
+                </Button>
+              </div>
+            )}
           </div>
         ) : (
           <div>

@@ -38,14 +38,20 @@ describe('app bar', () => {
     expect(app).not.toContain('export function TabBar');
   });
 
-  // Regression, user report ("PAIR SHOULD BE ON THE FUCKING HEADER"): pairing was a
-  // chip at the end of the list's fleet strip, so it moved and changed shape with the
-  // fleet. It is app chrome: it belongs beside the app's own cog, always in one place.
-  it('pairs from the bar, immediately before the cog', () => {
-    const pair = app.indexOf('aria-label="Pair a machine"');
+  // Regression, user report ("search should be cross machine and it should be on top
+  // in the header"): the field was the list's third row of chrome, directly under the
+  // chip naming one machine. It is the bar's own middle now — nothing scopes it — and
+  // it takes the free space, so the cog still holds the right edge.
+  it('gives the bar\'s middle to a fleet-wide search', () => {
+    const search = app.indexOf('aria-label="Search sessions on every machine"');
     const preferences = app.indexOf('aria-label="Open preferences"');
-    expect(pair).toBeGreaterThan(0);
-    expect(pair).toBeLessThan(preferences);
+    expect(search).toBeGreaterThan(0);
+    expect(search).toBeLessThan(preferences);
+    expect(classes(openingTag(app, 'Search sessions on every machine'))).toContain(
+      'flex-1',
+    );
+    // Pairing is a twice-a-year verb; it stopped renting the bar.
+    expect(app).not.toContain('aria-label="Pair a machine"');
   });
 
   // Regression, user report ("make them nice buttons like the fucking New Session"):
@@ -53,8 +59,7 @@ describe('app bar', () => {
   // They are the app's own `Button` now, so the CLUSTER holds the free space and the
   // component owns every metric — a call site may only position.
   it('hands the free space to the trailing cluster, not to a control', () => {
-    expect(app).toContain('<div className="ml-auto flex items-center gap-2">');
-    expect(classes(openingTag(app, 'Pair a machine'))).not.toContain('ml-auto');
+    expect(app).toContain('<div className="flex items-center gap-2">');
     // Nothing else competes for that space now, so there is no breakpoint at which
     // the cluster gives it up.
     expect(cog).not.toContain('sm:ml-0');

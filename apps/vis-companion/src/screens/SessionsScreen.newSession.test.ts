@@ -72,9 +72,9 @@ describe('where "New session" lives', () => {
     // what this row can do". (The filter's own clear IS a plain icon button — it
     // opens no menu, so it must not wear the control that promises one.)
     expect(source).not.toContain("<DotsIcon");
-    // Only the filter's own Clear is glyph-only now; every verb is a word.
-    expect(source.match(/<IconButton/g)?.length).toBe(1);
-    expect(source).toContain('label="Clear filter"');
+    // Every verb in the list is a word: the one glyph-only control it had, the
+    // filter's Clear, moved to the app bar with the field.
+    expect(source).not.toContain('<IconButton');
     expect(source.match(/<Menu[\s>]/g)?.length).toBe(1);
     expect(source.match(/<MenuHeading>/g)?.length).toBe(2);
     expect(source).not.toContain("<StartOption");
@@ -92,21 +92,20 @@ describe('where "New session" lives', () => {
   // with both — their disclosure ran flush to the screen edge, 12px past the `⋯`
   // directly above it, in what the eye reads as a single column of controls.
   it("gives every row the same trailing cluster, so the right edge is one decision", () => {
-    // Project header, session row, the filter band, and the two
-    // skeletons that stand in for a project header and a session row while the list
-    // loads — one cluster, so the loading screen cannot be a different shape from the
-    // screen it becomes, and the filter's own controls land in the same column as
-    // every `⋯` above and below them.
-    expect(source.match(/<HeaderActions>/g)?.length).toBe(5);
+    // Project header, session row, and the two skeletons that stand in for them
+    // while the list loads — one cluster, so the loading screen cannot be a different
+    // shape from the screen it becomes. (The filter band was a fifth; it is the app
+    // bar's now.)
+    expect(source.match(/<HeaderActions>/g)?.length).toBe(4);
     // The disclosure is that cluster's own control, never a hand-built strip: a `w-8`
     // welded to the edge at 40% opacity is how it drifted out of the column.
     expect(source).toContain("<RowDisclosure");
     expect(source).not.toContain("sm:w-9 sm:pt-2");
     expect(source).not.toContain("opacity-40 hover:opacity-100");
-    // Both headers now REPORT in the same voice too — and so does the filter, whose
-    // match count is the same kind of fact in the same cluster: the project's counts
-    // moved out of the toggle's fixed column into the one the machine header used.
-    expect(source.match(/<HeaderMeta>/g)?.length).toBe(2);
+    // A header REPORTS through `HeaderMeta`: the project's counts moved out of the
+    // toggle's fixed column into the one the machine header used. (The filter's own
+    // `N/M` was the second; it left with the field.)
+    expect(source.match(/<HeaderMeta>/g)?.length).toBe(1);
     expect(source).not.toContain(
       "flex shrink-0 items-center justify-end gap-2 font-mono",
     );
@@ -137,18 +136,16 @@ describe('where "New session" lives', () => {
   // margin, the header's two borders, and the toggle's two more borders. Adjacent rows
   // therefore overlapped by a pixel and the same line had as many as three DOM owners.
   it("assigns every list boundary to one outgoing edge without negative overlap", () => {
-    // The filter band IS the field: the input paper marks it at rest, its own rule
-    // inks amber on focus, and nothing nests a second box inside it. It wore a
-    // borrowed disclosure caret first, then a generic bordered `Input`.
-    expect(source).toContain(
-      "bg-input transition-colors duration-150 focus-within:border-accent",
-    );
-    expect(source).toContain('aria-label="Filter sessions"');
+    // Regression, user report ("search should be cross machine and it should be on
+    // top in the header"): the list owned a filter band of its own, directly under
+    // the chip naming ONE machine, so a fleet-wide query read as that machine's
+    // filter. The field is the app bar's now; the list only takes the query.
+    expect(source).not.toContain('aria-label="Filter sessions"');
+    expect(source).not.toContain("const [query, setQuery] = useState('')");
+    expect(source).toContain('query,');
     expect(source).not.toContain(
       '<ChevronIcon className="size-3.5 text-accent-ink" />',
     );
-    // The printed `/` hint is only honest because the key is actually bound.
-    expect(source).toContain("if (event.key !== '/'");
     expect(source).toContain("<section aria-label={`${project} sessions`}>");
     // The header's own band — its rule, its paper, its height — belongs to
     // `SectionHeader`, and is pinned once in `ui.test.tsx`.

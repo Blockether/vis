@@ -41,7 +41,8 @@ import {
 } from "./lib/share-intake";
 import { applyTheme, resolveLocalTheme } from "./lib/theme";
 import { getThemePalette, getThemePref } from "./lib/storage";
-import { Button } from "./components/ui";
+import { CloseIcon } from "./components/icons";
+import { Button, IconButton } from "./components/ui";
 import { ConnectScreen } from "./screens/ConnectScreen";
 import { SessionsScreen } from "./screens/SessionsScreen";
 import { IncompatibleScreen } from "./screens/IncompatibleScreen";
@@ -173,6 +174,10 @@ export function App() {
   const [active, setActive] = useState<GatewayConn | null>(null);
   const [primary, setPrimary] = useState<GatewayConn | null>(null);
   const [tab, setTab] = useState<Tab>("sessions");
+  // The search question is fleet-wide, so the SHELL owns it: the bar asks it and the
+  // list answers it. Kept here rather than in `SessionsScreen` so the field can sit
+  // above every machine chip instead of under the one that names a machine.
+  const [query, setQuery] = useState("");
   const [openTarget, setOpenTarget] = useState<{
     conn: GatewayConn;
     sid: string;
@@ -930,7 +935,8 @@ export function App() {
     <Shell>
       {isChromeVisible && (
         <Header
-          onPair={() => setTab("connect")}
+          query={query}
+          onQuery={setQuery}
           onAppSettings={() => setAppSettingsOpen(true)}
         />
       )}
@@ -942,6 +948,8 @@ export function App() {
           <div className={sessionsVisible ? "h-full" : "hidden"}>
             <SessionsScreen
               conns={conns}
+              query={query}
+              onQuery={setQuery}
               subscriptions={subscriptions}
               onUnreachable={handleUnreachable}
               onOpen={openGatewaySession}
@@ -1050,19 +1058,46 @@ export function App() {
         />
       )}
       {appSettingsOpen && (
-        <ApplicationSettingsDialog onClose={() => setAppSettingsOpen(false)} />
+        <ApplicationSettingsDialog
+          onPair={() => setTab("connect")}
+          onClose={() => setAppSettingsOpen(false)}
+        />
       )}
     </Shell>
   );
 }
 
 export function Header({
-  onPair,
+  query,
+  onQuery,
   onAppSettings,
 }: {
-  onPair: () => void;
+  query: string;
+  onQuery: (next: string) => void;
   onAppSettings: () => void;
 }) {
+  // `/` jumps to the search from anywhere on the shell — unannounced on purpose, and
+  // never stolen from someone already typing.
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return;
+      const at = document.activeElement as HTMLElement | null;
+      if (
+        at &&
+        (at.isContentEditable ||
+          at.tagName === 'INPUT' ||
+          at.tagName === 'TEXTAREA' ||
+          at.tagName === 'SELECT')
+      ) {
+        return;
+      }
+      event.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   return (
     <header className="relative z-30 shrink-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
       <div className="mx-auto flex h-12 w-full max-w-[1400px] items-center pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
@@ -1076,48 +1111,51 @@ export function Header({
             VIS
           </span>
         </div>
-        {/* PAIRING IS APP CHROME, NOT A ROW IN THE LIST.
-            It was the last chip of the fleet strip, so the one verb that ADDS a machine
-            moved with the fleet, changed shape with it, and vanished behind a scroll on
-            a phone once four machines were paired. It sits here instead — one fixed
-            place, beside the app's own cog, whether nothing is paired or ten things
-            are — and the strip below is left to answer "which machine" and nothing
-            else. */}
-        {/* A VERB IS A WORD.
-            `+` and `⚙` said "add… what?" and "settings of what?" in an `aria-label`
-            an eye never reads, on a screen whose loudest control ("New session") was
-            already spelled out. Every verb is written now; nothing here is a glyph. */}
-        {/* A VERB IS A BUTTON, not a word on the paper.
-            These two were hand-rolled `<button className=…>` slabs: bare text on the
-            bar, no box, no border, no press — so the only control on the whole screen
-            that looked pressable was the amber `New session` in the list. They are the
-            app's own `Button` now, on its own rhythm, and the FILL says which is which:
-            pairing ADDS a machine, so it is the amber primary exactly like `New
-            session`; preferences is its framed sibling, because a second amber would
-            make the rarest verb on the screen as loud as the commonest. */}
-        <div className="ml-auto flex items-center gap-2">
-          <Button
-            type="button"
-            variant="solid"
-            density="compact"
-            className="shrink-0 whitespace-nowrap"
-            onClick={onPair}
-            aria-label="Pair a machine"
-          >Pair machine</Button>
+        {/* SEARCH IS THE BAR, AND THE BAR IS ABOVE EVERY MACHINE.
+            The field used to be the list's THIRD row of chrome, sitting directly under
+            the chip that names one machine — so a query that has always fanned out over
+            every paired gateway (title/project matching AND the server-side transcript
+            search, both over `scopedConns`) read as "filter inside this machine". It is
+            the app bar's own middle now: nothing above it scopes it, it is the first
+            thing on the screen, and the placeholder says the promise out loud. The bar
+            owns the query and hands it down, because the thing being searched is the
+            fleet and not the list component.
+            Pairing left this bar with it. It is a twice-a-year verb and it was renting
+            the widest real estate on a 390px phone; it lives in Preferences, beside the
+            rest of this device's own setup. */}
+        <label className="mx-3 flex h-8 min-w-0 flex-1 items-center gap-1 rounded border border-dialog-edge bg-input px-2 transition-colors duration-150 focus-within:border-accent motion-reduce:transition-none">
+          <input
+            ref={searchRef}
+            value={query}
+            onChange={(event) => onQuery(event.target.value)}
+            className="min-w-0 flex-1 bg-transparent font-mono text-meta text-white outline-none placeholder:text-dialog-hint"
+            placeholder="Search all machines…"
+            aria-label="Search sessions on every machine"
+          />
+          {query ? (
+            <IconButton
+              variant="quiet"
+              label="Clear search"
+              onClick={() => {
+                onQuery('');
+                searchRef.current?.focus();
+              }}
+            >
+              <CloseIcon className="size-3" />
+            </IconButton>
+          ) : null}
+        </label>
         {/* ONE SCREEN, ONE COG.
             The app used to carry a two-item tab bar whose second item existed for a
-            verb used twice a year — pairing — and a nav duplicating it at `sm:`. The
-            fleet strip in the list already answers "which machine", so pairing became
-            the `⊕` chip at its end and both navigations are gone. What is left here is
-            the wordmark and the one cog on the whole app, and it means PREFERENCES:
-            this device's own settings, never a gateway's. A machine's settings hang
-            off that machine (the list's own ⚙), so two gears can no longer sit 40px
-            apart meaning different things.
-            It is a WORD in a button now rather than a cog: the `⚙` glyph falls back to
-            an emoji font whose advance width and baseline differ per platform, so it
-            never sat centred in its own cell. The button keeps the bar's gutter instead
-            of the old negative margin — a bordered box that bleeds off the paper reads
-            as a cropped control, and the list below stops its ink 14px in too. */}
+            verb used twice a year — pairing — and a nav duplicating it at `sm:`. What
+            is left here is the wordmark, the search, and the one cog on the whole app,
+            and it means PREFERENCES: this device's own settings, never a gateway's. A
+            machine's settings hang off that machine (the list's own verb), so two gears
+            can no longer sit 40px apart meaning different things.
+            It is a WORD in a button rather than a `⚙`: the glyph falls back to an emoji
+            font whose advance width and baseline differ per platform, so it never sat
+            centred in its own cell. */}
+        <div className="flex items-center gap-2">
           <Button
             type="button"
             variant="ghost"

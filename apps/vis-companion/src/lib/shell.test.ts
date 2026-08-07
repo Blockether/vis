@@ -141,7 +141,6 @@ describe('one screen, pairing is a chip', () => {
   // Regression, user report: "Everything labeled, no icons" — the bar's two verbs
   // were bare glyphs whose meaning lived only in an `aria-label` an eye never sees.
   it('spells its verbs and paints no icon', () => {
-    expect(appSource).toContain('>Pair machine</Button>');
     expect(appSource).toContain('>Preferences</Button>');
     expect(appSource).not.toContain('<PlusIcon');
     expect(appSource).not.toContain('<SettingsIcon');
@@ -151,16 +150,27 @@ describe('one screen, pairing is a chip', () => {
   // the bar's two verbs were hand-rolled `<button className=…>` slabs of bare text,
   // so the one control on the screen that looked pressed-able was `New session`.
   it('wears the app\'s own Button, not a hand-rolled slab', () => {
-    expect(appSource).toContain('import { Button } from "./components/ui";');
+    expect(appSource).toContain('import { Button, IconButton } from "./components/ui";');
     expect(appSource).not.toMatch(/<button\s+type="button"/);
     // The verb that ADDS is the amber primary, exactly like `New session`; the
     // preferences cog beside it is its framed sibling, never a second amber.
-    expect(appSource).toContain('variant="solid"');
     expect(appSource).toContain('variant="ghost"');
   });
 
-  it('pairs from the app bar and gives Machines a way back', () => {
-    expect(appSource).toContain('aria-label="Pair a machine"');
+  // Regression, user report: "search should be cross machine and it should be on top
+  // in the header" — the field sat UNDER the chip naming one machine, so a fleet-wide
+  // query read as a filter inside that machine, three rows down on a phone.
+  it('makes search the app bar, above every machine chip', () => {
+    expect(appSource).toContain('aria-label="Search sessions on every machine"');
+    expect(appSource).toContain('placeholder="Search all machines…"');
+    // Above the chips means owned by the bar: the list takes the query as a prop.
+    expect(appSource).toContain('query={query}');
+    expect(appSource).toContain('onQuery={setQuery}');
+    // The rarest verb no longer holds prime real estate beside it.
+    expect(appSource).not.toContain('>Pair machine</Button>');
+  });
+
+  it('pairs from Preferences and gives Machines a way back', () => {
     expect(appSource).toContain('onPair={() => setTab("connect")}');
     expect(appSource).not.toContain('onPairMachine');
     expect(appSource).toContain('onClose={hasConn ? () => setTab("sessions") : undefined}');

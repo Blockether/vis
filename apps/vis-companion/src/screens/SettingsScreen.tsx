@@ -1080,8 +1080,11 @@ function FormLabel({
 
 /** Settings owned by this companion installation, never by a gateway. */
 export function ApplicationSettingsDialog({
+  onPair,
   onClose,
 }: {
+  /** Opens the machines screen. Pairing is setup, and setup lives here. */
+  onPair: () => void;
   onClose: () => void;
 }) {
   const [pref, setPref] = useState<ThemePref>("blockether-light");
@@ -1195,6 +1198,31 @@ export function ApplicationSettingsDialog({
               <Banner kind="err">{err}</Banner>
             </div>
           )}
+          {/* PAIRING IS SETUP, NOT CHROME.
+              It held the widest slot in the app bar — beside the cog, above every
+              screen — for a verb used twice a year, while the bar's middle had nothing
+              in it and the fleet-wide search sat three rows down inside the list. The
+              search took that space; pairing came here, where the rest of this device's
+              own setup already lives. */}
+          <SettingsPanel
+            title="Machines"
+            description="Pair another machine with this device. A machine's own settings stay on that machine, in the sessions list."
+          >
+            <div className="p-3 sm:p-4">
+              <Button
+                type="button"
+                variant="solid"
+                density="compact"
+                className="shrink-0 whitespace-nowrap"
+                onClick={() => {
+                  onClose();
+                  onPair();
+                }}
+                aria-label="Pair a machine"
+              >Pair machine</Button>
+            </div>
+          </SettingsPanel>
+
           <SettingsPanel
             title="Theme"
             description="All themes advertised by your paired gateways. Duplicate theme ids appear once; the choice is saved on this device."
