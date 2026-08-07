@@ -27,7 +27,7 @@ describe('menuPosition', () => {
     expect(menuPosition(undefined, 320, DESKTOP)).toBeNull();
   });
 
-  // Regression (reported: "New session ▾ does fucking nothing in the app"): the
+  // Regression (reported: "New session ▾ does nothing in the app"): the
   // sessions screen closed this menu on EVERY `window.resize`. On a phone the
   // caret is one tap away from the filter field, and the keyboard hiding fires a
   // resize inside the same tap that opened the menu — so the menu died on the
@@ -41,8 +41,8 @@ describe('menuPosition', () => {
     expect(keyboardHidden).toEqual({ top: 138, left: 58 });
   });
 
-  // Regression (reported: "the fucking manage projects looks absolutely fucking
-  // awful on the desktop"). `Manage projects` opened from a project header at
+  // Regression (reported: "the manage projects looks absolutely awful
+  // on the desktop"). `Manage projects` opened from a project header at
   // y=300 of a 900px window was placed at top=300 with a 630px (70vh) budget: its
   // footer — which carries `Use project`, the only control that commits the whole
   // sheet — rendered 30px BELOW the window. Nothing could scroll it back: the page

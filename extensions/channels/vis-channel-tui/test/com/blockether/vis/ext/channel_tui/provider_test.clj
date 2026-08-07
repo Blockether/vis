@@ -1621,9 +1621,8 @@
                      (expect (= false @start-called?))
                      (expect (str/includes? (str @message) "api_key_command"))))))
 
-;; ── Regression (user report): "when I open the fucking providers and click on
-;; active providers the transient is hiding the full render of the fucking
-;; settings" ─────────────────────────────────────────────────────────────────
+;; ── Regression (user report): "when I open the providers and click on active
+;; providers the transient is hiding the full render of the settings" ─────────────────────────────────────────────────────────────────
 ;; Enter on a provider row ran its magit band with `:clear-above? true`, so the
 ;; band wiped EVERY row from the settings list's top down: the Settings frame
 ;; was an empty box with one popup floating in it, sidebar rail included. A band

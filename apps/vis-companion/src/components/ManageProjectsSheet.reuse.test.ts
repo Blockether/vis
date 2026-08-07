@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import source from "./ManageProjectsSheet.tsx?raw";
 import { startingDir } from "./ManageProjectsSheet";
 
-// Regression, user report ("the fucking manage projects looks absolutely fucking awful
+// Regression, user report ("the manage projects looks absolutely awful
 // on the desktop and iphone too — buttons are not canonicalized, components are not
 // reused"). The sheet painted every box it stood in by hand, each a near-copy of
 // something `Menu` already shipped, and each drifted:

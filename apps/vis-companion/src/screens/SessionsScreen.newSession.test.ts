@@ -141,7 +141,7 @@ describe('where "New session" lives', () => {
     expect(source).not.toContain('bg-panel-2 mouse:h-9');
   });
 
-  // Regression, user report ("the fucking individual session is bigger then project"):
+  // Regression, user report ("the individual session is bigger then project"):
   // a session row stood 48px against a 36px project band — the child taller than the
   // thing that contains it. The leaf is the SHORTEST of the three levels now, and on a
   // desktop the row is one line, so 32px holds it exactly. Touch keeps 48px, which is
@@ -170,7 +170,7 @@ describe('where "New session" lives', () => {
   });
 
 
-  // Regression, user report ("THEY LOOK FUCKING SHITTY ON THE IPHONE. See the machine
+  // Regression, user report ("THEY LOOK BAD ON THE IPHONE. See the machine
   // height project heights etc margin rights etc"): measured at 390px, the machine
   // banner stood 61px tall — its own `py-2` wrapped around a 44px control — while the
   // project header one row below it, with the very same controls, stood 49px. The

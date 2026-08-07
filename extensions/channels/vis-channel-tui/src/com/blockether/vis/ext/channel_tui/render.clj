@@ -6608,7 +6608,7 @@
      ;; render that answer through the NORMAL markdown block (headings /
      ;; lists / bold intact) — the cancel-block flattens it via
      ;; `extract-text` + italic, which is what made real answers read as
-     ;; "italics shit" instead of markdown. Bubble-level dim still applies.
+     ;; flat italics instead of markdown. Bubble-level dim still applies.
      (if (and cancelled? (not (markdown-non-empty? answer))) cancel-block answer-block)
 
      entries

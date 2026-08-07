@@ -410,7 +410,7 @@ describe("DialogClose", () => {
 });
 
 // Regression, user report ("still the ⋯ between the machine and project are different
-// fix it! MARGIN RIGHT DIFFERS AND ALSO WHY THERE ARE FUCKING BORDERS"): the two
+// fix it! MARGIN RIGHT DIFFERS AND ALSO WHY THERE ARE BORDERS"): the two
 // kebabs had become the same Button, but each call site still spelled out its own
 // popup semantics and glyph, and the app's default bordered box turned a header
 // glyph into a second rival to the yellow verb standing beside it.
@@ -797,7 +797,7 @@ describe("a row's pressable slab", () => {
   });
 });
 
-// Regression, user report ("the offer drafts is fucking jumping ... left right",
+// Regression, user report ("the offer drafts is jumping ... left right",
 // then "we need to normalize this setting because it's so hard to read"): the
 // setting was a lone on/off button whose title, sub-line and a trailing state word
 // all changed at once — and the auto-width `on`/`off` slid the row 6px sideways on

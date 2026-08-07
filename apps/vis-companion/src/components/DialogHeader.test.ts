@@ -9,7 +9,7 @@ import session from '../screens/SessionScreen.tsx?raw';
 import settings from '../screens/SettingsScreen.tsx?raw';
 
 // Regression, user report ("the portal close vs the dialog close and dialog headers
-// are different. WE SHOULD FUCKING NORMALIZE").
+// are different. WE SHOULD NORMALIZE").
 //
 // Seven surfaces opened over another surface and no two of their headers agreed:
 // two heights (`min-h-9` and `min-h-12`), two alignments (a centred title in

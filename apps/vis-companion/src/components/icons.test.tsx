@@ -381,7 +381,7 @@ describe("the shipped screens", () => {
     expect(glyphsAsIcons("<button>×</button>")).toEqual(["×"]);
     expect(glyphsAsIcons("const tail = ` ×${count}`;")).toEqual([]);
     expect(glyphsAsIcons("// this used to paint a ✕\n")).toEqual([]);
-    // Regression, reported as "these chevrons look shitty — different heights,
+    // Regression, reported as "these chevrons look bad — different heights,
     // fonts etc" in the session list: the disclosure in front of a session row was
     // the CHARACTER › set in the row's mono face, one line above a real
     // `ChevronIcon`, so the same mark came out at two sizes in the same column. It

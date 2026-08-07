@@ -374,7 +374,7 @@
         (expect (blank-band-row? (nth grid 7)))
         (expect (str/includes? (nth grid 8) "Group 0"))
         (expect (every? str/blank? (take 6 grid)))))
-  ;; Regression (user report): "THE FIRST fucking row should have the ------ and
+  ;; Regression (user report): "THE FIRST row should have the ------ and
   ;; it should be only columns" — the band spent its first row on a bold title
   ;; and its second on that title's own rule, so two rows of a short band were
   ;; chrome before a single command showed.

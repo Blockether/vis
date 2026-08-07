@@ -3528,7 +3528,7 @@
       (with-redefs
         [vis/gateway-submit-turn!
          (fn [_ _]
-           (Thread/sleep 1500)
+           (Thread/sleep 800)
            {:turn {"turn_id" "t-slow" "status" "queued"}})
 
          vis/notify!
@@ -3551,8 +3551,12 @@
            (- (System/currentTimeMillis) t0)]
 
           (expect (< blocked 500))
-          ;; …and the row still lands, painted from the gateway ACK.
-          (Thread/sleep 2500)
+          ;; …and the row still lands, painted from the gateway ACK. Polled, not
+          ;; slept: the contract is that it arrives, not how long the stub napped.
+          (loop [n 0]
+            (when (and (< n 300) (empty? (:pending-sends @state/app-db)))
+              (Thread/sleep 10)
+              (recur (inc n))))
           (expect (= ["t-slow"] (mapv :turn-id (:pending-sends @state/app-db)))))))
   (it "a lost round-trip is retried under the idempotency key, never duplicated"
       ;; The daemon can die mid-POST and respawn seconds later. Retrying is safe BY
