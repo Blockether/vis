@@ -587,17 +587,19 @@
                       (Thread/sleep (long ms))
                       (/ (double (- (cpu-ns) before)) (* 1.0e6 (double ms)))))
 
+                  ;; 250ms is plenty to see a whole core: a live spinner adds
+                  ;; ~1.0 to the delta, and the threshold below is 0.75.
                   baseline
-                  (busy-cores 400)]
+                  (busy-cores 250)]
 
                  (try (let
-                        [result (binding [rt/*eval-timeout-ms* 800]
+                        [result (binding [rt/*eval-timeout-ms* 400]
                                   ((deref #'lp/run-python-code) pc "while True:\n    pass"))]
                         (expect (true? (:timeout? result)))
                         ;; The guest is GONE: no EXTRA core is spinning after the timeout.
                         ;; Take the quieter of two samples so one unlucky GC/JIT burst
                         ;; cannot decide the verdict.
-                        (expect (< (- (min (busy-cores 500) (busy-cores 500)) baseline) 0.75))
+                        (expect (< (- (min (busy-cores 250) (busy-cores 250)) baseline) 0.75))
                         ;; ...and the interrupt did not poison the context.
                         (expect (= 42 (:result ((deref #'lp/run-python-code) pc "40 + 2")))))
                       (finally (try (.close ^org.graalvm.polyglot.Context pc true)
