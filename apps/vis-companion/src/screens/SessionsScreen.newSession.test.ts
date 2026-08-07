@@ -12,20 +12,36 @@ describe('where "New session" lives', () => {
     expect(source).toContain('onPress={() => onNewSession(root)}');
   });
 
-  it('puts project management on the machine bar, not project actions', () => {
+  // Regression, user report: "manage projects is not under this ⋯ but separately".
+  // The machine header carried a bespoke bordered word-button beside its ⋯, so the
+  // machine row had two controls where the project row one line below had one.
+  it('keeps project management behind the machine ⋯, not beside it', () => {
     expect(source).not.toContain('Switch project');
-    expect(source).toContain('Manage projects');
-    expect(source).toContain('aria-label={`Manage projects on ${machineLabel(machine.conn)}`}');
+    expect(source).toContain('title="Manage projects"');
+    expect(source).not.toContain('aria-label={`Manage projects on ${machineLabel(machine.conn)}`}');
     expect(source).not.toContain('Create, move, or remove projects and their sessions.');
   });
 
-  // Regression: machine settings must remain on the machine bar after project
-  // management moves there; removing the old machine overflow control hid pairing
-  // and unpair actions.
-  it('keeps machine settings in the machine bar actions', () => {
-    expect(source).toContain('aria-label={`Machine actions for ${machineLabel(machine.conn)}`}');
+  // Regression: machine settings must remain reachable after project management
+  // joins it behind the same control.
+  it('keeps machine settings in the machine ⋯', () => {
+    expect(source).toContain('label={`Actions for ${machineLabel(machine.conn)}`}');
     expect(source).toContain('title="Machine settings"');
     expect(source).toContain('onMachineSettings(target)');
+  });
+
+  // Regression, user report: "when I open the ⋯ the view is not coherent between the
+  // one ⋯ on the machine and another ⋯ on the project level" — two hand-built panels
+  // of different widths, one with an accent band and one with none, opened by two
+  // hand-built buttons of different heights wearing two different glyph sizes.
+  it('opens both overflow menus with the same button and the same Menu', () => {
+    expect(source.match(/<IconButton/g)?.length).toBe(2);
+    expect(source.match(/<DotsIcon className="size-3" \/>/g)?.length).toBe(2);
+    expect(source.match(/<Menu[\s>]/g)?.length).toBe(2);
+    expect(source.match(/<MenuHeading>/g)?.length).toBe(3);
+    expect(source).toContain('label={`Actions for ${project}`}');
+    expect(source).not.toContain('<StartOption');
+    expect(source).not.toContain('createPortal(');
   });
   // Regression, user report: the project header reused a home-shortened display path as
   // both its name and the root sent back to the gateway. On a gateway that resolved `~`
@@ -63,7 +79,10 @@ describe('where "New session" lives', () => {
   it('keeps the two-line project row compact without stretching its actions', () => {
     expect(source).toContain('bg-panel-2 mouse:h-9');
     expect(source).toContain('motion-reduce:transition-none mouse:min-h-0 mouse:py-0 sm:px-4');
-    expect(source).toContain('motion-reduce:transition-none mouse:min-h-0 sm:px-4');
+    // The ⋯ no longer spells its own metrics: `IconButton` is `Button` at the
+    // header's own compact desktop density, so it cannot drift from the yellow
+    // button it stands next to.
+    expect(source).not.toContain('motion-reduce:transition-none mouse:min-h-0 sm:px-4');
   });
 
   // Regression, issue: the machine panel disappeared when only one machine was paired.

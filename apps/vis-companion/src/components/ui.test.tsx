@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { MACHINE_COLORS } from '../lib/machine-colors';
 import {
   Button,
+  DialogClose,
+  IconButton,
   LiveTally,
   MachineBanner,
   MachineGap,
@@ -241,12 +243,80 @@ describe('NewSessionButton', () => {
   it('uses the same compact mouse height as the neighboring small action', () => {
     expect(html()).toContain('mouse:h-6');
     expect(html()).toContain('mouse:min-h-6');
-    expect(html()).toContain('mouse:self-center');
+    expect(html()).toContain('self-center');
+    expect(html()).toContain('h-11');
     expect(html()).toContain('mouse:text-meta');
     expect(html()).not.toContain('mouse:h-7');
   });
 
   it('is refused while the machine is busy or not answering', () => {
     expect(html({ disabled: true })).toContain('disabled=""');
+  });
+});
+
+// Regression, user report ("this new session button should be the same as other
+// buttons"): every icon-only control was written by hand at its call site, so the
+// machine header's `⋯` was a 32px bordered box while the project header's, one row
+// below it, was a 44px borderless slab with a bigger glyph — and neither of them
+// looked like the yellow button they stood beside.
+describe('IconButton', () => {
+  const html = (props: Partial<Parameters<typeof IconButton>[0]> = {}) =>
+    renderToStaticMarkup(
+      <IconButton label="Actions for tower" {...props}>
+        <span aria-hidden>⋯</span>
+      </IconButton>,
+    );
+
+  it('is the app’s button with a glyph where its word would be', () => {
+    expect(html()).toContain('border-edge-strong');
+    expect(html()).toContain('min-h-7');
+    expect(html()).toContain('focus-visible:ring-accent/60');
+  });
+
+  it('wears the same compact desktop box as the yellow button beside it', () => {
+    const primary = renderToStaticMarkup(<NewSessionButton machine="tower" onPress={() => {}} />);
+
+    for (const rhythm of ['h-11', 'self-center', 'mouse:h-6', 'mouse:min-h-6']) {
+      expect(html()).toContain(rhythm);
+      expect(primary).toContain(rhythm);
+    }
+  });
+
+  it('is named, because it carries no word', () => {
+    expect(html()).toContain('aria-label="Actions for tower"');
+  });
+
+  it('does not move under the press: it anchors a menu', () => {
+    expect(html()).not.toContain('active:scale');
+  });
+});
+
+// Regression, user report ("there is this exit button in the artifacts and it also
+// looks awful"): the artifacts sheet, an opened artifact and every dialog each spelled
+// their own close out again, so the sheet ended up wearing a bordered chip in a strip
+// of bordered chips where every other surface wears chrome.
+describe('DialogClose', () => {
+  const html = (props: Partial<Parameters<typeof DialogClose>[0]> = {}) =>
+    renderToStaticMarkup(<DialogClose label="Close artifacts" onClose={() => {}} {...props} />);
+
+  it('is welded to the band it closes, by that band’s own hairline', () => {
+    expect(html()).toContain('border-l');
+    expect(html()).not.toMatch(/class="[^"]*\bborder\s/);
+  });
+
+  // Closing is not a destructive act until you mean it.
+  it('goes red only under the pointer', () => {
+    expect(html()).toContain('hover:bg-err/15');
+    expect(html()).toContain('hover:text-err');
+    expect(html()).not.toContain('text-err"');
+  });
+
+  it('changes nothing but the paper it sits on', () => {
+    expect(html()).toContain('border-dialog-title-foreground/20');
+    expect(html({ tone: 'panel' })).toContain('border-dialog-edge');
+  });
+
+  it('is named for what it closes', () => {
+    expect(html()).toContain('aria-label="Close artifacts"');
   });
 });

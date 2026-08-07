@@ -33,21 +33,15 @@ import {
   pageBySize,
   SHEET_PAGE,
   type SessionArtifact,
-} from "../lib/artifacts";
-import { useAttachImage } from "../lib/attach-image";
-import { editedFilename } from "../lib/image-file";
-import type { GatewayClient } from "../lib/gateway";
-import { DocFrame } from "./DocArtifact";
-import { ImageViewer } from "./ImageViewer";
-import { TextFrame } from "./TextArtifact";
-import {
-  AlertIcon,
-  ArrowDownIcon,
-  ClipIcon,
-  CloseIcon,
-  DotsIcon,
-  PlayIcon,
-} from "./icons";
+} from '../lib/artifacts';
+import { useAttachImage } from '../lib/attach-image';
+import { editedFilename } from '../lib/image-file';
+import type { GatewayClient } from '../lib/gateway';
+import { DocFrame } from './DocArtifact';
+import { ImageViewer } from './ImageViewer';
+import { TextFrame } from './TextArtifact';
+import { AlertIcon, ArrowDownIcon, ClipIcon, DotsIcon, PlayIcon } from './icons';
+import { DialogClose } from './ui';
 
 /**
  * Two documents produced by the same turn have to stay distinguishable at a
@@ -345,9 +339,9 @@ function FilterStrip({
     <div
       role="group"
       aria-label="Filter artifacts by kind"
-      className="flex min-h-9 shrink-0 items-center gap-1.5 border-b border-dialog-edge bg-panel pl-3 pr-1 py-1.5 mouse:min-h-8 sm:pl-4"
+      className="flex min-h-9 shrink-0 items-stretch border-b border-dialog-edge bg-panel pl-3 mouse:min-h-8 sm:pl-4"
     >
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-1.5 pr-1.5">
         {ARTIFACT_FILTERS.map((filter) => {
           const count = list.filter((entry) =>
             filter.kinds.includes(entry.kind),
@@ -380,14 +374,10 @@ function FilterStrip({
           );
         })}
       </div>
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="Close artifacts"
-        className="grid min-h-7 min-w-7 shrink-0 place-items-center border border-edge text-dialog-hint transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-h-6 mouse:min-w-6"
-      >
-        <CloseIcon />
-      </button>
+      {/* The way out is the app's way out: welded to the band's right edge behind
+          its own hairline, exactly as a dialog and an opened artifact are left.
+          It used to be one more bordered chip in a strip of bordered chips. */}
+      <DialogClose label="Close artifacts" tone="panel" onClose={onClose} />
     </div>
   );
 }
@@ -427,14 +417,11 @@ function DetailOverlay({
         >
           {name}
         </h2>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Back to artifacts"
-          className="absolute inset-y-0 right-0 grid min-w-9 place-items-center border-l border-dialog-title-foreground/20 text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-w-8"
-        >
-          <CloseIcon />
-        </button>
+        <DialogClose
+          label="Back to artifacts"
+          className="absolute inset-y-0 right-0"
+          onClose={onClose}
+        />
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
         {children}

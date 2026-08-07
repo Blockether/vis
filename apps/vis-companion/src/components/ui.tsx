@@ -6,6 +6,8 @@ import {
 } from 'react';
 
 import type { MachineColor } from '../lib/machine-colors';
+import { createPortal } from 'react-dom';
+
 import { CloseIcon } from './icons';
 
 // Ref-forwarding: a button that ANCHORS something (a popover, a focus return) has
@@ -22,8 +24,19 @@ export const Button = forwardRef<
      * under the finger.
      */
     pressEffect?: 'scale' | 'none';
+    /**
+     * `compact` is the DESKTOP rhythm of a header row: a 24px box, centred in a
+     * taller row, at the meta type scale. It lives here and only here, because a
+     * row where the primary is 32px and the `⋯` beside it is 24px is precisely
+     * the incoherence this app was reported for. Touch is untouched — a finger
+     * still gets the full box.
+     */
+    density?: 'default' | 'compact';
   }
->(function Button({ variant = 'solid', pressEffect = 'scale', className = '', ...props }, ref) {
+>(function Button(
+  { variant = 'solid', pressEffect = 'scale', density = 'default', className = '', ...props },
+  ref,
+) {
   // Disabled colours live PER VARIANT, not in the base class: `quiet` has to stay
   // frameless while it is busy, and a shared `disabled:border-edge` would fight it
   // on equal specificity (whoever Tailwind emits last wins).
@@ -45,15 +58,99 @@ export const Button = forwardRef<
   // and `active:scale-[0.98]` have equal specificity, so a call-site override would
   // be decided by Tailwind's emission order, not by the call site.
   const press = pressEffect === 'scale' ? 'active:scale-[0.98] disabled:active:scale-100' : '';
+  // Touch gets a 44px box centred in whatever row it was dropped into — a header
+  // control that STRETCHES is 28px on one row and 48px on the next, which is how
+  // the machine's `⋯` and the project's `⋯` stopped looking like one control.
+  const scale =
+    density === 'compact' ? 'h-11 self-center mouse:h-6 mouse:min-h-6 mouse:text-meta' : '';
 
   return (
     <button
       ref={ref}
-      className={`min-h-7 rounded-none border px-2.5 py-0.5 text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 ${press} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 disabled:shadow-none motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${styles} ${className}`}
+      className={`min-h-7 rounded-none border px-2.5 py-0.5 text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 ${press} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 disabled:shadow-none motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${scale} ${styles} ${className}`}
       {...props}
     />
   );
 });
+
+/**
+ * An icon-only control is still a BUTTON.
+ *
+ * A kebab, a close, a retry: they carry no word, so they used to be written by
+ * hand at the call site — and the machine header's `⋯` ended up a 32px bordered
+ * box while the project header's, one row below it, was a 44px borderless slab
+ * with a bigger glyph. Two controls that do the same thing looked like two
+ * different affordances, and neither looked like the yellow button beside them.
+ *
+ * So it is `Button` with its word replaced by a glyph: the same box, border,
+ * focus ring, transition and desktop rhythm as every other button in the app.
+ * `pressEffect="none"` because these anchor menus and sheets — a transform moves
+ * the box the popover was measured against.
+ */
+export const IconButton = forwardRef<
+  HTMLButtonElement,
+  ButtonHTMLAttributes<HTMLButtonElement> & {
+    /** Icon-only, so the name is not optional. */
+    label: string;
+    variant?: 'solid' | 'ghost' | 'quiet' | 'danger';
+  }
+>(function IconButton({ label, className = '', variant = 'ghost', children, ...props }, ref) {
+  return (
+    <Button
+      ref={ref}
+      type="button"
+      variant={variant}
+      pressEffect="none"
+      density="compact"
+      aria-label={label}
+      className={`grid min-w-7 shrink-0 place-items-center px-0 sm:min-w-8 sm:px-0 mouse:min-w-6 ${className}`}
+      {...props}
+    >
+      {children}
+    </Button>
+  );
+});
+
+/**
+ * THE WAY OUT, and there is only one of it.
+ *
+ * A dialog, an opened artifact and the artifacts sheet itself are all left the
+ * same way: a close welded to the right edge of the band that titles them,
+ * separated by that band's own hairline, going red only under the pointer —
+ * closing is not a destructive act until you mean it. Every one of those three
+ * surfaces used to spell the same forty classes out again, which is how the
+ * artifacts sheet ended up wearing a bordered chip in a strip of bordered chips
+ * where every other surface wears chrome.
+ *
+ * `tone` is the paper it sits on, because that is the only thing that differs:
+ * the dark title bar of a dialog, or a panel band.
+ */
+export function DialogClose({
+  label,
+  tone = 'title',
+  className = '',
+  onClose,
+}: {
+  label: string;
+  tone?: 'title' | 'panel';
+  className?: string;
+  onClose: () => void;
+}) {
+  const skin =
+    tone === 'title'
+      ? 'border-dialog-title-foreground/20 text-dialog-title-foreground/70'
+      : 'border-dialog-edge text-dialog-hint';
+  return (
+    <button
+      type="button"
+      onClick={onClose}
+      aria-label={label}
+      className={`grid min-w-9 shrink-0 place-items-center border-l transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none motion-reduce:transition-none mouse:min-w-8 ${skin} ${className}`}
+    >
+      <CloseIcon />
+    </button>
+  );
+}
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   function Input({ className = '', ...props }, ref) {
@@ -98,6 +195,33 @@ export function Section({ title, children }: { title: string; children: ReactNod
   );
 }
 
+/**
+ * THE ONE MODAL: a dialog centred over a scrim, dismissed by the paper around it.
+ *
+ * `Menu` is the other half of that contract — a sheet on a phone, a popover under
+ * the control it came from. Between them they are every layer this app puts over
+ * itself, so no screen writes the safe-area scrim out by hand again; two of them
+ * had already drifted into two copies of the same forty characters.
+ */
+export function Modal({ onDismiss, children }: { onDismiss: () => void; children: ReactNode }) {
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]"
+      role="presentation"
+      onClick={onDismiss}
+    >
+      <div
+        className="w-full max-w-md"
+        role="presentation"
+        onClick={(event) => event.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function DialogFrame({
   title,
   children,
@@ -127,14 +251,11 @@ export function DialogFrame({
           {title}
         </h2>
         {onClose && (
-          <button
-            type="button"
-            className="absolute inset-y-0 right-0 grid min-w-9 place-items-center border-l border-dialog-title-foreground/20 text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none mouse:min-w-8"
-            onClick={onClose}
-            aria-label="Close dialog"
-          >
-            <CloseIcon />
-          </button>
+          <DialogClose
+            label="Close dialog"
+            className="absolute inset-y-0 right-0"
+            onClose={onClose}
+          />
         )}
       </header>
       <div className="border-t border-dialog-edge">{children}</div>
@@ -322,10 +443,11 @@ export function NewSessionButton({
     <Button
       type="button"
       pressEffect="none"
+      density="compact"
       disabled={disabled}
       aria-label={`New session on ${machine}`}
       title={where ? `New session on ${machine}, in ${where}` : `New session on ${machine}`}
-      className="shrink-0 whitespace-nowrap mouse:h-6 mouse:min-h-6 mouse:self-center mouse:text-meta"
+      className="shrink-0 whitespace-nowrap"
       onClick={(event) => onPress(event.currentTarget)}
     >
       New session

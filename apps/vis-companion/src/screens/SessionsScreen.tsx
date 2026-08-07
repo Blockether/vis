@@ -1,19 +1,21 @@
-import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { createPortal } from 'react-dom';
+import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Banner,
   Button,
   DialogFrame,
+  IconButton,
   Input,
   LiveTally,
   MachineBanner,
   MachineGap,
   MachineMark,
   MachineRail,
+  Modal,
   NewSessionButton,
   Spinner,
   UnreadBadge,
 } from '../components/ui';
+import { Menu, MenuBack, MenuHeading, MenuItem, MenuNote, MENU_WIDTH } from '../components/Menu';
 import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { GatewayConn, Session, SessionUsage, WorkspaceDraft } from '../lib/types';
@@ -190,21 +192,11 @@ function useNow(intervalMs: number): number {
 }
 
 /**
- * The start-in menu's desktop width in px. The popover is RIGHT-aligned to the
- * control it hangs from, so the anchor math needs the width before the menu has ever
- * been measured; it must stay equal to the `sm:w-80` the menu paints itself at.
+ * How wide the folder browser is placed from. The sheet is RIGHT-aligned to the
+ * control it hangs from, so the anchor math needs the width before it has ever
+ * been measured; it must stay equal to the width `ManageProjectsSheet` paints.
  */
-const START_MENU_WIDTH = 320;
-
-/**
- * The one question you cannot skip wears the Blockether yellow, and the menu spends
- * that colour exactly once — every other band in it is quiet.
- */
-const LOUD_BAND =
-  'border-b-2 border-warn-strong bg-accent px-3 py-2 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground';
-
-/** Width of the project-group kebab menu — must match the `sm:w-64` it paints itself at. */
-const PROJECT_MENU_WIDTH = 256;
+const BROWSE_WIDTH = 384;
 
 /**
  * Where a new session begins. `trunk` is the plain session this screen always made:
@@ -761,7 +753,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
   const openStartMenuAt = useCallback(
     (anchor: HTMLElement | null, on: GatewayConn | null = null) => {
       if (anchor) startAnchorEl.current = anchor;
-      const at = menuPosition(startAnchorEl.current?.getBoundingClientRect(), START_MENU_WIDTH);
+      const at = menuPosition(startAnchorEl.current?.getBoundingClientRect(), MENU_WIDTH);
       setStartFlow((flow) => {
         const opened = startFlowOpen(flow, at);
         return on && opened.step === 'menu' ? startFlowPick(opened, on) : opened;
@@ -1274,13 +1266,18 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                         {machine.error ? (
                           <>
                             <span>offline</span>
-                            <button
+                            {/* Retrying is a button, so it is THE button: the same box
+                                and rhythm as the `⋯` beside it, quiet because it sits
+                                inside a line of metadata. */}
+                            <Button
                               type="button"
-                              className="border border-edge px-1.5 py-0.5 transition-colors duration-150 hover:text-white motion-reduce:transition-none"
+                              variant="quiet"
+                              density="compact"
+                              pressEffect="none"
                               onClick={() => void loadMachine(machine.conn)}
                             >
                               Retry
-                            </button>
+                            </Button>
                           </>
                         ) : (
                           <>
@@ -1294,28 +1291,18 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                                 time. */}
                           </>
                         )}
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            const at = menuPosition(event.currentTarget.getBoundingClientRect(), 384);
-                            if (at) setManageProjects({ machine, at });
-                          }}
-                          aria-label={`Manage projects on ${machineLabel(machine.conn)}`}
-                          className="shrink-0 border border-edge px-2 py-1 font-mono text-chip text-dialog-hint transition-colors duration-150 hover:border-accent hover:text-white focus-visible:border-accent focus-visible:outline-none motion-reduce:transition-none"
+                        {/* One control, and it is the app's icon button: the same box,
+                            border and focus ring the project header's `⋯` wears one row
+                            below it. Everything rarer than reading the list — the machine's
+                            files, the machine itself — lives behind it, so the header never
+                            grows a second bespoke word-button beside it. */}
+                        <IconButton
+                          aria-haspopup="menu"
+                          label={`Actions for ${machineLabel(machine.conn)}`}
+                          onClick={(event) => openStartMenuAt(event.currentTarget, machine.conn)}
                         >
-                          Manage projects
-                        </button>
-                        {onMachineSettings && (
-                          <button
-                            type="button"
-                            aria-haspopup="menu"
-                            aria-label={`Machine actions for ${machineLabel(machine.conn)}`}
-                            onClick={(event) => openStartMenuAt(event.currentTarget, machine.conn)}
-                            className="flex min-h-8 min-w-8 items-center justify-center border border-edge text-dialog-hint transition-colors duration-150 hover:border-accent hover:text-white focus-visible:border-accent focus-visible:outline-none motion-reduce:transition-none"
-                          >
-                            <DotsIcon className="size-3" />
-                          </button>
-                        )}
+                          <DotsIcon className="size-3" />
+                        </IconButton>
                       </span>
                     </MachineBanner>
                   {groups.length === 0
@@ -1364,17 +1351,8 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
         </footer>
       </div>
 
-      {rowAction && rowCopy && createPortal(
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]"
-          role="presentation"
-          onClick={closeRowAction}
-        >
-          <div
-            className="w-full max-w-md"
-            role="presentation"
-            onClick={(event) => event.stopPropagation()}
-          >
+      {rowAction && rowCopy && (
+        <Modal onDismiss={closeRowAction}>
             <DialogFrame title={rowCopy.title} onClose={closeRowAction}>
               <div className="space-y-3 p-4">
                 <p className="truncate font-mono text-meta text-dialog-hint">{rowCopy.subject}</p>
@@ -1427,159 +1405,148 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                 </div>
               </div>
             </DialogFrame>
-          </div>
-        </div>,
-        document.body,
+        </Modal>
       )}
 
-      {startMenu && createPortal(
-        <div
-          className="fixed inset-0 z-50 bg-black/40 sm:bg-transparent"
-          role="presentation"
-          onClick={() => leaveStart(true)}
+      {startMenu && (
+        <Menu
+          label={
+            target
+              ? isDraftsOpen
+                ? 'Start the new session in'
+                : `Actions for ${machineLabel(target)}`
+              : 'Create the new session on'
+          }
+          at={startMenu}
+          onDismiss={() => leaveStart(true)}
         >
-          {/* Phones get a bottom sheet (thumb-reachable, full width, safe-area aware);
-              from `sm` up it becomes a popover pinned under the control it came from. */}
-          <div
-            role="menu"
-            aria-label={
-              target
-                ? isDraftsOpen
-                  ? 'Start the new session in'
-                  : `Actions for ${machineLabel(target)}`
-                : 'Create the new session on'
-            }
-            className="absolute inset-x-0 bottom-0 max-h-[70vh] touch-pan-y overflow-y-auto overscroll-contain border-t-2 border-accent bg-panel pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-auto sm:bottom-auto sm:left-[var(--menu-left)] sm:top-[var(--menu-top)] sm:w-80 sm:border sm:border-dialog-edge sm:pb-0 sm:shadow-[8px_8px_0_var(--line2)]"
-            style={{ '--menu-top': `${startMenu.top}px`, '--menu-left': `${startMenu.left}px` } as CSSProperties}
-            onClick={(event) => event.stopPropagation()}
-          >
-            {target && !isDraftsOpen ? (
-              /* What is LEFT once the verb moved out to the header: the yellow button
-                 beside this `⋯` already starts a session in the project this machine is
-                 in, so the menu holds the rarer half of the order — a private copy,
-                 another folder, the machine itself. */
-              <>
-                <p className={LOUD_BAND}>{machineLabel(target)}</p>
-                {/* A draft is an expert move and costs everyone else a question, so it
-                    is a SECOND verb and only when the app was told to offer it. */}
-                {offerDrafts && (
-                  <StartOption
-                    title="New session in a draft…"
-                    hint={`a private copy of ${project?.label ?? 'this project'}, uncommitted work included`}
-                    onSelect={() => setStartFlow((flow) => startFlowStep(flow, 'drafts', target))}
+          {target && !isDraftsOpen ? (
+            /* What is LEFT once the verb moved out to the project header: the yellow
+               button there already starts a session in the project it names, so this
+               menu holds the rarer half of the order — a private copy, this machine's
+               files, the machine itself. */
+            <>
+              <MenuHeading>{machineLabel(target)}</MenuHeading>
+              {/* A draft is an expert move and costs everyone else a question, so it
+                  is a SECOND verb and only when the app was told to offer it. */}
+              {offerDrafts && (
+                <MenuItem
+                  title="New session in a draft…"
+                  hint={`a private copy of ${project?.label ?? 'this project'}, uncommitted work included`}
+                  onSelect={() => setStartFlow((flow) => startFlowStep(flow, 'drafts', target))}
+                />
+              )}
+              {/* Managing a machine's project folders is a machine verb, so it is
+                  BEHIND this control with the other ones instead of sitting beside it
+                  as a second word-button in the header's right corner. */}
+              <MenuItem
+                title="Manage projects"
+                hint="browse, create, and choose this machine's project folders"
+                onSelect={(anchor) => {
+                  const at = menuPosition(anchor.getBoundingClientRect(), BROWSE_WIDTH);
+                  if (!at || !targetMachine) return;
+                  leaveStart();
+                  setManageProjects({ machine: targetMachine, at });
+                }}
+              />
+              {onMachineSettings && (
+                <MenuItem
+                  title="Machine settings"
+                  hint="name, pairing, unpair"
+                  onSelect={() => {
+                    leaveStart();
+                    onMachineSettings(target);
+                  }}
+                />
+              )}
+            </>
+          ) : target ? (
+            <>
+              {/* A step INSIDE the same order, so it is left the way it was entered:
+                  back to the machine's verbs, never out to a blank screen. */}
+              <MenuBack
+                label={`Back to actions for ${machineLabel(target)}`}
+                onBack={() => setStartFlow(startFlowBack)}
+              >
+                Start the session in
+                {machines.length > 1 ? ` · ${machineLabel(target)}` : ''}
+              </MenuBack>
+              <MenuItem
+                title="The project itself"
+                hint="Edits land straight in the repo — no isolated copy."
+                badge="Default"
+                onSelect={() => void createSession({ kind: 'trunk' }, target, project?.path)}
+              />
+              <MenuItem
+                title="A new draft, with my uncommitted changes"
+                hint="A private copy of this project exactly as it is now — your uncommitted changes come with it. The real project stays untouched."
+                onSelect={() => askDraftName(false)}
+              />
+              <MenuItem
+                title="A new draft, without my uncommitted changes"
+                hint="A private copy of this project as of your last commit. Your uncommitted work stays here, in the real project, untouched."
+                onSelect={() => askDraftName(true)}
+              />
+              {/* The SECOND band of the same menu, so it is the quiet one: a treatment
+                  that shouts once is a barcode when it is charged twice. */}
+              <MenuHeading tone="quiet">
+                Or a draft you parked{draftRepo ? ` · ${draftRepo}` : ''}
+              </MenuHeading>
+              {drafts === null ? (
+                <MenuNote>
+                  <Spinner className="text-accent-ink" />
+                  Reading drafts...
+                </MenuNote>
+              ) : drafts.length === 0 ? (
+                <MenuNote>{draftsError ?? 'No drafts parked in this project yet.'}</MenuNote>
+              ) : (
+                drafts.map((draft) => (
+                  <MenuItem
+                    key={draft.workspace_id}
+                    title={draft.label?.trim() || shortId(draft.workspace_id)}
+                    hint={draftHint(draft)}
+                    badge={draft.is_current ? 'in use' : undefined}
+                    onSelect={() => void createSession({ kind: 'resume', draft })}
                   />
-                )}
-                {onMachineSettings && (
-                  <StartOption
-                    title="Machine settings"
-                    hint="name, pairing, unpair"
-                    onSelect={() => {
-                      leaveStart();
-                      onMachineSettings(target);
-                    }}
-                  />
-                )}
-              </>
-            ) : target ? (
-              <>
-                {/* A step INSIDE the same order, so it is left the way it was entered:
-                    back to the machine's verbs, never out to a blank screen. */}
-                <button
-                  type="button"
-                  className={`${LOUD_BAND} flex min-h-11 w-full items-center gap-2 text-left`}
-                  aria-label={`Back to actions for ${machineLabel(target)}`}
-                  onClick={() => setStartFlow(startFlowBack)}
-                >
-                  <ChevronIcon className="size-3" aria-hidden />
-                  Start the session in
-                  {machines.length > 1 ? ` · ${machineLabel(target)}` : ''}
-                </button>
-                <StartOption
-                  title="The project itself"
-                  hint="Edits land straight in the repo — no isolated copy."
-                  badge="Default"
-                  onSelect={() => void createSession({ kind: 'trunk' }, target, project?.path)}
-                />
-                <StartOption
-                  title="A new draft, with my uncommitted changes"
-                  hint="A private copy of this project exactly as it is now — your uncommitted changes come with it. The real project stays untouched."
-                  onSelect={() => askDraftName(false)}
-                />
-                <StartOption
-                  title="A new draft, without my uncommitted changes"
-                  hint="A private copy of this project as of your last commit. Your uncommitted work stays here, in the real project, untouched."
-                  onSelect={() => askDraftName(true)}
-                />
-                <div className="flex items-baseline justify-between gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2">
-                  <span className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-                    Or a draft you parked
-                  </span>
-                  {draftRepo && (
-                    <span className="truncate font-mono text-chip text-dialog-hint/70">{draftRepo}</span>
-                  )}
-                </div>
-                {drafts === null ? (
-                  <p className="flex items-center gap-2 px-3 py-3 font-mono text-meta text-dialog-hint">
-                    <Spinner className="text-accent-ink" />
-                    Reading drafts...
-                  </p>
-                ) : drafts.length === 0 ? (
-                  <p className="px-3 py-3 font-mono text-meta text-dialog-hint">
-                    {draftsError ?? 'No drafts parked in this project yet.'}
-                  </p>
-                ) : (
-                  drafts.map((draft) => (
-                    <StartOption
-                      key={draft.workspace_id}
-                      title={draft.label?.trim() || shortId(draft.workspace_id)}
-                      hint={draftHint(draft)}
-                      badge={draft.is_current ? 'in use' : undefined}
-                      onSelect={() => void createSession({ kind: 'resume', draft })}
+                ))
+              )}
+            </>
+          ) : (
+            /* No machine is in scope, so the session has no home yet. The draft
+               question comes AFTER this one — a workspace only exists on a
+               machine — so this menu asks the one question that has to be first. */
+            <>
+              <MenuHeading>Create the session on</MenuHeading>
+              {ask.choices.length === 0 ? (
+                <MenuNote>No paired machine is answering right now.</MenuNote>
+              ) : (
+                ask.choices.map((machine) => {
+                  const tally = tallies.get(machineKey(machine.conn));
+                  const count = tally?.sessions ?? 0;
+                  return (
+                    <MenuItem
+                      key={machineKey(machine.conn)}
+                      title={machineLabel(machine.conn)}
+                      hint={`${count} ${count === 1 ? 'session' : 'sessions'} · ${hostOf(machine.conn.url)}`}
+                      badge={tally?.live ? `${tally.live} live` : undefined}
+                      onSelect={() => {
+                        // An ANSWER, never the whole order: the workspace question
+                        // comes next, and the drafts it offers are parked on THIS
+                        // machine — another key, read on the very next frame.
+                        setStartFlow((flow) => startFlowPick(flow, machine.conn));
+                      }}
                     />
-                  ))
-                )}
-              </>
-            ) : (
-              /* No machine is in scope, so the session has no home yet. The draft
-                 question comes AFTER this one — a workspace only exists on a
-                 machine — so this menu asks the one question that has to be first. */
-              <>
-                <p className="border-b-2 border-warn-strong bg-accent px-3 py-2 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
-                  Create the session on
-                </p>
-                {ask.choices.length === 0 ? (
-                  <p className="px-3 py-3 font-mono text-meta text-dialog-hint">
-                    No paired machine is answering right now.
-                  </p>
-                ) : (
-                  ask.choices.map((machine) => {
-                    const tally = tallies.get(machineKey(machine.conn));
-                    const count = tally?.sessions ?? 0;
-                    return (
-                      <StartOption
-                        key={machineKey(machine.conn)}
-                        title={machineLabel(machine.conn)}
-                        hint={`${count} ${count === 1 ? 'session' : 'sessions'} · ${hostOf(machine.conn.url)}`}
-                        badge={tally?.live ? `${tally.live} live` : undefined}
-                        onSelect={() => {
-                          // An ANSWER, never the whole order: the workspace question
-                          // comes next, and the drafts it offers are parked on THIS
-                          // machine — another key, read on the very next frame.
-                          setStartFlow((flow) => startFlowPick(flow, machine.conn));
-                        }}
-                      />
-                    );
-                  })
-                )}
-              </>
-            )}
-          </div>
-        </div>,
-        document.body,
+                  );
+                })
+              )}
+            </>
+          )}
+        </Menu>
       )}
 
-      {/* Manage projects opens the machine's filesystem surface. It is separate from the
-          session creation action, because project management is not a machine-level verb. */}
+      {/* The folder browser the start flow falls through to when a machine has no
+          project yet. `manageProjects` below is the same sheet reached deliberately
+          from a machine's `⋯`. */}
       {target && browseAt && (
         <ManageProjectsSheet
           label={machineLabel(target)}
@@ -1608,17 +1575,8 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
         />
       )}
 
-      {namePrompt && createPortal(
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]"
-          role="presentation"
-          onClick={() => leaveStart()}
-        >
-          <div
-            className="w-full max-w-md"
-            role="presentation"
-            onClick={(event) => event.stopPropagation()}
-          >
+      {namePrompt && (
+        <Modal onDismiss={() => leaveStart()}>
             <DialogFrame
               title={namePrompt.clean ? 'Name the clean draft' : 'Name the draft'}
               onClose={() => leaveStart()}
@@ -1658,9 +1616,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                 </div>
               </div>
             </DialogFrame>
-          </div>
-        </div>,
-        document.body,
+        </Modal>
       )}
     </section>
   );
@@ -1762,10 +1718,9 @@ const ProjectGroup = memo(function ProjectGroup({
   // "close," and one that deletes 40 sessions is drawn identically to one that deletes 1.
   // The ⋯ is a neutral overflow control; "Delete all N" rides inside it carrying its count.
   const [menu, setMenu] = useState<{ top: number; left: number } | null>(null);
-  const [manageAt, setManageAt] = useState<{ top: number; left: number } | null>(null);
   const kebabRef = useRef<HTMLButtonElement>(null);
   const openMenu = useCallback(() => {
-    setMenu(menuPosition(kebabRef.current?.getBoundingClientRect(), PROJECT_MENU_WIDTH));
+    setMenu(menuPosition(kebabRef.current?.getBoundingClientRect(), MENU_WIDTH));
   }, []);
   const closeMenu = useCallback((restoreFocus = false) => {
     setMenu(null);
@@ -1868,17 +1823,15 @@ const ProjectGroup = memo(function ProjectGroup({
         {/* Gone while a query is live: a group showing 3 of 40 matches must never
             offer a control that deletes 40. */}
         {!needle && (
-          <button
+          <IconButton
             ref={kebabRef}
-            type="button"
-            onClick={() => (menu ? closeMenu() : openMenu())}
             aria-haspopup="menu"
             aria-expanded={menu !== null}
-            aria-label="Project actions"
-            className="flex min-h-11 shrink-0 items-center justify-center px-3 text-ui text-dialog-hint transition-colors duration-150 hover:bg-hover hover:text-white focus-visible:bg-hover focus-visible:text-white focus-visible:outline-none motion-reduce:transition-none mouse:min-h-0 sm:px-4"
+            label={`Actions for ${project}`}
+            onClick={() => (menu ? closeMenu() : openMenu())}
           >
-            <DotsIcon className="size-4" />
-          </button>
+            <DotsIcon className="size-3" />
+          </IconButton>
         )}
       </header>
       {rows.length > 0 && (
@@ -1908,52 +1861,22 @@ const ProjectGroup = memo(function ProjectGroup({
         </div>
       )}
     </section>
-    {menu &&
-      createPortal(
-        <div
-          className="fixed inset-0 z-50 bg-black/40 sm:bg-transparent"
-          role="presentation"
-          onClick={() => closeMenu(true)}
-        >
-          {/* Phones get a bottom sheet; from `sm` up it is a popover pinned under the kebab. */}
-          <div
-            role="menu"
-            aria-label={`Actions for ${project}`}
-            className="absolute inset-x-0 bottom-0 max-h-[70vh] overflow-y-auto overscroll-contain border-t-2 border-accent bg-panel pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-auto sm:bottom-auto sm:left-[var(--menu-left)] sm:top-[var(--menu-top)] sm:w-64 sm:border sm:border-dialog-edge sm:pb-0 sm:shadow-[8px_8px_0_var(--line2)]"
-            style={{ '--menu-top': `${menu.top}px`, '--menu-left': `${menu.left}px` } as CSSProperties}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                closeMenu();
-                onDeleteProject(project, sessions, conn);
-              }}
-              className="flex w-full items-center gap-3 px-3 py-3 text-left transition-colors duration-150 hover:bg-err/15 focus-visible:bg-err/15 focus-visible:outline-none motion-reduce:transition-none"
-            >
-              <span className="shrink-0 text-err"><TrashIcon className="size-4" /></span>
-              <span className="min-w-0">
-                <span className="block font-mono text-ui font-bold text-err">Remove sessions</span>
-                <span className="mt-0.5 block font-mono text-meta text-dialog-hint">
-                  Removes every transcript in this project on this machine. This cannot be undone.
-                </span>
-              </span>
-            </button>
-          </div>
-        </div>,
-        document.body,
-      )}
-      {manageAt && (
-        <ManageProjectsSheet
-          label={machineLabel(conn)}
-          client={clientFor(conn)}
-          startAt={root || null}
-          knownRoots={new Set(sessions.map(projectPath).filter((path): path is string => !!path))}
-          at={manageAt}
-          onCancel={() => setManageAt(null)}
-          onChoose={(_root: string) => setManageAt(null)}
-        />
+      {menu && (
+        <Menu label={`Actions for ${project}`} at={menu} onDismiss={() => closeMenu(true)}>
+          {/* The same band the machine's `⋯` opens with, naming what these rows act
+              on: two menus one row apart must not be two different objects. */}
+          <MenuHeading>{project}</MenuHeading>
+          <MenuItem
+            tone="danger"
+            icon={<TrashIcon className="size-4" />}
+            title="Remove sessions"
+            hint="Removes every transcript in this project on this machine. This cannot be undone."
+            onSelect={() => {
+              closeMenu();
+              onDeleteProject(project, sessions, conn);
+            }}
+          />
+        </Menu>
       )}
     </>
   );
@@ -2595,48 +2518,6 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// One row of the start-in menu. Title carries the choice, hint carries the
-// consequence — a workspace decision is unrecoverable-ish once the agent starts
-// writing, so no row is allowed to be a bare noun. `min-h-11` keeps every row a
-// real thumb target on a phone sheet.
-
-/**
- * Everything one machine has EXCEPT the obvious one. "New session" is the yellow
- * button immediately to its left, on the fleet bar and on every machine header, so
- * what is left behind this control is the rarer half: a private copy, another folder,
- * the machine's own settings. `min-h-11` keeps it a real thumb target.
- */
-
-function StartOption({
-  title,
-  hint,
-  badge,
-  onSelect,
-}: {
-  title: string;
-  hint: string;
-  badge?: string;
-  onSelect: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      className="flex min-h-11 w-full items-start gap-2 border-b border-dialog-edge px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none"
-      onClick={onSelect}
-    >
-      <span className="min-w-0 flex-1">
-        <span className="block truncate font-mono text-ui font-bold text-white">{title}</span>
-        <span className="mt-0.5 block font-mono text-meta text-dialog-hint">{hint}</span>
-      </span>
-      {badge && (
-        <span className="mt-0.5 shrink-0 border border-edge px-1 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-          {badge}
-        </span>
-      )}
-    </button>
-  );
-}
 
 // A parked draft says WHEN it forked, because that — not its name — is what tells
 // you whether it still matches the project. A draft with no recorded fork time
