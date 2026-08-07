@@ -567,6 +567,20 @@ describe("Pager", () => {
     expect(isPainted(last, "Next page")).toBe(false);
   });
 
+  // Regression, user report: the `<` and `>` were spread the full width of the
+  // list, "too much and hard to click" — 360px apart on a phone, so no thumb can
+  // reach both and click-click-click through pages. The band still runs the full
+  // width; the control inside it is capped and centred.
+  it("keeps the two steps within a thumb's reach of the numbers", () => {
+    const html = renderToStaticMarkup(
+      <Pager page={4} pageCount={73} onPage={() => {}} label="vis sessions" />,
+    );
+    // A FIXED cap, not `w-fit`: a cluster that sizes to its own window re-centres
+    // whenever the window grows, which is what slid `>` out from under the finger.
+    expect(html).toContain("flex w-full max-w-[19rem] items-center gap-1");
+    expect(html).toContain("flex justify-center border-t");
+  });
+
   it("makes every printed page a one-tap jump, current one marked", () => {
     const html = renderToStaticMarkup(
       <Pager page={5} pageCount={73} onPage={() => {}} label="vis sessions" />,

@@ -905,9 +905,17 @@ export function Pager({
   return (
     <nav
       aria-label={`Pages of ${label}`}
-      className={`flex items-center gap-1 border-t border-dialog-edge py-1 ${LIST_EDGE} ${LIST_EDGE_END}`}
+      className={`flex justify-center border-t border-dialog-edge py-1 ${LIST_EDGE} ${LIST_EDGE_END}`}
     >
-      {step(page - 1, true)}
+      {/* The band runs the width of the list; the CONTROL does not. Steps pinned to
+          the paper's two edges put `<` and `>` 360px apart on a phone, so paging is a
+          two-handed reach and no thumb can rest between them — you cannot tap `>`
+          twice without moving. The cluster is capped and centred instead, which puts
+          the two steps a thumb's width from the numbers they belong to. It is a FIXED
+          cap, not `w-fit`: a window that grows from `1 2 … 73` to `1 … 5 6 7 … 73`
+          would otherwise re-centre and slide `>` out from under the finger again. */}
+      <div className="flex w-full max-w-[19rem] items-center gap-1">
+        {step(page - 1, true)}
       {/* The strip is LIVE: pressing a number changes nothing else on the band, so
           without this a screen reader hears silence after the press. */}
       <span aria-live="polite" className="flex flex-1 items-center justify-center gap-1">
@@ -938,7 +946,8 @@ export function Pager({
           ),
         )}
       </span>
-      {step(page + 1, false)}
+        {step(page + 1, false)}
+      </div>
     </nav>
   );
 }
