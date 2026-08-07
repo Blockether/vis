@@ -16,7 +16,7 @@ import {
 import { ArtifactsChip, ArtifactsSheet } from "../components/ArtifactsSheet";
 import { collapseArtifactVersions, collectArtifacts } from "../lib/artifacts";
 import { ExpandableImage } from "../components/ImageViewer";
-import { Banner, Spinner } from "../components/ui";
+import { Banner, DialogHeader, Spinner } from '../components/ui';
 import {
   ArrowDownIcon,
   CameraIcon,
@@ -80,6 +80,12 @@ import {
   savePendingVoice,
 } from "../lib/pending-voice";
 import { readerOwnsScroll } from "../lib/reader-gesture";
+import {
+  applyReadingPosition,
+  markReadingPosition,
+  parkedReadingPosition,
+  rememberReadingPosition,
+} from "../lib/reading-position";
 import type {
   ContentBlock,
   IterationAttachment,
@@ -937,28 +943,14 @@ function PasteEditor({
           }
         }}
       >
-        <header className="flex min-h-12 shrink-0 items-center bg-dialog-title pt-[env(safe-area-inset-top)] text-dialog-title-foreground sm:pt-0">
-          <div className="min-w-0 flex-1 px-3 py-2 sm:px-4">
-            <h2
-              id="paste-editor-title"
-              className="truncate font-mono text-body font-bold tracking-wide"
-            >
-              {`Pasted #${editingPaste.id}`}
-            </h2>
-            <p className="truncate font-mono text-meta text-dialog-title-foreground/70">
-              {pasteSummary(editingPaste.id, editingPaste.draft)}
-            </p>
-          </div>
-          <button
-            type="button"
-            className="grid min-h-10 min-w-10 place-items-center border-l border-dialog-title-foreground/20 text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
-            onMouseDown={keepKeyboard}
-            onClick={onClose}
-            aria-label="Close paste editor"
-          >
-            <CloseIcon />
-          </button>
-        </header>
+        <DialogHeader
+          className="pt-[env(safe-area-inset-top)] sm:pt-0"
+          titleId="paste-editor-title"
+          title={`Pasted #${editingPaste.id}`}
+          subtitle={pasteSummary(editingPaste.id, editingPaste.draft)}
+          closeLabel="Close paste editor"
+          onClose={onClose}
+        />
 
         <textarea
           // eslint-disable-next-line jsx-a11y/no-autofocus
@@ -2998,11 +2990,31 @@ export function SessionScreen({
       turns.length &&
       hydratedTurnCount >= Math.min(FIRST_PAINT_TURNS, turns.length)
     ) {
+      // Where the reader LEFT this session outranks its newest turn: stepping
+      // out to the list or to Machines and coming back must return them to the
+      // place they were reading, not to the bottom.
+      const viewport = scrollRef.current;
+      const parked = parkedReadingPosition(sid);
+      if (parked !== null && viewport) {
+        // Not there yet: older turns are still ramping in ABOVE the viewport, so
+        // keep the opening pending and try again on the next hydrated chunk.
+        if (
+          !applyReadingPosition(viewport, parked) &&
+          hydratedTurnCount < Math.min(visibleTurnCount, turns.length)
+        )
+          return;
+        followingRef.current = false;
+        if (!showJumpRef.current) {
+          showJumpRef.current = true;
+          setShowJump(true);
+        }
+      } else {
+        pinToEnd();
+      }
       initialScrollPendingRef.current = false;
-      pinToEnd();
       // The first paint window is the whole opening contract. Reveal one frame
-      // after it is bottom-pinned; older turns continue hydrating above the
-      // viewport instead of keeping an already-readable transcript behind a veil.
+      // after it is placed; older turns continue hydrating above the viewport
+      // instead of keeping an already-readable transcript behind a veil.
       requestAnimationFrame(() => setLoading(false));
       return;
     }
@@ -3017,6 +3029,7 @@ export function SessionScreen({
     visibleTurnCount,
     hydratedTurnCount,
     liveTurn?.id,
+    sid,
     scrollToEnd,
     pinToEnd,
   ]);
@@ -3953,6 +3966,8 @@ export function SessionScreen({
         viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
       const following = distance < 64;
       followingRef.current = following;
+      // The reader's place, kept for the next time this session is opened.
+      rememberReadingPosition(sid, markReadingPosition(viewport));
       if (showJumpRef.current !== !following) {
         showJumpRef.current = !following;
         setShowJump(!following);
@@ -4318,7 +4333,7 @@ export function SessionScreen({
             onClick={onBack}
             aria-label="Back to sessions"
           >
-            <ChevronIcon className="size-4" aria-hidden />
+            <ChevronIcon back className="size-4" aria-hidden />
           </button>
           <div className="min-w-0 flex-1 self-center px-3 py-1.5">
             <h1 className="truncate font-mono text-body font-bold text-white">
