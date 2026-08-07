@@ -8,6 +8,7 @@ import {
   HeaderTally,
   HeaderTitle,
   Pager,
+  IconButton,
   Input,
   LIST_EDGE,
   LIST_EDGE_END,
@@ -59,6 +60,7 @@ import {
 } from '../components/ManageProjectsSheet';
 import {
   PencilIcon,
+  PlusIcon,
   ProjectsIcon,
   SettingsIcon,
   StarIcon,
@@ -238,6 +240,8 @@ interface Props {
   onMachineSettings?: (conn: GatewayConn) => void;
   /** Renames the machine in place from its own header. '' clears the name. */
   onRenameMachine?: (conn: GatewayConn, label: string) => void;
+  /** Pair another machine. The `+` stands at the end of the tab strip. */
+  onPair?: () => void;
 }
 
 export function SessionsScreen({
@@ -249,6 +253,7 @@ export function SessionsScreen({
   onOpen,
   onMachineSettings,
   onRenameMachine,
+  onPair,
 }: Props) {
   // A machine OWNS its projects: every row belongs to exactly one gateway, and a
   // project only exists inside the machine it lives on. The fleet is therefore
@@ -1146,6 +1151,20 @@ export function SessionsScreen({
               </button>
             );
           })}
+          {/* ADDING A MACHINE IS THE TAB STRIP'S OWN VERB.
+              The strip answers "which machine", so "one more machine" belongs at its
+              end, not buried in Preferences: a `+` after the last tab, on the page's
+              own paper, never inside the card it would add a sibling to. */}
+          {onPair && (
+            <IconButton
+              label="Pair machine"
+              variant="quiet"
+              className="self-center"
+              onClick={onPair}
+            >
+              <PlusIcon />
+            </IconButton>
+          )}
       </div>
         {/* The card is a CLOSED frame on every width, and it ENDS where its content
             ends: `h-full` stretched it to the viewport, so on a desktop the bottom

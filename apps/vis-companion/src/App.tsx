@@ -957,6 +957,7 @@ export function App() {
                 await upsertConnection({ ...conn, label: label || undefined });
                 await refresh();
               }}
+              onPair={() => setTab("connect")}
             />
           </div>
         )}
