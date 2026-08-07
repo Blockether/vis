@@ -209,6 +209,7 @@ jobs:
           fi
 
       - name: Commit release notes
+        id: notes
         run: |
           set -euo pipefail
           git config user.name "blockether-deployer"
@@ -216,23 +217,18 @@ jobs:
           git add README.md CHANGELOG.md resources/vis-docs/index.md
           if git diff --cached --quiet; then
             echo "No changes to commit"
+            echo "pushable=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git commit -m "release: update release notes for ${{ github.ref_name }}"
-          # main can move while the release runs — another push landing first used to
-          # reject this push and fail a release that had ALREADY published the tag, the
-          # GitHub Release and the Clojars artifacts, which also skipped the mobile job.
-          # Rebase the notes commit onto the new main and retry instead.
-          for attempt in 1 2 3 4 5; do
-            if git push origin HEAD:main; then
-              exit 0
-            fi
-            echo "push rejected (attempt $attempt) — rebasing release notes onto origin/main"
-            git fetch --no-recurse-submodules origin main
-            git rebase origin/main
-          done
-          echo "could not push release notes after 5 attempts" >&2
-          exit 1
+          echo "pushable=true" >> "$GITHUB_OUTPUT"
+
+      - name: Push release notes
+        if: steps.notes.outputs.pushable == 'true'
+        uses: ./.github/actions/git-push
+        with:
+          refspec: HEAD:main
+          rebase-onto: main
 
   mobile:
     name: Release matching iOS and Android apps

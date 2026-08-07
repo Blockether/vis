@@ -1,0 +1,65 @@
+name: Push to origin
+description: >-
+  The ONE way a workflow writes to this repository. main can move while a job
+  runs, so a plain push is a race: it used to reject a release-notes commit that
+  had ALREADY published the tag, the GitHub Release and the Clojars artifacts.
+  Every push goes through this action, with the same bot identity and the same
+  fetch-rebase-retry.
+
+inputs:
+  refspec:
+    description: "What to push, e.g. HEAD:main or refs/tags/installer"
+    required: true
+  rebase-onto:
+    description: >-
+      Branch to fetch and rebase onto between attempts (empty = retry the push
+      as-is, which is what a rolling tag wants)
+    required: false
+    default: ""
+  force:
+    description: "Push with --force (only for a rolling tag that is meant to move)"
+    required: false
+    default: "false"
+  attempts:
+    description: "How many times to try before failing the job"
+    required: false
+    default: "5"
+  user-name:
+    description: "git author/committer name"
+    required: false
+    default: blockether-deployer
+  user-email:
+    description: "git author/committer email"
+    required: false
+    default: contact@blockether.com
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        REFSPEC: ${{ inputs.refspec }}
+        REBASE_ONTO: ${{ inputs.rebase-onto }}
+        FORCE: ${{ inputs.force }}
+        ATTEMPTS: ${{ inputs.attempts }}
+        USER_NAME: ${{ inputs.user-name }}
+        USER_EMAIL: ${{ inputs.user-email }}
+      run: |
+        set -euo pipefail
+        git config user.name "$USER_NAME"
+        git config user.email "$USER_EMAIL"
+        args=()
+        if [ "$FORCE" = "true" ]; then args+=(--force); fi
+        for attempt in $(seq 1 "$ATTEMPTS"); do
+          if git push "${args[@]}" origin "$REFSPEC"; then
+            exit 0
+          fi
+          echo "push of $REFSPEC rejected (attempt $attempt)"
+          if [ -n "$REBASE_ONTO" ]; then
+            echo "rebasing onto origin/$REBASE_ONTO and retrying"
+            git fetch --no-recurse-submodules origin "$REBASE_ONTO"
+            git rebase "origin/$REBASE_ONTO"
+          fi
+        done
+        echo "could not push $REFSPEC after $ATTEMPTS attempts" >&2
+        exit 1

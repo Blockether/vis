@@ -40,13 +40,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Move the installer tag and refresh both assets
+      - name: Move the installer tag
+        run: git tag -f installer "$GITHUB_SHA"
+
+      - uses: ./.github/actions/git-push
+        with:
+          refspec: refs/tags/installer
+          force: "true"
+
+      - name: Refresh both installer assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          git tag -f installer "$GITHUB_SHA"
-          git push -f origin refs/tags/installer
           if gh release view installer >/dev/null 2>&1; then
             gh release edit installer --target "$GITHUB_SHA" --prerelease --latest=false
             gh release upload installer bin/install-vis-agent bin/vis-agent --clobber
