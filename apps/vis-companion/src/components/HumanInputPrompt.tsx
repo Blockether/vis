@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Banner, Button, DIALOG_DESKTOP_HEIGHT, DialogFrame, Input } from './ui';
+import {
+  Banner,
+  Button,
+  ChoiceRow,
+  DIALOG_DESKTOP_HEIGHT,
+  DialogFrame,
+  Input,
+} from './ui';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
@@ -430,18 +437,17 @@ function HumanInputFieldRow({
     const on = value === true;
     return (
       <FieldShell field={field} {...(error ? { error } : {})}>
-        <button
-          type="button"
+        <ChoiceRow
+          isOn={on}
           disabled={disabled}
           aria-pressed={on}
-          className="flex w-full items-center gap-2 border border-edge bg-input px-2.5 py-1 text-left font-mono text-meta text-white transition-colors hover:border-accent focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted sm:text-ui"
+          mark={
+            on ? HUMAN_INPUT_CHOICE_MARKS.inclusiveOn : HUMAN_INPUT_CHOICE_MARKS.inclusiveOff
+          }
           onClick={() => onChange(field.id, !on)}
         >
-          <span aria-hidden="true">
-            {on ? HUMAN_INPUT_CHOICE_MARKS.inclusiveOn : HUMAN_INPUT_CHOICE_MARKS.inclusiveOff}
-          </span>
-          <span className="truncate">{field.label}</span>
-        </button>
+          {field.label}
+        </ChoiceRow>
       </FieldShell>
     );
   }
@@ -454,14 +460,20 @@ function HumanInputFieldRow({
           {options.map((option) => {
             const on = isMulti ? chosen.includes(option.value) : value === option.value;
             return (
-              <button
+              <ChoiceRow
                 key={option.value}
-                type="button"
+                isOn={on}
                 disabled={disabled}
                 {...(isMulti ? { 'aria-pressed': on } : { role: 'radio', 'aria-checked': on })}
-                className={`flex w-full items-center gap-2 border px-2.5 py-1 text-left font-mono text-meta transition-colors focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted sm:text-ui ${
-                  on ? 'border-accent bg-hover text-accent-ink' : 'border-edge bg-input text-white'
-                }`}
+                mark={
+                  isMulti
+                    ? on
+                      ? HUMAN_INPUT_CHOICE_MARKS.inclusiveOn
+                      : HUMAN_INPUT_CHOICE_MARKS.inclusiveOff
+                    : on
+                      ? HUMAN_INPUT_CHOICE_MARKS.exclusiveOn
+                      : HUMAN_INPUT_CHOICE_MARKS.exclusiveOff
+                }
                 onClick={() =>
                   onChange(
                     field.id,
@@ -471,17 +483,8 @@ function HumanInputFieldRow({
                   )
                 }
               >
-                <span aria-hidden="true">
-                  {isMulti
-                    ? on
-                      ? HUMAN_INPUT_CHOICE_MARKS.inclusiveOn
-                      : HUMAN_INPUT_CHOICE_MARKS.inclusiveOff
-                    : on
-                      ? HUMAN_INPUT_CHOICE_MARKS.exclusiveOn
-                      : HUMAN_INPUT_CHOICE_MARKS.exclusiveOff}
-                </span>
-                <span className="truncate">{option.label}</span>
-              </button>
+                {option.label}
+              </ChoiceRow>
             );
           })}
         </div>

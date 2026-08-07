@@ -67,7 +67,16 @@ import {
   setThemePref,
 } from "../lib/storage";
 import { BUNDLED_THEMES } from "../lib/palettes";
-import { Banner, Button, DialogFrame, Input, Modal, PROSE } from "../components/ui";
+import {
+  Banner,
+  Button,
+  Chip,
+  DialogFrame,
+  Input,
+  ListRow,
+  Modal,
+  PROSE,
+} from "../components/ui";
 import {
   REACH_HINT,
   REACH_LABEL,
@@ -354,13 +363,9 @@ export function GatewaySettingsDialog({
                 <p className="font-mono text-meta text-dialog-hint">
                   Can't load settings — vis isn't responding on this machine.
                 </p>
-                <button
-                  type="button"
-                  onClick={() => void load()}
-                  className="border border-dialog-edge bg-input px-3 py-1.5 font-mono text-meta font-bold text-white hover:bg-hover"
-                >
+                <Button variant="ghost" onClick={() => void load()}>
                   Retry
-                </button>
+                </Button>
               </div>
             </SettingsPanel>
           ) : unauthorized ? (
@@ -374,13 +379,9 @@ export function GatewaySettingsDialog({
                   <code className="text-accent-ink">vis gateway pair</code> and
                   paste the fresh link to load its settings.
                 </p>
-                <button
-                  type="button"
-                  onClick={() => void load()}
-                  className="border border-dialog-edge bg-input px-3 py-1.5 font-mono text-meta font-bold text-white hover:bg-hover"
-                >
+                <Button variant="ghost" onClick={() => void load()}>
                   Retry
-                </button>
+                </Button>
               </div>
             </SettingsPanel>
           ) : groups === null ? (
@@ -470,20 +471,14 @@ export function GatewaySettingsDialog({
                             {toggle.choices.map((choice) => {
                               const selected = toggle.value === choice;
                               return (
-                                <button
-                                  type="button"
+                                <Chip
                                   key={choice}
+                                  isOn={selected}
                                   disabled={busy}
                                   onClick={() => pick(toggle, choice)}
-                                  className={`min-h-8 border px-2 py-0.5 font-mono text-chip font-bold transition-[background-color,border-color,color,transform,translate,scale,rotate] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none mouse:min-h-6 ${
-                                    selected
-                                      ? "border-transparent bg-accent text-accent-foreground"
-                                      : "border-transparent bg-panel-2 text-dialog-hint hover:bg-hover hover:text-white"
-                                  }`}
-                                  aria-pressed={selected}
                                 >
                                   {choice}
-                                </button>
+                                </Chip>
                               );
                             })}
                           </div>
@@ -922,14 +917,14 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
               aria-label="MCP transport"
             >
               {(["stdio", "streamable_http"] as const).map((kind) => (
-                <button
+                <Chip
                   key={kind}
-                  type="button"
+                  isOn={transport === kind}
                   onClick={() => setTransport(kind)}
-                  className={`min-h-8 border px-2 font-mono text-chip font-bold uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${transport === kind ? "border-transparent bg-accent text-accent-foreground" : "border-transparent bg-panel-2 text-dialog-hint hover:bg-hover hover:text-white"}`}
+                  className="w-full uppercase"
                 >
                   {kind === "stdio" ? "Local command" : "Streamable HTTP"}
-                </button>
+                </Chip>
               ))}
             </div>
             <FormLabel label="Server name">
@@ -1395,9 +1390,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
               key={provider.id}
               className="border border-dialog-edge bg-panel-2"
             >
-              <button
-                type="button"
-                className="flex min-h-12 w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none"
+              <ListRow
                 onClick={() => setExpanded(open ? null : provider.id)}
                 aria-expanded={open}
               >
@@ -1425,7 +1418,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                   open={open}
                   className="size-3.5 text-dialog-hint"
                 />
-              </button>
+              </ListRow>
 
               <ProviderNotice auth={auth} provider={provider} />
 
@@ -2233,15 +2226,11 @@ function AddressPanel({
             const state = reach[url] ?? "checking";
             return (
               <li key={url}>
-                <button
-                  type="button"
+                <ListRow
+                  isFramed
+                  isSelected={inUse}
                   disabled={inUse || busy !== null}
                   onClick={() => void choose(url, true)}
-                  className={`flex w-full min-w-0 items-center gap-2 border px-2 py-1.5 text-left transition-colors disabled:cursor-default ${
-                    inUse
-                      ? "border-accent bg-panel-2"
-                      : "border-dialog-edge hover:border-accent hover:bg-hover"
-                  }`}
                 >
                   <span
                     className={`size-1.5 shrink-0 rounded-full ${
@@ -2262,7 +2251,7 @@ function AddressPanel({
                   <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
                     {inUse ? "in use" : busy === url ? "switching" : "use"}
                   </span>
-                </button>
+                </ListRow>
                 {inUse && (
                   <p className="px-2 pt-1 font-mono text-meta text-dialog-hint">
                     {REACH_HINT[kind]}

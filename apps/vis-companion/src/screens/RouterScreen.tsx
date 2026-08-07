@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
 import type { ModelPref, RouterProvider } from '../lib/types';
-import { Banner, Button, DialogHeader } from '../components/ui';
+import { Banner, Button, DialogHeader, ListRow } from '../components/ui';
 import { ChevronIcon } from '../components/icons';
 import {
   defaultFirstProviders,
@@ -131,9 +131,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
 
             return (
               <div key={provider.id} className="border border-dialog-edge bg-panel-2">
-                <button
-                  type="button"
-                  className="flex w-full min-h-12 items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none"
+                <ListRow
                   onClick={() => setExpanded(open ? null : provider.id)}
                   aria-expanded={open}
                 >
@@ -149,7 +147,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
                     </span>
                   </span>
                   <ChevronIcon open={open} className="size-3.5 text-dialog-hint" />
-                </button>
+                </ListRow>
 
                 {open && (
                   <div className="space-y-2 border-t border-dialog-edge p-3">
@@ -169,19 +167,17 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
                           const active = pref?.provider === provider.id && pref?.model === model;
                           return (
                             <li key={model} className="min-w-0">
-                              <button
-                                type="button"
-                                className={`flex w-full min-h-9 items-center border px-2 py-1.5 text-left font-mono text-ui transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none ${
-                                  active
-                                    ? 'border-accent bg-hover text-accent-ink'
-                                    : 'border-dialog-edge text-white/85'
-                                }`}
+                              <ListRow
+                                isFramed
+                                isSelected={active}
                                 disabled={picking === `${provider.id}:${model}`}
                                 onClick={() => void pick(provider, model)}
                                 aria-pressed={active}
                               >
-                                <span className="min-w-0 flex-1 truncate">{model}</span>
-                              </button>
+                                <span className="min-w-0 flex-1 truncate font-mono text-ui">
+                                  {model}
+                                </span>
+                              </ListRow>
                             </li>
                           );
                         })}

@@ -43,8 +43,15 @@ import { DocFrame } from "./DocArtifact";
 import { ImageViewer } from "./ImageViewer";
 import { MarkdownArtifact } from "./MarkdownArtifact";
 import { PdfAnnotator } from "./PdfArtifact";
-import { AlertIcon, ArrowDownIcon, ClipIcon, PlayIcon } from "./icons";
-import { DialogClose, DialogHeader, KebabButton } from "./ui";
+import { AlertIcon, ClipIcon, PlayIcon } from "./icons";
+import {
+  Chip,
+  DialogClose,
+  DialogHeader,
+  KebabButton,
+  ListRow,
+  LoadMore,
+} from "./ui";
 
 /**
  * Two documents produced by the same turn have to stay distinguishable at a
@@ -350,20 +357,12 @@ function FilterStrip({
           ).length;
           const on = filter.label === active;
           return (
-            <button
+            <Chip
               key={filter.label}
-              type="button"
+              isOn={on}
               onClick={() => onPick(filter.label)}
               disabled={!count}
-              aria-pressed={on}
               aria-label={`${filter.label}, ${count} artifacts`}
-              className={`inline-flex min-h-7 shrink-0 items-center gap-1.5 border px-2 font-mono text-meta focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-6 ${
-                on
-                  ? "border-accent bg-accent font-bold text-accent-foreground"
-                  : count
-                    ? "border-edge text-dialog-hint hover:bg-hover"
-                    : "border-edge text-dialog-hint opacity-40"
-              }`}
             >
               <span aria-hidden="true">{filter.label}</span>
               <span
@@ -372,7 +371,7 @@ function FilterStrip({
               >
                 {count}
               </span>
-            </button>
+            </Chip>
           );
         })}
       </div>
@@ -584,11 +583,11 @@ function ArtifactVersions({
       >
         {versions.map((version, position) => (
           <li key={version.key}>
-            <button
-              type="button"
+            <ListRow
+              isFramed
               onClick={() => onOpen(version)}
               aria-label={`Open ${describeArtifact(version)}`}
-              className="flex min-h-11 w-full items-center gap-3 border border-dialog-edge bg-panel px-3 py-2 text-left transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent"
+              className="gap-3"
             >
               <span className="font-mono text-meta font-bold text-white">
                 v{version.version}
@@ -599,7 +598,7 @@ function ArtifactVersions({
               {position === 0 && (
                 <span className="font-mono text-chip text-accent">latest</span>
               )}
-            </button>
+            </ListRow>
           </li>
         ))}
       </ul>
@@ -735,15 +734,12 @@ export function ArtifactsSheet({
               ))}
             </div>
             {page.rest.length > 0 && (
-              <button
-                type="button"
+              <LoadMore
+                label={`Load ${page.restLabel} of artifacts`}
                 onClick={() => setPages((current) => current + 1)}
-                aria-label={`Load ${page.restLabel} of artifacts`}
-                className="mt-3 flex min-h-8 w-full items-center justify-center gap-1.5 border border-dialog-edge bg-panel font-mono text-meta text-dialog-hint hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-7"
               >
-                <ArrowDownIcon />
-                <span>Load {page.restLabel}</span>
-              </button>
+                Load {page.restLabel}
+              </LoadMore>
             )}
           </>
         ) : (

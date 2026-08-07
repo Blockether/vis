@@ -8,13 +8,12 @@ import {
   useMemo,
   useRef,
   useState,
-  type MouseEvent,
   type ReactNode,
 } from "react";
 import Prism from "prismjs";
 import { DataTable } from "./DataTable";
 import { DocPreview } from "./DocArtifact";
-import { AlertIcon, ArrowDownIcon, ArrowOutIcon, ChevronIcon } from "./icons";
+import { AlertIcon, ArrowOutIcon, ChevronIcon } from "./icons";
 import {
   artifactMedia,
   attachmentBytes,
@@ -25,7 +24,14 @@ import {
   pageBySize,
   RAIL_PAGE,
 } from "../lib/artifacts";
-import { PROSE, PROSE_RAGGED, Spinner } from "./ui";
+import {
+  CopyChip,
+  Disclosure,
+  LoadMore,
+  PROSE,
+  PROSE_RAGGED,
+  Spinner,
+} from "./ui";
 import "prismjs/components/prism-bash";
 import "prismjs/components/prism-clojure";
 import "prismjs/components/prism-css";
@@ -64,9 +70,6 @@ import {
   mediaSlotFrame,
   type MediaSlotState,
 } from "../lib/media-frame";
-
-const disclosureClass =
-  "inline-block shrink-0 text-ui transition-transform duration-150 group-open:rotate-90";
 
 // Transcript nodes the stream appends rise + fade in instead of popping into
 // place. A keyframe animation (see `--animate-transcript-*` in index.css) plays
@@ -112,45 +115,6 @@ const toolLabelOverrides: Record<string, string> = {
   repl_eval: "REPL",
   // `shell` needs no override: ONE tool, whose card names the op that ran.
 };
-
-function CopyButton({
-  value,
-  className = "absolute right-2 top-2 z-10",
-  label = "Copy code",
-}: {
-  value: string;
-  /** Placement only — the chip's own look is fixed. */
-  className?: string;
-  label?: string;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy(event: MouseEvent<HTMLButtonElement>) {
-    // This chip also lives inside a <summary>, where a bare click would toggle
-    // the disclosure as well as copy.
-    event.preventDefault();
-    event.stopPropagation();
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1_500);
-    } catch {
-      // Clipboard access can be unavailable in an untrusted mobile webview.
-    }
-  }
-
-  return (
-    <button
-      type="button"
-      // min-w keeps 'Copy' and 'Copied' the same width so the chip never jumps.
-      className={`${className} min-w-[6ch] border border-dialog-edge bg-button px-1.5 py-0.5 text-center font-mono text-chip text-button-foreground transition-colors hover:bg-hover`}
-      onClick={copy}
-      aria-label={label}
-    >
-      {copied ? "Copied" : "Copy"}
-    </button>
-  );
-}
 
 type DiffLineKind = "add" | "del" | "ctx";
 type DiffLine =
@@ -268,7 +232,15 @@ const DiffBlock = memo(function DiffBlock({
       className={`${compact ? "my-2" : "my-3"} relative overflow-hidden bg-code ${frameless ? "" : "border border-code-edge"}`}
       aria-label="Unified diff"
     >
-      {!frameless && <CopyButton value={value} />}
+      {!frameless && (
+        <CopyChip
+          value={value}
+          label="Copy code"
+          className="absolute right-2 top-2 z-10"
+        >
+          Copy
+        </CopyChip>
+      )}
       <div
         className={`${compact ? "text-meta" : "text-ui"} max-w-full overflow-x-auto overscroll-x-contain py-2 font-mono`}
       >
@@ -481,7 +453,15 @@ const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
     >
       {/* An enclosing card (a tool result) owns ONE copy control for the whole
           body, so a frameless block does not add a second, third, … chip. */}
-      {!frameless && <CopyButton value={copyValue ?? source} />}
+      {!frameless && (
+        <CopyChip
+          value={copyValue ?? source}
+          label="Copy code"
+          className="absolute right-2 top-2 z-10"
+        >
+          Copy
+        </CopyChip>
+      )}
       <pre
         className={`${compact ? "py-2 text-meta " : "py-2.5 text-ui "} m-0 max-w-full overflow-x-auto overscroll-x-contain font-mono text-code-foreground`}
       >
@@ -1158,16 +1138,15 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
       }}
     >
       <summary className="flex min-h-6 list-none cursor-pointer select-none items-center gap-1.5 px-2 py-1 text-code-result hover:bg-hover [&::-webkit-details-marker]:hidden">
-        <span
-          className={`${disclosureClass} ${failed ? "text-err" : "text-accent-ink"}`}
-          aria-hidden="true"
-        >
-          ›
-        </span>
+        <ChevronIcon
+          className={`size-3 shrink-0 group-open:rotate-90 ${failed ? "text-err" : "text-accent-ink"}`}
+        />
         {headline}
         {/* ONE copy control per result card: the body's code blocks are frameless
             inside this card and render no chip of their own. */}
-        <CopyButton value={body} className="shrink-0" label="Copy result" />
+        <CopyChip value={body} label="Copy result" className="shrink-0">
+          Copy
+        </CopyChip>
       </summary>
       {/* A tool result is SUBORDINATE to the answer it feeds: its body is `text-meta`
           (10px), the step its compact code blocks and diffs already render at, so the
@@ -1285,29 +1264,24 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
             4-line snippet and a 40-line one carry the same chrome. */}
         <div className="flex min-h-6 items-center gap-1.5 border-b border-code-edge pr-1.5">
           {collapsible ? (
-            <button
-              type="button"
-              data-disclosure-toggle
-              className="flex min-h-6 min-w-0 flex-1 cursor-pointer select-none items-center gap-1.5 px-2 py-1 text-left transition-colors hover:bg-hover"
-              aria-expanded={expanded}
+            <Disclosure
+              isOpen={expanded}
+              tone="step"
+              className="min-w-0 flex-1 px-2"
               onClick={() => setExpanded((current) => !current)}
             >
-              <span
-                className={`${disclosureClass} text-accent-ink ${expanded ? "rotate-90" : ""}`}
-                aria-hidden="true"
-              >
-                ›
-              </span>
-              <span className="truncate font-mono text-chip font-extrabold tracking-[0.06em] text-accent-ink">
+              <span className="min-w-0 truncate">
                 {expanded ? label : `${label} +${hiddenLines} more`}
               </span>
-            </button>
+            </Disclosure>
           ) : (
             <span className="min-w-0 flex-1 select-none truncate px-2 py-1 font-mono text-chip font-extrabold tracking-[0.06em] text-accent-ink">
               {label}
             </span>
           )}
-          <CopyButton value={value} className="shrink-0" label="Copy code" />
+          <CopyChip value={value} label="Copy code" className="shrink-0">
+            Copy
+          </CopyChip>
         </div>
         <SyntaxCodeBlock
           value={visibleValue}
@@ -1514,16 +1488,16 @@ export const ThinkingBand = memo(function ThinkingBand({
   return (
     <section className="my-2 min-w-0 bg-thinking-surface px-3 py-2 text-ui text-thinking">
       {collapsible && (
-        <button
-          type="button"
-          data-disclosure-toggle
-          className="mb-1 flex min-h-6 w-full items-center gap-1.5 text-left font-mono text-chip font-bold not-italic tracking-[0.07em] text-thinking transition-colors hover:text-dialog-hint-key"
-          aria-expanded={expanded}
+        <Disclosure
+          isOpen={expanded}
+          tone="thinking"
+          className="mb-1"
           onClick={() => setExpandRequested((value) => !value)}
         >
-          <ChevronIcon open={expanded} className="size-3" />
-          <span>{expanded ? "THINKING" : `THINKING +${hiddenRows} more`}</span>
-        </button>
+          <span className="min-w-0 truncate">
+            {expanded ? "THINKING" : `THINKING +${hiddenRows} more`}
+          </span>
+        </Disclosure>
       )}
       <div
         ref={bodyRef}
@@ -1801,26 +1775,20 @@ export const AttachmentRail = memo(function AttachmentRail({
         />
       ))}
       {page.rest.length > 0 && (
-        <button
-          type="button"
+        <LoadMore
+          label={`Load ${page.restLabel} of attachments`}
           onClick={() => setPages((current) => current + 1)}
-          aria-label={`Load ${page.restLabel} of attachments`}
-          className="mt-2 flex min-h-11 w-full min-w-0 items-center gap-1.5 border border-dialog-edge px-2 text-left font-mono text-chip text-footer-muted hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent mouse:min-h-8"
         >
-          <ArrowDownIcon className="size-3 opacity-70" />
-          <span className="min-w-0 truncate">Load {page.restLabel}</span>
-        </button>
+          Load {page.restLabel}
+        </LoadMore>
       )}
       {head && (
         <div className="mt-2 min-w-0">
-          <button
-            type="button"
-            aria-expanded={open}
+          <Disclosure
+            isOpen={open}
             onClick={() => setOpen((current) => !current)}
-            className="flex min-h-8 w-full min-w-0 items-center gap-1.5 text-left font-mono text-chip text-footer-muted"
           >
-            <ChevronIcon open={open} className="size-3 opacity-70" />
-            <ArrowOutIcon className="size-3 opacity-70" />
+            <ArrowOutIcon className="size-3 shrink-0 opacity-70" />
             <span className="min-w-0 truncate">
               {head.name}
               {head.count > 1 ? ` ×${head.count}` : ""}
@@ -1828,7 +1796,7 @@ export const AttachmentRail = memo(function AttachmentRail({
             {rest > 0 && (
               <span className="shrink-0 opacity-70">+{rest} more</span>
             )}
-          </button>
+          </Disclosure>
           {open && (
             <ul className="grid min-w-0 gap-0.5 pl-4">
               {files.map((file) => (

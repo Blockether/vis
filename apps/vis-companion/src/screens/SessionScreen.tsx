@@ -16,17 +16,24 @@ import {
 import { ArtifactsChip, ArtifactsSheet } from "../components/ArtifactsSheet";
 import { collapseArtifactVersions, collectArtifacts } from "../lib/artifacts";
 import { ExpandableImage } from "../components/ImageViewer";
-import { Banner, DialogHeader, Spinner } from '../components/ui';
+import {
+  Banner,
+  Button,
+  CopyChip,
+  DialogHeader,
+  RemoveButton,
+  Spinner,
+} from '../components/ui';
 import {
   ArrowDownIcon,
   CameraIcon,
   ChevronIcon,
-  CloseIcon,
   ImageIcon,
   MicIcon,
   PlusIcon,
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
+import { MenuItem } from "../components/Menu";
 import { ProviderRouterDialog } from "./RouterScreen";
 import {
   attachmentsFromFiles,
@@ -845,33 +852,17 @@ function keepKeyboard(event: ReactMouseEvent<HTMLElement>) {
 // The session id is the durable handle a user pastes into `vis-agent`/tools, so it is
 // tap-to-copy rather than inert text — shown short with the full id on hover.
 function CopyableId({ id, className }: { id: string; className: string }) {
-  const [copied, setCopied] = useState(false);
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(id);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1_200);
-    } catch {
-      // Clipboard access can be unavailable in an untrusted mobile webview.
-    }
-  }
   const short = id.length > 8 ? id.slice(0, 8) : id;
   return (
-    <button
-      type="button"
-      onClick={copy}
+    <CopyChip
+      value={id}
+      label="Copy session id"
       title={`Copy session id\n${id}`}
-      aria-label="Copy session id"
-      className={`group inline-flex h-6 min-w-0 items-center gap-1 border border-dialog-edge px-2 font-mono text-chip transition-[background-color,color,border-color] hover:bg-hover ${copied ? "border-ok text-ok" : "text-dialog-hint"} ${className}`}
+      mark="#"
+      className={className}
     >
-      <span
-        aria-hidden="true"
-        className="opacity-50 transition-opacity group-hover:opacity-100"
-      >
-        #
-      </span>
-      <span className="truncate">{copied ? "Copied" : short}</span>
-    </button>
+      {short}
+    </CopyChip>
   );
 }
 
@@ -971,22 +962,12 @@ function PasteEditor({
           <span className="mr-auto hidden truncate sm:block">
             Esc cancels · ⌘↵ saves
           </span>
-          <button
-            type="button"
-            className="min-h-9 border border-dialog-edge px-3 text-ui text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err focus-visible:outline-none"
-            onMouseDown={keepKeyboard}
-            onClick={onClose}
-          >
+          <Button variant="ghost" onMouseDown={keepKeyboard} onClick={onClose}>
             Cancel
-          </button>
-          <button
-            type="button"
-            className="min-h-9 border border-accent bg-accent px-3 text-ui text-accent-foreground transition-colors hover:bg-accent/85 focus-visible:outline-none"
-            onMouseDown={keepKeyboard}
-            onClick={onSave}
-          >
+          </Button>
+          <Button onMouseDown={keepKeyboard} onClick={onSave}>
             Save
-          </button>
+          </Button>
         </footer>
       </section>
     </div>
@@ -4722,10 +4703,9 @@ export function SessionScreen({
                         </span>
                       </button>
                     )}
-                    <button
-                      type="button"
+                    <RemoveButton
+                      label={`Remove queued message ${index + 1}`}
                       disabled={busy}
-                      className="grid size-6 shrink-0 place-items-center text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-dialog-hint"
                       onClick={() => {
                         setEditingQueued((current) =>
                           current?.turnId === item.turnId ? null : current,
@@ -4740,10 +4720,7 @@ export function SessionScreen({
                           .catch((cause) => setError((cause as Error).message))
                           .finally(() => markQueueBusy(item.turnId, false));
                       }}
-                      aria-label={`Remove queued message ${index + 1}`}
-                    >
-                      <CloseIcon className="size-3" />
-                    </button>
+                    />
                   </div>
                 );
               })}
@@ -4768,15 +4745,12 @@ export function SessionScreen({
                     >
                       {paste.token}
                     </button>
-                    <button
-                      type="button"
-                      className="grid min-h-7 w-7 place-items-center border-l border-code-edge text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err"
+                    <RemoveButton
+                      edge
+                      label={`Remove pasted block ${paste.id}`}
                       onMouseDown={keepKeyboard}
                       onClick={() => removePaste(paste.id)}
-                      aria-label={`Remove pasted block ${paste.id}`}
-                    >
-                      <CloseIcon className="size-3" />
-                    </button>
+                    />
                   </span>
                 ))}
               </div>
@@ -4786,7 +4760,7 @@ export function SessionScreen({
                 {attachments.map((attachment) => (
                   <div
                     key={attachment.id}
-                    className="group relative flex min-w-0 max-w-40 shrink-0 items-center gap-1.5 border border-dialog-edge bg-panel pr-6 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
+                    className="group relative flex min-w-0 max-w-40 shrink-0 items-center gap-1.5 border border-dialog-edge bg-panel pr-7 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
                   >
                     {isVideoMediaType(attachment.media_type) ? (
                       <video
@@ -4812,15 +4786,12 @@ export function SessionScreen({
                         </span>
                       </ExpandableImage>
                     )}
-                    <button
-                      type="button"
+                    <RemoveButton
+                      label={`Remove ${attachment.filename}`}
+                      className="absolute inset-y-0 right-0"
                       onMouseDown={keepKeyboard}
-                      className="absolute inset-y-0 right-0 grid w-6 place-items-center text-body text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err"
                       onClick={() => removeAttachment(attachment.id)}
-                      aria-label={`Remove ${attachment.filename}`}
-                    >
-                      <CloseIcon className="size-3" />
-                    </button>
+                    />
                   </div>
                 ))}
               </div>
@@ -4904,37 +4875,32 @@ export function SessionScreen({
                       onMouseDown={keepKeyboard}
                       onClick={() => setAttachMenuOpen(false)}
                     />
+                    {/* The mousedown is cancelled on the PANEL: it bubbles from
+                        whichever row was pressed, and the default it cancels —
+                        moving focus off the composer — is what takes the iOS
+                        keyboard down and puts it straight back up. */}
                     <div
                       role="menu"
                       aria-label="Attach"
+                      onMouseDown={keepKeyboard}
                       className="absolute bottom-full left-0 z-30 mb-1.5 w-max min-w-40 border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
                     >
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="flex min-h-9 w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-meta text-dialog-foreground transition-colors hover:bg-hover"
-                        onMouseDown={keepKeyboard}
-                        onClick={() => {
+                      <MenuItem
+                        title="Take a photo"
+                        icon={<CameraIcon />}
+                        onSelect={() => {
                           setAttachMenuOpen(false);
                           void takePhoto();
                         }}
-                      >
-                        <CameraIcon />
-                        Take a photo
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="flex min-h-9 w-full items-center gap-2 border-t border-dialog-edge px-3 py-1.5 text-left font-mono text-meta text-dialog-foreground transition-colors hover:bg-hover"
-                        onMouseDown={keepKeyboard}
-                        onClick={() => {
+                      />
+                      <MenuItem
+                        title="Photos or videos"
+                        icon={<ImageIcon />}
+                        onSelect={() => {
                           setAttachMenuOpen(false);
                           void addAttachments();
                         }}
-                      >
-                        <ImageIcon />
-                        Photos or videos
-                      </button>
+                      />
                     </div>
                   </>
                 )}

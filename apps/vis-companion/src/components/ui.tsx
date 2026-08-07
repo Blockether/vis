@@ -4,6 +4,7 @@ import {
   useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
+  type MouseEvent,
   type ReactNode,
 } from 'react';
 
@@ -11,7 +12,13 @@ import type { MachineColor } from '../lib/machine-colors';
 import type { RefObject } from 'react';
 import { createPortal } from 'react-dom';
 
-import { ChevronIcon, CloseIcon, DotsIcon, DraftIcon } from './icons';
+import {
+  ArrowDownIcon,
+  ChevronIcon,
+  CloseIcon,
+  DotsIcon,
+  DraftIcon,
+} from './icons';
 
 // Ref-forwarding: a button that ANCHORS something (a popover, a focus return) has
 // to be measurable by its owner, and cloning the element's classes at the call site
@@ -233,6 +240,297 @@ export const KebabButton = forwardRef<
     </IconButton>
   );
 });
+
+/**
+ * A CHIP: one small word that is ON or OFF, and there is only one of it.
+ *
+ * A filter over the artifacts, a toggle's three choices, which transport an MCP
+ * server speaks — the same question every time, and every screen used to answer
+ * it in its own hand: the artifacts strip drew `min-h-7 … text-meta`, the
+ * settings choices `min-h-8 … text-chip`, the transport row a third box with no
+ * hover at all. Three sizes of the same control, on two screens a tap apart.
+ *
+ * Selection is the app's amber, exactly as `MachineTab` spells it, and OFF is
+ * the quiet frame every other resting control wears. A chip that leads nowhere
+ * (a filter with nothing behind it) is `disabled` and says so by fading, never
+ * by inventing a fourth face.
+ */
+export const Chip = forwardRef<
+  HTMLButtonElement,
+  ButtonHTMLAttributes<HTMLButtonElement> & { isOn?: boolean }
+>(function Chip({ isOn = false, className = '', ...props }, ref) {
+  return (
+    <button
+      ref={ref}
+      type="button"
+      aria-pressed={isOn}
+      className={`inline-flex min-h-7 shrink-0 items-center justify-center gap-1.5 border px-2 font-mono text-meta font-bold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none mouse:min-h-6 ${
+        isOn
+          ? 'border-accent bg-accent text-accent-foreground'
+          : 'border-edge bg-transparent text-dialog-hint hover:bg-hover'
+      } ${className}`}
+      {...props}
+    />
+  );
+});
+
+/**
+ * "THERE IS MORE OF THIS BELOW", and there is only one of it.
+ *
+ * The transcript's attachments and the artifacts sheet page the same way, so
+ * they were the same promise in two faces: a 44px left-aligned bar in
+ * `text-footer-muted` under the message, a 32px centred bar in `text-dialog-hint`
+ * inside the sheet — and each spelled its own arrow beside its own words. The
+ * arrow belongs to the control, not to the caller, and `label` is what a screen
+ * reader hears ("Load 12 more artifacts") while the children are what the eye
+ * reads.
+ */
+export function LoadMore({
+  label,
+  className = '',
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      className={`mt-2 flex min-h-8 w-full min-w-0 items-center justify-center gap-1.5 border border-dialog-edge bg-panel px-2 font-mono text-meta text-dialog-hint transition-colors duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-7 ${className}`}
+      {...props}
+    >
+      <ArrowDownIcon className="size-3 opacity-70" />
+      <span className="min-w-0 truncate">{children}</span>
+    </button>
+  );
+}
+
+/**
+ * COPY THIS, and there is only one of it.
+ *
+ * A code block's `Copy` chip and the session id beside the title are the same
+ * control: press, the clipboard takes it, the chip says so for a moment and goes
+ * back. Both used to own that state, that timeout, that `catch` for a webview
+ * with no clipboard, and two different faces around it — and both had to keep
+ * their own width so "Copied" would not shove the row.
+ *
+ * The chip also lives inside pressable things (a `<summary>`, a header), so it
+ * ALWAYS stops the click it consumed: copying a snippet must never also toggle
+ * the disclosure it sits in.
+ */
+export function CopyChip({
+  value,
+  label,
+  title,
+  mark,
+  className = '',
+  children,
+}: {
+  /** What lands on the clipboard. */
+  value: string;
+  /** What the control is called: "Copy code", "Copy session id". */
+  label: string;
+  /** Hover text, when there is more to say than the label — the full id. */
+  title?: string;
+  /** An optional leading glyph — the `#` in front of a session id. */
+  mark?: ReactNode;
+  /** Placement only; the chip's own face is fixed. */
+  className?: string;
+  /** What it reads at rest. */
+  children: ReactNode;
+}) {
+  const [isCopied, setIsCopied] = useState(false);
+  async function copy(event: MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(value);
+      setIsCopied(true);
+      window.setTimeout(() => setIsCopied(false), 1_500);
+    } catch {
+      // Clipboard access can be unavailable in an untrusted mobile webview.
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      aria-label={label}
+      title={title ?? label}
+      // The minimum width keeps "Copy" and "Copied" the same box, so the chip
+      // never jumps under the finger that just pressed it.
+      className={`group inline-flex h-6 min-w-[6ch] items-center justify-center gap-1 border bg-button px-2 text-center font-mono text-chip transition-colors duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none ${
+        isCopied ? 'border-ok text-ok' : 'border-dialog-edge text-button-foreground'
+      } ${className}`}
+    >
+      {mark ? (
+        <span
+          aria-hidden="true"
+          className="opacity-50 transition-opacity group-hover:opacity-100"
+        >
+          {mark}
+        </span>
+      ) : null}
+      <span className="min-w-0 truncate">{isCopied ? 'Copied' : children}</span>
+    </button>
+  );
+}
+
+/**
+ * A ROW YOU PRESS, and there is only one of it.
+ *
+ * A provider, a model, a saved gateway, an artifact's older version, a preset to
+ * sign in with: a full-width slab, its content left-aligned, that opens or picks
+ * the thing it names. Five screens spelled that out five times — `min-h-12` here
+ * and `min-h-11` there, `hover:bg-hover` with and without a focus paper, a frame
+ * on some and none on others — so rows doing one job read as several.
+ *
+ * `isFramed` is the only real difference: a row standing on the page needs no
+ * frame, a row standing INSIDE a card needs one. Selection is the same in both:
+ * the amber edge over the raised paper, never a second colour.
+ */
+export const ListRow = forwardRef<
+  HTMLButtonElement,
+  ButtonHTMLAttributes<HTMLButtonElement> & {
+    isSelected?: boolean;
+    isFramed?: boolean;
+  }
+>(function ListRow(
+  { isSelected = false, isFramed = false, className = '', ...props },
+  ref,
+) {
+  const paper = isFramed
+    ? `border ${isSelected ? 'border-accent bg-panel-2' : 'border-dialog-edge bg-panel'}`
+    : isSelected
+      ? 'bg-panel-2'
+      : '';
+  return (
+    <button
+      ref={ref}
+      type="button"
+      className={`flex min-h-12 w-full min-w-0 items-center gap-2 px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none disabled:cursor-default disabled:hover:bg-transparent motion-reduce:transition-none ${paper} ${className}`}
+      {...props}
+    />
+  );
+});
+
+/**
+ * A TRACE ROW YOU EXPAND, and there is only one of it.
+ *
+ * A tool step's header, the THINKING band and an attachment rail's summary all
+ * ask the same question — "show me the rest of this" — and each spelled its own
+ * answer: three chevrons (one of them a rotated `›`), three heights, three
+ * hovers, and only two of them tagged `data-disclosure-toggle`, which is what
+ * the transcript uses to keep the scroll anchored when a row opens.
+ *
+ * `tone` is the ink of the thing it opens, because that is the only difference.
+ * The height follows the pointer, never the width: 32px under a finger, the
+ * tight 24px rhythm only where there is a cursor.
+ */
+export function Disclosure({
+  isOpen,
+  tone = 'muted',
+  className = '',
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  isOpen: boolean;
+  tone?: 'step' | 'thinking' | 'muted';
+}) {
+  const ink =
+    tone === 'step'
+      ? 'font-extrabold tracking-[0.06em] text-accent-ink hover:bg-hover'
+      : tone === 'thinking'
+        ? 'font-bold not-italic tracking-[0.07em] text-thinking hover:text-dialog-hint-key'
+        : 'text-footer-muted hover:bg-hover';
+  return (
+    <button
+      type="button"
+      data-disclosure-toggle
+      aria-expanded={isOpen}
+      className={`flex min-h-8 w-full min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono text-chip transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-6 ${ink} ${className}`}
+      {...props}
+    >
+      <ChevronIcon open={isOpen} className="size-3 shrink-0 opacity-70" />
+      {children}
+    </button>
+  );
+}
+
+/**
+ * AN OPTION YOU PICK, and there is only one of it.
+ *
+ * The human-input form's checkbox and its select/multiselect options are the
+ * same control asking the same question — a status glyph, a label, a frame that
+ * turns amber when it is the answer — and each spelled its own class list, so a
+ * checkbox hovered its frame and an option did not. What differs is the GLYPH
+ * (`HUMAN_INPUT_CHOICE_MARKS`: `●`/`○` for a choice of one, `[✓]`/`[ ]` for a
+ * choice of any) and the ARIA the caller passes, never the face.
+ */
+export function ChoiceRow({
+  isOn,
+  mark,
+  className = '',
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  isOn: boolean;
+  /** The status glyph, decorative: the label beside it carries the meaning. */
+  mark: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={`flex w-full min-w-0 items-center gap-2 border px-2.5 py-1 text-left font-mono text-meta transition-colors duration-150 focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted motion-reduce:transition-none sm:text-ui ${
+        isOn
+          ? 'border-accent bg-hover text-accent-ink'
+          : 'border-edge bg-input text-white hover:border-accent'
+      } ${className}`}
+      {...props}
+    >
+      <span aria-hidden="true">{mark}</span>
+      <span className="min-w-0 truncate">{children}</span>
+    </button>
+  );
+}
+
+/**
+ * TAKE THIS ONE OUT, and there is only one of it.
+ *
+ * The composer is a row of things you can drop — a queued turn, a pasted block,
+ * an attached image — and each `×` was written where it stood: a 24px grid box
+ * here, a 28px one with a hairline there, an absolutely placed 24px one over a
+ * thumbnail, all repeating the same `hover:bg-warn-surface hover:text-err` from
+ * memory. Removal is one gesture, so it wears one face; only WHERE it sits is
+ * the call site's business.
+ *
+ * `edge` is the hairline a control grows when it ends a chip it shares with a
+ * label — part of the face, so it is a prop rather than a class at the call site.
+ */
+export function RemoveButton({
+  label,
+  edge = false,
+  className = '',
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  /** Icon-only, so the name is not optional: "Remove notes.md". */
+  label: string;
+  /** Draws the divider between this and the label it ends. */
+  edge?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className={`grid min-h-7 w-7 shrink-0 place-items-center text-dialog-hint transition-colors duration-150 hover:bg-warn-surface hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-dialog-hint motion-reduce:transition-none ${
+        edge ? 'border-l border-code-edge' : ''
+      } ${className}`}
+      {...props}
+    >
+      <CloseIcon className="size-3" />
+    </button>
+  );
+}
 
 /**
  * THE WAY OUT, and there is only one of it.

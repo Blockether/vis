@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
 import type { AuthFlow, ProviderLimitRow, ProviderPreset, RouterProvider } from '../lib/types';
-import { Banner, Button, Input } from './ui';
+import { Banner, Button, Input, ListRow } from './ui';
 import { ChevronIcon, PlusIcon } from './icons';
 
 /** How long to keep polling a device flow before giving up on our side. */
@@ -931,11 +931,11 @@ export function AddProviderPanel({
       {presets.map((preset) => {
         const busy = auth.pending === `add:${preset.id}`;
         return (
-          <button
+          <ListRow
             key={preset.id}
-            type="button"
+            isFramed
             disabled={busy}
-            className="flex min-h-12 w-full items-center gap-2 border border-dialog-edge bg-panel px-3 py-2 text-left transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none disabled:opacity-50"
+            className="disabled:opacity-50"
             onClick={() => {
               if (preset.is_local) {
                 setBaseUrl('');
@@ -957,7 +957,7 @@ export function AddProviderPanel({
             <span className="shrink-0 text-dialog-hint" aria-hidden="true">
               {preset.is_local ? <ChevronIcon /> : <PlusIcon />}
             </span>
-          </button>
+          </ListRow>
         );
       })}
 

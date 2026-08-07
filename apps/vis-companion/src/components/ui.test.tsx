@@ -10,10 +10,18 @@ import chatSource from "./ChatContent.tsx?raw";
 import docSource from "./DocArtifact.tsx?raw";
 import tableBarSource from "./DataTable.tsx?raw";
 import boundarySource from "./ErrorBoundary.tsx?raw";
+import artifactsSheetSource from "./ArtifactsSheet.tsx?raw";
+import humanInputSource from "./HumanInputPrompt.tsx?raw";
+import providerAuthSource from "./ProviderAuth.tsx?raw";
+import routerSource from "../screens/RouterScreen.tsx?raw";
+import sessionScreenSource from "../screens/SessionScreen.tsx?raw";
 
 import { MACHINE_COLORS } from "../lib/machine-colors";
 import {
   Button,
+  Chip,
+  ChoiceRow,
+  CopyChip,
   DialogClose,
   DialogFrame,
   HeaderActions,
@@ -24,7 +32,9 @@ import {
   pageWindow,
   IconButton,
   KebabButton,
+  ListRow,
   LiveCount,
+  LoadMore,
   LiveTally,
   MachineGap,
   MachineMark,
@@ -32,6 +42,8 @@ import {
   MachineSwitcher,
   MachineTab,
   NewSessionButton,
+  Disclosure,
+  RemoveButton,
   RowDisclosure,
   SectionHeader,
   UnreadBadge,
@@ -1164,5 +1176,209 @@ describe("every surface uses the vocabulary's own controls", () => {
     expect(tableBarSource).not.toContain("BAR_BUTTON");
     expect(tableBarSource).not.toContain("PAGER_BUTTON");
     expect(tableBarSource).not.toContain("border border-edge-strong px-3");
+  });
+});
+
+
+// The user's own words, twice: "I really don't understand how we can have so many
+// different buttons styles … PLEASE ENSURE WE HAVE REUSABLE COMPONENTS", then "go
+// over the other components AND STANDARDIZE". Six faces were being re-spelled at a
+// dozen call sites — a filter chip, a "load more" bar, a `Copy` chip, a pressable
+// list row, a trace disclosure, an option row and a remove `×` — so the same control
+// looked different depending on which screen you found it on.
+describe("the second vocabulary: chips, rows, disclosures", () => {
+  const first = (html: string) =>
+    (/<button[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "").split(" ");
+
+  describe("Chip", () => {
+    const html = (isOn: boolean) =>
+      renderToStaticMarkup(
+        <Chip isOn={isOn} onClick={() => {}}>
+          IMAGES
+        </Chip>,
+      );
+
+    it("says whether it is the one that is on", () => {
+      expect(html(true)).toContain('aria-pressed="true"');
+      expect(html(false)).toContain('aria-pressed="false"');
+      expect(first(html(true))).toContain("bg-accent");
+      expect(first(html(false))).toContain("bg-transparent");
+    });
+
+    it("keeps the touch box and only tightens it for a cursor", () => {
+      expect(first(html(false))).toContain("min-h-7");
+      expect(first(html(false))).toContain("mouse:min-h-6");
+    });
+  });
+
+  describe("LoadMore", () => {
+    const html = () =>
+      renderToStaticMarkup(
+        <LoadMore label="Load 12 more artifacts" onClick={() => {}}>
+          Load 12 more
+        </LoadMore>,
+      );
+
+    it("owns its arrow and hears its own name", () => {
+      expect(html()).toContain('aria-label="Load 12 more artifacts"');
+      expect(html()).toContain("<svg");
+      expect(html()).toContain("Load 12 more");
+    });
+  });
+
+  describe("CopyChip", () => {
+    const html = () =>
+      renderToStaticMarkup(
+        <CopyChip value="abc" label="Copy session id" mark="#">
+          abc12345
+        </CopyChip>,
+      );
+
+    it("is one box wide enough for 'Copied', so it never jumps", () => {
+      expect(first(html())).toContain("min-w-[6ch]");
+      expect(first(html())).toContain("h-6");
+    });
+
+    it("carries a name and, when there is more to say, a title", () => {
+      expect(html()).toContain('aria-label="Copy session id"');
+      const titled = renderToStaticMarkup(
+        <CopyChip value="abc" label="Copy session id" title="Copy session id\nabc">
+          abc
+        </CopyChip>,
+      );
+      expect(titled).toContain("title=");
+    });
+  });
+
+  describe("ListRow", () => {
+    const html = (props: Partial<Parameters<typeof ListRow>[0]> = {}) =>
+      renderToStaticMarkup(
+        <ListRow onClick={() => {}} {...props}>
+          anthropic
+        </ListRow>,
+      );
+
+    it("is one slab at one height, framed only inside a card", () => {
+      expect(first(html())).toContain("min-h-12");
+      expect(first(html())).not.toContain("border");
+      expect(first(html({ isFramed: true }))).toContain("border");
+    });
+
+    it("marks the selected one with the amber edge, framed or not", () => {
+      expect(first(html({ isSelected: true }))).toContain("bg-panel-2");
+      expect(first(html({ isFramed: true, isSelected: true }))).toContain(
+        "border-accent",
+      );
+    });
+  });
+
+  describe("Disclosure", () => {
+    const html = (props: Partial<Parameters<typeof Disclosure>[0]> = {}) =>
+      renderToStaticMarkup(
+        <Disclosure isOpen={false} onClick={() => {}} {...props}>
+          <span>THINKING</span>
+        </Disclosure>,
+      );
+
+    it("reports its state and stays the transcript's scroll anchor", () => {
+      expect(html()).toContain('aria-expanded="false"');
+      expect(html({ isOpen: true })).toContain('aria-expanded="true"');
+      // SessionScreen keeps the viewport still by finding exactly this attribute.
+      expect(html()).toContain("data-disclosure-toggle");
+    });
+
+    it("wears the ink of what it opens and nothing else", () => {
+      expect(first(html({ tone: "step" }))).toContain("text-accent-ink");
+      expect(first(html({ tone: "thinking" }))).toContain("text-thinking");
+      expect(first(html())).toContain("text-footer-muted");
+    });
+  });
+
+  describe("ChoiceRow", () => {
+    const html = (isOn: boolean) =>
+      renderToStaticMarkup(
+        <ChoiceRow isOn={isOn} mark="●" onClick={() => {}}>
+          production
+        </ChoiceRow>,
+      );
+
+    it("turns amber when it is the answer, and the glyph is decoration", () => {
+      expect(first(html(true))).toContain("border-accent");
+      expect(first(html(false))).toContain("border-edge");
+      expect(html(true)).toContain('aria-hidden="true"');
+      expect(html(true)).toContain("production");
+    });
+  });
+
+  describe("RemoveButton", () => {
+    const html = (props: Partial<Parameters<typeof RemoveButton>[0]> = {}) =>
+      renderToStaticMarkup(<RemoveButton label="Remove notes.md" {...props} />);
+
+    it("is named, red only under the pointer, and a 28px target", () => {
+      expect(html()).toContain('aria-label="Remove notes.md"');
+      expect(first(html())).toContain("hover:text-err");
+      expect(first(html())).toContain("min-h-7");
+      expect(first(html())).toContain("w-7");
+    });
+
+    it("grows its divider by prop, never by a class at the call site", () => {
+      expect(first(html({ edge: true }))).toContain("border-l");
+      expect(first(html())).not.toContain("border-l");
+    });
+  });
+});
+
+// The same report, one layer down: the call sites. A control is a COMPONENT before
+// it is a class list, so these screens may not spell one out again.
+describe("every screen uses the second vocabulary too", () => {
+  it("leaves no hand-rolled button in the transcript, the sheet, the router, the form", () => {
+    for (const source of [
+      chatSource,
+      humanInputSource,
+      providerAuthSource,
+      routerSource,
+    ]) {
+      expect(source).not.toContain("<button");
+    }
+    // The transcript's `Copy` chips and its three expanders are the shared ones.
+    expect(chatSource).toContain("<CopyChip");
+    expect(chatSource).toContain("<Disclosure");
+    expect(chatSource).toContain("<LoadMore");
+    expect(chatSource).not.toContain("function CopyButton");
+    expect(chatSource).not.toContain("disclosureClass");
+  });
+
+  it("files the artifacts sheet's chips, version rows and pager under the vocabulary", () => {
+    expect(artifactsSheetSource).toContain("<Chip");
+    expect(artifactsSheetSource).toContain("<ListRow");
+    expect(artifactsSheetSource).toContain("<LoadMore");
+    // The filter strip's own three-way class list is gone.
+    expect(artifactsSheetSource).not.toContain(
+      "border-accent bg-accent font-bold text-accent-foreground",
+    );
+  });
+
+  it("files settings' toggles and rows under it as well", () => {
+    expect(settingsSource).toContain("<Chip");
+    expect(settingsSource).toContain("<ListRow");
+    expect(settingsSource).not.toContain("min-h-8 border px-2 py-0.5");
+    expect(settingsSource).not.toContain(
+      "flex min-h-12 w-full items-center gap-2 px-3 py-2",
+    );
+  });
+
+  it("leaves the composer's three removes as one control and its menu as menu rows", () => {
+    expect(sessionScreenSource).toContain("<RemoveButton");
+    expect(sessionScreenSource).toContain("<MenuItem");
+    expect(sessionScreenSource).toContain("<CopyChip");
+    expect(sessionScreenSource).not.toContain("hover:bg-warn-surface hover:text-err");
+    expect(sessionScreenSource).not.toContain('role="menuitem"');
+  });
+
+  it("gives the human-input form the one option row", () => {
+    expect(humanInputSource).toContain("<ChoiceRow");
+    expect(humanInputSource).not.toContain(
+      "border-accent bg-hover text-accent-ink",
+    );
   });
 });

@@ -1,20 +1,20 @@
 import artifactsSheetSource from "./ArtifactsSheet.tsx?raw";
-import sessionScreenSource from "../screens/SessionScreen.tsx?raw";
+import uiSource from "./ui.tsx?raw";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ArtifactsChip, ArtifactsSheet } from "./ArtifactsSheet";
 import type { GatewayClient } from "../lib/gateway";
 import type { SessionArtifact } from "../lib/artifacts";
 
-/** The height the OTHER chip in the session header wears, read from its own
- *  source. `CopyableId` is not exported and importing that screen into a unit
- *  test would drag the whole session with it — but it is the surviving half of
- *  the pair the deleted Share button belonged to, so "the same height as the
- *  button that used to be there" is checked against IT and not against a number
- *  typed into this file. */
+/** The height the OTHER chip in the session header wears, read from the
+ *  component that owns it. The session id is a `CopyChip` (so is every `Copy`
+ *  in the transcript), and it is the surviving half of the pair the deleted
+ *  Share button belonged to — so "the same height as the button that used to be
+ *  there" is checked against THAT control and not against a number typed into
+ *  this file. */
 const sessionIdChipHeight = () => {
   const chip =
-    /function CopyableId\([\s\S]*?\n}\n/.exec(sessionScreenSource)?.[0] ?? "";
+    /export function CopyChip\([\s\S]*?\n}\n/.exec(uiSource)?.[0] ?? "";
   return /className=\{`[^`]*?\b(h-\d+)\b/.exec(chip)?.[1] ?? "";
 };
 
