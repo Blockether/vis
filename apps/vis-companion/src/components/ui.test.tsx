@@ -520,6 +520,14 @@ describe("LiveCount", () => {
 // header used to hide its whole history behind a disclosure, and the history grew
 // one endless column through "Show more" over rows the client had downloaded.
 describe("Pager", () => {
+  // A step is PAINTED when its own slot is not `invisible`; the slot itself is
+  // always in the DOM, because a control that vanishes moves its neighbour.
+  const isPainted = (html: string, label: string) => {
+    const at = html.indexOf(`aria-label="${label}"`);
+    expect(at).toBeGreaterThan(-1);
+    return !html.slice(html.lastIndexOf("<button", at), at).includes("invisible");
+  };
+
   it("renders nothing for a project that fits on one page", () => {
     expect(
       renderToStaticMarkup(
@@ -531,21 +539,32 @@ describe("Pager", () => {
   // Regression, user report ("on page one there should be no `<`; and what if I
   // want to jump to page 5?"): the band painted a dead disabled step at each end
   // and offered nothing but one-page steps, so page 5 of 73 cost four taps.
-  it("drops the step it cannot take", () => {
+  //
+  // Regression, user report ("clicking `>` many times, its width changes and I
+  // cannot click again to keep going"): dropping the step from the DOM re-centred
+  // the band, so stepping off page one slid `>` left out from under the finger
+  // already on it. The step is unpainted and unannounced, but its slot stays.
+  it("drops the step it cannot take without moving the one it can", () => {
     const first = renderToStaticMarkup(
       <Pager page={1} pageCount={7} onPage={() => {}} label="vis sessions" />,
     );
     expect(first).toContain('aria-label="Pages of vis sessions"');
     expect(first).toContain("Page 1 of 7");
-    expect(first).not.toContain('aria-label="Previous page"');
-    expect(first).toContain('aria-label="Next page"');
+    expect(isPainted(first, "Previous page")).toBe(false);
+    expect(isPainted(first, "Next page")).toBe(true);
     expect(first).not.toContain('disabled=""');
+    // The unpainted slot is held, unannounced, and out of the tab order.
+    expect(first).toContain('aria-hidden="true"');
+    expect(first).toContain('tabindex="-1"');
+    // Both ends are fixed and only the numbers between them breathe.
+    expect(first).toContain("flex-1 items-center justify-center");
+    expect(first).not.toContain("justify-center gap-1 border-t");
 
     const last = renderToStaticMarkup(
       <Pager page={7} pageCount={7} onPage={() => {}} label="vis sessions" />,
     );
-    expect(last).toContain('aria-label="Previous page"');
-    expect(last).not.toContain('aria-label="Next page"');
+    expect(isPainted(last, "Previous page")).toBe(true);
+    expect(isPainted(last, "Next page")).toBe(false);
   });
 
   it("makes every printed page a one-tap jump, current one marked", () => {

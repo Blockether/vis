@@ -857,6 +857,13 @@ export function pageWindow(page: number, pageCount: number, span = 1): (number |
  *
  * A step that cannot be taken is not painted. It used to render disabled, so page
  * one wore a `<` that answered nothing and the eye still had to check it.
+ *
+ * But a control that DISAPPEARS must not move the one beside it: with the band
+ * centred, stepping off page one dropped a `<` into the strip and slid `>` left
+ * under the finger already on it, so the third tap landed on a number — walking
+ * the list by tapping `>` was impossible. So each step owns a FIXED slot at its
+ * end of the band, holding its width whether or not it is painted, and only the
+ * numbers between them breathe. `>` is at the same x on every page.
  */
 export function Pager({
   page,
@@ -872,19 +879,33 @@ export function Pager({
   label: string;
 }) {
   if (pageCount <= 1) return null;
+  // `invisible` rather than absent: the slot keeps its exact box, so nothing on the
+  // band moves when the step arrives or leaves. Nothing is painted, nothing is
+  // announced, nothing is focusable.
+  const step = (to: number, isBack: boolean) => {
+    const can = to >= 1 && to <= pageCount;
+    return (
+      <IconButton
+        label={isBack ? 'Previous page' : 'Next page'}
+        variant="quiet"
+        onClick={() => onPage(to)}
+        className={can ? '' : 'invisible'}
+        aria-hidden={can ? undefined : true}
+        tabIndex={can ? undefined : -1}
+      >
+        <ChevronIcon back={isBack} className="size-3" />
+      </IconButton>
+    );
+  };
   return (
     <nav
       aria-label={`Pages of ${label}`}
-      className={`flex items-center justify-center gap-1 border-t border-dialog-edge py-1 ${LIST_EDGE} ${LIST_EDGE_END}`}
+      className={`flex items-center gap-1 border-t border-dialog-edge py-1 ${LIST_EDGE} ${LIST_EDGE_END}`}
     >
-      {page > 1 && (
-        <IconButton label="Previous page" variant="quiet" onClick={() => onPage(page - 1)}>
-          <ChevronIcon back className="size-3" />
-        </IconButton>
-      )}
+      {step(page - 1, true)}
       {/* The strip is LIVE: pressing a number changes nothing else on the band, so
           without this a screen reader hears silence after the press. */}
-      <span aria-live="polite" className="flex items-center gap-1">
+      <span aria-live="polite" className="flex flex-1 items-center justify-center gap-1">
         <span className="sr-only">
           Page {page} of {pageCount}
         </span>
@@ -912,11 +933,7 @@ export function Pager({
           ),
         )}
       </span>
-      {page < pageCount && (
-        <IconButton label="Next page" variant="quiet" onClick={() => onPage(page + 1)}>
-          <ChevronIcon className="size-3" />
-        </IconButton>
-      )}
+      {step(page + 1, false)}
     </nav>
   );
 }
