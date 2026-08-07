@@ -415,6 +415,59 @@
                                 :items [{:key "c" :type :action :id :commit :label "Commit"}]}]}))))
       (expect (some #{["-key" "toggle flag"]} (:hint-pairs (tr/layout commit-transient-spec))))))
 
+(def ^:private leader-spec
+  "A which-key style LEADER menu: many small groups, the shape the C-x hydra has."
+  {:title "C-x — vis commands"
+   :groups (mapv (fn [g]
+                   {:title (str "Group " g)
+                    :items (mapv (fn [i]
+                                   {:key (str g i)
+                                    :type :action
+                                    :id (keyword (str "g" g "-" i))
+                                    :label (str "verb " g i)})
+                                 (range 4))})
+                 (range 5))})
+
+(def ^:private leader-band-region
+  "A SIDELESS in-session band on a wide terminal: `dialogs/prefix-band!`'s own
+   rectangle, with the transcript above `:min-row`."
+  {:left 1 :inner-w 100 :text-w 98 :hint-row 20 :min-row 1 :cols 104 :is-sideless true})
+
+(defdescribe
+  transient-panes-test
+  (it "one pane IS the single column" (expect (= [(tr/rows leader-spec)] (tr/panes leader-spec 1))))
+  (it "groups are dealt WHOLE into panes, and every pane is padded to a rectangle"
+      (let [ps (tr/panes leader-spec 3)]
+        (expect (= 3 (count ps)))
+        (expect (= 1 (count (distinct (map count ps)))))
+        ;; nothing is lost and no group is split: every verb is still on the grid,
+        ;; each one under the heading it belongs to.
+        (expect (= (mapv (comp :id :item) (filter #(= :item (:kind %)) (tr/rows leader-spec)))
+                   (sort-by (fn [id]
+                              (name id))
+                            (mapv (comp :id :item)
+                                  (filter #(= :item (:kind %)) (apply concat ps))))))
+        (expect (= 5 (count (filter #(= :header (:kind %)) (apply concat ps)))))))
+  (it "a tall BAND wraps into columns rather than running up the transcript"
+      (let
+        [n
+         (tr/pane-count leader-spec leader-band-region)
+
+         lay
+         (tr/layout leader-spec leader-band-region)]
+
+        (expect (> n 1))
+        (expect (= n (:pane-count lay)))
+        ;; the band claims at most half the rows the host offered it
+        (expect (<= (:row-count lay) (quot (- (dec 20) 3) 2)))
+        ;; and the panes share the width, the `│` gaps already paid for
+        (expect (<= (+ (* n (:pane-w lay)) (* 3 (dec n))) 100))))
+  (it "a MODAL keeps magit's single column: its paper is sized to the spec"
+      (expect (= 1 (tr/pane-count leader-spec (dissoc leader-band-region :is-sideless))))
+      (expect (= 1 (tr/pane-count leader-spec nil))))
+  (it "a short band is already a band: nothing wraps"
+      (expect (= 1 (tr/pane-count commit-transient-spec leader-band-region)))))
+
 (defdescribe
   transient-contract-test
   (it "`check` ANSWERS instead of throwing, so a producer asks before it paints"

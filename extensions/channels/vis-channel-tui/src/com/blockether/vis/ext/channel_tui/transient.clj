@@ -183,6 +183,123 @@
                                         [{:kind :blank}])))
                       (:groups spec)))))
 
+(def ^:private pane-gap
+  "Columns between two side-by-side panes: one of padding, the `│` rule itself,
+   one more of padding. The rule lives in the MIDDLE column, so a pane's text
+   never touches it."
+  3)
+
+(defn- group-block
+  "PURE: one group's display rows — its header, then its items."
+  [{:keys [title items]}]
+  (into [{:kind :header :text title}]
+        (map (fn [it]
+               {:kind :item :item it}))
+        items))
+
+(defn panes
+  "PURE: `spec`'s groups dealt into at most `n` side-by-side panes, in order,
+   balanced by row count and NEVER splitting a group — a heading and the verbs
+   under it are one block or the column has lied about what it groups.
+
+   Every pane is padded with blanks to the tallest, so pane `j` row `i` is always
+   the cell at that grid position and a painter walks a rectangle instead of a
+   ragged list.
+
+   `n` = 1 is exactly [[rows]]: one pane IS the single column."
+  [spec ^long n]
+  (let
+    [blocks
+     (mapv group-block (:groups spec))
+
+     total
+     (+ (long (reduce + 0 (map count blocks))) (max 0 (dec (count blocks))))
+
+     target
+     (max 1 (long (Math/ceil (/ (double total) (double (max 1 n))))))
+
+     packed
+     (reduce (fn [acc block]
+               (let [cur (peek acc)]
+                 (if (and (seq cur) (< (count acc) n) (> (+ (count cur) 1 (count block)) target))
+                   (conj acc (vec block))
+                   (conj (pop acc)
+                         (into (cond-> cur
+                                 (seq cur)
+                                 (conj {:kind :blank}))
+                               block)))))
+             [[]]
+             blocks)
+
+     h
+     (long (reduce max 0 (map count packed)))]
+
+    (mapv (fn [pane]
+            (into pane (repeat (- h (count pane)) {:kind :blank})))
+          packed)))
+
+(defn pane-count
+  "PURE: how many side-by-side panes `spec` is dealt into inside `region`.
+
+   A band is a BAND: it never claims more than half the rows the host offered it
+   while the width can buy that height back. So a short magit popup stays the
+   single column magit paints, and a tall leader menu — the C-x hydra — reads as
+   emacs' own which-key grid, columns separated by `│`, instead of a list running
+   up the transcript.
+
+   Bounded by the groups there are (a pane is whole groups) and by the width a
+   pane needs for its own key and label columns. No region ⇒ one column."
+  ^long [spec region]
+  (if (or (nil? region) (not (:is-sideless region)))
+    1
+    (let
+      [{:keys [key-w label-w]}
+       (columns spec)
+
+       natural
+       (+ 3 (long key-w) (long label-w))
+
+       inner-w
+       (long (or (:inner-w region) 0))
+
+       capacity
+       (max 1 (quot (+ inner-w (long pane-gap)) (+ natural (long pane-gap))))
+
+       body-h
+       (max 1 (- (dec (long (or (:hint-row region) 1))) (+ (long (or (:min-row region) 0)) 2)))
+
+       budget
+       (max 1 (quot body-h 2))
+
+       upper
+       (max 1 (min (count (:groups spec)) capacity))]
+
+      (or (first (filter (fn [^long n]
+                           (<= (count (first (panes spec n))) budget))
+                         (range 1 (inc upper))))
+          upper))))
+
+(defn pane-width
+  "PURE: the columns ONE of `n` panes gets inside `region`'s inner width, the
+   gaps between them already paid for.
+
+   A pane is only as wide as its own grid needs — gutter, key column, label — so
+   the columns sit BESIDE each other like which-key's, instead of one heading
+   floating alone at the far edge of a wide terminal. The even split is the
+   ceiling, never the target."
+  ^long [region spec ^long n]
+  (let
+    [{:keys [key-w label-w]}
+     (columns spec)
+
+     inner-w
+     (long (or (:inner-w region) 0))
+
+     share
+     (max 1 (quot (- inner-w (* (long pane-gap) (dec n))) n))]
+
+    (if (= 1 n) share (max 1 (min share (+ 4 (long key-w) (long label-w)))))))
+
 (def ^:private chrome-rows
   "Rows of the popup's OWN chrome above its body: the opening separator, the
    title, and the title's rule. The closing rule and the hint bar belong to the
@@ -324,22 +441,38 @@
 
 (defn layout
   "PURE: everything ONE frame needs from `spec`, computed ONCE — the display
-   [[rows]] and how many there are, the grid [[columns]] every row aligns to,
-   the [[hint-pairs]] its footer shows, the [[height]] a host sizes its box
-   with, and the keystroke index its key loop dispatches on.
+   [[rows]], the [[panes]] they are dealt into for `region`, the grid [[columns]]
+   every row aligns to, the [[hint-pairs]] its footer shows, the [[height]] a
+   host sizes its box with, and the keystroke index its key loop dispatches on.
 
    Painting used to walk the whole spec twice per frame (once for geometry,
    once for the body) and scan every group again for each keystroke; a run
-   builds this once and the loop reads it."
-  [spec]
-  (let [display-rows (rows spec)]
-    {:title (:title spec)
-     :rows display-rows
-     :row-count (count display-rows)
-     :columns (columns spec)
-     :hint-pairs (hint-pairs spec)
-     :height (+ (long chrome-rows) (count display-rows))
-     :by-key (index-by-key spec)}))
+   builds this once and the loop reads it.
+
+   Without a `region` the layout is the single column: nothing has told it how
+   wide or how tall the host is, so nothing may wrap."
+  ([spec] (layout spec nil))
+  ([spec region]
+   (let
+     [n
+      (pane-count spec region)
+
+      ps
+      (panes spec n)
+
+      pane-h
+      (count (first ps))]
+
+     {:title (:title spec)
+      :rows (rows spec)
+      :panes ps
+      :pane-count (count ps)
+      :pane-w (if region (pane-width region spec (count ps)) 0)
+      :row-count pane-h
+      :columns (columns spec)
+      :hint-pairs (hint-pairs spec)
+      :height (+ (long chrome-rows) pane-h)
+      :by-key (index-by-key spec)})))
 
 (defn- draw-item!
   "One transient row as a GRID cell: key glyph column, description column, and the
@@ -472,9 +605,14 @@
 
 (defn- paint-layout!
   "Paint ONE frame of an already-computed [[layout]] at `state`. Everything the
-   spec decides is decided in [[layout]]; this fn only puts cells on a screen."
+   spec decides is decided in [[layout]]; this fn only puts cells on a screen.
+
+   The body is a GRID: pane `j` starts [[pane-width]] + [[pane-gap]] columns
+   after pane `j-1`, and the middle column of every gap carries a `│` down the
+   whole body — which is what tells a reader that the next heading is a sibling
+   column and not the continuation of this one."
   [{:keys [g hint-bar!]} {:keys [left inner-w text-w restore!] :as region}
-   {title :title display-rows :rows n :row-count grid :columns hints :hint-pairs} state]
+   {title :title panes :panes n :row-count pane-w :pane-w grid :columns hints :hint-pairs} state]
   (let
     [{:keys [sep-row title-row title-rule-row body-top foot-rule-row foot-row wipe-top visible
              top-limit]}
@@ -485,6 +623,9 @@
 
      inner-w
      (long inner-w)
+
+     pane-w
+     (long (if (pos? (long (or pane-w 0))) pane-w inner-w))
 
      clear-row!
      (fn [row]
@@ -503,30 +644,38 @@
     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
     (p/styled g [p/BOLD] (p/put-str! g (+ left 2) title-row (p/ellipsize (str title) text-w)))
     (dotimes [i visible]
-      (let
-        [r (nth display-rows i)
-         row (+ (long body-top) (long i))]
-
+      (let [row (+ (long body-top) (long i))]
         (clear-row! row)
-        (case (:kind r)
-          :header
-          (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-              (p/styled g
-                        [p/BOLD]
-                        (p/put-str! g (+ left 2) row (p/ellipsize (str (:text r)) text-w))))
-
-          :blank
-          nil
-
-          :item
+        (dotimes [j (count panes)]
           (let
-            [{:keys [type id] :as it} (:item r)
-             {:keys [is-flag is-valued]} (get sp/item-types type)
-             active? (boolean (or (and is-valued (contains? (:options state) id))
-                                  (and is-flag (contains? (:switches state) id))))
-             value (when is-valued (get (:options state) id))]
+            [pane-left (+ left (* (long j) (+ pane-w (long pane-gap))))
+             r (nth (nth panes j) i)]
 
-            (draw-item! g left row inner-w grid it active? value)))))
+            (when (pos? (long j))
+              (p/set-colors! g t/border-fg t/dialog-bg)
+              (p/set-char! g (- pane-left 2) row p/BOX_V))
+            (case (:kind r)
+              :header
+              (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                  (p/styled g
+                            [p/BOLD]
+                            (p/put-str! g
+                                        (+ pane-left 2)
+                                        row
+                                        (p/ellipsize (str (:text r)) (max 1 (- pane-w 2))))))
+
+              :blank
+              nil
+
+              :item
+              (let
+                [{:keys [type id] :as it} (:item r)
+                 {:keys [is-flag is-valued]} (get sp/item-types type)
+                 active? (boolean (or (and is-valued (contains? (:options state) id))
+                                      (and is-flag (contains? (:switches state) id))))
+                 value (when is-valued (get (:options state) id))]
+
+                (draw-item! g pane-left row pane-w grid it active? value)))))))
     (hint-bar! g left foot-row inner-w hints)))
 
 (defn paint!
@@ -535,7 +684,7 @@
    transient with this plus `toggle`; `run!` is the batteries-included loop.
    A host that paints many frames computes [[layout]] once instead."
   [host region spec state]
-  (paint-layout! host region (layout spec) state))
+  (paint-layout! host region (layout spec region) state))
 
 ;;; ── Run ─────────────────────────────────────────────────────────────────────
 
@@ -570,7 +719,7 @@
     (invalid! :vis/transient-invalid-host why {}))
   (let
     [lay
-     (layout spec)
+     (layout spec region)
 
      read-option
      (or (:read-option spec) (constantly nil))]
