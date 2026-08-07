@@ -481,10 +481,18 @@ describe('the machine strip', () => {
   // followed the last tab instead of ending the row, and a 24px tab stood beside a
   // 32px button.
   it('is tabs on the left and the verb on the trailing edge, on one control height', () => {
-    expect(source).toMatch(/aria-label="Machines"[\s\S]{0,200}pt-3/);
+    expect(source).toMatch(/aria-label="Machines"[\s\S]{0,200}pt-6/);
     expect(source).toContain("className=\"ml-auto shrink-0 whitespace-nowrap\"");
     // `Button` density="compact" is exactly `h-8` with `mouse:h-6`.
     expect(source).toMatch(/inline-flex h-8 [^`]*mouse:h-6/);
     expect(source).not.toContain('inline-flex min-h-6');
+  });
+
+  // Regression, user report ("Make add machine a black button, add even more margin
+  // top from header"): the verb was `quiet`, i.e. frameless ink that only looked like
+  // a button under a cursor, and the strip's 12px top gap still read as flush.
+  it('pours the page ink into Add machine and clears the header by more', () => {
+    expect(source).toMatch(/variant="inverse"[\s\S]{0,200}Add machine/);
+    expect(source).toMatch(/aria-label="Machines"[\s\S]{0,200}pt-6 sm:px-4 sm:pt-8/);
   });
 });

@@ -19,7 +19,7 @@ import { ChevronIcon, CloseIcon, DotsIcon, DraftIcon } from './icons';
 export const Button = forwardRef<
   HTMLButtonElement,
   ButtonHTMLAttributes<HTMLButtonElement> & {
-    variant?: 'solid' | 'ghost' | 'quiet' | 'danger' | 'overlay';
+    variant?: 'solid' | 'ghost' | 'quiet' | 'danger' | 'overlay' | 'inverse';
     /**
      * Press feedback. `scale` is the default nudge; `none` is for a button that
      * ANCHORS something (a popover) or sits in a segmented group — a transform
@@ -81,9 +81,15 @@ export const Button = forwardRef<
     // by which of the two the call site happened to type last.
     overlay:
       'border-transparent bg-ink/80 text-dialog-hint hover:bg-hover hover:text-accent-ink disabled:border-transparent disabled:bg-panel-2 disabled:text-muted',
+    // THE PAGE'S OWN INK, POURED. `--color-white` is `--fg` in this palette, so a
+    // fill of it is the near-black slab in the light theme and the pale slab in the
+    // dark one — the inverse of the paper, in both. It is for a verb that must read
+    // as a real button beside the amber primary without being a second primary:
+    // amber says "the thing this screen is for", ink says "a control, definitely
+    // pressable". Hover moves the surface alone, like every other variant.
+    inverse: `border-white bg-white text-ink hover:bg-white/90 ${dimmed}`,
     // A split button's caret half is NOT a second variant: it is `solid` with a
-    // hairline in `accent-foreground`. Dark chrome next to an amber primary reads
-    // as a disabled slab, and nobody presses a control that looks switched off.
+    // hairline in `accent-foreground`.
   }[variant];
   // The transform utilities are OMITTED rather than overridden: `active:scale-100`
   // and `active:scale-[0.98]` have equal specificity, so a call-site override would

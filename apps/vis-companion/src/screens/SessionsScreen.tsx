@@ -1123,7 +1123,7 @@ export function SessionsScreen({
       <div
         role="group"
         aria-label="Machines"
-        className="relative z-10 flex items-end gap-1.5 overflow-x-auto px-3 pt-3 sm:px-4 sm:pt-4"
+        className="relative z-10 flex items-end gap-1.5 overflow-x-auto px-3 pt-6 sm:px-4 sm:pt-8"
       >
           {machines.map((machine) => {
             const key = machineKey(machine.conn);
@@ -1156,10 +1156,12 @@ export function SessionsScreen({
               reader to guess what it adds - a project? a session? - so the control
               says `Add machine`, on the page's own paper, never inside the card it
               would add a sibling to. `ml-auto` puts it on the row's TRAILING edge:
-              tabs read left to right and the verb is not one of them. */}
+              tabs read left to right and the verb is not one of them. It is `inverse`
+              — the page's own ink, poured — so it reads as a pressable control beside
+              the amber primaries in the card below without becoming a second one. */}
           {onPair && (
             <Button
-              variant="quiet"
+              variant="inverse"
               density="compact"
               className="ml-auto shrink-0 whitespace-nowrap"
               onClick={onPair}
