@@ -43,7 +43,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
           The screen stopped rendering. Your sessions and drafts are safe on the gateway — reloading picks up where you were.
         </p>
         <p className="max-w-sm break-words font-mono text-chip text-footer-muted">{error.message}</p>
-        <Button variant="ghost" onClick={() => window.location.reload()}>
+        <Button variant="secondary" onClick={() => window.location.reload()}>
           Reload Vis
         </Button>
       </div>

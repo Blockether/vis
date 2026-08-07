@@ -344,7 +344,7 @@ export function ManageProjectsSheet({
           </div>
           <div className={`shrink-0 border-t border-dialog-edge bg-panel-2 py-2 ${SHEET_EDGE}`}>
             <div className="flex items-center justify-end">
-              <Button variant="ghost" onClick={() => setAdding(true)}>
+              <Button variant="secondary" onClick={() => setAdding(true)}>
                 Add project…
               </Button>
             </div>
@@ -507,7 +507,7 @@ export function ManageProjectsSheet({
             <p className="mr-auto text-meta text-dialog-hint">It’s already a project</p>
           )}
           <Button
-            variant="ghost"
+            variant="secondary"
             disabled={saving || !here || alreadyProject}
             onClick={() => setFolder(folder === null ? '' : null)}
           >

@@ -81,7 +81,7 @@ describe("DocPreview", () => {
   });
 
   // The one control the card carries is the app's own `Button` — a secondary
-  // (`ghost`) at the header rhythm — not a chip face spelled out here. A compact
+  // (`secondary`) at the header rhythm — not a chip face spelled out here. A compact
   // button keeps the 44px target on touch through its own invisible `::after`.
   it("carries an Open button from the shared vocabulary", () => {
     const html = preview();

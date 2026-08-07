@@ -15,7 +15,7 @@ import { startingDir } from "./ManageProjectsSheet";
 //     that stayed at 44px rows under a mouse;
 //   * its own `CHIP`, a second spelling of `MenuItem`'s badge;
 //   * its own 44px pencil, borderless, answering neither hover nor focus;
-//   * `quiet` for the secondary verb where every other dialog footer uses `ghost`.
+//   * `quiet` for the secondary verb where every other dialog footer uses `secondary`.
 
 describe("ManageProjectsSheet paints no box of its own", () => {
   // Regression, user report ("can Manage projects look exactly the same as the draft
@@ -68,7 +68,7 @@ describe("ManageProjectsSheet paints no box of its own", () => {
 
   it("commits with the footer every other dialog in the app commits with", () => {
     expect(source).toContain("justify-end gap-2");
-    expect(source).toContain('variant="ghost"');
+    expect(source).toContain('variant="secondary"');
     expect(source).not.toContain("justify-between gap-2");
   });
 

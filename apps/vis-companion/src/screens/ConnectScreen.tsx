@@ -9,7 +9,7 @@ import {
   normalizeGatewayUrl,
   reachOf,
 } from '../lib/endpoints';
-import { Banner, Button, DialogHeader, Input } from '../components/ui';
+import { Banner, Button, DialogHeader, Input, ListRow } from '../components/ui';
 import { ChevronIcon } from '../components/icons';
 
 // The QR scanner drags in jsqr (~250 kB of source, a fifth of the launch chunk)
@@ -307,13 +307,11 @@ export function ConnectScreen({
               const isPrimary = primary?.url === conn.url;
               const hv = healthView(health[conn.url]);
               return (
-                <button
-                  type="button"
+                <ListRow
                   key={conn.url}
+                  isSelected={selected}
                   onClick={() => onSettings(conn)}
-                  className={`flex w-full min-w-0 items-center gap-3 px-2 py-2.5 text-left transition-colors duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none sm:px-3 ${
-                    selected ? 'border-l-2 border-accent bg-panel-2' : 'border-l-2 border-transparent bg-panel'
-                  }`}
+                  className="gap-3"
                 >
                   <span
                     className={`shrink-0 font-mono text-title ${hv.dotClass} ${hv.state === 'checking' ? 'animate-pulse' : ''}`}
@@ -361,7 +359,7 @@ export function ConnectScreen({
                     Settings
                   </span>
                   <ChevronIcon className="size-3 text-dialog-hint" aria-hidden />
-                </button>
+                </ListRow>
               );
             })}
           </div>
@@ -405,7 +403,7 @@ export function ConnectScreen({
                 >
                   {busy ? 'Checking\u2026' : 'Pair'}
                 </Button>
-                <Button variant="ghost" onClick={() => setScanning(true)} disabled={busy}>
+                <Button variant="secondary" onClick={() => setScanning(true)} disabled={busy}>
                   Scan QR
                 </Button>
               </div>

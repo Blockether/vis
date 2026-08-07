@@ -362,14 +362,14 @@ export function ImageViewer({
             aria-label="Zoom controls"
           >
             <Button
-              variant="ghost"
+              variant="secondary"
               onClick={() => zoomBy(1 / 1.35)}
               aria-label="Zoom out"
             >
               −
             </Button>
             <Button
-              variant="ghost"
+              variant="secondary"
               className="min-w-14 border-x-0"
               onClick={resetTransform}
               aria-label="Reset zoom"
@@ -377,7 +377,7 @@ export function ImageViewer({
               <span ref={zoomLabelRef}>100%</span>
             </Button>
             <Button
-              variant="ghost"
+              variant="secondary"
               onClick={() => zoomBy(1.35)}
               aria-label="Zoom in"
             >
@@ -386,7 +386,7 @@ export function ImageViewer({
           </div>
 
           <Button
-            variant={drawing ? "solid" : "ghost"}
+            variant={drawing ? "primary" : "secondary"}
             onClick={() => {
               resetTransform();
               setDrawing((current) => !current);
@@ -399,7 +399,7 @@ export function ImageViewer({
 
           <div className="ml-auto flex shrink-0 items-center gap-2">
             <Button
-              variant="ghost"
+              variant="secondary"
               onClick={() =>
                 run("copy", "Could not copy image", (blob) =>
                   copyImage(blob, name),
@@ -409,10 +409,10 @@ export function ImageViewer({
             >
               {busy === "copy" ? "Copying…" : "Copy"}
             </Button>
-            {/* Exactly ONE solid button is on screen at a time: when the picture can go
+            {/* Exactly ONE primary button is on screen at a time: when the picture can go
                 back into the message, THAT is the primary action and sharing steps down. */}
             <Button
-              variant={onApply ? "ghost" : "solid"}
+              variant={onApply ? "secondary" : "primary"}
               onClick={() =>
                 run("share", "Could not share image", (blob) =>
                   shareImage(blob, name),
@@ -424,7 +424,7 @@ export function ImageViewer({
             </Button>
             {onApply && (
               <Button
-                variant="solid"
+                variant="primary"
                 onClick={() =>
                   // Hand the drawn-on picture back to whoever opened the viewer. The
                   // caller owns the slot it came from, so an annotated attachment

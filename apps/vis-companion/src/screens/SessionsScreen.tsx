@@ -1143,12 +1143,14 @@ export function SessionsScreen({
               reader to guess what it adds - a project? a session? - so the control
               says `Add machine`, on the page's own paper, never inside the card it
               would add a sibling to. `ml-auto` puts it on the row's TRAILING edge:
-              tabs read left to right and the verb is not one of them. It is `inverse`
-              — the page's own ink, poured — so it reads as a pressable control beside
-              the amber primaries in the card below without becoming a second one. */}
+              tabs read left to right and the verb is not one of them. It is
+              `secondary` — a real, framed control beside the amber primaries in the
+              card below, without becoming a second one. It used to be a face of its
+              own (`inverse`, the page's ink poured); a fifth variant for one button
+              on one screen is a name the rest of the app has to carry. */}
           {onPair && (
             <Button
-              variant="inverse"
+              variant="secondary"
               density="compact"
               className="ml-auto shrink-0 whitespace-nowrap"
               onClick={onPair}
@@ -1246,7 +1248,7 @@ export function SessionsScreen({
                   settings is the framed sibling, so one amber never rivals another. */}
               {scopeChrome && !scopeChrome.error && (
                 <Button
-                  variant="solid"
+                  variant="primary"
                   density="compact"
                   className="shrink-0 whitespace-nowrap"
                   aria-label={`Add a project on ${machineLabel(scopeChrome.conn)}`}
@@ -1262,7 +1264,7 @@ export function SessionsScreen({
               )}
               {scopeChrome && onMachineSettings && (
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   density="compact"
                   className="shrink-0 whitespace-nowrap"
                   aria-label={`Settings for ${machineLabel(scopeChrome.conn)}`}
@@ -1288,7 +1290,7 @@ export function SessionsScreen({
             </p>
             <p className="mt-2 font-mono text-ui text-dialog-hint">{scopedError}</p>
             <div className="mt-4 flex justify-center">
-              <Button variant="ghost" onClick={() => void load()}>
+              <Button variant="secondary" onClick={() => void load()}>
                 Retry
               </Button>
             </div>
@@ -1307,7 +1309,7 @@ export function SessionsScreen({
                 way back to a full list is offered where the dead end is. */}
             {query && (
               <div className="mt-4 flex justify-center">
-                <Button variant="ghost" onClick={() => onQuery('')}>
+                <Button variant="secondary" onClick={() => onQuery('')}>
                   Clear search
                 </Button>
               </div>
@@ -1432,11 +1434,11 @@ export function SessionsScreen({
                 )}
                 {actionError && <Banner kind="err">{actionError}</Banner>}
                 <div className="flex justify-end gap-2">
-                  <Button variant="ghost" onClick={closeRowAction}>
+                  <Button variant="secondary" onClick={closeRowAction}>
                     Cancel
                   </Button>
                   <Button
-                    variant={rowAction.mode === 'rename' ? 'solid' : 'danger'}
+                    variant={rowAction.mode === 'rename' ? 'primary' : 'danger'}
                     disabled={actionBusy}
                     onClick={() => void commitRowAction()}
                   >
@@ -1665,11 +1667,11 @@ export function SessionsScreen({
                   />
                 </label>
                 <div className="flex justify-end gap-2">
-                  <Button variant="ghost" onClick={() => leaveStart()}>
+                  <Button variant="secondary" onClick={() => leaveStart()}>
                     Cancel
                   </Button>
                   <Button
-                    variant="solid"
+                    variant="primary"
                     disabled={!draftLabel.trim()}
                     onClick={commitDraftName}
                   >

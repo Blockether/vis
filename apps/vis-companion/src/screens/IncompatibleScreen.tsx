@@ -84,11 +84,11 @@ export function IncompatibleScreen({ compat, conn, onRetry, onBack, isChecking =
           {isChecking ? 'Checking…' : 'Check again'}
         </Button>
         {appStale && (
-          <Button type="button" variant="ghost" onClick={() => window.location.reload()}>
+          <Button type="button" variant="secondary" onClick={() => window.location.reload()}>
             Reload app
           </Button>
         )}
-        <Button type="button" variant="ghost" onClick={onBack}>
+        <Button type="button" variant="secondary" onClick={onBack}>
           Choose another machine
         </Button>
       </footer>

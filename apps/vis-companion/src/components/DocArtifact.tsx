@@ -256,7 +256,7 @@ export const DocPreview = memo(function DocPreview({
         sizeLabel={sizeLabel}
         action={
           <Button
-            variant="ghost"
+            variant="secondary"
             density="compact"
             onClick={open}
             aria-label={`Open ${name}`}

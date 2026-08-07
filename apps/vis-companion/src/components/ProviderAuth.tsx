@@ -651,7 +651,7 @@ function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
 
       {flow.url && (
         <Button
-          variant="ghost"
+          variant="secondary"
           className="w-full"
           onClick={() => openProviderUrl(flow.url as string)}
         >
@@ -720,7 +720,7 @@ function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
             {busy ? 'Saving…' : 'Save key'}
           </Button>
         )}
-        <Button variant="ghost" className="flex-1" onClick={() => void auth.cancelFlow()}>
+        <Button variant="secondary" className="flex-1" onClick={() => void auth.cancelFlow()}>
           Cancel
         </Button>
       </div>
@@ -782,7 +782,7 @@ export function ProviderSignOutButton({
   if (!isConfirming) {
     return (
       <Button
-        variant="ghost"
+        variant="secondary"
         className={className}
         disabled={busy}
         onClick={() => setIsConfirming(true)}
@@ -806,7 +806,7 @@ export function ProviderSignOutButton({
         {busy ? 'Signing out…' : 'Yes, sign out'}
       </Button>
       <Button
-        variant="ghost"
+        variant="secondary"
         className="min-w-0 flex-1"
         disabled={busy}
         onClick={() => setIsConfirming(false)}
@@ -916,7 +916,7 @@ export function AddProviderPanel({
           >
             {busy ? 'Adding…' : `Add ${chosen.label}`}
           </Button>
-          <Button variant="ghost" className="flex-1" disabled={busy} onClick={() => setChosen(null)}>
+          <Button variant="secondary" className="flex-1" disabled={busy} onClick={() => setChosen(null)}>
             Back
           </Button>
         </div>
@@ -962,7 +962,7 @@ export function AddProviderPanel({
       })}
 
       <Button
-        variant="ghost"
+        variant="secondary"
         className="w-full"
         onClick={() => {
           setIsPicking(false);
@@ -994,7 +994,7 @@ export function ProviderRemoveButton({
 
   if (!isConfirming) {
     return (
-      <Button variant="ghost" className={className} disabled={busy} onClick={() => setIsConfirming(true)}>
+      <Button variant="secondary" className={className} disabled={busy} onClick={() => setIsConfirming(true)}>
         {busy ? 'Removing…' : 'Remove'}
       </Button>
     );
@@ -1013,7 +1013,7 @@ export function ProviderRemoveButton({
       >
         {busy ? 'Removing…' : 'Yes, remove'}
       </Button>
-      <Button variant="ghost" className="min-w-0 flex-1" disabled={busy} onClick={() => setIsConfirming(false)}>
+      <Button variant="secondary" className="min-w-0 flex-1" disabled={busy} onClick={() => setIsConfirming(false)}>
         Cancel
       </Button>
     </span>

@@ -26,7 +26,23 @@ import {
 export const Button = forwardRef<
   HTMLButtonElement,
   ButtonHTMLAttributes<HTMLButtonElement> & {
-    variant?: 'solid' | 'ghost' | 'quiet' | 'danger' | 'overlay' | 'inverse';
+    /**
+     * FOUR RANKS AND ONE CONTEXT.
+     *
+     * The rank is what the reader is being told about the verb, and there are only
+     * ever four of those: `primary` is the thing this screen exists for, `secondary`
+     * is a real control beside it, `quiet` is chrome that must not draw a frame, and
+     * `danger` is destructive. They used to be spelled `solid`/`ghost`, which name
+     * the PAINT rather than the rank, so a call site had to know the palette to
+     * choose; `inverse` was a fifth paint-name with one call site, and one screen's
+     * "Add machine" is not a rank of its own.
+     *
+     * `overlay` is not a rank at all: it is the same control floating over CONTENT —
+     * a thumbnail, a picture — where the app's paper is not underneath, so it has to
+     * bring its own. It stays a variant because a face is decided here or it is
+     * decided by Tailwind's emission order at a call site, never by a `className`.
+     */
+    variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay';
     /**
      * Press feedback. `scale` is the default nudge; `none` is for a button that
      * ANCHORS something (a popover) or sits in a segmented group — a transform
@@ -44,7 +60,7 @@ export const Button = forwardRef<
     density?: 'default' | 'compact';
   }
 >(function Button(
-  { variant = 'solid', pressEffect = 'scale', density = 'default', className = '', ...props },
+  { variant = 'primary', pressEffect = 'scale', density = 'default', className = '', ...props },
   ref,
 ) {
   // Disabled colours live PER VARIANT, not in the base class: `quiet` has to stay
@@ -54,8 +70,8 @@ export const Button = forwardRef<
   // ONE hover system, and it only ever moves the SURFACE.
   //
   // Each variant used to invent its own, and each said something different from
-  // "you are on it": `solid` FADED the amber to 85%, so the primary looked like it
-  // was switching off under the cursor; `ghost` and `quiet` flared their ink and
+  // "you are on it": `primary` FADED the amber to 85%, so the primary looked like it
+  // was switching off under the cursor; `secondary` and `quiet` flared their ink and
   // their frame amber, which is more attention than a hover has earned and is a
   // second amber on a screen whose primary is already amber; `danger` poured a
   // solid red fill under `text-white`, and `--color-white` in this app is the
@@ -64,12 +80,12 @@ export const Button = forwardRef<
   //
   // The press already answers the finger (`active:scale`) and the keyboard already
   // has its ring, so hover is the quietest of the three: the paper changes, the ink
-  // does not. `solid` has no hover at all — a filled amber slab is as arrived as a
+  // does not. `primary` has no hover at all — a filled amber slab is as arrived as a
   // control gets, and there is nothing for a hover to add.
   const styles = {
-    solid: `border-accent bg-accent text-accent-foreground ${dimmed}`,
-    ghost: `border-edge-strong bg-transparent text-white hover:bg-hover ${dimmed}`,
-    // For a SECONDARY action sitting next to a solid primary: two bordered boxes
+    primary: `border-accent bg-accent text-accent-foreground ${dimmed}`,
+    secondary: `border-edge-strong bg-transparent text-white hover:bg-hover ${dimmed}`,
+    // For a SECONDARY action sitting next to the primary: two bordered boxes
     // side by side read as rivals, so this one keeps the button's box (transparent
     // border, identical metrics) and NEVER draws a frame — not at rest and not on
     // hover. A frame that arrives under the pointer is a box appearing out of
@@ -88,14 +104,7 @@ export const Button = forwardRef<
     // by which of the two the call site happened to type last.
     overlay:
       'border-transparent bg-ink/80 text-dialog-hint hover:bg-hover hover:text-accent-ink disabled:border-transparent disabled:bg-panel-2 disabled:text-muted',
-    // THE PAGE'S OWN INK, POURED. `--color-white` is `--fg` in this palette, so a
-    // fill of it is the near-black slab in the light theme and the pale slab in the
-    // dark one — the inverse of the paper, in both. It is for a verb that must read
-    // as a real button beside the amber primary without being a second primary:
-    // amber says "the thing this screen is for", ink says "a control, definitely
-    // pressable". Hover moves the surface alone, like every other variant.
-    inverse: `border-white bg-white text-ink hover:bg-white/90 ${dimmed}`,
-    // A split button's caret half is NOT a second variant: it is `solid` with a
+    // A split button's caret half is NOT a second variant: it is `primary` with a
     // hairline in `accent-foreground`.
   }[variant];
   // The transform utilities are OMITTED rather than overridden: `active:scale-100`
@@ -146,7 +155,7 @@ export const IconButton = forwardRef<
   ButtonHTMLAttributes<HTMLButtonElement> & {
     /** Icon-only, so the name is not optional. */
     label: string;
-    variant?: 'solid' | 'ghost' | 'quiet' | 'danger' | 'overlay';
+    variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay';
     /** Passed through: a control over a thumbnail is not on a header's rhythm. */
     density?: 'default' | 'compact';
     /**
@@ -166,7 +175,7 @@ export const IconButton = forwardRef<
     edge?: boolean;
   }
 >(function IconButton(
-  { label, className = '', variant = 'ghost', density = 'compact', edge, children, ...props },
+  { label, className = '', variant = 'secondary', density = 'compact', edge, children, ...props },
   ref,
 ) {
   // `border-r-0`: this box ends ON the paper's own edge, and the paper already draws
@@ -287,10 +296,19 @@ export const Chip = forwardRef<
  */
 export function LoadMore({
   label,
+  isEarlier = false,
   className = '',
   children,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  label: string;
+  /**
+   * The rest is ABOVE: the transcript's older turns. Same promise, same bar, the
+   * arrow turned over — a second component for it would be the same forty classes
+   * again with one of them different.
+   */
+  isEarlier?: boolean;
+}) {
   return (
     <button
       type="button"
@@ -298,7 +316,7 @@ export function LoadMore({
       className={`mt-2 flex min-h-8 w-full min-w-0 items-center justify-center gap-1.5 border border-dialog-edge bg-panel px-2 font-mono text-meta text-dialog-hint transition-colors duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-7 ${className}`}
       {...props}
     >
-      <ArrowDownIcon className="size-3 opacity-70" />
+      <ArrowDownIcon className={`size-3 opacity-70 ${isEarlier ? 'rotate-180' : ''}`} />
       <span className="min-w-0 truncate">{children}</span>
     </button>
   );
@@ -533,6 +551,289 @@ export function RemoveButton({
 }
 
 /**
+ * THE WAY BACK, and there is only one of it.
+ *
+ * A full-screen surface that stands ON another one — a session over its list —
+ * leaves by the leading half of its own title band: a stretched, notch-aware
+ * column carrying one chevron. It is not an `IconButton`: an icon button is a
+ * box inside a row, and this one IS the row's left edge, so it owns the safe
+ * area the phone puts outside the paper and grows with the band's height.
+ */
+export function BackButton({
+  label,
+  className = '',
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      className={`grid w-[calc(2.75rem+env(safe-area-inset-left))] shrink-0 place-items-center border-r border-dialog-edge bg-dialog-title pl-[env(safe-area-inset-left)] font-mono text-subhead font-bold text-dialog-title-foreground transition-[background-color,transform,translate,scale,rotate] duration-150 hover:bg-accent-2 focus-visible:bg-accent-2 focus-visible:outline-none active:scale-[0.96] motion-reduce:transition-none mouse:w-[calc(2.5rem+env(safe-area-inset-left))] ${className}`}
+      {...props}
+    >
+      <ChevronIcon back className="size-4" aria-hidden />
+    </button>
+  );
+}
+
+/**
+ * A CONTROL THAT ARRIVES OVER THE CONTENT, and there is only one of it.
+ *
+ * Not chrome: it is laid on top of the thing it acts on — "Latest" over the
+ * transcript — so it brings its own paper, its own lift and its own entrance
+ * (`starting:`), and the call site decides only WHERE it lands. `Button` cannot
+ * be it: a button's face is flat because it sits ON the app's paper, and one
+ * that floats has to be told from the sentence it is covering.
+ */
+export function Pill({
+  className = '',
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      className={`inline-flex min-h-8 items-center gap-1.5 border border-dialog-edge bg-button px-3 font-mono text-meta font-bold text-button-foreground shadow-[4px_4px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate,background-color] duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 active:scale-[0.97] starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none ${className}`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * A ROW OF A COMPLETION LIST, and there is only one of it.
+ *
+ * `@file` and `/command` are the same gesture answered twice, and they were the
+ * same forty classes written twice — including the one that matters and is easy
+ * to forget: the pointer press is CANCELLED, because a completion list must not
+ * take the caret out of the composer it is completing. That is behaviour, so it
+ * belongs to the control and not to whoever remembers it.
+ *
+ * `isActive` is the keyboard's position in the list, which is why it is the
+ * app's amber and not a hover: a finger and an arrow key are pointing at two
+ * different rows and the reader has to be able to tell which is which.
+ */
+export function OptionRow({
+  isActive = false,
+  className = '',
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { isActive?: boolean }) {
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={isActive}
+      onPointerDown={(event) => event.preventDefault()}
+      className={`grid min-h-9 w-full gap-3 border-t border-dialog-edge px-3 py-1.5 text-left transition-colors duration-150 motion-reduce:transition-none ${
+        isActive
+          ? 'bg-accent text-accent-foreground'
+          : 'text-dialog-foreground hover:bg-hover'
+      } ${className}`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * THE COMPOSER'S OWN CONTROLS, and there is one of them.
+ *
+ * Attach, dictate, send, stop: four boxes in one strip that were written four
+ * times, and they had drifted apart in the only dimension a strip is read in —
+ * two were 32×28 with a `mouse:` step, the send was a 32px square, the stop had
+ * no rhythm at all. They also each re-spelled the same transition list and the
+ * same `active:scale-[0.94]`, and none of them had a focus ring.
+ *
+ * `tone` is what the control MEANS, and the box follows from it: `quiet` is a
+ * glyph in the strip, `send` is the verb the strip exists for, `stop` fills the
+ * slot the send left, `recording` is `quiet` while it is listening. Nothing here
+ * is a `className` at the call site, because a strip whose boxes disagree is
+ * exactly what this replaced.
+ */
+export function ComposerButton({
+  label,
+  tone = 'quiet',
+  className = '',
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  /** Icon-only, so the name is not optional. */
+  label: string;
+  tone?: 'quiet' | 'send' | 'stop' | 'recording';
+}) {
+  const face = {
+    quiet: 'h-8 w-7 text-dialog-hint hover:bg-hover hover:text-dialog-hint-key disabled:text-muted mouse:h-7 mouse:w-6',
+    recording:
+      'h-8 w-7 animate-pulse bg-warn-surface text-err disabled:text-muted motion-reduce:animate-none mouse:h-7 mouse:w-6',
+    send: 'size-8 border border-dialog-edge bg-dialog-title text-ui font-bold text-dialog-title-foreground hover:bg-accent-2 disabled:scale-100 disabled:bg-button disabled:text-dialog-hint mouse:size-7',
+    // It stands in the send's slot, which is already the right size: taking the
+    // whole of it is how the two never disagree about where the strip ends.
+    stop: 'size-full border border-err bg-cancelled hover:bg-warn-surface starting:scale-90 starting:opacity-0',
+  }[tone];
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      className={`grid shrink-0 place-items-center transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.94] motion-reduce:transition-none ${face} ${className}`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * WHAT THIS TURN WILL RUN AS, and there is only one of it.
+ *
+ * The line under the composer reports the model and the reasoning level, and
+ * both are pressable: one opens the picker, one cycles. They are the same small
+ * caps at the same size and they had two different hovers, so the strip read as
+ * one label beside one button. `isPicker` is the only difference that survived —
+ * the dotted rule under the word that OPENS something.
+ */
+export function MetaButton({
+  isPicker = false,
+  className = '',
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { isPicker?: boolean }) {
+  return (
+    <button
+      type="button"
+      className={`px-1 py-1 text-left font-mono text-chip font-semibold uppercase tracking-[0.08em] transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none ${
+        isPicker
+          ? 'text-dialog-hint-key underline decoration-dialog-edge decoration-1 underline-offset-4 hover:decoration-accent'
+          : 'text-dialog-hint'
+      } ${className}`}
+      {...props}
+    />
+  );
+}
+
+/**
+ * PRESSABLE PROSE, and there is only one of it.
+ *
+ * A queued turn you can still edit, a pasted block standing in for 40 lines:
+ * text in a row that opens an editor. Neither is a button-shaped thing and
+ * neither should become one — but they hovered differently (one flared its ink,
+ * one moved its paper) for the same gesture. Hover moves the SURFACE here as it
+ * does everywhere else; `isToken` adds the dotted rule that says this word is
+ * standing in for something longer.
+ */
+export function TextButton({
+  isToken = false,
+  className = '',
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { isToken?: boolean }) {
+  return (
+    <button
+      type="button"
+      className={`min-w-0 px-1 text-left font-mono text-ui text-dialog-foreground transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:bg-transparent motion-reduce:transition-none ${
+        isToken ? 'truncate underline decoration-dotted underline-offset-2' : ''
+      } ${className}`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * ONE VALUE OF A SETTING, and there is only one of it.
+ *
+ * Theme, sessions per project, where a session starts: a segmented grid where
+ * every cell is one of the values and exactly one of them is yours. Three
+ * hand-spelled copies of it had already drifted apart in height and gap.
+ *
+ * It is a CELL and not a `ChoiceRow`, and the difference is real rather than
+ * cosmetic: the grid draws the hairlines (`gap-px` over `bg-dialog-edge`), so a
+ * cell that framed itself would double every line in the grid. A `ChoiceRow`
+ * stands on its own and brings its own frame. Selection is the amber FILL here,
+ * as it is on every other segmented thing in the app (`Chip`, `MachineTab`,
+ * `OptionRow`), and the glyph is `dialogs/choice-mark`'s own `●`/`○` — one of
+ * these is the answer, never several.
+ */
+export function ChoiceCell({
+  title,
+  sub,
+  isSelected,
+  className = '',
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  title: string;
+  /** The quiet word under the name: a theme's mode, a page size's temper. */
+  sub: string;
+  isSelected: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={isSelected}
+      className={`flex min-h-10 min-w-0 items-center justify-between gap-3 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent active:scale-[0.99] disabled:opacity-45 motion-reduce:transition-none mouse:min-h-9 ${
+        isSelected ? 'bg-accent text-accent-foreground' : 'bg-input text-white hover:bg-hover'
+      } ${className}`}
+      {...props}
+    >
+      <span className="min-w-0">
+        <span className="block truncate font-mono text-ui font-bold">{title}</span>
+        <span className="block truncate font-mono text-chip uppercase tracking-wider opacity-65">
+          {sub}
+        </span>
+      </span>
+      <span className="shrink-0 font-mono text-meta font-black" aria-hidden="true">
+        {isSelected ? '●' : '○'}
+      </span>
+    </button>
+  );
+}
+
+/**
+ * ON OR OFF, and there is only one of it.
+ *
+ * A feature toggle is a WORD, not a sliding knob: `ON`/`OFF` in the same mono
+ * the rest of the app is set in, amber when it is on. It reports its own work
+ * (`isBusy` → `··`, `aria-busy`) because a setting is a round trip to a gateway
+ * and a control that snaps back a second later without saying why is a bug
+ * report. `role="switch"` and `aria-checked` are the control's, not the caller's.
+ */
+export function Switch({
+  label,
+  isOn,
+  isBusy,
+  className = '',
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  /** Icon-only in effect — `ON` is not a name — so the name is not optional. */
+  label: string;
+  isOn: boolean;
+  isBusy?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-label={`${label}: ${isOn ? 'on' : 'off'}`}
+      aria-checked={isOn}
+      aria-busy={isBusy}
+      className={`mt-0.5 inline-flex h-8 w-[3.25rem] shrink-0 items-center justify-center border font-mono text-chip font-black tracking-[0.08em] transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 active:scale-[0.97] disabled:opacity-45 motion-reduce:transition-none motion-reduce:active:scale-100 mouse:h-6 ${
+        isOn
+          ? 'border-transparent bg-accent text-accent-foreground'
+          : 'border-transparent bg-panel-2 text-dialog-hint hover:bg-hover hover:text-white'
+      } ${className}`}
+      {...props}
+    >
+      <span aria-hidden className={isBusy ? 'animate-pulse' : ''}>
+        {isBusy ? '··' : isOn ? 'ON' : 'OFF'}
+      </span>
+    </button>
+  );
+}
+
+/**
  * THE WAY OUT, and there is only one of it.
  *
  * A dialog, an opened artifact and the artifacts sheet itself are all left the
@@ -644,12 +945,6 @@ export const SearchField = forwardRef<
   );
 });
 
-export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return (
-    <div className={`border border-dialog-edge bg-panel p-4 ${className}`}>{children}</div>
-  );
-}
-
 export function Banner({ kind, children }: { kind: 'ok' | 'warn' | 'err'; children: ReactNode }) {
   const colors = {
     ok: 'border-ok/50 bg-ok/10 text-ok',
@@ -661,17 +956,6 @@ export function Banner({ kind, children }: { kind: 'ok' | 'warn' | 'err'; childr
     <div className={`border px-3 py-2 font-mono text-body ${colors}`} role="status">
       {children}
     </div>
-  );
-}
-
-export function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="space-y-3">
-      <h2 className="border-l-2 border-accent px-2 font-mono text-body font-bold uppercase tracking-[0.1em] text-white/70">
-        {title}
-      </h2>
-      {children}
-    </section>
   );
 }
 
@@ -1383,7 +1667,7 @@ export function Pager({
           ) : (
             <Button
               key={entry}
-              variant={entry === page ? 'solid' : 'quiet'}
+              variant={entry === page ? 'primary' : 'quiet'}
               density="compact"
               aria-label={`Page ${entry}`}
               aria-current={entry === page ? 'page' : undefined}

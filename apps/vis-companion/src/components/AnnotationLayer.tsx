@@ -262,10 +262,10 @@ export function PenToolbar({
           />
         </button>
       ))}
-      <Button variant="ghost" onClick={onUndo} disabled={!strokeCount}>
+      <Button variant="secondary" onClick={onUndo} disabled={!strokeCount}>
         Undo
       </Button>
-      <Button variant="ghost" onClick={onClear} disabled={!strokeCount}>
+      <Button variant="secondary" onClick={onClear} disabled={!strokeCount}>
         Clear
       </Button>
     </div>

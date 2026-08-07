@@ -386,7 +386,7 @@ export const DataTable = memo(function DataTable({
         <span className="shrink-0 text-chip text-warn" aria-live="polite">
           {selected.size > 0 ? `${selected.size} selected` : ''}
         </span>
-        <Button variant="ghost" density="compact" onClick={copy}>
+        <Button variant="secondary" density="compact" onClick={copy}>
           {copied ? 'Copied' : chosen.length > 0 ? `Copy ${chosen.length} rows` : 'Copy CSV'}
         </Button>
       </div>
@@ -537,7 +537,7 @@ export const DataTable = memo(function DataTable({
             {focused === '' ? 'NULL' : focused}
           </pre>
           <Button
-            variant="ghost"
+            variant="secondary"
             density="compact"
             onClick={() => void navigator.clipboard?.writeText(focused ?? '')}
           >
@@ -573,7 +573,7 @@ export const DataTable = memo(function DataTable({
           </span>
           <span className="hidden shrink-0 text-chip text-muted sm:inline">PgUp/PgDn</span>
           <Button
-            variant="ghost"
+            variant="secondary"
             density="compact"
             onClick={() => goPage(current - 1)}
             disabled={current === 0}
@@ -583,7 +583,7 @@ export const DataTable = memo(function DataTable({
           </Button>
           <span className="shrink-0 text-ui tabular-nums text-code-foreground">{`Page ${current + 1}/${pages}`}</span>
           <Button
-            variant="ghost"
+            variant="secondary"
             density="compact"
             onClick={() => goPage(current + 1)}
             disabled={current >= pages - 1}

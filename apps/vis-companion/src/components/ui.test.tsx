@@ -15,12 +15,16 @@ import humanInputSource from "./HumanInputPrompt.tsx?raw";
 import providerAuthSource from "./ProviderAuth.tsx?raw";
 import routerSource from "../screens/RouterScreen.tsx?raw";
 import sessionScreenSource from "../screens/SessionScreen.tsx?raw";
+import connectSource from "../screens/ConnectScreen.tsx?raw";
 
 import { MACHINE_COLORS } from "../lib/machine-colors";
 import {
+  BackButton,
   Button,
   Chip,
+  ChoiceCell,
   ChoiceRow,
+  ComposerButton,
   CopyChip,
   DialogClose,
   DialogFrame,
@@ -41,9 +45,14 @@ import {
   MachineRail,
   MachineSwitcher,
   MachineTab,
+  MetaButton,
   NewSessionButton,
+  OptionRow,
+  Pill,
   Disclosure,
   RemoveButton,
+  Switch,
+  TextButton,
   RowDisclosure,
   SectionHeader,
   UnreadBadge,
@@ -901,7 +910,9 @@ describe("where a new session starts", () => {
 
   it("picks every setting with the one ChoiceCell, spelled once", () => {
     expect(settingsSource.match(/<ChoiceCell/g)?.length).toBe(2);
-    expect(settingsSource.match(/function ChoiceCell\(/g)?.length).toBe(1);
+    // The cell moved into the vocabulary; the dialog no longer owns a copy.
+    expect(settingsSource.match(/function ChoiceCell\(/g)?.length).toBe(undefined);
+    expect(uiSource.match(/function ChoiceCell\(/g)?.length).toBe(1);
   });
 });
 
@@ -1380,5 +1391,218 @@ describe("every screen uses the second vocabulary too", () => {
     expect(humanInputSource).not.toContain(
       "border-accent bg-hover text-accent-ink",
     );
+  });
+});
+
+// The third pass over the same report: the four names a button comes in, and the
+// composer — the one strip the app is used through — which had written its own
+// four boxes, its own two text controls, its own back arrow and its own floating
+// pill, none of them agreeing with each other on a rhythm.
+describe("the button's four ranks", () => {
+  const classes = (html: string) =>
+    (/<button[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "").split(" ");
+
+  it("names the RANK of a verb, never the paint it happens to wear", () => {
+    expect(uiSource).toContain(
+      "variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay';",
+    );
+    // `solid`/`ghost` described a fill; `inverse` was a fifth face with one call
+    // site. A rank has to be choosable without knowing the palette.
+    expect(uiSource).not.toContain("'solid'");
+    expect(uiSource).not.toContain("'ghost'");
+    expect(uiSource).not.toContain("inverse:");
+  });
+
+  it("keeps the amber primary and gives the secondary its frame", () => {
+    expect(classes(renderToStaticMarkup(<Button>Send</Button>))).toContain(
+      "bg-accent",
+    );
+    expect(
+      classes(renderToStaticMarkup(<Button variant="secondary">Cancel</Button>)),
+    ).toContain("border-edge-strong");
+  });
+
+  it("leaves no screen asking for a variant that no longer exists", () => {
+    for (const source of [
+      chatSource,
+      settingsSource,
+      sessionsListSource,
+      sessionScreenSource,
+      routerSource,
+      providerAuthSource,
+      artifactsSheetSource,
+      connectSource,
+      docSource,
+      tableBarSource,
+      boundarySource,
+    ]) {
+      expect(source).not.toContain('variant="solid"');
+      expect(source).not.toContain('variant="ghost"');
+      expect(source).not.toContain('variant="inverse"');
+    }
+  });
+});
+
+describe("the composer's own controls", () => {
+  const classes = (html: string) =>
+    (/<button[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "").split(" ");
+
+  it("gives attach, dictate, send and stop ONE rhythm and one press", () => {
+    const box = (tone: "quiet" | "send" | "stop" | "recording") =>
+      classes(
+        renderToStaticMarkup(
+          <ComposerButton tone={tone} label="Send message">
+            {"\u2191"}
+          </ComposerButton>,
+        ),
+      );
+    // The glyphs in the strip are one box; the send is the square that ends it
+    // and the stop takes exactly the send's slot, so the strip cannot disagree
+    // with itself about where it ends.
+    expect(box("quiet")).toContain("h-8");
+    expect(box("quiet")).toContain("mouse:h-7");
+    expect(box("recording")).toContain("h-8");
+    expect(box("send")).toContain("size-8");
+    expect(box("send")).toContain("mouse:size-7");
+    expect(box("stop")).toContain("size-full");
+    for (const tone of ["quiet", "send", "stop", "recording"] as const) {
+      expect(box(tone)).toContain("active:scale-[0.94]");
+      // None of the four had a focus ring when each was written by hand.
+      expect(box(tone)).toContain("focus-visible:ring-accent/60");
+    }
+  });
+
+  it("is icon-only, so it is named", () => {
+    expect(
+      renderToStaticMarkup(
+        <ComposerButton label="Dictate message">{"\u25cf"}</ComposerButton>,
+      ),
+    ).toContain('aria-label="Dictate message"');
+  });
+
+  it("reports the turn's model and level in one type step, hovered one way", () => {
+    const picker = classes(
+      renderToStaticMarkup(<MetaButton isPicker>opus</MetaButton>),
+    );
+    const plain = classes(renderToStaticMarkup(<MetaButton>high</MetaButton>));
+    expect(picker).toContain("underline");
+    expect(plain).not.toContain("underline");
+    for (const one of [picker, plain]) {
+      expect(one).toContain("text-chip");
+      expect(one).toContain("hover:text-accent-ink");
+    }
+  });
+
+  it("presses prose by moving the paper, dotted only where a word stands in", () => {
+    const token = classes(
+      renderToStaticMarkup(<TextButton isToken>{"[paste #1]"}</TextButton>),
+    );
+    const plain = classes(renderToStaticMarkup(<TextButton>draft</TextButton>));
+    expect(token).toContain("decoration-dotted");
+    expect(plain).not.toContain("decoration-dotted");
+    // One hover for both: the surface moves, the ink does not.
+    for (const one of [token, plain]) expect(one).toContain("hover:bg-hover");
+  });
+
+  it("completes @ and / with one row, and never steals the caret", () => {
+    const html = renderToStaticMarkup(
+      <OptionRow isActive>notes.md</OptionRow>,
+    );
+    expect(html).toContain('role="option"');
+    expect(html).toContain('aria-selected="true"');
+    expect(classes(html)).toContain("bg-accent");
+    expect(
+      classes(renderToStaticMarkup(<OptionRow>notes.md</OptionRow>)),
+    ).toContain("hover:bg-hover");
+    // The pointer press is CANCELLED by the control, not by whoever remembers.
+    expect(uiSource).toContain(
+      "onPointerDown={(event) => event.preventDefault()}",
+    );
+  });
+
+  it("leaves by the band's own leading half, notch included", () => {
+    const html = renderToStaticMarkup(
+      <BackButton label="Back to sessions" />,
+    );
+    expect(html).toContain('aria-label="Back to sessions"');
+    expect(classes(html)).toContain("pl-[env(safe-area-inset-left)]");
+  });
+
+  it("floats over the transcript with its own paper and its own lift", () => {
+    const pill = classes(renderToStaticMarkup(<Pill>Latest</Pill>));
+    expect(pill).toContain("bg-button");
+    expect(pill).toContain("shadow-[4px_4px_0_var(--dialog-shadow)]");
+  });
+});
+
+describe("a setting is picked and switched by one control each", () => {
+  const classes = (html: string) =>
+    (/<button[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "").split(" ");
+
+  it("fills the chosen cell in amber and marks it once", () => {
+    const on = renderToStaticMarkup(
+      <ChoiceCell title="Gruvbox" sub="dark" isSelected />,
+    );
+    expect(classes(on)).toContain("bg-accent");
+    expect(on).toContain("\u25cf");
+    expect(on).toContain('aria-pressed="true"');
+    const off = renderToStaticMarkup(
+      <ChoiceCell title="Gruvbox" sub="dark" isSelected={false} />,
+    );
+    expect(classes(off)).toContain("bg-input");
+    expect(off).toContain("\u25cb");
+    // The grid draws the hairlines; a cell that framed itself would double them.
+    expect(classes(off)).not.toContain("border");
+  });
+
+  it("says ON or OFF in words, and says when it is still asking", () => {
+    const on = renderToStaticMarkup(<Switch label="Web search" isOn />);
+    expect(on).toContain('role="switch"');
+    expect(on).toContain('aria-checked="true"');
+    expect(on).toContain('aria-label="Web search: on"');
+    expect(on).toContain("ON");
+    expect(
+      renderToStaticMarkup(<Switch label="Web search" isOn isBusy />),
+    ).toContain("\u00b7\u00b7");
+  });
+});
+
+// The call sites, one layer down again.
+describe("the session screen and the settings dialog spell no control out", () => {
+  it("leaves not one hand-rolled button in either", () => {
+    expect(sessionScreenSource).not.toContain("<button");
+    expect(settingsSource).not.toContain("<button");
+  });
+
+  it("uses the composer's own vocabulary where it used to repeat itself", () => {
+    expect(sessionScreenSource).toContain("<ComposerButton");
+    expect(sessionScreenSource).toContain("<MetaButton");
+    expect(sessionScreenSource).toContain("<OptionRow");
+    expect(sessionScreenSource).toContain("<TextButton");
+    expect(sessionScreenSource).toContain("<BackButton");
+    expect(sessionScreenSource).toContain("<Pill");
+    // The transcript's "load earlier" is the artifacts sheet's own bar, turned over.
+    expect(sessionScreenSource).toContain("<LoadMore");
+    expect(sessionScreenSource).toContain("isEarlier");
+    expect(sessionScreenSource).not.toContain("grid h-8 w-7");
+    expect(sessionScreenSource).not.toContain("tracking-[0.08em] text-dialog-hint-key underline");
+  });
+
+  it("moves the settings picker and the switch into the vocabulary", () => {
+    expect(settingsSource).toContain("<ChoiceCell");
+    expect(settingsSource).toContain("<Switch");
+    expect(settingsSource).not.toContain("function ChoiceCell");
+    expect(settingsSource).not.toContain("function Switch");
+  });
+
+  it("picks a saved machine with the one pressable row", () => {
+    expect(connectSource).toContain("<ListRow");
+    expect(connectSource).not.toContain("<button");
+  });
+
+  it("keeps no control nobody uses", () => {
+    // `Card` and `Section` had no call site left anywhere in the app.
+    expect(uiSource).not.toContain("export function Card(");
+    expect(uiSource).not.toContain("export function Section(");
   });
 });

@@ -60,7 +60,7 @@ describe("ImageViewer", () => {
   });
 
   // Regression, user report ("the close buttons, instead of being just the X mark,
-  // are shown as `Close`"): the image viewer's header carried a ghost text button
+  // are shown as `Close`"): the image viewer's header carried a secondary text button
   // where every other surface wears `DialogClose`.
   it("leaves through the app's one X, named after the picture", () => {
     const close = control("Close chart.png");

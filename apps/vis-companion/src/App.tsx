@@ -1144,7 +1144,7 @@ export function Header({
         <div className="flex items-center gap-2">
           <Button
             type="button"
-            variant="ghost"
+            variant="secondary"
             density="compact"
             className="shrink-0 whitespace-nowrap"
             onClick={onAppSettings}

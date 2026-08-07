@@ -17,17 +17,23 @@ import { ArtifactsChip, ArtifactsSheet } from "../components/ArtifactsSheet";
 import { collapseArtifactVersions, collectArtifacts } from "../lib/artifacts";
 import { ExpandableImage } from "../components/ImageViewer";
 import {
+  BackButton,
   Banner,
   Button,
+  ComposerButton,
   CopyChip,
   DialogHeader,
+  LoadMore,
+  MetaButton,
+  OptionRow,
+  Pill,
   RemoveButton,
   Spinner,
+  TextButton,
 } from '../components/ui';
 import {
   ArrowDownIcon,
   CameraIcon,
-  ChevronIcon,
   ImageIcon,
   MicIcon,
   PlusIcon,
@@ -962,7 +968,7 @@ function PasteEditor({
           <span className="mr-auto hidden truncate sm:block">
             Esc cancels · ⌘↵ saves
           </span>
-          <Button variant="ghost" onMouseDown={keepKeyboard} onClick={onClose}>
+          <Button variant="secondary" onMouseDown={keepKeyboard} onClick={onClose}>
             Cancel
           </Button>
           <Button onMouseDown={keepKeyboard} onClick={onSave}>
@@ -4324,14 +4330,7 @@ export function SessionScreen({
          back-button block and the panel background still reach the physical
          edge; only their CONTENT is pushed into the safe area. */}
         <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
-          <button
-            type="button"
-            className="grid w-[calc(2.75rem+env(safe-area-inset-left))] shrink-0 place-items-center border-r border-dialog-edge bg-dialog-title pl-[env(safe-area-inset-left)] font-mono text-subhead font-bold text-dialog-title-foreground transition-[background-color,transform,translate,scale,rotate] duration-150 active:scale-[0.96] hover:bg-accent-2 focus-visible:outline-none focus-visible:bg-accent-2 motion-reduce:transition-none mouse:w-[calc(2.5rem+env(safe-area-inset-left))]"
-            onClick={onBack}
-            aria-label="Back to sessions"
-          >
-            <ChevronIcon back className="size-4" aria-hidden />
-          </button>
+          <BackButton label="Back to sessions" onClick={onBack} />
           <div className="min-w-0 flex-1 self-center px-3 py-1.5">
             <h1 className="truncate font-mono text-body font-bold text-white">
               {title}
@@ -4458,19 +4457,19 @@ export function SessionScreen({
                   // Not anchorable: this row is pinned above the history it loads, so
                   // its own top never moves and anchoring on it would hold nothing
                   // while 40 000 px lands underneath it.
-                  <div className="mb-5 flex justify-center" data-anchor="skip">
-                    <button
-                      type="button"
-                      className="border border-dialog-edge bg-panel px-3 py-1.5 font-mono text-chip font-bold text-dialog-hint transition-colors hover:border-accent hover:text-dialog-hint-key"
+                  <div className="mb-5" data-anchor="skip">
+                    <LoadMore
+                      isEarlier
+                      label={`Load earlier turns · ${earlierTotal} remaining`}
                       onClick={loadEarlierTurns}
                       disabled={loadingEarlier}
                     >
                       {loadingEarlier
                         ? "Loading earlier…"
                         : visibleStart > 0
-                          ? `↑ Load ${Math.min(INITIAL_VISIBLE_TURNS, earlierTotal)} earlier · ${earlierTotal} remaining`
-                          : `↑ Load earlier · ${earlierTotal} remaining`}
-                    </button>
+                          ? `Load ${Math.min(INITIAL_VISIBLE_TURNS, earlierTotal)} earlier · ${earlierTotal} remaining`
+                          : `Load earlier · ${earlierTotal} remaining`}
+                    </LoadMore>
                   </div>
                 )}
 
@@ -4504,14 +4503,13 @@ export function SessionScreen({
             tray and composer no matter how tall they grow. Hidden while a
             completion list occupies the same strip. */}
           {showJump && !fileMatches.length && !slashMatches.length && (
-            <button
-              type="button"
-              className="absolute bottom-full left-1/2 z-20 mb-2 inline-flex -translate-x-1/2 items-center gap-1.5 border border-dialog-edge bg-button px-3 py-1.5 font-mono text-meta font-bold text-button-foreground shadow-[4px_4px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate,background-color] duration-150 starting:translate-y-2 starting:opacity-0 active:scale-[0.97] motion-reduce:transition-none"
+            <Pill
+              className="absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2"
               onClick={() => scrollToEnd("smooth")}
             >
               <ArrowDownIcon />
               Latest
-            </button>
+            </Pill>
           )}
 
           {fileMatches.length > 0 && (
@@ -4525,17 +4523,10 @@ export function SessionScreen({
                 Attach a file
               </div>
               {fileMatches.map((file, index) => (
-                <button
+                <OptionRow
                   key={file.name}
-                  type="button"
-                  role="option"
-                  aria-selected={index === fileIndex}
-                  className={`grid min-h-9 w-full grid-cols-[1fr_auto] items-center gap-3 border-t border-dialog-edge px-3 py-1.5 text-left transition-colors ${
-                    index === fileIndex
-                      ? "bg-accent text-accent-foreground"
-                      : "text-dialog-foreground hover:bg-hover"
-                  }`}
-                  onPointerDown={(event) => event.preventDefault()}
+                  isActive={index === fileIndex}
+                  className="grid-cols-[1fr_auto] items-center"
                   onClick={() => completeFile(file.name)}
                 >
                   <code className="truncate font-mono text-ui font-semibold text-accent-ink">
@@ -4550,7 +4541,7 @@ export function SessionScreen({
                       .filter(Boolean)
                       .join(" · ")}
                   </span>
-                </button>
+                </OptionRow>
               ))}
             </div>
           )}
@@ -4566,17 +4557,10 @@ export function SessionScreen({
                 Slash commands
               </div>
               {slashMatches.map((command, index) => (
-                <button
+                <OptionRow
                   key={command.name}
-                  type="button"
-                  role="option"
-                  aria-selected={index === slashIndex}
-                  className={`grid min-h-9 w-full grid-cols-[7.5rem_1fr] items-start gap-3 border-t border-dialog-edge px-3 py-1.5 text-left transition-colors sm:grid-cols-[10rem_1fr] ${
-                    index === slashIndex
-                      ? "bg-accent text-accent-foreground"
-                      : "text-dialog-foreground hover:bg-hover"
-                  }`}
-                  onPointerDown={(event) => event.preventDefault()}
+                  isActive={index === slashIndex}
+                  className="grid-cols-[7.5rem_1fr] items-start sm:grid-cols-[10rem_1fr]"
                   onClick={() => completeSlash(command)}
                 >
                   <code className="break-words font-mono text-ui font-semibold text-accent-ink">
@@ -4585,7 +4569,7 @@ export function SessionScreen({
                   <span className="line-clamp-2 text-meta text-dialog-hint">
                     {command.doc}
                   </span>
-                </button>
+                </OptionRow>
               ))}
             </div>
           )}
@@ -4600,10 +4584,14 @@ export function SessionScreen({
               <span className="min-w-0 flex-1 truncate">
                 {queuePaused.held} held · {queuePaused.reason.replace(/_/g, " ")}
               </span>
-              <button
-                type="button"
+              {/* The strip is warn-toned, the VERB is the app's own secondary:
+                  a control that repaints itself per banner is how three
+                  identical "do it anyway" buttons ended up looking unrelated. */}
+              <Button
+                variant="secondary"
+                density="compact"
                 disabled={resumingQueue}
-                className="shrink-0 border border-warn-strong px-2 py-0.5 font-bold text-warn-strong transition-colors hover:bg-warn-strong hover:text-ink disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-warn-strong"
+                className="shrink-0"
                 onClick={() => {
                   setResumingQueue(true);
                   void client
@@ -4613,7 +4601,7 @@ export function SessionScreen({
                 }}
               >
                 {resumingQueue ? "Continuing…" : "Continue queue"}
-              </button>
+              </Button>
             </div>
           )}
 
@@ -4672,8 +4660,7 @@ export function SessionScreen({
                         aria-label={`Edit queued message ${index + 1}`}
                       />
                     ) : (
-                      <button
-                        type="button"
+                      <TextButton
                         disabled={busy}
                         onClick={() =>
                           setEditingQueued({
@@ -4681,7 +4668,7 @@ export function SessionScreen({
                             text: item.request,
                           })
                         }
-                        className="flex min-w-0 flex-1 items-center gap-1 text-left font-mono text-ui text-dialog-foreground transition-colors hover:text-accent-ink disabled:cursor-not-allowed"
+                        className="flex flex-1 items-center gap-1"
                         title="Tap to edit"
                       >
                         {/* Image chips first: a queued screenshot reads as its filename,
@@ -4701,7 +4688,7 @@ export function SessionScreen({
                           {item.preview ||
                             (item.attachments.length ? "" : "(empty)")}
                         </span>
-                      </button>
+                      </TextButton>
                     )}
                     <RemoveButton
                       label={`Remove queued message ${index + 1}`}
@@ -4735,16 +4722,16 @@ export function SessionScreen({
                     key={paste.id}
                     className="inline-flex min-h-7 shrink-0 items-center border border-code-edge bg-code font-mono text-chip text-accent-ink"
                   >
-                    <button
-                      type="button"
-                      className="max-w-56 truncate px-2 text-left underline decoration-dotted underline-offset-2 transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none"
+                    <TextButton
+                      isToken
+                      className="max-w-56 shrink"
                       onMouseDown={keepKeyboard}
                       onClick={() => openPasteEditor(paste.id)}
                       aria-label={`Edit pasted block ${paste.id}`}
                       title="Edit this paste"
                     >
                       {paste.token}
-                    </button>
+                    </TextButton>
                     <RemoveButton
                       edge
                       label={`Remove pasted block ${paste.id}`}
@@ -4868,10 +4855,9 @@ export function SessionScreen({
                 {attachMenuOpen && (
                   <>
                     {/* Tapping anywhere else is a dismissal, not a mis-tap. */}
-                    <button
-                      type="button"
-                      aria-label="Close attachment menu"
-                      className="fixed inset-0 z-20 cursor-default"
+                    <div
+                      role="presentation"
+                      className="fixed inset-0 z-20"
                       onMouseDown={keepKeyboard}
                       onClick={() => setAttachMenuOpen(false)}
                     />
@@ -4905,10 +4891,8 @@ export function SessionScreen({
                   </>
                 )}
 
-                <button
-                  type="button"
+                <ComposerButton
                   onMouseDown={keepKeyboard}
-                  className="grid h-8 w-7 shrink-0 place-items-center text-dialog-hint transition-[background-color,color,transform,translate,scale,rotate] duration-150 hover:bg-hover hover:text-dialog-hint-key active:scale-[0.94] disabled:text-muted motion-reduce:transition-none mouse:h-7 mouse:w-6"
                   onClick={() => {
                     if (!Capacitor.isNativePlatform()) {
                       void addAttachments();
@@ -4926,7 +4910,7 @@ export function SessionScreen({
                   aria-expanded={
                     Capacitor.isNativePlatform() ? attachMenuOpen : undefined
                   }
-                  aria-label={
+                  label={
                     Capacitor.isNativePlatform()
                       ? "Attach a photo or video"
                       : "Choose photos or videos"
@@ -4940,24 +4924,19 @@ export function SessionScreen({
                   <PlusIcon
                     className={`size-3.5 transition-transform duration-150 motion-reduce:transition-none ${attachMenuOpen ? "rotate-45" : ""}`}
                   />
-                </button>
+                </ComposerButton>
               </div>
 
               {voiceSupported && (
-                <button
-                  type="button"
+                <ComposerButton
+                  tone={voicePhase === "recording" ? "recording" : "quiet"}
                   onMouseDown={keepKeyboard}
-                  className={`grid h-8 w-7 shrink-0 place-items-center transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.94] disabled:text-muted motion-reduce:transition-none mouse:h-7 mouse:w-6 ${
-                    voicePhase === "recording"
-                      ? "animate-pulse bg-warn-surface text-err motion-reduce:animate-none"
-                      : "text-dialog-hint hover:bg-hover hover:text-dialog-hint-key"
-                  }`}
                   onClick={() => void toggleVoice()}
                   disabled={
                     voicePhase === "transcribing" ||
                     voiceModel?.status === "downloading"
                   }
-                  aria-label={
+                  label={
                     voicePhase === "recording"
                       ? "Finish dictation"
                       : "Dictate message"
@@ -4969,7 +4948,7 @@ export function SessionScreen({
                   }
                 >
                   <MicIcon />
-                </button>
+                </ComposerButton>
               )}
 
               <textarea
@@ -5106,21 +5085,19 @@ export function SessionScreen({
                 cancel. */}
               <div className="grid size-8 shrink-0 place-items-center mouse:size-7">
                 {activeWork && !liveTurn?.cancelling && (
-                  <button
-                    type="button"
+                  <ComposerButton
+                    tone="stop"
                     onMouseDown={keepKeyboard}
-                    className="grid size-full place-items-center border border-err bg-cancelled transition-[background-color,opacity,transform,translate,scale,rotate] duration-150 hover:bg-warn-surface active:scale-[0.94] starting:scale-90 starting:opacity-0 motion-reduce:transition-none"
                     onClick={cancel}
-                    aria-label="Stop response"
+                    label="Stop response"
                   >
                     <span className="size-1.5 bg-err" />
-                  </button>
+                  </ComposerButton>
                 )}
               </div>
-              <button
-                type="button"
+              <ComposerButton
+                tone="send"
                 onMouseDown={keepKeyboard}
-                className="grid size-8 shrink-0 place-items-center border border-dialog-edge bg-dialog-title text-ui font-bold text-dialog-title-foreground transition-[background-color,color,transform,translate,scale,rotate] duration-150 hover:bg-accent-2 active:scale-[0.94] disabled:scale-100 disabled:bg-button disabled:text-dialog-hint motion-reduce:transition-none mouse:size-7"
                 onClick={() => {
                   // Sending ends the writing: the keyboard goes down with the
                   // message instead of standing over the answer it asked for.
@@ -5131,11 +5108,11 @@ export function SessionScreen({
                   (!prompt.trim() && !attachments.length) ||
                   voicePhase !== "idle"
                 }
-                aria-label={running ? "Queue message" : "Send message"}
+                label={running ? "Queue message" : "Send message"}
                 title={running ? "Queue behind the running turn" : "Send"}
               >
                 {"↑"}
-              </button>
+              </ComposerButton>
             </div>
           </div>
 
@@ -5153,9 +5130,9 @@ export function SessionScreen({
             model is the loud one, its level the quiet one, the cost the only
             accent. */}
           <div className="flex w-full items-center gap-2.5 pt-1">
-            <button
-              type="button"
-              className="min-w-0 shrink truncate px-1 py-1 text-left font-mono text-chip font-semibold uppercase tracking-[0.08em] text-dialog-hint-key underline decoration-dialog-edge decoration-1 underline-offset-4 transition-colors duration-150 hover:text-accent-ink hover:decoration-accent focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none"
+            <MetaButton
+              isPicker
+              className="min-w-0 shrink truncate"
               onClick={() => setRouterOpen(true)}
               aria-label="Change provider and model"
               title={
@@ -5165,7 +5142,7 @@ export function SessionScreen({
               }
             >
               {modelPref?.model ?? defaultPref?.model ?? "model"}
-            </button>
+            </MetaButton>
 
             {reasoning && (reasoning.choices?.length ?? 0) > 0 && (
               <>
@@ -5173,10 +5150,9 @@ export function SessionScreen({
                   aria-hidden="true"
                   className="h-2.5 w-px shrink-0 bg-dialog-edge"
                 />
-                <button
-                  type="button"
+                <MetaButton
+                  className="shrink-0"
                   onMouseDown={keepKeyboard}
-                  className="shrink-0 px-1 py-1 font-mono text-chip font-semibold uppercase tracking-[0.08em] text-dialog-hint transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none"
                   onClick={() => void cycleReasoning()}
                   disabled={reasoningBusy}
                   aria-busy={reasoningBusy}
@@ -5193,7 +5169,7 @@ export function SessionScreen({
                   >
                     {reasoningLevel}
                   </span>
-                </button>
+                </MetaButton>
               </>
             )}
 

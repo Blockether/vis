@@ -271,12 +271,12 @@ export function QrScanner({ onResult, onCancel }: Props) {
           </p>
         )}
         <div className="flex gap-2">
-          <Button variant="ghost" className="flex-1" onClick={cancel}>
+          <Button variant="secondary" className="flex-1" onClick={cancel}>
             Cancel
           </Button>
           {photoScanSupported() && (
             <Button
-              variant="ghost"
+              variant="secondary"
               className="flex-1"
               onClick={shootPhoto}
               disabled={phase === 'busy'}

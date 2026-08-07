@@ -70,12 +70,14 @@ import { BUNDLED_THEMES } from "../lib/palettes";
 import {
   Banner,
   Button,
+  ChoiceCell,
   Chip,
   DialogFrame,
   Input,
   ListRow,
   Modal,
   PROSE,
+  Switch,
 } from "../components/ui";
 import {
   REACH_HINT,
@@ -315,7 +317,7 @@ export function GatewaySettingsDialog({
                       You&apos;ll need the QR code again.
                     </span>
                     <Button
-                      variant="ghost"
+                      variant="secondary"
                       onClick={() => setConfirmRemove(false)}
                     >
                       Cancel
@@ -363,7 +365,7 @@ export function GatewaySettingsDialog({
                 <p className="font-mono text-meta text-dialog-hint">
                   Can't load settings — vis isn't responding on this machine.
                 </p>
-                <Button variant="ghost" onClick={() => void load()}>
+                <Button variant="secondary" onClick={() => void load()}>
                   Retry
                 </Button>
               </div>
@@ -379,7 +381,7 @@ export function GatewaySettingsDialog({
                   <code className="text-accent-ink">vis gateway pair</code> and
                   paste the fresh link to load its settings.
                 </p>
-                <Button variant="ghost" onClick={() => void load()}>
+                <Button variant="secondary" onClick={() => void load()}>
                   Retry
                 </Button>
               </div>
@@ -459,8 +461,8 @@ export function GatewaySettingsDialog({
                         {toggle.type === "boolean" && (
                           <Switch
                             label={toggle.label}
-                            on={!!toggle.enabled}
-                            busy={busy}
+                            isOn={!!toggle.enabled}
+                            isBusy={busy}
                             disabled={busy}
                             onClick={() => flip(toggle)}
                           />
@@ -805,7 +807,7 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
             <div className="flex flex-wrap items-center justify-end gap-1.5">
               {server.url && (
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   disabled={busy !== null}
                   onClick={() => void authorize(server)}
                 >
@@ -814,7 +816,7 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
               )}
               {server.url && server.is_authorized && (
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   disabled={busy !== null}
                   onClick={() => void signOut(server)}
                 >
@@ -822,7 +824,7 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
                 </Button>
               )}
               <Button
-                variant="ghost"
+                variant="secondary"
                 disabled={busy !== null}
                 onClick={() => void setRunning(server, server.is_killed)}
               >
@@ -832,20 +834,20 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
                 <>
                   <Switch
                     label={`${server.name} MCP server`}
-                    on={server.enabled}
-                    busy={busy === server.name}
+                    isOn={server.enabled}
+                    isBusy={busy === server.name}
                     disabled={busy !== null}
                     onClick={() => void toggle(server)}
                   />
                   <Button
-                    variant="ghost"
+                    variant="secondary"
                     disabled={busy !== null}
                     onClick={() => openForm(server)}
                   >
                     Edit
                   </Button>
                   <Button
-                    variant="ghost"
+                    variant="secondary"
                     disabled={busy !== null}
                     onClick={() => void remove(server)}
                   >
@@ -883,7 +885,7 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
                 />
                 <div className="flex flex-wrap justify-end gap-2">
                   <Button
-                    variant="ghost"
+                    variant="secondary"
                     disabled={busy !== null}
                     onClick={() => void cancelAuth()}
                   >
@@ -1025,7 +1027,7 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
             )}
             <div className="flex flex-wrap justify-end gap-2 border-t border-dialog-edge pt-2">
               <Button
-                variant="ghost"
+                variant="secondary"
                 disabled={busy !== null}
                 onClick={() => closeForm()}
               >
@@ -1206,7 +1208,7 @@ export function ApplicationSettingsDialog({
             <div className="p-3 sm:p-4">
               <Button
                 type="button"
-                variant="solid"
+                variant="primary"
                 density="compact"
                 className="shrink-0 whitespace-nowrap"
                 onClick={() => {
@@ -1229,7 +1231,7 @@ export function ApplicationSettingsDialog({
                   key={choice.id}
                   title={choice.display_name}
                   sub={choice.mode}
-                  selected={pref === choice.id}
+                  isSelected={pref === choice.id}
                   disabled={pending?.startsWith("theme:") ?? false}
                   onClick={() => void chooseTheme(choice)}
                 />
@@ -1252,7 +1254,7 @@ export function ApplicationSettingsDialog({
                   key={size}
                   title={String(size)}
                   sub={label}
-                  selected={size === pageSize}
+                  isSelected={size === pageSize}
                   disabled={pending?.startsWith("pageSize:") ?? false}
                   onClick={() => void choosePageSize(size)}
                 />
@@ -1468,7 +1470,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                     <div className="flex flex-col gap-2 sm:flex-row">
                       <Button
                         className="flex-1"
-                        variant={isDefaultModel ? "ghost" : "solid"}
+                        variant={isDefaultModel ? "secondary" : "primary"}
                         disabled={!selectedModel || tagging || isDefaultModel}
                         onClick={() =>
                           void setDefault(provider.id, selectedModel)
@@ -1478,7 +1480,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                       </Button>
                       <Button
                         className="flex-1"
-                        variant="ghost"
+                        variant="secondary"
                         disabled={
                           !selectedModel ||
                           tagging ||
@@ -1494,7 +1496,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                       {provider.is_fallback && (
                         <Button
                           className="flex-1"
-                          variant="ghost"
+                          variant="secondary"
                           disabled={tagging}
                           onClick={() => void clearFallback(provider.id)}
                         >
@@ -1512,7 +1514,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                   <div className="flex flex-col gap-2 sm:flex-row">
                     <Button
                       className="flex-1"
-                      variant={authed ? "ghost" : "solid"}
+                      variant={authed ? "secondary" : "primary"}
                       disabled={pending === `auth:${provider.id}`}
                       onClick={() => void auth.signIn(provider)}
                     >
@@ -1523,7 +1525,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                           : "Sign in"}
                     </Button>
                     <Button
-                      variant="ghost"
+                      variant="secondary"
                       className="flex-1"
                       disabled={pending === `status:${provider.id}`}
                       onClick={() => void auth.recheck(provider)}
@@ -1957,52 +1959,6 @@ function NativeNotificationsPanel({
   );
 }
 
-/**
- * ONE settings choice — the only control this dialog picks with. Theme, sessions
- * per project and where a session starts all wear it, so a setting is read the
- * same way everywhere: a name, the quiet word under it, and `●`/`○` for whether
- * this is the one you have. Three hand-spelled copies of this button had already
- * drifted apart in height and gap.
- */
-function ChoiceCell({
-  title,
-  sub,
-  selected,
-  disabled,
-  onClick,
-}: {
-  title: string;
-  sub: string;
-  selected: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      disabled={disabled}
-      onClick={onClick}
-      className={`flex min-h-10 min-w-0 items-center justify-between gap-3 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none mouse:min-h-9 ${selected ? "bg-accent text-accent-foreground" : "bg-input text-white hover:bg-hover"}`}
-    >
-      <span className="min-w-0">
-        <span className="block truncate font-mono text-ui font-bold">
-          {title}
-        </span>
-        <span className="block truncate font-mono text-chip uppercase tracking-wider opacity-65">
-          {sub}
-        </span>
-      </span>
-      <span
-        className="shrink-0 font-mono text-meta font-black"
-        aria-hidden="true"
-      >
-        {selected ? "●" : "○"}
-      </span>
-    </button>
-  );
-}
-
 function SettingsPanel({
   title,
   description,
@@ -2045,41 +2001,6 @@ function SettingsPanel({
       </header>
       <div>{children}</div>
     </section>
-  );
-}
-
-function Switch({
-  label,
-  on,
-  busy,
-  disabled,
-  onClick,
-}: {
-  label: string;
-  on: boolean;
-  busy?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-label={`${label}: ${on ? "on" : "off"}`}
-      aria-checked={on}
-      aria-busy={busy}
-      disabled={disabled}
-      onClick={onClick}
-      className={`mt-0.5 inline-flex h-8 w-[3.25rem] shrink-0 items-center justify-center border font-mono text-chip font-black tracking-[0.08em] transition-colors duration-150 ease-out active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none motion-reduce:active:scale-100 mouse:h-6 ${
-        on
-          ? "border-transparent bg-accent text-accent-foreground"
-          : "border-transparent bg-panel-2 text-dialog-hint hover:bg-hover hover:text-white"
-      }`}
-    >
-      <span aria-hidden className={busy ? "animate-pulse" : ""}>
-        {busy ? "··" : on ? "ON" : "OFF"}
-      </span>
-    </button>
   );
 }
 
@@ -2270,7 +2191,7 @@ function AddressPanel({
           </span>
           {gateway.pinned && (
             <Button
-              variant="ghost"
+              variant="secondary"
               onClick={() =>
                 void choose(bestAddress(addresses) ?? gateway.url, false)
               }

@@ -196,7 +196,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
           </p>
           <div className="flex gap-2">
             <Button
-              variant="ghost"
+              variant="secondary"
               disabled={pending === 'reload'}
               onClick={() => void refresh()}
             >

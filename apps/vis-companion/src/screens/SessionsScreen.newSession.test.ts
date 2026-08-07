@@ -372,10 +372,10 @@ describe("the machine header's own verbs", () => {
   // to pin), so what is left of the original complaint is that neither draws a glyph.
   it("paints the header's two verbs as words, not as glyphs", () => {
     expect(source).toMatch(
-      /<Button\s+variant="solid"\s+density="compact"[\s\S]{0,120}aria-label=\{`Add a project on/,
+      /<Button\s+variant="primary"\s+density="compact"[\s\S]{0,120}aria-label=\{`Add a project on/,
     );
     expect(source).toMatch(
-      /<Button\s+variant="ghost"\s+density="compact"[\s\S]{0,120}aria-label=\{`Settings for/,
+      /<Button\s+variant="secondary"\s+density="compact"[\s\S]{0,120}aria-label=\{`Settings for/,
     );
   });
 });
@@ -450,10 +450,10 @@ describe("the machine is a chip, not a second band", () => {
     expect(verbs).not.toContain('variant="quiet"');
     // ADD is the amber primary, its settings sibling the framed one.
     expect(verbs.slice(0, verbs.indexOf("Add project</Button>"))).toContain(
-      'variant="solid"',
+      'variant="primary"',
     );
     expect(verbs.slice(0, verbs.indexOf("Machine settings</Button>"))).toContain(
-      'variant="ghost"',
+      'variant="secondary"',
     );
   });
 
@@ -512,7 +512,7 @@ describe('the machine strip', () => {
   // top from header"): the verb was `quiet`, i.e. frameless ink that only looked like
   // a button under a cursor, and the strip's 12px top gap still read as flush.
   it('pours the page ink into Add machine and clears the header by more', () => {
-    expect(source).toMatch(/variant="inverse"[\s\S]{0,200}Add machine/);
+    expect(source).toMatch(/variant="secondary"[\s\S]{0,200}Add machine/);
     expect(source).toMatch(
       /aria-label="Machines"[\s\S]{0,200}pb-3 pt-6 sm:px-4 sm:pb-4 sm:pt-8/,
     );

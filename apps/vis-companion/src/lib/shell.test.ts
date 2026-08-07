@@ -154,7 +154,7 @@ describe('one screen, pairing is a chip', () => {
     expect(appSource).not.toMatch(/<button\s+type="button"/);
     // The verb that ADDS is the amber primary, exactly like `New session`; the
     // preferences cog beside it is its framed sibling, never a second amber.
-    expect(appSource).toContain('variant="ghost"');
+    expect(appSource).toContain('variant="secondary"');
   });
 
   // Regression, user report: "search should be cross machine and it should be on top

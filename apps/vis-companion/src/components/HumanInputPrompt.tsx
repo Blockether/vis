@@ -263,7 +263,7 @@ export function HumanInputSheet({
               <div className="flex gap-2 sm:justify-end">
                 {request.is_cancellable && (
                   <Button
-                    variant="ghost"
+                    variant="secondary"
                     className="flex-1 sm:flex-none"
                     disabled={busy}
                     onClick={onCancel}
