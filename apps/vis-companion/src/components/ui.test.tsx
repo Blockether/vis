@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import uiSource from './ui.tsx?raw';
+import sessionsListSource from '../screens/SessionsScreen.tsx?raw';
 import settingsSource from '../screens/SettingsScreen.tsx?raw';
 
 import { MACHINE_COLORS } from '../lib/machine-colors';
@@ -679,5 +680,21 @@ describe('a row-ending icon button fills its row', () => {
     expect(line).toContain('self-stretch');
     // A stretched box needs no invisible reach for its target.
     expect(line).toContain('after:content-none');
+  });
+});
+
+// Regression, user report ("session element right side before the > has no enough
+// padding right because hovering over the element looks awful"): the pressable half of
+// a session row painted its hover slab to x=340 and its own facts ended at 340 too, so
+// the ink sat on the boundary of its own highlight, a hair from the `›`.
+describe("a row's pressable slab", () => {
+  it('pads its trailing inside edge exactly as LIST_EDGE pads the leading one', () => {
+    expect(uiSource).toContain("export const LIST_EDGE = 'pl-3 sm:pl-4';");
+    expect(uiSource).toContain("export const LIST_EDGE_END = 'pr-3 sm:pr-4';");
+  });
+
+  it('never lets a row spell that padding itself', () => {
+    expect(sessionsListSource).not.toContain('pr-3 sm:pr-4');
+    expect(sessionsListSource).toContain('${LIST_EDGE} ${LIST_EDGE_END}');
   });
 });

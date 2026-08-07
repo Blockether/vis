@@ -663,6 +663,18 @@ const HeaderTone = createContext<'machine' | 'project'>('project');
 export const LIST_EDGE = 'pl-3 sm:pl-4';
 
 /**
+ * THE INNER EDGE OF A PRESSABLE ROW, and the other half of `LIST_EDGE`.
+ *
+ * A row's pressable half is a HOVER SLAB: it fills the row from the leading edge up to
+ * the trailing control cluster, and it PAINTS. Measured on a 390px iPhone, the session
+ * row's own facts — the status badge, the timestamp — ended at 340 and the slab ended
+ * at 340 too, so on hover the ink sat exactly on the boundary of its own highlight.
+ * A slab needs the same air inside its trailing edge that `LIST_EDGE` gives its
+ * leading one; the gap BETWEEN the slab and the cluster stays `LIST_TRAIL`'s business.
+ */
+export const LIST_EDGE_END = 'pr-3 sm:pr-4';
+
+/**
  * THE LEFT EDGE OF THE LIST, worn by whatever is standing there.
  *
  * The card gives this side up entirely so that a machine's rail can BE the frame
@@ -824,7 +836,7 @@ export function HeaderToggle({
       type="button"
       aria-expanded={isOpen}
       onClick={onToggle}
-      className={`flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:py-0 ${LIST_EDGE}`}
+      className={`flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:py-0 ${LIST_EDGE} ${LIST_EDGE_END}`}
     >
       <span className={HEADER_GLYPH}>
         <ChevronIcon open={isOpen} className="size-3.5 text-dialog-hint" />

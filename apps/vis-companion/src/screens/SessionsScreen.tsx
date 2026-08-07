@@ -12,6 +12,7 @@ import {
   Input,
   KebabButton,
   LIST_EDGE,
+  LIST_EDGE_END,
   LIST_FRAME,
   LiveCount,
   LiveTally,
@@ -2042,7 +2043,7 @@ const SessionRow = memo(function SessionRow({
       <div className="flex items-stretch">
         <button
           type="button"
-          className={`group flex min-h-12 min-w-0 flex-1 items-center py-1.5 text-left transition-colors duration-150 hover:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:min-h-8 mouse:py-1 ${LIST_EDGE}`}
+          className={`group flex min-h-12 min-w-0 flex-1 items-center py-1.5 text-left transition-colors duration-150 hover:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:min-h-8 mouse:py-1 ${LIST_EDGE} ${LIST_EDGE_END}`}
           data-session-id={session.id}
           onClick={() => void onOpen(conn, session.id)}
         >
@@ -2189,7 +2190,7 @@ function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }
   const errors = usage?.top_errors ?? [];
 
   return (
-    <div className={`border-t border-dialog-edge bg-panel-2 py-2.5 pr-3 sm:pr-4 ${LIST_EDGE}`}>
+    <div className={`border-t border-dialog-edge bg-panel-2 py-2.5 ${LIST_EDGE} ${LIST_EDGE_END}`}>
       {phase === 'loading' && (
         <p className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
           Reading usage…
@@ -2566,7 +2567,7 @@ function MatchPreview({ match, needle }: { match: SessionMatch; needle: string }
         ].filter((h) => h.snippet.length > 0);
   if (rows.length === 0) return null;
   return (
-    <div className={`border-t border-dialog-edge bg-ink/30 py-1.5 pr-3 sm:pr-4 ${LIST_EDGE}`}>
+    <div className={`border-t border-dialog-edge bg-ink/30 py-1.5 ${LIST_EDGE} ${LIST_EDGE_END}`}>
       <div className="divide-y divide-dialog-edge/70">
         {rows.map((hit, index) => (
           <div
