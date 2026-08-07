@@ -320,6 +320,21 @@ export function ProjectsIcon({ className }: { className?: string }) {
   );
 }
 
+/**
+ * A DRAFT: the project folder, copied. Same flat-cornered folder as
+ * `ProjectsIcon` with a second one standing behind it, because a draft is not a
+ * different kind of place — it is this project, duplicated. The verb it marks
+ * sits directly under "Manage projects", so the two marks have to be relatives.
+ */
+export function DraftIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M7.06 4.8h4.3l1.33 1.78h6.55v7.2" />
+      <path d="M3.7 7.6h5.18l1.6 2.14h7.9v9.06H3.7z" />
+    </Icon>
+  );
+}
+
 export function SettingsIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>

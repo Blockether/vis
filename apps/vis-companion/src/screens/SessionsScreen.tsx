@@ -61,6 +61,7 @@ import {
 } from '../components/ManageProjectsSheet';
 import {
   CloseIcon,
+  DraftIcon,
   PencilIcon,
   ProjectsIcon,
   SettingsIcon,
@@ -1547,6 +1548,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                   is a SECOND verb and only when the app was told to offer it. */}
               {offerDrafts && (
                 <MenuItem
+                  icon={<DraftIcon className="size-4" />}
                   title="New session in a draft…"
                   hint={`a private copy of ${project?.label ?? 'this project'}, uncommitted work included`}
                   onSelect={() => setStartFlow((flow) => startFlowStep(flow, 'drafts', target))}

@@ -1,3 +1,4 @@
+import sessionsSource from "../screens/SessionsScreen.tsx?raw";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
@@ -9,6 +10,7 @@ import {
   ClipIcon,
   CloseIcon,
   DotsIcon,
+  DraftIcon,
   ImageIcon,
   MachinesIcon,
   MicIcon,
@@ -273,7 +275,22 @@ describe("the icon set", () => {
  * marks the TUI paints too, and the spinner's Braille cadence is deliberate as
  * well. Only marks that stand in for an icon are refused.
  */
-const GLYPHS_AS_ICONS = ["✕", "✖", "✗", "▾", "▶", "◀", "▲", "↓", "↗", "▣", "≡", "⋯", "›", "‹"];
+const GLYPHS_AS_ICONS = [
+  "✕",
+  "✖",
+  "✗",
+  "▾",
+  "▶",
+  "◀",
+  "▲",
+  "↓",
+  "↗",
+  "▣",
+  "≡",
+  "⋯",
+  "›",
+  "‹",
+];
 
 /**
  * Two of them have an honest job in TEXT: `×` multiplies (`retried 3×`, `3 rows
@@ -297,8 +314,10 @@ const withoutComments = (source: string) =>
  */
 const UNICODE_ESCAPE = /\\u\{([0-9a-fA-F]{1,6})\}|\\u([0-9a-fA-F]{4})/g;
 const unescaped = (source: string) =>
-  source.replace(UNICODE_ESCAPE, (_match, braced: string | undefined, plain: string) =>
-    String.fromCodePoint(Number.parseInt(braced ?? plain, 16)),
+  source.replace(
+    UNICODE_ESCAPE,
+    (_match, braced: string | undefined, plain: string) =>
+      String.fromCodePoint(Number.parseInt(braced ?? plain, 16)),
   );
 
 const STRING = /(['"`])(?:\\.|(?!\1)[^\\])*\1/g;
@@ -450,5 +469,26 @@ describe("the shipped screens", () => {
     expect(
       oversizedOnChipLines(chip.replace("text-chip", "text-meta")),
     ).toEqual([]);
+  });
+});
+
+// Regression, user report ("New session in the draft should also have the icon"):
+// the draft verb sat directly under `Manage projects` in the same menu band, but
+// only one of the two carried a mark, so the pair read as a heading and an item.
+describe("DraftIcon", () => {
+  it("is the project folder, copied", () => {
+    const html = renderToStaticMarkup(<DraftIcon />);
+    // The front folder is `ProjectsIcon`'s own outline, translated.
+    expect(html).toContain("h5.18l1.6 2.14h7.9v9.06");
+    expect(html.match(/<path/g)?.length).toBe(2);
+  });
+
+  it("marks the draft verb in the start menu", () => {
+    const sessions = sessionsSource;
+    const band = sessions.slice(
+      sessions.indexOf("{offerDrafts && ("),
+      sessions.indexOf('title="Manage projects"'),
+    );
+    expect(band).toContain('<DraftIcon className="size-4" />');
   });
 });
