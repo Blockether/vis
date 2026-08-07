@@ -1903,7 +1903,11 @@ const SessionRow = memo(function SessionRow({
   const live = sessionIsLive(session);
   const turns = Number(session.turn_count ?? 0);
   // Turns that finished while this session was closed: the one thing a relative
-  // timestamp cannot announce.
+  // timestamp cannot announce. The row SUBSCRIBES to the marks: the list stays
+  // mounted behind the transcript, and this component is memoised over row objects
+  // an unchanged poll returns identical — so without the subscription the badge of
+  // the session you just read stayed on screen until something else moved.
+  useReadMarks();
   const unread = unreadTurnCount(session);
   // The right chevron is a real DISCLOSURE, not decoration: it opens this
   // session's usage rollup in place. It stays a sibling of the open-session
