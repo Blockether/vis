@@ -1147,11 +1147,12 @@ export function SessionsScreen({
             );
           })}
       </div>
-        {/* The card is a CLOSED frame on every width: it used to carry only a bottom
-            rule and a 2px right rule, so on a phone its top edge did not exist (the
-            tab had nothing to join into) and its right edge sat at x=388..390, off the
-            glass. One border, and the phone inset matches the chip strip's own. */}
-        <div className="mx-3 flex h-full min-h-0 flex-col overflow-hidden border border-dialog-edge bg-panel sm:mx-0 sm:border-r-2">
+        {/* The card is a CLOSED frame on every width, and it ENDS where its content
+            ends: `h-full` stretched it to the viewport, so on a desktop the bottom
+            rule floated ~300px under the pager with nothing between them - a border
+            around emptiness. `max-h-full` keeps the scroll containment and puts the
+            bottom edge directly under the last row. */}
+        <div className="mx-3 flex max-h-full min-h-0 flex-col overflow-hidden border border-dialog-edge bg-panel sm:mx-0 sm:border-r-2">
         <div className={`border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4 ${LIST_FRAME}`}>
           <div className="mt-1.5 flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -1815,8 +1816,10 @@ const ProjectGroup = memo(function ProjectGroup({
           />
         </HeaderActions>
       </SectionHeader>
+      {/* The list carries no bottom rule of its own: the card's own bottom border
+          closes it, and the two of them stacked into a doubled line under the pager. */}
       {rows.length > 0 && (
-        <div className="border-b border-dialog-edge">
+        <div>
           {rows.map((session) => (
             <SessionRow
               key={session.id}
@@ -2317,7 +2320,7 @@ function NavigatorSkeleton() {
                 layout jump the user pays for on every cold open. It used to carry an
                 `invisible` chevron and `px-3`, indenting its bars 32px in a list whose
                 real rows started their titles at 8px. */}
-            <div className="border-b border-dialog-edge">
+            <div>
               {rows.map((width, row) => (
                 <div
                   key={row}

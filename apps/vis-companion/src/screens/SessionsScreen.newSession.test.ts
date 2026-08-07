@@ -159,9 +159,9 @@ describe('where "New session" lives', () => {
     // `SectionHeader`, and is pinned once in `ui.test.tsx`.
     expect(source).toContain("<SectionHeader>");
     expect(source).not.toContain('tone="machine"');
-    expect(source).toContain(
-      '      {rows.length > 0 && (\n        <div className="border-b border-dialog-edge">',
-    );
+    // The list's last boundary is the CARD's own bottom border, not a rule of its own:
+    // the two of them stacked into a doubled line under the pager.
+    expect(source).toContain("      {rows.length > 0 && (");
     expect(source).not.toContain("-mt-px");
     // The ONE deliberate overlap on the screen is the chosen machine tab merging
     // into its card, and it lives in `chipClass`, above the list entirely.
@@ -216,6 +216,16 @@ describe('where "New session" lives', () => {
     expect(source).not.toContain("sm:border-y sm:border-r-2");
     expect(source).toContain("{index > 0 && <MachineGap />}");
     expect(source).not.toContain("showMachineHeaders");
+  });
+
+  // Regression, user report ("what is this bottom border, remove it"): the card was
+  // `h-full`, so on a 1280x900 desktop its bottom rule floated at y=876 with ~300px of
+  // empty paper between it and the pager at y=554 — a border drawn around nothing — and
+  // the list's own `border-b` doubled the line right under the pager.
+  it("ends the card where its content ends, with one rule under the pager", () => {
+    expect(source).toContain("mx-3 flex max-h-full min-h-0 flex-col overflow-hidden");
+    expect(source).not.toContain("mx-3 flex h-full min-h-0 flex-col overflow-hidden");
+    expect(source).not.toContain('<div className="border-b border-dialog-edge">');
   });
 
   // Regression, user report ("THEY LOOK BAD ON THE IPHONE. See the machine
@@ -383,7 +393,7 @@ describe("the machine is a chip, not a second band", () => {
   it("stands the chips outside the machine card, joined to it as tabs", () => {
     // The switcher is ABOVE the card, on the page's own paper.
     expect(source.indexOf('aria-label="Machines"')).toBeLessThan(
-      source.indexOf("flex h-full min-h-0 flex-col overflow-hidden"),
+      source.indexOf("flex max-h-full min-h-0 flex-col overflow-hidden"),
     );
     // The selected chip's bottom edge is open, so it merges into the card below it.
     expect(source).toContain("-mb-px");
