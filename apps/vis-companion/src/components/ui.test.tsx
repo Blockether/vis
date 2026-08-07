@@ -7,6 +7,9 @@ import sessionsListSource from "../screens/SessionsScreen.tsx?raw";
 import gatewaySource from "../lib/gateway.ts?raw";
 import settingsSource from "../screens/SettingsScreen.tsx?raw";
 import chatSource from "./ChatContent.tsx?raw";
+import docSource from "./DocArtifact.tsx?raw";
+import tableBarSource from "./DataTable.tsx?raw";
+import boundarySource from "./ErrorBoundary.tsx?raw";
 
 import { MACHINE_COLORS } from "../lib/machine-colors";
 import {
@@ -1130,5 +1133,36 @@ describe("Modal, fit", () => {
 
   it("is what the rename/delete question opens in", () => {
     expect(sessionsListSource).toContain('<Modal size="fit" onDismiss={closeRowAction}>');
+  });
+});
+
+
+// Regression, user report ("in the artifacts when I read the md file there is this
+// close button which doesn't look like rest of the close buttons"): an opened
+// document wore a caption STRIP with the X hung off its end on panel paper, while
+// every other opened surface wears the one `DialogHeader` band with a title-toned
+// close. Three more surfaces spelled a button out by hand beside it — the doc
+// card's `Open` chip in `bg-button`, the data table's `BAR_BUTTON`/`PAGER_BUTTON`
+// class constants, and the error screen's reload — so the app carried four button
+// faces nobody had chosen.
+describe("every surface uses the vocabulary's own controls", () => {
+  it("titles an opened document with the one header band and the one way out", () => {
+    expect(docSource).toContain("<DialogHeader");
+    expect(docSource).toContain("closeLabel={`Close ${name}`}");
+    // The X is the header's own; nothing hangs it off a caption strip.
+    expect(docSource).not.toContain("<DialogClose");
+    expect(docSource).not.toContain("self-stretch");
+  });
+
+  it("leaves no hand-rolled button in the document, table or error surfaces", () => {
+    for (const source of [docSource, tableBarSource, boundarySource]) {
+      expect(source).toMatch(/from ['"]\.\/ui['"]/);
+    }
+    // A control is a COMPONENT before it is a class list.
+    expect(docSource).not.toContain("<button");
+    expect(boundarySource).not.toContain("<button");
+    expect(tableBarSource).not.toContain("BAR_BUTTON");
+    expect(tableBarSource).not.toContain("PAGER_BUTTON");
+    expect(tableBarSource).not.toContain("border border-edge-strong px-3");
   });
 });

@@ -1,5 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 
+import { Button } from './ui';
+
 /**
  * The last line between a thrown render and a BLANK app.
  *
@@ -41,13 +43,9 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
           The screen stopped rendering. Your sessions and drafts are safe on the gateway — reloading picks up where you were.
         </p>
         <p className="max-w-sm break-words font-mono text-chip text-footer-muted">{error.message}</p>
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          className="border border-dialog-edge bg-panel-2 px-4 py-2 text-ui active:opacity-70"
-        >
+        <Button variant="ghost" onClick={() => window.location.reload()}>
           Reload Vis
-        </button>
+        </Button>
       </div>
     );
   }

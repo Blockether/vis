@@ -11,7 +11,7 @@ import {
 import { MarkdownArtifact } from "./MarkdownArtifact";
 import { PdfAnnotator } from "./PdfArtifact";
 import { TextFrame } from "./TextArtifact";
-import { DialogClose } from "./ui";
+import { Button, DialogHeader } from "./ui";
 
 /**
  * What an OPENED artifact needs in order to be marked up: which session and
@@ -136,30 +136,6 @@ function DocCaption({
   );
 }
 
-/**
- * The transcript's own chip face — the very box, border, paper, ink and hover
- * that `Copy` wears in a tool result, so the card carries no foreign control.
- */
-function DocChip({
-  label,
-  onClick,
-  ariaLabel,
-}: {
-  label: string;
-  onClick: () => void;
-  ariaLabel: string;
-}) {
-  return (
-    <button
-      type="button"
-      className="min-h-11 min-w-[6ch] shrink-0 border border-dialog-edge bg-button px-2 py-0.5 text-center font-mono text-chip text-button-foreground transition-colors hover:bg-hover active:bg-hover mouse:min-h-7"
-      onClick={onClick}
-      aria-label={ariaLabel}
-    >
-      {label}
-    </button>
-  );
-}
 
 /**
  * An opened document owns the WHOLE viewport — full height and full width —
@@ -193,18 +169,14 @@ export const DocOverlay = memo(function DocOverlay({
 
   return (
     <div className="fixed inset-0 z-50 flex h-[100dvh] min-h-0 min-w-0 flex-col overflow-hidden overscroll-contain bg-panel pt-[env(safe-area-inset-top)]">
-      <DocCaption
-        mime={mime}
-        name={name}
-        sizeLabel={sizeLabel}
-        action={
-          <DialogClose
-            label={`Close ${name}`}
-            tone="panel"
-            className="-my-1 -mr-2 self-stretch"
-            onClose={onClose}
-          />
-        }
+      {/* The one header band, exactly as an artifact opened from the sheet or any
+          other surface that opens over another wears it: the name is the title,
+          what the file IS is the subtitle, and the way out is the header's own. */}
+      <DialogHeader
+        title={name}
+        subtitle={[docKindLabel(mime), sizeLabel].filter(Boolean).join(" · ")}
+        closeLabel={`Close ${name}`}
+        onClose={onClose}
       />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Opened, the artifact is not only READ: a note can be commented on and a
@@ -283,7 +255,14 @@ export const DocPreview = memo(function DocPreview({
         name={name}
         sizeLabel={sizeLabel}
         action={
-          <DocChip label="Open" onClick={open} ariaLabel={`Open ${name}`} />
+          <Button
+            variant="ghost"
+            density="compact"
+            onClick={open}
+            aria-label={`Open ${name}`}
+          >
+            Open
+          </Button>
         }
       />
       {/* The opened document is a SCREEN, not a part of the transcript: it is

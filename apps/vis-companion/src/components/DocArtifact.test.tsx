@@ -80,15 +80,15 @@ describe("DocPreview", () => {
     expect(body).not.toContain("New tab");
   });
 
-  // The one control the card carries wears the transcript's own chip face, the
-  // same one `Copy` wears in a tool result — at a thumb-sized height on touch.
-  it("carries an Open chip shaped like the copy chip", () => {
+  // The one control the card carries is the app's own `Button` — a secondary
+  // (`ghost`) at the header rhythm — not a chip face spelled out here. A compact
+  // button keeps the 44px target on touch through its own invisible `::after`.
+  it("carries an Open button from the shared vocabulary", () => {
     const html = preview();
     expect(text(html)).toContain("Open");
-    expect(html).toContain("border-dialog-edge");
-    expect(html).toContain("bg-button");
-    expect(html).toContain("text-button-foreground");
-    expect(html).toContain("min-h-11");
+    expect(html).toContain("border-edge-strong");
+    expect(html).toContain("after:-top-1.5");
+    expect(html).not.toContain("bg-button");
   });
 });
 

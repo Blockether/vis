@@ -1,5 +1,6 @@
 import { memo, useCallback, useId, useMemo, useRef, useState } from 'react';
 import { SortIcon } from './icons';
+import { Button } from './ui';
 
 // A CSV/TSV artifact is DATA, not a picture. `vis_attach` emits it as a
 // ````vis-table` fence and BOTH surfaces paint it as a real grid: the TUI through
@@ -206,11 +207,6 @@ const BODY_CELL = 'h-[26px] border-b border-code-edge p-0 align-middle';
 /** The `│` of the TUI grid: every column but the first carries its own rule. */
 const COLUMN_RULE = 'border-l border-code-edge';
 
-const PAGER_BUTTON =
-  'flex min-h-11 min-w-11 items-center justify-center border border-edge-strong px-3 text-ui text-code-foreground active:bg-hover disabled:opacity-40';
-const BAR_BUTTON =
-  'flex min-h-11 shrink-0 items-center border border-edge-strong px-3 text-ui text-code-foreground active:bg-hover';
-
 type Sort = { index: number; dir: 'asc' | 'desc' } | null;
 type Cell = { row: number; col: number } | null;
 
@@ -390,9 +386,9 @@ export const DataTable = memo(function DataTable({
         <span className="shrink-0 text-chip text-warn" aria-live="polite">
           {selected.size > 0 ? `${selected.size} selected` : ''}
         </span>
-        <button type="button" onClick={copy} className={BAR_BUTTON}>
+        <Button variant="ghost" density="compact" onClick={copy}>
           {copied ? 'Copied' : chosen.length > 0 ? `Copy ${chosen.length} rows` : 'Copy CSV'}
-        </button>
+        </Button>
       </div>
 
       <div className="relative flex min-h-0 flex-1">
@@ -540,13 +536,13 @@ export const DataTable = memo(function DataTable({
           <pre className="max-h-20 min-w-0 flex-1 overflow-auto text-meta break-all whitespace-pre-wrap text-code-foreground">
             {focused === '' ? 'NULL' : focused}
           </pre>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            density="compact"
             onClick={() => void navigator.clipboard?.writeText(focused ?? '')}
-            className={BAR_BUTTON}
           >
             Copy value
-          </button>
+          </Button>
         </div>
       )}
 
@@ -576,25 +572,25 @@ export const DataTable = memo(function DataTable({
             {`${range.first}–${range.last} of ${ordered.length}`}
           </span>
           <span className="hidden shrink-0 text-chip text-muted sm:inline">PgUp/PgDn</span>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            density="compact"
             onClick={() => goPage(current - 1)}
             disabled={current === 0}
             aria-label="Previous page"
-            className={PAGER_BUTTON}
           >
             Prev
-          </button>
+          </Button>
           <span className="shrink-0 text-ui tabular-nums text-code-foreground">{`Page ${current + 1}/${pages}`}</span>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            density="compact"
             onClick={() => goPage(current + 1)}
             disabled={current >= pages - 1}
             aria-label="Next page"
-            className={PAGER_BUTTON}
           >
             Next
-          </button>
+          </Button>
         </div>
       )}
     </div>
