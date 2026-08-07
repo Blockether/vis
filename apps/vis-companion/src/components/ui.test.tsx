@@ -1,7 +1,7 @@
-import { readFileSync } from 'node:fs';
-
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+
+import uiSource from './ui.tsx?raw';
 
 import { MACHINE_COLORS } from '../lib/machine-colors';
 import {
@@ -606,7 +606,7 @@ describe('RowDisclosure', () => {
 // the glass while the `⋯` menu beside it slid up from the bottom edge: two layers
 // with the same job and two physics. Below `sm:` a dialog is a SHEET.
 describe('Modal and DialogFrame as a phone sheet', () => {
-  const source = readFileSync(new URL('./ui.tsx', import.meta.url), 'utf8');
+  const source = uiSource;
 
   it('docks the scrim to the bottom edge on a phone and centres it from sm: up', () => {
     expect(source).toContain('flex items-end justify-center bg-black/60');
