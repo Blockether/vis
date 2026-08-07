@@ -306,7 +306,13 @@ export function Section({ title, children }: { title: string; children: ReactNod
 }
 
 /**
- * THE ONE MODAL: a dialog centred over a scrim, dismissed by the paper around it.
+ * THE ONE MODAL: a SHEET on a phone, a dialog centred over a scrim on a desktop.
+ *
+ * iOS taught the thumb that a surface which arrives from the bottom edge is the one
+ * it can reach and flick away, so `Menu` already slid up from there while a dialog
+ * with the very same job — "Manage projects" — dropped into the middle of the glass.
+ * Two layers, two physics, one hand. The sheet wins below `sm:`: full width, docked
+ * to the bottom safe area, travelling its own height on the way in.
  *
  * `Menu` is the other half of that contract — a sheet on a phone, a popover under
  * the control it came from. Between them they are every layer this app puts over
@@ -325,12 +331,12 @@ export function Modal({
 }) {
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 pt-[max(1.5rem,env(safe-area-inset-top))] sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))]"
       role="presentation"
       onClick={onDismiss}
     >
       <div
-        className={`w-full ${size === 'lg' ? 'max-w-lg' : 'max-w-md'}`}
+        className={`w-full ${size === 'lg' ? 'sm:max-w-lg' : 'sm:max-w-md'}`}
         role="presentation"
         onClick={(event) => event.stopPropagation()}
       >
@@ -420,7 +426,7 @@ export function DialogFrame({
 }) {
   return (
     <section
-      className={`overflow-hidden border border-dialog-edge bg-panel shadow-none transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:shadow-[8px_8px_0_var(--dialog-shadow)] ${className}`}
+      className={`overflow-hidden border-t-2 border-accent bg-panel pb-[env(safe-area-inset-bottom)] shadow-none transition-[opacity,transform,translate,scale,rotate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-full starting:opacity-0 motion-reduce:transition-none sm:border sm:border-dialog-edge sm:pb-0 sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:duration-200 sm:starting:translate-y-2 ${className}`}
       role="dialog"
       aria-modal="true"
       aria-label={title}

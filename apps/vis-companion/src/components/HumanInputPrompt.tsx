@@ -228,10 +228,10 @@ export function HumanInputSheet({
   // only becomes a centred card once there is a mouse-sized window.
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] sm:items-center"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 pt-[max(1.5rem,env(safe-area-inset-top))] sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))]"
       role="presentation"
     >
-      <div className="w-full max-w-md" role="presentation">
+      <div className="w-full sm:max-w-md" role="presentation">
         <DialogFrame
           title={request.title}
           {...(request.is_cancellable ? { onClose: onCancel } : {})}
