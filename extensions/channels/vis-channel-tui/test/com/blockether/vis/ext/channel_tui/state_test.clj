@@ -339,7 +339,10 @@
       (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
       (expect (= "tab draft" (input/input->text (:input @state/app-db))))
       (expect (= ["tab prompt"] (:input-history @state/app-db))))
-  (it "drops a tab's cached layout and always enters at its latest event"
+  ;; Regression, TUI reading position: switching to another workspace tab and
+  ;; coming back used to slam the transcript to the bottom, losing the place the
+  ;; reader had scrolled up to.
+  (it "drops a tab's cached layout but keeps where its reader was parked"
       (let
         [main-layout
          {:cols 120 :rows 40 :total-h 5000 :inner-h 30 :offsets [0 100 900]}
@@ -363,12 +366,11 @@
         ;; The cached layout describes the frame this tab painted BEFORE it went
         ;; to the background; carried over, the ease would animate against it.
         (expect (nil? (:layout @state/app-db)))
-        ;; A tab switch is a latest-events jump, not a restoration of where this
-        ;; transcript was previously read. This applies equally to a live tab.
-        (expect (= scroll/follow (:scroll @state/app-db)))
+        ;; The parked row survives the switch, snapped (no `:pos` to ease from).
+        (expect (= (scroll/parked 5) (:scroll @state/app-db)))
         (state/dispatch [:select-tab-index 0])
         (expect (nil? (:layout @state/app-db)))
-        (expect (= scroll/follow (:scroll @state/app-db)))))
+        (expect (= (scroll/parked 40) (:scroll @state/app-db)))))
   (it "snaps a FOLLOWing tab to the live bottom instead of easing down to it"
       ;; The regression: a hidden FOLLOW tab keeps `:pos` pinned at the bottom of
       ;; the `total-h` it had when last painted, and that grows while it is hidden
@@ -399,7 +401,7 @@
                             :render-version 0})
       (state/dispatch [:select-tab-index 1])
       (expect (nil? (:layout @state/app-db)))
-      (expect (= scroll/follow (:scroll @state/app-db))))
+      (expect (= (scroll/parked 5) (:scroll @state/app-db))))
   (it "never leaks the leaving tab's live turn identity onto the incoming tab"
       ;; The regression: `tab-state-keys` omitted the turn identity, so the
       ;; snapshot dropped it AND `restore-tab` (a MERGE over the db root) left

@@ -1087,12 +1087,12 @@
    of `:layout` (the scroll ease above all) would take it for the current
    geometry.
 
-   Switching tabs is deliberately a **latest-events jump**, not a restoration of a
-   prior reading position. The incoming transcript was not on screen, and its
-   background turn may have grown while hidden; retaining either a parked offset
-   or eased `:pos` produces stale history followed by an unwanted scroll. Resetting
-   to FOLLOW makes the first frame show the current tail, including for live turns.
-   The tab's stale published `:layout` is dropped for the same reason."
+   Where the reader LEFT this tab is THEIRS: a tab parked above the live bottom
+   (`:at`) reopens at that very row, so stepping to another workspace and back is
+   not a one-way trip to the tail. Only the in-flight ease (`:pos`) is dropped, so
+   the first frame PAINTS that row instead of animating toward it. A tab that was
+   FOLLOWING still enters at the live tail, including for a live turn that grew
+   while hidden. The tab's stale published `:layout` is dropped either way."
   [db workspace-id]
   (let
     [entry
@@ -1108,10 +1108,10 @@
 
      db'
      (-> (merge db locals)
-         ;; A workspace switch always enters at the live tail. Per-tab scroll
-         ;; snapshots still matter while a tab stays focused, but never across a
-         ;; switch: a background/live tab should not reopen above its newest event.
-         (assoc :scroll scroll/follow)
+         ;; A FOLLOWING tab enters at the live tail; a PARKED tab keeps the row
+         ;; its reader left it on, with any in-flight ease dropped so the frame is
+         ;; painted there rather than animated toward it.
+         (update :scroll scroll/resettle)
          ;; And the incoming tab's published `:layout` goes with it. That map is
          ;; the geometry of the LAST frame this tab painted, and a tab that was
          ;; streaming in the background has grown taller since — while the render
