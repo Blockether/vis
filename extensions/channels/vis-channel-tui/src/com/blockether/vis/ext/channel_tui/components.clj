@@ -1078,45 +1078,13 @@
   (p/word-wrap s w))
 
 (defn- justify-line
-  "Full-justify `s` to `w` display columns by spreading extra spaces between
-   words. Returns `s` untouched when it has fewer than two words or already
-   fills `w`."
+  "Full-justify plain `s` to `w` display columns through the ONE shared
+   justifier, `layout/justify-line-runs` — a plain string is a single run — so
+   this row stretches on lanterna's grapheme/EAW-aware column engine and under
+   the same near-full policy as every styled row. Returns `s` untouched when
+   there is nothing to stretch."
   [s ^{:tag long} w]
-  (let
-    [words
-     (str/split (str/trim s) #"\s+")
-
-     n
-     (long (count words))]
-
-    (if (< n 2)
-      s
-      (let
-        [text-w
-         (long (reduce + (map p/display-width words)))
-
-         gaps
-         (dec n)
-
-         slack
-         (- w text-w gaps)]
-
-        (if (<= slack 0)
-          s
-          (let
-            [base
-             (quot slack gaps)
-
-             extra
-             (rem slack gaps)]
-
-            (apply str
-              (interleave words
-                          (concat (map (fn [^long i]
-                                         (apply str
-                                           (repeat (+ 1 base (if (< i extra) 1 0)) \space)))
-                                       (range gaps))
-                                  [""])))))))))
+  (str (:text (first (layout/justify-line-runs [{:text (str s)}] w)))))
 
 (defn- wrapped-rows
   "Rows for `text` wrapped to `w` columns: the FIRST row is prefixed by the\n   `head` segments (e.g. a colored glyph) and every continuation row is\n   indented by `indent` spaces so it aligns under the head. Non-final lines\n   are full-justified to `w`. Each row is a vec of `[text color bold?]`\n   segments. `indent` MUST equal the head's display width for clean alignment."
@@ -1147,75 +1115,6 @@
     [text (if accent? t/header-active-tab-accent base-color)
      (boolean (or base-bold? (contains? style :bold)))]))
 
-(defn- justify-segs
-  "Full-justify a row of `[text color bold?]` segments to `w` display columns by
-   widening every inter-word whitespace run across the segments. Returns the
-   segments untouched when there are no gaps or no slack (single word / already
-   full). The styled twin of `justify-line` for `md-wrapped-rows`.
-
-   `prefix-n` leading segments are STRUCTURAL — a list marker (`- `, `• `,
-   `1. `) or a continuation hanging-indent (`  `). Their widths still count
-   toward the slack budget, but their whitespace is never stretched, so a
-   bulleted line keeps a single space after the marker (`- foo bar baz`,
-   not `-    foo  bar  baz`) while the content still justifies edge-to-edge."
-  ([segs ^{:tag long} w] (justify-segs segs w 0))
-  ([segs ^{:tag long} w ^{:tag long} prefix-n]
-   (let
-     [texts
-      (map first segs)
-
-      content-texts
-      (drop prefix-n texts)
-
-      gap-count
-      (long (reduce +
-                    (map (fn [t]
-                           (count (re-seq #"\s+" t)))
-                         content-texts)))
-
-      text-w
-      (long (reduce + (map p/display-width texts)))
-
-      slack
-      (- w text-w)]
-
-     (if (or (< gap-count 1)
-             (<= slack 0)
-             ;; Stretch cap: only justify lines that are ALREADY near-full.
-             ;; When `slack >= gap-count`, every gap would grow by ≥1 space
-             ;; (single→double across the whole line — the "A  lighter
-             ;; alternative" rivers). Leave those ragged-right; only lines
-             ;; within `gap-count` columns of full get the gentle treatment,
-             ;; where `slack` gaps gain +1 space (max 2 per gap) and the rest
-             ;; stay single.
-             (>= slack gap-count))
-       segs
-       (let
-         [base
-          (quot slack gap-count)
-
-          extra
-          (rem slack gap-count)
-
-          idx
-          (atom -1)]
-
-         (vec (map-indexed (fn [^long si [t color bold?]]
-                             (if (< si prefix-n)
-                               [t color bold?]
-                               [(str/replace t
-                                             #"\s+"
-                                             (fn [m]
-                                               (let
-                                                 [i
-                                                  (long (swap! idx inc))
-
-                                                  add
-                                                  (+ base (if (< i extra) 1 0))]
-
-                                                 (str m (apply str (repeat add \space)))))) color
-                                bold?]))
-                           segs)))))))
 
 (defn- md-wrapped-rows
   "Wrap Markdown `text` to `w` `columns` through the renderer-local Markdown
@@ -1253,39 +1152,34 @@
     (if (empty? lines)
       [(vec head)]
       (vec
-        (map-indexed
-          (fn [i {:keys [runs wrap?]}]
-            (let
-              [segs
-               (mapv (fn [r]
-                       (run->seg r base-color base-bold?))
-                     runs)
+        (map-indexed (fn [i {:keys [runs wrap?]}]
+                       (let
+                         [;; Only lines the wrapper broke on overflow (`:wrap?`) get
+                          ;; full-justified. Paragraph/block-terminal lines are short
+                          ;; and ragged-right by nature — stretching them edge-to-edge
+                          ;; is the "4 words, mega holes" bug.
+                          ;;
+                          ;; Justification happens on the IR RUNS, through the one
+                          ;; shared `layout/justify-line-runs`: lanterna's
+                          ;; grapheme/EAW-aware gap arithmetic, the near-full stretch
+                          ;; cap, and the leading-`:marker`/hanging-indent prefix
+                          ;; protection all live there rather than in a second copy
+                          ;; here.
+                          runs
+                          (if wrap? (layout/justify-line-runs runs (long w)) runs)
 
-               segs
-               (if (seq segs) segs [["" base-color base-bold?]])
+                          segs
+                          (mapv (fn [r]
+                                  (run->seg r base-color base-bold?))
+                                runs)
 
-               ;; Leading structural runs — a list `:marker` (`- `,
-               ;; `• `, `1. `) or the pure-whitespace hanging-indent on
-               ;; a wrapped continuation — must NOT be stretched, else
-               ;; justification blows a hole right after the bullet
-               ;; (`-      foo`). Count them so `justify-segs` protects
-               ;; that prefix and only justifies the content gaps.
-               prefix-n
-               (count (take-while (fn [r]
-                                    (or (contains? (:style r) :marker) (str/blank? (:text r))))
-                                  runs))
+                          segs
+                          (if (seq segs) segs [["" base-color base-bold?]])]
 
-               ;; Only lines the wrapper broke on overflow (`:wrap?`)
-               ;; get full-justified. Paragraph/block-terminal lines
-               ;; are short and ragged-right by nature — stretching
-               ;; them edge-to-edge is the "4 words, mega holes" bug.
-               segs
-               (if wrap? (justify-segs segs (long w) (long prefix-n)) segs)]
-
-              (if (zero? (long i))
-                (into (vec head) segs)
-                (into [[pad base-color base-bold?]] segs))))
-          lines)))))
+                         (if (zero? (long i))
+                           (into (vec head) segs)
+                           (into [[pad base-color base-bold?]] segs))))
+                     lines)))))
 
 (defn- task-entry-rows
   "Progressive-disclosure rows for ONE task. SETTLED tasks

@@ -2,6 +2,7 @@
   (:require [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.components :as comps]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
+            [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defn- noop-graphics
@@ -158,3 +159,40 @@
                                        :closable? true}))
                    (expect (= (vec (range 10 19)) (mapv first @underlined)))
                    (expect (empty? (filter (set (range 19 22)) (map first @underlined)))))))
+
+;; The overlay cards used to carry their OWN gap arithmetic (a plain
+;; `justify-line` and a styled `justify-segs`), so a task/fact card could
+;; stretch a row lanterna would have left alone. Both paths now route through
+;; `layout/justify-line-runs`.
+(defdescribe overlay-justification-uses-shared-engine-test
+             (let
+               [justify-line
+                (deref (ns-resolve 'com.blockether.vis.ext.channel-tui.components 'justify-line))
+
+                md-rows
+                (deref (ns-resolve 'com.blockether.vis.ext.channel-tui.components
+                                   'md-wrapped-rows))]
+
+               (it "plain rows justify exactly like the shared run justifier"
+                   (let [line "alpha beta gamma delta"]
+                     (expect (= (:text (first (layout/justify-line-runs [{:text line}] 24)))
+                                (justify-line line 24)))))
+               (it "a line with more slack than gaps is left ragged, like the shared engine"
+                   ;; The near-full cap is policy that lives in ONE place: lanterna itself
+                   ;; would have stretched this.
+                   (let [line "alpha beta"]
+                     (expect (= line (justify-line line 40)))))
+               (it "a bulleted overlay row keeps a single space after its marker"
+                   (let
+                     [rows
+                      (md-rows [] 0 "- lorem ipsum dolor sit amet consectetur" 22 nil false)
+
+                      texts
+                      (mapv (fn [row]
+                              (apply str (map first row)))
+                            rows)]
+
+                     (expect (some (fn [t]
+                                     (re-find #"^- \S" t))
+                                   texts)
+                             texts)))))

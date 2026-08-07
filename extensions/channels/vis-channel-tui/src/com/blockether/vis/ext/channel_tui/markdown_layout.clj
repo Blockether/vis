@@ -1687,7 +1687,7 @@
 
     (str/replace (str/join " " (remove str/blank? line-strs)) #"\s+" " ")))
 
-(defn- justify-line-runs
+(defn justify-line-runs
   "Full-justify ONE soft-wrapped walker line's `runs` to `width` display columns
    by widening the inter-word whitespace INSIDE its text runs. The styled twin
    of `primitives/justify-line`, run on the IR before the runs are flattened to
@@ -1710,7 +1710,11 @@
    not ALREADY near-full (at `slack >= gap-count` every single gap would grow by
    at least a column, which is the river, not justification — lanterna itself
    has no such cap, that policy is ours), and whenever the justified text is not
-   word-for-word the text we sent."
+   word-for-word the text we sent.
+
+   This is the ONE justifier in the TUI: `components` routes both its plain and
+   its styled rows through it (a plain string is a single run), so no surface
+   keeps a second copy of the gap arithmetic."
   [runs ^long width]
   (let
     [prefix-n
