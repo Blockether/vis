@@ -4,7 +4,12 @@ export interface SwipeAction {
   key: string;
   label: string;
   icon: ReactNode;
-  tone?: 'neutral' | 'danger';
+  /**
+   * What the action MEANS, in colour. `accent` is the brand yellow a star wears —
+   * the same amber the filled glyph is painted in — so "Star" can never read as
+   * one more neutral verb beside "Rename".
+   */
+  tone?: 'neutral' | 'accent' | 'danger';
   onSelect: () => void;
 }
 
@@ -90,7 +95,9 @@ export function SwipeActions({
             className={`flex w-[4.5rem] shrink-0 flex-col items-center justify-center gap-1 border-l font-mono text-chip font-bold uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none ${
               action.tone === 'danger'
                 ? 'border-err/40 bg-err/15 text-err hover:bg-err hover:text-white'
-                : 'border-dialog-edge bg-panel-2 text-accent-ink hover:bg-hover'
+                : action.tone === 'accent'
+                  ? 'border-accent/40 bg-accent/15 text-accent hover:bg-accent hover:text-accent-foreground'
+                  : 'border-dialog-edge bg-panel-2 text-accent-ink hover:bg-hover'
             }`}
             onClick={() => {
               close();

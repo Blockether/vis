@@ -1922,12 +1922,28 @@ const SessionRow = memo(function SessionRow({
   const favorites = useFavorites();
   const starKey = favoriteKey(clientFor(conn).base, session.id);
   const isStarred = starKey in favorites;
+  // A star PINS the row to the top of its project, so the row you tapped leaves the
+  // spot you tapped it in — on a phone it travels several hundred pixels and an
+  // unstarred neighbour slides under your thumb, which reads as "nothing happened".
+  // Regression, user report: after starring, the star was invisible until the list
+  // was rebuilt by opening a session. The row follows its own pin.
+  const rowRef = useRef<HTMLDivElement>(null);
+  const pinned = useRef(false);
+  useEffect(() => {
+    if (!pinned.current) return;
+    pinned.current = false;
+    rowRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+  }, [isStarred]);
+  const toggleStar = useCallback(() => {
+    pinned.current = true;
+    toggleFavorite(starKey);
+  }, [starKey]);
   // A draft is a per-session clone of the project; the row says so instead of
   // the list inventing a project for it.
   const draftName = isDraftWorkspace(session) ? session.workspace?.label?.trim() : '';
 
   return (
-    <div className="[&+&]:border-t [&+&]:border-dialog-edge">
+    <div ref={rowRef} className="[&+&]:border-t [&+&]:border-dialog-edge">
       <SwipeActions
         label={title}
         actions={[
@@ -1935,7 +1951,10 @@ const SessionRow = memo(function SessionRow({
             key: 'favorite',
             label: isStarred ? 'Unstar' : 'Star',
             icon: <StarIcon filled={isStarred} className="size-4" />,
-            onSelect: () => toggleFavorite(starKey),
+            // The one action on the strip that is not a neutral verb: it wears the
+            // same brand yellow as the mark it leaves.
+            tone: 'accent',
+            onSelect: toggleStar,
           },
           {
             key: 'rename',

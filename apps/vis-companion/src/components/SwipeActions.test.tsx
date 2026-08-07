@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
+import { SwipeActions } from './SwipeActions';
 import { StarIcon } from './icons';
 
 // Regression (reported: "make the star icon truly yellow"): the filled star used
@@ -22,5 +23,30 @@ describe('StarIcon', () => {
     const svg = renderToStaticMarkup(<StarIcon />);
     expect(svg).toContain('fill-none');
     expect(svg).toContain('stroke-current');
+  });
+});
+
+// Regression, user report ("the colour is the same as rename"): every action on the
+// strip wore one neutral ink, so the star — the mark the human types in themselves,
+// and the only yellow thing in the list — looked like one more grey verb.
+describe('SwipeActions tones', () => {
+  const strip = (tone?: 'neutral' | 'accent' | 'danger') =>
+    renderToStaticMarkup(
+      <SwipeActions
+        label="a session"
+        actions={[{ key: 'favorite', label: 'Star', icon: <StarIcon />, tone, onSelect: () => {} }]}
+      >
+        <span>row</span>
+      </SwipeActions>,
+    );
+
+  it('paints an accent action in the brand yellow', () => {
+    const html = strip('accent');
+    expect(html).toContain('text-accent');
+    expect(html).not.toContain('text-accent-ink');
+  });
+
+  it('leaves a neutral action in the shared verb ink', () => {
+    expect(strip()).toContain('text-accent-ink');
   });
 });
