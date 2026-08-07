@@ -1003,35 +1003,34 @@
         (let [r ((ev :scroll-down) {:scroll (scroll/parked 10)} [:scroll-down 30 200 100])]
           (expect (= :at (:mode (:scroll r))))
           (expect (= 40 (:offset (:scroll r))))))
-    (it "ease-scroll walks FOLLOW toward the growing bottom (no teleport)"
-        ;; Regression for the streamed big-block "jump jump": a turn appends
-        ;; a tall bubble in one frame. FOLLOW's desired row IS the new bottom,
-        ;; so ease steps the on-screen pos down toward it instead of snapping.
-        (let [r ((ev :ease-scroll) {:scroll (assoc scroll/follow :pos 100)} [:ease-scroll 300 100])]
-          ;; max-s 200; step 0.35*(200-100)=35 -> pos 135, still FOLLOW.
-          (expect (= {:mode :follow :pos 135} (:scroll r)))))
+    ;; Regression, issue #resize/tab-reflow: FOLLOW used to re-pin an eased `:pos`
+    ;; at the bottom every tick so the NEXT content growth had somewhere to ease
+    ;; FROM — which is exactly what made a streamed chunk, a resize or a tab
+    ;; switch animate the whole transcript downward on its own. Auto-follow is
+    ;; not a gesture: it snaps, and only a deliberate move animates.
+    (it "ease-scroll never STARTS an animation for a growing bottom"
+        ;; Also pins the render fast path: nothing moved ⇒ db returned UNTOUCHED,
+        ;; so `identical?`-keyed partial repaints are not demoted to FULL frames.
+        (let
+          [db {:scroll scroll/follow :progress {:iterations []}}
+           r ((ev :ease-scroll) db [:ease-scroll 300 100])]
+
+          (expect (= scroll/follow (:scroll r)))
+          (expect (identical? r db))))
+    (it "ease-scroll still FINISHES a deliberate move back to the bottom"
+        ;; `scroll/down` landing inside the slack band re-arms FOLLOW carrying the
+        ;; row it started from; that ease runs out and then snaps clean.
+        (let
+          [stepped
+           ((ev :ease-scroll) {:scroll (assoc scroll/follow :pos 100)} [:ease-scroll 300 100])]
+          (expect (= {:mode :follow :pos 135} (:scroll stepped)))
+          (expect (= scroll/follow
+                     (:scroll ((ev :ease-scroll)
+                                {:scroll (assoc scroll/follow :pos 200)}
+                                [:ease-scroll 300 100]))))))
     (it "ease-scroll settles a parked move and drops :pos"
         (let [r ((ev :ease-scroll) {:scroll {:mode :at :offset 50 :pos 50}} [:ease-scroll 150 100])]
           (expect (= {:mode :at :offset 50} (:scroll r)))))
-    (it "ease-scroll preserves :scroll IDENTITY when settled (fast-path survives)"
-        ;; Regression for the streaming FULL-frame spin: `scroll/ease` re-`assoc`s
-        ;; :pos every tick, so a settled follow-bottom returned a fresh-but-EQUAL
-        ;; scroll map each ~80ms pulse. app-db's :scroll churned identity, and the
-        ;; render loop's identical?-keyed fast paths (live-progress-only-change?)
-        ;; demoted every progress tick to a FULL repaint. The handler must return
-        ;; db UNTOUCHED when nothing moved so the cheap partial-live path stays live.
-        (let
-          [db {:scroll (assoc scroll/follow :pos 200) :progress {:iterations []}}
-           ;; max-s = total-h(240) - inner-h(40) = 200, already at bottom -> settled
-           once ((ev :ease-scroll) db [:ease-scroll 240 40])
-           twice ((ev :ease-scroll) once [:ease-scroll 240 40])]
-
-          ;; no move -> same db object, and :scroll identity is stable across ticks
-          (expect (identical? once db))
-          (expect (identical? (:scroll once) (:scroll twice)))
-          ;; real growth still moves the scroll (view follows the new bottom)
-          (expect (not (identical? (:scroll twice)
-                                   (:scroll ((ev :ease-scroll) twice [:ease-scroll 340 40])))))))
     (it "set-scroll snap-parks at an exact row (search jump)"
         (let [r ((ev :set-scroll) {:scroll scroll/follow} [:set-scroll 42])]
           (expect (= {:mode :at :offset 42} (:scroll r)))))

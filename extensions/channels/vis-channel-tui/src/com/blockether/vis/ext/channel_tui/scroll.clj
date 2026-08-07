@@ -191,9 +191,16 @@
    render frame.
 
    - Mid-ease ⇒ step `:pos` toward the target.
-   - Settled while PARKED ⇒ drop `:pos` (clean snap; no further repaint).
-   - Settled while FOLLOWING ⇒ KEEP `:pos` pinned at the bottom so the
-     next content growth eases FROM here instead of teleporting."
+   - Settled ⇒ DROP `:pos` (clean snap; no further repaint).
+
+   FOLLOW never re-pins `:pos` at the bottom. It used to, so that the next
+   content growth had \"somewhere to ease FROM\" — which is precisely what made
+   the transcript animate itself downward on every streamed chunk, every
+   resize, and every tab switch: growth moves the bottom in one step, and the
+   pinned `:pos` then had several frames of catching up to do. Auto-follow is
+   not a gesture, so it gets no animation: the latest view is simply the view.
+   An ease still runs for DELIBERATE movement (`up`/`down`/jump-to-bottom seed
+   `:pos` themselves) and ends here, snapped, when it arrives."
   [sc ^long max-s]
   (let
     [sc
@@ -205,9 +212,7 @@
      cur
      (displayed sc max-s)]
 
-    (cond (not= cur d) (assoc sc :pos (step-toward cur d))
-          (= :follow (:mode sc)) (assoc sc :pos d)
-          :else (dissoc sc :pos))))
+    (if (and (:pos sc) (not= cur d)) (assoc sc :pos (step-toward cur d)) (dissoc sc :pos))))
 
 (defn up
   "Wheel/key scroll UP by `amount`: park `amount` rows above the current
