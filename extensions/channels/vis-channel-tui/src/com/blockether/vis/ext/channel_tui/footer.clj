@@ -478,6 +478,9 @@
       (str/join "  " (map #(format-generic-limit-row now-ms %) rows)))))
 
 (defn- generic-limit-sort-key
+  "Premium interactions first, then the rolling plan windows shortest-first
+   (5h before 7d for EVERY provider, derived from the window itself), then
+   rows with signal, then pressure."
   [row]
   [(case (:id row)
      :premium_interactions
@@ -486,20 +489,8 @@
      :premium-interactions
      0
 
-     :codex-5h
-     1
-
-     :zai-coding-plan-5h
-     1
-
-     :codex-7d
-     2
-
-     :zai-coding-plan-7d
-     2
-
-     3) (if (lfmt/generic-limit-has-signal? row) 0 1) (lfmt/limit-row-pressure row)
-   (or (:label row) (name (:id row)))])
+     1) (or (lfmt/limit-window-ms row) Long/MAX_VALUE) (if (lfmt/generic-limit-has-signal? row) 0 1)
+   (lfmt/limit-row-pressure row) (or (:label row) (name (:id row)))])
 
 (defn- generic-limits-footer-text
   "Footer-left text for the limits row. Returns either:

@@ -240,6 +240,47 @@
                        :text)]
             (expect (re-find #"Claude 5h 0% ↺5h0m@.* / 7d 75% ↺6d0h@" text))
             (expect (not (str/includes? text "Claude 7d"))))))))
+  ;; Regression, reported by a user against Claude: the footer sorted limit rows
+  ;; by pressure alone, so a nearly-spent 7d window jumped in front of a fresh 5h
+  ;; one and the line read "Claude 7d 12% … / 5h 90%". The short window leads.
+  (it
+    "keeps the Claude 5h window first even when the 7d window is tighter"
+    (let
+      [build-limits-segments
+       @#'footer/build-limits-segments
+
+       now-ms
+       1000000000000
+
+       report
+       {:provider-id :anthropic-coding-plan
+        :dynamic {:limits [{:id :claude-7d
+                            :label "Claude 7d"
+                            :kind :rate
+                            :limit 100.0
+                            :remaining 12.0
+                            :window {:resets-at-ms (+ now-ms (* 6 24 60 60 1000))}}
+                           {:id :claude-5h
+                            :label "Claude 5h"
+                            :kind :rate
+                            :limit 100.0
+                            :remaining 90.0
+                            :window {:resets-at-ms (+ now-ms (* 5 60 60 1000))}}]}}]
+
+      (with-redefs-fn {#'footer/chosen-model-info (fn []
+                                                    {:name "claude-opus-4-6"
+                                                     :provider :anthropic-coding-plan})}
+        (fn []
+          (let
+            [text (->> (build-limits-segments {:messages []
+                                               :settings {}
+                                               :provider-limits {:provider-id :anthropic-coding-plan
+                                                                 :report report}}
+                                              now-ms)
+                       (filter #(= :left (:region %)))
+                       first
+                       :text)]
+            (expect (re-find #"Claude 5h 90% .* / 7d 12% " text)))))))
   (it
     "shows Z.ai coding plan quota windows as percentages on the second footer line"
     (let

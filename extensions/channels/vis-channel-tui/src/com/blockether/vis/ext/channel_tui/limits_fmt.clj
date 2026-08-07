@@ -29,3 +29,7 @@
 (def limit-row-pressure limits-format/limit-row-pressure)
 
 (def prioritize-limit-rows limits-format/prioritize-limit-rows)
+
+(def limit-window-ms limits-format/limit-window-ms)
+
+(def limit-window-order limits-format/limit-window-order)

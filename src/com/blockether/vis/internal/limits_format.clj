@@ -186,11 +186,61 @@
         [1 (/ (double remaining) (double limit))]
         :else [1 1.0]))
 
+(def ^:private window-unit-ms
+  "Milliseconds per `[:window :unit]` keyword."
+  {:second 1000 :minute 60000 :hour 3600000 :day 86400000 :week 604800000 :month 2592000000})
+
+(defn limit-window-ms
+  "Duration of a row's rolling window in milliseconds, or nil when the row is
+   not a window row. Read from `[:window :unit]` + `[:window :size]` when the
+   provider supplied them, else from the id's own `-5h` / `-7d` suffix (the
+   only spelling every provider uses), so a report that crossed the gateway
+   wire — where a placeholder row may carry nothing but its id — still orders."
+  [row]
+  (let
+    [{:keys [unit size]}
+     (:window row)
+
+     unit-ms
+     (get window-unit-ms (->kw unit))]
+
+    (or (when (and unit-ms (number? size)) (long (* (long unit-ms) (long size))))
+        (when-let
+          [[_ n u] (some->> (:id row)
+                            name
+                            (re-find #"-([0-9]+)([hdwm])$"))]
+          (* (long (parse-long n))
+             (long (get window-unit-ms
+                        (case u
+                          "h"
+                          :hour
+
+                          "d"
+                          :day
+
+                          "w"
+                          :week
+
+                          "m"
+                          :minute))))))))
+
+(defn limit-window-order
+  "Sort key putting the SHORTER rolling window first — 5h before 7d, always,
+   whichever one happens to be tighter right now. Non-window rows fall back to
+   `limit-row-pressure` and keep sorting behind the plan windows they belong to."
+  [row]
+  (if-let [ms (limit-window-ms row)]
+    [0 ms 0.0]
+    (let [[category fraction] (limit-row-pressure row)]
+      [1 (double category) (double fraction)])))
+
 (defn prioritize-limit-rows
-  "Stable reorder of limit rows by `limit-row-pressure`, so whatever is
-   blocking (or closest to blocking) leads any truncated rendering."
+  "Stable reorder of limit rows: rolling plan windows first, SHORTEST window
+   leading (5h before 7d, never the other way round because the weekly bucket
+   happens to be tighter today), then everything else by `limit-row-pressure`
+   so whatever is blocking leads any truncated rendering."
   [rows]
-  (vec (sort-by limit-row-pressure rows)))
+  (vec (sort-by limit-window-order rows)))
 
 (defn label+usage
   "Compose `\"<label> <usage>\"` for a single row, or `\"<label>\"`

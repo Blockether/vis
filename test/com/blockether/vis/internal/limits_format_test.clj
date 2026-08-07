@@ -150,3 +150,28 @@
       (expect (nil? (lf/dynamic-summary nil)))
       (expect (nil? (lf/dynamic-summary {})))
       (expect (nil? (lf/dynamic-summary {:dynamic {:limits []}})))))
+
+;; Regression, reported by a user against Claude: the 7d window overtook the 5h
+;; whenever it happened to be the tighter bucket, so Claude reported
+;; "7d 12% / 5h 90%" — the short window a user is actually spending is the one
+;; that must lead.
+(defdescribe
+  limit-window-order-test
+  (it "reads the window duration from the row's window map or its id suffix"
+      (expect (= (* 5 3600000) (lf/limit-window-ms {:id :claude-5h})))
+      (expect (= (* 7 86400000) (lf/limit-window-ms {:id "codex-7d"})))
+      (expect (= (* 5 3600000)
+                 (lf/limit-window-ms {:id :whatever :window {:kind :rolling :unit :hour :size 5}})))
+      (expect (nil? (lf/limit-window-ms {:id :chat}))))
+  (it "orders 5h before 7d even when the weekly window is tighter"
+      (expect (= [:claude-5h :claude-7d]
+                 (mapv :id
+                       (lf/prioritize-limit-rows
+                         [{:id :claude-7d :limit 100.0 :remaining 12.0}
+                          {:id :claude-5h :limit 100.0 :remaining 90.0}])))))
+  (it "still leads with the blocking row among non-window rows"
+      (expect (= [:premium_interactions :chat]
+                 (mapv :id
+                       (lf/prioritize-limit-rows
+                         [{:id :chat :is-unlimited true}
+                          {:id :premium_interactions :used 5 :limit 5 :remaining 0}]))))))
