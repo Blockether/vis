@@ -110,34 +110,48 @@
 (defn- confine!
   "Throw a clear IOException unless `p` resolves under a current root OR one
    of the always-allowed `extra-roots` (the engine outbox dir, the system temp
-   dirs `/tmp`/`$TMPDIR`, and Vis's own `~/.vis` tree). Returns `p` (a Path) on
+   dirs `/tmp`/`$TMPDIR`, and Vis's own `~/.vis` tree) AND is not refused by
+   `protected-fn` — the extension-declared `:ext/protected-paths` boundary, the
+   very same registry the native file verbs consult. Returns `p` (a Path) on
    success. `cache` memoizes root canonicalization.
 
-   The four-argument form preserves already-created filesystem closures across a
-   hot reload; those closures predate operation-specific diagnostics."
-  (^Path [roots-fn cache extra-roots p] (confine! roots-fn cache extra-roots "file-read" p))
-  (^Path [roots-fn cache extra-roots operation p]
-   (let
-     [^Path pp
-      (if (instance? Path p) p (Paths/get (str p) (make-array String 0)))
+   `protected-fn` is `(fn [operation abs-path] -> rule | nil)`; nil disables the
+   check. A THROW from it denies the operation (fail closed) rather than opening
+   the path."
+  ^Path [roots-fn cache extra-roots protected-fn operation p]
+  (let
+    [^Path pp
+     (if (instance? Path p) p (Paths/get (str p) (make-array String 0)))
 
-      real
-      (real-path pp)
+     real
+     (real-path pp)
 
-      roots
-      (into (vec extra-roots) (current-real-roots roots-fn cache))]
+     roots
+     (into (vec extra-roots) (current-real-roots roots-fn cache))]
 
-     (when-not (some (fn [^Path root]
-                       (.startsWith real root))
-                     roots)
-       ;; This is a policy decision made by Vis, not an ambiguous OS EACCES/EPERM.
-       ;; IOException is intentional: GraalPy preserves its message in the guest
-       ;; error, whereas it replaces SecurityException with generic PermissionError.
-       ;; Keep paths and roots out of the guest-visible message: they may be secret.
-       (throw (IOException. (str "[vis:sandbox_denied] operation="
-                                 operation
-                                 " reason=outside_approved_filesystem_roots"))))
-     pp)))
+    (when-not (some (fn [^Path root]
+                      (.startsWith real root))
+                    roots)
+      ;; This is a policy decision made by Vis, not an ambiguous OS EACCES/EPERM.
+      ;; IOException is intentional: GraalPy preserves its message in the guest
+      ;; error, whereas it replaces SecurityException with generic PermissionError.
+      ;; Keep paths and roots out of the guest-visible message: they may be secret.
+      (throw (IOException. (str "[vis:sandbox_denied] operation="
+                                operation
+                                " reason=outside_approved_filesystem_roots"))))
+    (when protected-fn
+      (when-let
+        [rule (try
+                (protected-fn operation (str real))
+                (catch Throwable _
+                  {:hint
+                   "Fix the extension's :ext/protected-paths callback before retrying file IO."}))]
+        ;; The owning extension's own hint IS the remedy — it names the API to use
+        ;; instead, so the guest error is actionable without naming the path.
+        (throw (IOException. (str "[vis:sandbox_denied] operation=" operation
+                                  " reason=path_protected" (when-let [h (:hint rule)]
+                                                             (str " hint=" h)))))))
+    pp))
 
 (defn- write-opts?
   "True when the open options request a WRITE/APPEND (⇒ the sandbox is producing
@@ -178,8 +192,9 @@
    fires `on-close` with the file path. The SAME `on-close` also fires for a
    write closed under any system temp root (`/tmp`, `$TMPDIR`), so plain /tmp
    scratch streams to the DB too, not just `$VIS_OUTBOX`. Nil ⇒ no tap."
-  (^FileSystem [roots-fn] (confined-filesystem roots-fn nil))
-  (^FileSystem [roots-fn outbox]
+  (^FileSystem [roots-fn] (confined-filesystem roots-fn nil nil))
+  (^FileSystem [roots-fn outbox] (confined-filesystem roots-fn outbox nil))
+  (^FileSystem [roots-fn outbox protected-fn]
    (let
      [^FileSystem d
       (FileSystem/newDefaultFileSystem)
@@ -200,7 +215,7 @@
 
       c
       (fn [operation p]
-        (confine! roots-fn root-cache extra-roots operation p))
+        (confine! roots-fn root-cache extra-roots protected-fn operation p))
 
       confined
       (proxy [FileSystem] []

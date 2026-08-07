@@ -1,7 +1,7 @@
 # PLAN — remove the native filesystem tools, move the work into `python_execution`
 
-Status: **in progress.** Phase 0 (delete ACP) and the `vis_attach_bytes` merge are DONE;
-everything below is still proposal.
+Status: **in progress.** Phase 0 (delete ACP), the `vis_attach_bytes` merge and P0 (the
+protected-paths predicate at `confine!`) are DONE; everything below is still proposal.
 
 ## The finding that drives it
 
@@ -44,9 +44,14 @@ exactly one natural home: the `c` confine closure in `confined-filesystem`
 (`sandbox_fs.clj:202-203`), which every operation above already funnels through, with the
 operation name already in hand.
 
-**P0:** teach `confine!` the protected-paths predicate so a protected path refuses with its
-own reason and the owning extension's API hint, alongside the existing root check. One call
-site, one function, one test.
+**P0 (DONE):** `internal/protected_paths.clj` is now the ONE resolver — rule matching,
+first-match-wins per extension and most-restrictive-wins across them — shared by
+`editing/core.clj` and by `confine!`, which takes a `protected-fn` predicate
+(`protected-paths/deny-fn`, wired in `loop.clj` from the live env + workspace root and
+threaded through `env_python/create-python-context`). A protected path now refuses
+`open(..., "w")`, `shutil.move` and `Path.unlink` with
+`[vis:sandbox_denied] operation=… reason=path_protected hint=<the owner's own hint>`, and
+a throwing registry fails CLOSED.
 
 ## Phase 1 — remove `copy`, `move`, `delete`, `create_directory`, `file_exists`
 
@@ -105,8 +110,7 @@ before committing to it.
 
 1. ~~Phase 0 — delete ACP.~~ DONE (`8e6e9e413`).
 2. ~~Collapse `vis_attach_bytes` into `vis_attach`.~~ DONE.
-3. P0 — at the `confine!` seam: the `:ext/protected-paths` predicate, with a red-then-green
-   test that a Python `shutil.move` onto a protected path refuses.
+3. ~~P0 — the `:ext/protected-paths` predicate at the `confine!` seam.~~ DONE.
 4. Phase 1 removals + test updates.
 5. Phase 2 — remove `ls`, land the sandbox walk helper and its prompt line.
 6. Phase 3 — the `shell_background` handle object; then the `git` question.

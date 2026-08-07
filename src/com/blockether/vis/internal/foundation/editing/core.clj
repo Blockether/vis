@@ -43,6 +43,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.editing.patch :as patch]
             [com.blockether.vis.internal.foundation.editing.index :as index]
+            [com.blockether.vis.internal.protected-paths :as pp]
             [com.blockether.vis.internal.foundation.editing.structural :as structural]
             [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
@@ -655,7 +656,9 @@
 ;; Extension protected paths
 ;; =============================================================================
 
-(def ^:private protected-access-rank {:read-write 0 :read-only 1 :none 2})
+;; Rule matching + precedence live in `internal/protected-paths`, the ONE
+;; resolver the Python sandbox filesystem shares. This layer only extracts the
+;; op's paths and turns a refusal into a tool failure.
 
 (defn- extracted-paths
   [path-extractor args]
@@ -856,117 +859,7 @@
   (let [target (path->target path kind)]
     (when (:resolved target) target)))
 
-(defn- protected-glob-matches?
-  [glob rel]
-  (let
-    [matcher
-     (.getPathMatcher (java.nio.file.FileSystems/getDefault) (str "glob:" glob))
-
-     rel
-     (str/replace (str rel) (str (char 92)) "/")
-
-     name
-     (last (str/split rel #"/+"))]
-
-    (boolean (some (fn [candidate]
-                     (try (.matches matcher (fs/path candidate)) (catch Throwable _ false)))
-                   (distinct [rel name])))))
-
-(def ^:private glob-meta-chars #{\* \? \[ \] \{ \}})
-
-(defn- glob-static-prefix
-  [glob]
-  (let
-    [glob
-     (str/replace (str glob) (str (char 92)) "/")
-
-     idx
-     (first (keep-indexed (fn [idx ch]
-                            (when (contains? glob-meta-chars ch) idx))
-                          glob))
-
-     raw-prefix
-     (if idx (subs glob 0 idx) glob)
-
-     prefix
-     (if (and idx (not (str/ends-with? raw-prefix "/")))
-       (let [slash-idx (.lastIndexOf ^String raw-prefix "/")]
-         (if (neg? slash-idx) "" (subs raw-prefix 0 slash-idx)))
-       raw-prefix)
-
-     prefix
-     (str/replace prefix #"/+$" "")]
-
-    (if (str/blank? prefix) "." prefix)))
-
-(defn- path-prefix?
-  [ancestor path]
-  (let
-    [ancestor
-     (str/replace (str ancestor) (str (char 92)) "/")
-
-     path
-     (str/replace (str path) (str (char 92)) "/")]
-
-    (or (= "." ancestor) (= ancestor path) (str/starts-with? path (str ancestor "/")))))
-
-(defn- composite-path-target?
-  [{:keys [kind absolute]}]
-  (or (= :dir kind) (and (= :path kind) absolute (.isDirectory (io/file absolute)))))
-
-(defn- protected-rule-matches?
-  [target rule]
-  (or (protected-glob-matches? (:glob rule) (:resolved target))
-      (and (composite-path-target? target)
-           (let
-             [rel
-              (:resolved target)
-
-              prefix
-              (glob-static-prefix (:glob rule))]
-
-             (or (path-prefix? prefix rel)
-                 (and (not= :read-write (:access rule)) (path-prefix? rel prefix)))))))
-
-(defn- rules-by-extension
-  [rules]
-  (->> (map-indexed vector rules)
-       (reduce (fn [groups [idx rule]]
-                 (let [ext-name (:extension/name rule)]
-                   (-> groups
-                       (update-in [ext-name :idx] #(or % idx))
-                       (update-in [ext-name :rules] (fnil conj []) rule))))
-               {})
-       vals
-       (sort-by :idx)
-       (mapv :rules)))
-
-(defn- first-matching-rule
-  [target rules]
-  (some (fn [rule]
-          (when (protected-rule-matches? target rule) rule))
-        rules))
-
-(defn- more-restrictive-rule
-  [best rule]
-  (if (or (nil? best)
-          (> (long (protected-access-rank (:access rule)))
-             (long (protected-access-rank (:access best)))))
-    rule
-    best))
-
-(defn- resolve-protected-access
-  [rules target]
-  (reduce (fn [best extension-rules]
-            (if-let [match (first-matching-rule target extension-rules)]
-              (more-restrictive-rule best match)
-              best))
-          nil
-          (rules-by-extension rules)))
-
-(defn- blocked-access?
-  [access-intent access]
-  (or (= :none access) (and (= :write access-intent) (= :read-only access))))
+;; (protected rule matching: see `internal/protected-paths`)
 
 (defn- hidden-descendant-prefix?
   "Whether the static protected prefix is strictly below `ancestor` and crosses
@@ -974,10 +867,10 @@
   [ancestor glob]
   (let
     [prefix
-     (glob-static-prefix glob)
+     (pp/glob-static-prefix glob)
 
      suffix
-     (when (and (not= ancestor prefix) (path-prefix? ancestor prefix))
+     (when (and (not= ancestor prefix) (pp/path-prefix? ancestor prefix))
        (if (= "." ancestor) prefix (subs prefix (inc (count ancestor)))))]
 
     (boolean (some #(str/starts-with? % ".") (when suffix (str/split suffix #"/+"))))))
@@ -996,8 +889,8 @@
   [op access-intent target rule args]
   (let [rel (:resolved target)]
     (and (= :read access-intent)
-         (composite-path-target? target)
-         (not (protected-glob-matches? (:glob rule) rel))
+         (pp/composite-target? target)
+         (not (pp/glob-matches? (:glob rule) rel))
          (or (= "." rel)
              (and (= :grep op)
                   (not (hidden-search? args))
@@ -1081,8 +974,8 @@
 
             blocked
             (keep (fn [target]
-                    (when-let [rule (resolve-protected-access rules target)]
-                      (when (and (blocked-access? access-intent (:access rule))
+                    (when-let [rule (pp/resolve-access rules target)]
+                      (when (and (pp/blocked-access? access-intent (:access rule))
                                  (not
                                    (safe-read-ancestor-match? op access-intent target rule args)))
                         (assoc rule

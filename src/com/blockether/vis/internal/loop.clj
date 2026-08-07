@@ -30,6 +30,7 @@
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.session-model :as session-model]
             [com.blockether.vis.internal.prompt :as prompt]
+            [com.blockether.vis.internal.protected-paths :as protected-paths]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.provider-error :as perr]
             [com.blockether.vis.internal.providers :as providers]
@@ -11275,10 +11276,23 @@
      _register-repl-jail
      (when session-id (process-jail/register-session-jail! session-id jail-policy-fn))
 
+     ;; The SAME `:ext/protected-paths` boundary the native file verbs enforce,
+     ;; pushed down into the sandbox filesystem: an extension-protected path
+     ;; refuses `open(..., "w")` / `shutil.move` exactly as it refuses `delete`.
+     sandbox-protected-fn
+     (when sandbox-roots-fn
+       (protected-paths/deny-fn (fn []
+                                  @environment-atom)
+                                (fn []
+                                  (:root @workspace-atom))))
+
      {:keys [python-context sandbox-ns initial-ns-keys]}
      (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))
                                 sandbox-roots-fn
-                                network-opts)
+                                network-opts
+                                nil
+                                nil
+                                sandbox-protected-fn)
 
      env
      (cond->

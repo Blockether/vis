@@ -5,6 +5,8 @@
    reads and writes anywhere else are untouched."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mpl-capture :as mc]
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.protected-paths :as protected-paths]
             [com.blockether.vis.internal.sandbox-fs :as sfs]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]
@@ -35,7 +37,7 @@
            [root])
 
          confine
-         #(@#'sfs/confine! roots-fn (atom {}) [] "file-read" (p %))]
+         #(@#'sfs/confine! roots-fn (atom {}) [] nil "file-read" (p %))]
 
         ;; allowed
         (expect (= (str root "/inside.txt") (str (confine (str root "/inside.txt")))))
@@ -58,6 +60,7 @@
                               [root])
                             (atom {})
                             []
+                            nil
                             "file-read"
                             (p link))))))
   (it "fails CLOSED with zero roots (denies everything)"
@@ -67,6 +70,7 @@
                               [])
                             (atom {})
                             []
+                            nil
                             "file-read"
                             (p (str root "/inside.txt")))))
         (expect (denied? #(@#'sfs/confine!
@@ -74,6 +78,7 @@
                               nil)
                             (atom {})
                             []
+                            nil
                             "file-read"
                             (p (str root "/inside.txt")))))))
   (it "allows a path under the OUTBOX dir even though it is outside configured roots"
@@ -91,6 +96,7 @@
               [root])
             (atom {})
             [(p outbox)]
+            nil
             "file-read"
             (p %))]
 
@@ -341,3 +347,79 @@
         (finally (Files/deleteIfExists (p ext-probe))
                  (Files/deleteIfExists (p log-probe))
                  (Files/deleteIfExists (p config-probe)))))))
+
+;; Regression, PLAN P0: `:ext/protected-paths` only reached the native file
+;; verbs, so a path an extension declared protected still accepted a plain
+;; Python `open(..., "w")` / `shutil.move` through the sandbox filesystem.
+(defdescribe
+  protected-paths-in-sandbox-test
+  (let
+    [deny-fn (fn [root rules]
+               (protected-paths/deny-fn
+                 (constantly {:extensions (atom [(extension/extension
+                                                   {:ext/name "test.protected-paths"
+                                                    :ext/description "Test protected paths."
+                                                    :ext/protected-paths (constantly (vec
+                                                                                       rules))})])})
+                 (constantly root)))]
+    (it "refuses a WRITE to an extension-protected path, inside an approved root"
+        (let
+          [root (tmp-root)
+           fs (sfs/confined-filesystem
+                (fn []
+                  [root])
+                nil
+                (deny-fn root [{:glob "secrets/**" :access :none :hint "Use the vault API."}]))]
+
+          (Files/createDirectory (p (str root "/secrets")) (make-array FileAttribute 0))
+          (expect (denied? #(.newByteChannel fs
+                                             (p (str root "/secrets/key.txt"))
+                                             #{StandardOpenOption/WRITE StandardOpenOption/CREATE}
+                                             (make-array FileAttribute 0))))
+          (expect (denied? #(.delete fs (p (str root "/secrets/key.txt")))))
+          ;; :none also refuses the READ
+          (expect (denied? #(.newByteChannel fs
+                                             (p (str root "/secrets/key.txt"))
+                                             #{StandardOpenOption/READ}
+                                             (make-array FileAttribute 0))))
+          ;; an unprotected sibling is untouched
+          (expect (some? (.newByteChannel fs
+                                          (p (str root "/plain.txt"))
+                                          #{StandardOpenOption/WRITE StandardOpenOption/CREATE}
+                                          (make-array FileAttribute 0))))))
+    (it "a :read-only rule still reads, and the guest error names the owner's hint"
+        (let
+          [root (tmp-root)
+           fs (sfs/confined-filesystem (fn []
+                                         [root])
+                                       nil
+                                       (deny-fn root
+                                                [{:glob "inside.txt"
+                                                  :access :read-only
+                                                  :hint "Use (br/policy) instead."}]))
+           msg (try (.newByteChannel fs
+                                     (p (str root "/inside.txt"))
+                                     #{StandardOpenOption/WRITE}
+                                     (make-array FileAttribute 0))
+                    nil
+                    (catch java.io.IOException e (ex-message e)))]
+
+          (expect (some? (.newByteChannel fs
+                                          (p (str root "/inside.txt"))
+                                          #{StandardOpenOption/READ}
+                                          (make-array FileAttribute 0))))
+          (expect (str/includes? (str msg) "reason=path_protected"))
+          (expect (str/includes? (str msg) "Use (br/policy) instead."))))
+    (it "fails CLOSED when the protected-paths registry itself throws"
+        (let
+          [root (tmp-root)
+           fs (sfs/confined-filesystem (fn []
+                                         [root])
+                                       nil
+                                       (fn [_op _path]
+                                         (throw (ex-info "broken registry" {}))))]
+
+          (expect (denied? #(.newByteChannel fs
+                                             (p (str root "/inside.txt"))
+                                             #{StandardOpenOption/READ}
+                                             (make-array FileAttribute 0))))))))
