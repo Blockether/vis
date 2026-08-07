@@ -278,7 +278,7 @@
                       (expect (= "ping-42" (String. buf 0 (max n 0)))))
                     (finally (.close cli))))
              (.disconnect sess))
-           (finally (.close target) (.close ^Context python-context))))))
+           (finally (.close target) (.close ^Context python-context true))))))
 
 (defdescribe
   paramiko-server-reap-test
@@ -370,14 +370,15 @@
 ;; the guest about `none`.
 (defdescribe
   paramiko-none-auth-test
-  (it "authenticates Transport.auth_none against a guest ServerInterface that accepts none"
+  ;; ONE guest server, ONE GraalPy context, both verdicts: the guest accept loop
+  ;; already serves more than one connection, so the accepted user and the refused
+  ;; one are two dials against the same server rather than two contexts. The close
+  ;; is CANCELLING (`true`): the server's guest accept loop is a live daemon thread,
+  ;; and a polite close waits ~13s for it before giving up.
+  (it "authenticates Transport.auth_none only for the user the guest ServerInterface accepts"
       (let [{python-context :python-context} (ep/create-python-context {} nil {:enabled? true})]
         (try (.eval ^Context python-context "python" none-auth-server-src)
              (expect (= ["authenticated" true] (ev python-context (none-auth-client-src "bob"))))
-             (finally (.close ^Context python-context)))))
-  (it "refuses none for a user the ServerInterface rejects, instead of authenticating everyone"
-      (let [{python-context :python-context} (ep/create-python-context {} nil {:enabled? true})]
-        (try (.eval ^Context python-context "python" none-auth-server-src)
              (let [[kind _msg] (ev python-context (none-auth-client-src "mallory"))]
                (expect (= "AuthenticationException" kind)))
-             (finally (.close ^Context python-context))))))
+             (finally (.close ^Context python-context true))))))

@@ -152,10 +152,13 @@
       ;; / `tempfile` (both call `io.open`), and `builtins.open` reached through any
       ;; other module's globals. Each leaked one descriptor per call, and none of it
       ;; showed up in the registry — an untracked handle is invisible there by
-      ;; definition — so the process's own count is what has to be watched: 120
-      ;; leaked opens moved it by ~120. The block returning at all also proves no
-      ;; door leads back INTO the shim; a self-call would be a RecursionError on the
-      ;; very first `open`.
+      ;; definition — so the process's own count is what has to be watched: the leak
+      ;; was ONE descriptor per door per iteration, so 12 iterations move it by ~36
+      ;; while a reclaiming sandbox stays under 12. The block returning at all also
+      ;; proves no door leads back INTO the shim; a self-call would be a
+      ;; RecursionError on the very first `open`. (Each guest `open` costs ~20ms
+      ;; interpreted, so the count is the smallest one that still separates the two
+      ;; outcomes.)
       (let
         [ctx
          (sandbox)
@@ -166,7 +169,7 @@
          r
          (ep/run-python-block ctx
                               (str "import builtins, io, pathlib\n"
-                                   "for _ in range(40):\n" "    h = pathlib.Path(F).open()\n"
+                                   "for _ in range(12):\n" "    h = pathlib.Path(F).open()\n"
                                    "    h = io.open(F)\n" "    h = builtins.open(F)\n"
                                    "    del h\n" "len(__vis_fd_registry__)")
                               "t1/i2")
@@ -176,7 +179,7 @@
 
         (expect (nil? (:error r)))
         (expect (>= 8 (:result r)))
-        (expect (> 40 grown))))
+        (expect (> 12 grown))))
   (it "tracks the layer that owns the descriptor, not the wrapper around it"
       ;; `open()` hands back a STACK (TextIOWrapper -> BufferedReader -> FileIO) and
       ;; dropping the top layer does not end the file: `raw = open(p, "rb").raw`
@@ -265,7 +268,7 @@
                                    "seen = [h.fileno() in __vis_fd_registry__,\n"
                                    "        c.fileno() in __vis_fd_registry__]\n"
                                    "h.close()\n" "c.close()\n"
-                                   "for _ in range(40):\n" "    g = io.FileIO(F)\n"
+                                   "for _ in range(12):\n" "    g = io.FileIO(F)\n"
                                    "    del g\n" "seen + [len(__vis_fd_registry__) <= 8]")
                               "t1/i2")
 
@@ -274,7 +277,7 @@
 
         (expect (nil? (:error r)))
         (expect (= [true true true] (:result r)))
-        (expect (> 40 grown))))
+        (expect (> 12 grown))))
   (it "keeps `isinstance` honest after taking over `io.FileIO`"
       ;; The shim is a SUBCLASS, so the raw built INSIDE `open` is not one of its
       ;; instances. Its metaclass forwards the question to the real class, or every
@@ -321,7 +324,7 @@
 
          r
          (ep/run-python-block ctx
-                              (str "import gc, sqlite3\n" "for i in range(40):\n"
+                              (str "import gc, sqlite3\n" "for i in range(12):\n"
                                    "    c = sqlite3.connect(W + str(i) + '.db')\n"
                                    "    c.execute('create table t(x)')\n"
                                    "    del c\n" "gc.collect()\n"
@@ -333,4 +336,4 @@
 
         (expect (nil? (:error r)))
         (expect (= "done" (:result r)))
-        (expect (> 20 grown)))))
+        (expect (> 6 grown)))))
