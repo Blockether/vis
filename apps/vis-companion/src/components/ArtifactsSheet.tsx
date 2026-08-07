@@ -394,14 +394,26 @@ function SurfaceFooter() {
   );
 }
 
-/** The chrome a clip or a document is read inside. A picture brings its own. */
+/**
+ * The chrome a clip or a document is read inside. A picture brings its own.
+ *
+ * AN OPENED ARTIFACT IS THE WHOLE SCREEN. The overlay is the sheet's own box, so
+ * the body under the header takes every remaining pixel and hands them to the
+ * artifact: `fill` gives the child the box (it owns its own scrolling and its
+ * own padding), while a list of rows keeps the padded scroller. A document that
+ * sizes itself to `60vh` inside a padded scroller is a page floating in a
+ * letterbox with the app's paper above and below it.
+ */
 function DetailOverlay({
   name,
   onClose,
+  fill = false,
   children,
 }: {
   name: string;
   onClose: () => void;
+  /** The child fills the body and scrolls itself. */
+  fill?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -417,7 +429,13 @@ function DetailOverlay({
         closeLabel="Back to artifacts"
         onClose={onClose}
       />
-      <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
+      <div
+        className={
+          fill
+            ? "flex min-h-0 min-w-0 flex-1 flex-col"
+            : "min-h-0 flex-1 overflow-y-auto p-3 sm:p-4"
+        }
+      >
         {children}
       </div>
     </div>
@@ -474,13 +492,13 @@ function ArtifactDetail({
 
   if (artifact.kind === "video") {
     return (
-      <DetailOverlay name={artifact.name} onClose={onClose}>
+      <DetailOverlay name={artifact.name} onClose={onClose} fill>
         <video
           src={url}
           controls
           playsInline
           preload="metadata"
-          className="h-full w-full bg-code object-contain"
+          className="min-h-0 flex-1 bg-code object-contain"
         />
       </DetailOverlay>
     );
@@ -491,7 +509,7 @@ function ArtifactDetail({
   // document back as the next version of the same filename.
   if (isMarkdownMedia(artifact.mediaType, artifact.name)) {
     return (
-      <DetailOverlay name={artifact.name} onClose={onClose}>
+      <DetailOverlay name={artifact.name} onClose={onClose} fill>
         <MarkdownArtifact
           client={client}
           sid={sid}
@@ -509,15 +527,20 @@ function ArtifactDetail({
   // than the artifact.
   if (isTextMedia(artifact.mediaType, artifact.name)) {
     return (
-      <DetailOverlay name={artifact.name} onClose={onClose}>
-        <TextFrame url={url} mime={artifact.mediaType} name={artifact.name} />
+      <DetailOverlay name={artifact.name} onClose={onClose} fill>
+        <TextFrame
+          url={url}
+          mime={artifact.mediaType}
+          name={artifact.name}
+          fill
+        />
       </DetailOverlay>
     );
   }
 
   return (
-    <DetailOverlay name={artifact.name} onClose={onClose}>
-      <DocFrame url={url} mime={artifact.mediaType} name={artifact.name} />
+    <DetailOverlay name={artifact.name} onClose={onClose} fill>
+      <DocFrame url={url} mime={artifact.mediaType} name={artifact.name} fill />
     </DetailOverlay>
   );
 }

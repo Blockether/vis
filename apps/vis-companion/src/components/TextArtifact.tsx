@@ -65,10 +65,13 @@ export const TextFrame = memo(function TextFrame({
   url,
   mime,
   name,
+  fill = false,
 }: {
   url: string;
   mime: string;
   name: string;
+  /** Opened rather than previewed: fill the box and scroll inside it. */
+  fill?: boolean;
 }) {
   const [text, setText] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -96,5 +99,11 @@ export const TextFrame = memo(function TextFrame({
       </p>
     );
   }
-  return <TextBody text={text} mime={mime} name={name} />;
+  const body = <TextBody text={text} mime={mime} name={name} />;
+  if (!fill) return body;
+  return (
+    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-3 sm:p-4">
+      {body}
+    </div>
+  );
 });

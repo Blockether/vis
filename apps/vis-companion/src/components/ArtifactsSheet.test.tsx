@@ -1,3 +1,4 @@
+import artifactsSheetSource from "./ArtifactsSheet.tsx?raw";
 import sessionScreenSource from "../screens/SessionScreen.tsx?raw";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -325,5 +326,28 @@ describe("an artifact with a history", () => {
   it("keeps the history control a sibling of the tile it belongs to", () => {
     const html = sheet([threaded]);
     expect(html).not.toMatch(/<button(?:(?!<\/button>)[\s\S])*<button/);
+  });
+});
+
+// Regression: an opened attachment was read in a letterbox. Every kind that owns
+// its own scrolling — a clip, a note, a text file, a document — is handed the
+// overlay's whole body (`fill`); only a list of rows keeps the padded scroller.
+describe("an opened artifact", () => {
+  const detail =
+    /function ArtifactDetail\([\s\S]*?\n}\n/.exec(artifactsSheetSource)?.[0] ??
+    "";
+
+  it("is given the whole height of the overlay", () => {
+    const overlays = detail.match(/<DetailOverlay[^>]*>/g) ?? [];
+    // The first overlay is the loading/failed line, which is prose in a scroller.
+    expect(overlays.length).toBeGreaterThan(1);
+    expect(overlays.slice(1).every((tag) => tag.includes("fill"))).toBe(true);
+  });
+
+  it("hands the filled body to the frame rather than padding around it", () => {
+    const overlay =
+      /function DetailOverlay\([\s\S]*?\n}\n/.exec(artifactsSheetSource)?.[0] ??
+      "";
+    expect(overlay).toContain("flex min-h-0 min-w-0 flex-1 flex-col");
   });
 });

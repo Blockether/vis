@@ -61,10 +61,13 @@ export const DocFrame = memo(function DocFrame({
   url,
   mime,
   name,
+  fill = false,
 }: {
   url: string;
   mime: string;
   name: string;
+  /** Opened rather than previewed: take the whole box. */
+  fill?: boolean;
 }) {
   return (
     <iframe
@@ -73,7 +76,9 @@ export const DocFrame = memo(function DocFrame({
       sandbox={docSandbox(mime)}
       referrerPolicy="no-referrer"
       loading="lazy"
-      className="h-[60vh] max-h-[34rem] w-full border-0 bg-input"
+      className={`w-full border-0 bg-input ${
+        fill ? "min-h-0 flex-1" : "h-[60vh] max-h-[34rem]"
+      }`}
     />
   );
 });

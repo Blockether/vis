@@ -144,12 +144,12 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   }, [onSave, body, comments]);
 
   return (
-    <div className="flex min-w-0 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div
         ref={proseRef}
         onMouseUp={pickSelection}
         onTouchEnd={pickSelection}
-        className="min-w-0 bg-panel px-3 py-3 font-sans text-body text-foreground sm:px-4"
+        className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-panel px-3 py-3 font-sans text-body text-foreground sm:px-4"
       >
         <Markdown>{body}</Markdown>
       </div>
