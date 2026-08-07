@@ -6,10 +6,10 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type WheelEvent as ReactWheelEvent,
-} from 'react';
-import { createPortal } from 'react-dom';
-import { PEN_COLORS, flattenAnnotations, type PenToken } from '../lib/annotate';
-import { copyImage, shareImage, shareVerb } from '../lib/image-share';
+} from "react";
+import { createPortal } from "react-dom";
+import { PEN_COLORS, flattenAnnotations, type PenToken } from "../lib/annotate";
+import { copyImage, shareImage, shareVerb } from "../lib/image-share";
 import {
   NO_TRANSFORM,
   clampTransform,
@@ -23,13 +23,13 @@ import {
   type Gesture,
   type Point,
   type Transform,
-} from '../lib/zoom-pan';
+} from "../lib/zoom-pan";
 import {
   AnnotationLayer,
   PenToolbar,
   type AnnotationSurface,
-} from './AnnotationLayer';
-import { Button } from './ui';
+} from "./AnnotationLayer";
+import { Button } from "./ui";
 
 interface ExpandableImageProps {
   src: string;
@@ -38,8 +38,8 @@ interface ExpandableImageProps {
   children?: ReactNode;
   /** Extra classes for the zoom trigger itself, e.g. `shrink-0` inside a flex row. */
   frameClassName?: string;
-  loading?: 'eager' | 'lazy';
-  decoding?: 'async' | 'auto' | 'sync';
+  loading?: "eager" | "lazy";
+  decoding?: "async" | "auto" | "sync";
   onError?: () => void;
   /**
    * Given, the viewer can hand the picture BACK: the flattened image (original
@@ -68,9 +68,9 @@ export function ExpandableImage({
   alt,
   className,
   children,
-  frameClassName = '',
-  loading = 'lazy',
-  decoding = 'async',
+  frameClassName = "",
+  loading = "lazy",
+  decoding = "async",
   onError,
   onApply,
 }: ExpandableImageProps) {
@@ -81,7 +81,7 @@ export function ExpandableImage({
       <button
         type="button"
         className={`${
-          children ? 'flex min-w-0 items-center gap-1.5' : 'block'
+          children ? "flex min-w-0 items-center gap-1.5" : "block"
         } max-w-full cursor-zoom-in appearance-none border-0 bg-transparent p-0 text-left ${frameClassName}`}
         onClick={() => setOpen(true)}
         aria-label={`Open ${alt} full screen`}
@@ -124,7 +124,7 @@ export function ImageViewer({
   name,
   onClose,
   onApply,
-  applyLabel = 'Use edit',
+  applyLabel = "Use edit",
 }: ImageViewerProps) {
   const imageRef = useRef<HTMLImageElement | null>(null);
   const transformedRef = useRef<HTMLDivElement | null>(null);
@@ -136,10 +136,10 @@ export function ImageViewer({
   const [drawing, setDrawing] = useState(false);
   const [penColor, setPenColor] = useState<PenToken>(PEN_COLORS[0].token);
   const [strokeCount, setStrokeCount] = useState(0);
-  const [busy, setBusy] = useState<'copy' | 'share' | 'apply' | null>(null);
+  const [busy, setBusy] = useState<"copy" | "share" | "apply" | null>(null);
   // Probed once per open: the sheet cannot appear or disappear mid-viewer.
   const [shareAction] = useState(shareVerb);
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState("");
 
   // The transform is written to style rather than to state: a pinch that
   // re-rendered React on every frame would stutter on exactly the devices that
@@ -162,14 +162,14 @@ export function ImageViewer({
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    document.body.style.overflow = "hidden";
     const keyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === "Escape") onClose();
     };
-    window.addEventListener('keydown', keyDown);
+    window.addEventListener("keydown", keyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', keyDown);
+      window.removeEventListener("keydown", keyDown);
     };
   }, [onClose]);
 
@@ -179,7 +179,7 @@ export function ImageViewer({
       annotationRef.current?.fit(image.naturalWidth, image.naturalHeight);
   }
 
-function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
+  function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
     const point = { x: event.clientX, y: event.clientY };
     pointersRef.current.set(event.pointerId, point);
     const pointers = [...pointersRef.current.values()];
@@ -189,13 +189,18 @@ function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
     // above this handler, not a pan — only a SECOND finger starts a gesture
     // here, so a pinch still works while the pen is out.
     if (drawing && !pinching) return;
+    // A second finger arrived: the mark the first one was leaving belongs to a
+    // pinch, not to the picture. Drop it before the zoom starts, or every
+    // two-finger zoom on a phone scribbles a line across the page.
+    if (drawing && pinching) annotationRef.current?.cancelStroke();
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     // A live pinch/pan writes the transform every frame; the CSS transition
     // meant for button/reset snaps fights that at exactly the frame rate a
     // finger moves, which is what read as stutter and a lagging, rubber-banded
     // pinch. Only a finger on the glass suspends it.
-    if (transformedRef.current) transformedRef.current.style.transitionDuration = '0ms';
+    if (transformedRef.current)
+      transformedRef.current.style.transitionDuration = "0ms";
     gestureRef.current = pinching
       ? pinchFrom(a, b, transformRef.current)
       : panFrom(event.pointerId, point, transformRef.current);
@@ -210,12 +215,12 @@ function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
     const gesture = gestureRef.current;
     if (!gesture) return;
     const [a, b] = [...pointersRef.current.values()];
-    if (gesture.kind === 'pinch' && a && b) {
+    if (gesture.kind === "pinch" && a && b) {
       event.preventDefault();
       applyTransform(pinchTransform(gesture, a, b));
     } else if (
       !drawing &&
-      gesture.kind === 'pan' &&
+      gesture.kind === "pan" &&
       gesture.pointerId === event.pointerId
     ) {
       event.preventDefault();
@@ -238,7 +243,7 @@ function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
     // Last finger up: restore the CSS transition so a clamp snap-back (e.g.
     // pinching past 1x) and the toolbar's own zoom buttons animate again.
     if (!gestureRef.current && transformedRef.current)
-      transformedRef.current.style.transitionDuration = '';
+      transformedRef.current.style.transitionDuration = "";
   }
 
   function zoomBy(factor: number) {
@@ -259,7 +264,7 @@ function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
 
   function editedImage(): Promise<Blob> {
     const image = imageRef.current;
-    if (!image) throw new Error('Image is not ready');
+    if (!image) throw new Error("Image is not ready");
     return flattenAnnotations(image, annotationRef.current?.canvas() ?? null);
   }
 
@@ -269,12 +274,12 @@ function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
    * the work and the sentence to fall back to.
    */
   async function run(
-    kind: 'copy' | 'share' | 'apply',
+    kind: "copy" | "share" | "apply",
     fallback: string,
     work: (blob: Blob) => Promise<string>,
   ) {
     setBusy(kind);
-    setStatus('Preparing image…');
+    setStatus("Preparing image…");
     try {
       setStatus(await work(await editedImage()));
     } catch (cause) {
@@ -301,7 +306,7 @@ function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
       </header>
 
       <div
-        className={`absolute inset-0 grid cursor-grab place-items-center overflow-hidden overscroll-none px-4 pt-20 active:cursor-grabbing [touch-action:none] ${drawing ? 'pb-36' : 'pb-24'}`}
+        className={`absolute inset-0 grid cursor-grab place-items-center overflow-hidden overscroll-none px-4 pt-20 active:cursor-grabbing [touch-action:none] ${drawing ? "pb-36" : "pb-24"}`}
         onPointerDownCapture={beginGesture}
         onPointerMove={moveGesture}
         onPointerUp={endGesture}
@@ -319,7 +324,7 @@ function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
             alt={name}
             draggable={false}
             onLoad={fitAnnotations}
-            className={`block max-w-[calc(100vw-2rem)] select-none object-contain ${drawing ? 'max-h-[calc(100dvh-13rem)]' : 'max-h-[calc(100dvh-10rem)]'}`}
+            className={`block max-w-[calc(100vw-2rem)] select-none object-contain ${drawing ? "max-h-[calc(100dvh-13rem)]" : "max-h-[calc(100dvh-10rem)]"}`}
           />
           <AnnotationLayer
             ref={annotationRef}
@@ -363,41 +368,41 @@ function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
           </div>
 
           <Button
-            variant={drawing ? 'solid' : 'ghost'}
+            variant={drawing ? "solid" : "ghost"}
             onClick={() => {
               resetTransform();
               setDrawing((current) => !current);
-              setStatus('');
+              setStatus("");
             }}
             aria-pressed={drawing}
           >
-            {drawing ? 'Done' : 'Draw'}
+            {drawing ? "Done" : "Draw"}
           </Button>
 
           <div className="ml-auto flex shrink-0 items-center gap-2">
             <Button
               variant="ghost"
               onClick={() =>
-                run('copy', 'Could not copy image', (blob) =>
+                run("copy", "Could not copy image", (blob) =>
                   copyImage(blob, name),
                 )
               }
               disabled={busy !== null}
             >
-              {busy === 'copy' ? 'Copying…' : 'Copy'}
+              {busy === "copy" ? "Copying…" : "Copy"}
             </Button>
             {/* Exactly ONE solid button is on screen at a time: when the picture can go
                 back into the message, THAT is the primary action and sharing steps down. */}
             <Button
-              variant={onApply ? 'ghost' : 'solid'}
+              variant={onApply ? "ghost" : "solid"}
               onClick={() =>
-                run('share', 'Could not share image', (blob) =>
+                run("share", "Could not share image", (blob) =>
                   shareImage(blob, name),
                 )
               }
               disabled={busy !== null}
             >
-              {busy === 'share' ? `${shareAction}…` : shareAction}
+              {busy === "share" ? `${shareAction}…` : shareAction}
             </Button>
             {onApply && (
               <Button
@@ -407,15 +412,15 @@ function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
                   // caller owns the slot it came from, so an annotated attachment
                   // REPLACES itself instead of arriving as a second copy — and the
                   // original bytes are never mutated here.
-                  run('apply', 'Could not use this edit', async (blob) => {
+                  run("apply", "Could not use this edit", async (blob) => {
                     await onApply(blob);
                     onClose();
-                    return '';
+                    return "";
                   })
                 }
                 disabled={busy !== null}
               >
-                {busy === 'apply' ? 'Applying…' : applyLabel}
+                {busy === "apply" ? "Applying…" : applyLabel}
               </Button>
             )}
           </div>
@@ -439,9 +444,9 @@ function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
           {status ||
             (drawing
               ? onApply
-                ? 'Draw on the image, then use the edit in your message.'
-                : 'Draw on the image, then copy or share it.'
-              : 'Pinch, scroll, or double-click to zoom.')}
+                ? "Draw on the image, then use the edit in your message."
+                : "Draw on the image, then copy or share it."
+              : "Pinch, scroll, or double-click to zoom.")}
         </div>
       </div>
     </div>

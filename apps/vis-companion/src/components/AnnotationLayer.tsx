@@ -4,7 +4,7 @@ import {
   useRef,
   type PointerEvent as ReactPointerEvent,
   type Ref,
-} from 'react';
+} from "react";
 import {
   PEN_COLORS,
   canvasPoint,
@@ -15,8 +15,8 @@ import {
   strokeWidthFor,
   type PenToken,
   type Stroke,
-} from '../lib/annotate';
-import { Button } from './ui';
+} from "../lib/annotate";
+import { Button } from "./ui";
 
 /**
  * A transparent sheet you can draw on, and the tools that drive it.
@@ -39,6 +39,11 @@ export interface AnnotationSurface {
   undo(): void;
   /** Drop every stroke. */
   clear(): void;
+  /**
+   * Abandon the stroke in progress. A second finger landed, so what looked like
+   * a pen was the start of a pinch: the marks it left are not wanted.
+   */
+  cancelStroke(): void;
   /** The painted sheet, to compose over the picture it annotates. */
   canvas(): HTMLCanvasElement | null;
 }
@@ -47,8 +52,8 @@ export function AnnotationLayer({
   ref,
   active,
   color,
-  className = '',
-  label = 'Drawing layer',
+  className = "",
+  label = "Drawing layer",
   onStrokesChange,
 }: {
   ref?: Ref<AnnotationSurface>;
@@ -74,7 +79,7 @@ export function AnnotationLayer({
 
   function repaint(): void {
     const canvas = canvasRef.current;
-    const context = canvas?.getContext('2d');
+    const context = canvas?.getContext("2d");
     if (canvas && context) repaintStrokes(context, canvas, strokesRef.current);
     announce();
   }
@@ -102,6 +107,13 @@ export function AnnotationLayer({
         drawingRef.current = null;
         repaint();
       },
+      cancelStroke() {
+        const stroke = drawingRef.current;
+        if (!stroke) return;
+        strokesRef.current = strokesRef.current.filter((it) => it !== stroke);
+        drawingRef.current = null;
+        repaint();
+      },
       canvas: () => canvasRef.current,
     }),
     [],
@@ -121,7 +133,7 @@ export function AnnotationLayer({
     };
     strokesRef.current = [...strokesRef.current, stroke];
     drawingRef.current = stroke;
-    const context = canvas.getContext('2d');
+    const context = canvas.getContext("2d");
     if (context) paintStroke(context, stroke);
     announce();
   }
@@ -137,7 +149,7 @@ export function AnnotationLayer({
     event.preventDefault();
     const previous = stroke.points[stroke.points.length - 1];
     stroke.points.push(point);
-    const context = canvas.getContext('2d');
+    const context = canvas.getContext("2d");
     if (previous && context) paintSegment(context, stroke, previous, point);
   }
 
@@ -152,8 +164,8 @@ export function AnnotationLayer({
     <canvas
       ref={canvasRef}
       aria-label={label}
-      data-annotation={active ? 'active' : 'idle'}
-      className={`[touch-action:none] ${active ? 'pointer-events-auto cursor-crosshair' : 'pointer-events-none'} ${className}`}
+      data-annotation={active ? "active" : "idle"}
+      className={`[touch-action:none] ${active ? "pointer-events-auto cursor-crosshair" : "pointer-events-none"} ${className}`}
       onPointerDown={begin}
       onPointerMove={extend}
       onPointerUp={finish}
@@ -175,7 +187,7 @@ export function PenToolbar({
   strokeCount,
   onUndo,
   onClear,
-  className = '',
+  className = "",
 }: {
   color: PenToken;
   onColor: (token: PenToken) => void;
@@ -197,23 +209,15 @@ export function PenToolbar({
         >
           <span
             className={`size-7 border-2 ${pen.className} ${
-              color === pen.token ? 'border-accent' : 'border-edge-strong'
+              color === pen.token ? "border-accent" : "border-edge-strong"
             }`}
           />
         </button>
       ))}
-      <Button
-        variant="ghost"
-        onClick={onUndo}
-        disabled={!strokeCount}
-      >
+      <Button variant="ghost" onClick={onUndo} disabled={!strokeCount}>
         Undo
       </Button>
-      <Button
-        variant="ghost"
-        onClick={onClear}
-        disabled={!strokeCount}
-      >
+      <Button variant="ghost" onClick={onClear} disabled={!strokeCount}>
         Clear
       </Button>
     </div>

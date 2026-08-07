@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { act, createRef, type RefObject } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, createRef, type RefObject } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AnnotationLayer,
   PenToolbar,
   type AnnotationSurface,
-} from './AnnotationLayer';
+} from "./AnnotationLayer";
 
 // The pen used to live inside the image viewer and nowhere else, so annotating
 // a PDF page meant opening a full-screen picture dialog. These tests hold the
@@ -22,7 +22,7 @@ let host: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
-  host = document.createElement('div');
+  host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
   // jsdom has no 2d context and no pointer capture; the layer must survive both,
@@ -41,8 +41,8 @@ function mount(node: React.ReactNode) {
 }
 
 function layer(): HTMLCanvasElement {
-  const canvas = host.querySelector('canvas');
-  if (!canvas) throw new Error('no annotation layer');
+  const canvas = host.querySelector("canvas");
+  if (!canvas) throw new Error("no annotation layer");
   canvas.getBoundingClientRect = () =>
     ({
       left: 0,
@@ -60,8 +60,8 @@ function pointer(
   y: number,
 ) {
   const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y });
-  Object.defineProperty(event, 'isPrimary', { value: true });
-  Object.defineProperty(event, 'pointerId', { value: 1 });
+  Object.defineProperty(event, "isPrimary", { value: true });
+  Object.defineProperty(event, "pointerId", { value: 1 });
   act(() => {
     canvas.dispatchEvent(event);
   });
@@ -70,18 +70,18 @@ function pointer(
 function draw(canvas: HTMLCanvasElement, points: [number, number][]) {
   const [first, ...rest] = points;
   if (!first) return;
-  pointer(canvas, 'pointerdown', first[0], first[1]);
-  for (const [x, y] of rest) pointer(canvas, 'pointermove', x, y);
-  pointer(canvas, 'pointerup', 0, 0);
+  pointer(canvas, "pointerdown", first[0], first[1]);
+  for (const [x, y] of rest) pointer(canvas, "pointermove", x, y);
+  pointer(canvas, "pointerup", 0, 0);
 }
 
 function surface(ref: RefObject<AnnotationSurface | null>): AnnotationSurface {
-  if (!ref.current) throw new Error('layer did not publish a surface');
+  if (!ref.current) throw new Error("layer did not publish a surface");
   return ref.current;
 }
 
-describe('AnnotationLayer', () => {
-  it('is inert until it is switched on, so the picture below stays draggable', () => {
+describe("AnnotationLayer", () => {
+  it("is inert until it is switched on, so the picture below stays draggable", () => {
     const onStrokesChange = vi.fn();
     mount(
       <AnnotationLayer
@@ -91,7 +91,7 @@ describe('AnnotationLayer', () => {
       />,
     );
     const canvas = layer();
-    expect(canvas.className).toContain('pointer-events-none');
+    expect(canvas.className).toContain("pointer-events-none");
     draw(canvas, [
       [1, 1],
       [5, 5],
@@ -99,7 +99,7 @@ describe('AnnotationLayer', () => {
     expect(onStrokesChange).not.toHaveBeenCalled();
   });
 
-  it('records one stroke per gesture and reports the count', () => {
+  it("records one stroke per gesture and reports the count", () => {
     const onStrokesChange = vi.fn();
     const ref = createRef<AnnotationSurface>();
     mount(
@@ -122,7 +122,7 @@ describe('AnnotationLayer', () => {
     expect(canvas.height).toBe(100);
   });
 
-  it('undoes the last stroke and clears every one', () => {
+  it("undoes the last stroke and clears every one", () => {
     const onStrokesChange = vi.fn();
     const ref = createRef<AnnotationSurface>();
     mount(
@@ -145,7 +145,7 @@ describe('AnnotationLayer', () => {
 
   // Resizing a canvas wipes it, so the strokes have to go with it — keeping them
   // would leave marks that no longer sit on anything.
-  it('drops the drawing when it is fitted to a different picture', () => {
+  it("drops the drawing when it is fitted to a different picture", () => {
     const onStrokesChange = vi.fn();
     const ref = createRef<AnnotationSurface>();
     mount(
@@ -163,15 +163,15 @@ describe('AnnotationLayer', () => {
     expect(onStrokesChange).toHaveBeenLastCalledWith(0);
   });
 
-  it('hands its own canvas back for flattening', () => {
+  it("hands its own canvas back for flattening", () => {
     const ref = createRef<AnnotationSurface>();
     mount(<AnnotationLayer ref={ref} active color="--err" />);
     expect(surface(ref).canvas()).toBe(layer());
   });
 });
 
-describe('PenToolbar', () => {
-  it('offers every ink, says which one is chosen, and is touch-sized', () => {
+describe("PenToolbar", () => {
+  it("offers every ink, says which one is chosen, and is touch-sized", () => {
     const onColor = vi.fn();
     mount(
       <PenToolbar
@@ -182,22 +182,22 @@ describe('PenToolbar', () => {
         onClear={() => undefined}
       />,
     );
-    const swatches = [...host.querySelectorAll('button[aria-pressed]')];
+    const swatches = [...host.querySelectorAll("button[aria-pressed]")];
     expect(swatches).toHaveLength(5);
     expect(
-      swatches.filter((b) => b.getAttribute('aria-pressed') === 'true'),
+      swatches.filter((b) => b.getAttribute("aria-pressed") === "true"),
     ).toHaveLength(1);
     for (const swatch of swatches) {
-      expect(swatch.getAttribute('aria-label')).toMatch(/pen$/u);
-      expect(swatch.className).toContain('min-h-11');
-      expect(swatch.className).not.toContain('sm:min-h');
+      expect(swatch.getAttribute("aria-label")).toMatch(/pen$/u);
+      expect(swatch.className).toContain("min-h-11");
+      expect(swatch.className).not.toContain("sm:min-h");
     }
     act(() => (swatches[0] as HTMLButtonElement).click());
-    expect(onColor).toHaveBeenCalledWith('--err');
+    expect(onColor).toHaveBeenCalledWith("--err");
   });
 
   // Undo and Clear on an untouched picture promise something they cannot do.
-  it('disables the ways back until there is something to take back', () => {
+  it("disables the ways back until there is something to take back", () => {
     const onUndo = vi.fn();
     mount(
       <PenToolbar
@@ -208,8 +208,8 @@ describe('PenToolbar', () => {
         onClear={() => undefined}
       />,
     );
-    const back = [...host.querySelectorAll('button')].filter((b) =>
-      ['Undo', 'Clear'].includes(b.textContent ?? ''),
+    const back = [...host.querySelectorAll("button")].filter((b) =>
+      ["Undo", "Clear"].includes(b.textContent ?? ""),
     );
     expect(back).toHaveLength(2);
     for (const button of back)
@@ -224,11 +224,36 @@ describe('PenToolbar', () => {
         onClear={() => undefined}
       />,
     );
-    const undo = [...host.querySelectorAll('button')].find(
-      (b) => b.textContent === 'Undo',
+    const undo = [...host.querySelectorAll("button")].find(
+      (b) => b.textContent === "Undo",
     );
     expect((undo as HTMLButtonElement).disabled).toBe(false);
     act(() => (undo as HTMLButtonElement).click());
     expect(onUndo).toHaveBeenCalled();
   });
+});
+
+it("drops the stroke in progress when its owner cancels it", () => {
+  const ref = createRef<AnnotationSurface>();
+  const onStrokesChange = vi.fn();
+  mount(
+    <AnnotationLayer
+      ref={ref}
+      active
+      color="--err"
+      onStrokesChange={onStrokesChange}
+    />,
+  );
+  const canvas = layer();
+  canvas.width = 100;
+  canvas.height = 100;
+  pointer(canvas, "pointerdown", 5, 5);
+  expect(onStrokesChange).toHaveBeenLastCalledWith(1);
+  act(() => surface(ref).cancelStroke());
+  expect(onStrokesChange).toHaveBeenLastCalledWith(0);
+  // A cancel with no stroke in flight is a no-op, not an erasure.
+  pointer(canvas, "pointerdown", 5, 5);
+  pointer(canvas, "pointerup", 5, 5);
+  act(() => surface(ref).cancelStroke());
+  expect(onStrokesChange).toHaveBeenLastCalledWith(1);
 });
