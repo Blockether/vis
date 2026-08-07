@@ -165,6 +165,37 @@
                (expect (= "hang test request words here for title" @title*))
                (expect (true? (provisional-title? sid))))
              (finally (deliver blocker nil)))))
+  ;; Regression, issue #b712ee2e: a message whose first lines are a pasted
+  ;; image's `````vis-image` fence was titled after the clipboard TEMP FILE —
+  ;; `/var/folders/.../T/clipboard-2026-08-07-130827-BCB` — instead of the words
+  ;; the human typed under the picture.
+  (it
+    "REGRESSION: a pasted-image attachment fence never names the session"
+    (let
+      [sid
+       (fresh-sid)
+
+       title*
+       (atom "")
+
+       request
+       (str
+         "````vis-image\n" "[Image #1: clipboard-2026-08-07-130827-BCBBE597.png 1720×578, 87KB]\n"
+         "/var/folders/67/5js7xvyn2t14v8zq9rrzb8m40000gn/T/clipboard-2026-08-07-130827-BCBBE597.png\n"
+         "image/png\n1720x578\n87KB\n"
+         "````\n" "Streaming was killed between the chunks. Please analyze it.")]
+
+      (with-redefs
+        [titling/set-title-with-broadcast!
+         (fn [_ _ a t]
+           (reset! a t))
+
+         svar/ask!
+         (fn [_ _]
+           (throw (ex-info "429 rate limited" {})))]
+
+        @(maybe-auto-title! (env* sid title*) request)
+        (expect (= "Streaming was killed between the chunks" @title*)))))
   (it
     "REGRESSION: a leading /new-session slash command is stripped so the title reflects the real prompt, not the command word"
     ;; The `/new-session <task>` composer action leaked its command word into

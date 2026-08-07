@@ -465,6 +465,28 @@
    genuine path like `/usr/bin/foo` (interior slashes) is left untouched."
   #"(?i)^\s*/[\p{L}][\p{L}\p{N}_-]*(?:\s+|$)")
 
+(def ^:private attachment-fence-pattern
+  "A channel-authored display fence for a pasted/dropped file (`vis-image`,
+   `vis-doc`, `vis-table`). Its body is machine text — a caption, an absolute
+   TEMP path, a media type, pixel dimensions, a byte size — and none of it is a
+   word the human typed, so it must never name the session."
+  #"(?ms)^[ \t]*(`{3,})vis-[a-z-]+[^\n]*\n.*?^[ \t]*\1[ \t]*$")
+
+(defn- strip-attachment-fences
+  "Drop every `vis-*` display fence from `user-request` so the title comes from
+   the prose around a pasted image, not from the clipboard file's path. Returns
+   the request unchanged when stripping would leave nothing (an image-only
+   message still deserves whatever name its own text can give)."
+  [user-request]
+  (let
+    [s
+     (str user-request)
+
+     stripped
+     (str/trim (str/replace s attachment-fence-pattern "\n"))]
+
+    (if (str/blank? stripped) s stripped)))
+
 (defn- strip-leading-slash-command
   "Drop a leading composer slash-command word from `user-request` so an
    auto-title reflects the real prompt, not the command (the `/new-session
@@ -477,6 +499,14 @@
       (let [rest (str/trim (subs s (count m)))]
         (if (str/blank? rest) s rest))
       s)))
+
+(defn- title-source
+  "The text a title is allowed to be made of: the user's own prose, with the
+   channel's scaffolding removed — a leading composer slash command and every
+   `vis-*` attachment fence. Both the local title and the LLM prompt read this,
+   so neither can name the session after a command word or a clipboard path."
+  [user-request]
+  (strip-leading-slash-command (strip-attachment-fences user-request)))
 
 (defn- auto-title-pass!
   "One titling pass. Phase 1 is the deterministic LOCAL title (it cannot hang and
@@ -521,7 +551,7 @@
   [env user-request]
   (let [cfg (titling-config)]
     (when (and (not (titling-disabled? cfg)) (titleable? env))
-      (auto-title-pass! env cfg (strip-leading-slash-command user-request) false)
+      (auto-title-pass! env cfg (title-source user-request) false)
       nil)))
 
 (defn after-turn-auto-title!
@@ -537,4 +567,4 @@
   [env user-request]
   (let [cfg (titling-config)]
     (when (and (llm-titling? cfg) (titleable? env))
-      (future (auto-title-pass! env cfg (strip-leading-slash-command user-request) true)))))
+      (future (auto-title-pass! env cfg (title-source user-request) true)))))
