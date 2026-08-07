@@ -6302,9 +6302,10 @@
    in-frame band the human-input form and the magit status buffer use, painted
    over the bottom of the transcript instead of in a window of its own.
 
-   `content-top` is the first row the band may touch (the screen's
-   `[:layout :messages-top]`), so the header and the session it is about stay
-   readable above it. The frame is snapshotted before the band paints and put
+   `anchor` is `state/band-anchor`: `:content-top` is the first row the band
+   may touch and `:prompt-h` the live height of the prompt it sits above, so
+   the header and the session it is about stay readable. The frame is
+   snapshotted before the band paints and put
    back on the way out — the transcript underneath is never repainted from
    scratch and never blanked.
 
@@ -6318,9 +6319,8 @@
    this band (`/draft new`) is exactly that key, pre-pressed, so the band paints
    itself and goes straight to the question instead of waiting for a keystroke
    the human already typed."
-  ([^TerminalScreen screen content-top prompt-h spec f]
-   (session-band! screen content-top prompt-h spec f nil))
-  ([^TerminalScreen screen content-top prompt-h spec f pressed]
+  ([^TerminalScreen screen anchor spec f] (session-band! screen anchor spec f nil))
+  ([^TerminalScreen screen {:keys [content-top prompt-h]} spec f pressed]
    (let
      [size
       (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
@@ -6362,7 +6362,7 @@
 
    Returns the `KeyStroke` (Esc included — the resolver reads it as an abort), or
    nil when the terminal had nothing to give."
-  [^TerminalScreen screen content-top prompt-h spec]
+  [^TerminalScreen screen {:keys [content-top prompt-h]} spec]
   (let
     [size
      (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
@@ -6499,13 +6499,11 @@
    (`drafts/slash-band`): `/draft new` IS `d`, already pressed. A command this
    band does not offer right now (`/draft resume` with no drafts) opens the band
    itself rather than firing something the human was never shown."
-  ([^TerminalScreen screen content-top prompt-h draft-rows]
-   (draft-transient! screen content-top prompt-h draft-rows nil))
-  ([^TerminalScreen screen content-top prompt-h draft-rows pressed]
+  ([^TerminalScreen screen anchor draft-rows] (draft-transient! screen anchor draft-rows nil))
+  ([^TerminalScreen screen anchor draft-rows pressed]
    (let [spec (drafts/spec draft-rows)]
      (session-band! screen
-                    content-top
-                    prompt-h
+                    anchor
                     spec
                     #(draft-band-choice % draft-rows)
                     (when (tr/item-by-id spec pressed) pressed)))))
@@ -6531,8 +6529,8 @@
 
    Returns `{:start-in :trunk}`, `{:start-in :draft :clean? bool :draft {:label :clean?}}`,
    or nil."
-  [^TerminalScreen screen content-top prompt-h]
-  (session-band! screen content-top prompt-h drafts/start-in-spec start-in-band-choice))
+  [^TerminalScreen screen anchor]
+  (session-band! screen anchor drafts/start-in-spec start-in-band-choice))
 
 (def palette-commands
   "Command palette entries. Each is {:id keyword :label str}. The `:id` is the

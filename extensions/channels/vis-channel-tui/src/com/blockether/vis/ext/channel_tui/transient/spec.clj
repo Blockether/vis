@@ -89,7 +89,9 @@
   (into #{:key :type :id :label :arg} value-keys))
 
 (def group-keys
-  "Every key one group may carry: its heading and the items under it."
+  "Every key one group may carry: its heading — OPTIONAL, because a band whose
+   whole question is inked on its opening rule has ONE group and no heading to
+   repeat it — and the items under it."
   #{:title :items})
 
 (def spec-keys
@@ -194,7 +196,7 @@
 
 (s/def ::title string?)
 (s/def ::items (s/and (s/coll-of ::item :kind sequential?) some-items?))
-(s/def ::group (s/and #(closed? group-keys %) (s/keys :req-un [::title ::items])))
+(s/def ::group (s/and #(closed? group-keys %) (s/keys :req-un [::items] :opt-un [::title])))
 (s/def ::groups (s/and (s/coll-of ::group :kind sequential?) some-items?))
 (s/def ::read-option ifn?)
 

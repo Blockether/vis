@@ -5,6 +5,7 @@
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
             [com.blockether.vis.ext.channel-tui.state :as state]
+            [com.blockether.vis.ext.channel-tui.transient :as tr]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -4991,3 +4992,31 @@
                  (expect (= 2 (get-in @state/app-db [:human-input :focus])))
                  (state/dispatch [:human-input-close nil])
                  (expect (nil? (:human-input @state/app-db)))))
+
+;;; ── Where a MAIN-SCREEN transient sits ───────────────────────────────────────
+;; Every band on the session screen is anchored by ONE value read here, instead
+;; of three call sites each re-spelling `[:layout :messages-top]` and
+;; `[:layout :input-h]` — a band anchored to a stale prompt height paints over
+;; the input box the human is typing into.
+
+(defdescribe band-anchor-test
+             (it "reads the live layout: under the header, above the prompt at its LIVE height"
+                 (expect (= {:content-top 6 :prompt-h 7}
+                            (state/band-anchor {:layout {:messages-top 6 :input-h 7}}))))
+             (it "falls back to the resting prompt box when the frame has not published a layout"
+                 (expect (= {:content-top 1 :prompt-h tr/prompt-rows} (state/band-anchor {}))))
+             (it "keeps the band ABOVE the prompt however tall the prompt grew"
+                 (let
+                   [rows
+                    40
+
+                    {:keys [content-top prompt-h]}
+                    (state/band-anchor {:layout {:messages-top 4 :input-h 7}})
+
+                    {:keys [hint-row min-row]}
+                    (tr/band-region 80 rows content-top prompt-h)]
+
+                   ;; the band's LAST row (its hint bar) still sits above the input box
+                   (expect (< (long hint-row) (- rows (long prompt-h))))
+                   ;; and it never climbs over the header
+                   (expect (= 4 min-row)))))

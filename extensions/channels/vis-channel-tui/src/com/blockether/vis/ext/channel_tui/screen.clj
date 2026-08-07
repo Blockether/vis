@@ -21,7 +21,6 @@
             [com.blockether.vis.ext.channel-tui.selection :as selection]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
-            [com.blockether.vis.ext.channel-tui.transient :as tr]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
@@ -4491,9 +4490,7 @@
   (if-not (:prefix (:state r))
     r
     (if-let [key (with-dialog-lock #(dlg/prefix-band! screen
-                                                      (or (get-in db [:layout :messages-top]) 1)
-                                                      (or (get-in db [:layout :input-h])
-                                                          tr/prompt-rows)
+                                                      (state/band-anchor db)
                                                       (keymap/prefix-spec db)))]
       (input/resolve-prefix-key key (:state r))
       {:action :continue :state (dissoc (:state r) :prefix)})))
@@ -5547,10 +5544,7 @@
                   (state/dispatch [:close-overlays])
                   (when-let
                     [choice (with-dialog-lock
-                              #(dlg/start-in-transient!
-                                 screen
-                                 (or (get-in @state/app-db [:layout :messages-top]) 1)
-                                 (or (get-in @state/app-db [:layout :input-h]) tr/prompt-rows)))]
+                              #(dlg/start-in-transient! screen (state/band-anchor)))]
                     (if (= :trunk (:start-in choice))
                       (do (state/dispatch [:reset-input])
                           (switch-session! {:action :new}))
@@ -5587,16 +5581,11 @@
                            (vis/gateway-list-drafts sid)
 
                            ;; The band lives INSIDE this session's frame, under the
-                           ;; transcript it is about — never over the header.
-                           content-top
-                           (or (get-in @state/app-db [:layout :messages-top]) 1)
-
+                           ;; transcript it is about — never over the header, always
+                           ;; above the prompt (`state/band-anchor`).
                            choice
                            (with-dialog-lock #(dlg/draft-transient! screen
-                                                                    content-top
-                                                                    (or (get-in @state/app-db
-                                                                                [:layout :input-h])
-                                                                        tr/prompt-rows)
+                                                                    (state/band-anchor)
                                                                     drafts
                                                                     pressed))]
 
