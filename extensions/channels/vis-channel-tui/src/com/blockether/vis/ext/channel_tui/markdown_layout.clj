@@ -437,125 +437,11 @@
             (.put folded-highlight-cache key lines)
             lines)))))
 
-(defn- side-by-side-diff-lines
-  "Project a unified diff into paired before/after rows that fit `width`.
-
-   Returns ROW MAPS, never bare strings: `{:text s :kind k}` for a full-width
-   metadata/hunk row and `{:left {…} :right {…}}` for a paired body row whose
-   two halves each carry their OWN `:kind` (`:del`, `:add`, `:ctx`). The caller
-   needs that kind: the composed row no longer starts with `-`/`+`, so
-   re-classifying the projected string painted every single change in neutral
-   code colours — a diff with no red and no green.
-
-   A line number is OPTIONAL. A compact diff (and a whole-file add) carries no
-   `@@` header, so both sides run number-less; the TEXT must still render.
-   Dropping it left nothing on screen but the column divider.
-
-   Metadata stays full-width; consecutive removals and additions share a row.
-   This is deliberately a presentation projection: the original patch remains
-   the fence payload used by copy/export and by the companion app."
-  [^String content ^long width]
-  (let
-    [cell-width
-     (max 10 (quot (- width 3) 2))
-
-     blank-cell
-     {:text (apply str (repeat cell-width " ")) :kind nil}
-
-     cell
-     (fn [{:keys [line text kind] :as entry}]
-       (if entry
-         {:text (p/pad-right (p/ellipsize (str (if line (format "%5d  " (long line)) "       ")
-                                               text)
-                                          cell-width)
-                             cell-width)
-          :kind kind}
-         blank-cell))
-
-     pair
-     (fn [rows removed added]
-       (into rows
-             (map (fn [index]
-                    {:left (cell (nth removed index nil)) :right (cell (nth added index nil))}))
-             (range (max (count removed) (count added)))))
-
-     flush
-     (fn [{:keys [rows removed added] :as state}]
-       (assoc state
-         :rows (pair rows removed added)
-         :removed []
-         :added []))]
-
-    (loop
-      [lines
-       (str/split content #"\n" -1)
-
-       before-line
-       nil
-
-       after-line
-       nil
-
-       rows
-       []
-
-       removed
-       []
-
-       added
-       []]
-
-      (if-let [line (first lines)]
-        (let
-          [state {:rows rows :removed removed :added added}
-           hunk (re-matches #"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@.*" line)]
-
-          (cond hunk (let [{:keys [rows]} (flush state)]
-                       (recur (next lines)
-                              (parse-long (nth hunk 1))
-                              (parse-long (nth hunk 2))
-                              (conj rows {:text (p/ellipsize line width) :kind :hunk})
-                              []
-                              []))
-                (and (str/starts-with? line "-") (not (str/starts-with? line "---")))
-                (recur (next lines)
-                       (when (some? before-line) (unchecked-inc ^long before-line))
-                       after-line
-                       rows
-                       (conj removed {:line before-line :text (subs line 1) :kind :del})
-                       added)
-                (and (str/starts-with? line "+") (not (str/starts-with? line "+++")))
-                (recur (next lines)
-                       before-line
-                       (when (some? after-line) (unchecked-inc ^long after-line))
-                       rows
-                       removed
-                       (conj added {:line after-line :text (subs line 1) :kind :add}))
-                (str/starts-with? line " ")
-                (let [{:keys [rows]} (flush state)]
-                  (recur (next lines)
-                         (when (some? before-line) (unchecked-inc ^long before-line))
-                         (when (some? after-line) (unchecked-inc ^long after-line))
-                         (conj rows
-                               {:left (cell {:line before-line :text (subs line 1) :kind :ctx})
-                                :right (cell {:line after-line :text (subs line 1) :kind :ctx})})
-                         []
-                         []))
-                :else
-                (let [{:keys [rows]} (flush state)]
-                  (recur (next lines)
-                         before-line
-                         after-line
-                         (conj rows {:text (p/ellipsize line width) :kind (ir/diff-line-kind line)})
-                         []
-                         []))))
-        (:rows (flush {:rows rows :removed removed :added added}))))))
-
 (defn- code-block->lines
-  "Code blocks preserve source indentation. Diff fences project their before and
-   after sides into paired columns while keeping the original patch as the
-   copy/export payload. Plain output may still soft-wrap; every code block gets
-   an inside-code padding row above and below its content."
+  "Code blocks preserve source indentation. Diff fences stay COMPACT: the
+   unified patch is rendered as-is, one row per patch line, coloured by kind.
+   Plain output may still soft-wrap; every code block gets an inside-code
+   padding row above and below its content."
   [node width {:keys [code-fence?] :as _opts}]
   (let
     [src
@@ -642,27 +528,18 @@
          :node node}])
 
      diff-line
-     (fn [{:keys [text kind left right]}]
-       ;; The colour comes from the PROJECTION's own kinds, never from
-       ;; re-reading the composed row: a side-by-side row starts with a line
-       ;; number, so `diff-line-kind` would call every change `:ctx`.
-       ;; Each half is coloured on its own (red before, green after) and only a
-       ;; ONE-SIDED change tints the row's BACKGROUND band — a modified line is
-       ;; red and green at once, so it keeps the neutral code-block bg.
-       (if (some? text)
-         {:runs (if (= "" text) [] [{:text (ansi-kind text kind) :style #{:code} :node node}])}
-         (let
-           [half
-            (fn [{:keys [text kind]}]
-              {:text (ansi-kind text kind) :style #{:code} :node node})
-
-            band
-            (cond (and (= :del (:kind left)) (not= :add (:kind right))) :del
-                  (and (= :add (:kind right)) (not= :del (:kind left))) :add)]
-
-           (cond-> {:runs [(half left) {:text " │ " :style #{:code} :node node} (half right)]}
-             band
-             (assoc :meta {:diff-kind band})))))
+     (fn [^String line]
+       ;; A diff fence is COMPACT: the unified patch line itself, coloured by
+       ;; its own kind, char-folded to the bubble width. A one-sided change
+       ;; also tints the row's BACKGROUND band via `:meta`.
+       (let [kind (ir/diff-line-kind line)]
+         (mapv (fn [seg]
+                 (cond->
+                   {:runs
+                    (if (= "" seg) [] [{:text (ansi-kind seg kind) :style #{:code} :node node}])}
+                   (#{:add :del} kind)
+                   (assoc :meta {:diff-kind kind})))
+               (if (= "" line) [""] (p/fold-cols line budget)))))
 
      wrap-line
      (fn [line]
@@ -688,9 +565,8 @@
      (vec
        (cond fold? (mapcat fold-line (str/split-lines content))
              wrap? (mapcat wrap-line (str/split-lines content))
-             ;; Unified patches become a bounded two-column projection. The raw
-             ;; diff still backs copy/export; this only changes TUI paint rows.
-             diff? (mapv diff-line (side-by-side-diff-lines content budget))
+             ;; Unified patches stay compact: one row per patch line.
+             diff? (mapcat diff-line (str/split-lines content))
              ;; Highlighted source (real grammar) ANSI-CHAR-FOLDS any
              ;; over-wide row to the bubble width, re-opening the SGR
              ;; active at each cut so token color survives the fold.
