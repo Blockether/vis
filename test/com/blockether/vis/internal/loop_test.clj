@@ -6107,3 +6107,101 @@
         (expect (= "turn-1" (:turn-id d)))
         (expect (not (contains? d :iteration-id)))
         (expect (not (contains? d :tool-call-id))))))
+
+(def ^:private cache-key (deref #'lp/cache-key))
+
+(def ^:private acquire-turn-lock! (deref #'lp/acquire-turn-lock!))
+
+(defn- hold-lock-forever!
+  "Start a thread that takes `lock` and keeps it until the returned `:release`
+   promise is delivered — a turn wedged inside the engine, which is the only way
+   to make an off-thread `tryLock` genuinely fail (the lock is reentrant)."
+  [^java.util.concurrent.locks.ReentrantLock lock]
+  (let [held (promise)
+        release (promise)
+        ghost (Thread. ^Runnable (fn []
+                                   (.lock lock)
+                                   (deliver held true)
+                                   @release
+                                   (.unlock lock))
+                       "wedged-engine-test-ghost")]
+    (.setDaemon ghost true)
+    (.start ghost)
+    @held
+    {:release release :thread ghost}))
+
+;; Regression, session e8c9dbc9-388d-43a4-8264-9dd5adec4449: a turn wedged inside
+;; the engine (parked on GraalPy's GIL, where `Thread.interrupt` never reaches it)
+;; never released its session's `ReentrantLock`. The daemon's cancel backstop
+;; synthesized `turn.cancelled` and reported the session idle — but `send!` took
+;; that lock with a bare `.lock`, so the NEXT turn parked in `Unsafe.park`
+;; forever: `turn.started` on the wire, not one event after it, and deaf to its
+;; own cancel. The session was dead for the life of the daemon.
+(defdescribe wedged-engine-lock-test
+  (describe
+    "a turn queued behind a wedged one"
+    (it
+      "waits while the lock is legitimately held, but stays interruptible"
+      (let [id "wedge-test/queued"
+            k (cache-key id)
+            entry (new-cache-entry {:marker :ghost})
+            ghost (hold-lock-forever! (:lock entry))
+            outcome (promise)]
+        (swap! env-cache assoc k entry)
+        (try
+          (let [queued (Thread. ^Runnable
+                                (fn []
+                                  (try (lp/send! id "hello" {})
+                                       (deliver outcome :returned)
+                                       (catch InterruptedException _
+                                         (deliver outcome :interrupted))
+                                       (catch Throwable t
+                                         (deliver outcome [:threw (str (class t))]))))
+                                "wedged-engine-test-queued")]
+            (.setDaemon queued true)
+            (.start queued)
+            ;; a running turn owns the lock: queueing is correct, so nothing resolves
+            (Thread/sleep 400)
+            (expect (not (realized? outcome)))
+            ;; ...but a cancel must be able to take this turn OFF that queue
+            (.interrupt queued)
+            (expect (= :interrupted (deref outcome 5000 :parked-forever)))
+            (.join queued 1000))
+          (finally (deliver (:release ghost) true)
+                   (.join ^Thread (:thread ghost) 2000)
+                   (swap! env-cache dissoc k)))))
+    (it
+      "abandons a CONDEMNED engine and runs on a fresh context"
+      (let [id "wedge-test/condemned"
+            k (cache-key id)
+            entry (new-cache-entry {:marker :ghost})
+            ^java.util.concurrent.locks.ReentrantLock dead-lock (:lock entry)
+            ghost (hold-lock-forever! dead-lock)
+            got (promise)]
+        (swap! env-cache assoc k entry)
+        (try
+          (with-redefs-fn {#'lp/open-env! (fn [_ _]
+                                            {:marker :fresh})}
+            (fn []
+              (let [waiter (Thread. ^Runnable
+                                    (fn []
+                                      (let [e (acquire-turn-lock! id)]
+                                        (.unlock ^java.util.concurrent.locks.ReentrantLock (:lock e))
+                                        (deliver got e)))
+                                    "wedged-engine-test-waiter")]
+                (.setDaemon waiter true)
+                (.start waiter)
+                ;; nothing has declared the holder dead yet, so we keep waiting
+                (Thread/sleep 400)
+                (expect (not (realized? got)))
+                ;; the daemon's cancel backstop declares the turn over
+                (expect (true? (lp/condemn-env! id)))
+                (let [fresh (deref got 5000 ::parked)]
+                  (expect (not= ::parked fresh))
+                  ;; a FRESH env under a FRESH lock — the ghost keeps the old one
+                  (expect (= {:marker :fresh} (:environment fresh)))
+                  (expect (not (identical? dead-lock (:lock fresh)))))
+                (.join waiter 1000))))
+          (finally (deliver (:release ghost) true)
+                   (.join ^Thread (:thread ghost) 2000)
+                   (swap! env-cache dissoc k)))))))

@@ -2658,6 +2658,34 @@
                            (reset! landed true)))
                (expect (true? (await-flag landed 4000)))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
+    ;; Regression, session e8c9dbc9-388d-43a4-8264-9dd5adec4449: landing the
+    ;; synthesized terminal freed the session ON PAPER while the wedged worker's
+    ;; thread still owned the engine lock, so the very next turn started and then
+    ;; parked on it forever — `turn.started` and nothing else, for the life of the
+    ;; daemon. A backstop must condemn the engine it just gave up on.
+    (it "condemns the session engine it just declared dead"
+        (let
+          [sid
+           (str "backstop-" (java.util.UUID/randomUUID))
+
+           token
+           (cancellation/cancellation-token)
+
+           condemned
+           (atom nil)]
+
+          (try (swap! registry assoc sid {:next-seq 0 :current-turn "t1"})
+               (with-redefs-fn {#'lp/condemn-env! (fn [id]
+                                                    (reset! condemned id)
+                                                    true)}
+                 (fn []
+                   (backstop sid
+                             "t1" token
+                             150 (fn [& _]
+                                   nil))
+                   (expect (true? (await-flag condemned 4000)))
+                   (expect (= sid @condemned))))
+               (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     (it "stays silent once the turn is no longer the session's current turn"
         (let
           [sid

@@ -2340,7 +2340,17 @@
                             :warn
                             ["gateway: cancelled turn never landed a terminal — backstopping" tid
                              (str grace-ms "ms after cancel")])
-                          (land! sid tid cancel-token))
+                          (land! sid tid cancel-token)
+                          ;; The terminal we just synthesized is only half the
+                          ;; truth: the worker never came back, so its thread may
+                          ;; still own this session's ENGINE lock. Landing the
+                          ;; event alone reports the session idle while every
+                          ;; later turn parks on that lock forever — started, no
+                          ;; events, deaf to its own cancel. Condemn the engine
+                          ;; so the next turn abandons the wedged context and
+                          ;; runs on a fresh one instead of queueing behind a
+                          ;; thread that is never coming back.
+                          (try (lp/condemn-env! sid) (catch Throwable _ nil)))
                         (catch InterruptedException _ nil)
                         (catch Throwable _ nil)))
                  (str "gateway-turn-cancel-backstop-" tid))

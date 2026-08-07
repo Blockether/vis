@@ -11685,11 +11685,14 @@
 
 (defn- new-cache-entry
   "Build a cache entry wrapping `env`: the environment, its per-session
-   `ReentrantLock` (one turn at a time), and an `AtomicLong` `:last-active`
-   epoch-ms stamp the reaper reads to decide idleness."
+   `ReentrantLock` (one turn at a time), an `AtomicLong` `:last-active`
+   epoch-ms stamp the reaper reads to decide idleness, and the `:condemned`
+   flag `condemn-env!` raises when this entry's turn was declared over by a
+   thread that never came back."
   [env]
   {:environment env
    :lock (java.util.concurrent.locks.ReentrantLock.)
+   :condemned (java.util.concurrent.atomic.AtomicBoolean. false)
    :last-active (java.util.concurrent.atomic.AtomicLong. (System/currentTimeMillis))
    :turns (java.util.concurrent.atomic.AtomicLong. 0)
    ;; The `/reload` epoch this env was built under. `send!` recycles the entry
@@ -12085,6 +12088,81 @@
           :policy-epoch (java.util.concurrent.atomic.AtomicLong. (long @policy-reload-epoch))))
       (try (dispose-environment! (:environment old)) (catch Throwable _ nil)))))
 
+(def ^:private ENGINE_LOCK_POLL_MS
+  "How long one attempt at a session's turn lock waits before `send!` re-reads
+   the cache entry it is queueing on.
+
+   Not a deadline: a turn legitimately owns that lock for its whole run, and a
+   queued turn is supposed to wait. It is the beat at which the waiter notices
+   its entry was CONDEMNED (see [[condemn-env!]]) and stops waiting for a thread
+   that is never coming back."
+  250)
+
+(defn- detach-entry!
+  "Drop `entry` from the cache, but only while it is still `k`'s entry.
+
+   Nothing is disposed and the lock is not touched: the thread parked inside
+   that Context still owns both, and closing a Context out from under a live
+   guest thread is not safe. So the Context, its actions-pool thread and its
+   native heap leak until the process exits — which beats a session that can
+   never take another turn. The next [[ensure-env!]] builds a fresh env under a
+   FRESH lock, and the ghost is left holding an object nobody references."
+  [k entry]
+  (loop []
+
+    (let [m @cache]
+      (cond (not (identical? entry (get m k))) false
+            (compare-and-set! cache m (dissoc m k)) true
+            :else (recur)))))
+
+(defn condemn-env!
+  "Mark session `id`'s engine entry CONDEMNED: the daemon has already declared
+   this session's turn over, but the thread that ran it never came back, so it
+   may be holding the entry's `ReentrantLock` forever.
+
+   The mark is a fact the NEXT turn reads: [[acquire-turn-lock!]] abandons a
+   condemned entry instead of queueing behind a dead lock. A worker that does
+   thaw clears the mark simply by taking the lock normally, so a backstop that
+   fired early costs nothing. Returns true when an entry was marked."
+  [id]
+  (boolean (when-let
+             [^java.util.concurrent.atomic.AtomicBoolean flag (:condemned (get @cache
+                                                                               (cache-key id)))]
+             (.set flag true)
+             true)))
+
+(defn- acquire-turn-lock!
+  "Take session `id`'s one-turn-at-a-time lock and return the entry that owns
+   it, WITHOUT ever parking on it forever.
+
+   This used to be a bare `.lock`. A turn wedged inside the engine — parked on
+   GraalPy's GIL, where `Thread.interrupt` cannot reach it — never unlocks, so
+   every later turn for that session parked in `Unsafe.park`: `turn.started` on
+   the wire, not one event after it, and deaf to its own cancel, for the life of
+   the daemon. Meanwhile the cancel backstop had already synthesized
+   `turn.cancelled` and the daemon reported the session idle.
+
+   So the wait is a POLL. Each round re-reads the session's CURRENT entry, and a
+   CONDEMNED one is detached and rebuilt rather than waited on; `tryLock` is
+   interruptible, so a queued turn's own cancel finally reaches it."
+  [id]
+  (let [k (cache-key id)]
+    (loop []
+
+      (let
+        [{:keys [^java.util.concurrent.locks.ReentrantLock lock
+                 ^java.util.concurrent.atomic.AtomicBoolean condemned]
+          :as entry}
+         (ensure-env! id)]
+        (if (.tryLock lock (long ENGINE_LOCK_POLL_MS) java.util.concurrent.TimeUnit/MILLISECONDS)
+          (do (when condemned (.set condemned false)) entry)
+          (do
+            (when (and condemned (.get condemned) (detach-entry! k entry))
+              (tel/log!
+                {:level :warn :id ::engine-abandoned :data {:session k}}
+                "Session engine abandoned: its turn was declared over but its thread never returned - starting a fresh context"))
+            (recur)))))))
+
 (defn db-info
   "Return the process-wide shared DB connection bound to
    `(config/resolve-db-spec)`. Thin wrapper over
@@ -12252,16 +12330,17 @@
      [k
       (cache-key id)
 
-      {:keys [^java.util.concurrent.locks.ReentrantLock lock] :as entry}
-      (ensure-env! id)
-
       message-vec
-      (if (string? messages) [(svar/user messages)] messages)]
+      (if (string? messages) [(svar/user messages)] messages)
 
-     ;; ReentrantLock keeps one turn per session. Extension reload marks
-     ;; envs dirty; actual sandbox reset happens here, after prior IR/render is
-     ;; finished and before the next user code executes.
-     (.lock lock)
+      ;; ONE turn per session, and the lock is TAKEN right here — through
+      ;; `acquire-turn-lock!`, which never parks on a lock a wedged turn is
+      ;; never going to release. Extension reload marks envs dirty; the actual
+      ;; sandbox reset happens under the lock below, after prior IR/render is
+      ;; finished and before the next user code executes.
+      {:keys [^java.util.concurrent.locks.ReentrantLock lock] :as entry}
+      (acquire-turn-lock! id)]
+
      (try
        ;; Apply a pending `/reload` FIRST: if this entry was built under an
        ;; older policy epoch, recycle it now so the turn runs against a
