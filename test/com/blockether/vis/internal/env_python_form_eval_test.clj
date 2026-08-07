@@ -23,11 +23,12 @@
   (:import [org.graalvm.polyglot PolyglotException]
            [org.graalvm.polyglot.proxy ProxyArray ProxyHashMap]))
 
-(def ^:private py-ctx
-  ;; One shared GraalPy sandbox for parsing + eval cases. Parser helpers live in
-  ;; this SAME session context and take source as an argument, so they neither
-  ;; allocate an auxiliary context nor race through a scratch global.
-  (delay (tpc/shared)))
+(defn- py-ctx
+  "This namespace's own long-lived sandbox. Parser helpers live in this SAME
+   session context and take source as an argument, so they neither allocate an
+   auxiliary context nor race through a scratch global."
+  []
+  (tpc/context ::ctx))
 
 (defn- classify
   "Parse `code` (parse-only — never evaluates the forms). On SyntaxError, run it
@@ -249,8 +250,9 @@
   protected-tool-name-test
   (let
     [mk (fn []
-          (tpc/shared-with! {'patch (fn [& _]
-                                      "patched")}))]
+          (tpc/context-with! ::ctx
+                             {'patch (fn [& _]
+                                       "patched")}))]
     (it "lets a block SHADOW a bound tool name and keeps the callable usable after"
         (let
           [ctx (mk)
@@ -275,7 +277,7 @@ await patch({'path': css})" "t1/i1")]
           (expect (nil? (:error r)))
           (expect (= "patched" (:result r)))))
     (it "a tool added after context creation is shadowable and survives the block"
-        (let [ctx (tpc/shared)]
+        (let [ctx (tpc/context ::ctx)]
           (ep/set-python-binding! ctx
                                   'later_patch
                                   (fn [& _]
@@ -292,8 +294,9 @@ await patch({'path': css})" "t1/i1")]
     ;; `format`→`format_code`) so natural variables don't collide at all.
     (it "a shadowed run_tests is still the tool in the NEXT block"
         (let
-          [ctx (tpc/shared-with! {'run_tests (fn [& _]
-                                               "ran")})
+          [ctx (tpc/context-with! ::ctx
+                                  {'run_tests (fn [& _]
+                                                "ran")})
            r1 (ep/run-python-block ctx "run_tests = 'oops'" "t1/i1")
            r2 (ep/run-python-block ctx "run_tests('go')" "t1/i2")]
 
@@ -314,8 +317,9 @@ await patch({'path': css})" "t1/i1")]
           (expect (= "patched" (:result r2)))))
     (it "lets the model bind `test` and `format` as ordinary variables (not tools)"
         (let
-          [ctx (tpc/shared-with! {'patch (fn [& _]
-                                           "patched")})
+          [ctx (tpc/context-with! ::ctx
+                                  {'patch (fn [& _]
+                                            "patched")})
            r (ep/run-python-block
                ctx
                "test = 'promise_pool.test.ts'\nformat = 'csv'\nawait patch({'path': test})"
@@ -350,7 +354,7 @@ await patch({'path': css})" "t1/i1")]
    block is still live in the NEXT block on the same context — globals persist
    NATURALLY (no rebind, no pickle, no per-turn fresh sandbox)."
   (it "a bound variable is still live in a later call on the same context"
-      (let [ctx (tpc/shared)]
+      (let [ctx (tpc/context ::ctx)]
         (ep/run-python-block ctx "kept_v = 41")
         (let [r2 (ep/run-python-block ctx "print(kept_v + 1)")]
           (expect (nil? (:error r2)))
@@ -359,7 +363,7 @@ await patch({'path': css})" "t1/i1")]
   ;; bodies execute in the SAME scope, so a name they bind is a module global in
   ;; real Python and must survive the block here too.
   (it "a variable bound INSIDE an if/for/with/try body persists into the next block"
-      (let [ctx (tpc/shared)]
+      (let [ctx (tpc/context ::ctx)]
         (ep/run-python-block ctx
                              (str "import io\n"
                                   "if True:\n    in_if = 1\n"
@@ -374,8 +378,9 @@ await patch({'path': css})" "t1/i1")]
   ;; next block, which then died with a bare NameError.
   (it "a variable bound inside a `with` in an AWAIT-bearing block persists"
       (let
-        [ctx (tpc/shared-with! {'echo (fn [x]
-                                        (str "<" x ">"))})]
+        [ctx (tpc/context-with! ::ctx
+                                {'echo (fn [x]
+                                         (str "<" x ">"))})]
         (ep/run-python-block
           ctx
           (str "import io\n" "with io.StringIO('x') as fh:\n" "    hk = await echo(fh.read())\n")
@@ -387,8 +392,9 @@ await patch({'path': css})" "t1/i1")]
   ;; can never clobber a protected tool name.
   (it "a `with` target that shadows a tool name stays block-local"
       (let
-        [ctx (tpc/shared-with! {'patch (fn [& _]
-                                         "patched")})]
+        [ctx (tpc/context-with! ::ctx
+                                {'patch (fn [& _]
+                                          "patched")})]
         (ep/run-python-block
           ctx
           (str "import io\n" "with io.StringIO('s') as patch:\n" "    got = patch.read()\n")
@@ -399,7 +405,7 @@ await patch({'path': css})" "t1/i1")]
   ;; A walrus binds in the ENCLOSING scope from wherever it appears — an `if`
   ;; test, a comprehension, a call argument — so it is a module global too.
   (it "a walrus binding in an if test / comprehension persists"
-      (let [ctx (tpc/shared)]
+      (let [ctx (tpc/context ::ctx)]
         (ep/run-python-block ctx
                              (str "if (wal := 5) > 1:\n    pass\n"
                                   "sq = [dbl := i * 2 for i in range(3)]\n")
@@ -410,7 +416,7 @@ await patch({'path': css})" "t1/i1")]
   ;; `del x` on a module global must delete the GLOBAL. Treated as a frame local
   ;; it raised UnboundLocalError on a name that was plainly there.
   (it "`del` removes a module global instead of raising UnboundLocalError"
-      (let [ctx (tpc/shared)]
+      (let [ctx (tpc/context ::ctx)]
         (ep/run-python-block ctx "gone = 1" "t1/i1")
         (let [r (ep/run-python-block ctx "del gone\nprint('gone' in globals())" "t1/i2")]
           (expect (nil? (:error r)))
@@ -418,7 +424,7 @@ await patch({'path': css})" "t1/i1")]
   ;; `for` / `with` / `except` / `case` targets are bindings like any other: real
   ;; module scope keeps them alive after the statement.
   (it "`for` / `with` / `match` targets persist like module bindings"
-      (let [ctx (tpc/shared)]
+      (let [ctx (tpc/context ::ctx)]
         (ep/run-python-block ctx
                              (str "import io\n" "for line in ['a']:\n    pass\n"
                                   "with io.StringIO('s') as fh:\n    pass\n"
@@ -431,8 +437,9 @@ await patch({'path': css})" "t1/i1")]
   ;; block-locally instead of being declared global.
   (it "a `for` target that shadows a tool name stays block-local"
       (let
-        [ctx (tpc/shared-with! {'patch (fn [& _]
-                                         "patched")})]
+        [ctx (tpc/context-with! ::ctx
+                                {'patch (fn [& _]
+                                          "patched")})]
         (ep/run-python-block ctx "for patch in [1, 2]:\n    pass" "t1/i1")
         (let [r (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
           (expect (nil? (:error r)))
@@ -442,15 +449,16 @@ await patch({'path': css})" "t1/i1")]
   ;; which the host could not even render (bare UnsupportedOperationException).
   (it "`from mod import *` binds module names without clobbering a tool"
       (let
-        [ctx (tpc/shared-with! {'dumps (fn [& _]
-                                         "tool-dumps")})]
+        [ctx (tpc/context-with! ::ctx
+                                {'dumps (fn [& _]
+                                          "tool-dumps")})]
         (ep/run-python-block ctx "from math import *\nfrom json import *" "t1/i1")
         (let [r (ep/run-python-block ctx "print(int(pi), dumps('x'))" "t1/i2")]
           (expect (nil? (:error r)))
           (expect (= "3 tool-dumps" (str/trim (str (:stdout r))))))))
   ;; At module level `exec('x = 1')` binds a global and `locals() is globals()`.
   (it "module-level `exec` / `locals()` act on the session globals"
-      (let [ctx (tpc/shared)]
+      (let [ctx (tpc/context ::ctx)]
         (let
           [r
            (ep/run-python-block ctx "exec('made = 7')\nprint(made, locals() is globals())" "t1/i1")]
@@ -463,7 +471,7 @@ await patch({'path': css})" "t1/i1")]
   (it "`exec` inside a def keeps real function-scope semantics"
       (let
         [ctx
-         (tpc/shared)
+         (tpc/context ::ctx)
 
          r
          (ep/run-python-block ctx
@@ -478,14 +486,14 @@ await patch({'path': css})" "t1/i1")]
   ;; A compile error on the SYNTHESIZED module has no source text; re-raised from
   ;; the preamble it renders as a normal Python error at the boundary.
   (it "a compile error on the wrapped module surfaces as a Python error"
-      (let [r (ep/run-python-block (tpc/shared) "nonlocal nope" "t1/i1")]
+      (let [r (ep/run-python-block (tpc/context ::ctx) "nonlocal nope" "t1/i1")]
         (expect (some? (:error r)))
         (expect (str/includes? (str (:message (:error r))) "nonlocal"))))
   ;; MODULE-SCOPE ANNOTATIONS. `x: int = 5` under the wrapper's `global x` is
   ;; "annotated name 'x' can't be global" in CPython; the AnnFix pass rewrites it
   ;; to a plain assignment plus the `__annotations__` record a module keeps.
   (it "an annotated module-level assignment binds and records its annotation"
-      (let [ctx (tpc/shared)]
+      (let [ctx (tpc/context ::ctx)]
         (let
           [r (ep/run-python-block
                ctx
@@ -502,7 +510,7 @@ await patch({'path': css})" "t1/i1")]
   ;; and OR'd into compile() instead — here PEP 563 stores annotations unevaluated.
   (it "`from __future__ import annotations` compiles and applies its flag"
       (let
-        [r (ep/run-python-block (tpc/shared)
+        [r (ep/run-python-block (tpc/context ::ctx)
                                 (str "from __future__ import annotations\n"
                                      "fut_v: int = 3\n"
                                      "print(fut_v, repr(__annotations__['fut_v']))")
@@ -513,13 +521,13 @@ await patch({'path': css})" "t1/i1")]
   ;; function), and a top-level `yield` turned it into an async generator whose
   ;; body never ran. Both are SyntaxErrors in a real module.
   (it "a top-level `return` is a SyntaxError, not a silently truncated block"
-      (let [r (ep/run-python-block (tpc/shared) "print('a')\nreturn 5" "t1/i1")]
+      (let [r (ep/run-python-block (tpc/context ::ctx) "print('a')\nreturn 5" "t1/i1")]
         (expect (some? (:error r)))
         (expect (str/includes? (str (:message (:error r))) "'return' outside function"))))
   ;; AUTO-SETTLE must not touch a generator: it only drives OUR deferred tool
   ;; thunks. Driving anything with `.send` exhausted the generator and bound None.
   (it "a generator binding is not driven to exhaustion by the auto-settle"
-      (let [ctx (tpc/shared)]
+      (let [ctx (tpc/context ::ctx)]
         (ep/run-python-block ctx "gen = (i for i in range(3))" "t1/i1")
         (let [r (ep/run-python-block ctx "print(list(gen))" "t1/i2")]
           (expect (nil? (:error r)))
@@ -532,7 +540,7 @@ await patch({'path': css})" "t1/i1")]
   (it "a BeautifulSoup binding is not mistaken for an awaitable by the auto-settle"
       (let
         [ctx
-         (tpc/shared)
+         (tpc/context ::ctx)
 
          r
          (ep/run-python-block ctx
@@ -546,7 +554,7 @@ await patch({'path': css})" "t1/i1")]
   (it "an object whose __getattr__ answers everything is not driven as a coroutine"
       (let
         [ctx
-         (tpc/shared)
+         (tpc/context ::ctx)
 
          r
          (ep/run-python-block ctx
@@ -563,7 +571,7 @@ await patch({'path': css})" "t1/i1")]
   (it "`await` inside a lambda is a normal SyntaxError, not an engine fault"
       (let
         [r
-         (ep/run-python-block (tpc/shared) "f = lambda: await g()" "t1/i1")
+         (ep/run-python-block (tpc/context ::ctx) "f = lambda: await g()" "t1/i1")
 
          msg
          (str (:message (:error r)))]
@@ -577,7 +585,7 @@ await patch({'path': css})" "t1/i1")]
   (it "a bare starred assignment target is a SyntaxError, not a host fault"
       (let
         [ctx
-         (tpc/shared)
+         (tpc/context ::ctx)
 
          r
          (ep/run-python-block ctx "*only = [1]" "t1/i1")
@@ -656,8 +664,9 @@ await patch({'path': css})" "t1/i1")]
    rejects top-level await) and drives it, persisting assigned vars by name."
   (let
     [mk (fn []
-          (tpc/shared-with! {'echo (fn [x]
-                                     (str "<" x ">"))}))]
+          (tpc/context-with! ::ctx
+                             {'echo (fn [x]
+                                      (str "<" x ">"))}))]
     (it "await runs a NESTED deferred tool call"
         (let [r (ep/run-python-block (mk) "print(await echo(\"hi\"))" "t1/i1")]
           (expect (nil? (:error r)))
@@ -691,8 +700,9 @@ await patch({'path': css})" "t1/i1")]
     (it "auto-settles a bare deferred assignment EXACTLY once (no double-run)"
         (let
           [calls (atom 0)
-           ctx (tpc/shared-with! {'tick (fn []
-                                          (str "n" (swap! calls inc)))})
+           ctx (tpc/context-with! ::ctx
+                                  {'tick (fn []
+                                           (str "n" (swap! calls inc)))})
            r (ep/run-python-block ctx "c = await tick()\nres = tick()\nprint(res)" "t1/i1")]
 
           (expect (nil? (:error r)))
@@ -713,8 +723,9 @@ await patch({'path': css})" "t1/i1")]
     (it "await on an already-settled binding does NOT re-run the tool"
         (let
           [calls (atom 0)
-           ctx (tpc/shared-with! {'tick (fn []
-                                          (str "n" (swap! calls inc)))})
+           ctx (tpc/context-with! ::ctx
+                                  {'tick (fn []
+                                           (str "n" (swap! calls inc)))})
            r (ep/run-python-block ctx "x = tick()\nprint(await x)" "t1/i1")]
 
           (expect (nil? (:error r)))
@@ -818,11 +829,14 @@ await patch({'path': css})" "t1/i1")]
              (normalize-thunks thunks)))
 
      mk
+     ;; A FRESH context per case: these cases weigh coroutine frames against the
+     ;; garbage collector, and a long-lived sandbox still holds references from
+     ;; whatever ran in it before.
      (fn []
-       (tpc/shared-with! {'echo (fn [x]
-                                  (str "<" x ">"))
-                          (symbol "__vis_par__") par
-                          (symbol "__vis_par_isolated__") par-isolated}))]
+       (:python-context (ep/create-python-context {'echo (fn [x]
+                                                           (str "<" x ">"))
+                                                   (symbol "__vis_par__") par
+                                                   (symbol "__vis_par_isolated__") par-isolated})))]
 
     (it
       "asyncio.run(main()) drives a coroutine that awaits tools"
@@ -989,7 +1003,7 @@ await patch({'path': css})" "t1/i1")]
    dangerous capabilities stay denied."
   (let
     [mk (fn []
-          (tpc/shared))]
+          (tpc/context ::ctx))]
     (it
       "threading.Thread runs to completion"
       (let
@@ -1039,7 +1053,7 @@ await patch({'path': css})" "t1/i1")]
         (expect (= {"path" "missing.txt" "exists" false} (:result via-missing)))
         (expect (str/includes? (get-in via-old [:error :message]) "`is_exists` is not defined"))))
   (it "removing the binding makes file_exists undefined"
-      (let [ctx (tpc/shared)]
+      (let [ctx (tpc/context ::ctx)]
         (ep/set-python-binding! ctx
                                 'file-exists
                                 (fn [path]
