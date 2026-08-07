@@ -29,19 +29,21 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   ARTIFACT_FILTERS,
   docKindLabel,
+  isMarkdownMedia,
   isTextMedia,
   pageBySize,
   SHEET_PAGE,
   type SessionArtifact,
-} from '../lib/artifacts';
-import { useAttachImage } from '../lib/attach-image';
-import { editedFilename } from '../lib/image-file';
-import type { GatewayClient } from '../lib/gateway';
-import { DocFrame } from './DocArtifact';
-import { ImageViewer } from './ImageViewer';
-import { TextFrame } from './TextArtifact';
-import { AlertIcon, ArrowDownIcon, ClipIcon, PlayIcon } from './icons';
-import { DialogClose, DialogHeader, KebabButton } from './ui';
+} from "../lib/artifacts";
+import { useAttachImage } from "../lib/attach-image";
+import { editedFilename } from "../lib/image-file";
+import type { GatewayClient } from "../lib/gateway";
+import { DocFrame } from "./DocArtifact";
+import { ImageViewer } from "./ImageViewer";
+import { MarkdownArtifact } from "./MarkdownArtifact";
+import { TextFrame } from "./TextArtifact";
+import { AlertIcon, ArrowDownIcon, ClipIcon, PlayIcon } from "./icons";
+import { DialogClose, DialogHeader, KebabButton } from "./ui";
 
 /**
  * Two documents produced by the same turn have to stay distinguishable at a
@@ -484,9 +486,27 @@ function ArtifactDetail({
     );
   }
 
-  // Markdown and plain text are read by the APP, not by a sandboxed frame: an
-  // iframe would paint `# Heading` as `# Heading`, which is the artifact's
-  // source rather than the artifact.
+  // A markdown note is the one artifact the human can ANSWER: it is rendered as
+  // prose and a selected passage can be commented on, which saves the whole
+  // document back as the next version of the same filename.
+  if (isMarkdownMedia(artifact.mediaType, artifact.name)) {
+    return (
+      <DetailOverlay name={artifact.name} onClose={onClose}>
+        <MarkdownArtifact
+          client={client}
+          sid={sid}
+          iterationId={artifact.iterationId}
+          name={artifact.name}
+          mediaType={artifact.mediaType}
+          url={url}
+        />
+      </DetailOverlay>
+    );
+  }
+
+  // Other text is read by the APP, not by a sandboxed frame: an iframe would
+  // paint `# Heading` as `# Heading`, which is the artifact's source rather
+  // than the artifact.
   if (isTextMedia(artifact.mediaType, artifact.name)) {
     return (
       <DetailOverlay name={artifact.name} onClose={onClose}>

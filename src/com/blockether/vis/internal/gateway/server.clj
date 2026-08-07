@@ -2486,6 +2486,41 @@
                         :index idx)))
     (session-404 (get-in request [:path-params :sid]))))
 
+(defn- append-attachment-handler
+  "POST /v1/sessions/:sid/iterations/:iid/attachments — a HUMAN's revision of an
+   artifact the model produced, stored into the iteration that produced it:
+   `{\"filename\": \"notes.md\", \"media_type\": \"text/markdown\",
+   \"base64\": \"…\"}`.
+
+   The filename is the identity, so re-sending the name is the NEXT VERSION of
+   that artifact and not a second file beside it — the annotated note the
+   companion saves is `v2` of the note it was reading. Answers with the same
+   descriptor shape the transcript and the byte endpoint already speak, so the
+   client re-reads the revision through the paths it already has."
+  [request]
+  (if (path-sid request)
+    (let [body (body-json request)
+          filename (some-> (get body "filename")
+                           str
+                           str/trim)
+          base64 (get body "base64")]
+      (if (or (str/blank? filename) (str/blank? (str base64)))
+        (error-response 400 :invalid-attachment "filename and base64 are required")
+        (if-let [descriptor (state/append-iteration-attachment!
+                              (path-iid request)
+                              {:filename filename
+                               :media-type (or (not-empty (str (get body "media_type")))
+                                               "application/octet-stream")
+                               :base64 (str base64)
+                               :kind "doc"
+                               :audience "user"})]
+          (json-response 201 descriptor)
+          (error-response 404
+                          :attachment-not-stored
+                          "unknown iteration"
+                          :iteration_id (str (path-iid request))))))
+    (session-404 (get-in request [:path-params :sid]))))
+
 (defn- turn-attachments-handler
   "GET /v1/sessions/:sid/turns/:tid/attachments — the inline images a USER sent
    with one turn: `{\"attachments\": [{filename, media_type, base64}, …]}`.
@@ -3404,6 +3439,7 @@
         [(sid-route "/resources") {:get resources-handler}]
         [(sid-route "/resources/stop") {:post resource-stop-handler}]
         [(sid-route "/resources/logs") {:get resource-logs-handler}]
+        [(sid-route "/iterations/:iid/attachments") {:post append-attachment-handler}]
         [(sid-route "/iterations/:iid/attachments/:idx") {:get attachment-bytes-handler}]
         [(sid-route "/model") {:get session-model-handler :patch set-session-model-handler}]
         [(sid-route "/usage") {:get usage-handler}]

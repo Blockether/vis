@@ -2667,6 +2667,33 @@ export class GatewayClient {
     return `${this.base}/v1/sessions/${encodeURIComponent(sid)}/iterations/${encodeURIComponent(iterationId)}/attachments/${index}`;
   }
 
+  /**
+   * A HUMAN'S REVISION OF AN ARTIFACT — `POST
+   * /v1/sessions/:sid/iterations/:iid/attachments`.
+   *
+   * The filename is the identity, so saving an annotated note under the name it
+   * was read as is the NEXT VERSION of that note rather than a second file
+   * beside it. The gateway answers with the descriptor the transcript and the
+   * byte endpoint already speak, so the caller can open the revision through
+   * the paths it already has.
+   */
+  async saveArtifactText(
+    sid: string,
+    iterationId: string,
+    filename: string,
+    mediaType: string,
+    text: string,
+  ): Promise<{ index?: number; version?: number; filename?: string }> {
+    const bytes = new TextEncoder().encode(text);
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return this.request(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(sid)}/iterations/${encodeURIComponent(iterationId)}/attachments`,
+      { filename, media_type: mediaType, base64: btoa(binary) },
+    );
+  }
+
   private static attachmentKey(
     sid: string,
     iterationId: string,

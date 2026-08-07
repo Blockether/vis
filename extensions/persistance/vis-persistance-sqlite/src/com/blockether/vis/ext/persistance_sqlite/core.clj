@@ -3226,6 +3226,81 @@
                                       :created_at now}
                                      payload)]}))))))
 
+(defn db-append-iteration-attachment!
+  "Append ONE artifact to an EXISTING iteration - a human's own revision of a
+   document the model produced (a markdown note annotated in the companion).
+
+   Same table, same grain and the SAME version rule as
+   [[store-iteration-attachments!]]: re-using a `:filename` is the NEXT CUT of
+   that artifact, never a stranger beside it, so an annotated note lands as `v2`
+   of the file it came from and the gallery threads the two. The row joins the
+   iteration's `NULL` tool-call group (the one group no tool call owns) at the
+   end of it, which keeps the table's `(iteration, tool_call_id, position)`
+   UNIQUE constraint.
+
+   The owning turn soul is read off the iteration's existing attachments: an
+   artifact is only ever revised through the one it came from, so there is
+   always a sibling row, and no assumption about the iteration table's own
+   columns is baked in here.
+
+   `att` is `{:media-type :base64 :filename? :kind? :audience?}`. Returns
+   `{:id :version :position}` for the stored row, or nil when the iteration is
+   unknown, has no artifacts, or the payload does not decode."
+  [db-info iteration-id att]
+  (when (and (ds db-info) iteration-id)
+    (sqlite-write-tx!
+      db-info
+      (fn [tx-info]
+        (let
+          [iter-id-s
+           (->ref iteration-id)
+
+           soul-id-s
+           (:session_turn_soul_id (first (query! tx-info
+                                                 {:select [:session_turn_soul_id]
+                                                  :from :session_attachment
+                                                  :where [:= :session_turn_iteration_id iter-id-s]
+                                                  :limit 1})))
+
+           payload
+           (attachment-payload-cols att)]
+
+          (when (and soul-id-s payload)
+            (let
+              [version
+               ((version-allocator tx-info soul-id-s) (:filename att))
+
+               position
+               (inc (long (or (:p (first (query! tx-info
+                                                 {:select [[[:max :position] :p]]
+                                                  :from :session_attachment
+                                                  :where [:and
+                                                          [:= :session_turn_iteration_id iter-id-s]
+                                                          [:= :tool_call_id nil]]})))
+                              -1)))
+
+               id
+               (str (new-uuid))]
+
+              (execute! tx-info
+                        {:insert-into :session_attachment
+                         :values [(merge {:id id
+                                          :session_turn_soul_id soul-id-s
+                                          :session_turn_iteration_id iter-id-s
+                                          :tool_call_id nil
+                                          :position position
+                                          :kind (or (some-> (:kind att)
+                                                            name)
+                                                    "doc")
+                                          :media_type (str (:media-type att))
+                                          :filename (:filename att)
+                                          :version version
+                                          :audience (attachments/normalize-audience (or (:audience att)
+                                                                                        "user"))
+                                          :created_at (now-ms)}
+                                         payload)]})
+              {:id id :version version :position position})))))))
+
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 
 (defn db-store-iteration!

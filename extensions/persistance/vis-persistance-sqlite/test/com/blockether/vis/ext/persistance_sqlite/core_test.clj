@@ -3534,3 +3534,58 @@
            {:parent-session-id cid2 :user-request "elsewhere" :attachments [(att "chart.png")]})]
 
         (expect (= {"chart.png" [1]} (by-name (vis/db-list-turn-attachments s other))))))))
+
+;; A human's own revision of an artifact: the companion saves an annotated
+;; markdown note back into the iteration that produced it, under the SAME
+;; filename, and the engine's version rule makes that the next CUT of the note.
+(defdescribe
+  sqlite-append-iteration-attachment-test
+  (it
+    "appends a human revision as the next version of the same filename"
+    (let
+      [s
+       (h/store)
+
+       cid
+       (h/store-session! s {:channel :cli})
+
+       tid
+       (vis/db-store-session-turn! s {:parent-session-id cid :user-request "write the note"})
+
+       encode
+       #(.encodeToString (java.util.Base64/getEncoder) (.getBytes ^String % "UTF-8"))
+
+       iid
+       (h/store-iteration! s
+                           {:session-turn-id tid
+                            :status :done
+                            :code "vis_attach(...)"
+                            :attachments [{:tool-call-id "call_A"
+                                           :media-type "text/markdown"
+                                           :base64 (encode "# Note\n")
+                                           :filename "note.md"}]})
+
+       stored
+       (persistance/db-append-iteration-attachment! s
+                                                    iid
+                                                    {:media-type "text/markdown"
+                                                     :base64 (encode "# Note\n\n> a comment\n")
+                                                     :filename "note.md"
+                                                     :kind "doc"
+                                                     :audience "user"})
+
+       rows
+       (vis/db-list-iteration-attachments s iid)]
+
+      (expect (= 2 (:version stored)))
+      (expect (= 2 (count rows)))
+      ;; Same NAME, two cuts — that is one artifact with a history, and the
+      ;; revision is a user-visible document rather than model input.
+      (expect (= #{1 2} (set (map :version rows))))
+      (let [revision (first (filter #(= 2 (:version %)) rows))]
+        (expect (= "note.md" (:filename revision)))
+        (expect (= "doc" (:kind revision)))
+        (expect (= "user" (name (:audience revision))))
+        (expect (= "# Note\n\n> a comment\n"
+                   (String. (.decode (java.util.Base64/getDecoder) ^String (:base64 revision))
+                            "UTF-8")))))))

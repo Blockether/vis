@@ -1,5 +1,6 @@
-import { memo, useEffect } from 'react';
-import { docKindLabel, isPdfMedia } from '../lib/artifacts';
+import { memo, useEffect } from "react";
+import { docKindLabel, isPdfMedia, isTextMedia } from "../lib/artifacts";
+import { TextFrame } from "./TextArtifact";
 
 // A PDF or an HTML page is a DOCUMENT, not a picture and not data: nothing in it
 // is worth spending a model's context on, so `vis_attach` clamps it to
@@ -35,18 +36,18 @@ export type DocArtifact = {
  * nothing of ours.
  */
 export function docSandbox(mime: string | undefined): string {
-  return isPdfMedia(mime) ? 'allow-scripts' : '';
+  return isPdfMedia(mime) ? "allow-scripts" : "";
 }
 
 /** Parse a `vis-doc` fence body: five header lines, no payload. */
 export function parseDocBlock(body: string): DocArtifact {
-  const lines = body.replace(/\n+$/, '').split('\n');
-  const at = (index: number) => (lines[index] ?? '').trim();
+  const lines = body.replace(/\n+$/, "").split("\n");
+  const at = (index: number) => (lines[index] ?? "").trim();
   return {
     summary: at(0),
     path: at(1),
     mime: at(2),
-    name: at(3) || at(1).split('/').pop() || 'document',
+    name: at(3) || at(1).split("/").pop() || "document",
     sizeLabel: at(4),
   };
 }
@@ -97,7 +98,7 @@ export const DocCard = memo(function DocCard({
   const kind = docKindLabel(artifact.mime);
   return (
     <div
-      className={`${compact ? 'my-2' : 'my-3'} flex w-full max-w-full min-w-0 flex-col overflow-hidden bg-input ${frameless ? '' : 'border border-code-edge'}`}
+      className={`${compact ? "my-2" : "my-3"} flex w-full max-w-full min-w-0 flex-col overflow-hidden bg-input ${frameless ? "" : "border border-code-edge"}`}
     >
       <div className="flex flex-wrap items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
         <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-warn">
@@ -112,7 +113,7 @@ export const DocCard = memo(function DocCard({
           {artifact.name}
         </span>
         <span className="min-w-0 truncate font-mono text-chip text-muted">
-          {[artifact.mime, artifact.sizeLabel].filter(Boolean).join(' · ')}
+          {[artifact.mime, artifact.sizeLabel].filter(Boolean).join(" · ")}
         </span>
         {artifact.path && (
           <span className="min-w-0 truncate font-mono text-chip text-footer-muted">
@@ -160,7 +161,7 @@ export const DocPreview = memo(function DocPreview({
           {kind}
         </span>
         <span className="min-w-0 flex-1 truncate font-mono text-chip text-muted">
-          {[name, sizeLabel].filter(Boolean).join(' · ')}
+          {[name, sizeLabel].filter(Boolean).join(" · ")}
         </span>
       </div>
       <div className="min-w-0">
@@ -169,7 +170,13 @@ export const DocPreview = memo(function DocPreview({
             This document could not be loaded from the gateway.
           </p>
         ) : url ? (
-          <DocFrame url={url} mime={mime} name={name} />
+          // Markdown and plain text are read by the APP: an iframe would paint
+          // `# Heading` as `# Heading`, the source instead of the document.
+          isTextMedia(mime, name) ? (
+            <TextFrame url={url} mime={mime} name={name} />
+          ) : (
+            <DocFrame url={url} mime={mime} name={name} />
+          )
         ) : (
           <p className="px-2 py-3 text-meta text-footer-muted">Loading…</p>
         )}

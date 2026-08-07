@@ -1112,6 +1112,33 @@
   [iteration-id]
   (attachment-descriptors iteration-id (user-iteration-attachments iteration-id)))
 
+(defn append-iteration-attachment!
+  "Store a HUMAN's revision of an artifact the model produced, into the very
+   iteration that produced it, and hand back its wire descriptor.
+
+   The version rule is the engine's own and lives in the writer: re-using the
+   filename is the next CUT of that artifact, so a note the human annotated in
+   the companion becomes `v2` of that note rather than a second file with the
+   same name. Everything a client already knows how to do with an artifact -
+   list it, thread it by name, fetch its bytes by index - then works on the
+   revision unchanged.
+
+   `att` is `{:filename :media-type :base64}`. nil when the iteration is unknown
+   or the payload could not be stored."
+  [iid att]
+  (try (when-let [iid (some-> iid
+                              str
+                              parse-uuid)]
+         (when-let [stored (persistance/db-append-iteration-attachment! (lp/db-info) iid att)]
+           (let [rows (user-iteration-attachments iid)
+                 idx (first (keep-indexed (fn [i row]
+                                            (when (= (str (:id row)) (str (:id stored))) i))
+                                          rows))]
+             (when idx (nth (attachment-descriptors iid rows) idx nil)))))
+       (catch Throwable t
+         (tel/log! :warn ["gateway: append-iteration-attachment! failed" (str iid) (ex-message t)])
+         nil)))
+
 (def ^:private activity-phases
   "Coarse 'Vis is doing X' phases surfaced to the LIVE ticker but never pinned
    into the durable trace: a provider wait, response parsing, and shell/tool

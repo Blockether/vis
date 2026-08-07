@@ -534,6 +534,8 @@
 
 (defdelegate db-read-attachment [db-info attachment-id])
 
+(defdelegate db-append-iteration-attachment! [db-info iteration-id att])
+
 ;; --- Full-text search ---
 (def search-query-dsl-doc
   "Canonical, BACKEND-NEUTRAL search-query DSL — the single source of truth for
