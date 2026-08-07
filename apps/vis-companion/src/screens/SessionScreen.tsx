@@ -3882,7 +3882,12 @@ export function SessionScreen({
       return next;
     });
     try {
-      await client.cancelCurrentTurn(sid);
+      // Prefer the id-addressed route: the turn id every channel learns from
+      // `turn.started` needs no ownership proof, and it survives a reload that
+      // forgot which correlation id this client submitted under.
+      const liveTid = liveTurnRef.current?.id;
+      if (liveTid) await client.cancelTurn(sid, liveTid);
+      else await client.cancelCurrentTurn(sid);
       for (const row of backlog)
         restoreCancelledQueued(row.turnId, row.request);
       requestAnimationFrame(() => composerRef.current?.focus());

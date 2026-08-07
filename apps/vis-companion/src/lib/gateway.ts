@@ -2788,6 +2788,15 @@ export class GatewayClient {
     }
   }
 
+  /**
+   * The correlation id each session's last submission from THIS client carried.
+   *
+   * A session is shared, so the gateway refuses a tid-less cancel that cannot name
+   * the turn it means (409 `:not-owner`): `cancel-current` proves ownership with
+   * the very `idempotency_key` the submit sent, and nothing else.
+   */
+  private readonly submissionKeys = new Map<string, string>();
+
   submitTurn(
     sid: string,
     request: string,
@@ -2797,6 +2806,8 @@ export class GatewayClient {
       attachments?: GatewayAttachment[];
     } = {},
   ): Promise<SubmittedTurn> {
+    const clientId = `companion:${crypto.randomUUID()}`;
+    this.submissionKeys.set(sid, clientId);
     return this.request<SubmittedTurn>(
       "POST",
       `/v1/sessions/${encodeURIComponent(sid)}/turns`,
@@ -2805,14 +2816,29 @@ export class GatewayClient {
         display_request: options.displayRequest,
         model: options.model,
         attachments: options.attachments,
+        idempotency_key: clientId,
       },
     );
   }
 
+  /** Stop a turn we know the id of — the addressed route, open to every channel. */
+  cancelTurn(sid: string, tid: string): Promise<unknown> {
+    return this.request(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/cancel`,
+    );
+  }
+
+  /**
+   * Stop the turn we submitted here without knowing its id yet (Stop pressed before
+   * `turn.started` landed). It names itself with the submission's correlation id;
+   * without one the gateway would have to guess, and refuses.
+   */
   cancelCurrentTurn(sid: string): Promise<unknown> {
     return this.request(
       "POST",
       `/v1/sessions/${encodeURIComponent(sid)}/cancel-current`,
+      { idempotency_key: this.submissionKeys.get(sid) },
     );
   }
 

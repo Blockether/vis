@@ -93,3 +93,42 @@ describe('GatewayClient session slash palette', () => {
     );
   });
 });
+
+// Regression: the gateway scoped POST /v1/sessions/:sid/cancel-current to the
+// idempotency_key its submitter sent, and the app sent none — so every Stop in the
+// mobile app and the web answered 409 :not-owner and the turn kept running.
+describe('GatewayClient turn cancellation', () => {
+  it('cancels the current turn under the correlation id it submitted with', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(new Response(JSON.stringify({ turn_id: 'turn-1' }))),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    await client.submitTurn('session-1', 'hello');
+    await client.cancelCurrentTurn('session-1');
+
+    const submitBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    const cancelBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
+      '/v1/sessions/session-1/cancel-current',
+    );
+    expect(submitBody.idempotency_key).toBeTruthy();
+    expect(cancelBody.idempotency_key).toBe(submitBody.idempotency_key);
+  });
+
+  it('cancels a known turn by id, which needs no correlation id', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({})));
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+
+    await new GatewayClient(conn).cancelTurn('session-1', 'turn-1');
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      '/v1/sessions/session-1/turns/turn-1/cancel',
+    );
+  });
+});
