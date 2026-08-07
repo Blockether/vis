@@ -493,6 +493,15 @@ describe('the machine strip', () => {
   // a button under a cursor, and the strip's 12px top gap still read as flush.
   it('pours the page ink into Add machine and clears the header by more', () => {
     expect(source).toMatch(/variant="inverse"[\s\S]{0,200}Add machine/);
-    expect(source).toMatch(/aria-label="Machines"[\s\S]{0,200}pt-6 sm:px-4 sm:pt-8/);
+    expect(source).toMatch(
+      /aria-label="Machines"[\s\S]{0,200}pb-3 pt-6 sm:px-4 sm:pb-4 sm:pt-8/,
+    );
+  });
+
+  // Regression, user report ("This add machine should have some margin bottom as
+  // well right?"): the strip cleared the app bar above it but sat flush against the
+  // machine card below, so the tabs and the verb touched the card they select.
+  it('clears the machine card below it as well', () => {
+    expect(source).toMatch(/aria-label="Machines"[\s\S]{0,200}pb-3[\s\S]{0,60}sm:pb-4/);
   });
 });

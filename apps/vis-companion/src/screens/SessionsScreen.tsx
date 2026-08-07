@@ -1123,7 +1123,7 @@ export function SessionsScreen({
       <div
         role="group"
         aria-label="Machines"
-        className="relative z-10 flex items-end gap-1.5 overflow-x-auto px-3 pt-6 sm:px-4 sm:pt-8"
+        className="relative z-10 flex items-end gap-1.5 overflow-x-auto px-3 pb-3 pt-6 sm:px-4 sm:pb-4 sm:pt-8"
       >
           {machines.map((machine) => {
             const key = machineKey(machine.conn);
