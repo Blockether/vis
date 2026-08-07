@@ -48,11 +48,11 @@ Read only the section relevant to the change. Keep this file for durable, repo-w
 - A managed REPL retains Vars. When interactive evaluation is part of the workflow, reload every changed production namespace, then every changed test namespace, before rerunning; there is no restart op — `stop` then `start` a fresh REPL when a clean load is safer.
 - Clean JVM commands from the owning project: `clojure -M:test`, `clojure -M:test --namespace my.ns-test`, or `clojure -M:test --var my.ns-test/my-test`.
 
-## Debugging gateway HTTP APIs
+## Gateway HTTP API calls
 
-- **Use the canonical Clojure client; never parse `~/.vis/gateway/registry`, copy a gateway secret, or hand-build `curl`/`httpx` authentication.** In a managed project REPL, require `[com.blockether.vis.internal.gateway.client :as gateway-client]` and call `(gateway-client/request! :get "/healthz")` or `(gateway-client/request! :get "/v1/sessions")`. For the route under investigation, pass its real method/path and optional `{:body data :headers {...} :timeout-ms n :as ...}`. The helper resolves or starts the daemon for the configured DB, registers the client lease, supplies protocol/authentication headers, and JSON-encodes `:body` through the production `babashka.http-client` transport.
+- **Always use the canonical Clojure client for every agent-initiated gateway HTTP call — debugging, reproduction, setup, health checks, verification, and diagnostics. There are no one-off exceptions.** Never parse `~/.vis/gateway/registry`, copy a gateway secret, or hand-build `curl`/`httpx` authentication. In a managed project REPL, require `[com.blockether.vis.internal.gateway.client :as gateway-client]` and call `(gateway-client/request! :get "/healthz")` or `(gateway-client/request! :get "/v1/sessions")`. For the route under investigation, pass its real method/path and optional `{:body data :headers {...} :timeout-ms n :as ...}`. The helper resolves or starts the daemon for the configured DB, registers the client lease, supplies protocol/authentication headers, and JSON-encodes `:body` through the production `babashka.http-client` transport.
 - `request!` returns the raw non-throwing HTTP response map. Inspect only what the check needs, normally `(select-keys response [:status :body])`; 4xx/5xx are data in `:status`. Do not print token- or secret-bearing bodies into logs or answers.
-- This direct API helper is for JVM development and diagnostics. Companion browser development still uses `npm run dev` below, which owns browser-side gateway discovery and storage seeding.
+- Companion browser development still starts with `npm run dev` below because it owns browser-side gateway discovery and storage seeding; this is not permission to bypass `gateway-client/request!` for direct gateway API calls.
 
 ## Companion web dev server
 
