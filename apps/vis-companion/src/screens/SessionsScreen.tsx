@@ -1147,7 +1147,11 @@ export function SessionsScreen({
             );
           })}
       </div>
-        <div className="flex h-full min-h-0 flex-col overflow-hidden border-b border-r-2 border-dialog-edge bg-panel sm:border-y sm:border-r-2">
+        {/* The card is a CLOSED frame on every width: it used to carry only a bottom
+            rule and a 2px right rule, so on a phone its top edge did not exist (the
+            tab had nothing to join into) and its right edge sat at x=388..390, off the
+            glass. One border, and the phone inset matches the chip strip's own. */}
+        <div className="mx-3 flex h-full min-h-0 flex-col overflow-hidden border border-dialog-edge bg-panel sm:mx-0 sm:border-r-2">
         <div className={`border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4 ${LIST_FRAME}`}>
           <div className="mt-1.5 flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -1192,7 +1196,7 @@ export function SessionsScreen({
                       <>
                         <span className="whitespace-nowrap">
                           {totals.projects} {totals.projects === 1 ? 'project' : 'projects'}
-                          <span className="px-1 opacity-40">·</span>
+                          <span className="px-1" aria-hidden="true">·</span>
                           {totals.all} {totals.all === 1 ? 'session' : 'sessions'}
                         </span>
                         {/* WHERE the two numbers live is a one-place question.
@@ -2009,10 +2013,13 @@ const SessionRow = memo(function SessionRow({
           {/* `sm:contents` is what lets one dom order be two layouts: on a phone this
               is a single line of prose under the title, and from `sm:` up it dissolves
               so that the id and the turn count become columns in their own right. */}
-          <span className="col-start-1 row-start-2 flex min-w-0 items-center gap-x-2 font-mono text-chip text-dialog-hint sm:contents">
-            <span className="truncate text-white/55 tabular-nums">{shortId(session.id)}</span>
-            <span className="opacity-40 sm:hidden" aria-hidden="true">·</span>
-            <span className="whitespace-nowrap font-mono text-chip text-dialog-hint tabular-nums">
+          {/* One rank, one ink: hierarchy is carried by SIZE (title 12px vs meta 10px),
+              never by transparency — an id at 55% ink beside a `·` at 40% beside a full
+              hint made one 9px line carry three different inks and none of them readable. */}
+          <span className="col-start-1 row-start-2 flex min-w-0 items-center gap-x-2 font-mono text-meta text-dialog-hint sm:contents">
+            <span className="truncate tabular-nums">{shortId(session.id)}</span>
+            <span className="sm:hidden" aria-hidden="true">·</span>
+            <span className="whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums">
               {turns} {turns === 1 ? 'turn' : 'turns'}
             </span>
           </span>
@@ -2025,7 +2032,7 @@ const SessionRow = memo(function SessionRow({
             {status}
           </span>
           <span
-            className="col-start-2 col-end-4 row-start-2 justify-self-end whitespace-nowrap font-mono text-chip text-dialog-hint tabular-nums sm:col-start-auto sm:col-end-auto sm:row-start-auto sm:justify-self-start"
+            className="col-start-2 col-end-4 row-start-2 justify-self-end whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums sm:col-start-auto sm:col-end-auto sm:row-start-auto sm:justify-self-start"
             title={formatExact(timestamp)}
           >
             {timeLabel(timestamp)}

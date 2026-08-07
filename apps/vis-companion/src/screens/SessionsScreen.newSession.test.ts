@@ -102,6 +102,14 @@ describe('where "New session" lives', () => {
     expect(source).toContain("<RowDisclosure");
     expect(source).not.toContain("sm:w-9 sm:pt-2");
     expect(source).not.toContain("opacity-40 hover:opacity-100");
+    // A row's meta line is ONE rank in ONE ink: the id at 55%, a `·` at 40% and a full
+    // hint on the same 9px line was three inks nobody could read. Size carries the
+    // hierarchy instead — `text-meta` on every meta span, no alpha anywhere.
+    expect(source).not.toContain("text-white/55");
+    expect(source).not.toContain('className="opacity-40 sm:hidden"');
+    expect(source).toContain(
+      'flex min-w-0 items-center gap-x-2 font-mono text-meta text-dialog-hint sm:contents',
+    );
     // A header REPORTS through `HeaderMeta`: the project's counts moved out of the
     // toggle's fixed column into the one the machine header used. (The filter's own
     // `N/M` was the second; it left with the field.)
@@ -200,8 +208,12 @@ describe('where "New session" lives', () => {
       "<MachineRail color={machineColor(machineColors, key)}>",
     );
     expect(source).toContain(
-      "border-b border-r-2 border-dialog-edge bg-panel sm:border-y sm:border-r-2",
+      "border border-dialog-edge bg-panel sm:mx-0 sm:border-r-2",
     );
+    // A card is a CLOSED frame at every width. It used to carry `border-b border-r-2`
+    // alone, so on a 390px phone it had no top edge for the tab to join into and its
+    // right rule sat at x=388..390, off the glass.
+    expect(source).not.toContain("sm:border-y sm:border-r-2");
     expect(source).toContain("{index > 0 && <MachineGap />}");
     expect(source).not.toContain("showMachineHeaders");
   });
