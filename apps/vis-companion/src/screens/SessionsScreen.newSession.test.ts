@@ -163,10 +163,9 @@ describe('where "New session" lives', () => {
     // the two of them stacked into a doubled line under the pager.
     expect(source).toContain("      {rows.length > 0 && (");
     expect(source).not.toContain("-mt-px");
-    // The ONE deliberate overlap on the screen is the chosen machine tab merging
-    // into its card, and it lives in `chipClass`, above the list entirely.
-    expect(source.match(/-mb-px/g)).toHaveLength(1);
-    expect(source).toMatch(/chipClass[\s\S]{0,400}-mb-px/);
+    // Nothing on this screen overlaps anything any more: the machine tabs are a
+    // segmented switch on the page's own paper, not a chip merged into the card.
+    expect(source).not.toContain("-mb-px");
     expect(source).not.toContain("-my-px");
     expect(source).not.toContain("items-stretch border-y border-dialog-edge");
   });
@@ -292,21 +291,30 @@ describe('where "New session" lives', () => {
       "? `${unread} new` : ",
       "dirty",
       "draft {draftName}",
-      "<StarIcon filled",
     ]) {
       expect(
         flags.slice(0, flags.indexOf("</span>\n          {/* `sm:contents`")),
       ).toContain(flag);
     }
-    // ...and the title cell holds the title alone.
+    // ...and the title cell holds the title and its star.
     const name = source.slice(
       source.indexOf(
-        '<span className="col-start-1 row-start-1 flex min-w-0 items-center sm:',
+        '<span className="col-start-1 row-start-1 flex min-w-0 items-center gap-1.5 sm:',
       ),
     );
+    const nameCell = name.slice(0, name.indexOf("{/* What the session HAS"));
+    expect(nameCell).not.toContain("unread > 0");
+    // Regression, user report: the star belongs immediately to the RIGHT of the
+    // title, on every row. It used to ride at the END of the flag cluster, behind
+    // `new`/`dirty`/`draft`, so which session was starred depended on what else
+    // that row happened to carry.
+    expect(nameCell).toContain("<StarIcon filled");
+    expect(nameCell.indexOf("{title}")).toBeLessThan(
+      nameCell.indexOf("<StarIcon filled"),
+    );
     expect(
-      name.slice(0, name.indexOf("{/* What the session HAS")),
-    ).not.toContain("unread > 0");
+      source.slice(source.indexOf("{/* What the session HAS")),
+    ).not.toContain("<StarIcon filled");
     // Status and time moved one column out to make room.
     expect(source).toContain("col-start-3 row-start-1 inline-flex shrink-0");
     expect(source).toContain(
@@ -399,8 +407,8 @@ describe("the machine is a chip, not a second band", () => {
     expect(source).toContain("onRenameMachine(scopeChrome.conn, next)");
   });
 
-  // Regression, user report: "Everything labeled, no icons and the MACHINES are in
-  // the fucking HEADER" — paraphrased: the machine verbs were glyph-only, and the
+  // Regression, user report (paraphrased: label everything, no icons, and put the
+  // MACHINES in the header): the machine verbs were glyph-only, and the
   // machines themselves stood in a strip of their own BELOW the header band, so the
   // one question the screen answers first was not part of the header that answers it.
   // Regression, user report ("the MACHINE SHOULD BE BOXED DULLY AND THOSE SWITCHERS
@@ -412,9 +420,9 @@ describe("the machine is a chip, not a second band", () => {
     expect(source.indexOf('aria-label="Machines"')).toBeLessThan(
       source.indexOf("flex h-full min-h-0 flex-col overflow-hidden border-y"),
     );
-    // The selected chip's bottom edge is open, so it merges into the card below it.
-    expect(source).toContain("-mb-px");
-    expect(source).toContain("border-b-transparent");
+    // And it is a switch, not a row of boxes: one track, no per-tab border, no seam.
+    expect(source).toContain("<MachineSwitcher>");
+    expect(source).not.toContain("border-b-transparent");
   });
 
   it("scopes to exactly one machine — this one or that one, never All", () => {
@@ -483,8 +491,14 @@ describe('the machine strip', () => {
   it('is tabs on the left and the verb on the trailing edge, on one control height', () => {
     expect(source).toMatch(/aria-label="Machines"[\s\S]{0,200}pt-6/);
     expect(source).toContain("className=\"ml-auto shrink-0 whitespace-nowrap\"");
-    // `Button` density="compact" is exactly `h-8` with `mouse:h-6`.
-    expect(source).toMatch(/inline-flex h-8 [^`]*mouse:h-6/);
+    // Regression, user report (paraphrased: should the switcher be regular buttons,
+    // and make it beautiful): the tabs were individually bordered
+    // chips standing beside a filled button, so a STATE and a VERB wore one species.
+    // The machines are one segmented track now (`MachineSwitcher`/`MachineTab`), and
+    // the screen no longer spells a tab's box out at the call site.
+    expect(source).toContain("<MachineSwitcher>");
+    expect(source).toContain("<MachineTab");
+    expect(source).not.toContain("chipClass");
     expect(source).not.toContain('inline-flex min-h-6');
   });
 

@@ -13,11 +13,12 @@ import {
   LIST_EDGE_END,
   LIST_FRAME,
   LiveCount,
-  LiveTally,
   EditableName,
   MachineGap,
   MachineMark,
   MachineRail,
+  MachineSwitcher,
+  MachineTab,
   Modal,
   NewSessionButton,
   RowDisclosure,
@@ -169,23 +170,8 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
   });
 }
 
-// The scope strip's tabs: one per machine.
-//
-// `text-meta` is the step the header line it answers is already set in; at
-// `text-chip` the label was the smallest type on the screen.
-// A TAB IS A CONTROL ON THE BUTTON'S OWN SCALE: the strip ends in a real `Button`
-// (`Add machine`), so a tab that stands 24px beside a 32px button makes one row
-// hold two control heights. The tab wears `Button`'s `density="compact"` box
-// exactly — 32px under a finger, 24px only where a cursor earns it (`mouse:`).
-function chipClass(isOn: boolean): string {
-  return `inline-flex h-8 shrink-0 items-center gap-1.5 border px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none mouse:h-6 ${
-    isOn
-      ? // The chosen chip's bottom edge is OPEN and it overlaps the card's own top
-        // rule, so the tab and the machine it names are visibly one shape.
-        '-mb-px border-dialog-edge border-b-transparent bg-panel-2 font-bold text-white'
-      : 'border-transparent text-dialog-hint hover:text-white'
-  }`;
-}
+// The scope strip's tabs live in `MachineSwitcher`/`MachineTab` (`components/ui`):
+// one track, one raised tile for the machine you are on, no per-tab borders.
 
 
 function useSessionsPerPage(): number {
@@ -1115,25 +1101,24 @@ export function SessionsScreen({
           lines doing one job, and a rail that is a BORDER also steals 2px of layout
           the trailing edge has no match for. Both sides are 2px now, so the ink
           lands symmetrically whichever one is painting. */}
-      {/* THE SWITCHER STANDS OUTSIDE WHAT IT SWITCHES.
+      {/* THE SWITCHER STANDS OUTSIDE WHAT IT SWITCHES, AND IT IS ONE OBJECT.
           The chips used to sit inside the machine card's own header, so the control
           that picks a machine looked like part of that machine's own answer. They are
-          tabs on the page's paper now, and the chosen one's bottom edge is open onto
-          the card below it. There is no "All": a scope is one machine, always. */}
+          a segmented switch on the page's paper now: one track, the chosen machine a
+          raised tile inside it. There is no "All": a scope is one machine, always. */}
       <div
         role="group"
         aria-label="Machines"
-        className="relative z-10 flex items-end gap-1.5 overflow-x-auto px-3 pb-3 pt-6 sm:px-4 sm:pb-4 sm:pt-8"
+        className="relative z-10 flex items-center gap-1.5 px-3 pb-3 pt-6 sm:px-4 sm:pb-4 sm:pt-8"
       >
+          <MachineSwitcher>
           {machines.map((machine) => {
             const key = machineKey(machine.conn);
             const tally = tallies.get(key);
             return (
-              <button
+              <MachineTab
                 key={key}
-                type="button"
-                aria-pressed={scope === key}
-                className={chipClass(scope === key)}
+                isOn={scope === key}
                 onClick={() => selectScope(key)}
               >
                 <MachineMark color={machineColor(machineColors, key)} />
@@ -1142,13 +1127,23 @@ export function SessionsScreen({
                   <span className="opacity-70">offline</span>
                 ) : (
                   <>
-                    <LiveTally count={tally?.live ?? 0} />
+                    {/* A COUNT INSIDE A TILE IS INK, NOT A THIRD BOX. The live tally
+                        was a filled green pill inside a bordered chip inside a row:
+                        boxes three deep in 32px. Live is the machine's resting state,
+                        so it is plain ink; unread is news and keeps its amber block. */}
+                    {(tally?.live ?? 0) > 0 && (
+                      <span className="tabular-nums opacity-70">
+                        {tally?.live}
+                        <span className="sr-only"> live</span>
+                      </span>
+                    )}
                     <UnreadBadge count={tally?.unread ?? 0} />
                   </>
                 )}
-              </button>
+              </MachineTab>
             );
           })}
+          </MachineSwitcher>
           {/* ADDING A MACHINE IS THE TAB STRIP'S OWN VERB, AND IT IS A WORD.
 
               The strip answers "which machine", so "one more machine" belongs at its
@@ -1985,7 +1980,7 @@ const SessionRow = memo(function SessionRow({
               cell, so every row started its flags at a different x — the longer the
               title, the further right its `NEW` — and a long title pushed them off
               the line entirely. They have their own column now. */}
-          <span className="col-start-1 row-start-1 flex min-w-0 items-center sm:col-start-auto sm:row-start-auto">
+          <span className="col-start-1 row-start-1 flex min-w-0 items-center gap-1.5 sm:col-start-auto sm:row-start-auto">
             {/* The LEAF, and the smallest name on the screen: 15 / 13 / 10 down the
                 machine -> project -> session ladder. It stays the strongest thing in
                 its OWN row — semibold, full ink, against the hint-grey `text-chip`
@@ -1997,9 +1992,19 @@ const SessionRow = memo(function SessionRow({
             >
               {title}
             </span>
+            {/* The star sits immediately RIGHT of the title, on every row. Riding at
+                the end of the flag cluster, it landed behind `new`/`dirty`/`draft`,
+                so the one mark the human typed in themselves moved with whatever
+                else the row happened to carry. */}
+            {isStarred && (
+              <span className="shrink-0">
+                <StarIcon filled className="size-3" />
+                <span className="sr-only">Favorite</span>
+              </span>
+            )}
           </span>
           {/* What the session HAS — unread answers, unsent words, the draft it was
-              forked into, a star — in ONE column of its own, so the flags of every
+              forked into — in ONE column of its own, so the flags of every
               row line up with each other instead of with the end of a title. On a
               phone the flags sit directly BESIDE the status they qualify — `NEW`
               against `IDLE` — which is what the fixed 6.75rem status track broke:
@@ -2032,12 +2037,6 @@ const SessionRow = memo(function SessionRow({
                 title={session.workspace?.root}
               >
                 draft {draftName}
-              </span>
-            )}
-            {isStarred && (
-              <span className="shrink-0 text-accent-ink">
-                <StarIcon filled className="size-3" />
-                <span className="sr-only">Favorite</span>
               </span>
             )}
           </span>
