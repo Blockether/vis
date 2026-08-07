@@ -40,24 +40,75 @@
     (spit f source)
     f))
 
+(defonce ^:private live-load
+  ;; The one extension set currently loaded in this JVM: {:sources :ext-dir
+  ;; :result :fingerprint}. nil when nothing is loaded.
+  (atom nil))
+
+(defn- load-sources!
+  "Write `sources` to a fresh temp dir and load them, replacing whatever was
+   loaded before. Returns the new `live-load` value."
+  [sources]
+  (let [ext-dir (temp-dir)]
+    (doseq [[fname src] sources]
+      (write-ext! ext-dir fname src))
+    (let [result (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})]
+      (reset! live-load
+        {:sources sources :ext-dir ext-dir :result result :fingerprint @@#'pyx/last-fingerprint}))))
+
 (defn- with-loaded
   "Load `.py` sources (map of filename -> source) from a temp dir with
-   `vis.state` confined to a throwaway in-memory DB, run `f` with the load
-   result, then tear everything down so tests stay isolated."
+   `vis.state` confined to a throwaway in-memory DB, and run `f` with the load
+   result.
+
+   An extension is its own GraalPy sandbox and re-executing the 28 KB
+   `extension_bootstrap.py` into a fresh one costs ~100ms, so the SAME sources
+   are not loaded twice in a row: the load survives between tests and only the
+   store is thrown away. That is all the isolation these tests need, because
+   `vis.state` resolves the store through `*current-environment*` at CALL time
+   — a fresh in-memory DB is a fresh state map even in a reused module.
+
+   A body that loads, reloads or edits extensions itself moves the loader's own
+   fingerprint; that invalidates the cache, so the next test reloads."
   [sources f]
   (let
-    [ext-dir
-     (temp-dir)
+    [{:keys [ext-dir result fingerprint]}
+     (let [cached @live-load]
+       (if (and (= sources (:sources cached)) (= (:fingerprint cached) @@#'pyx/last-fingerprint))
+         cached
+         (load-sources! sources)))
 
      store
      (ps/db-create-connection! :memory)]
 
-    (doseq [[fname src] sources]
-      (write-ext! ext-dir fname src))
     (binding [extension/*current-environment* {:db-info store}]
-      (try
-        (f (pyx/reload-python-extensions! {:dirs [(str ext-dir)]}) {:ext-dir ext-dir :store store})
-        (finally (pyx/reload-python-extensions! {:dirs []}) (ps/db-dispose-connection! store))))))
+      (try (f result {:ext-dir ext-dir :store store})
+           (catch Throwable t
+             (reset! live-load nil)
+             (pyx/reload-python-extensions! {:dirs []})
+             (throw t))
+           (finally (when-not (= fingerprint @@#'pyx/last-fingerprint) (reset! live-load nil))
+                    (ps/db-dispose-connection! store))))))
+
+(defn- with-fresh-loaded
+  "`with-loaded` for a test that OWNS the load: nothing before it is reused and
+   nothing after it may reuse this one, and the teardown scan (the one that
+   deregisters the extension) really runs. For a body that damages the sandbox
+   on purpose — closing its `Context` — or that asserts on the unload itself."
+  [sources f]
+  (reset! live-load nil)
+  (let
+    [{:keys [ext-dir result]}
+     (load-sources! sources)
+
+     store
+     (ps/db-create-connection! :memory)]
+
+    (binding [extension/*current-environment* {:db-info store}]
+      (try (f result {:ext-dir ext-dir :store store})
+           (finally (reset! live-load nil)
+                    (pyx/reload-python-extensions! {:dirs []})
+                    (ps/db-dispose-connection! store))))))
 
 (defn- registered
   [ext-name]
@@ -651,22 +702,22 @@ vis.extension(
   (it "change listeners see every (re)load and removal"
       (let [events (atom [])]
         (pyx/add-change-listener! ::test #(swap! events conj %))
-        (try (with-loaded {"counter.py" counter-py}
-                          (fn [_ {:keys [ext-dir]}]
-                            ;; initial load: counter registered, nothing removed
-                            (let [{:keys [extensions removed]} (last @events)]
-                              (expect (= ["counter"] (mapv :ext/name extensions)))
-                              (expect (= [] removed)))
-                            ;; edit + reload: fresh registration, still nothing removed
-                            (write-ext!
-                              ext-dir
-                              "counter.py"
-                              (str/replace counter-py "Counter fixture extension." "Counter v2."))
-                            (pyx/load-python-extensions! {:dirs [(str ext-dir)]})
-                            (let [{:keys [extensions removed]} (last @events)]
-                              (expect (= "Counter v2." (:ext/description (first extensions))))
-                              (expect (= [] removed)))))
-             ;; with-loaded's teardown scanned an empty dir set -> counter removed
+        (try (with-fresh-loaded
+               {"counter.py" counter-py}
+               (fn [_ {:keys [ext-dir]}]
+                 ;; initial load: counter registered, nothing removed
+                 (let [{:keys [extensions removed]} (last @events)]
+                   (expect (= ["counter"] (mapv :ext/name extensions)))
+                   (expect (= [] removed)))
+                 ;; edit + reload: fresh registration, still nothing removed
+                 (write-ext! ext-dir
+                             "counter.py"
+                             (str/replace counter-py "Counter fixture extension." "Counter v2."))
+                 (pyx/load-python-extensions! {:dirs [(str ext-dir)]})
+                 (let [{:keys [extensions removed]} (last @events)]
+                   (expect (= "Counter v2." (:ext/description (first extensions))))
+                   (expect (= [] removed)))))
+             ;; with-fresh-loaded's teardown scanned an empty dir set -> counter removed
              (let [{:keys [extensions removed]} (last @events)]
                (expect (= [] extensions))
                (expect (= ["counter"] removed)))
@@ -1877,24 +1928,24 @@ vis.extension(name='rebuilder', description='rebuilder', alias='rb',
               symbols=[vis.symbol(ping), vis.symbol(boom)])
 ")
 
-(defdescribe
-  python-extension-context-heal-test
-  (it "a symbol captured before a reload keeps working after the rebuild"
-      ;; Sandbox bindings and cached session env rows capture the symbol fn ONCE,
-      ;; over the context that was alive then. A `/reload` builds new contexts and
-      ;; closes the old ones without re-binding anything, so every captured symbol
-      ;; died with "Context execution was cancelled" until the session restarted.
-      (with-loaded {"rebuilder.py" rebuilder-py}
-                   (fn [_ {:keys [ext-dir]}]
-                     (let [captured (symbol-fn (registered "rebuilder") 'ping)]
-                       (expect (= "pong" (:result (captured))))
-                       (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
-                       (expect (= "pong" (:result (captured))))))))
-  (it "a symbol whose context was torn down rebuilds that context and answers"
-      ;; Nothing reloaded — the context itself is gone (host teardown, cancel).
-      ;; The loader's fingerprint gate would call a reload a no-op here, so the
-      ;; failing call has to rebuild its own file.
-      (with-loaded {"rebuilder.py" rebuilder-py}
+(defdescribe python-extension-context-heal-test
+             (it "a symbol captured before a reload keeps working after the rebuild"
+                 ;; Sandbox bindings and cached session env rows capture the symbol fn ONCE,
+                 ;; over the context that was alive then. A `/reload` builds new contexts and
+                 ;; closes the old ones without re-binding anything, so every captured symbol
+                 ;; died with "Context execution was cancelled" until the session restarted.
+                 (with-fresh-loaded {"rebuilder.py" rebuilder-py}
+                                    (fn [_ {:keys [ext-dir]}]
+                                      (let [captured (symbol-fn (registered "rebuilder") 'ping)]
+                                        (expect (= "pong" (:result (captured))))
+                                        (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
+                                        (expect (= "pong" (:result (captured))))))))
+             (it "a symbol whose context was torn down rebuilds that context and answers"
+                 ;; Nothing reloaded — the context itself is gone (host teardown, cancel).
+                 ;; The loader's fingerprint gate would call a reload a no-op here, so the
+                 ;; failing call has to rebuild its own file.
+                 (with-fresh-loaded
+                   {"rebuilder.py" rebuilder-py}
                    (fn [_ _]
                      (let
                        [captured
@@ -1910,11 +1961,12 @@ vis.extension(name='rebuilder', description='rebuilder', alias='rb',
                        (expect (not (identical? dead (:context (first (vals @@#'pyx/loaded))))))
                        (expect (= "pong"
                                   (:result ((symbol-fn (registered "rebuilder") 'ping)))))))))
-  (it "context-dead? asks the context itself, it never matches error text"
-      ;; Liveness is a QUESTION for GraalVM, not a string to parse: a cheap
-      ;; `asValue` handshake returns on a live context and throws on a cancelled
-      ;; or closed one. A raised Python exception leaves the context alive.
-      (with-loaded {"rebuilder.py" rebuilder-py}
+             (it "context-dead? asks the context itself, it never matches error text"
+                 ;; Liveness is a QUESTION for GraalVM, not a string to parse: a cheap
+                 ;; `asValue` handshake returns on a live context and throws on a cancelled
+                 ;; or closed one. A raised Python exception leaves the context alive.
+                 (with-fresh-loaded
+                   {"rebuilder.py" rebuilder-py}
                    (fn [_ _]
                      (let [^Context live (:context (first (vals @@#'pyx/loaded)))]
                        (expect (false? (#'pyx/context-dead? live)))
@@ -1923,8 +1975,9 @@ vis.extension(name='rebuilder', description='rebuilder', alias='rb',
                        (.close live true)
                        (expect (true? (#'pyx/context-dead? live)))
                        (expect (true? (#'pyx/context-dead? nil)))))))
-  (it "an ordinary Python error stays a failure and never rebuilds the context"
-      (with-loaded {"rebuilder.py" rebuilder-py}
+             (it "an ordinary Python error stays a failure and never rebuilds the context"
+                 (with-fresh-loaded
+                   {"rebuilder.py" rebuilder-py}
                    (fn [_ _]
                      (let
                        [before
