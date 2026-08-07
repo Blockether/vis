@@ -57,3 +57,16 @@ describe("markdown annotations", () => {
     expect(quoteOf("  spaced   out  ")).toBe("spaced out");
   });
 });
+
+// A remark about the note itself carries no quote, and has to survive a save.
+describe("a whole-document comment", () => {
+  it("round-trips under its own marker", () => {
+    const saved = renderAnnotated("# Plan\n", [
+      { quote: "", body: "This plan is stale." },
+    ]);
+    expect(saved).toContain("- **Whole document** \u2014 This plan is stale.");
+    const back = parseAnnotated(saved);
+    expect(back.body).toBe("# Plan");
+    expect(back.comments).toEqual([{ quote: "", body: "This plan is stale." }]);
+  });
+});

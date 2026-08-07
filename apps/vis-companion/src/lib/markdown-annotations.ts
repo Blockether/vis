@@ -24,6 +24,17 @@ export const COMMENTS_HEADING = "## Comments";
 
 const COMMENT_LINE = /^- \*\*“(.*)”\*\* — (.*)$/;
 
+/**
+ * A remark about the WHOLE note, not about one passage.
+ *
+ * Not every thing a human has to say is about a sentence — "this plan is out of
+ * date" is about the document. Such a comment carries no quote, and is written
+ * out under its own marker so the section still round-trips.
+ */
+export const GENERAL_LABEL = "Whole document";
+
+const GENERAL_LINE = /^- \*\*Whole document\*\* — (.*)$/;
+
 /** One line, no markers that could close the ones this format opens. */
 function oneLine(text: string): string {
   return text.replace(/[“”]/g, '"').replace(/\s+/g, " ").trim();
@@ -38,6 +49,11 @@ export function parseAnnotated(text: string): {
   if (at < 0) return { body: text, comments: [] };
   const comments: MarkdownComment[] = [];
   for (const line of text.slice(at + COMMENTS_HEADING.length + 2).split("\n")) {
+    const general = GENERAL_LINE.exec(line.trim());
+    if (general) {
+      comments.push({ quote: "", body: general[1] });
+      continue;
+    }
     const hit = COMMENT_LINE.exec(line.trim());
     if (hit) comments.push({ quote: hit[1], body: hit[2] });
   }
@@ -54,8 +70,10 @@ export function renderAnnotated(
   const prose = body.replace(/\s+$/, "");
   const kept = comments.filter((entry) => oneLine(entry.body).length > 0);
   if (kept.length === 0) return `${prose}\n`;
-  const lines = kept.map(
-    (entry) => `- **“${oneLine(entry.quote)}”** — ${oneLine(entry.body)}`,
+  const lines = kept.map((entry) =>
+    oneLine(entry.quote).length === 0
+      ? `- **${GENERAL_LABEL}** — ${oneLine(entry.body)}`
+      : `- **“${oneLine(entry.quote)}”** — ${oneLine(entry.body)}`,
   );
   return `${prose}\n\n${COMMENTS_HEADING}\n\n${lines.join("\n")}\n`;
 }

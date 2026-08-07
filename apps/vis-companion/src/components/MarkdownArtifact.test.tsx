@@ -150,7 +150,7 @@ describe("marking up the passages a comment is about", () => {
     // circle, no background, nothing that reads as a control.
     const cardOrdinals = Array.from(
       host.querySelectorAll<HTMLElement>(
-        'ul[aria-label="Comments"] > li > span',
+        'ul[aria-label="Comments"] > li > sup',
       ),
     );
     expect(cardOrdinals.map((chip) => chip.textContent)).toEqual(["1", "2"]);
@@ -172,8 +172,15 @@ describe("the annotation palette", () => {
   // moment the gateway ships a dark one: every hue is a shared theme token.
   it("is spelled in theme variables, never in hard-coded hex", () => {
     for (const colour of ANNOTATION_COLORS) {
-      expect(colour).toMatch(/^var\(--[a-z0-9-]+\)$/);
+      expect(colour).toMatch(
+        /^(var\(--[a-z0-9-]+\)|color-mix\(in oklab,.*var\(--.*\))$/,
+      );
+      expect(colour).not.toMatch(/#[0-9a-f]{3}/i);
     }
+    // Ten threads on one note, and no two of them the same ink.
+    expect(ANNOTATION_COLORS).toHaveLength(10);
+    expect(new Set(ANNOTATION_COLORS).size).toBe(10);
+    expect(annotationColor(10)).toBe(annotationColor(0));
     expect(annotationWash(0)).toContain(annotationColor(0));
     expect(annotationWash(0)).toContain("color-mix");
   });
@@ -195,5 +202,75 @@ describe("an opened plain-text artifact", () => {
     // Each line is a <p>, so a tap quotes it exactly as a paragraph is quoted.
     expect(markup.match(/<p /g)?.length ?? 0).toBeGreaterThanOrEqual(2);
     expect(markup).toContain("Tap a passage to comment on it.");
+  });
+});
+
+// A remark is not always about a sentence: "this plan is stale" is about the
+// note itself, and a reader with nothing to point at could not say it.
+describe("a comment on the whole note", () => {
+  it("opens the composer with no quote and lists the remark as the whole document", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(
+        <MarkdownAnnotator
+          text={"# Ship it\n\nWe cut on Friday.\n"}
+          onSave={noop}
+        />,
+      );
+    });
+
+    const open = [...host.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").includes("Comment on the note"),
+    );
+    expect(open).toBeTruthy();
+    act(() => {
+      open!.click();
+    });
+    expect(host.textContent).toContain("Comment on the whole document");
+
+    const field = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Comment"]',
+    )!;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )!.set!;
+      setter.call(field, "This plan is stale.");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const add = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "Add comment",
+    )!;
+    act(() => {
+      add.click();
+    });
+
+    const list = host.querySelector('ul[aria-label="Comments"]')!;
+    expect(list.textContent).toContain("Whole document");
+    expect(list.textContent).toContain("This plan is stale.");
+    // Nothing in the prose is marked: the remark points at no passage.
+    expect(host.querySelector("h1")!.style.textDecorationLine).toBe("");
+
+    act(() => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  it("draws the card ordinal as a superscript, smaller than the remark", () => {
+    const markup = html(
+      <MarkdownAnnotator
+        text={
+          "# Ship it\n\n## Comments\n\n- **Whole document** \u2014 Stale.\n"
+        }
+        onSave={noop}
+      />,
+    );
+    expect(markup).toContain("<sup");
+    expect(markup).toContain("Whole document");
+    expect(markup).toContain("Stale.");
   });
 });

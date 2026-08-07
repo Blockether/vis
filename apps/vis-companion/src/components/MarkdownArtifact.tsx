@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 import type { GatewayClient } from "../lib/gateway";
 import {
+  GENERAL_LABEL,
   parseAnnotated,
   quoteOf,
   renderAnnotated,
@@ -20,8 +21,8 @@ const QUOTABLE_BLOCKS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,pre,td,th";
  *
  * A remark is identified by its ORDINAL and by its hue: the passage it is about
  * is marked in that hue and carries the number, and the card below wears the
- * very same ordinal. Six remarks on one note are then six threads a reader can
- * follow, instead of six identical grey boxes under a page of untouched prose.
+ * very same ordinal. Ten remarks on one note are then ten threads a reader can
+ * follow, instead of ten identical grey boxes under a page of untouched prose.
  *
  * The palette is spelled as THEME VARIABLES, never as hard-coded hex: the app's
  * paper is whatever `/v1/theme` sent, so an ink chosen for a cream light theme
@@ -36,6 +37,10 @@ export const ANNOTATION_COLORS = [
   "var(--code-syntax-special)",
   "var(--code-syntax-number)",
   "var(--code-syntax-string)",
+  "var(--code-syntax-keyword)",
+  "var(--warning-border)",
+  "var(--code-syntax-comment)",
+  "color-mix(in oklab, var(--code-syntax-special) 60%, var(--link-fg))",
 ];
 
 export function annotationColor(index: number): string {
@@ -200,7 +205,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   );
 
   const addComment = useCallback(() => {
-    if (!quote || draft.trim().length === 0) return;
+    if (quote === null || draft.trim().length === 0) return;
     setComments((old) => [...old, { quote, body: draft.trim() }]);
     setQuote(null);
     setDraft("");
@@ -234,7 +239,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
       const text = quoteOf(block.textContent ?? "");
       const hits: number[] = [];
       comments.forEach((comment, at) => {
-        if (comment.quote === text) hits.push(at);
+        if (text.length > 0 && comment.quote === text) hits.push(at);
       });
       if (hits.length === 0) continue;
       block.style.textDecorationLine = "underline";
@@ -299,9 +304,13 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         {plain ? <PlainText text={body} /> : <Markdown>{body}</Markdown>}
       </div>
 
-      {quote ? (
+      {quote !== null ? (
         <div className="flex shrink-0 flex-col gap-2 border-t border-dialog-edge bg-panel-2 px-3 py-3 sm:px-4">
-          <p className="text-meta text-dialog-hint">Comment on “{quote}”</p>
+          <p className="text-meta text-dialog-hint">
+            {quote.length === 0
+              ? `Comment on the ${GENERAL_LABEL.toLowerCase()}`
+              : `Comment on “${quote}”`}
+          </p>
           <textarea
             autoFocus
             value={draft}
@@ -327,9 +336,29 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
           </div>
         </div>
       ) : (
-        <p className="shrink-0 border-t border-dialog-edge px-3 py-2 text-meta text-dialog-hint sm:px-4">
-          Tap a passage to comment on it.
-        </p>
+        // A REMARK NEED NOT BE ABOUT A SENTENCE.
+        //
+        // "This plan is stale" is about the note, not about a line in it, and a
+        // reader with nothing to point at had no way to say it. The whole-note
+        // comment sits beside the invitation and opens the very same composer
+        // with an empty quote.
+        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-dialog-edge px-3 py-2 sm:px-4">
+          <p className="min-w-0 flex-1 text-meta text-dialog-hint">
+            Tap a passage to comment on it.
+          </p>
+          <Button
+            type="button"
+            variant="quiet"
+            density="compact"
+            onClick={() => {
+              setQuote("");
+              setDraft("");
+              setStatus("");
+            }}
+          >
+            Comment on the note
+          </Button>
+        </div>
       )}
 
       {comments.length > 0 ? (
@@ -346,16 +375,18 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
                 backgroundColor: annotationWash(at),
               }}
             >
-              <span
+              <sup
                 aria-hidden="true"
-                className="mt-0.5 shrink-0 font-mono text-chip font-bold"
+                className="mt-1 shrink-0 font-mono text-chip font-bold"
                 style={{ color: annotationColor(at) }}
               >
                 {at + 1}
-              </span>
+              </sup>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-meta text-dialog-hint">
-                  “{comment.quote}”
+                  {comment.quote.length === 0
+                    ? GENERAL_LABEL
+                    : `“${comment.quote}”`}
                 </p>
                 <p className="text-body text-foreground">{comment.body}</p>
               </div>
