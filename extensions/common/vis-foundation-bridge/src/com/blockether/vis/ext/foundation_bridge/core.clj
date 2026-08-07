@@ -821,42 +821,46 @@
 
 (defn- bridge-commit-gate
   [{:keys [root candidate-tree index-preserving?]} _op args next]
-  (when-not (and (string? root)
-                 (not (str/blank? root))
-                 (string? candidate-tree)
-                 (not (str/blank? candidate-tree))
-                 (true? index-preserving?))
-    (throw (ex-info "Bridge blocked commit: Vis did not provide an exact staged candidate."
-                    {:type :vis.bridge/invalid-commit-candidate})))
-  (let
-    [env
-     {:workspace/root root}
-
-     discovery
-     (profile-discovery-at-root root)]
-
-    (if-not (:configured? discovery)
-      (next args)
+  (if-not (vis/toggle-enabled? "bridge")
+    (next args)
+    (do
+      (when-not (and (string? root)
+                     (not (str/blank? root))
+                     (string? candidate-tree)
+                     (not (str/blank? candidate-tree))
+                     (true? index-preserving?))
+        (throw (ex-info "Bridge blocked commit: Vis did not provide an exact staged candidate."
+                        {:type :vis.bridge/invalid-commit-candidate})))
       (let
-        [{:keys [profile policy policy-path]}
-         (load-profile+policy env {"profile" (:profile-path discovery)})
+        [env
+         {:workspace/root root}
 
-         summary
-         (try (br/check profile
-                        {:index? true :approve? true :policy policy :policy-path policy-path})
-              (catch Throwable t
-                (throw (ex-info (str "Bridge blocked commit: "
-                                     (or (ex-message t) "verification failed"))
-                                {:type :vis.bridge/commit-check-failed}
-                                t))))
+         discovery
+         (profile-discovery-at-root root)]
 
-         checked-tree
-         (get-in summary [:change-detection :candidate-tree])
+        (if-not (:configured? discovery)
+          (next args)
+          (let
+            [{:keys [profile policy policy-path]}
+             (load-profile+policy env {"profile" (:profile-path discovery)})
 
-         approval-status
-         (get-in summary [:change-detection :approval :status])]
+             summary
+             (try (br/check profile
+                            {:index? true :approve? true :policy policy :policy-path policy-path})
+                  (catch Throwable t
+                    (throw (ex-info (str "Bridge blocked commit: "
+                                         (or (ex-message t) "verification failed"))
+                                    {:type :vis.bridge/commit-check-failed}
+                                    t))))
 
-        (cond (not= candidate-tree checked-tree)
+             checked-tree
+             (get-in summary [:change-detection :candidate-tree])
+
+             approval-status
+             (get-in summary [:change-detection :approval :status])]
+
+            (cond
+              (not= candidate-tree checked-tree)
               (throw
                 (ex-info
                   "Bridge blocked commit: the staged candidate changed during verification; retry."
@@ -871,7 +875,7 @@
                                     {:type :vis.bridge/commit-not-approved
                                      :status (:status summary)
                                      :issue-count (:issue-count summary)
-                                     :approval-status approval-status})))))))
+                                     :approval-status approval-status})))))))))
 
 (vis/register-toggle!
   {:id "bridge"

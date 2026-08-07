@@ -231,6 +231,35 @@
                    (try (expect (true? (activation-fn {})))
                         (vis/toggle-set-enabled! "bridge" false)
                         (expect (false? (activation-fn {})))
+                        (finally (vis/toggle-set-enabled! "bridge" original)))))
+             ;; Regression, this report: disabling Bridge still left its commit-verification hook active.
+             (it "does not run the commit gate while Bridge is disabled"
+                 (let
+                   [root
+                    (temp-root "bridge-ext-disabled-gate")
+
+                    _
+                    (configure-project! root root)
+
+                    original
+                    (vis/toggle-enabled? "bridge")
+
+                    check-called?
+                    (atom false)]
+
+                   (try (vis/toggle-set-enabled! "bridge" false)
+                        (with-redefs
+                          [br/check (fn [& _]
+                                      (reset! check-called? true)
+                                      (throw (ex-info "disabled Bridge hook ran" {})))]
+                          (expect (= :committed
+                                     (extension/invoke-operation :git/commit
+                                                                 {:root root
+                                                                  :candidate-tree "candidate"
+                                                                  :index-preserving? true}
+                                                                 (constantly :committed)
+                                                                 [])))
+                          (expect (false? @check-called?)))
                         (finally (vis/toggle-set-enabled! "bridge" original))))))
 
 ;; Regression, issue: bridge silently fell back to `(System/getProperty "user.dir")`
