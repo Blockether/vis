@@ -742,6 +742,59 @@
                  (expect (= "landed.png" (get (first rows) "filename")))
                  (expect (= "REVG" (get (first rows) "base64")))))
              (finally (reset! registry saved)))))
+  ;; Regression, issue #1: an image sent from the TUI painted only a filename
+  ;; chip in the companion's live user bubble - the picture appeared only after
+  ;; the turn landed and the session was reloaded. The TUI authors a message that
+  ;; merely NAMES the file (a `vis-image` fence around an absolute path), so the
+  ;; gateway holds no inline `:attachments`, and the engine's stored bytes are
+  ;; keyed by its own session-turn soul id and do not exist until the turn lands:
+  ;; both existing arms missed, and this endpoint answered `[]`.
+  (it
+    "serves the images a turn's own request TEXT names, before the turn lands"
+    (let
+      [sid
+       (str (java.util.UUID/randomUUID))
+
+       dir
+       (str (java.nio.file.Files/createTempDirectory
+              "vis-turn-attachments"
+              (into-array java.nio.file.attribute.FileAttribute [])))
+
+       png
+       (java.io.File. dir "clipboard-2026-08-07-104042.png")
+
+       pixels
+       (.decode (java.util.Base64/getDecoder)
+                (str "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4"
+                     "2mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
+
+       registry
+       @#'state/registry
+
+       saved
+       @registry]
+
+      (try (java.nio.file.Files/write (.toPath png)
+                                      ^bytes pixels
+                                      (into-array java.nio.file.OpenOption []))
+           (reset! registry {sid {:next-seq 0
+                                  :turn-order ["t5"]
+                                  :turns {"t5" {:turn_id "t5"
+                                                :session_id sid
+                                                :status "running"
+                                                :workspace {:root dir}
+                                                :request (str "look at this\n\n```vis-image\n"
+                                                              (.getAbsolutePath png)
+                                                              "\n```")}}}})
+           (let [rows (state/turn-attachments sid "t5")]
+             (expect (= 1 (count rows)))
+             (expect (= "clipboard-2026-08-07-104042.png" (get (first rows) "filename")))
+             (expect (= "image/png" (get (first rows) "media_type")))
+             (expect (= (.encodeToString (java.util.Base64/getEncoder) pixels)
+                        (get (first rows) "base64")))
+             (expect (= "user" (get (first rows) "source")))
+             (expect (= "both" (get (first rows) "audience"))))
+           (finally (reset! registry saved) (.delete png)))))
   (it "is nil for an unknown turn"
       (expect (nil? (state/turn-attachments (str (java.util.UUID/randomUUID)) "nope")))))
 

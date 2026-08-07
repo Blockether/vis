@@ -1470,8 +1470,53 @@
   (some-> (wire-turn (turn-record sid tid))
           wire/canonical))
 
+(defn- request-text-attachments
+  "The images a turn's own request TEXT points at, loaded WITH their pixel bytes.
+
+   Not every image arrives as an upload. The TUI's drag-drop and clipboard paste
+   author a message that merely NAMES the file - an absolute path inside a
+   `vis-image` fence - and only the ENGINE turns those paths into stored bytes,
+   under its own session-turn id, once the turn lands. So this authoring style
+   had no byte source at all while the turn was in flight, and the app's live
+   user bubble painted a filename chip with no picture in it until the session
+   was reloaded. `attachment-previews` already resolves BOTH authoring styles for
+   the byte-free chips; this is that same resolution with the pixels, in the
+   shape a transcript row carries. Never throws."
+  [turn]
+  (try (let
+         [workspace
+          (:workspace turn)
+
+          root
+          (or (:root workspace) (get workspace "root"))]
+
+         (into []
+               (map-indexed (fn [position {:keys [path media-type base64 size]}]
+                              {:filename (.getName (java.io.File. (str path)))
+                               :media_type media-type
+                               :base64 base64
+                               :size size
+                               :kind "image"
+                               :source "user"
+                               :audience "both"
+                               :position position}))
+               (:attached (attachments/collect-user-images (:request turn)
+                                                           {:workspace-root root}))))
+       (catch Throwable _ nil)))
+
+(defn- dedupe-attachments-by-filename
+  "First row wins per filename: an inline upload and the same file named in the
+   request text are ONE attachment, never two."
+  [rows]
+  (->> rows
+       (reduce (fn [acc row]
+                 (let [filename (get row "filename")]
+                   (if (some #(= filename (get % "filename")) acc) acc (conj acc row))))
+               [])
+       vec))
+
 (defn turn-attachments
-  "The FULL inline attachments (filename / media_type / base64) of ONE turn.
+  "The FULL attachments (filename / media_type / base64) of ONE turn.
 
    The live rail and the queue mirror ship byte-free `:attachment_previews`, and
    a turn's persisted row only exists once it LANDS — so between submit and
@@ -1479,18 +1524,22 @@
    the user bubble's images. Restart the app (or open the session on a second
    device) mid-turn and they were gone for good.
 
-   The gateway holds those bytes the whole time: `:attachments` on the registry
-   entry of a running/queued turn, the attachment store once the turn lands. This
-   serves them, in the SAME shape a transcript row carries, so a channel can
-   lazily fetch what it does not have. nil when the turn is unknown or carried no
-   images."
+   The gateway can reach those bytes the whole time, from all THREE sources a
+   user's image has: `:attachments` on the registry entry of a running/queued
+   turn (inline uploads), the paths the turn's own request text names (the TUI's
+   drag-drop and clipboard paste, which upload nothing), and the attachment store
+   once the turn lands. This serves them, in the SAME shape a transcript row
+   carries, so a channel can lazily fetch what it does not have. nil when the
+   turn is unknown or carried no images."
   [sid tid]
   (when (and sid tid)
-    (or (seq (wire/canonical (vec (:attachments (turn-record sid tid)))))
-        (try (seq (wire/canonical (vec (get (persistance/db-list-turns-attachments (lp/db-info)
-                                                                                   [tid])
-                                            (str tid)))))
-             (catch Throwable _ nil)))))
+    (let [turn (turn-record sid tid)]
+      (or (seq (dedupe-attachments-by-filename
+                 (wire/canonical (into (vec (:attachments turn)) (request-text-attachments turn)))))
+          (try (seq (wire/canonical (vec (get (persistance/db-list-turns-attachments (lp/db-info)
+                                                                                     [tid])
+                                              (str tid)))))
+               (catch Throwable _ nil))))))
 
 (def ^:private persisted-status->wire
   "Durable engine turn status -> wire status. A map lookup rather than `case`:
