@@ -2742,13 +2742,13 @@
         ;; malfunction and invites a pointless re-run (the shape that spins).
         (let
           [m
-           (irm {:tool-calls [{:id "F" :name "delete"}]
+           (irm {:tool-calls [{:id "F" :name "grep"}]
                  :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "F"}]})
 
            c
            (get-in m [:content 0 :content])]
 
-          (expect (str/includes? c "`delete`"))
+          (expect (str/includes? c "`grep`"))
           (expect (str/includes? c "NOT a failure"))
           (expect (not (str/includes? c "print()")))
           ;; still a plain result, never flagged as an error
@@ -3681,7 +3681,7 @@
              ;; a printed edit silently loses its card.
              (let [op @#'lp/printed-result-op]
                (it "reads the stamped op off a map result"
-                   (expect (= "delete" (op {"op" "delete" "action" "delete" "paths" ["a.txt"]})))
+                   (expect (= "ls" (op {"op" "ls" "action" "ls" "paths" ["a.txt"]})))
                    (expect (= "cat" (op {"op" "cat"}))))
                (it "resolves a list of per-file edit rows to the shared patch renderer"
                    (expect (= "patch" (op [{"path" "a.clj" "op" "update" "changed" true}])))
@@ -3835,7 +3835,7 @@
         ;; `cat` is plural-only (`paths`), so it declares NO positional shape.
         (expect (nil? (get real-call-shapes "cat")))
         (expect (= {:lead-opt "language" :rest :always} (get real-call-shapes "repl_eval")))
-        (expect (= {:pos ["paths"]} (get real-call-shapes "file_exists")))
+        (expect (= {:pos ["name" "new_name"]} (get real-call-shapes "struct_rename")))
         (expect (fn? (get real-call-shapes "patch")))
         ;; lint_code takes a whole dict → it declares NO :call and uses the default.
         (expect (nil? (get real-call-shapes "lint_code")))
@@ -3887,17 +3887,10 @@
       ;; `struct_nodes` is plural-only too: `nodes` rides the generic whole-dict form.
       (expect (= "struct_nodes({\"nodes\": [{\"path\": \"a.clj\", \"nav\": [\"down\"]}]})"
                  (synth {:name "struct_nodes" :input {"nodes" [{"path" "a.clj" "nav" ["down"]}]}})))
-      (expect (= "copy(\"a\", \"b\")" (synth {:name "copy" :input {"src" "a" "dest" "b"}})))
-      (expect (= "copy(\"a\", \"b\", {\"is_overwrite\": True})"
-                 (synth {:name "copy" :input {"src" "a" "dest" "b" "is_overwrite" true}})))
       (expect (= "shell_run({\"commands\": [\"ls\"], \"cwd\": \"/tmp\"})"
                  (synth {:name "shell_run" :input {"commands" ["ls"] "cwd" "/tmp"}}))))
     (it "all-positional + optional-trailing-positional shapes"
-        (expect (= "move(\"a\", \"b\")" (synth {:name "move" :input {"src" "a" "dest" "b"}})))
-        (expect (= "delete([\"p\"])" (synth {:name "delete" :input {"paths" ["p"]}})))
-        (expect (= "create_directory([\"d\"])"
-                   (synth {:name "create_directory" :input {"paths" ["d"]}})))
-        (expect (= "file_exists([\"d\"])" (synth {:name "file_exists" :input {"paths" ["d"]}})))
+        ;; Every shell verb receives its complete request as one map.
         ;; Every shell verb receives its complete request as one map.
         (expect (= "shell_background({\"id\": \"x\", \"commands\": [\"sleep 1\"]})"
                    (synth {:name "shell_background" :input {"id" "x" "commands" ["sleep 1"]}})))
@@ -3907,8 +3900,9 @@
                    (synth {:name "struct_rename" :input {"name" "a" "new_name" "b"}})))
         (expect (= "shell_stop({\"id\": \"x\"})"
                    (synth {:name "shell_stop" :input {"id" "x"}}))))
-    (it "file_exists synthesizes its wire name file_exists (bound name matches)"
-        (expect (= "file_exists([\"p\"])" (synth {:name "file_exists" :input {"paths" ["p"]}}))))
+    (it "struct_rename synthesizes its two positionals"
+        (expect (= "struct_rename(\"p\", \"q\")"
+                   (synth {:name "struct_rename" :input {"name" "p" "new_name" "q"}}))))
     (it "patch projects its one native shape to the edits vector"
         (expect (= "patch([{\"path\": \"a.clj\", \"from_anchor\": \"1:a\"}])"
                    (synth {:name "patch"
@@ -3972,7 +3966,7 @@
       "rg" :observation
       "grep" :observation
       "struct_index" :observation
-      "file_exists" :observation
+      "ls" :observation
       "struct_nodes" :observation
       "patch" :mutation
       "write" :mutation

@@ -252,7 +252,7 @@ vis.op_hook(ops, fn, phase="before")
 ```
 
 - `ops` — sandbox tool names to hook: `"write"`, `"patch"`,
-  `"struct_patch"`, `"move"`, `"copy"`, `"delete"`, …
+  `"struct_patch"`, `"shell_run"`, `"python_execution"`, …
 - `phase="before"` — `fn(call)` receives `{"op", "args"}` **before** the op
   runs. Return `vis.block(reason)` to refuse it (the model sees the reason
   as a tool failure) or `None` to allow. A hook error fails open.

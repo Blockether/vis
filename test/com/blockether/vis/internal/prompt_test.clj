@@ -89,10 +89,11 @@
       (expect (str/includes? text "only for product questions"))
       (expect (str/includes? text "locates unknown code"))
       (expect (str/includes? text "**Filesystem work goes through native tools**"))
-      ;; The routing rule NAMES the whole filesystem surface: an omitted verb silently
-      ;; re-opens the `mkdir -p`/`test -f` shell reflex it exists to close.
+      ;; The routing rule sends every filesystem CHANGE to Python; naming the deleted
+      ;; native verbs again would re-open the `mkdir -p`/`test -f` reflex it exists to close.
       (doseq [verb ["`copy`" "`move`" "`delete`" "`create_directory`" "`file_exists`"]]
-        (expect (str/includes? text verb)))
+        (expect (not (str/includes? text verb))))
+      (expect (str/includes? text "CHANGING the tree is plain Python"))
       (expect (str/includes? text "`shell_run` runs programs"))
       (expect (< (str/index-of text "`grep` FIRST") (str/index-of text "`vis_docs()`")))
       (doseq
@@ -162,8 +163,8 @@
     "advertises exact model-facing Python capabilities, never internal shim ids"
     (let
       [shims [{:shim/name "attach"
-               :shim/globals ["vis_attach" "vis_attachments" "vis_attachment"
-                              "vis_read_attachment" "vis_reinspect_attachment"]
+               :shim/globals ["vis_attach" "vis_attachments" "vis_attachment" "vis_read_attachment"
+                              "vis_reinspect_attachment"]
                :shim/description
                "Persist artifacts as durable attachments. Vis-native; no upstream library."}
               {:shim/name "fonttools" :shim/imports ["brotli" "fontTools"]}
@@ -185,8 +186,8 @@
             (expect (str/includes? text (str "`" module "`"))))
           (expect (str/includes? text "Prebound shim globals"))
           (doseq
-            [global ["vis_attach" "vis_attachments" "vis_attachment"
-                     "vis_read_attachment" "vis_reinspect_attachment"]]
+            [global ["vis_attach" "vis_attachments" "vis_attachment" "vis_read_attachment"
+                     "vis_reinspect_attachment"]]
             (expect (str/includes? text (str "`" global "`"))))
           (expect (not (str/includes? text "`attach`")))
           ;; NAMES ALONE ARE A TRAP. Every shim is a reimplementation, so the surface

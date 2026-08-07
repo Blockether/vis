@@ -93,12 +93,13 @@
        include-schema
        (get-in find-files-tool [:schema :properties "include"])]
 
-      (expect (<= 8 (count ents)))          ;; cat ls grep patch move delete file_exists
+      (expect (<= 8 (count ents)))          ;; cat ls grep patch write struct_index struct_nodes
       (expect (contains? names "cat"))
       (expect (not (contains? names "rg"))) ;; rg folded into grep
-      ;; The merged `fs` tool is gone: every filesystem verb is its own native tool.
+      ;; The filesystem MUTATION verbs are gone: create/copy/move/delete/exists are
+      ;; plain Python (`os`, `shutil`, `pathlib`) under the confined filesystem.
       (expect (not (contains? names "fs")))
-      (expect (every? names ["copy" "move" "delete" "create_directory" "file_exists"]))
+      (expect (not-any? names ["copy" "move" "delete" "create_directory" "file_exists"]))
       (expect (every? (comp map? :ext.symbol/schema) ents))
       (expect (every? :schema tools))
       (expect (some #(= {:type "string"} %) (:oneOf include-schema)))
@@ -107,18 +108,17 @@
       (expect (every? :render-finish-call-fn tools))
       (expect (every? (comp seq str :description) tools))
       (expect (not-any? :ext.symbol/native-tool ents))))
-  (it
-    "native-tool-finish-call-renderers-by-op keys by result :op (cat→\"cat\", file-exists→\"file_exists\")"
-    (let
-      [ext
-       {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
+  (it "native-tool-finish-call-renderers-by-op keys by result :op (cat→\"cat\")"
+      (let
+        [ext
+         {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
 
-       by-op
-       (extension/native-tool-finish-call-renderers-by-op [ext])]
+         by-op
+         (extension/native-tool-finish-call-renderers-by-op [ext])]
 
-      (expect (fn? (:render-finish-call-fn (get by-op "cat"))))
-      (expect (fn? (:render-finish-call-fn (get by-op "grep"))))
-      (expect (contains? by-op "file_exists"))))) ;; file-exists → "file_exists"
+        (expect (fn? (:render-finish-call-fn (get by-op "cat"))))
+        (expect (fn? (:render-finish-call-fn (get by-op "grep"))))
+        (expect (not (contains? by-op "file_exists"))))))
 
 (defdescribe
   rg-simplified-api-test
@@ -290,46 +290,6 @@
                              :failures
                              first
                              :reason)))))))
-    (it "create-dirs refuses to mkdir outside cwd"
-        (let [create (private-fn "create-dirs-safe")]
-          (doseq [p escape-paths]
-            (let [err (try (create p) nil (catch clojure.lang.ExceptionInfo e e))]
-              (expect (some? err))
-              (expect (= :ext.foundation.editing/path-escape (:type (ex-data err))))))))
-    (it "copy refuses src OR dest outside cwd"
-        (let
-          [copy (private-fn "copy-safe")
-           inside (write-temp! "cwd-safety/copy-src.txt" "x")]
-
-          (doseq [p escape-paths]
-            (let
-              [err1 (try (copy p inside) nil (catch clojure.lang.ExceptionInfo e e))
-               err2 (try (copy inside p) nil (catch clojure.lang.ExceptionInfo e e))]
-
-              (expect (some? err1))
-              (expect (some? err2))
-              (expect (= :ext.foundation.editing/path-escape (:type (ex-data err1))))
-              (expect (= :ext.foundation.editing/path-escape (:type (ex-data err2))))))))
-    (it "move refuses src OR dest outside cwd"
-        (let
-          [move (private-fn "move-safe")
-           inside (write-temp! "cwd-safety/move-src.txt" "x")]
-
-          (doseq [p escape-paths]
-            (let
-              [err1 (try (move p inside) nil (catch clojure.lang.ExceptionInfo e e))
-               err2 (try (move inside p) nil (catch clojure.lang.ExceptionInfo e e))]
-
-              (expect (some? err1))
-              (expect (some? err2))
-              (expect (= :ext.foundation.editing/path-escape (:type (ex-data err1))))
-              (expect (= :ext.foundation.editing/path-escape (:type (ex-data err2))))))))
-    (it "delete refuses paths outside cwd"
-        (let [del (private-fn "delete-if-exists-safe")]
-          (doseq [p escape-paths]
-            (let [err (try (del p) nil (catch clojure.lang.ExceptionInfo e e))]
-              (expect (some? err))
-              (expect (= :ext.foundation.editing/path-escape (:type (ex-data err))))))))
     (it "cat (read) ALSO refuses paths outside cwd"
         ;; Defense in depth: even reads can't leak through path traversal.
         (let [cat (private-fn "read-file")]
@@ -621,10 +581,10 @@
                        :result
                        :error
                        :type)))))
-  (it "exists? on `.` is allowed when only descendants are protected"
+  (it "ls on `.` is allowed when only descendants are protected"
       (let
         [before
-         (:ext.symbol/before-fn (private-fn "file-exists-symbol"))
+         (:ext.symbol/before-fn (private-fn "ls-symbol"))
 
          out
          (before (protected-env [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
@@ -651,25 +611,10 @@
 
         (expect (some? failure))
         (expect (false? (:success? failure)))))
-  (it "writes on `.` are still blocked even when only descendants are protected"
-      ;; The bypass is INTENTIONALLY read-only — a recursive write on cwd
-      ;; cannot filter protected descendants safely, so we keep failing
-      ;; closed. (patch / write don't target cwd in practice, but
-      ;; delete on \".\" must stay blocked.)
-      (let
-        [before
-         (:ext.symbol/before-fn (private-fn "delete-symbol"))
-
-         out
-         (before (protected-env [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
-                 (constantly :ok)
-                 ["."])
-
-         failure
-         (:result out)]
-
-        (expect (some? failure))
-        (expect (false? (:success? failure)))))
+  ;; The read bypass for an ANCESTOR target only ever applied to composite (whole
+  ;; subtree) targets, which after the removal of the batch fs verbs are read-only
+  ;; by construction. Writes into a protected path are gated per path at
+  ;; `sandbox-fs/confine!` (see `internal.sandbox-fs-test`).
   ;; =============================================================================
   ;; FORCING plan-gate composition — write/patch consult env :mutation-gate AFTER
   ;; path-protection clears. (proposal Decision 2 / G1)
@@ -1698,61 +1643,25 @@
         (expect (string/includes? (get (first (wins {"ranges" [[0 2]]})) "note") "1-based"))
         ;; components that are not line numbers at all are still an error
         (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path {"ranges" [[1 :hi]]})))))
-  (it
-    "path/src/edits tools unwrap the collapsed all-kwargs spec map, never stringify it"
-    (let
-      [txt
-       (write-temp! "kwargs-collapse/a.txt" "hi\n")
+  (it "path/src/edits tools unwrap the collapsed all-kwargs spec map, never stringify it"
+      (let
+        [clj
+         (write-temp! "kwargs-collapse/n.clj" "(def x 1)\n")
 
-       clj
-       (write-temp! "kwargs-collapse/n.clj" "(def x 1)\n")
+         sexpr
+         (private-fn "nodes-tool")
 
-       create-directory
-       (private-fn "create-directory-tool")
+         patch-tool
+         (private-fn "patch-tool")]
 
-       file-exists
-       (private-fn "file-exists-tool")
-
-       delete
-       (private-fn "delete-tool")
-
-       copy
-       (private-fn "copy-tool")
-
-       move
-       (private-fn "move-tool")
-
-       sexpr
-       (private-fn "nodes-tool")
-
-       patch-tool
-       (private-fn "patch-tool")]
-
-      ;; Idempotency: copy/move below leave `.bak`/`.bak2` artifacts under the
-      ;; shared temp root; a prior run's leftovers make copy/move throw
-      ;; FileAlreadyExists. Clear the derived paths before asserting.
-      (run! #(fs/delete-if-exists (fs/file %)) [(str txt ".bak") (str txt ".bak2")])
-      ;; A batch verb's `tool(paths=[…])` collapses at the Python boundary to ONE map
-      ;; `{"paths" […]}`, and the two-place verbs to `{"src" …, "dest" …}`; a
-      ;; scalar-first arity used to treat that whole map as the path/src and
-      ;; stringify it (the `cat` bug). Assert the unwrap for each.
-      (expect (true? (get-in (:result (file-exists {"paths" [txt]})) ["paths" 0 "is_existing"])))
-      (expect (= txt (get-in (:result (file-exists {"paths" [txt]})) ["paths" 0 "path"])))
-      (expect (= (str txt "-dir")
-                 (get-in (:result (create-directory {"paths" [(str txt "-dir")]}))
-                         ["paths" 0 "path"])))
-      ;; `delete(paths=[p])` on an already-absent path is a no-op, never an error.
-      (expect (false? (get-in (:result (delete {"paths" [(str txt "-absent")]}))
-                              ["paths" 0 "is_deleted"])))
-      ;; `copy/move(src=a, dest=b)` previously threw wrong-arity (1).
-      (expect (= txt (get (:result (copy {"src" txt "dest" (str txt ".bak")})) "src")))
-      (expect (= (str txt ".bak")
-                 (get (:result (move {"src" (str txt ".bak") "dest" (str txt ".bak2")})) "src")))
-      ;; `struct_nodes(path=p)` previously threw a map→String ClassCastException.
-      (expect (map? (sexpr {"path" clj})))
-      ;; `patch(edits=[…])` unwraps to the edits vector — empty is a CLEAN rejection,
-      ;; not a map cast error.
-      (expect (throws? clojure.lang.ExceptionInfo #(patch-tool {"edits" []})))))
+        ;; A tool's `tool(k=v)` call collapses at the Python boundary to ONE map; a
+        ;; scalar-first arity used to treat that whole map as the path and stringify
+        ;; it (the `cat` bug). Assert the unwrap.
+        ;; `struct_nodes(path=p)` previously threw a map→String ClassCastException.
+        (expect (map? (sexpr {"path" clj})))
+        ;; `patch(edits=[…])` unwraps to the edits vector — empty is a CLEAN rejection,
+        ;; not a map cast error.
+        (expect (throws? clojure.lang.ExceptionInfo #(patch-tool {"edits" []})))))
   (it ":ranges rejects empty or malformed specs and coerces a reversed pair"
       (let
         [path
@@ -2371,63 +2280,6 @@
         (expect (= [0] (mapv :edit-index (:checks err))))
         ;; A nil loop hint is pure payload noise; omit the key entirely.
         (expect (not (contains? err :loop-hint)))))
-  (it "exists? and delete-if-exists work on cwd-relative paths"
-      (let
-        [path
-         (write-temp! "bbfs/meta/x.txt" "x")
-
-         exists?
-         (private-fn "exists-safe?")
-
-         delete-if-exists
-         (private-fn "delete-if-exists-safe")]
-
-        (expect (true? (exists? path)))
-        (expect (true? (delete-if-exists path)))
-        (expect (false? (exists? path)))))
-  (it "file_exists returns a per-path MAP, not a bare boolean (shape consistency)"
-      ;; Regression (turn 4, iter 1→2):
-      ;;   model wrote `(def ports (exists? \".nrepl-port\"))` then
-      ;;   `(:exists? ports)`, expecting the map shape every other `v/*`
-      ;;   tool returns. The old `exists-tool` returned a bare boolean
-      ;;   so `(:exists? true)` evaluated to `nil` and the model burned
-      ;;   an iter realizing \"exists? is returning true directly rather
-      ;;   than a map containing an :exists? key\".
-      ;; Fix: every v/* tool returns a MAP (not a bare boolean); the batch verb
-      ;; answers one self-describing entry per requested path.
-      (let
-        [present-path
-         (write-temp! "exists-shape/yes.txt" "x")
-
-         missing-path
-         "exists-shape/no.txt"
-
-         file-exists-tool
-         (private-fn "file-exists-tool")
-
-         r
-         (:result (file-exists-tool [present-path missing-path]))
-
-         [present missing]
-         (get r "paths")]
-
-        (expect (= "file_exists" (get r "action")))
-        (expect (map? present))
-        (expect (true? (get present "is_existing")))
-        (expect (= present-path (get present "path")))
-        (expect (map? missing))
-        (expect (false? (get missing "is_existing")))
-        (expect (= missing-path (get missing "path")))))
-  (it "keeps exists shape details out of the compact prompt and PYTHON in symbol docs"
-      (let
-        [d
-         (:ext.symbol/doc editing/file-exists-symbol)]
-
-        ;; the result shape lives in the symbol doc, not the compact prompt
-        (expect (not (string/includes? @editing/editing-prompt "\"exists\": bool")))
-        ;; doc states the Python call shape — and NOT the old Clojure `:exists?`
-        (expect (string/includes? d "file_exists("))
-        (expect (not (string/includes? d ":exists?")))))
   (it "bash helpers fully removed from the editing core"
       (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
                                      "run-bash-safe"))))
@@ -2443,68 +2295,6 @@
                                      "channel-render-bash"))))
       (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
                                      "journal-render-bash"))))))
-
-(defdescribe delete-tool-shape-test
-             ;; Regression: `delete-tool` used to set `:result nil`. The channel
-             ;; preview then painted `DELETE nil` and `(def r (delete p))`
-             ;; consumers couldn't read `(:path r)` (same parity bug `exists?`
-             ;; already fixed). All `v/*` tools now return a map shape.
-             (it "delete returns a per-path entry (no bare nil)"
-                 (let
-                   [delete-tool
-                    (private-fn "delete-tool")
-
-                    p
-                    (write-temp! "delete-shape/x.txt" "goodbye\n")
-
-                    envelope
-                    (delete-tool p)]
-
-                   (expect (true? (:success? envelope)))
-                   (expect (= :delete (:symbol envelope)))
-                   (let [r (:result envelope)]
-                     (expect (map? r))
-                     (expect (= "delete" (get r "action")))
-                     (expect (= p (get-in r ["paths" 0 "path"])))
-                     (expect (true? (get-in r ["paths" 0 "is_deleted"]))))))
-             (it "delete keeps the same entry shape whatever the actual outcome"
-                 (let
-                   [delete-if
-                    (private-fn "delete-tool")
-
-                    p
-                    (write-temp! "delete-shape/here.txt" "x\n")
-
-                    present
-                    (:result (delete-if p))
-
-                    absent
-                    (:result (delete-if p))]
-
-                   ;; First call deletes the file; the entry carries "is_deleted" true.
-                   (expect (map? present))
-                   (expect (= p (get-in present ["paths" 0 "path"])))
-                   (expect (true? (get-in present ["paths" 0 "is_deleted"])))
-                   ;; Second call hits an already-absent path; the map stays the same shape.
-                   (expect (map? absent))
-                   (expect (= p (get-in absent ["paths" 0 "path"])))
-                   (expect (false? (get-in absent ["paths" 0 "is_deleted"])))))
-             (it "delete recursively removes non-empty directories"
-                 (let
-                   [delete-tool
-                    (private-fn "delete-tool")
-
-                    dir
-                    (temp-dir-path "delete-shape/tree")
-
-                    nested-file
-                    (fs/file dir "nested" "x.txt")]
-
-                   (fs/create-dirs (fs/parent nested-file))
-                   (spit nested-file "x\n")
-                   (let [r (:result (delete-tool dir))]
-                     (expect (true? (get-in r ["paths" 0 "is_deleted"])))
-                     (expect (false? (fs/exists? dir)))))))
 
 (defdescribe
   patch-summary-shape-test
@@ -6173,99 +5963,6 @@
             (expect (= before (.availablePermits semaphore))))))))
 
 (defdescribe
-  fs-verbs-canonical-shape-test
-  "Every filesystem verb is its own native tool with ONE input shape and a
-   workspace-relative, action-discriminated result."
-  ;; Regression, un-unified fs: one `fs` tool with an `op` discriminator made
-  ;; `paths` + `src`/`dest` share a schema, so the generated all-required
-  ;; signature was impossible to call — copy/move rejected the very `paths`
-  ;; argument the signature demanded.
-  (it "gives the batch verbs `paths` and the two-place verbs `src`/`dest`"
-      (doseq [sym [editing/create-directory-symbol editing/delete-symbol
-                   editing/file-exists-symbol]]
-        (let [schema (:ext.symbol/schema sym)]
-          (expect (= #{"paths"} (set (keys (:properties schema)))))
-          (expect (= ["paths"] (:required schema)))
-          (expect (= "array" (get-in schema [:properties "paths" :type])))))
-      (doseq [sym [editing/copy-symbol editing/move-symbol]]
-        (let [schema (:ext.symbol/schema sym)]
-          (expect (= #{"src" "dest" "is_overwrite"} (set (keys (:properties schema)))))
-          (expect (= ["src" "dest"] (:required schema)))))
-      ;; `is_overwrite` is offered ONLY where it is honoured.
-      (doseq [sym [editing/create-directory-symbol editing/delete-symbol
-                   editing/file-exists-symbol]]
-        (expect (nil? (get-in sym [:ext.symbol/schema :properties "is_overwrite"])))))
-  (it "reports each batch verb per path, in request order"
-      (let
-        [create-directory
-         (private-fn "create-directory-tool")
-
-         delete
-         (private-fn "delete-tool")
-
-         file-exists
-         (private-fn "file-exists-tool")
-
-         render
-         (private-fn "render-paths-result")
-
-         base
-         (str (temp-root) "/fs-verbs")]
-
-        (fs/delete-tree base)
-        (let [r (:result (create-directory (str base "/a")))]
-          (expect (= {"action" "create_directory"
-                      "paths" [{"path" (str base "/a") "is_created" true}]}
-                     r))
-          (expect (= "created 1 dir" (:summary (render r)))))
-        ;; A repeat is a no-op that says so rather than claiming a change.
-        (let [r (:result (create-directory (str base "/a")))]
-          (expect (= false (get-in r ["paths" 0 "is_created"])))
-          (expect (= "created 0 of 1 dirs · 1 already existed" (:summary (render r)))))
-        (let [r (:result (create-directory [(str base "/b") (str base "/c")]))]
-          (expect (= [true true] (mapv #(get % "is_created") (get r "paths"))))
-          (expect (= "created 2 dirs" (:summary (render r))))
-          (expect (= (str "\n- `" base "/b`" "\n- `" base "/c`") (:body (render r)))))
-        (spit (str base "/a/x.txt") "hi")
-        (let [r (:result (file-exists [(str base "/a/x.txt") (str base "/a/nope.txt")]))]
-          (expect (= "file_exists" (get r "action")))
-          (expect (= [true false] (mapv #(get % "is_existing") (get r "paths"))))
-          (expect (= "1 of 2 paths exist · 1 missing" (:summary (render r)))))
-        ;; Deleting an absent path is a no-op reported as `is_deleted` false.
-        (let [r (:result (delete [(str base "/a/x.txt") (str base "/a/nope.txt")]))]
-          (expect (= [true false] (mapv #(get % "is_deleted") (get r "paths"))))
-          (expect (= "deleted 1 of 2 paths · 1 already absent" (:summary (render r))))
-          (expect (not (fs/exists? (str base "/a/x.txt")))))
-        ;; Long requests keep their paths out of the headline without dropping any.
-        (let
-          [card (render {"action" "delete"
-                         "paths" (mapv (fn [i]
-                                         {"path" (str "p" i) "is_deleted" true})
-                                       (range 9))})]
-
-          (expect (= "deleted 9 paths" (:summary card)))
-          (expect (not (string/includes? (:summary card) "`p0`")))
-          (expect (string/includes? (:body card) "- `p8`")))
-        (fs/delete-tree base)))
-  (it "requires at least one target for every batch verb"
-      (let
-        [delete
-         (private-fn "delete-tool")
-
-         create-directory
-         (private-fn "create-directory-tool")]
-
-        (expect (throws? clojure.lang.ExceptionInfo #(delete [])))
-        (expect (throws? clojure.lang.ExceptionInfo #(create-directory [])))))
-  ;; Regression, issue #fs-card: copy and move used to put both paths in the
-  ;; summary, so the TUI rendered them inline instead of as expandable path bodies.
-  (it "renders copy and move as their own one-line transfers"
-      (let [copy-card ((private-fn "render-copy-result") {"src" "a" "dest" "b"})
-            move-card ((private-fn "render-move-result") {"src" "a" "dest" "b"})]
-        (expect (= "copied `a` → `b`" (:summary copy-card)))
-        (expect (= "moved `a` → `b`" (:summary move-card))))))
-
-(defdescribe
   fff-index-pool-test
   (describe
     "pooled fff index"
@@ -6428,26 +6125,17 @@
   "`cat` exposes a plural `files` contract; read/search/fs scope contracts use
    plural `paths`. Neither surface has a singular `path` twin, and batch entries
    carry their own per-file windows so one call can read different regions."
-  (it "cat advertises `files`; struct_index, grep, and the batch fs verbs advertise `paths`"
+  (it "cat advertises `files`; struct_index and grep advertise `paths`"
       (let [cat-props (get-in editing/cat-symbol [:ext.symbol/schema :properties])]
         (expect (contains? cat-props "files"))
         (expect (nil? (get cat-props "paths")))
         (expect (nil? (get cat-props "path"))))
-      (doseq [sym [editing/index-symbol editing/grep-symbol editing/delete-symbol
-                   editing/create-directory-symbol editing/file-exists-symbol]]
+      (doseq [sym [editing/index-symbol editing/grep-symbol]]
         (let [props (get-in sym [:ext.symbol/schema :properties])]
           (expect (contains? props "paths"))
           (expect (nil? (get props "path"))))))
-  (it "`delete` carries no `is_missing_ok` twin and there is no `delete_if_exists` tool"
-      ;; Deleting an absent path is a no-op reported as `is_deleted` false, so the
-      ;; flag AND the whole delete_if_exists alias tool are dead weight.
-      (expect (nil? (get-in editing/delete-symbol [:ext.symbol/schema :properties "is_missing_ok"])))
-      (let
-        [names (into #{}
-                     (map #(str (or (:ext.symbol/name %) (:ext.symbol/symbol %))))
-                     (editing/available-editing-symbols))]
-        (expect (contains? names "delete"))
-        (expect (not (contains? names "delete_if_exists")))))
+  (it "cat advertises no singular `path` twin"
+      (expect (nil? (get-in editing/cat-symbol [:ext.symbol/schema :properties "path"]))))
   (it "cat `files` and struct_index `paths` entries take per-file `ranges`"
       (doseq [[sym key] [[editing/cat-symbol "files"] [editing/index-symbol "paths"]]]
         (let

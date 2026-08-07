@@ -29,12 +29,12 @@ def _guard(call):
 
 vis.extension(
     name="protected-paths",
-    description="Refuses write/patch/move/copy/delete on protected paths.",
+    description="Refuses write/patch/struct_patch on protected paths.",
     version="0.1.0",
     kind="guard",
     op_hooks=[
         vis.op_hook(
-            ["write", "patch", "struct_patch", "move", "copy", "delete"],
+            ["write", "patch", "struct_patch"],
             _guard,
             phase="before",
         ),

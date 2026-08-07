@@ -794,7 +794,7 @@
 ;;
 ;; When ONE iteration emits ≥2 native tool calls that are ALL read-only
 ;; OBSERVATIONS (cat / grep / ls / struct_index / struct_nodes /
-;; file_exists — anything the extension declares `:tag :observation`), and NONE
+;; anything the extension declares `:tag :observation`), and NONE
 ;; is python_execution, a native handler, or carries a preflight error, we run
 ;; the whole batch CONCURRENTLY through the isolated bounded platform pool
 ;; (`__vis_par_isolated__`) instead of serially. I/O-bound reads/greps overlap;

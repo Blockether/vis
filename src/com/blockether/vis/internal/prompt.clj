@@ -234,7 +234,7 @@
     "## 3. Inspect\n"
     "- **Filesystem work goes through native tools**: `ls` FIRST maps an unknown tree's shape in ONE\n"
     "  batched call (`depth` descends), so no path is guessed; `grep` searches, `cat` reads files,\n"
-    "  `copy`/`move`/`delete`/`create_directory`/`file_exists` change and probe it; `shell_run` runs programs.\n"
+    "  `shell_run` runs programs. CHANGING the tree is plain Python (`os`, `shutil`, `pathlib`).\n"
     "- For concrete work, after the initial search make at most two targeted discovery rounds before reproducing a\n"
     "  bug or writing the smallest test; exceed only if it fails or a named unresolved decision blocks the edit.\n"
     "- Code: `grep` locates unknown code — ONE call ORs every needle across every scope.\n"

@@ -1027,22 +1027,22 @@ await patch({'path': css})" "t1/i1")]
           (expect (some? (:error r)))))))
 
 (defdescribe
-  file-exists-binding-test
-  "`file-exists` binds as the snake_case `file_exists` tool in the sandbox — no `is_exists`/`exists` alias."
-  (it "exposes file_exists and NOT the old is_exists name"
+  probe-path-binding-test
+  "`probe-path` binds as the snake_case `probe_path` tool in the sandbox — no `is_exists`/`exists` alias."
+  (it "exposes probe_path and NOT the old is_exists name"
       (let
         [ctx
          (:python-context (ep/create-python-context
                             ;; strings-only boundary: tool results are built with STRING
                             ;; keys at the source (a keyword-keyed result now throws).
-                            {'file-exists (fn [path]
-                                            {"path" path "exists" (= path "present.txt")})}))
+                            {'probe-path (fn [path]
+                                           {"path" path "exists" (= path "present.txt")})}))
 
          via-file
-         (ep/run-python-block ctx "await file_exists('present.txt')" "t1/i1")
+         (ep/run-python-block ctx "await probe_path('present.txt')" "t1/i1")
 
          via-missing
-         (ep/run-python-block ctx "await file_exists('missing.txt')" "t1/i2")
+         (ep/run-python-block ctx "await probe_path('missing.txt')" "t1/i2")
 
          via-old
          (ep/run-python-block ctx "is_exists('present.txt')" "t1/i3")]
@@ -1052,19 +1052,18 @@ await patch({'path': css})" "t1/i1")]
         (expect (= {"path" "present.txt" "exists" true} (:result via-file)))
         (expect (= {"path" "missing.txt" "exists" false} (:result via-missing)))
         (expect (str/includes? (get-in via-old [:error :message]) "`is_exists` is not defined"))))
-  (it "removing the binding makes file_exists undefined"
+  (it "removing the binding makes probe_path undefined"
       (let [ctx (tpc/context ::ctx)]
         (ep/set-python-binding! ctx
-                                'file-exists
+                                'probe-path
                                 (fn [path]
                                   {"path" path "exists" true}))
         (expect (= {"path" "dynamic.txt" "exists" true}
-                   (:result (ep/run-python-block ctx "await file_exists('dynamic.txt')" "t1/i3"))))
-        (ep/remove-python-binding! ctx 'file-exists)
-        (expect (str/includes? (get-in
-                                 (ep/run-python-block ctx "file_exists('dynamic.txt')" "t1/i4")
-                                 [:error :message])
-                               "`file_exists` is not defined")))))
+                   (:result (ep/run-python-block ctx "await probe_path('dynamic.txt')" "t1/i3"))))
+        (ep/remove-python-binding! ctx 'probe-path)
+        (expect (str/includes? (get-in (ep/run-python-block ctx "probe_path('dynamic.txt')" "t1/i4")
+                                       [:error :message])
+                               "`probe_path` is not defined")))))
 
 (defdescribe run-python-block-form-eval-test
              ;; (R8 in-fence r["tN/iN/fF"] memory removed: context is print-only — a later

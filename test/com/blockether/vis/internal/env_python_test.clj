@@ -112,7 +112,7 @@
              (it "exposes grep as grep/find_files/find and unaliased tools as themselves"
                  (expect (= ["grep" "find_files" "find"] (ep/python-binding-names 'grep)))
                  (expect (= ["shell_run"] (ep/python-binding-names 'shell_run)))
-                 (expect (= ["file_exists"] (ep/python-binding-names 'file-exists))))
+                 (expect (= ["shell_logs"] (ep/python-binding-names 'shell-logs))))
              (it "routes every alias to the SAME tool in a live context"
                  (let
                    [ctx
