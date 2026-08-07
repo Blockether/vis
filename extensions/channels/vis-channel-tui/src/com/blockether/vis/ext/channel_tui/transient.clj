@@ -166,27 +166,43 @@
     {:key-w (reduce max 0 (map #(long (p/display-width (key-glyph %))) items))
      :label-w (reduce max 0 (map #(long (p/display-width (str (:label %)))) items))}))
 
+(def band-body-pad
+  "Blank display rows of BREATHING SPACE at the TOP and BOTTOM of every pane: the
+   band's body is not glued to the rule that carries its title, nor to the closing
+   rule above the hint bar. It is part of the BODY, not of the chrome, so a pane
+   the terminal is too short for loses a padding row before it loses a verb."
+  1)
+
+(defn- pad-block
+  "PURE: `block` with [[band-body-pad]] blank rows above and below it."
+  [block]
+  (let [blanks (repeat (long band-body-pad) {:kind :blank})]
+    (-> (vec blanks)
+        (into block)
+        (into blanks))))
+
 (defn rows
   "PURE: the popup's display rows, top to bottom — `{:kind :header :text}`,
-   `{:kind :item :item}` and `{:kind :blank}` spacers between groups.
+   `{:kind :item :item}` and `{:kind :blank}` spacers between groups, wrapped in
+   the [[band-body-pad]] blanks the band breathes with.
 
    The title carries its OWN rule underneath (see `geometry`), so the first
    group header needs no blank margin of its own; groups after it still get one
    from the trailing blank of the group before."
   [spec]
-  (vec (butlast (into []
-                      (mapcat (fn [{:keys [title items]}]
-                                (concat [{:kind :header :text title}]
-                                        (map (fn [it]
-                                               {:kind :item :item it})
-                                             items)
-                                        [{:kind :blank}])))
-                      (:groups spec)))))
+  (pad-block (vec (butlast (into []
+                                 (mapcat (fn [{:keys [title items]}]
+                                           (concat [{:kind :header :text title}]
+                                                   (map (fn [it]
+                                                          {:kind :item :item it})
+                                                        items)
+                                                   [{:kind :blank}])))
+                                 (:groups spec))))))
 
 (def ^:private pane-gap
-  "Columns between two side-by-side panes: one of padding, the `│` rule itself,
-   one more of padding. The rule lives in the MIDDLE column, so a pane's text
-   never touches it."
+  "Columns between two side-by-side panes: pure BREATHING SPACE. Panes are told
+   apart by their own bold headings and by the gap, not by a rule — a `│` down
+   the body made a two-column hydra read as a table."
   3)
 
 (defn- group-block
@@ -235,12 +251,17 @@
                [[]]
                blocks))
 
+     padded
+     ;; Every pane breathes the same: the grid is one rectangle, so a blank top
+     ;; row on one column and none on the next would tilt the whole band.
+     (mapv pad-block packed)
+
      h
-     (long (reduce max 0 (map count packed)))]
+     (long (reduce max 0 (map count padded)))]
 
     (mapv (fn [pane]
             (into pane (repeat (- h (count pane)) {:kind :blank})))
-          packed)))
+          padded)))
 
 (defn pane-count
   "PURE: how many side-by-side panes `spec` is dealt into inside `region`.
@@ -299,7 +320,7 @@
 
 (defn height
   "PURE: rows the popup needs INSIDE the host's frame — its opening separator
-   and every display row. The closing rule and the
+   and every display row (the padding blanks included). The closing rule and the
    hint bar are the host's OWN bottom chrome, so they are not counted; a host
    sizes its box with this before it paints one."
   ^long [spec]
@@ -593,9 +614,12 @@
    `├`/`┤` junctions beside the popup. Capping separators put their own junctions
    back afterwards.
 
-   A SIDELESS region (`band-region`) has no border columns and no paper of its
-   own: it wipes the FULL terminal width, because anything it does not repaint
-   is the live transcript showing through between its rules.
+   A SIDELESS region (`band-region`) has no border columns, but its paper is
+   still its OWN rectangle: it fills the band's inner columns with the band's
+   bg and repaints the [[band-pad]] margins on each side with the TERMINAL's
+   own background, so the band is a slab inset to its rules instead of a colour
+   wash from screen edge to screen edge, and no stale transcript survives beside
+   it either.
 
    A transient erases exactly the rows it paints. A host that repaints BANDS OF
    DIFFERENT HEIGHTS into one rectangle — the model picker paging a catalog —
@@ -616,7 +640,11 @@
       (let [row (+ (long from) i)]
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (if is-sideless
-          (p/fill-rect! g 0 row (long cols) 1)
+          (do (p/set-colors! g t/dialog-fg t/terminal-bg)
+              (p/fill-rect! g 0 row (inc left) 1)
+              (p/fill-rect! g (+ left inner-w 1) row (max 0 (- (long cols) (+ left inner-w 1))) 1)
+              (p/set-colors! g t/dialog-fg t/dialog-bg)
+              (p/fill-rect! g (inc left) row inner-w 1))
           (do (p/fill-rect! g (inc left) row inner-w 1)
               (p/set-colors! g t/dialog-border t/dialog-bg)
               (p/set-char! g left row p/BOX_V)
@@ -627,21 +655,24 @@
    spec decides is decided in [[layout]]; this fn only puts cells on a screen.
 
    The body is a GRID: pane `j` starts [[pane-width]] + [[pane-gap]] columns
-   after pane `j-1`, and the middle column of every gap carries a `│` down the
-   whole body — which is what tells a reader that the next heading is a sibling
-   column and not the continuation of this one.
+   after pane `j-1`, and the gap is EMPTY — a sibling column is told by its own
+   bold heading and by the space, never by a rule down the body.
 
    The band has NO title row: its FIRST row is the opening `───` rule and
    everything under it is the column grid, because a heading over columns that
    already name themselves is a row of chrome bought with a row of content.
 
-   A SIDELESS band is not a dialog: it lies on the LIVE transcript, so it wears
-   `theme/band-bg` instead of the dialog's paper. That is bound ONCE here, so
-   every painter below — rules, rows, hint bar — follows without carrying
-   a colour argument of its own."
+   A SIDELESS band is not a dialog: it lies on the LIVE transcript and wears the
+   TERMINAL's own background, so it is the border that says where the band is —
+   no tinted slab. That is bound ONCE here, so every painter below — rules,
+   rows, hint bar — follows without carrying a colour argument of its own.
+
+   The band is BORDERED: its opening and closing rules are corner-capped and
+   every row between them carries a `│` in the same two columns, so a transient
+   is a box laid over the transcript instead of a pair of loose lines."
   [{:keys [g hint-bar!]} {:keys [left inner-w restore!] :as region}
    {panes :panes n :row-count pane-w :pane-w grid :columns hints :hint-pairs title :title} state]
-  (binding [t/dialog-bg (if (:is-sideless region) (t/band-bg) t/dialog-bg)]
+  (binding [t/dialog-bg (if (:is-sideless region) t/terminal-bg t/dialog-bg)]
     (let
       [{:keys [sep-row body-top foot-rule-row foot-row wipe-top visible top-limit]}
        (band-geometry region n)
@@ -659,7 +690,12 @@
         (clear-row! (+ (long wipe-top) i)))
       (when (>= (long sep-row) (max (long wipe-top) (long top-limit)))
         (draw-rule! g region sep-row title))
+      ;; The closing rule and the hint bar are the band's own rows too: they are
+      ;; papered first, so the slab's edges are the same colour all the way down.
+      (when (and (> (long foot-row) (long foot-rule-row)) (>= (long foot-row) (long top-limit)))
+        (clear-row! foot-row))
       (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
+        (clear-row! foot-rule-row)
         (draw-rule! g region foot-rule-row))
       (p/set-colors! g t/dialog-hint-key t/dialog-bg)
       (dotimes [i visible]
@@ -670,12 +706,9 @@
               [pane-left (+ left (* (long j) (+ pane-w (long pane-gap))))
                r (nth (nth panes j) i)]
 
-              (when (pos? (long j))
-                (p/set-colors! g t/border-fg t/dialog-bg)
-                (p/set-char! g (- pane-left 2) row p/BOX_V))
               (case (:kind r)
                 :header
-                (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                (do (p/set-colors! g t/dialog-fg t/dialog-bg)
                     (p/styled g
                               [p/BOLD]
                               (p/put-str! g
@@ -695,6 +728,23 @@
                    value (when is-valued (get (:options state) id))]
 
                   (draw-item! g pane-left row pane-w grid it active? value)))))))
+      ;; The band's own BORDER: corner-capped rules with a `│` down both edge
+      ;; columns, so a sideless transient is a closed box over the transcript.
+      ;; The hint bar stays OUTSIDE it, directly under the closing rule.
+      (when (:is-sideless region)
+        (let [right (+ left inner-w 1)]
+          (p/set-colors! g t/border-fg t/dialog-bg)
+          (when (>= (long sep-row) (long top-limit))
+            (p/set-char! g left sep-row p/BOX_TL)
+            (p/set-char! g right sep-row p/BOX_TR))
+          (doseq [^long r (range (inc (long sep-row)) (long foot-rule-row))]
+            (when (>= r (long top-limit))
+              (p/set-char! g left r p/BOX_V)
+              (p/set-char! g right r p/BOX_V)))
+          (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
+            (p/set-char! g left foot-rule-row p/BOX_BL)
+            (p/set-char! g right foot-rule-row p/BOX_BR))
+          (p/set-colors! g t/dialog-fg t/dialog-bg)))
       (hint-bar! g left foot-row inner-w hints))))
 
 (defn paint!

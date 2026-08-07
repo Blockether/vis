@@ -8,6 +8,7 @@
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.terminals :as term]
+            [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.transient :as tr])
   (:import [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
@@ -65,6 +66,12 @@
      (term/grid terminal))))
 
 (defn- row-with [rows needle] (some #(when (str/includes? (:text %) needle) %) rows))
+
+(defn- blank-band-row?
+  "True when terminal row `s` carries no band CONTENT — a padding row, which on a
+   framed host still wears the dialog's own `│` rails."
+  [s]
+  (str/blank? (str/replace (str s) #"[│├┤]" " ")))
 
 (defdescribe
   transient-toggle-test
@@ -182,15 +189,18 @@
       ;; runs straight into the footer text with the rule swallowed.
       (expect (str/includes? (nth grid 26) "────"))
       (expect (= [\├ \┤] [(nth (nth grid 26) 3) (nth (nth grid 26) 78)]))
-      ;; The band is CONTIGUOUS: the last command sits directly on that rule,
-      ;; never one row above it with a host row left showing between.
-      (expect (str/includes? (nth grid 25) "Amend last commit"))
-      ;; NO TITLE BAND: the opening rule, then the first group header directly
-      ;; under it — `───` / `Arguments` / body. There is no second rule and no
+      ;; The band is GLUED to that rule, one blank padding row apart: the last
+      ;; command never runs straight into the chrome, and no host row shows in
+      ;; the gap.
+      (expect (str/includes? (nth grid 24) "Amend last commit"))
+      (expect (blank-band-row? (subs (nth grid 25) 3)))
+      ;; NO TITLE BAND: the opening rule, one blank row, then the first group
+      ;; header — `───` / ` ` / `Arguments`. There is no second rule and no
       ;; heading row repeating what the columns already say.
-      (expect (= rule-y (dec (long args-y))))
-      (expect (not (str/includes? (nth grid (- args-y 2)) "Commit")))
-      (expect (not (str/includes? (nth grid (- args-y 2)) "────")))))
+      (expect (= rule-y (- (long args-y) 2)))
+      (expect (blank-band-row? (nth grid (dec (long args-y)))))
+      (expect (not (str/includes? (nth grid (dec (long rule-y))) "Commit")))
+      (expect (not (str/includes? (nth grid (dec (long rule-y))) "────")))))
   (it "the popup wipes every host row it covers and no column outside the frame"
       ;; The status buffer paints its OWN hint bar on `hint-row`, framed by the
       ;; dialog's box borders. The popup replaces that hint bar in place: any row
@@ -358,10 +368,11 @@
          grid
          (transient-grid! tall 3 74 27 {:min-row 6})]
 
-        ;; The band's first row IS the rule, at the `:min-row` floor, and the
-        ;; first column heading sits directly on it.
+        ;; The band's first row IS the rule, at the `:min-row` floor, with one
+        ;; blank padding row between it and the first column heading.
         (expect (str/includes? (nth grid 6) "────"))
-        (expect (str/includes? (nth grid 7) "Group 0"))
+        (expect (blank-band-row? (nth grid 7)))
+        (expect (str/includes? (nth grid 8) "Group 0"))
         (expect (every? str/blank? (take 6 grid)))))
   ;; Regression (user report): "THE FIRST fucking row should have the ------ and
   ;; it should be only columns" — the band spent its first row on a bold title
@@ -384,8 +395,9 @@
         ;; The title is ON the rule row …
         (expect (str/includes? (nth grid rule) "Commit"))
         (expect (str/includes? (nth grid rule) "────"))
-        ;; … and the very next row is already the column grid.
-        (expect (str/includes? (nth grid (inc rule)) "Models"))
+        ;; … and one blank padding row later the column grid begins.
+        (expect (blank-band-row? (nth grid (inc rule))))
+        (expect (str/includes? (nth grid (+ rule 2)) "Models"))
         ;; … and it is said exactly once.
         (expect (= 1 (count (filter #(str/includes? % "Commit") grid)))))))
 
@@ -537,3 +549,136 @@
                                                   :read-option (fn [_ _]
                                                                  nil))
                                                 [\t :esc]))))))
+
+;; Regression, issue #C-x band padding: the hydra's first heading sat directly on
+;; the rule that carried its title and its last row directly on the closing rule,
+;; so the band read as a table jammed between two lines.
+(defdescribe
+  transient-band-padding-test
+  (it "every pane opens and closes with a blank row, so the body is not glued to the chrome"
+      (doseq [pane (tr/panes leader-spec 3)]
+        (expect (= :blank (:kind (first pane))))
+        (expect (= :blank (:kind (last pane)))))
+      (expect (= :blank (:kind (first (tr/rows commit-transient-spec)))))
+      (expect (= :blank (:kind (last (tr/rows commit-transient-spec))))))
+  (it "one pane is still exactly the single column, padding and all"
+      (expect (= [(tr/rows leader-spec)] (tr/panes leader-spec 1))))
+  (it "the height a host sizes its box with pays for those blank rows"
+      (expect (= (+ 1 (count (tr/rows commit-transient-spec))) (tr/height commit-transient-spec))))
+  (it "the padding rows are the band's OWN paper, not the transcript showing through"
+      (let
+        [grid
+         (transient-grid! commit-transient-spec
+                          3
+                          74
+                          27
+                          nil
+                          (fn [g]
+                            (dotimes [row 28]
+                              (p/put-str! g 0 row (apply str (repeat 74 \X))))))
+
+         rule-y
+         (long (first (keep-indexed (fn [i s]
+                                      (when (str/includes? s "────") i))
+                                    grid)))]
+
+        ;; the rule, then a blank row, then the first heading
+        (expect (blank-band-row? (subs (nth grid (inc rule-y)) 3)))
+        (expect (str/includes? (nth grid (+ rule-y 2)) "Arguments"))
+        ;; and a blank row between the last verb and the closing rule
+        (expect (str/includes? (nth grid 24) "Amend last commit"))
+        (expect (blank-band-row? (subs (nth grid 25) 3)))
+        (expect (str/includes? (nth grid 26) "────")))))
+
+;; Regression, issue #C-x band caret: the hardware cursor stayed parked in the
+;; prompt and went on blinking behind the hydra band, as if the band were not up.
+(defdescribe band-caret-test
+             (it "the band hides the terminal caret for as long as it owns the keyboard"
+                 (let
+                   [{:keys [^TerminalScreen screen]}
+                    (term/virtual-screen)
+
+                    seen
+                    (do (.setCursorPosition screen (p/cursor-pos 4 4))
+                        (#'dlg/session-band-instance!
+                         screen
+                         {:content-top 1 :prompt-h 3}
+                         (fn [_ _]
+                           (.getCursorPosition screen))))]
+
+                   (expect (nil? seen)))))
+
+;; Regression, issue #C-x band width: the band washed its paper across the WHOLE
+;; terminal width, so its background ran past both of its own rules to the screen
+;; edges instead of reading as a slab inset to them.
+(defdescribe
+  band-paper-width-test
+  (it
+    "the band's paper stops at its rules; the margins keep the terminal's own bg"
+    (let
+      [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+       (term/virtual-screen)
+
+       g
+       (.newTextGraphics screen)
+
+       region
+       (tr/band-region 80 30 1)
+
+       bg-at
+       (fn [x y]
+         (.getBackgroundColor (.getCharacter terminal (p/cursor-pos (int x) (int y)))))
+
+       painted
+       (do (.addInput terminal (term/keystroke :esc))
+           (tr/run! (dlg/transient-host screen g)
+                    region
+                    (assoc commit-transient-spec :title "Commit"))
+           (term/grid terminal))
+
+       ;; every row the band owns, from its opening rule to its hint bar
+       rule-rows
+       (keep-indexed (fn [i s]
+                       (when (str/includes? s "────") i))
+                     painted)
+
+       band-rows
+       (range (long (first rule-rows)) (inc (inc (long (last rule-rows)))))
+
+       left
+       (long (:left region))
+
+       inner-w
+       (long (:inner-w region))]
+
+      (doseq [y band-rows]
+        ;; the band wears the TERMINAL's own paper — no tinted slab anywhere,
+        ;; inside its rules or beside them: the border is what marks the band.
+        (expect (= t/terminal-bg (bg-at (inc left) y)))
+        (expect (= t/terminal-bg (bg-at (+ left inner-w) y)))
+        (expect (= t/terminal-bg (bg-at 0 y)))
+        (expect (= t/terminal-bg (bg-at (+ left inner-w 1) y)))
+        (expect (= t/terminal-bg (bg-at 79 y))))
+      ;; and it is BORDERED: corner-capped rules with rails down both edges.
+      (let
+        [char-at
+         (fn [x y]
+           (.getCharacterString (.getCharacter terminal (p/cursor-pos (int x) (int y)))))
+
+         top
+         (long (first rule-rows))
+
+         bottom
+         (long (last rule-rows))
+
+         right
+         (+ left inner-w 1)]
+
+        (expect (= ["┌" "┐"] [(char-at left top) (char-at right top)]))
+        (expect (= ["└" "┘"] [(char-at left bottom) (char-at right bottom)]))
+        (doseq [y (range (inc top) bottom)]
+          (expect (= ["│" "│"] [(char-at left y) (char-at right y)])))
+        ;; no rule between the columns of the grid
+        (expect (not-any? #(str/includes? % "│ ")
+                          (map #(subs % (inc (long left)) (+ (long left) (long inner-w)))
+                               (subvec (vec painted) (inc top) bottom))))))))
