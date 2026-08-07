@@ -788,7 +788,12 @@ export function HeaderTitle({
     // while the name and its qualifier share a BASELINE inside it. Baseline-aligning
     // the mark alongside them drops a 10px block below the ink it belongs to.
     <span className={`flex min-w-0 flex-1 items-center gap-2 ${LIST_EDGE}`}>
-      {mark && <span className={HEADER_GLYPH}>{mark}</span>}
+      {/* The column is RESERVED, marked or not: the machine header wears a hue
+          block here and the project header below it wears nothing, and a column
+          that only exists when it is filled put the machine's name at x=36 and
+          the project's at x=14 on a 390px iPhone — the deeper row starting
+          further left, which is hierarchy read backwards. */}
+      <span className={HEADER_GLYPH}>{mark}</span>
       <span className="flex min-w-0 items-baseline gap-2">
         <span
           className={`shrink-0 truncate font-mono font-bold text-white ${qualifier ? 'max-w-[60%]' : 'min-w-0'} ${HEADER_TYPE[tone]}`}
@@ -1002,38 +1007,18 @@ export function HeaderMeta({ children }: { children: ReactNode }) {
 /**
  * A header's own count, in `HeaderMeta`'s voice.
  *
- * The NUMBER is the fact and never leaves the screen; the noun is a courtesy. A
- * project header carries a yellow verb and a `⋯` beside it, so on a phone it is
- * `isCrowded` and the noun waits for `sm` — printing "699 sessions" in a fixed 160px
- * column is what truncated that project's own name to `~/v…`. A machine header has
- * the room and says the phrase.
- *
- * A screen reader always hears the whole phrase: the visible half is decoration.
+ * A count is a NUMBER AND ITS NOUN, on every screen. A bare `725` over a list of
+ * rows says nothing about what was counted, and the phone is exactly where the
+ * reader has the least context to supply it from — so the noun is never dropped to
+ * win back width. What gives way instead is the project's own name, which
+ * truncates with the full path on its `title`.
  */
-export function HeaderTally({
-  count,
-  unit,
-  isCrowded = false,
-}: {
-  count: number;
-  unit: string;
-  /**
-   * This header also carries a yellow verb and a `⋯`, so on a phone the NUMBER holds
-   * the line alone and the noun waits for `sm`. A header with room says the phrase.
-   */
-  isCrowded?: boolean;
-}) {
+export function HeaderTally({ count, unit }: { count: number; unit: string }) {
   const noun = count === 1 ? unit : `${unit}s`;
   return (
-    <>
-      <span className="sr-only">
-        {count} {noun}
-      </span>
-      <span className="whitespace-nowrap" aria-hidden="true">
-        {count}
-        <span className={isCrowded ? 'hidden sm:inline' : ''}> {noun}</span>
-      </span>
-    </>
+    <span className="whitespace-nowrap">
+      {count} {noun}
+    </span>
   );
 }
 

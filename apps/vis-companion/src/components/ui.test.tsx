@@ -590,32 +590,24 @@ describe("Pager", () => {
 });
 
 describe("HeaderTally", () => {
-  it("says the whole phrase in a header that has the room for it", () => {
-    const html = renderToStaticMarkup(<HeaderTally count={2} unit="project" />);
-    expect(html).not.toContain("hidden sm:inline");
-    expect(html).toContain("2");
-  });
-
-  it("keeps the number alone on a phone where a yellow verb shares the row", () => {
-    const html = renderToStaticMarkup(
-      <HeaderTally count={699} unit="session" isCrowded />,
-    );
-    expect(html).toContain("hidden sm:inline");
-    expect(html).toContain("699");
-  });
-
-  it("always says the whole phrase to a screen reader", () => {
+  // Regression, user report: the phone header printed "725" over a list of
+  // sessions and dropped the word "sessions" to win back width. A number with no
+  // noun is not a shorter sentence, it is a different one.
+  it("prints the number AND its noun on every screen", () => {
     const html = renderToStaticMarkup(
       <HeaderTally count={699} unit="session" />,
     );
-    expect(html).toContain('<span class="sr-only">699 sessions</span>');
-    expect(html).toContain('aria-hidden="true"');
+    expect(html).not.toContain("hidden sm:inline");
+    expect(html).not.toContain("sr-only");
+    expect(html).toContain("699");
+    expect(html).toContain("sessions");
   });
 
   it("counts one of a thing in the singular", () => {
-    expect(
-      renderToStaticMarkup(<HeaderTally count={1} unit="project" />),
-    ).toContain('<span class="sr-only">1 project</span>');
+    const html = renderToStaticMarkup(<HeaderTally count={1} unit="project" />);
+    expect(html).toContain("1");
+    expect(html).toContain("project");
+    expect(html).not.toContain("projects");
   });
 });
 
@@ -657,15 +649,19 @@ describe("the list grid", () => {
 
   // The last 8px of the same misalignment: a mark sized to its own ink moved the
   // header NAME beside it.
-  it("gives a machine mark its own glyph column", () => {
-    expect(
-      renderToStaticMarkup(
-        <HeaderTitle
-          mark={<MachineMark color={MACHINE_COLORS[0]!} />}
-          name="tower"
-        />,
-      ),
-    ).toContain("grid size-3.5 shrink-0 place-items-center");
+  // Regression, user report ("on iPhone its not aligned properly"): the glyph
+  // column existed only when something filled it, so the machine's NAME began at
+  // x=36 behind its hue block while the project header one row below — which has
+  // no mark since its disclosure became a pager — began at x=14. The deeper row
+  // started further left, and the two names never read as a hierarchy.
+  it("reserves one glyph column, marked or not", () => {
+    const marked = renderToStaticMarkup(
+      <HeaderTitle mark={<MachineMark color={MACHINE_COLORS[0]!} />} name="tower" />,
+    );
+    const bare = renderToStaticMarkup(<HeaderTitle name="vis" qualifier="~/vis" />);
+    for (const html of [marked, bare]) {
+      expect(html).toContain("grid size-3.5 shrink-0 place-items-center");
+    }
   });
 
   // The trailing gutter lives INSIDE the last control, not on the cluster: a box

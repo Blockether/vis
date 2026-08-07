@@ -1875,7 +1875,7 @@ const ProjectGroup = memo(function ProjectGroup({
             the same box, and both stop at the same right edge as every other header. */}
         <HeaderActions>
           <HeaderMeta>
-            <HeaderTally count={sessions.length} unit="session" isCrowded />
+            <HeaderTally count={sessions.length} unit="session" />
             <LiveCount count={liveCount} />
           </HeaderMeta>
           <NewSessionButton
