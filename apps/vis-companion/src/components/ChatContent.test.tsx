@@ -233,3 +233,25 @@ describe("transcript scroll ownership", () => {
     expect(chatContentSource).not.toMatch(/rampFromRef/u);
   });
 });
+
+// Regression: a document artifact was on screen twice — the `vis-doc` fence
+// painted its own card in the tool result while the attachment rail below it
+// painted the openable tile for the very same file.
+describe("a vis-doc fence", () => {
+  const fence = [
+    "````vis-doc",
+    "[Document: report.pdf PDF, 1.2 MB]",
+    "/tmp/vis-python/doc-1/report.pdf",
+    "application/pdf",
+    "report.pdf",
+    "1.2 MB",
+    "````",
+  ].join("\n");
+
+  it("paints nothing: the attachment tile is the document's one appearance", () => {
+    const markup = renderToStaticMarkup(<Markdown compact>{fence}</Markdown>);
+    expect(text(markup)).not.toContain("report.pdf");
+    expect(text(markup)).not.toContain("/tmp/vis-python/doc-1/report.pdf");
+    expect(markup).not.toContain("<iframe");
+  });
+});

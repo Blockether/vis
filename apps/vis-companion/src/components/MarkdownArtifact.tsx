@@ -16,6 +16,9 @@ import { Button, IconButton } from "./ui";
 /** The blocks a tap may quote: one paragraph, heading, item or cell. */
 const QUOTABLE_BLOCKS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,pre,td,th";
 
+/** A press that travelled further than this was a scroll, not a tap (CSS px). */
+const TAP_SLOP = 10;
+
 /**
  * ONE COLOUR PER COMMENT, AND THE SAME COLOUR IN BOTH PLACES.
  *
@@ -172,7 +175,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
 
-  // ON A PHONE A PASSAGE IS TAPPED, NOT DRAGGED.
+  // ON A PHONE A PASSAGE IS TAPPED, NOT DRAGGED — AND A SCROLL IS NOT A TAP.
   //
   // iOS answers a long press inside prose with its OWN callout (Copy / Look Up /
   // Share) and only settles the range after it: a `touchend` handler either sees
@@ -181,28 +184,47 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   // tap on a paragraph, a heading or a list item quotes it — and text selection
   // is left switched on for a mouse only (`mouse:select-text`), where dragging a
   // range is natural and no callout exists.
-  const pickSelection = useCallback(
-    (event: React.MouseEvent | React.PointerEvent) => {
-      const prose = proseRef.current;
-      if (!prose) return;
-      // A real drag-selection inside the prose wins; otherwise the tapped block.
-      const selection = window.getSelection?.();
-      const node = selection?.anchorNode ?? null;
-      const dragged =
-        !!node && prose.contains(node)
-          ? quoteOf(selection?.toString() ?? "")
-          : "";
-      const target = event.target as HTMLElement | null;
-      const block = target?.closest?.(QUOTABLE_BLOCKS) as HTMLElement | null;
-      const tapped =
-        block && prose.contains(block) ? quoteOf(block.textContent ?? "") : "";
-      const picked = dragged || tapped;
-      if (picked.length === 0) return;
-      setQuote(picked);
+  //
+  // The gesture is read from the POINTER, not from `click`: a finger that moved
+  // is a flick of the page and must leave the note alone, so a press that
+  // travelled more than `TAP_SLOP` never quotes anything. (`onClick` plus
+  // `onMouseUp` also ran the same pick twice for every mouse click.) Tapping the
+  // quoted block again lets it go, so a mis-tap costs one tap, not a trip to
+  // Cancel.
+  const tapFrom = useRef<{ x: number; y: number } | null>(null);
+  const beginTap = useCallback((event: React.PointerEvent) => {
+    tapFrom.current = { x: event.clientX, y: event.clientY };
+  }, []);
+  const endTap = useCallback(() => {
+    tapFrom.current = null;
+  }, []);
+
+  const pickSelection = useCallback((event: React.PointerEvent) => {
+    const prose = proseRef.current;
+    const from = tapFrom.current;
+    tapFrom.current = null;
+    if (!prose) return;
+    // A real drag-selection inside the prose wins; otherwise the tapped block.
+    const selection = window.getSelection?.();
+    const node = selection?.anchorNode ?? null;
+    const dragged =
+      !!node && prose.contains(node) ? quoteOf(selection?.toString() ?? "") : "";
+    if (dragged.length > 0) {
+      setQuote(dragged);
       setStatus("");
-    },
-    [],
-  );
+      return;
+    }
+    if (!from) return;
+    const travelled = Math.hypot(event.clientX - from.x, event.clientY - from.y);
+    if (travelled > TAP_SLOP) return;
+    const target = event.target as HTMLElement | null;
+    const block = target?.closest?.(QUOTABLE_BLOCKS) as HTMLElement | null;
+    const tapped =
+      block && prose.contains(block) ? quoteOf(block.textContent ?? "") : "";
+    if (tapped.length === 0) return;
+    setQuote((current) => (current === tapped ? null : tapped));
+    setStatus("");
+  }, []);
 
   const addComment = useCallback(() => {
     if (quote === null || draft.trim().length === 0) return;
@@ -263,9 +285,30 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         marks.push(mark);
       }
     }
+    // THE PICKED PASSAGE IS SHOWN AS PICKED.
+    //
+    // Between the tap and the "Add comment" the human had nothing to check
+    // against: the composer quoted the text in a caption at the bottom of the
+    // screen while the passage itself sat unmarked. The pending block wears the
+    // accent — the same ink the app uses for focus — until the remark lands or
+    // is dropped.
+    if (quote) {
+      for (const block of blocks) {
+        if (painted.includes(block)) continue;
+        if (quoteOf(block.textContent ?? "") !== quote) continue;
+        block.style.backgroundColor =
+          "color-mix(in oklab, var(--accent) 18%, transparent)";
+        block.style.boxShadow = "inset 2px 0 0 0 var(--accent)";
+        block.style.borderRadius = "2px";
+        block.style.paddingInline = "0.375rem";
+        block.dataset.quotePending = "true";
+        painted.push(block);
+      }
+    }
     return () => {
       for (const mark of marks) mark.remove();
       for (const block of painted) {
+        delete block.dataset.quotePending;
         block.style.textDecorationLine = "";
         block.style.textDecorationColor = "";
         block.style.textDecorationThickness = "";
@@ -276,7 +319,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         block.style.paddingInline = "";
       }
     };
-  }, [comments, body]);
+  }, [comments, body, quote]);
 
   const save = useCallback(() => {
     setSaving(true);
@@ -297,9 +340,11 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
           bottom of an iPhone. */}
       <div
         ref={proseRef}
-        onClick={pickSelection}
-        onMouseUp={pickSelection}
-        className="min-h-0 min-w-0 flex-1 touch-manipulation overflow-y-auto bg-panel px-3 py-3 font-sans text-body [-webkit-touch-callout:none] text-foreground select-none sm:px-4 mouse:select-text"
+        onPointerDown={beginTap}
+        onPointerUp={pickSelection}
+        onPointerCancel={endTap}
+        onContextMenu={(event) => event.preventDefault()}
+        className="min-h-0 min-w-0 flex-1 touch-manipulation overflow-y-auto overscroll-contain bg-panel px-3 py-3 font-sans text-body [-webkit-tap-highlight-color:transparent] [-webkit-touch-callout:none] text-foreground select-none sm:px-4 mouse:select-text"
       >
         {plain ? <PlainText text={body} /> : <Markdown>{body}</Markdown>}
       </div>
@@ -317,9 +362,9 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
             onChange={(event) => setDraft(event.target.value)}
             aria-label="Comment"
             placeholder="What about this passage?"
-            className="min-h-11 w-full resize-y border border-dialog-edge bg-panel px-3 py-2 font-sans text-body text-foreground focus-visible:outline-2 focus-visible:outline-accent"
+            className="min-h-24 w-full resize-y border border-dialog-edge bg-panel px-3 py-2 font-sans text-body text-foreground focus-visible:outline-2 focus-visible:outline-accent"
           />
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 *:flex-1 sm:*:flex-none">
             <Button type="button" onClick={addComment} disabled={!draft.trim()}>
               Add comment
             </Button>

@@ -1,4 +1,6 @@
 import { memo, useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+
 import type { GatewayClient } from "../lib/gateway";
 import {
   docKindLabel,
@@ -9,6 +11,7 @@ import {
 import { MarkdownArtifact } from "./MarkdownArtifact";
 import { PdfAnnotator } from "./PdfArtifact";
 import { TextFrame } from "./TextArtifact";
+import { DialogClose } from "./ui";
 
 /**
  * What an OPENED artifact needs in order to be marked up: which session and
@@ -26,18 +29,13 @@ export type AnnotateContext = {
 // is worth spending a model's context on, so `vis_attach` clamps it to
 // `audience: "user"` and emits a ````vis-doc` fence with five header lines
 // (summary / host path / mime / name / size) and NO payload. The TUI opens the
-// host file in the system viewer; this component is the app's half — a card in
-// the transcript and a SANDBOXED frame for the artifact's own bytes.
-
-export type DocArtifact = {
-  /** `[Document: report.pdf PDF, 1.2 MB]` — the caption row. */
-  summary: string;
-  /** The host path the file was written to (what the TUI opens). */
-  path: string;
-  mime: string;
-  name: string;
-  sizeLabel: string;
-};
+// host file in the system viewer; this component is the app's half.
+//
+// THE DOCUMENT APPEARS ONCE. The fence and the attachment rail describe the same
+// artifact, so painting a card for the fence AND a tile for the attachment put
+// two boxes for one file in the turn. The attachment tile is the one that can
+// open and annotate the bytes, so it is the only one: `ChatContent` renders
+// nothing for the fence itself.
 
 /**
  * An attached page is UNTRUSTED markup, so it is never mounted in the app's own
@@ -59,35 +57,18 @@ export function docSandbox(mime: string | undefined): string {
   return isPdfMedia(mime) ? "allow-scripts" : "";
 }
 
-/** Parse a `vis-doc` fence body: five header lines, no payload. */
-export function parseDocBlock(body: string): DocArtifact {
-  const lines = body.replace(/\n+$/, "").split("\n");
-  const at = (index: number) => (lines[index] ?? "").trim();
-  return {
-    summary: at(0),
-    path: at(1),
-    mime: at(2),
-    name: at(3) || at(1).split("/").pop() || "document",
-    sizeLabel: at(4),
-  };
-}
-
 /**
  * The artifact itself, quarantined. `url` is an object URL for the attachment's
- * bytes; the frame is deliberately tall enough to read a page on a phone and
- * capped so a document never eats the whole transcript.
+ * bytes, and an opened document always fills its box.
  */
 export const DocFrame = memo(function DocFrame({
   url,
   mime,
   name,
-  fill = false,
 }: {
   url: string;
   mime: string;
   name: string;
-  /** Opened rather than previewed: take the whole box. */
-  fill?: boolean;
 }) {
   return (
     <iframe
@@ -96,57 +77,8 @@ export const DocFrame = memo(function DocFrame({
       sandbox={docSandbox(mime)}
       referrerPolicy="no-referrer"
       loading="lazy"
-      className={`w-full border-0 bg-input ${
-        fill ? "min-h-0 flex-1" : "h-[60vh] max-h-[34rem]"
-      }`}
+      className="min-h-0 w-full flex-1 border-0 bg-input"
     />
-  );
-});
-
-/**
- * The fence as it appears in a tool result. The transcript carries descriptors
- * only — the bytes live on the gateway — so the card states WHAT was produced
- * and where it landed on the host; the rail below the block is where the same
- * artifact is actually opened.
- */
-export const DocCard = memo(function DocCard({
-  body,
-  compact,
-  frameless = false,
-}: {
-  body: string;
-  compact: boolean;
-  /** Keep the spacing but drop the frame: an enclosing card already draws one. */
-  frameless?: boolean;
-}) {
-  const artifact = parseDocBlock(body);
-  const kind = docKindLabel(artifact.mime);
-  return (
-    <div
-      className={`${compact ? "my-2" : "my-3"} flex w-full max-w-full min-w-0 flex-col overflow-hidden bg-input ${frameless ? "" : "border border-code-edge"}`}
-    >
-      <div className="flex flex-wrap items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
-        <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-warn">
-          {kind}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-chip text-muted">
-          {artifact.summary || artifact.name}
-        </span>
-      </div>
-      <div className="grid min-w-0 gap-0.5 px-2 py-1.5">
-        <span className="min-w-0 truncate font-mono text-meta text-code-foreground">
-          {artifact.name}
-        </span>
-        <span className="min-w-0 truncate font-mono text-chip text-muted">
-          {[artifact.mime, artifact.sizeLabel].filter(Boolean).join(" · ")}
-        </span>
-        {artifact.path && (
-          <span className="min-w-0 truncate font-mono text-chip text-footer-muted">
-            {artifact.path}
-          </span>
-        )}
-      </div>
-    </div>
   );
 });
 
@@ -156,13 +88,11 @@ function DocBody({
   mime,
   url,
   failed,
-  fill,
 }: {
   name: string;
   mime: string;
   url: string | null;
   failed: boolean;
-  fill: boolean;
 }) {
   if (failed)
     return (
@@ -173,12 +103,11 @@ function DocBody({
   if (!url)
     return <p className="px-2 py-3 text-meta text-footer-muted">Loading…</p>;
   // Markdown and plain text are read by the APP: an iframe would paint
-  // `# Heading` as `# Heading`, the source instead of the document. Inline in the
-  // session, though, a note IS its source: only the opened artifact renders.
+  // `# Heading` as `# Heading`, the source instead of the document.
   return isTextMedia(mime, name) ? (
-    <TextFrame url={url} mime={mime} name={name} fill={fill} raw={!fill} />
+    <TextFrame url={url} mime={mime} name={name} fill />
   ) : (
-    <DocFrame url={url} mime={mime} name={name} fill={fill} />
+    <DocFrame url={url} mime={mime} name={name} />
   );
 }
 
@@ -223,7 +152,7 @@ function DocChip({
   return (
     <button
       type="button"
-      className="min-w-[6ch] shrink-0 border border-dialog-edge bg-button px-1.5 py-0.5 text-center font-mono text-chip text-button-foreground transition-colors hover:bg-hover"
+      className="min-h-11 min-w-[6ch] shrink-0 border border-dialog-edge bg-button px-2 py-0.5 text-center font-mono text-chip text-button-foreground transition-colors hover:bg-hover active:bg-hover mouse:min-h-7"
       onClick={onClick}
       aria-label={ariaLabel}
     >
@@ -234,7 +163,7 @@ function DocChip({
 
 /**
  * An opened document owns the WHOLE viewport — full height and full width —
- * with nothing above it but its own caption row and the Close chip.
+ * with nothing above it but its own caption row and the app's one X.
  */
 export const DocOverlay = memo(function DocOverlay({
   name,
@@ -263,16 +192,17 @@ export const DocOverlay = memo(function DocOverlay({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex h-[100dvh] min-h-0 min-w-0 flex-col overflow-hidden bg-panel pt-[env(safe-area-inset-top)]">
+    <div className="fixed inset-0 z-50 flex h-[100dvh] min-h-0 min-w-0 flex-col overflow-hidden overscroll-contain bg-panel pt-[env(safe-area-inset-top)]">
       <DocCaption
         mime={mime}
         name={name}
         sizeLabel={sizeLabel}
         action={
-          <DocChip
-            label="Close"
-            onClick={onClose}
-            ariaLabel={`Close ${name}`}
+          <DialogClose
+            label={`Close ${name}`}
+            tone="panel"
+            className="-my-1 -mr-2 self-stretch"
+            onClose={onClose}
           />
         }
       />
@@ -298,10 +228,10 @@ export const DocOverlay = memo(function DocOverlay({
             name={name}
             mediaType={mime}
             url={url}
-            frame={<DocFrame url={url} mime={mime} name={name} fill />}
+            frame={<DocFrame url={url} mime={mime} name={name} />}
           />
         ) : (
-          <DocBody name={name} mime={mime} url={url} failed={failed} fill />
+          <DocBody name={name} mime={mime} url={url} failed={failed} />
         )}
       </div>
     </div>
@@ -309,9 +239,13 @@ export const DocOverlay = memo(function DocOverlay({
 });
 
 /**
- * A document attachment, shown in place: one caption row, the bytes, and the
- * single `Open` chip that throws the document over the whole screen. No draw
- * strip, no hide toggle, no new-tab escape.
+ * A document attachment in the transcript: ONE caption row and the single `Open`
+ * chip that throws it over the whole screen.
+ *
+ * The bytes are NOT painted here. A note embedded in place stood taller than the
+ * turn that produced it — the reader scrolled a whole document to reach the next
+ * line of the conversation — and a PDF beside it did the same in a 60vh frame.
+ * The transcript states what was produced; reading it is one tap away.
  */
 export const DocPreview = memo(function DocPreview({
   name,
@@ -352,29 +286,22 @@ export const DocPreview = memo(function DocPreview({
           <DocChip label="Open" onClick={open} ariaLabel={`Open ${name}`} />
         }
       />
-      {/* Every document preview in the transcript is the SAME box: a PDF in its
-          frame and a note read by the app both stand 60vh tall and scroll inside
-          themselves, so a long note no longer swallows the turn that made it. */}
-      <div className="max-h-[60vh] min-w-0 overflow-y-auto">
-        <DocBody
-          name={name}
-          mime={mime}
-          url={url}
-          failed={failed}
-          fill={false}
-        />
-      </div>
-      {opened && (
-        <DocOverlay
-          name={name}
-          mime={mime}
-          sizeLabel={sizeLabel}
-          url={url}
-          failed={failed}
-          annotate={annotate}
-          onClose={close}
-        />
-      )}
+      {/* The opened document is a SCREEN, not a part of the transcript: it is
+          portalled to the document body, so the composer strip the session screen
+          pins to the bottom cannot paint on top of it. */}
+      {opened &&
+        createPortal(
+          <DocOverlay
+            name={name}
+            mime={mime}
+            sizeLabel={sizeLabel}
+            url={url}
+            failed={failed}
+            annotate={annotate}
+            onClose={close}
+          />,
+          document.body,
+        )}
     </div>
   );
 });

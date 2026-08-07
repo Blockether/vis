@@ -16,6 +16,26 @@ const html = (node: Parameters<typeof renderToStaticMarkup>[0]) =>
 
 const noop = async () => undefined;
 
+/**
+ * One finger, down and up on the same spot. React reads the POINTER, not
+ * `click`, so a flick of the page can be told from a tap on a passage; jsdom
+ * carries no `PointerEvent`, and a `MouseEvent` under that type name has the
+ * coordinates the handler reads.
+ */
+const pointer = (type: string, x: number, y: number) =>
+  new MouseEvent(type, { bubbles: true, clientX: x, clientY: y });
+
+const tap = (element: Element, at = { x: 20, y: 20 }) => {
+  element.dispatchEvent(pointer("pointerdown", at.x, at.y));
+  element.dispatchEvent(pointer("pointerup", at.x, at.y));
+};
+
+/** A press that travelled: the page was scrolled, the note was not tapped. */
+const flick = (element: Element) => {
+  element.dispatchEvent(pointer("pointerdown", 20, 200));
+  element.dispatchEvent(pointer("pointerup", 22, 40));
+};
+
 describe("an opened markdown note", () => {
   it("renders the note as prose and invites a selection", () => {
     const markup = html(
@@ -67,7 +87,7 @@ describe("picking a passage on a touch screen", () => {
     const paragraph = host.querySelector("p");
     expect(paragraph?.textContent).toBe("We cut on Friday.");
     act(() => {
-      paragraph?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      tap(paragraph!);
     });
 
     expect(host.textContent).toContain("Comment on “We cut on Friday.”");
@@ -272,5 +292,54 @@ describe("a comment on the whole note", () => {
     expect(markup).toContain("<sup");
     expect(markup).toContain("Whole document");
     expect(markup).toContain("Stale.");
+  });
+});
+
+// Regression: every tap on the note opened the composer, so flicking the page to
+// read further quoted whatever paragraph the finger happened to land on; and a
+// mis-tap could only be undone through Cancel, while the passage the composer
+// was quoting carried no mark at all.
+describe("the tap that quotes a passage", () => {
+  const mount = (text: string) => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(<MarkdownAnnotator text={text} onSave={noop} />);
+    });
+    return {
+      host,
+      paragraph: host.querySelector("p") as HTMLElement,
+      done: () => {
+        act(() => root.unmount());
+        host.remove();
+      },
+    };
+  };
+
+  it("leaves the note alone when the finger was scrolling", () => {
+    const { host, paragraph, done } = mount("# Ship it\n\nWe cut on Friday.\n");
+    act(() => {
+      flick(paragraph);
+    });
+    expect(host.textContent).not.toContain("Comment on “We cut on Friday.”");
+    expect(host.querySelector('textarea[aria-label="Comment"]')).toBeNull();
+    done();
+  });
+
+  it("marks the picked passage and releases it when it is tapped again", () => {
+    const { host, paragraph, done } = mount("# Ship it\n\nWe cut on Friday.\n");
+    act(() => {
+      tap(paragraph);
+    });
+    expect(paragraph.dataset.quotePending).toBe("true");
+
+    act(() => {
+      tap(paragraph);
+    });
+    expect(host.querySelector('textarea[aria-label="Comment"]')).toBeNull();
+    expect(paragraph.dataset.quotePending).toBeUndefined();
+    done();
   });
 });

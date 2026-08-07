@@ -536,7 +536,7 @@ function ArtifactDetail({
   // rasterised, the ink stamped back onto it, and the stamped PDF saved under
   // the same filename — the next version, like an annotated note.
   const frame = (
-    <DocFrame url={url} mime={artifact.mediaType} name={artifact.name} fill />
+    <DocFrame url={url} mime={artifact.mediaType} name={artifact.name} />
   );
   return (
     <DetailOverlay name={artifact.name} onClose={onClose} fill>

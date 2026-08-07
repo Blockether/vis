@@ -13,7 +13,7 @@ import {
 } from "react";
 import Prism from "prismjs";
 import { DataTable } from "./DataTable";
-import { DocCard, DocPreview } from "./DocArtifact";
+import { DocPreview } from "./DocArtifact";
 import { AlertIcon, ArrowDownIcon, ArrowOutIcon, ChevronIcon } from "./icons";
 import {
   artifactMedia,
@@ -682,18 +682,12 @@ export const Markdown = memo(function Markdown({
                 />
               );
             }
-            // A PDF or an HTML page is a DOCUMENT: it never reaches the model, and
-            // the fence carries a descriptor only. The card says what was produced;
-            // the attachment rail below opens the bytes in a sandboxed frame.
-            if (language === "vis-doc") {
-              return (
-                <DocCard
-                  body={stripMarks(raw)}
-                  compact={compact}
-                  frameless={nested}
-                />
-              );
-            }
+            // A PDF or a note is a DOCUMENT: it never reaches the model, and the
+            // fence carries a descriptor only. The attachment rail below the block
+            // already shows that artifact as an openable tile, so painting the
+            // fence too put the same file on screen twice — the fence itself is
+            // rendered as nothing.
+            if (language === "vis-doc") return null;
             return (
               <SyntaxCodeBlock
                 value={raw}
