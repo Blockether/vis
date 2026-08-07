@@ -1,4 +1,4 @@
-import { memo, useEffect } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 import { docKindLabel, isPdfMedia, isTextMedia } from "../lib/artifacts";
 import { TextFrame } from "./TextArtifact";
 
@@ -130,11 +130,139 @@ export const DocCard = memo(function DocCard({
   );
 });
 
+/** The artifact's own bytes: a note read by the app, anything else in a frame. */
+function DocBody({
+  name,
+  mime,
+  url,
+  failed,
+  fill,
+}: {
+  name: string;
+  mime: string;
+  url: string | null;
+  failed: boolean;
+  fill: boolean;
+}) {
+  if (failed)
+    return (
+      <p className="px-2 py-3 text-meta text-footer-muted">
+        This document could not be loaded from the gateway.
+      </p>
+    );
+  if (!url)
+    return <p className="px-2 py-3 text-meta text-footer-muted">Loading…</p>;
+  // Markdown and plain text are read by the APP: an iframe would paint
+  // `# Heading` as `# Heading`, the source instead of the document.
+  return isTextMedia(mime, name) ? (
+    <TextFrame url={url} mime={mime} name={name} fill={fill} />
+  ) : (
+    <DocFrame url={url} mime={mime} name={name} fill={fill} />
+  );
+}
+
+/** The caption row both the card and the opened document wear. */
+function DocCaption({
+  mime,
+  name,
+  sizeLabel,
+  action,
+}: {
+  mime: string;
+  name: string;
+  sizeLabel?: string;
+  action: React.ReactNode;
+}) {
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
+      <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-warn">
+        {docKindLabel(mime)}
+      </span>
+      <span className="min-w-0 flex-1 truncate font-mono text-chip text-muted">
+        {[name, sizeLabel].filter(Boolean).join(" · ")}
+      </span>
+      {action}
+    </div>
+  );
+}
+
 /**
- * A document attachment, shown in place. The bytes are asked for as soon as the
- * artifact is on screen and land inside a sandboxed frame; there is no toggle,
- * no new-tab escape hatch and no capture strip — the document is simply read
- * where it sits.
+ * The transcript's own chip face — the very box, border, paper, ink and hover
+ * that `Copy` wears in a tool result, so the card carries no foreign control.
+ */
+function DocChip({
+  label,
+  onClick,
+  ariaLabel,
+}: {
+  label: string;
+  onClick: () => void;
+  ariaLabel: string;
+}) {
+  return (
+    <button
+      type="button"
+      className="min-w-[6ch] shrink-0 border border-dialog-edge bg-button px-1.5 py-0.5 text-center font-mono text-chip text-button-foreground transition-colors hover:bg-hover"
+      onClick={onClick}
+      aria-label={ariaLabel}
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
+ * An opened document owns the WHOLE viewport — full height and full width —
+ * with nothing above it but its own caption row and the Close chip.
+ */
+export const DocOverlay = memo(function DocOverlay({
+  name,
+  mime,
+  sizeLabel,
+  url,
+  failed,
+  onClose,
+}: {
+  name: string;
+  mime: string;
+  sizeLabel?: string;
+  url: string | null;
+  failed: boolean;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex min-h-0 min-w-0 flex-col bg-panel">
+      <DocCaption
+        mime={mime}
+        name={name}
+        sizeLabel={sizeLabel}
+        action={
+          <DocChip
+            label="Close"
+            onClick={onClose}
+            ariaLabel={`Close ${name}`}
+          />
+        }
+      />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <DocBody name={name} mime={mime} url={url} failed={failed} fill />
+      </div>
+    </div>
+  );
+});
+
+/**
+ * A document attachment, shown in place: one caption row, the bytes, and the
+ * single `Open` chip that throws the document over the whole screen. No draw
+ * strip, no hide toggle, no new-tab escape.
  */
 export const DocPreview = memo(function DocPreview({
   name,
@@ -153,43 +281,47 @@ export const DocPreview = memo(function DocPreview({
   /** Asked for the bytes — the parent starts the fetch. */
   onNeeded: () => void;
 }) {
+  const [opened, setOpened] = useState(false);
+
   useEffect(() => {
     onNeeded();
   }, [onNeeded]);
 
-  const kind = docKindLabel(mime);
+  const close = useCallback(() => setOpened(false), []);
+  const open = useCallback(() => setOpened(true), []);
 
   return (
     <div className="mt-2 min-w-0 border border-code-edge bg-input">
-      <div className="flex flex-wrap items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
-        <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-warn">
-          {kind}
-        </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-chip text-muted">
-          {[name, sizeLabel].filter(Boolean).join(" · ")}
-        </span>
-      </div>
+      <DocCaption
+        mime={mime}
+        name={name}
+        sizeLabel={sizeLabel}
+        action={
+          <DocChip label="Open" onClick={open} ariaLabel={`Open ${name}`} />
+        }
+      />
       {/* Every document preview in the transcript is the SAME box: a PDF in its
           frame and a note read by the app both stand 60vh tall and scroll inside
-          themselves, so a long note no longer swallows the turn that made it.
-          Opened from the artifacts sheet it still takes the whole screen. */}
+          themselves, so a long note no longer swallows the turn that made it. */}
       <div className="max-h-[60vh] min-w-0 overflow-y-auto">
-        {failed ? (
-          <p className="px-2 py-3 text-meta text-footer-muted">
-            This document could not be loaded from the gateway.
-          </p>
-        ) : url ? (
-          // Markdown and plain text are read by the APP: an iframe would paint
-          // `# Heading` as `# Heading`, the source instead of the document.
-          isTextMedia(mime, name) ? (
-            <TextFrame url={url} mime={mime} name={name} />
-          ) : (
-            <DocFrame url={url} mime={mime} name={name} />
-          )
-        ) : (
-          <p className="px-2 py-3 text-meta text-footer-muted">Loading…</p>
-        )}
+        <DocBody
+          name={name}
+          mime={mime}
+          url={url}
+          failed={failed}
+          fill={false}
+        />
       </div>
+      {opened && (
+        <DocOverlay
+          name={name}
+          mime={mime}
+          sizeLabel={sizeLabel}
+          url={url}
+          failed={failed}
+          onClose={close}
+        />
+      )}
     </div>
   );
 });

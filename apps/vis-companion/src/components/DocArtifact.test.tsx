@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DocCard,
   DocFrame,
+  DocOverlay,
   DocPreview,
   docSandbox,
   parseDocBlock,
@@ -132,9 +133,35 @@ describe("DocPreview", () => {
     const body = text(preview());
     expect(body).not.toContain("Draw");
     expect(body).not.toContain("Hide");
-    expect(body).not.toContain("Open");
     expect(body).not.toContain("New tab");
-    expect(preview()).not.toContain("<button");
+  });
+
+  // The one control the card carries wears the transcript's own chip face, the
+  // same one `Copy` wears in a tool result.
+  it("carries an Open chip shaped like the copy chip", () => {
+    const html = preview();
+    expect(text(html)).toContain("Open");
+    expect(html).toContain("border-dialog-edge");
+    expect(html).toContain("bg-button");
+    expect(html).toContain("text-button-foreground");
+  });
+
+  it("opens the document over the whole viewport", () => {
+    const markup = renderToStaticMarkup(
+      <DocOverlay
+        name="report.pdf"
+        mime="application/pdf"
+        sizeLabel="1.2 MB"
+        url="blob:x"
+        failed={false}
+        onClose={() => undefined}
+      />,
+    );
+    expect(markup).toContain("fixed inset-0");
+    expect(markup).toContain("flex-1");
+    expect(markup).not.toContain("60vh");
+    expect(markup).toContain("w-full");
+    expect(text(markup)).toContain("Close");
   });
 
   // A markdown note read by the app used to grow without bound inside the turn
