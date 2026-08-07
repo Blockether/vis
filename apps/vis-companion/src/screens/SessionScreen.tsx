@@ -39,7 +39,11 @@ import {
 import { sheetDismissed } from "../lib/image-file";
 import { AttachImageContext } from "../lib/attach-image";
 import type { GatewayClient } from "../lib/gateway";
-import { holdKeyboardAcrossSheet } from "../lib/keyboard";
+import {
+  dismissSoftKeyboard,
+  holdKeyboardAcrossSheet,
+  isEnterSendPlatform,
+} from "../lib/keyboard";
 import {
   mergeQueueBacklog,
   queuedTurnFromWire,
@@ -1237,6 +1241,9 @@ export function SessionScreen({
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // A hardware keyboard has a Shift to hold for the new line; an on-screen one
+  // does not, so there Return simply types one.
+  const enterSends = isEnterSendPlatform();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recordingRef = useRef<WavRecording | null>(null);
   const pasteCounterRef = useRef(peekDraftMessage(draftMessageId).counter);
@@ -5043,7 +5050,8 @@ export function SessionScreen({
                       return;
                     }
                     if (
-                      (event.key === "Tab" || event.key === "Enter") &&
+                      (event.key === "Tab" ||
+                        (event.key === "Enter" && enterSends)) &&
                       selectedFile
                     ) {
                       event.preventDefault();
@@ -5083,7 +5091,11 @@ export function SessionScreen({
                     setSlashDismissed(true);
                     return;
                   }
+                  // On a phone or a tablet Return is the NEW LINE key: there is no
+                  // Shift to hold on an on-screen keyboard, so a submitting Enter
+                  // makes a paragraph impossible to type. Send is the send button.
                   if (
+                    enterSends &&
                     event.key === "Enter" &&
                     !event.shiftKey &&
                     !event.nativeEvent.isComposing
@@ -5130,7 +5142,12 @@ export function SessionScreen({
                 type="button"
                 onMouseDown={keepKeyboard}
                 className="grid size-8 shrink-0 place-items-center border border-dialog-edge bg-dialog-title text-ui font-bold text-dialog-title-foreground transition-[background-color,color,transform,translate,scale,rotate] duration-150 hover:bg-accent-2 active:scale-[0.94] disabled:scale-100 disabled:bg-button disabled:text-dialog-hint motion-reduce:transition-none mouse:size-7"
-                onClick={send}
+                onClick={() => {
+                  // Sending ends the writing: the keyboard goes down with the
+                  // message instead of standing over the answer it asked for.
+                  dismissSoftKeyboard(composerRef.current);
+                  void send();
+                }}
                 disabled={
                   (!prompt.trim() && !attachments.length) ||
                   voicePhase !== "idle"

@@ -144,3 +144,34 @@ export function holdKeyboardAcrossSheet(
     schedule(raise, SHEET_DISMISS_MS);
   };
 }
+
+/**
+ * Does a bare Enter SEND the message?
+ *
+ * On a hardware keyboard it does, and Shift+Enter makes the new line. On a phone
+ * or a tablet the Return key IS the new-line key: the on-screen keyboard has no
+ * modifier to hold, so a bare Enter that submits makes a multi-line message
+ * impossible to type and fires the turn on the first paragraph break.
+ */
+export function isEnterSendPlatform(
+  platform: string = Capacitor.getPlatform(),
+): boolean {
+  return platform === 'web';
+}
+
+/**
+ * Puts the software keyboard away with the field that raised it.
+ *
+ * Sending is the end of writing, so the keyboard goes down with the message —
+ * on the phone it used to stay up over the answer the user just asked for. The
+ * blur is what the webview understands; `Keyboard.hide()` covers the native
+ * shell, where the composer can keep DOM focus while UIKit still shows the IME.
+ * A no-op with a hardware keyboard, where nothing is covering anything.
+ */
+export function dismissSoftKeyboard(
+  element: HTMLElement | null | undefined,
+): void {
+  if (isEnterSendPlatform()) return;
+  if (element && element.ownerDocument?.activeElement === element) element.blur();
+  if (Capacitor.isNativePlatform()) void Keyboard.hide().catch(() => undefined);
+}

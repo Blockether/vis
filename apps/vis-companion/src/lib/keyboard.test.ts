@@ -1,5 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
-import { holdKeyboardAcrossSheet } from './keyboard';
+import {
+  dismissSoftKeyboard,
+  holdKeyboardAcrossSheet,
+  isEnterSendPlatform,
+} from './keyboard';
+
+let platform = 'web';
+const hide = vi.fn(() => Promise.resolve());
+
+vi.mock('@capacitor/core', () => ({
+  Capacitor: {
+    getPlatform: () => platform,
+    isNativePlatform: () => platform !== 'web',
+  },
+}));
+vi.mock('@capacitor/keyboard', () => ({ Keyboard: { hide: () => hide(), show: () => Promise.resolve() } }));
 
 interface Composer {
   element: HTMLTextAreaElement;
@@ -317,5 +332,43 @@ describe('holdKeyboardAcrossSheet on a phone that answers late', () => {
     ios.advance(4000);
 
     expect(ios.log).toEqual(['up', 'down', 'up']);
+  });
+});
+
+// Regression: on iOS/Android a bare Return submitted the message, so a multi-line
+// message could not be typed at all — the on-screen keyboard has no Shift to hold.
+describe('isEnterSendPlatform', () => {
+  it('sends on Enter only where a hardware keyboard has a Shift to hold', () => {
+    expect(isEnterSendPlatform('web')).toBe(true);
+    expect(isEnterSendPlatform('ios')).toBe(false);
+    expect(isEnterSendPlatform('android')).toBe(false);
+  });
+});
+
+// Regression: tapping Send left the software keyboard standing over the answer
+// the message had just asked for.
+describe('dismissSoftKeyboard', () => {
+  it('takes the keyboard down with the composer on a phone', () => {
+    platform = 'ios';
+    hide.mockClear();
+    const { element, document, log } = composer();
+
+    dismissSoftKeyboard(element);
+
+    expect(log).toEqual(['blur']);
+    expect(document.activeElement).toBeNull();
+    expect(hide).toHaveBeenCalledTimes(1);
+    platform = 'web';
+  });
+
+  it('leaves a hardware keyboard alone', () => {
+    hide.mockClear();
+    const { element, document, log } = composer();
+
+    dismissSoftKeyboard(element);
+
+    expect(log).toEqual([]);
+    expect(document.activeElement).toBe(element);
+    expect(hide).not.toHaveBeenCalled();
   });
 });
