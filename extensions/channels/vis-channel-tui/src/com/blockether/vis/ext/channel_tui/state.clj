@@ -4469,9 +4469,21 @@
 
 (reg-event-fx
   :cancel-turn
+  ;; `:loading?` is only THIS tab's BELIEF about the session. The daemon is the
+  ;; authority: a dropped terminal event, an SSE gap across a reconnect, or a turn
+  ;; started from another channel all leave work running that this tab is not
+  ;; painting. This handler used to return `{:db db}` in that case — no gateway
+  ;; call, no message, nothing — so a human could press cancel for ten minutes and
+  ;; never send one request nor hear one word back. A cancel that was ASKED FOR must
+  ;; never vanish: when this tab has nothing of its own to stop, ask the gateway what
+  ;; the session is really running, cancel that turn BY ITS OWN ID, and say either way.
   (fn [db _]
     (if-not (:loading? db)
-      {:db db}
+      (if-let [sid (get-in db [:session :id])]
+        {:db db :fx [[:cancel-detached-turn sid]]}
+        {:db db
+         :fx [[:notify "Nothing to cancel — no session is open." :info
+               cancel-notification-ttl-ms]]})
       (let
         [sid
          (get-in db [:session :id])
@@ -5678,6 +5690,44 @@
             (gateway-cancel-io! (fn []
                                   (try (vis/gateway-cancel-turn! sid tid)
                                        (catch Throwable _ nil)))))))
+
+(def ^:private running-turn-statuses
+  "Turn statuses the daemon reports for work IT is still executing. Anything else
+   is queued (the composer's own queue owns that) or settled."
+  #{"running" "streaming"})
+
+(reg-fx
+  :cancel-detached-turn
+  ;; Cancel asked for on a tab that believes it is idle (see `:cancel-turn`). The tab's
+  ;; belief is not the truth, so ASK the gateway which turn this session is running and
+  ;; cancel THAT id. Never a blind `cancel-current`: the session is shared and the
+  ;; tid-less route would stop whatever another channel is doing (see
+  ;; `gateway-cancel-turn-or-current!`). One cheap listing on the cancel lane, never on
+  ;; the Lanterna input thread, and every outcome ends in a notification — an unheard
+  ;; cancel is the defect this exists to close.
+  (fn [sid]
+    (when sid
+      (gateway-cancel-io!
+        (fn []
+          (let
+            [turns
+             (try (vis/gateway-list-turns sid) (catch Throwable _ ::unreachable))
+
+             live
+             (when-not (= ::unreachable turns)
+               (some (fn [turn]
+                       (when (contains? running-turn-statuses (str (get turn "status"))) turn))
+                     turns))
+
+             [text level]
+             (cond (= ::unreachable turns)
+                   ["Cancel could not reach the gateway - nothing was stopped." :warn]
+                   live (do (gateway-cancel-turn-or-current! sid (str (get live "turn_id")) nil)
+                            ["Cancelling the turn this session is running..." :info])
+                   :else ["Nothing is running to cancel." :info])]
+
+            (try (vis/notify! text :level level :ttl-ms cancel-notification-ttl-ms)
+                 (catch Throwable _ nil))))))))
 
 (reg-fx :drain-idle-queue
         ;; Kick a server-side queued backlog into motion for an IDLE session on

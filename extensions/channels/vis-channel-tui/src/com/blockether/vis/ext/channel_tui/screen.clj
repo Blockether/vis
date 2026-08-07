@@ -7420,7 +7420,11 @@
                                           :level :info
                                           :ttl-ms copy-success-ttl-ms)
                              (recur))
-                           :else (recur))
+                           ;; Nothing here to stop, as far as THIS tab knows — which is
+                           ;; exactly when a cancel used to disappear without a trace.
+                           ;; `:cancel-turn` asks the daemon what the session is really
+                           ;; running and always answers the human.
+                           :else (do (state/dispatch [:cancel-turn]) (recur)))
 
                          ;; PageUp / M-v (Emacs `scroll-down-command`): a FULL screen
                          ;; back, keeping 2 lines of context overlap (Emacs's

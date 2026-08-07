@@ -1151,6 +1151,68 @@
         (expect (= ["Cancelling current turn..." [:level :info :ttl-ms 2500]] @notified))
         (deliver release-gateway true)))))
 
+;; Regression, issue: session e8c9dbc9-388d-43a4-8264-9dd5adec4449 - the human pressed
+;; cancel for ten minutes and the gateway journal recorded ZERO cancel requests. With
+;; `:loading?` false on this tab (a dropped terminal event, an SSE gap, or a turn started
+;; from another channel) `:cancel-turn` returned `{:db db}`: no HTTP, no notification, and
+;; no way to tell a swallowed cancel from an idle session.
+(defdescribe
+  cancel-detached-turn-test
+  (it "cancels the turn the DAEMON is running when this tab paints none"
+      (let
+        [cancelled
+         (promise)
+
+         notified
+         (promise)]
+
+        (with-redefs
+          [vis/gateway-list-turns
+           (fn [sid]
+             (expect (= "s1" sid))
+             [{"turn_id" "gw-old" "status" "completed"} {"turn_id" "gw-live" "status" "running"}])
+
+           vis/gateway-cancel-turn!
+           (fn [sid tid]
+             (deliver cancelled [sid tid])
+             {:status "cancelling"})
+
+           vis/notify!
+           (fn [text & kvs]
+             (deliver notified [text kvs]))]
+
+          (reset! state/app-db {:session {:id "s1"} :loading? false :render-version 0})
+          (state/dispatch [:cancel-turn])
+          (expect (= ["s1" "gw-live"] (deref cancelled 1000 :timeout)))
+          (expect (= ["Cancelling the turn this session is running..." [:level :info :ttl-ms 2500]]
+                     (deref notified 1000 :timeout))))))
+  (it "answers an idle session out loud instead of swallowing the cancel"
+      (let
+        [cancelled
+         (atom nil)
+
+         notified
+         (promise)]
+
+        (with-redefs
+          [vis/gateway-list-turns
+           (fn [_]
+             [{"turn_id" "gw-old" "status" "completed"}])
+
+           vis/gateway-cancel-turn!
+           (fn [sid tid]
+             (reset! cancelled [sid tid]))
+
+           vis/notify!
+           (fn [text & kvs]
+             (deliver notified [text kvs]))]
+
+          (reset! state/app-db {:session {:id "s1"} :loading? false :render-version 0})
+          (state/dispatch [:cancel-turn])
+          (expect (= ["Nothing is running to cancel." [:level :info :ttl-ms 2500]]
+                     (deref notified 1000 :timeout)))
+          (expect (nil? @cancelled))))))
+
 ;; Regression: with no gateway turn id bound, Esc fell back to a BLIND
 ;; `cancel-current`, which stops whatever turn the SESSION is running. A session is
 ;; shared, so a TUI started on a session the companion app was already working in

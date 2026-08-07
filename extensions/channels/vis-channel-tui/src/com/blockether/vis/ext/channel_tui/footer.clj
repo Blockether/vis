@@ -1085,7 +1085,6 @@
    keys where they belong — over the transcript, not in a one-row strip."
   [{:keys [loading? cancelling? echo]}]
   (cond cancelling? [(hint-segment "Cancelling... please wait" 1)]
-        cancelling? [(hint-segment "Cancelling... please wait" 1)]
         loading? [(hint-segment (str (keymap/abort-hint) " cancel") 1)]
         (not (str/blank? (str echo))) [(hint-segment (str/trim (str echo)) 1)]
         :else []))
