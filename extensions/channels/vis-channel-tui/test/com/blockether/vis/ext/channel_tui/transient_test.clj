@@ -652,15 +652,13 @@
        (long (:inner-w region))]
 
       (doseq [y band-rows]
-        ;; the band's own paper is a NOTCH darker than the transcript it lies on,
-        ;; and the hint bar is a notch darker still — its own footer strip.
-        (let [paper (if (= y (dec (long (last rule-rows)))) (t/band-footer-bg) (t/band-bg))]
-          (expect (= paper (bg-at (inc left) y)))
-          (expect (= paper (bg-at (+ left inner-w) y)))
-          (expect (= t/terminal-bg (bg-at 0 y)))
-          ;; the rails themselves stand on the band's paper, not on the transcript's
-          (expect (= paper (bg-at (+ left inner-w 1) y)))
-          (expect (= t/terminal-bg (bg-at 79 y)))))
+        ;; the band wears the TERMINAL's own paper — no tint, body or footer:
+        ;; the border is what marks the band.
+        (expect (= t/terminal-bg (bg-at (inc left) y)))
+        (expect (= t/terminal-bg (bg-at (+ left inner-w) y)))
+        (expect (= t/terminal-bg (bg-at 0 y)))
+        (expect (= t/terminal-bg (bg-at (+ left inner-w 1) y)))
+        (expect (= t/terminal-bg (bg-at 79 y))))
       ;; the footer is FENCED OFF: its own rule sits directly above the hint bar,
       ;; so the band has three rules — opening, footer, closing.
       (expect (= 3 (count rule-rows)))
