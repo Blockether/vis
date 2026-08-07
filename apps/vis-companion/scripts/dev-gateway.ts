@@ -113,17 +113,38 @@ function scriptLiteral(value: unknown): string {
     .replaceAll('\u2029', '\\u2029');
 }
 
-/** Seed both the synchronous web mirror and Capacitor Preferences before React imports. */
+/**
+ * Seed both the synchronous web mirror and Capacitor Preferences before React imports.
+ *
+ * The registry knows an address and a token; everything else about a paired
+ * machine — the name a human typed into its header, its id, its pinned address —
+ * is owned by the APP and only lives in storage. So the seed MERGES onto what is
+ * already there, per URL, instead of writing the registry over it: a rename that
+ * survived the click has to survive the next page load too.
+ */
 export function devConnectionStorageScript(connections: DevGatewayConnection[]): string {
-  const encoded = JSON.stringify(connections);
   const primary = connections[0]?.url ?? '';
+  return `(() => {
+  const seeded = ${scriptLiteral(connections)};
+  let stored = [];
+  try {
+    const raw = localStorage.getItem('vis.connections');
+    if (raw) stored = JSON.parse(raw);
+  } catch {}
+  const kept = new Map(
+    (Array.isArray(stored) ? stored : [])
+      .filter((conn) => conn && typeof conn.url === 'string')
+      .map((conn) => [conn.url, conn]),
+  );
+  const merged = JSON.stringify(seeded.map((conn) => ({ ...kept.get(conn.url), ...conn })));
   const values = {
-    'vis.connections': encoded,
-    'CapacitorStorage.vis.connections': encoded,
-    'vis.primaryConnection': primary,
-    'CapacitorStorage.vis.primaryConnection': primary,
-    'vis.activeConnection': primary,
-    'CapacitorStorage.vis.activeConnection': primary,
+    'vis.connections': merged,
+    'CapacitorStorage.vis.connections': merged,
+    'vis.primaryConnection': ${scriptLiteral(primary)},
+    'CapacitorStorage.vis.primaryConnection': ${scriptLiteral(primary)},
+    'vis.activeConnection': ${scriptLiteral(primary)},
+    'CapacitorStorage.vis.activeConnection': ${scriptLiteral(primary)},
   };
-  return `for (const [key, value] of Object.entries(${scriptLiteral(values)})) localStorage.setItem(key, value);`;
+  for (const [key, value] of Object.entries(values)) localStorage.setItem(key, value);
+})();`;
 }

@@ -104,4 +104,47 @@ describe('companion dev gateway discovery', () => {
     expect(values.get('vis.primaryConnection')).toBe('');
     expect(values.get('vis.activeConnection')).toBe('');
   });
+  // Regression, turn 37: renaming a machine in its own header saved the label,
+  // and the next page load put the address back — the dev seed rewrote
+  // `vis.connections` from the registry alone and dropped every field the app
+  // owns.
+  it('keeps the name the human gave a machine', () => {
+    const values = new Map([
+      [
+        'vis.connections',
+        JSON.stringify([
+          {
+            url: 'http://127.0.0.1:7890',
+            token: 'stale-token',
+            label: 'tower',
+            id: 'be2c15686eaef0f4',
+          },
+        ]),
+      ],
+    ]);
+    const localStorage = {
+      getItem(key) {
+        return values.has(key) ? values.get(key) : null;
+      },
+      setItem(key, value) {
+        values.set(key, value);
+      },
+    };
+
+    new Function(
+      'localStorage',
+      devConnectionStorageScript([
+        { url: 'http://127.0.0.1:7890', token: 'fresh-token' },
+      ]),
+    )(localStorage);
+
+    expect(JSON.parse(values.get('vis.connections'))).toEqual([
+      {
+        url: 'http://127.0.0.1:7890',
+        token: 'fresh-token',
+        label: 'tower',
+        id: 'be2c15686eaef0f4',
+      },
+    ]);
+  });
 });
