@@ -366,12 +366,13 @@
              "reasoning"
              (get block "text")
 
-             ;; Same card the companion paints (`ChatContent.tsx`:
-             ;; `<strong>{code}</strong><span>{message}</span>`) - the machine
-             ;; code is the bold lead, the sentence follows. The TUI bubble
-             ;; painter tints those rows on the warning surface in error ink,
-             ;; so a failed turn reads as a card in both channels.
-             ("error" "notice")
+             ;; An ERROR names its machine code, the same card the companion
+             ;; paints (`ChatContent.tsx`: `<strong>{code}</strong><span>{message}</span>`):
+             ;; `turn_failed` is what a bug report quotes. A NOTICE is prose for
+             ;; a human - the companion prints its message alone, so the TUI does
+             ;; too. "turn_cancelled Cancelled by user." said the same thing
+             ;; twice, once in a token nobody outside this repo can read.
+             "error"
              (let
                [message
                 (get block "message")
@@ -380,6 +381,9 @@
                 (get block "code")]
 
                (if (and (seq code) (seq message)) (str "**" code "** " message) message))
+
+             "notice"
+             (get block "message")
 
              "tool"
              (some-> (get block "output")

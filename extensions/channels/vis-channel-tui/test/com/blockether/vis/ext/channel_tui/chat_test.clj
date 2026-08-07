@@ -489,6 +489,24 @@
           (expect (= "notice" (get-in result ["content" 0 "type"])))
           (expect (str/includes? (get-in result ["content" 0 "message"]) "Cancelled by user"))))))
 
+;; A NOTICE is prose, not a machine code: the TUI used to lead every notice with
+;; `**turn_cancelled** Cancelled by user.` while the companion (`ChatContent.tsx`)
+;; printed the sentence alone, so the terminal shouted an internal token at a
+;; human who had just pressed Esc. The ERROR card keeps its code — that is what a
+;; bug report quotes.
+(defdescribe
+  notice-markdown-test
+  (it "prints a notice's sentence alone, without its machine code"
+      (expect (= "Cancelled by user."
+                 (chat/content->markdown [{"id" "b1"
+                                           "type" "notice"
+                                           "code" "turn_cancelled"
+                                           "message" "Cancelled by user."}]))))
+  (it "still leads an error with its bold machine code"
+      (expect (= "**turn_failed** Turn failed."
+                 (chat/content->markdown
+                   [{"id" "b1" "type" "error" "code" "turn_failed" "message" "Turn failed."}])))))
+
 (defdescribe
   gateway-event-chunk-test
   ;; The gateway wire event ships the raw `:code`; the TUI renders it directly
