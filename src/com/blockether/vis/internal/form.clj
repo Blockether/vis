@@ -101,7 +101,7 @@
                                            the summary (a chevron/`<details>`)
 
    A call still RUNNING has no result yet, so the headline falls back to the
-   tool-authored `:pending-summary` (`shell_run`'s `$ npm test (running)`): the SAME
+   tool-authored `:pending-summary` (`$ npm test (running)`): the SAME
    card, in its awaiting state, rather than a bare unlabeled code band.
 
    `nil` for a NON-tool form (no `:vis/tool-name`) — its result rendering stays
