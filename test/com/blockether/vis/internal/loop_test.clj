@@ -591,7 +591,7 @@
                   (busy-cores 750)]
 
                  (try (let
-                        [result (binding [rt/*eval-timeout-ms* 3000]
+                        [result (binding [rt/*eval-timeout-ms* 1500]
                                   ((deref #'lp/run-python-code) pc "while True:\n    pass"))]
                         (expect (true? (:timeout? result)))
                         ;; The guest is GONE: no EXTRA core is spinning after the timeout.
@@ -617,7 +617,7 @@
                   (:python-context (env/create-python-context {}))]
 
                  (try (let
-                        [result (binding [rt/*eval-timeout-ms* 3000]
+                        [result (binding [rt/*eval-timeout-ms* 1000]
                                   ((deref #'lp/run-python-code) pc "print('fetched 1')\nwhile True:\n    pass"))]
 
                         (expect (true? (:timeout? result)))

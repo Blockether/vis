@@ -3,7 +3,8 @@
    the footer-frequency read must never re-run the full config enumeration on
    a warm caller, a stale snapshot must refresh OFF the calling thread, and
    every same-process fleet mutation must invalidate the snapshot."
-  (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]
+  (:require [lazytest.core :as lt]
+            [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]
             [com.blockether.vis.internal.cancellation :as cancel]
             [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
@@ -26,6 +27,19 @@
       (cond (= expected value) value
             (zero? attempts) nil
             :else (do (Thread/sleep 10) (recur (dec attempts)))))))
+
+;; Every fleet mutation fires the router-rebuild hook `loop` registers at load,
+;; and rebuilding the shared router enumerates each provider's LIVE `/models`
+;; catalog over the network — 20s of real HTTP inside a unit test, and a
+;; different 20s on a machine with no route out. The hook firing at all is what
+;; `picking-a-default-rebuilds-the-shared-router` asserts, with its own counting
+;; hook; everywhere else it is inert. Lazytest's clojure.test shim has no
+;; `use-fixtures`; a namespace-level `around-each` context is the same wrapping.
+(lt/set-ns-context! [(lt/around-each [f]
+                                     (let [prev (providers/router-rebuild-hook-val)]
+                                       (try (providers/set-router-rebuild-hook! (fn []))
+                                            (f)
+                                            (finally (providers/set-router-rebuild-hook! prev)))))])
 
 (deftest live-limits-unauthenticated-overrides-a-stale-credential-status
   (with-redefs
@@ -535,11 +549,16 @@
      (promise)
 
      probe
+     ;; The production ceiling is 5s, and proving a wedged callback is walled off
+     ;; costs that ceiling in wall-clock — twice, once per callback kind. The
+     ;; contract under test is the WALL, not its length, so shrink it: 10s of
+     ;; sleeping became 2s.
      (fn [provider]
-       (deref (cancel/worker-future "provider-probe-test"
-                                    #(providers/safe-provider-status provider))
-              8000
-              ::still-running))
+       (with-redefs [providers/probe-timeout-ms 1000]
+         (deref (cancel/worker-future "provider-probe-test"
+                                      #(providers/safe-provider-status provider))
+                8000
+                ::still-running)))
 
      status
      (probe {:id :wedged
