@@ -26,14 +26,27 @@ describe('where "New session" lives', () => {
     );
   });
 
-  // Regression: machine settings must remain reachable after project management
-  // joins it behind the same control.
-  it("keeps machine settings in the machine ⋯", () => {
-    expect(source).toContain(
+  // Regression, user report: the machine header should not carry a `⋯` at all —
+  // "add + and the gear and this will be add project and the machine settings".
+  // Its menu held exactly two rows, so it charged a tap and a guess for what two
+  // glyphs say on the band itself.
+  it("puts the machine's two verbs on the header, not behind a ⋯", () => {
+    expect(source).not.toContain("<KebabButton");
+    expect(source).not.toContain(
       "label={`Actions for ${machineLabel(machine.conn)}`}",
     );
+    expect(source).toContain(
+      "label={`Add a project on ${machineLabel(machine.conn)}`}",
+    );
+    expect(source).toContain('title="Add a project"');
+    expect(source).toContain('<PlusIcon className="size-4" />');
+    expect(source).toContain(
+      "label={`Settings for ${machineLabel(machine.conn)}`}",
+    );
     expect(source).toContain('title="Machine settings"');
-    expect(source).toContain("onMachineSettings(target)");
+    expect(source).toContain("onMachineSettings(machine.conn)");
+    // The `+` opens the SAME sheet the menu row opened, aimed at this machine.
+    expect(source).toContain("setManageProjects({ machine, at })");
   });
 
   // Regression, user report: "when I open the ⋯ the view is not coherent between the
@@ -46,7 +59,6 @@ describe('where "New session" lives', () => {
   // verb that creates. There is ONE `⋯` in this list now, on the machine, and removal
   // moved into the portal that manages projects, per project, where it belongs.
   it("opens the one overflow menu with the same button and the same Menu", () => {
-    expect(source.match(/<KebabButton/g)?.length).toBe(1);
     expect(source).not.toContain("label={`Actions for ${project}`}");
     expect(source).not.toContain("'purge'");
     // Removal is the portal's, and it is aimed by the project's canonical ROOT rather
@@ -61,7 +73,7 @@ describe('where "New session" lives', () => {
     // what this row can do". (The filter's own clear IS a plain icon button — it
     // opens no menu, so it must not wear the control that promises one.)
     expect(source).not.toContain("<DotsIcon");
-    expect(source.match(/<IconButton/g)?.length).toBe(1);
+    expect(source.match(/<IconButton/g)?.length).toBe(3);
     expect(source).toContain('label="Clear filter"');
     expect(source.match(/<Menu[\s>]/g)?.length).toBe(1);
     expect(source.match(/<MenuHeading>/g)?.length).toBe(2);

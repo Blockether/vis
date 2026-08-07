@@ -10,7 +10,6 @@ import {
   Pager,
   IconButton,
   Input,
-  KebabButton,
   LIST_EDGE,
   LIST_EDGE_END,
   LIST_FRAME,
@@ -63,6 +62,7 @@ import {
   CloseIcon,
   PencilIcon,
   ProjectsIcon,
+  PlusIcon,
   SettingsIcon,
   StarIcon,
   TrashIcon,
@@ -1395,10 +1395,33 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                             Retry
                           </Button>
                         )}
-                        <KebabButton
-                          label={`Actions for ${machineLabel(machine.conn)}`}
-                          onClick={(event) => openStartMenuAt(event.currentTarget, machine.conn)}
-                        />
+                        {/* The machine's two verbs, spelled out instead of parked behind a
+                            `⋯`: ADD a project, and open the machine's own settings. A
+                            two-item menu costs a tap and a guess to say what two glyphs
+                            say on the band itself. */}
+                        <IconButton
+                          label={`Add a project on ${machineLabel(machine.conn)}`}
+                          title="Add a project"
+                          onClick={(event) => {
+                            const at = menuPosition(
+                              event.currentTarget.getBoundingClientRect(),
+                              BROWSE_WIDTH,
+                            );
+                            if (!at) return;
+                            setManageProjects({ machine, at });
+                          }}
+                        >
+                          <PlusIcon className="size-4" />
+                        </IconButton>
+                        {onMachineSettings && (
+                          <IconButton
+                            label={`Settings for ${machineLabel(machine.conn)}`}
+                            title="Machine settings"
+                            onClick={() => onMachineSettings(machine.conn)}
+                          >
+                            <SettingsIcon className="size-4" />
+                          </IconButton>
+                        )}
                       </HeaderActions>
                     </MachineBanner>
                   {groups.length === 0
