@@ -961,13 +961,14 @@
 
 (defdescribe
   toggle-indent-test
-  "A TOGGLE paints no field surface, so it may not wear a field surface's inner
-   padding either: the pad exists to keep text off a coloured edge, and on the
-   dialog's own paper it is just a margin nobody asked for. A checkbox IS its own
-   label, so that margin made the one row that should line up with the other
-   labels the only row indented away from them."
+  "A form has ONE text column. A focusable row's accent ring lives in the frame's
+   own edge column — the gutter is OUTSIDE the text — so an option, a checkbox and
+   an input box all start exactly where the labels and the prose start. A ring cell
+   carved out of the text column indented every toggle away from the labels, and a
+   checkbox, which IS its own label, was then the only label in the form that did
+   not line up."
   (it
-    "starts a checkbox and an option one ring cell in, not two"
+    "starts a checkbox and an option in the label's own column"
     (let
       [{:keys [screen g]}
        (virtual-screen)
@@ -1002,9 +1003,9 @@
        (col-of "Environment")]
 
       (expect (some? label-col))
-      ;; The ring cell is the ONLY gutter a focusable row gets.
-      (expect (= (inc (long label-col)) (col-of "●")))
-      (expect (= (inc (long label-col)) (col-of "[ ]"))))))
+      ;; The text column is shared: no row is indented for a gutter.
+      (expect (= label-col (col-of "●")))
+      (expect (= label-col (col-of "[ ]"))))))
 
 (def ^:private prose
   "Two sentences of dialog prose — wider than any dialog row, so it reaches the

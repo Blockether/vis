@@ -703,11 +703,18 @@
   (max 1 (- (long inner-w) 2 1 (* 2 (long field-pad)))))
 
 (defn- draw-row-surface!
-  "The shared geometry of EVERY focusable form row, typed or toggled. The
-   dialog's own paper is cleared first — anything past the row's right edge
+  "The shared geometry of EVERY focusable form row, typed or toggled. A form has
+   ONE text column: the label, the prose, an option, a checkbox and an input box
+   all start at the dialog's own inner edge. The accent ring `▎` a focused row
+   wears lives OUTSIDE that column, in the frame's own edge column, so focus costs
+   the text no indent — a gutter carved out of the text column indented every
+   toggle away from its label, and a checkbox, which IS its own label, was the one
+   label in the form that did not line up.
+
+   The dialog's own paper is cleared first — anything past the row's right edge
    belongs to the body — then `bg` paints the row's surface, the text lands one
-   pad in from the ring cell, and a focused row wears the accent ring `▎` and
-   takes the ink (`box-fg`, bold) while an unfocused one recedes to
+   `pad` in from that surface's edge (none when there is no surface), and a focused
+   row takes the ink (`box-fg`, bold) while an unfocused one recedes to
    `dialog-hint`. Returns the column the text started at.
 
    Geometry is shared so a form's rows line up whatever they are; the SURFACE is
@@ -717,27 +724,30 @@
     [content-w
      (field-content-w inner-w)
 
-     ;; ring cell, then the surface's own pad (none when there is no surface),
-     ;; then the text.
+     ;; the ring sits in the frame's edge column; the text column starts at the
+     ;; dialog's own inner edge, where every label starts.
+     ring-col
+     (long left)
+
      field-left
      (inc (long left))
 
      text-left
-     (+ (long field-left) 1 (long pad))
+     (+ (long field-left) (long pad))
 
      shown
      (ellipsize (str content) content-w)]
 
     (p/set-colors! g t/dialog-fg t/dialog-bg)
-    (p/fill-rect! g (inc (long left)) row inner-w 1)
+    (p/fill-rect! g ring-col row (inc (long inner-w)) 1)
     (p/set-colors! g (if focused? t/box-fg t/dialog-hint) bg)
     (p/fill-rect! g field-left row (+ content-w 1 (* 2 (long pad))) 1)
     (if focused?
       (p/styled g [p/BOLD] (p/put-str! g text-left row shown))
       (p/put-str! g text-left row shown))
     (when focused?
-      (p/set-colors! g t/header-active-tab-accent bg)
-      (p/put-str! g field-left row "▎"))
+      (p/set-colors! g t/header-active-tab-accent t/dialog-bg)
+      (p/put-str! g ring-col row "▎"))
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     text-left))
 
