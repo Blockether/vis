@@ -1221,34 +1221,16 @@ export function ApplicationSettingsDialog({
             meta={`${themes.length} available`}
           >
             <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-2">
-              {themes.map((choice) => {
-                const selected = pref === choice.id;
-                return (
-                  <button
-                    type="button"
-                    key={choice.id}
-                    disabled={pending?.startsWith("theme:") ?? false}
-                    onClick={() => void chooseTheme(choice)}
-                    className={`flex min-h-10 items-center justify-between gap-3 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none mouse:min-h-9 ${selected ? "bg-accent text-accent-foreground" : "bg-input text-white hover:bg-hover"}`}
-                    aria-pressed={selected}
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate font-mono text-ui font-bold">
-                        {choice.display_name}
-                      </span>
-                      <span className="block font-mono text-chip uppercase tracking-wider opacity-65">
-                        {choice.mode}
-                      </span>
-                    </span>
-                    <span
-                      className="shrink-0 font-mono text-meta font-black"
-                      aria-hidden="true"
-                    >
-                      {selected ? "●" : "○"}
-                    </span>
-                  </button>
-                );
-              })}
+              {themes.map((choice) => (
+                <ChoiceCell
+                  key={choice.id}
+                  title={choice.display_name}
+                  sub={choice.mode}
+                  selected={pref === choice.id}
+                  disabled={pending?.startsWith("theme:") ?? false}
+                  onClick={() => void chooseTheme(choice)}
+                />
+              ))}
             </div>
           </SettingsPanel>
 
@@ -1262,70 +1244,46 @@ export function ApplicationSettingsDialog({
                 { size: 5, label: "compact" },
                 { size: 10, label: "balanced" },
                 { size: 15, label: "detailed" },
-              ].map(({ size, label }) => {
-                const selected = size === pageSize;
-                return (
-                  <button
-                    type="button"
-                    key={size}
-                    disabled={pending?.startsWith("pageSize:") ?? false}
-                    onClick={() => void choosePageSize(size)}
-                    className={`flex min-h-10 min-w-0 items-center justify-between gap-2 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none mouse:min-h-9 ${selected ? "bg-accent text-accent-foreground" : "bg-input text-white hover:bg-hover"}`}
-                    aria-pressed={selected}
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate font-mono text-ui font-bold">
-                        {size}
-                      </span>
-                      <span className="block font-mono text-chip uppercase tracking-wider opacity-65">
-                        {label}
-                      </span>
-                    </span>
-                    <span
-                      className="shrink-0 font-mono text-meta font-black"
-                      aria-hidden="true"
-                    >
-                      {selected ? "●" : "○"}
-                    </span>
-                  </button>
-                );
-              })}
+              ].map(({ size, label }) => (
+                <ChoiceCell
+                  key={size}
+                  title={String(size)}
+                  sub={label}
+                  selected={size === pageSize}
+                  disabled={pending?.startsWith("pageSize:") ?? false}
+                  onClick={() => void choosePageSize(size)}
+                />
+              ))}
             </div>
           </SettingsPanel>
 
+          {/* The odd one out until now: a lone on/off button whose label, its
+              sub-line AND a chip all changed at once, so the row said "on",
+              "off" and two different sentences about menus and nobody could
+              tell what it did. It is a CHOICE, like every other setting in this
+              dialog — two named outcomes, the same cell, the ring on the one
+              you have. */}
           <SettingsPanel
-            title="Offer drafts"
-            description="A draft is a private copy of a project, so an agent can work without touching the repo. With this off, a new session always starts in the project itself and the question is never asked."
-            meta={
-              <span className="inline-block w-6 text-right">
-                {offerDrafts ? "on" : "off"}
-              </span>
-            }
+            title="Where a new session starts"
+            description="A draft is a private copy of a project. An agent can work in a draft without touching your real files, and you throw it away when you are done."
+            meta="saved on this device"
           >
-            <button
-              type="button"
-              aria-pressed={offerDrafts}
-              disabled={pending === "offerDrafts"}
-              onClick={() => void chooseOfferDrafts(!offerDrafts)}
-              className={`flex min-h-11 w-full items-center justify-between gap-3 px-3 py-1.5 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none ${offerDrafts ? "bg-accent text-accent-foreground" : "bg-input text-white hover:bg-hover"}`}
-            >
-              <span className="min-w-0">
-                <span className="block truncate font-mono text-ui font-bold">
-                  Ask where a session starts
-                </span>
-                <span className="block font-mono text-chip uppercase tracking-wider opacity-65">
-                  {offerDrafts
-                    ? "a machine's menu offers a draft too"
-                    : "a machine's menu starts in the project"}
-                </span>
-              </span>
-              {/* A state word that CHANGES has to reserve the widest of its states:
-                  `on` is 12px and `off` is 18px, so a `justify-between` row slid its
-                  chip 6px left on every tap. Fixed box, right-aligned ink. */}
-              <span className="inline-block w-6 shrink-0 text-right font-mono text-chip uppercase tracking-wider">
-                {offerDrafts ? "on" : "off"}
-              </span>
-            </button>
+            <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-2">
+              <ChoiceCell
+                title="In the project"
+                sub="start straight away"
+                selected={!offerDrafts}
+                disabled={pending === "offerDrafts"}
+                onClick={() => void chooseOfferDrafts(false)}
+              />
+              <ChoiceCell
+                title="Ask me first"
+                sub="project or a draft"
+                selected={offerDrafts}
+                disabled={pending === "offerDrafts"}
+                onClick={() => void chooseOfferDrafts(true)}
+              />
+            </div>
           </SettingsPanel>
         </div>
       </DialogFrame>
@@ -2024,6 +1982,52 @@ function NativeNotificationsPanel({
         )}
       </div>
     </SettingsPanel>
+  );
+}
+
+/**
+ * ONE settings choice — the only control this dialog picks with. Theme, sessions
+ * per project and where a session starts all wear it, so a setting is read the
+ * same way everywhere: a name, the quiet word under it, and `●`/`○` for whether
+ * this is the one you have. Three hand-spelled copies of this button had already
+ * drifted apart in height and gap.
+ */
+function ChoiceCell({
+  title,
+  sub,
+  selected,
+  disabled,
+  onClick,
+}: {
+  title: string;
+  sub: string;
+  selected: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      disabled={disabled}
+      onClick={onClick}
+      className={`flex min-h-10 min-w-0 items-center justify-between gap-3 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none mouse:min-h-9 ${selected ? "bg-accent text-accent-foreground" : "bg-input text-white hover:bg-hover"}`}
+    >
+      <span className="min-w-0">
+        <span className="block truncate font-mono text-ui font-bold">
+          {title}
+        </span>
+        <span className="block truncate font-mono text-chip uppercase tracking-wider opacity-65">
+          {sub}
+        </span>
+      </span>
+      <span
+        className="shrink-0 font-mono text-meta font-black"
+        aria-hidden="true"
+      >
+        {selected ? "●" : "○"}
+      </span>
+    </button>
   );
 }
 

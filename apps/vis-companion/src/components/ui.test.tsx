@@ -797,22 +797,26 @@ describe("a row's pressable slab", () => {
   });
 });
 
-// Regression, user report ("the offer drafts is fucking jumping ... left right, because
-// of the justify"): the `on`/`off` state word was auto-width inside a `justify-between`
-// row, so `on` (12px) and `off` (18px) moved the chip 6px sideways on every tap.
-describe("Offer drafts' state word", () => {
-  it("reserves the width of its widest state in both places it is spelled", () => {
-    const spellings: string[] = [];
-    let at = settingsSource.indexOf('offerDrafts ? "on" : "off"');
-    while (at !== -1) {
-      spellings.push(settingsSource.slice(Math.max(0, at - 200), at));
-      at = settingsSource.indexOf('offerDrafts ? "on" : "off"', at + 1);
-    }
-    expect(spellings.length).toBeGreaterThanOrEqual(2);
-    for (const before of spellings) {
-      const span = before.slice(before.lastIndexOf("<span"));
-      expect(span).toContain("w-6");
-      expect(span).toContain("text-right");
-    }
+// Regression, user report ("the offer drafts is fucking jumping ... left right",
+// then "we need to normalize this setting because it's so hard to read"): the
+// setting was a lone on/off button whose title, sub-line and a trailing state word
+// all changed at once — and the auto-width `on`/`off` slid the row 6px sideways on
+// every tap. It is a CHOICE now, spelled with the dialog's one choice control.
+describe("where a new session starts", () => {
+  it("is a pair of named choices, not a toggle with a changing state word", () => {
+    expect(settingsSource).not.toContain('offerDrafts ? "on" : "off"');
+    expect(settingsSource).toContain('title="Where a new session starts"');
+    expect(settingsSource).toContain('title="In the project"');
+    expect(settingsSource).toContain('title="Ask me first"');
+    expect(settingsSource).toContain("selected={!offerDrafts}");
+  });
+
+  it("picks every setting with the one ChoiceCell, spelled once", () => {
+    expect(settingsSource.match(/<ChoiceCell/g)?.length).toBe(4);
+    expect(settingsSource.match(/function ChoiceCell\(/g)?.length).toBe(1);
+    // No hand-rolled copy of it left behind.
+    expect(settingsSource).not.toContain(
+      '{selected ? "\u25cf" : "\u25cb"}\n                    </span>',
+    );
   });
 });
