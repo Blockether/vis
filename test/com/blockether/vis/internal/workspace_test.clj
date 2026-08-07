@@ -380,17 +380,19 @@
                                          (catch Throwable _ nil))))))))))
         (finally (delete-tree! base))))))
 
-(defdescribe clean-draft-requires-commit-test
-             (it "create! :clean? surfaces Rift's native Git refusal when no commit exists"
+;; Regression, reported Rift clean issue: a project that was never `git init`-ed
+;; reached the native clone at all — the refusal came from Rift's Git error after
+;; a copy had been made, instead of from Vis before one was.
+(defdescribe clean-draft-requires-a-git-project-test
+             (it "create! :clean? refuses a project that is not Git-managed"
                  (let [base (temp-dir "vis-ws-clean-nogit")]
                    (try (with-store (fn [store]
                                       (let [seed (seed-workspace! store base)]
                                         (expect (try (ws/create! store {:from seed :clean? true})
                                                      false
                                                      (catch clojure.lang.ExceptionInfo e
-                                                       (= {:type :rift/error :code "git"}
-                                                          (select-keys (ex-data e)
-                                                                       [:type :code]))))))))
+                                                       (= :workspace/clean-unavailable
+                                                          (:type (ex-data e)))))))))
                         (finally (delete-tree! base))))))
 
 (defdescribe

@@ -106,7 +106,8 @@
 (defn- handle-create
   "Shared `/draft new` + `/draft clean` implementation. `clean?` false clones cwd
    exactly as it stands (uncommitted work included); true clones, then rewinds the
-   copy to the COMMITTED HEAD so uncommitted work stays behind in cwd."
+   copy to the COMMITTED HEAD so uncommitted work stays behind in cwd — which only
+   means something in a Git-managed project."
   [ctx clean?]
   (let
     [db
@@ -137,6 +138,14 @@
       ;; the label (see the `:slash/prompt-arg` on this spec); other channels
       ;; get this explicit nudge instead of a silent "draft" default.
       (nil? label) (err (str "Name the draft: " usage))
+      ;; A clean draft seeds from the last COMMIT, so it only exists where there
+      ;; is one. Say that here instead of letting the clone refuse underneath.
+      (and clean? (not (workspace/git-managed? (or (:repo-root current) (workspace/trunk-root)))))
+      (err "/draft clean needs a Git repository"
+           :slash/body
+           (str "This project isn't Git-managed, so there is no commit to start "
+                "from. Use /draft new <label> to clone your working tree as it "
+                "stands."))
       (not (workspace/isolated-workspaces-supported? (or (:root current) (workspace/trunk-root))))
       (let [root (or (:root current) (workspace/trunk-root))]
         (err "No workspace backend can create an isolated draft here"

@@ -1376,6 +1376,14 @@
                      (catch Throwable _ nil))))
         plan))
 
+(defn git-managed?
+  "True when `root` is the top of a Git working tree, reading exactly the fact
+   Rift reads: a `.git` directory, or the link file of a linked worktree.
+   Deliberately filesystem-only — `internal.git` requires this namespace, so
+   requiring it back would close a load cycle."
+  [root]
+  (.exists (io/file (file-path root) ".git")))
+
 (defn create!
   "Create an isolated DRAFT using the strongest available backend and pin it
    to `:session-state-id`. The backend must provide the full draft capability
@@ -1386,14 +1394,28 @@
    inherit its `:repo-root` (apply target); otherwise the parent is the
    user's real cwd (trunk).
 
-   `:clean? true` forks the REAL tree and asks Rift to restore the clone to its
-   detached HEAD. Rift owns the Git index/worktree reset, removes uncommitted
-   paths, and records those omissions in its marker. The baseline is captured
-   after that operation so the reset is not read as an agent edit."
+   `:clean? true` forks the REAL tree and asks Rift to hand the clone back
+   WITHOUT the changes that were pending in it. Rift owns the Git index/worktree
+   reset, removes uncommitted paths, and records those omissions in its marker.
+   The baseline is captured after that operation so the reset is not read as an
+   agent edit. A project that is not Git-managed has no committed state to seed
+   from, so a clean draft is refused there before anything is cloned."
   [db-info {:keys [session-state-id label from clean? filesystem-roots]}]
   (let
     [trunk
      (or (:repo-root from) (trunk-root))
+
+     ;; A clean draft means "hand me this project at its committed state", so it
+     ;; is a Git question. Without a repository there is no committed state to
+     ;; seed from, and Rift would hand back the copy unchanged; refuse here,
+     ;; before anything is cloned, rather than call a draft full of pending work
+     ;; clean.
+     _
+     (when (and clean? (not (git-managed? trunk)))
+       (throw (ex-info (str "A clean draft needs a Git-managed project: "
+                            (file-path trunk)
+                            " is not a Git repository.")
+                       {:type :workspace/clean-unavailable :root (file-path trunk)})))
 
      parent
      (or (:root from) (trunk-root))
