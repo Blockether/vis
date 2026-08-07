@@ -61,7 +61,6 @@ import {
 } from '../components/ManageProjectsSheet';
 import {
   CloseIcon,
-  DraftIcon,
   PencilIcon,
   ProjectsIcon,
   SettingsIcon,
@@ -114,7 +113,6 @@ import {
   startFlowName,
   startFlowOn,
   startFlowOpen,
-  startFlowStep,
   startFlowBack,
   machineProject,
   startFlowPick,
@@ -743,9 +741,20 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
   const ask = startAsk(machines, scopeTarget, startFlowOn(startFlow));
   const target = ask.on;
   const targetMachine = ask.machine;
+  // Which project header opened the draft picker, so the list it reads is that
+  // project's own and not merely the machine's most recent one.
+  const [draftRoot, setDraftRoot] = useState<string | null>(null);
+  // Parked drafts belong to a PROJECT, and the split button that asks for them sits on
+  // that project's header — so the probe is a session in the very root that was tapped.
+  // Falling back to any session of the machine keeps every other caller unchanged.
   const draftProbe = useMemo(
-    () => targetMachine?.sessions?.find((session) => projectPath(session)) ?? null,
-    [targetMachine],
+    () =>
+      targetMachine?.sessions?.find(
+        (session) => draftRoot !== null && projectPath(session) === draftRoot,
+      ) ??
+      targetMachine?.sessions?.find((session) => projectPath(session)) ??
+      null,
+    [targetMachine, draftRoot],
   );
   const draftRepo = draftProbe ? projectLabel(draftProbe) : '';
   // Where that machine is working RIGHT NOW: the root of its most recent session.
@@ -822,6 +831,19 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
   // Re-anchoring an OPEN menu keeps every answer in it: a resize is not an answer, and
   // on a phone the keyboard fires one in the very tap that opens it.
   const openStartMenu = useCallback(() => openStartMenuAt(null), [openStartMenuAt]);
+
+  /**
+   * The draft half of a project header's split button: one tap lands on the draft
+   * question with machine AND project already answered. It used to be a row inside the
+   * machine's `⋯`, two headers above the project it actually forks.
+   */
+  const openDraftsAt = useCallback((anchor: HTMLElement, on: GatewayConn, root: string) => {
+    startAnchorEl.current = anchor;
+    const at = menuPosition(anchor.getBoundingClientRect(), MENU_WIDTH);
+    if (!at) return;
+    setDraftRoot(root);
+    setStartFlow({ step: 'drafts', at, on });
+  }, []);
 
   // Leaving the order — tap outside, Escape, Cancel, or a session actually created
   // — forgets every answer in it, INCLUDING which machine. That machine used to
@@ -1442,6 +1464,11 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                           onRename={startRename}
                           onDelete={startDelete}
                           onNewSession={(root) => void createSession({ kind: 'trunk' }, machine.conn, root)}
+                          onNewDraft={
+                            offerDrafts
+                              ? (anchor, root) => openDraftsAt(anchor, machine.conn, root)
+                              : undefined
+                          }
                           expanded={expanded.has(`${key}\u0000${groupRoot}`)}
                           forceExpand={forceExpand}
                           onToggle={toggleProject}
@@ -1544,16 +1571,6 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                files, the machine itself. */
             <>
               <MenuHeading>{machineLabel(target)}</MenuHeading>
-              {/* A draft is an expert move and costs everyone else a question, so it
-                  is a SECOND verb and only when the app was told to offer it. */}
-              {offerDrafts && (
-                <MenuItem
-                  icon={<DraftIcon className="size-4" />}
-                  title="New session in a draft…"
-                  hint={`a private copy of ${project?.label ?? 'this project'}, uncommitted work included`}
-                  onSelect={() => setStartFlow((flow) => startFlowStep(flow, 'drafts', target))}
-                />
-              )}
               {/* Managing a machine's project folders is a machine verb, so it is
                   BEHIND this control with the other ones instead of sitting beside it
                   as a second word-button in the header's right corner. */}
@@ -1814,6 +1831,7 @@ const ProjectGroup = memo(function ProjectGroup({
   onRename,
   onDelete,
   onNewSession,
+  onNewDraft,
   expanded,
   forceExpand,
   onToggle,
@@ -1832,6 +1850,8 @@ const ProjectGroup = memo(function ProjectGroup({
   onRename: (session: Session, conn: GatewayConn) => void;
   onDelete: (session: Session, conn: GatewayConn) => void;
   onNewSession: (root: string) => void;
+  /** Undefined while `Offer drafts` is off — then the button has no second half. */
+  onNewDraft?: (anchor: HTMLElement, root: string) => void;
   expanded: boolean;
   forceExpand: boolean;
   onToggle: (groupKey: string) => void;
@@ -1913,6 +1933,7 @@ const ProjectGroup = memo(function ProjectGroup({
             machine={machineLabel(conn)}
             where={project}
             onPress={() => onNewSession(root)}
+            onDraft={onNewDraft ? (anchor) => onNewDraft(anchor, root) : undefined}
           />
         </HeaderActions>
       </SectionHeader>

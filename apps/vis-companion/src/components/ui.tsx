@@ -10,7 +10,7 @@ import {
 import type { MachineColor } from '../lib/machine-colors';
 import { createPortal } from 'react-dom';
 
-import { ChevronIcon, CloseIcon, DotsIcon } from './icons';
+import { ChevronIcon, CloseIcon, DotsIcon, DraftIcon } from './icons';
 
 // Ref-forwarding: a button that ANCHORS something (a popover, a focus return) has
 // to be measurable by its owner, and cloning the element's classes at the call site
@@ -1021,19 +1021,30 @@ export function MachineMark({ color, size = 'inline' }: { color: MachineColor; s
  *
  * `pressEffect="none"`: a machine with no project yet falls through to the folder
  * browser anchored on this button, and a transform moves the box that was measured.
+ *
+ * `onDraft` makes it a SPLIT button. A draft is the same verb in a different place —
+ * this project, copied privately — so it is not a second word-button, and it is no
+ * longer a row in the machine's `⋯` two headers up, where it named a machine rather
+ * than the project it actually forks. It is the amber half joined to the amber verb,
+ * carrying the draft mark and nothing else: one control, one colour, one edge, and
+ * the rarer half costs the width of a glyph. It exists only when the app was told to
+ * offer drafts; without it this is a plain button again, exactly as it was.
  */
 export function NewSessionButton({
   machine,
   where,
   disabled,
   onPress,
+  onDraft,
 }: {
   machine: string;
   where?: string | null;
   disabled?: boolean;
   onPress: (anchor: HTMLElement) => void;
+  /** Omitted while `Offer drafts` is off — then there is no second half at all. */
+  onDraft?: (anchor: HTMLElement) => void;
 }) {
-  return (
+  const verb = (
     <Button
       type="button"
       pressEffect="none"
@@ -1041,10 +1052,31 @@ export function NewSessionButton({
       disabled={disabled}
       aria-label={`New session on ${machine}`}
       title={where ? `New session on ${machine}, in ${where}` : `New session on ${machine}`}
-      className="shrink-0 whitespace-nowrap"
+      className={`shrink-0 whitespace-nowrap${onDraft ? ' border-r-0' : ''}`}
       onClick={(event) => onPress(event.currentTarget)}
     >
       New session
     </Button>
+  );
+  if (!onDraft) return verb;
+  return (
+    <span className="flex shrink-0 items-stretch">
+      {verb}
+      {/* The seam is the only thing between the two halves: same fill, same height, a
+          hairline in the ink they both carry. A second bordered box beside the verb
+          would read as a different control doing a different thing. */}
+      <Button
+        type="button"
+        pressEffect="none"
+        density="compact"
+        disabled={disabled}
+        aria-label={`New session in a draft of ${where ?? 'this project'} on ${machine}`}
+        title={`New session in a draft — a private copy of ${where ?? 'this project'}`}
+        className="shrink-0 border-l-accent-foreground/30 px-2"
+        onClick={(event) => onDraft(event.currentTarget)}
+      >
+        <DraftIcon className="size-4" />
+      </Button>
+    </span>
   );
 }

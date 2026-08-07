@@ -1,3 +1,4 @@
+import uiSource from "./ui.tsx?raw";
 import sessionsSource from "../screens/SessionsScreen.tsx?raw";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -486,12 +487,14 @@ describe("DraftIcon", () => {
     expect(html.match(/<circle/g)?.length).toBe(2);
   });
 
-  it("marks the draft verb in the start menu", () => {
-    const sessions = sessionsSource;
-    const band = sessions.slice(
-      sessions.indexOf("{offerDrafts && ("),
-      sessions.indexOf('title="Manage projects"'),
-    );
-    expect(band).toContain('<DraftIcon className="size-4" />');
+  // Regression, user report ("New session in a draft should be under the project line,
+  // not the machine one — and there is already a New session button there"): the draft
+  // verb lived in the machine's menu, two headers above the project it forks. It is now
+  // the second half of that project's own split button, and the machine menu has no
+  // draft row left to carry a mark.
+  it("marks the draft half of the project header's split button", () => {
+    const split = uiSource.slice(uiSource.indexOf("export function NewSessionButton"));
+    expect(split).toContain('<DraftIcon className="size-4" />');
+    expect(sessionsSource).not.toContain("<DraftIcon");
   });
 });

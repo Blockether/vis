@@ -820,3 +820,41 @@ describe("where a new session starts", () => {
     );
   });
 });
+
+// Regression, user report ("New session in a draft should be under the project line,
+// not the machine one — and there is already a New session button there"): the draft
+// verb was a row in the machine's kebab menu, two headers above the project it forks,
+// while the project header carried the plain verb alone.
+describe("NewSessionButton, split", () => {
+  it("carries the draft as a joined second half, not a second button", () => {
+    const html = renderToStaticMarkup(
+      <NewSessionButton machine="visgw" where="vis" onPress={() => {}} onDraft={() => {}} />,
+    );
+    // One cluster, two halves of the same amber box: the verb drops its trailing
+    // border and the draft half wears the seam.
+    expect(html).toContain("border-r-0");
+    expect(html).toContain("border-l-accent-foreground/30");
+    // It NAMES the project it forks and the machine it forks on: several headers are
+    // on screen at once and "New session" alone says nothing to a screen reader.
+    expect(html).toContain('aria-label="New session in a draft of vis on visgw"');
+  });
+
+  it("is a plain button when drafts are not offered", () => {
+    const html = renderToStaticMarkup(
+      <NewSessionButton machine="visgw" where="vis" onPress={() => {}} />,
+    );
+    expect(html).not.toContain("border-r-0");
+    expect(html).not.toContain("in a draft");
+  });
+
+  it("hangs the draft question off the project header, never the machine menu", () => {
+    // The project header's split button is the only way in...
+    expect(sessionsListSource).toContain("onDraft={onNewDraft ?");
+    expect(sessionsListSource).toContain("const openDraftsAt = useCallback(");
+    // ...and the machine's own menu keeps only what is genuinely a machine verb.
+    expect(sessionsListSource).not.toContain('title="New session in a draft…"');
+    // The parked drafts read belongs to the project that was tapped, not to whatever
+    // the machine happened to touch last.
+    expect(sessionsListSource).toContain("projectPath(session) === draftRoot");
+  });
+});
