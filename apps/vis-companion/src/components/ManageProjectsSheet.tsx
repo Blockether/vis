@@ -36,6 +36,15 @@ const CRUMB_TAIL = 3;
  */
 const SHEET_EDGE = 'px-3';
 
+/**
+ * Both spellings of the path bar — the crumbs and the typed input — are the SAME band,
+ * so the pencil toggles what is inside it and never how tall it is. `min-h` let the
+ * crumb row (a 44px button on a fractional line box) settle at 45 while the input row
+ * settled at 44, and every row below jumped 1px on the toggle. A fixed height is the
+ * only spelling that cannot drift, and there is one of it.
+ */
+const PATH_BAND = 'flex h-11 shrink-0 items-center border-b border-dialog-edge mouse:h-9';
+
 interface Crumb {
   label: string;
   path: string;
@@ -333,7 +342,7 @@ export function ManageProjectsSheet({
 
       {typed === null ? (
         <div
-          className={`flex min-h-11 shrink-0 items-center gap-1 border-b border-dialog-edge bg-panel-2 mouse:min-h-9 ${SHEET_EDGE}`}
+          className={`${PATH_BAND} gap-1 bg-panel-2 ${SHEET_EDGE}`}
         >
           {crumbs.length > shown.length && (
             <span className="shrink-0 font-mono text-meta text-dialog-hint" aria-hidden>
@@ -373,7 +382,7 @@ export function ManageProjectsSheet({
         </div>
       ) : (
         <div
-          className={`flex min-h-11 shrink-0 items-center gap-2 border-b border-dialog-edge bg-panel-2 mouse:min-h-9 ${SHEET_EDGE}`}
+          className={`${PATH_BAND} gap-2 bg-panel-2 ${SHEET_EDGE}`}
         >
           <Input
             autoFocus
@@ -396,7 +405,7 @@ export function ManageProjectsSheet({
 
       {folder !== null && (
         <div
-          className={`flex min-h-11 shrink-0 items-center gap-2 border-b border-dialog-edge bg-panel mouse:min-h-9 ${SHEET_EDGE}`}
+          className={`${PATH_BAND} gap-2 bg-panel ${SHEET_EDGE}`}
         >
           <span aria-hidden className="shrink-0 font-mono text-ui text-accent-ink">
             +
