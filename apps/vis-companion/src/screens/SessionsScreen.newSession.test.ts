@@ -498,6 +498,12 @@ describe('the machine strip', () => {
     // the screen no longer spells a tab's box out at the call site.
     expect(source).toContain("<MachineSwitcher>");
     expect(source).toContain("<MachineTab");
+    // Regression, user report: remove the live tally, keep only news, and hide the
+    // switcher when a single machine is paired (a tab that switches to itself).
+    expect(source).toContain("machines.length > 1 &&");
+    expect(source).toContain("hasUnread={(tally?.unread ?? 0) > 0}");
+    expect(source).not.toContain("<UnreadBadge");
+    expect(source).not.toContain("sr-only\"> live");
     expect(source).not.toContain("chipClass");
     expect(source).not.toContain('inline-flex min-h-6');
   });

@@ -24,7 +24,6 @@ import {
   RowDisclosure,
   SectionHeader,
   Spinner,
-  UnreadBadge,
 } from '../components/ui';
 import {
   Menu,
@@ -1111,39 +1110,29 @@ export function SessionsScreen({
         aria-label="Machines"
         className="relative z-10 flex items-center gap-1.5 px-3 pb-3 pt-6 sm:px-4 sm:pb-4 sm:pt-8"
       >
+        {/* ONE MACHINE IS NOT A CHOICE. With a solo gateway paired the switcher had
+            exactly one tab, always on, switching to itself — a row of chrome that
+            costs a phone a band and answers nothing. The verb beside it stays. */}
+        {machines.length > 1 && (
           <MachineSwitcher>
-          {machines.map((machine) => {
-            const key = machineKey(machine.conn);
-            const tally = tallies.get(key);
-            return (
-              <MachineTab
-                key={key}
-                isOn={scope === key}
-                onClick={() => selectScope(key)}
-              >
-                <MachineMark color={machineColor(machineColors, key)} />
-                {machineLabel(machine.conn)}
-                {machine.error ? (
-                  <span className="opacity-70">offline</span>
-                ) : (
-                  <>
-                    {/* A COUNT INSIDE A TILE IS INK, NOT A THIRD BOX. The live tally
-                        was a filled green pill inside a bordered chip inside a row:
-                        boxes three deep in 32px. Live is the machine's resting state,
-                        so it is plain ink; unread is news and keeps its amber block. */}
-                    {(tally?.live ?? 0) > 0 && (
-                      <span className="tabular-nums opacity-70">
-                        {tally?.live}
-                        <span className="sr-only"> live</span>
-                      </span>
-                    )}
-                    <UnreadBadge count={tally?.unread ?? 0} />
-                  </>
-                )}
-              </MachineTab>
-            );
-          })}
+            {machines.map((machine) => {
+              const key = machineKey(machine.conn);
+              const tally = tallies.get(key);
+              return (
+                <MachineTab
+                  key={key}
+                  isOn={scope === key}
+                  hasUnread={(tally?.unread ?? 0) > 0}
+                  onClick={() => selectScope(key)}
+                >
+                  <MachineMark color={machineColor(machineColors, key)} />
+                  {machineLabel(machine.conn)}
+                  {machine.error && <span className="opacity-70">offline</span>}
+                </MachineTab>
+              );
+            })}
           </MachineSwitcher>
+        )}
           {/* ADDING A MACHINE IS THE TAB STRIP'S OWN VERB, AND IT IS A WORD.
 
               The strip answers "which machine", so "one more machine" belongs at its

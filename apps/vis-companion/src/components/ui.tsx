@@ -1230,10 +1230,14 @@ export function MachineMark({ color, size = 'inline' }: { color: MachineColor; s
  * down together to 24px — so the switch and `Add machine` share one baseline
  * whatever the pointer. Overflow scrolls INSIDE the clipped track, so a fleet of
  * six never widens the row or pushes the verb off the trailing edge.
+ *
+ * The corners are SQUARE. This screen's paper is a stack of square bands — machine
+ * card, project header, session rows — and a pill-cornered track floating above them
+ * was the only such shape on the page.
  */
 export function MachineSwitcher({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-w-0 shrink items-center gap-0.5 overflow-x-auto rounded-lg bg-level-machine p-0.5">
+    <div className="flex min-w-0 shrink items-center gap-0.5 overflow-x-auto bg-level-machine p-0.5">
       {children}
     </div>
   );
@@ -1243,14 +1247,21 @@ export function MachineSwitcher({ children }: { children: ReactNode }) {
  * One machine inside the switcher's track. Selection is a RAISED TILE — the page's
  * own paper lifted out of the track — never a border and never the accent: amber is
  * this product's verb colour, and a selected tab painted in it reads as a button
- * that will do something when you press it.
+ * that will do something when you press it. Square, like the track that holds it.
+ *
+ * News is a HIGHLIGHT, not a tally. A machine tab carried two numbers (live, unread)
+ * and the reader had to learn a colour code to tell them apart; what a tab has to say
+ * is "something happened over here", so unread is one amber mark and bold ink. The
+ * exact count belongs to the session rows that own it.
  */
 export function MachineTab({
   isOn,
+  hasUnread,
   onClick,
   children,
 }: {
   isOn: boolean;
+  hasUnread?: boolean;
   onClick: () => void;
   children: ReactNode;
 }) {
@@ -1259,13 +1270,20 @@ export function MachineTab({
       type="button"
       aria-pressed={isOn}
       onClick={onClick}
-      className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none mouse:h-5 ${
+      className={`inline-flex h-7 shrink-0 items-center gap-1.5 px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none mouse:h-5 ${
         isOn
           ? 'bg-panel font-bold text-white shadow-sm'
-          : 'text-dialog-hint hover:text-white'
+          : hasUnread
+            ? 'font-bold text-white'
+            : 'text-dialog-hint hover:text-white'
       }`}
     >
       {children}
+      {hasUnread && (
+        <span className="inline-block size-1.5 shrink-0 bg-accent">
+          <span className="sr-only">unread</span>
+        </span>
+      )}
     </button>
   );
 }

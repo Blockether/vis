@@ -1027,6 +1027,9 @@ describe("MachineSwitcher", () => {
     expect(html).toContain("mouse:h-5");
     // Six machines scroll INSIDE the clipped track rather than widening the row.
     expect(html).toContain("overflow-x-auto");
+    // Regression, user report: "definitely there should be no rounded corners" — this
+    // screen is a stack of square bands and the track was the only pill on the page.
+    expect(html).not.toContain("rounded");
   });
 
   it("gives the chosen machine a raised tile and the rest no box at all", () => {
@@ -1047,5 +1050,26 @@ describe("MachineSwitcher", () => {
     // Nothing inside the track is bordered, selected or not.
     for (const html of [on, off]) expect(html).not.toContain("border");
     expect(off).toContain("text-dialog-hint");
+  });
+
+  // Regression, user report: the tab carried a live count and an unread count, so the
+  // reader had to learn a colour code to tell two numbers apart. News is a HIGHLIGHT.
+  it("marks unread with one amber mark and bold ink, never a number", () => {
+    const news = renderToStaticMarkup(
+      <MachineTab isOn={false} hasUnread onClick={() => {}}>
+        tower
+      </MachineTab>,
+    );
+    const quiet = renderToStaticMarkup(
+      <MachineTab isOn={false} onClick={() => {}}>
+        tower
+      </MachineTab>,
+    );
+    expect(news).toContain("bg-accent");
+    expect(news).toContain("font-bold");
+    expect(news).toContain("unread");
+    expect(news).not.toMatch(/>\s*\d+\s*</);
+    expect(quiet).not.toContain("bg-accent");
+    expect(quiet).toContain("text-dialog-hint");
   });
 });
