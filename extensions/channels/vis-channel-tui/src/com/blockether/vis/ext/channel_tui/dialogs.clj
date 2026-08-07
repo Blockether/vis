@@ -2454,7 +2454,7 @@
   [g {:keys [left inner-w text-w restore!] :as region} title hints]
   (let
     [{:keys [sep-row title-row title-rule-row body-top foot-rule-row foot-row wipe-top top-limit]}
-     (tr/band-geometry region 1)]
+     (tr/band-geometry region 1 true)]
     (when restore! (restore! top-limit (dec (long wipe-top))))
     (tr/clear-rows! g region (max (long top-limit) (long wipe-top)) foot-row)
     (when (>= (long sep-row) (long top-limit)) (tr/draw-rule! g region sep-row))
@@ -2530,31 +2530,29 @@
 
 (defn- magit-mini-choose!
   "Ask WHICH one in the band's own frame. `choices` is a vec of
-   {:key char :label str :id kw}, painted as the band's OWN rows — the answers
-   are the only thing on screen while the question stands. Returns the chosen
-   `:id`, or nil on Esc."
+   {:key char :label str :id kw}, painted as the band's OWN rows under the
+   question — a band paints no title row, so the question is inked ON the band's
+   opening rule. Returns the chosen `:id`, or nil on Esc."
   [^TerminalScreen screen g region title choices]
   (:action (embed-transient! screen
                              g
                              region
                              {:title title
-                              :groups [{:title "Choose"
-                                        :items
+                              :groups [{:items
                                         (mapv (fn [{:keys [key label id]}]
                                                 {:key (str key) :type :action :id id :label label})
                                               choices)}]})))
 
 (defn- magit-mini-confirm!
-  "Ask y/n in the band's own frame: the question is the band's title and `Yes` /
-   `No` are the only rows under it. Returns true / false / nil (Esc)."
+  "Ask y/n in the band's own frame: the question is inked ON the band's opening
+   rule and `Yes` / `No` are the only rows under it. Returns true / false / nil (Esc)."
   [^TerminalScreen screen g region question]
   (case
     (:action (embed-transient! screen
                                g
                                region
                                {:title question
-                                :groups [{:title "Confirm"
-                                          :items [{:key "y" :type :action :id :yes :label "Yes"}
+                                :groups [{:items [{:key "y" :type :action :id :yes :label "Yes"}
                                                   {:key "n" :type :action :id :no :label "No"}]}]}))
     :yes
     true

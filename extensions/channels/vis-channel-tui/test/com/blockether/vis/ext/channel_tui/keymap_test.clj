@@ -127,10 +127,18 @@
                  (if (= id :show-palette) :show-palette (keymap/prefix-action-for (first key))))))
           (expect (= (set (map :action (keymap/available-prefix-commands {})))
                      (disj (set (map :id items)) :show-palette)))))
-    (it "the palette is always the last way out"
-        (expect (= [:show-palette] (mapv :id (:items (last (:groups (spec {})))))))
-        (expect (= (str keymap/prefix-palette-key)
-                   (:key (first (:items (last (:groups (spec {})))))))))
+    ;; Regression, issue: the palette used to buy a whole "Everything else"
+    ;; heading of its own — it is a TOOL, and it is the last one in that column.
+    (it "the palette is the last tool, not a heading of its own"
+        (let [tools (first (filter #(= "Tools" (:title %)) (:groups (spec {}))))]
+          (expect (some? tools))
+          (expect (= :show-palette (:id (last (:items tools)))))
+          (expect (= (str keymap/prefix-palette-key) (:key (last (:items tools)))))
+          (expect (= ["Tools"]
+                     (mapv :title
+                           (filter (fn [g]
+                                     (some #(= :show-palette (:id %)) (:items g)))
+                                   (:groups (spec {}))))))))
     (it "context-only verbs appear only where they can act"
         (let
           [ids (fn [db]

@@ -149,7 +149,10 @@
         (expect (str/includes? (:text command) "c  Commit staged"))
         (expect (= "c" (:bold command)))))
   (it
-    "the popup is a band INSIDE the host frame with a rule under its title"
+    ;; Regression, issue: the hydra band spent its two top rows on a title and a
+    ;; second rule — the band's FIRST row is the `───` and everything under it is
+    ;; the column grid.
+    "the popup is a band INSIDE the host frame whose first row is a rule over the columns"
     (let
       [grid
        (transient-grid! commit-transient-spec 3 74 27)
@@ -182,17 +185,12 @@
       ;; The band is CONTIGUOUS: the last command sits directly on that rule,
       ;; never one row above it with a host row left showing between.
       (expect (str/includes? (nth grid 25) "Amend last commit"))
-      ;; TITLE BAND: opening rule, the bold title, the title's OWN closing rule,
-      ;; then the first group header — `───` / `Commit` / `───` / body, the chrome
-      ;; the host gives any other titled section. Both rules end in T-junctions
-      ;; ON the frame, never in a blank margin row floating under the title.
-      (expect (str/includes? (nth grid (dec (long args-y))) "────"))
-      (expect (= [\├ \┤]
-                 [(nth (nth grid (dec (long args-y))) 3) (nth (nth grid (dec (long args-y))) 78)]))
-      (expect (str/includes? (nth grid (- args-y 2)) "Commit"))
-      (expect (str/includes? (nth grid (- args-y 3)) "────"))
-      (expect (= [\├ \┤] [(nth (nth grid (- args-y 3)) 3) (nth (nth grid (- args-y 3)) 78)]))
-      (expect (= rule-y (- args-y 3)))))
+      ;; NO TITLE BAND: the opening rule, then the first group header directly
+      ;; under it — `───` / `Arguments` / body. There is no second rule and no
+      ;; heading row repeating what the columns already say.
+      (expect (= rule-y (dec (long args-y))))
+      (expect (not (str/includes? (nth grid (- args-y 2)) "Commit")))
+      (expect (not (str/includes? (nth grid (- args-y 2)) "────")))))
   (it "the popup wipes every host row it covers and no column outside the frame"
       ;; The status buffer paints its OWN hint bar on `hint-row`, framed by the
       ;; dialog's box borders. The popup replaces that hint bar in place: any row
@@ -256,17 +254,14 @@
         ;; The popup's OWN rule keeps its T-junctions …
         (expect (= \├ (nth (nth grid (long rule-y)) 3)))
         (expect (= \┤ (nth (nth grid (long rule-y)) 78)))
-        ;; … the rule under its TITLE does too …
-        (expect (= [\├ \┤]
-                   [(nth (nth grid (+ (long rule-y) 2)) 3)
-                    (nth (nth grid (+ (long rule-y) 2)) 78)]))
+        ;; … there is no second rule under a title, because the band has none …
         ;; … its CLOSING rule keeps them too …
         (expect (= [\├ \┤] [(nth (nth grid 26) 3) (nth (nth grid 26) 78)]))
         ;; … and every other row it covers gets a plain frame edge back, the
         ;; host's junctions included.
         (expect (every? (fn [y]
                           (= [\│ \│] [(nth (nth grid y) 3) (nth (nth grid y) 78)]))
-                        (remove #{26 (+ (long rule-y) 2)} (range (inc (long rule-y)) 28))))
+                        (remove #{26} (range (inc (long rule-y)) 28))))
         ;; The host separator's body is gone, not just its junctions.
         (expect (not (str/includes? (nth grid 25) "────")))))
   (it "pressing a flag key arms it and pressing it again disarms it"
@@ -363,10 +358,36 @@
          grid
          (transient-grid! tall 3 74 27 {:min-row 6})]
 
-        (expect (str/includes? (nth grid 6) "Commit"))
-        ;; …and the title keeps its own rule even when the band is clamped.
-        (expect (str/includes? (nth grid 7) "────"))
-        (expect (every? str/blank? (take 6 grid))))))
+        ;; The band's first row IS the rule, at the `:min-row` floor, and the
+        ;; first column heading sits directly on it.
+        (expect (str/includes? (nth grid 6) "────"))
+        (expect (str/includes? (nth grid 7) "Group 0"))
+        (expect (every? str/blank? (take 6 grid)))))
+  ;; Regression (user report): "THE FIRST fucking row should have the ------ and
+  ;; it should be only columns" — the band spent its first row on a bold title
+  ;; and its second on that title's own rule, so two rows of a short band were
+  ;; chrome before a single command showed.
+  (it "inks the title ON its opening rule, never on a row of its own"
+      (let
+        [grid
+         ;; `transient-grid!` titles every spec "Commit".
+         (transient-grid! {:groups [{:title "Models"
+                                     :items [{:key "a" :type :action :id :a :label "acme-1"}]}]}
+                          3 74
+                          27 {:min-row 6})
+
+         rule
+         (long (first (keep-indexed (fn [i s]
+                                      (when (str/includes? s "────") i))
+                                    grid)))]
+
+        ;; The title is ON the rule row …
+        (expect (str/includes? (nth grid rule) "Commit"))
+        (expect (str/includes? (nth grid rule) "────"))
+        ;; … and the very next row is already the column grid.
+        (expect (str/includes? (nth grid (inc rule)) "Models"))
+        ;; … and it is said exactly once.
+        (expect (= 1 (count (filter #(str/includes? % "Commit") grid)))))))
 
 ;;; ── The contract: one seam, one refusal ─────────────────────────────────────
 

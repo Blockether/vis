@@ -1290,7 +1290,7 @@
         ;; top rule lands. The pinned action bar asks for one row of its own.
         (form-rows form (prose-width inner-w))
         {:keys [sep-row title-row title-rule-row body-top foot-rule-row foot-row visible top-limit]}
-        (tr/band-geometry region (+ (count draft) (if actions 1 0)))
+        (tr/band-geometry region (+ (count draft) (if actions 1 0)) true)
         visible (long visible)
         body-visible (max 0 (- visible (if actions 1 0)))
         is-overflowing (> (count draft) body-visible)

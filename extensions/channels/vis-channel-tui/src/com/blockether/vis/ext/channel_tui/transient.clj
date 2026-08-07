@@ -290,14 +290,16 @@
     (if (= 1 n) share (max 1 (min share (+ 4 (long key-w) (long label-w)))))))
 
 (def ^:private chrome-rows
-  "Rows of the popup's OWN chrome above its body: the opening separator, the
-   title, and the title's rule. The closing rule and the hint bar belong to the
-   host's bottom chrome, so they are not counted here."
-  3)
+  "Rows of the popup's OWN chrome above its body: the opening separator, and
+   nothing else. A transient band carries NO title row — its first row is the
+   `───` rule and everything under it is the column grid. The closing rule and
+   the hint bar belong to the host's bottom chrome, so they are not counted
+   here."
+  1)
 
 (defn height
-  "PURE: rows the popup needs INSIDE the host's frame — its opening separator,
-   the title, the title's rule, and every display row. The closing rule and the
+  "PURE: rows the popup needs INSIDE the host's frame — its opening separator
+   and every display row. The closing rule and the
    hint bar are the host's OWN bottom chrome, so they are not counted; a host
    sizes its box with this before it paints one."
   ^long [spec]
@@ -307,8 +309,9 @@
   "PURE: which row of `region` every part of a band `n` display rows tall
    lands on.
 
-     `:sep-row`         the band's opening separator
-     `:title-row`       the bold title, alone on its row
+     `:sep-row`         the band's opening separator — the FIRST row it paints
+     `:title-row`       the bold title, alone on its row (title-less band: the
+                        separator's own row, so nothing extra is painted)
      `:title-rule-row`  the title's OWN rule, closing the title band
      `:body-top`        first display row
      `:visible`         display rows that actually fit (overflow is dropped)
@@ -321,52 +324,57 @@
 
    The row count is the parameter, not the spec, because a band is not always a
    transient: the human-input form paints its own plan rows into exactly this
-   geometry, and both must land on the same chrome."
-  [{:keys [hint-row min-row]} ^long n]
-  (let
-    [top-limit
-     (long (or min-row 0))
+   geometry, and both must land on the same chrome.
 
-     ;; The popup is GLUED to the frame's BOTTOM CHROME: the host paints
-     ;; `├───┤` directly above its hint row, and a band that simply overwrote
-     ;; that rule left its last command running into the footer text — which
-     ;; reads as the popup eating the bottom border. The popup repaints it.
-     foot-row
-     (long hint-row)
+   A band is TITLE-LESS by default — the rule, then the body — because the C-x
+   hydra's own heading said nothing its columns did not. A band that asks ONE
+   question (`dialogs/band-question-frame!`, the human-input form) passes
+   `is-title` true, because there the title IS the question."
+  ([region ^long n] (band-geometry region n false))
+  ([{:keys [hint-row min-row]} ^long n is-title]
+   (let
+     [top-limit
+      (long (or min-row 0))
 
-     foot-rule-row
-     (dec foot-row)
+      ;; The popup is GLUED to the frame's BOTTOM CHROME: the host paints
+      ;; `├───┤` directly above its hint row, and a band that simply overwrote
+      ;; that rule left its last command running into the footer text — which
+      ;; reads as the popup eating the bottom border. The popup repaints it.
+      foot-row
+      (long hint-row)
 
-     ;; Anchor to the bottom of the band: the last body row sits DIRECTLY on
-     ;; the closing rule, with the title's rule, the title and the opening
-     ;; separator stacked above it.
-     body-top
-     (max (+ top-limit 2) (- foot-rule-row n))
+      foot-rule-row
+      (dec foot-row)
 
-     title-rule-row
-     (max top-limit (dec body-top))
+      ;; Anchor to the bottom of the band: the last body row sits DIRECTLY on
+      ;; the closing rule, with the chrome stacked above it.
+      body-top
+      (max (+ top-limit (if is-title 2 1)) (- foot-rule-row n))
 
-     title-row
-     (max top-limit (dec title-rule-row))
+      title-rule-row
+      (max top-limit (dec body-top))
 
-     sep-row
-     (max 0 (dec title-row))]
+      title-row
+      (if is-title (max top-limit (dec title-rule-row)) title-rule-row)
 
-    {:top-limit top-limit
-     :sep-row sep-row
-     :title-row title-row
-     :title-rule-row title-rule-row
-     :body-top body-top
-     :foot-rule-row foot-rule-row
-     :foot-row foot-row
-     ;; The band wipes exactly the rows it paints — the buffer above its opening
-     ;; separator is what magit keeps visible behind a transient. A host that
-     ;; repaints bands of different heights owns those rows and clears them
-     ;; itself (`clear-rows!`); the component never reaches over them.
-     :wipe-top (max sep-row top-limit)
-     ;; The closing rule is the floor: a page taller than the band it was given
-     ;; loses its overflow rows rather than painting over the host's frame.
-     :visible (min n (max 1 (- foot-rule-row body-top)))}))
+      sep-row
+      (if is-title (max 0 (dec title-row)) title-row)]
+
+     {:top-limit top-limit
+      :sep-row sep-row
+      :title-row title-row
+      :title-rule-row title-rule-row
+      :body-top body-top
+      :foot-rule-row foot-rule-row
+      :foot-row foot-row
+      ;; The band wipes exactly the rows it paints — the buffer above its opening
+      ;; separator is what magit keeps visible behind a transient. A host that
+      ;; repaints bands of different heights owns those rows and clears them
+      ;; itself (`clear-rows!`); the component never reaches over them.
+      :wipe-top (max sep-row top-limit)
+      ;; The closing rule is the floor: a page taller than the band it was given
+      ;; loses its overflow rows rather than painting over the host's frame.
+      :visible (min n (max 1 (- foot-rule-row body-top)))})))
 
 (defn geometry
   "PURE: [[band-geometry]] for `spec`'s OWN display rows — where every part of
@@ -465,14 +473,14 @@
       pane-h
       (count (first ps))]
 
-     {:title (:title spec)
-      :rows (rows spec)
+     {:rows (rows spec)
       :panes ps
       :pane-count (count ps)
       :pane-w (if region (pane-width region spec (count ps)) 0)
       :row-count pane-h
       :columns (columns spec)
       :hint-pairs (hint-pairs spec)
+      :title (:title spec)
       :height (+ (long chrome-rows) pane-h)
       :by-key (index-by-key spec)})))
 
@@ -552,19 +560,28 @@
    a SIDELESS band has no rails for a junction to join, so it draws the prompt's
    own inset line instead. One function, so a band and a modal wear the same
    chrome and neither grows a second copy of it."
-  [g {:keys [left inner-w is-sideless]} row]
-  (let
-    [left
-     (long left)
+  ([g region row] (draw-rule! g region row nil))
+  ([g {:keys [left inner-w is-sideless]} row label]
+   (let
+     [left
+      (long left)
 
-     inner-w
-     (long inner-w)]
+      inner-w
+      (long inner-w)]
 
-    (if is-sideless
-      (do (p/set-colors! g t/border-fg t/dialog-bg)
-          (p/put-str! g (inc left) row (p/horiz-line inner-w)))
-      (do (p/set-colors! g t/dialog-border t/dialog-bg)
-          (p/draw-separator! g left (+ left inner-w 1) row)))))
+     (if is-sideless
+       (do (p/set-colors! g t/border-fg t/dialog-bg)
+           (p/put-str! g (inc left) row (p/horiz-line inner-w)))
+       (do (p/set-colors! g t/dialog-border t/dialog-bg)
+           (p/draw-separator! g left (+ left inner-w 1) row)))
+     ;; The band has no title ROW, so a titled band says its name ON the rule —
+     ;; magit's own `── Commit ──`. The first row stays chrome and every row
+     ;; below it stays column grid.
+     (when-not (str/blank? (str label))
+       (let [txt (str " " (p/ellipsize (str label) (max 0 (- inner-w 6))) " ")]
+         (p/set-colors! g t/dialog-fg t/dialog-bg)
+         (p/styled g [p/BOLD] (p/put-str! g (+ left 3) row txt))))
+     (p/set-colors! g t/dialog-fg t/dialog-bg))))
 
 (defn clear-rows!
   "Blank rows `from`..`to` (INCLUSIVE) inside the host's frame: dialog paper
@@ -614,16 +631,19 @@
    whole body — which is what tells a reader that the next heading is a sibling
    column and not the continuation of this one.
 
+   The band has NO title row: its FIRST row is the opening `───` rule and
+   everything under it is the column grid, because a heading over columns that
+   already name themselves is a row of chrome bought with a row of content.
+
    A SIDELESS band is not a dialog: it lies on the LIVE transcript, so it wears
    `theme/band-bg` instead of the dialog's paper. That is bound ONCE here, so
-   every painter below — rules, title, rows, hint bar — follows without carrying
+   every painter below — rules, rows, hint bar — follows without carrying
    a colour argument of its own."
-  [{:keys [g hint-bar!]} {:keys [left inner-w text-w restore!] :as region}
-   {title :title panes :panes n :row-count pane-w :pane-w grid :columns hints :hint-pairs} state]
+  [{:keys [g hint-bar!]} {:keys [left inner-w restore!] :as region}
+   {panes :panes n :row-count pane-w :pane-w grid :columns hints :hint-pairs title :title} state]
   (binding [t/dialog-bg (if (:is-sideless region) (t/band-bg) t/dialog-bg)]
     (let
-      [{:keys [sep-row title-row title-rule-row body-top foot-rule-row foot-row wipe-top visible
-               top-limit]}
+      [{:keys [sep-row body-top foot-rule-row foot-row wipe-top visible top-limit]}
        (band-geometry region n)
        left (long left)
        inner-w (long inner-w)
@@ -638,12 +658,10 @@
       (dotimes [i (max 1 (- (long body-top) (long wipe-top)))]
         (clear-row! (+ (long wipe-top) i)))
       (when (>= (long sep-row) (max (long wipe-top) (long top-limit)))
-        (draw-rule! g region sep-row))
-      (when (> (long title-rule-row) (long title-row)) (draw-rule! g region title-rule-row))
+        (draw-rule! g region sep-row title))
       (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
         (draw-rule! g region foot-rule-row))
       (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-      (p/styled g [p/BOLD] (p/put-str! g (+ left 2) title-row (p/ellipsize (str title) text-w)))
       (dotimes [i visible]
         (let [row (+ (long body-top) (long i))]
           (clear-row! row)

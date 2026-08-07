@@ -1077,7 +1077,10 @@
    on screen — the card, the settings list — stays visible behind it, exactly
    like magit. A caller that pages bands of different heights hands the region a
    `:restore!` snapshot, and the rows a taller band covered are handed back to
-   the host instead of blanked."
+   the host instead of blanked.
+
+   A band paints no title row: `title` is inked ON its opening rule, so the
+   first row is chrome and every row under it is the column grid."
   [^TerminalScreen screen g region title spec]
   (dlg/embed-transient! screen g region (assoc spec :title title)))
 

@@ -247,26 +247,32 @@
 
 (defn prefix-spec
   "PURE: the `transient/run!` spec for the C-x hydra in `db` — one group per
-   `prefix-groups` heading that has a verb to show, plus the palette, which is
-   the way to every verb this band had no room or no context for.
+   `prefix-groups` heading that has a verb to show. The palette is a TOOL like
+   any other — it sits at the end of the Tools column instead of buying a
+   heading of its own — and it is the way to every verb this band had no room
+   or no context for.
 
    Rows are display-only: the band paints them and hands the raw keystroke back
    to `input/resolve-prefix-key`, so the label and the key can never drift from
    the chord that actually fires."
   [db]
-  (let [by-group (group-by :group (available-prefix-commands db))]
+  (let
+    [by-group
+     (group-by :group (available-prefix-commands db))
+
+     palette
+     {:key (str prefix-palette-key) :type :action :id :show-palette :label "command palette…"}]
+
     {:title (str (chord prefix-key) " — vis commands")
-     :groups (-> (into []
-                       (keep (fn [g]
-                               (when-let [cmds (seq (get by-group g))]
-                                 {:title g
-                                  :items (mapv
-                                           (fn [{:keys [action key label]}]
-                                             {:key (str key) :type :action :id action :label label})
-                                           cmds)})))
-                       prefix-groups)
-                 (conj {:title "Everything else"
-                        :items [{:key (str prefix-palette-key)
-                                 :type :action
-                                 :id :show-palette
-                                 :label "command palette…"}]}))}))
+     :groups (into []
+                   (keep (fn [g]
+                           (let
+                             [items (cond->
+                                      (mapv
+                                        (fn [{:keys [action key label]}]
+                                          {:key (str key) :type :action :id action :label label})
+                                        (get by-group g))
+                                      (= g "Tools")
+                                      (conj palette))]
+                             (when (seq items) {:title g :items items}))))
+                   prefix-groups)}))

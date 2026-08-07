@@ -1502,12 +1502,12 @@
 
       ;; Page 2 is on screen …
       (expect (some #(str/includes? % "final-model-a") grid))
-      ;; … and page 1 is GONE: ONE title and three rules — the opening one,
-      ;; the one under the title and the one above the hint bar. Without the
-      ;; picker's own wipe the taller page left a second title and a fourth
-      ;; rule stranded above the band …
+      ;; … and page 1 is GONE: the title is inked ON the band's opening rule, so
+      ;; there is ONE title and TWO rules — the opening one and the one above the
+      ;; hint bar. Without the picker's own wipe the taller page left a second
+      ;; title and a third rule stranded above the band …
       (expect (= 1 (count (filter #(str/includes? % "alpha — models") grid))))
-      (expect (= 3 (count (filter #(str/includes? % "────") grid))))
+      (expect (= 2 (count (filter #(str/includes? % "────") grid))))
       ;; … and its longest row bled THROUGH the shorter page's own header,
       ;; which used to read `Models  2/2el-2`.
       (expect (= "Models  2/2"
