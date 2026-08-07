@@ -21,7 +21,7 @@
  */
 
 /** The three things one media slot can be showing. All reserve the same box. */
-export type MediaSlotState = 'pending' | 'ready' | 'failed';
+export type MediaSlotState = "pending" | "ready" | "failed";
 
 /**
  * The reserved box itself: an aspect ratio off the column width, capped so a
@@ -29,17 +29,30 @@ export type MediaSlotState = 'pending' | 'ready' | 'failed';
  * are known at layout time, which is the whole point — no term comes from the
  * image.
  */
-export const mediaFrameClass = 'block w-full aspect-[4/3] max-h-[60svh]';
+export const mediaFrameClass =
+  "block w-full aspect-[4/3] max-h-[60svh] overflow-hidden border border-code-edge bg-code";
 
 /** The pulse a slot paints while its bytes are in flight, filling the frame. */
-export const mediaPendingClass = 'block h-full w-full animate-pulse bg-thinking-surface';
+export const mediaPendingClass =
+  "block h-full w-full animate-pulse bg-thinking-surface";
 
 /**
- * A picture or clip filling the reserved frame. `object-contain` keeps every
- * pixel of a tall phone screenshot visible, `object-left` keeps it on the text
- * column's own edge instead of floating in the middle of the letterbox.
+ * A picture or clip inside the reserved frame. `object-contain` keeps every
+ * pixel of a tall phone screenshot visible; the leftover paper is the frame's
+ * own MAT, so the picture is CENTRED in it. Shoved to `object-left` it looked
+ * like a small image that had failed to fill a broken box, and the caption
+ * beneath the empty half read as a label sitting ON the picture.
  */
-export const mediaContentClass = 'block h-full w-full object-contain object-left';
+export const mediaContentClass =
+  "block h-full w-full object-contain object-center";
+
+/**
+ * The plate's label, DOCKED under the mat and sharing its frame: one strip of
+ * paper carrying the file's name, so nothing about the name can be mistaken for
+ * part of the picture.
+ */
+export const mediaCaptionClass =
+  "flex min-w-0 items-center gap-2 border border-t-0 border-code-edge bg-thinking-surface px-2 py-1 font-mono text-chip text-footer-muted";
 
 /**
  * The frame ONE media slot reserves in a given state.
