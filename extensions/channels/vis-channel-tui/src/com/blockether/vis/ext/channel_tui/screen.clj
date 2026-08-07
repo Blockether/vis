@@ -21,6 +21,7 @@
             [com.blockether.vis.ext.channel-tui.selection :as selection]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
+            [com.blockether.vis.ext.channel-tui.transient :as tr]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
@@ -1594,6 +1595,12 @@
   ;; not on every spinner heartbeat.
   (atom nil))
 
+(defonce ^:private last-image-regions
+  ;; The placements currently on the graphics layer. A band (C-x, drafts) has to
+  ;; re-place the images it does NOT cover, and it never runs a frame of its own,
+  ;; so the last painted set is remembered here instead of recomputed.
+  (atom []))
+
 (defonce ^:private kitty-image-state
   ;; Transmit-once bookkeeping for the Kitty graphics protocol. Each unique image
   ;; (keyed by path + transmitted box) uploads its PNG ONCE under a client image id;
@@ -1699,6 +1706,7 @@
    moves them without the flicker the old delete+retransmit caused. Skips the
    whole write when the signature matches the last paint."
   [regions]
+  (reset! last-image-regions (vec regions))
   (let [proto
         (timg/images-protocol)
 
@@ -1741,7 +1749,31 @@
   (reset! image-paint-state nil)
   ;; `d=A` above freed the uploaded data too, so forget the transmit cache — the
   ;; next full frame re-uploads and re-places every visible image.
-  (reset! kitty-image-state {:transmits {} :order [] :placed #{} :next-id 1}))
+  (reset! kitty-image-state {:transmits {} :order [] :placed #{} :next-id 1})
+  (reset! last-image-regions []))
+
+(defn- images-above-band
+  "The placements a session BAND may KEEP on the graphics layer: every image whose
+   whole reserved box ends above `band-top`.
+
+   A band is not a modal. The C-x hydra, the draft band and the start-in band are
+   a strip glued to the prompt, with the transcript still readable above them —
+   dropping every inline image the way a full-screen dialog does made every
+   picture in the session vanish the moment C-x was pressed and only come back
+   after the band closed. Only a picture the band would sit UNDER has to go:
+   Kitty graphics ride above the text cells, so an image whose box reaches into
+   the band's rows would paint over the band itself."
+  [regions ^long band-top]
+  (filterv (fn [{:keys [row img]}]
+             (<= (+ (long row) (long (or (:rows img) 1))) band-top))
+           regions))
+
+(defn- clip-terminal-images-to-band!
+  "Re-place exactly the images that stay clear of a band starting at `band-top`;
+   the rest leave the graphics layer. Delegates to `paint-terminal-images!`, so
+   the kept placements keep their uploads and the dropped ones are deleted."
+  [band-top]
+  (paint-terminal-images! (images-above-band @last-image-regions band-top)))
 
 (defn- bubble-copy-hit
   [point regions]
@@ -1803,12 +1835,44 @@
    `:set-dialog-open false` dispatch wakes the render thread to
    repaint over the dialog area."
   [f]
-  (.lock draw-lock)
+  (.lock ^ReentrantLock draw-lock)
   ;; Kitty inline images ride ABOVE text cells, so any transcript image would
   ;; bleed over the modal we're about to open. Drop them (and clear the paint
   ;; signature) so the dialog is the top surface; the post-dialog frame
   ;; re-places them once the lock is released and the render thread wakes.
   (drop-terminal-images!)
+  (try (state/dispatch [:set-dialog-open true])
+       (try (f)
+            (finally (reset! dialog-closed-at (System/currentTimeMillis))
+                     (state/dispatch [:set-dialog-open false])))
+       (finally (.unlock draw-lock))))
+
+(defn- band-top-row
+  "First screen row a session band for `spec` will paint on, at the anchor the
+   live layout published. Bands are bottom-anchored, so their top is what decides
+   which inline images they would sit under.
+
+   Measured through `tr/layout`, never through `tr/geometry`: the band deals its
+   groups into PANES, so its height is the tallest pane, not every row of the
+   spec stacked — the stacked count made a four-column C-x hydra look tall enough
+   to reach the header and no image survived it."
+  ^long [db spec]
+  (let [{:keys [content-top prompt-h]} (state/band-anchor db)
+        {:keys [cols rows]} (:layout db)
+        region (tr/band-region (long (or cols 80))
+                               (long (or rows 24))
+                               (long content-top)
+                               (long prompt-h))]
+    (long (:sep-row (tr/band-geometry region (long (:row-count (tr/layout spec region))))))))
+
+(defn- with-band-lock
+  "`with-dialog-lock` for an in-session BAND: the transcript above it stays on
+   screen, so only the inline images the band would cover leave the graphics
+   layer (`clip-terminal-images-to-band!`). Dropping all of them is what made
+   every picture disappear the moment C-x was pressed."
+  [band-top f]
+  (.lock ^ReentrantLock draw-lock)
+  (clip-terminal-images-to-band! band-top)
   (try (state/dispatch [:set-dialog-open true])
        (try (f)
             (finally (reset! dialog-closed-at (System/currentTimeMillis))
@@ -4491,9 +4555,10 @@
   [^TerminalScreen screen db r]
   (if-not (:prefix (:state r))
     r
-    (if-let [key (with-dialog-lock #(dlg/prefix-band! screen
-                                                      (state/band-anchor db)
-                                                      (keymap/prefix-spec db)))]
+    (if-let [key (with-band-lock (band-top-row db (keymap/prefix-spec db))
+                                 #(dlg/prefix-band! screen
+                                                    (state/band-anchor db)
+                                                    (keymap/prefix-spec db)))]
       (input/resolve-prefix-key key (:state r))
       {:action :continue :state (dissoc (:state r) :prefix)})))
 

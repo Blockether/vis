@@ -9,6 +9,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.input :as input]
+            [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
@@ -1660,6 +1661,38 @@
                        (expect (= 10 (long (:cols bottom))))
                        (expect (= 20 (long (:rows scrolled))))
                        (expect (= 20 (long (:cols scrolled)))))))))
+
+;; Regression: pressing C-x made every inline image in the transcript disappear.
+;; The C-x hydra went through the MODAL `with-dialog-lock`, which deletes the
+;; whole Kitty graphics layer so a full-screen dialog is the top surface; a band
+;; only ever covers the rows it paints.
+(defdescribe images-above-band-test
+             (let
+               [above
+                (deref #'screen/images-above-band)
+
+                region
+                (fn [row rows]
+                  {:row row :col 2 :img {:path "/tmp/shot.png" :cols 10 :rows rows}})]
+
+               (it "keeps every picture whose box ends above the band's first row"
+                   (expect (= [(region 2 5)] (above [(region 2 5) (region 9 5)] 12))))
+               (it "drops a picture the band would sit on top of"
+                   (expect (= [] (above [(region 10 4)] 12)))
+                   (expect (= [] (above [(region 12 1)] 12))))
+               (it "the C-x band's top row leaves room for the transcript above it"
+                   (let
+                     [db
+                      {:layout {:cols 100 :rows 30 :messages-top 1 :input-h 3}}
+
+                      top
+                      ((deref #'screen/band-top-row) db (keymap/prefix-spec db))]
+
+                     ;; The hydra is four PANES, not every row stacked: it must not
+                     ;; measure tall enough to reach the header and swallow every
+                     ;; picture on screen.
+                     (expect (> (long top) 10))
+                     (expect (seq (above [(region 3 4)] top)))))))
 
 (defdescribe
   provider-limits-active-provider-test
