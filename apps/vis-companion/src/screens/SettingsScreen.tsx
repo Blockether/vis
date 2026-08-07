@@ -10,7 +10,7 @@ import {
   GatewayError,
   cachedThemeCatalogs,
 } from "../lib/gateway";
-import { ChevronIcon, CloseIcon } from "../components/icons";
+import { ChevronIcon } from "../components/icons";
 import type {
   GatewayConn,
   PushDevice,
@@ -69,7 +69,7 @@ import {
   setThemePref,
 } from "../lib/storage";
 import { BUNDLED_THEMES } from "../lib/palettes";
-import { Banner, Button, Input } from "../components/ui";
+import { Banner, Button, DialogHeader, Input } from '../components/ui';
 import {
   REACH_HINT,
   REACH_LABEL,
@@ -233,27 +233,13 @@ export function GatewaySettingsDialog({
         aria-modal="true"
         aria-labelledby="gateway-settings-title"
       >
-        <header className="flex min-h-12 shrink-0 items-center bg-dialog-title text-dialog-title-foreground">
-          <div className="min-w-0 flex-1 px-3 py-2 sm:px-4">
-            <h2
-              id="gateway-settings-title"
-              className="shrink-0 font-mono text-body font-black uppercase tracking-[0.12em]"
-            >
-              Machine settings
-            </h2>
-            <p className="truncate font-mono text-meta opacity-65">
-              {gateway.url}
-            </p>
-          </div>
-          <button
-            type="button"
-            className="grid min-w-10 self-stretch place-items-center border-l border-dialog-title-foreground/20 text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
-            onClick={onClose}
-            aria-label="Close machine settings"
-          >
-            <CloseIcon />
-          </button>
-        </header>
+        <DialogHeader
+          titleId="gateway-settings-title"
+          title="Machine settings"
+          subtitle={gateway.url}
+          closeLabel="Close machine settings"
+          onClose={onClose}
+        />
 
         <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
           <p className="text-pretty text-justify text-ui text-dialog-hint">
@@ -262,8 +248,15 @@ export function GatewaySettingsDialog({
           </p>
         </div>
 
-        <div className="min-h-0 flex-1 touch-pan-y space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain p-3 sm:p-4">
-          {err && <Banner kind="err">{err}</Banner>}
+        {/* Groups run FULL BLEED and are divided by one rule, so the dialog's own
+            frame is the only box on the screen. A banner still needs air, so it
+            brings its own rather than padding every group to get it. */}
+        <div className="min-h-0 flex-1 touch-pan-y divide-y divide-dialog-edge overflow-x-hidden overflow-y-auto overscroll-contain">
+          {err && (
+            <div className="p-3 sm:p-4">
+              <Banner kind="err">{err}</Banner>
+            </div>
+          )}
 
           <SettingsPanel
             title="Saved connection"
@@ -1228,25 +1221,13 @@ export function ApplicationSettingsDialog({
         aria-modal="true"
         aria-labelledby="application-settings-title"
       >
-        <header className="flex min-h-12 shrink-0 items-center bg-dialog-title text-dialog-title-foreground">
-          <div className="min-w-0 flex-1 px-3 py-2 sm:px-4">
-            <h2
-              id="application-settings-title"
-              className="font-mono text-body font-black uppercase tracking-[0.12em]"
-            >
-              Application settings
-            </h2>
-            <p className="font-mono text-meta opacity-65">This device</p>
-          </div>
-          <button
-            type="button"
-            className="grid min-w-10 self-stretch place-items-center border-l border-dialog-title-foreground/20 text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
-            onClick={onClose}
-            aria-label="Close application settings"
-          >
-            <CloseIcon />
-          </button>
-        </header>
+        <DialogHeader
+          titleId="application-settings-title"
+          title="Application settings"
+          subtitle="This device"
+          closeLabel="Close application settings"
+          onClose={onClose}
+        />
 
         <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
           <p className="text-pretty text-justify text-ui text-dialog-hint">
@@ -1255,8 +1236,12 @@ export function ApplicationSettingsDialog({
           </p>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-3 sm:p-4">
-          {err && <Banner kind="err">{err}</Banner>}
+        <div className="min-h-0 flex-1 divide-y divide-dialog-edge overflow-y-auto overscroll-contain">
+          {err && (
+            <div className="p-3 sm:p-4">
+              <Banner kind="err">{err}</Banner>
+            </div>
+          )}
           <SettingsPanel
             title="Theme"
             description="All themes advertised by your paired gateways. Duplicate theme ids appear once; the choice is saved on this device."
@@ -2059,7 +2044,13 @@ function SettingsPanel({
   children: ReactNode;
 }) {
   return (
-    <section className="min-w-0 overflow-hidden border border-dialog-edge bg-panel transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+    // A BAND, not a card. This section used to carry its own frame inside the
+    // dialog's frame, so every settings group sat in a box inside a box — two
+    // concentric hairlines 16px apart, and a third around each control inside it.
+    // The dialog is the only box; a group is separated from the next by the one
+    // rule its container divides on, exactly as a project is separated from the
+    // next in the sessions list.
+    <section className="min-w-0 overflow-hidden bg-panel transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
       <header
         className={`flex min-h-8 gap-3 border-b border-dialog-edge bg-panel-2 px-3 py-1.5 ${
           description ? "items-start" : "items-center"

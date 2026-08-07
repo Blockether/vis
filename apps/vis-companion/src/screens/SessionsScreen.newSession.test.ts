@@ -34,13 +34,31 @@ describe('where "New session" lives', () => {
   // one ⋯ on the machine and another ⋯ on the project level" — two hand-built panels
   // of different widths, one with an accent band and one with none, opened by two
   // hand-built buttons of different heights wearing two different glyph sizes.
-  it('opens both overflow menus with the same button and the same Menu', () => {
-    expect(source.match(/<KebabButton/g)?.length).toBe(2);
-    expect(source).not.toContain('<IconButton');
+  // Follow-up report ("these remove sessions do we really need to have it in the ⋯?"):
+  // the project header's `⋯` opened a popover holding exactly ONE destructive row — a
+  // menu of one, repeated on every project header, standing permanently beside the
+  // verb that creates. There is ONE `⋯` in this list now, on the machine, and removal
+  // moved into the portal that manages projects, per project, where it belongs.
+  it('opens the one overflow menu with the same button and the same Menu', () => {
+    expect(source.match(/<KebabButton/g)?.length).toBe(1);
+    expect(source).not.toContain('label={`Actions for ${project}`}');
+    expect(source).not.toContain("'purge'");
+    // Removal is the portal's, and it is aimed by the project's canonical ROOT rather
+    // than by its display name — two projects on one machine can share a name.
+    expect(source).toContain('onRemove={(entry) => {');
+    expect(source).toContain('projectPath(session) === entry.root');
+    // The machine's verbs read at a glance now, not as three lines of prose.
+    expect(source).toContain('<ProjectsIcon className="size-4" />');
+    expect(source).toContain('<SettingsIcon className="size-4" />');
+    // A `⋯` is never hand-assembled from the parts: no bare glyph, and no
+    // `IconButton` standing in for the one component that means "the rarer half of
+    // what this row can do". (The filter's own clear IS a plain icon button — it
+    // opens no menu, so it must not wear the control that promises one.)
     expect(source).not.toContain('<DotsIcon');
-    expect(source.match(/<Menu[\s>]/g)?.length).toBe(2);
-    expect(source.match(/<MenuHeading>/g)?.length).toBe(3);
-    expect(source).toContain('label={`Actions for ${project}`}');
+    expect(source.match(/<IconButton/g)?.length).toBe(1);
+    expect(source).toContain('label="Clear filter"');
+    expect(source.match(/<Menu[\s>]/g)?.length).toBe(1);
+    expect(source.match(/<MenuHeading>/g)?.length).toBe(2);
     expect(source).not.toContain('<StartOption');
     expect(source).not.toContain('createPortal(');
   });
@@ -50,14 +68,27 @@ describe('where "New session" lives', () => {
   // the machine banner padded its own right edge and the project header ended flush
   // against the screen, so the two identical buttons still sat at two different
   // distances from the same edge — and the yellow verb touched the words beside it.
-  it('gives both headers the same trailing cluster, so both edges are one decision', () => {
-    // Machine header, project header, and the skeleton that stands in for a project
-    // header while the list loads — one cluster, so the loading screen cannot be a
-    // different shape from the screen it becomes.
-    expect(source.match(/<HeaderActions>/g)?.length).toBe(3);
-    // Both headers now REPORT in the same voice too: the project's counts moved out of
-    // the toggle's fixed column and into the cluster the machine header already used.
-    expect(source.match(/<HeaderMeta>/g)?.length).toBe(2);
+  // Follow-up report ("some things are having margin left like the ⋯ then chevrons to
+  // open the session details are not having"): the same failure one row further down.
+  // The headers finally agreed with each other and the SESSION ROWS then disagreed
+  // with both — their disclosure ran flush to the screen edge, 12px past the `⋯`
+  // directly above it, in what the eye reads as a single column of controls.
+  it('gives every row the same trailing cluster, so the right edge is one decision', () => {
+    // Machine header, project header, session row, the filter band, and the two
+    // skeletons that stand in for a project header and a session row while the list
+    // loads — one cluster, so the loading screen cannot be a different shape from the
+    // screen it becomes, and the filter's own controls land in the same column as
+    // every `⋯` above and below them.
+    expect(source.match(/<HeaderActions>/g)?.length).toBe(6);
+    // The disclosure is that cluster's own control, never a hand-built strip: a `w-8`
+    // welded to the edge at 40% opacity is how it drifted out of the column.
+    expect(source).toContain('<RowDisclosure');
+    expect(source).not.toContain('sm:w-9 sm:pt-2');
+    expect(source).not.toContain('opacity-40 hover:opacity-100');
+    // Both headers now REPORT in the same voice too — and so does the filter, whose
+    // match count is the same kind of fact in the same cluster: the project's counts
+    // moved out of the toggle's fixed column into the one the machine header used.
+    expect(source.match(/<HeaderMeta>/g)?.length).toBe(3);
     expect(source).not.toContain('flex shrink-0 items-center justify-end gap-2 font-mono');
   });
   // Regression, user report: the project header reused a home-shortened display path as
@@ -80,7 +111,14 @@ describe('where "New session" lives', () => {
   // margin, the header's two borders, and the toggle's two more borders. Adjacent rows
   // therefore overlapped by a pixel and the same line had as many as three DOM owners.
   it('assigns every list boundary to one outgoing edge without negative overlap', () => {
-    expect(source).toContain('className="flex min-h-10 items-center border-b border-dialog-edge bg-panel px-3 mouse:min-h-9');
+    // The filter band IS the field: the input paper marks it at rest, its own rule
+    // inks amber on focus, and nothing nests a second box inside it. It wore a
+    // borrowed disclosure caret first, then a generic bordered `Input`.
+    expect(source).toContain('bg-input transition-colors duration-150 focus-within:border-accent');
+    expect(source).toContain('aria-label="Filter sessions"');
+    expect(source).not.toContain('<ChevronIcon className="size-3.5 text-accent-ink" />');
+    // The printed `/` hint is only honest because the key is actually bound.
+    expect(source).toContain("if (event.key !== '/'");
     expect(source).toContain('<section aria-label={`${project} sessions`}>');
     // The header's own band — its rule, its paper, its height — belongs to
     // `SectionHeader`, and is pinned once in `ui.test.tsx`.
@@ -103,9 +141,29 @@ describe('where "New session" lives', () => {
     expect(source).not.toContain('bg-panel-2 mouse:h-9');
   });
 
+  // Regression, user report ("the fucking individual session is bigger then project"):
+  // a session row stood 48px against a 36px project band — the child taller than the
+  // thing that contains it. The leaf is the SHORTEST of the three levels now, and on a
+  // desktop the row is one line, so 32px holds it exactly. Touch keeps 48px, which is
+  // still a real thumb target and still under the project band's 52.
+  it('keeps the session row shorter than the bands that contain it', () => {
+    expect(source).toContain('min-h-12 min-w-0 flex-1 items-center py-1.5');
+    expect(source).toContain('mouse:min-h-8 mouse:py-1');
+    expect(source).not.toContain('min-h-14 min-w-0 flex-1');
+    // The skeleton stands in for that row, so it is the same height or the screen
+    // jumps the moment data lands.
+    expect(source).toContain('flex min-h-12 w-full items-center py-1.5');
+  });
+
   // Regression, issue: the machine panel disappeared when only one machine was paired.
-  it('keeps the machine panel and rail unconditional for every machine section', () => {
+  it('keeps the machine panel unconditional for every machine section', () => {
+    // The rail is back, but as the card's LEFT FRAME rather than a line inside it:
+    // the card gives that side up (`LIST_FRAME` on every other child), both sides are
+    // 2px, and the machine simply colours the one on the left. The banner keeps the
+    // plain hairline — one machine must not wear its hue twice in the same corner.
+    expect(source).toContain('<MachineRail color={machineColor(machineColors, key)}>');
     expect(source).toContain('<MachineBanner>');
+    expect(source).toContain('border-b border-r-2 border-dialog-edge bg-panel sm:border-y sm:border-r-2');
     expect(source).toContain('const hasScopeStrip = showsScopeStrip(machines);');
     expect(source).toContain('{index > 0 && <MachineGap />}');
     expect(source).not.toContain('showMachineHeaders');

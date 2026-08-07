@@ -96,10 +96,10 @@ describe('the design board wears the shipped chrome', () => {
   });
 
   it('renders a machine with the components the app renders it with', () => {
-    // `MachineGap`/`MachineRail`/`MachineBanner` ARE the fleet list's machine block.
+    // `MachineGap`/`MachineBanner` ARE the fleet list's machine block.
     // Re-drawing that block in look-alike classes is how the board and the screen
     // start disagreeing about what a machine looks like.
-    for (const primitive of ['<MachineGap', '<MachineRail', '<MachineBanner', '<ChevronIcon']) {
+    for (const primitive of ['<MachineGap', '<MachineBanner', '<ChevronIcon']) {
       expect(variantSource, primitive).toContain(primitive);
     }
     // Identity, not liveness: the mark wears this machine's own hue, and `offline`

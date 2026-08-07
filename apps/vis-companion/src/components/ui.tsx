@@ -1,5 +1,7 @@
 import {
+  createContext,
   forwardRef,
+  useContext,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
@@ -41,15 +43,32 @@ export const Button = forwardRef<
   // frameless while it is busy, and a shared `disabled:border-edge` would fight it
   // on equal specificity (whoever Tailwind emits last wins).
   const dimmed = 'disabled:border-edge disabled:bg-panel-2 disabled:text-muted';
+  // ONE hover system, and it only ever moves the SURFACE.
+  //
+  // Each variant used to invent its own, and each said something different from
+  // "you are on it": `solid` FADED the amber to 85%, so the primary looked like it
+  // was switching off under the cursor; `ghost` and `quiet` flared their ink and
+  // their frame amber, which is more attention than a hover has earned and is a
+  // second amber on a screen whose primary is already amber; `danger` poured a
+  // solid red fill under `text-white`, and `--color-white` in this app is the
+  // PAGE's ink (`--fg`) — #262626 on #dc2626 is 2.3:1, a control that becomes
+  // unreadable exactly when the pointer is on it.
+  //
+  // The press already answers the finger (`active:scale`) and the keyboard already
+  // has its ring, so hover is the quietest of the three: the paper changes, the ink
+  // does not. `solid` has no hover at all — a filled amber slab is as arrived as a
+  // control gets, and there is nothing for a hover to add.
   const styles = {
-    solid: `border-accent bg-accent text-accent-foreground hover:border-accent/85 hover:bg-accent/85 ${dimmed}`,
-    ghost: `border-edge-strong bg-transparent text-white hover:border-accent hover:bg-hover hover:text-accent-ink ${dimmed}`,
+    solid: `border-accent bg-accent text-accent-foreground ${dimmed}`,
+    ghost: `border-edge-strong bg-transparent text-white hover:bg-hover ${dimmed}`,
     // For a SECONDARY action sitting next to a solid primary: two bordered boxes
     // side by side read as rivals, so this one keeps the button's box (transparent
     // border, identical metrics) and only draws a frame on hover/focus.
     quiet:
-      'border-transparent bg-transparent text-dialog-hint hover:border-edge-strong hover:bg-hover hover:text-accent-ink disabled:border-transparent disabled:bg-transparent disabled:text-muted',
-    danger: `border-err/40 bg-err/10 text-err hover:border-err hover:bg-err hover:text-white ${dimmed}`,
+      'border-transparent bg-transparent text-dialog-hint hover:border-edge-strong hover:bg-hover disabled:border-transparent disabled:bg-transparent disabled:text-muted',
+    // The red stays INK and the fill stays a wash, exactly as `MenuItem`'s danger
+    // row does — one destructive language in both.
+    danger: `border-err/40 bg-err/10 text-err hover:border-err hover:bg-err/20 ${dimmed}`,
     // A control that floats over CONTENT — a thumbnail, a picture — rather than over
     // chrome. It carries its own ink because whatever is under it is not the app's
     // paper, and it is a VARIANT rather than a class at the call site because
@@ -102,11 +121,31 @@ export const IconButton = forwardRef<
     variant?: 'solid' | 'ghost' | 'quiet' | 'danger' | 'overlay';
     /** Passed through: a control over a thumbnail is not on a header's rhythm. */
     density?: 'default' | 'compact';
+    /**
+     * This button ENDS a list row, so it owns the row's trailing edge.
+     *
+     * A centred glyph in a box that stops at the gutter is not the same distance
+     * from the paper's edge as the glyph that starts the row: measured on the
+     * desktop list, the leading chevron's ink sat 19px inside the panel and the
+     * trailing `⋯`'s ink sat 30px, because the box respected the gutter and then
+     * centred a 12px glyph inside 28px of its own. The margins matched and the INK
+     * did not, which is the only one of the two an eye can see.
+     *
+     * So the gutter moves INSIDE the button: the box runs to the paper's edge and
+     * pads its glyph away from it by exactly `LIST_EDGE`. The ink is symmetric, and
+     * the target grows to the edge instead of leaving a dead 16px strip beside it.
+     */
+    edge?: boolean;
   }
 >(function IconButton(
-  { label, className = '', variant = 'ghost', density = 'compact', children, ...props },
+  { label, className = '', variant = 'ghost', density = 'compact', edge, children, ...props },
   ref,
 ) {
+  // `border-r-0`: this box ends ON the paper's own edge, and the paper already draws
+  // that line. A hover frame that redraws it puts two hairlines in one pixel column.
+  const box = edge
+    ? 'min-w-10 justify-items-end border-r-0 pl-0 pr-3 -mr-3 sm:min-w-12 sm:pr-4 sm:-mr-4 mouse:min-w-10'
+    : 'min-w-7 place-items-center px-0 sm:min-w-8 sm:px-0 mouse:min-w-6';
   return (
     <Button
       ref={ref}
@@ -115,7 +154,7 @@ export const IconButton = forwardRef<
       pressEffect="none"
       density={density}
       aria-label={label}
-      className={`grid min-w-7 shrink-0 place-items-center px-0 sm:min-w-8 sm:px-0 mouse:min-w-6 ${className}`}
+      className={`grid shrink-0 items-center ${box} ${className}`}
       {...props}
     >
       {children}
@@ -157,6 +196,7 @@ export const KebabButton = forwardRef<
       label={label}
       variant={variant}
       density={density}
+      edge
       className={className}
       aria-haspopup="menu"
       aria-expanded={isOpen}
@@ -259,7 +299,16 @@ export function Section({ title, children }: { title: string; children: ReactNod
  * itself, so no screen writes the safe-area scrim out by hand again; two of them
  * had already drifted into two copies of the same forty characters.
  */
-export function Modal({ onDismiss, children }: { onDismiss: () => void; children: ReactNode }) {
+export function Modal({
+  size = 'md',
+  onDismiss,
+  children,
+}: {
+  /** `lg` is for a dialog that holds a LIST rather than a question. */
+  size?: 'md' | 'lg';
+  onDismiss: () => void;
+  children: ReactNode;
+}) {
   return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]"
@@ -267,7 +316,7 @@ export function Modal({ onDismiss, children }: { onDismiss: () => void; children
       onClick={onDismiss}
     >
       <div
-        className="w-full max-w-md"
+        className={`w-full ${size === 'lg' ? 'max-w-lg' : 'max-w-md'}`}
         role="presentation"
         onClick={(event) => event.stopPropagation()}
       >
@@ -278,14 +327,78 @@ export function Modal({ onDismiss, children }: { onDismiss: () => void; children
   );
 }
 
+/**
+ * THE HEADER OF EVERY SURFACE THAT OPENS OVER ANOTHER, and there is only one of it.
+ *
+ * There were seven, and no two agreed. Two heights (36px and 48px), two alignments
+ * (a centred title in `DialogFrame` and the artifact overlay; a left title with a
+ * subtitle in machine settings, application settings, the model picker and the paste
+ * editor), two paddings, and four close buttons hand-built at the call site in two
+ * different boxes — none of them the `DialogClose` this file says is the only way out.
+ *
+ * Left wins, because it is the only one of the two shapes that can hold a SUBTITLE,
+ * and four of the seven needed one — the gateway a setting belongs to, the model
+ * currently pinned, which pasted block is being edited. Centring also cost `px-12` of
+ * dead space on both sides to clear a close button that is welded to one of them.
+ *
+ * The band is the list's own (`min-h-12 mouse:min-h-9`), so a dialog's header and a
+ * machine's header are the same height on the same screen.
+ */
+export function DialogHeader({
+  title,
+  titleId,
+  subtitle,
+  closeLabel,
+  onClose,
+  className = '',
+}: {
+  title: ReactNode;
+  /** For a surface labelled by `aria-labelledby` rather than `aria-label`. */
+  titleId?: string;
+  subtitle?: ReactNode;
+  /** Names what it closes: three of these can be open over one another. */
+  closeLabel?: string;
+  onClose?: () => void;
+  className?: string;
+}) {
+  return (
+    <header
+      className={`flex min-h-12 shrink-0 items-stretch bg-dialog-title text-dialog-title-foreground mouse:min-h-9 ${className}`}
+    >
+      <div className={`min-w-0 flex-1 self-center py-1.5 ${LIST_EDGE}`}>
+        {/* A title can be a whole QUESTION from `vis.ask`, and a question clipped to
+            one line is no longer one anybody can answer. So it wraps — bounded at
+            three lines, which is the depth `HumanInputPrompt` was fixed to and pins.
+            The band's height is a minimum, not a cap. */}
+        <h2
+          id={titleId}
+          className="line-clamp-3 font-mono text-body font-bold tracking-wide"
+          title={typeof title === 'string' ? title : undefined}
+        >
+          {title}
+        </h2>
+        {subtitle && (
+          <p className="truncate font-mono text-meta text-dialog-title-foreground/70">
+            {subtitle}
+          </p>
+        )}
+      </div>
+      {onClose && <DialogClose label={closeLabel ?? 'Close'} tone="title" onClose={onClose} />}
+    </header>
+  );
+}
+
 export function DialogFrame({
   title,
+  subtitle,
   children,
   footer,
   onClose,
   className = '',
 }: {
   title: string;
+  /** The line under the title — which machine, which model, which paste. */
+  subtitle?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
   onClose?: () => void;
@@ -298,25 +411,12 @@ export function DialogFrame({
       aria-modal="true"
       aria-label={title}
     >
-      <header className="relative flex min-h-9 items-center justify-center bg-dialog-title px-12 py-1.5 text-dialog-title-foreground mouse:min-h-8">
-        {/* A dialog title can be a whole question from `vis.ask`; wrap it (bounded) instead of eating it. */}
-        <h2
-          className="line-clamp-3 text-center font-mono text-body font-bold tracking-wide"
-          title={title}
-        >
-          {title}
-        </h2>
-        {onClose && (
-          <DialogClose
-            label="Close dialog"
-            className="absolute inset-y-0 right-0"
-            onClose={onClose}
-          />
-        )}
-      </header>
-      <div className="border-t border-dialog-edge">{children}</div>
+      <DialogHeader title={title} subtitle={subtitle} closeLabel="Close dialog" onClose={onClose} />
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t border-dialog-edge">
+        {children}
+      </div>
       {footer && (
-        <footer className="border-t border-dialog-edge bg-panel-2 px-4 py-2 font-mono text-meta text-dialog-hint">
+        <footer className="shrink-0 border-t border-dialog-edge bg-panel-2 px-4 py-2 font-mono text-meta text-dialog-hint">
           {footer}
         </footer>
       )}
@@ -450,23 +550,139 @@ export function MachineGap() {
  * `HeaderToggle` (a toggle's hover has to reach the edge of the screen) and the trailing
  * one to `HeaderActions`, so each edge stays one decision instead of two.
  */
-const HEADER_BAND = 'flex min-h-12 items-stretch border-b border-dialog-edge mouse:min-h-9';
+/**
+ * THE LADDER, and it is the only thing that says which of the three levels you are
+ * looking at.
+ *
+ * Measured on the shipped list: the machine name and the project name were the SAME
+ * PIXELS — 11px, weight 700, `#262626`, in a 36px band on `rgb(250,243,235)` — and a
+ * session title one step deeper was 11px too. Three levels of ownership, one type
+ * step out of the eight this app defines, and the deepest level wearing the TALLEST
+ * band. The paper was supposed to carry the difference (`bg-panel` against
+ * `bg-panel-2`) and cannot: `--surface` and `--panel2` are the same value in both
+ * bundled palettes, so that distinction has never rendered.
+ *
+ * The ladder moves on THREE axes at once, because one of them alone is never enough
+ * to be seen: 13px against 12px is a step you can measure and cannot notice.
+ *
+ *   level     type              band (touch / mouse)   paper
+ *   machine   text-subhead 15   56 / 40                level-machine
+ *   project   text-title   13   52 / 36                level-project
+ *   session   text-ui      11   48 / 32                the page's own surface
+ *
+ * Two points of type per step, four pixels of band per step, and one derived step of
+ * paper per level (see `--color-level-*` in `index.css`).
+ *
+ * The LEAF is the shortest, not the tallest. A session row used to stand 48px against
+ * a 36px project band — the child bigger than the thing that contains it — which is
+ * backwards however you argue it, and on a desktop it is also just a waste: the row
+ * is ONE line there, so 32px holds it exactly. Touch keeps every level at 44px or
+ * more, so the ladder survives a thumb.
+ */
+const HEADER_TYPE = {
+  machine: 'text-subhead',
+  project: 'text-title',
+} as const;
 
-/** The leading edge of a header, worn by whichever half starts it. */
-const HEADER_EDGE = 'pl-3 sm:pl-4';
+/** The band a machine's header stands in, against the one a project's stands in. */
+const HEADER_BAND = {
+  machine: 'flex min-h-14 items-stretch mouse:min-h-10',
+  project: 'flex min-h-13 items-stretch mouse:min-h-9',
+} as const;
+
+/**
+ * Which level the header belongs to, read by the halves inside it.
+ *
+ * `SectionHeader` already knows its tone, so nothing below it restates one: a title
+ * that took its own `tone` prop would be a second place for the answer to live, and
+ * two places holding one answer is how the machine and the project came to be the
+ * same 11px in the first place.
+ */
+const HeaderTone = createContext<'machine' | 'project'>('project');
+
+/**
+ * THE LEADING EDGE OF THE LIST, and every row in it starts here.
+ *
+ * Measured on a 390px iPhone before this was one value: the machine's mark began at
+ * 14px, the project's disclosure at 14px but its NAME at 36px, a session's title at
+ * 10px, and an opened session's usage rollup at 40px. Five leading edges down one
+ * column of a list whose whole job is to show what contains what — and the session
+ * titles, the deepest thing on the screen, started FURTHEST LEFT, so depth read
+ * backwards. Containment is carried by the machine's rail and by the header's own
+ * paper, exactly as this file's other comments claim; it is not carried by a
+ * different indent per component, because that only ever produced five of them.
+ */
+export const LIST_EDGE = 'pl-3 sm:pl-4';
+
+/**
+ * THE LEFT EDGE OF THE LIST, worn by whatever is standing there.
+ *
+ * The card gives this side up entirely so that a machine's rail can BE the frame
+ * rather than stand beside it: a coloured 2px line one pixel inside a grey one is
+ * two lines doing one job, which is what the rail was removed for. Chrome bands wear
+ * it in the edge ink; a machine block wears it in its own hue (`MachineRail`). Both
+ * are 2px, and the card's right edge is 2px too, so the ink lands symmetrically
+ * whichever of them is painting.
+ */
+export const LIST_FRAME = 'border-l-2 border-dialog-edge';
+
+/**
+ * THE TRAILING CONTROL COLUMN, and every row in the list ends in it.
+ *
+ * The other half of the same failure: a header's `⋯` stopped 12px short of the
+ * screen while the session row's disclosure — one row below it, the same size glyph,
+ * the same "there is more here" promise — ran flush to the edge. Two controls in
+ * what the eye reads as one column, 12px apart, which is precisely the report that
+ * some things have a margin and the chevrons beside them do not.
+ *
+ * So the gap in front of the cluster, the gap between its controls and where it
+ * stops are decided once, HERE, and a row that ends in a control wears this.
+ */
+// The cluster ALWAYS owns the gutter, because what ends a row is not fixed: a
+// project header drops its `⋯` while a filter is live (a group showing 3 of 40
+// matches must not offer a control that deletes 40), and the amber verb becomes the
+// last thing in the row. An `edge` IconButton reclaims this padding with a matching
+// negative margin, so a bare GLYPH runs to the paper while a filled BOX stops at the
+// gutter — and both are true whichever one happens to be last.
+const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pl-2 pr-3 sm:pr-4';
+
+/**
+ * The leading GLYPH of a header, in a box the width of the widest one.
+ *
+ * A machine is marked by a 6px identity block and a project by a 14px disclosure, so
+ * with each sized to its own ink the machine's name began at x=28 and the project's
+ * name directly below it at x=36 — the last 8px of the same misalignment, surviving
+ * inside the two components that had just been taught to share every other edge.
+ * One column, and the names start together.
+ */
+const HEADER_GLYPH = 'grid size-3.5 shrink-0 place-items-center';
 
 export function SectionHeader({
   tone,
+  rule,
   children,
 }: {
   tone: 'machine' | 'project';
+  /**
+   * A border-colour class for the band's OUTGOING rule, when that rule carries
+   * meaning — a machine's own hue. It replaces the hairline rather than joining it:
+   * a coloured line beside a grey one is the double border this list was reported
+   * for, and the band only ever draws one.
+   */
+  rule?: string;
   children: ReactNode;
 }) {
-  // A machine ORGANIZES everything under it, so its band sticks to the top of the
-  // scroller and wears the panel's own paper; a project is a section inside that
-  // machine and sits one step deeper on `panel-2`. That is the whole difference.
-  const paper = tone === 'machine' ? 'sticky top-0 z-10 bg-panel' : 'bg-panel-2';
-  return <header className={`${HEADER_BAND} ${paper}`}>{children}</header>;
+  // A machine ORGANIZES everything under it, so its band is the taller of the two,
+  // the darkest paper of the three, and sticks to the top of the scroller; a project
+  // is a section inside that machine and sits one step nearer the page.
+  const paper =
+    tone === 'machine' ? 'sticky top-0 z-10 bg-level-machine' : 'bg-level-project';
+  const edge = rule ? `border-b-2 ${rule}` : 'border-b border-dialog-edge';
+  return (
+    <HeaderTone.Provider value={tone}>
+      <header className={`${HEADER_BAND[tone]} ${edge} ${paper}`}>{children}</header>
+    </HeaderTone.Provider>
+  );
 }
 
 /**
@@ -477,6 +693,8 @@ export function SectionHeader({
  * look clipped and introduced a false horizontal edge on narrow screens.
  */
 export function MachineBanner({ children }: { children: ReactNode }) {
+  // No coloured rule here: the hue is the RAIL now, and one machine wearing its
+  // colour twice in the same corner is the barcode this list was reported for.
   return <SectionHeader tone="machine">{children}</SectionHeader>;
 }
 
@@ -484,11 +702,48 @@ export function MachineBanner({ children }: { children: ReactNode }) {
  * The leading half of a header that only NAMES its section: an optional mark, then the
  * name, truncated. It takes the width the trailing cluster leaves and no more.
  */
-export function HeaderTitle({ mark, name }: { mark?: ReactNode; name: ReactNode }) {
+export function HeaderTitle({
+  mark,
+  name,
+  qualifier,
+  qualifierTitle,
+}: {
+  mark?: ReactNode;
+  name: ReactNode;
+  /**
+   * What the name alone cannot settle — the address behind a machine's label, the
+   * way a project header carries the path behind its folder name.
+   *
+   * All three levels of this list say the same sentence now: a NAME, then the thing
+   * that tells two of them apart, then what the row reports. Rendered nothing when a
+   * machine has no label of its own, because then the address IS the name and
+   * printing it twice is not a hierarchy.
+   */
+  qualifier?: ReactNode;
+  qualifierTitle?: string;
+}) {
+  const tone = useContext(HeaderTone);
   return (
-    <span className={`flex min-w-0 flex-1 items-center gap-2 ${HEADER_EDGE}`}>
-      {mark}
-      <span className="truncate font-mono text-ui font-bold text-white">{name}</span>
+    // The glyph centres against the LINE (`items-center`, as `HeaderToggle` does it)
+    // while the name and its qualifier share a BASELINE inside it. Baseline-aligning
+    // the mark alongside them drops a 10px block below the ink it belongs to.
+    <span className={`flex min-w-0 flex-1 items-center gap-2 ${LIST_EDGE}`}>
+      {mark && <span className={HEADER_GLYPH}>{mark}</span>}
+      <span className="flex min-w-0 items-baseline gap-2">
+        <span
+          className={`shrink-0 truncate font-mono font-bold text-white ${qualifier ? 'max-w-[60%]' : 'min-w-0'} ${HEADER_TYPE[tone]}`}
+        >
+          {name}
+        </span>
+        {qualifier && (
+          <span
+            className="min-w-0 truncate font-mono text-chip text-dialog-hint"
+            title={qualifierTitle}
+          >
+            {qualifier}
+          </span>
+        )}
+      </span>
     </span>
   );
 }
@@ -521,15 +776,26 @@ export function HeaderToggle({
       type="button"
       aria-expanded={isOpen}
       onClick={onToggle}
-      className={`flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:py-0 ${HEADER_EDGE}`}
+      className={`flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:py-0 ${LIST_EDGE}`}
     >
-      <ChevronIcon open={isOpen} className="size-3.5 shrink-0 text-dialog-hint" />
-      <span className="min-w-0">
-        <span className="block truncate font-mono text-ui font-bold text-white">{name}</span>
+      <span className={HEADER_GLYPH}>
+        <ChevronIcon open={isOpen} className="size-3.5 text-dialog-hint" />
+      </span>
+      {/* Name and path on ONE line, sharing a baseline. Stacked, this header stood two
+          lines tall while the machine header directly above it — the same band, the
+          same job — stood one, so the two never read as peers; and the path, which is
+          the thing that tells two `vis` projects apart, was the smaller of two lines
+          in a row already crowded by a count, a yellow verb and a `⋯`.
+          The NAME holds its ground and the PATH gives way: the name is the identity
+          and the path only qualifies it, so the path is the one that truncates — with
+          the whole thing on `title` for the row that needs it spelled out. */}
+      <span className="flex min-w-0 items-baseline gap-2">
         <span
-          className="mt-0.5 block truncate font-mono text-chip text-dialog-hint"
-          title={pathTitle}
+          className={`max-w-[60%] shrink-0 truncate font-mono font-bold text-white ${HEADER_TYPE.project}`}
         >
+          {name}
+        </span>
+        <span className="min-w-0 truncate font-mono text-chip text-dialog-hint" title={pathTitle}>
           {path}
         </span>
       </span>
@@ -538,23 +804,56 @@ export function HeaderToggle({
 }
 
 /**
- * The trailing half of a section header: what the row REPORTS, then what it OFFERS.
+ * The trailing half of a row: what it REPORTS, then what it OFFERS.
  *
- * It owns the right edge of every header in the list — which is why the header itself
- * no longer pads that side. A machine header padded its own right edge while the
- * project header one row below it ended flush, so the two `⋯` that were finally the
- * same button still sat at two different distances from the same screen edge, and the
- * yellow verb was welded to the words beside it with no gap at all. One component now
- * decides all three: the gap in front of the cluster, the gap between its controls,
- * and where it stops.
+ * It owns the right edge of every row in the list — headers and session rows alike —
+ * which is why no row pads that side itself. A machine header padded its own right
+ * edge while the project header one row below it ended flush, so the two `⋯` that were
+ * finally the same button still sat at two different distances from the same screen
+ * edge; the session rows below them then ran their disclosure flush to the screen, a
+ * third distance. One component decides all of it now.
  */
 export function HeaderActions({ children }: { children: ReactNode }) {
-  return (
-    <span className="flex shrink-0 items-center gap-2 self-center pl-2 pr-3 sm:pr-4">
-      {children}
-    </span>
-  );
+  return <span className={LIST_TRAIL}>{children}</span>;
 }
+
+/**
+ * "There is more inside this row", and there is only one of it.
+ *
+ * The sibling of `KebabButton`: where the `⋯` holds the rarer VERBS of a row, this
+ * holds the rest of its FACTS — a session's usage rollup, opened in place. They are
+ * the same promise in two directions, so they are the same box, in the same column,
+ * with the same border-on-hover and the same focus ring; only the glyph and the
+ * `aria-expanded` differ. It was a hand-built 32px strip welded to the screen edge,
+ * at 40% opacity, which is why it read as a decoration rather than as the control it
+ * is — and why it never lined up with the `⋯` directly above it.
+ *
+ * Opacity is NOT the resting state: a control that fades to 0.4 to look quiet is one
+ * that fails contrast while doing it. It rests in the same hint ink as every other
+ * quiet glyph in the list and answers the pointer with the button's own frame.
+ */
+export const RowDisclosure = forwardRef<
+  HTMLButtonElement,
+  Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> & {
+    /** It carries no word, so it names its row: `Show details for <session>`. */
+    label: string;
+    isOpen: boolean;
+  }
+>(function RowDisclosure({ label, isOpen, className = '', ...props }, ref) {
+  return (
+    <IconButton
+      ref={ref}
+      label={label}
+      variant="quiet"
+      edge
+      aria-expanded={isOpen}
+      className={className}
+      {...props}
+    >
+      <ChevronIcon open={isOpen} className="size-3.5" />
+    </IconButton>
+  );
+});
 
 /** A header's own quiet voice: what it counts, in the list's monospace hint ink. */
 export function HeaderMeta({ children }: { children: ReactNode }) {
@@ -618,22 +917,34 @@ export function LiveCount({ count }: { count: number }) {
 }
 
 /**
- * The rail that CONTAINS a machine: one 2px line in the machine's own hue running
- * down everything it owns, banner included. A project boundary is a hairline and a
- * machine boundary is a colour change — the eye can see where `tower` ends without
- * reading a single word. The same treatment identifies a solo machine too.
+ * The rail that CONTAINS a machine: 2px of its own hue down everything it owns,
+ * banner included. A project boundary is a hairline and a machine boundary is a
+ * colour change, so where one computer ends is seen before it is read.
+ *
+ * It is the card's LEFT FRAME, not a line inside it — see `LIST_FRAME`. That is the
+ * whole difference from the version that had to be removed: it doubled the card's
+ * own border and, being a border, pushed every railed row 2px deeper than its own
+ * trailing edge stopped. Now the frame is 2px on both sides and the rail simply
+ * colours the one on the left.
  */
 export function MachineRail({ color, children }: { color?: MachineColor; children: ReactNode }) {
-  if (!color) return <>{children}</>;
-  return <div className={`border-l-2 ${color.rail}`}>{children}</div>;
+  return (
+    <div className={color ? `border-l-2 ${color.rail}` : LIST_FRAME}>{children}</div>
+  );
 }
 
 /**
  * The machine's hue as a solid block, worn by its banner and its scope chip, so
  * the chip you tapped and the rail you got back are visibly the same machine.
  */
-export function MachineMark({ color }: { color: MachineColor }) {
-  return <span className={`size-1.5 shrink-0 ${color.dot}`} aria-hidden="true" />;
+export function MachineMark({ color, size = 'inline' }: { color: MachineColor; size?: 'inline' | 'banner' }) {
+  // A machine's identity block used to be `size-1.5` everywhere — the same 6px square,
+  // at the same size, as the LIVE / WAITING / IDLE dot on every session row beneath
+  // it. One shape meaning two things, and the SMALLEST glyph marking the HIGHEST
+  // level. In a banner it is the mark of a whole computer and takes the glyph column;
+  // riding inside a scope chip's text it stays the 6px it has to be.
+  const box = size === 'banner' ? 'size-2.5' : 'size-1.5';
+  return <span className={`${box} shrink-0 ${color.dot}`} aria-hidden="true" />;
 }
 
 /**

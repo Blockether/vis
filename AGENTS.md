@@ -151,6 +151,17 @@ UX proposals are **made in the app and photographed**, never described in prose.
 - A design that survived the gallery is still unproven: shoot the SHIPPED screen against **real gateways** too. Start it with `npm run dev`, which auto-loads every live local gateway registry entry and its token, then photograph the same states into `/tmp/vis-e2e/`. Add one unreachable connection only when the state under test requires it. That is where "scoped to the offline machine" turned out to render `No sessions yet`.
 - Drive that browser by **`@ref` from `spel snapshot -i -c`**, not by `find role button --name`: name matching is a substring match, so `--name 'New session'` also matches `aria-label="Choose which machine the new session runs on"` and the ambiguous click silently does nothing. If a control has no name in the snapshot, that is a real accessibility bug — give it an `aria-label` instead of working around it.
 - When a click seems to do nothing, confirm it against `spel eval-js "…element.click()"` before blaming the app: the DOM path proves whether the handler or the locator is at fault. `spel console` dumps every entry ever captured — read `spel errors` instead.
+- **A layout claim is proven by NUMBERS, never by looking at the screenshot.** A shot says a thing looks about right; it cannot say whether two controls share an edge, and the eye will happily sign off on a 12px discrepancy it is looking straight at. Every geometric assertion — an edge, a gutter, an indent, a hit box, a baseline, an overflow — is read out of the live DOM with `spel eval-js` and `getBoundingClientRect()`, per viewport, and REPORTED as the figures:
+
+  ```
+  spel --session s eval-js '(() => {
+    const at = (sel) => { const r = document.querySelector(sel)?.getBoundingClientRect();
+      return r && { l: Math.round(r.left), r: Math.round(r.right), w: Math.round(r.width), h: Math.round(r.height) }; };
+    return JSON.stringify({ kebab: at("button[aria-label^=Actions]"), row: at("[data-session-id]") });
+  })()'
+  ```
+
+  What that catches and a screenshot does not: two trailing controls ending at 378 and 390; a name at x=28 above a name at x=36; a 44px thumb target that quietly became 32; a panel whose `top + height` exceeds `innerHeight`, which is a primary button rendered below the fold. Check the numbers you are asserting on — `getBoundingClientRect()` is post-transform and viewport-relative, so measure after fonts load and after any open/close transition has settled. Screenshots stay in the loop for what only an eye can judge (weight, colour, rhythm, whether it is ugly); they are never the evidence for a measurement.
 
 ## Shipping verified work
 

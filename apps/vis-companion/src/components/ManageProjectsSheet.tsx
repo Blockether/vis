@@ -8,28 +8,33 @@
  *
  * Two modes, one header: the crumbs are for recognition, the pencil is for people
  * who know where they are going. The pencil is INK, never a box — a bordered button
- * beside the path reads as a second action competing with it.
+ * beside the path reads as a second action competing with it — which is `IconButton`
+ * in its `quiet` variant, not a hand-built one.
+ *
+ * NOTHING in here paints its own box. It used to paint all of them — its own panel,
+ * its own band, its own row, its own badge, its own icon button — each a near-copy of
+ * something `Menu` already shipped, and each drifted: the panel had no way out at all
+ * on a phone, the rows were the one list in the app that stayed 44px under a mouse,
+ * and on a desktop the whole sheet hung off the bottom of the window with `Use
+ * project` — the only control it exists to reach — below the fold and unscrollable.
+ * It is `AnchoredPanel` + `MenuHeading` + `MenuItem` now, so it cannot drift again.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { createPortal } from 'react-dom';
-import { Button, Input, Spinner } from './ui';
-import { ChevronIcon, PencilIcon } from './icons';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Button, DialogFrame, IconButton, Input, Modal, Spinner } from './ui';
+import { MenuBack, MenuItem, MenuNote } from './Menu';
+import { ChevronIcon, PencilIcon, ProjectsIcon, TrashIcon } from './icons';
 import type { GatewayClient } from '../lib/gateway';
 import type { BrowseEntry } from '../lib/types';
-import type { MenuPosition } from '../lib/anchored-menu';
-
-/** `SessionsScreen`'s menu heading. The sheet's amber is spent on its primary button. */
-const BAND = 'px-3 py-2 font-mono text-chip uppercase tracking-[0.08em]';
-const QUIET_BAND = 'border-b border-dialog-edge bg-panel-2 text-dialog-hint';
-/** `StartOption`: one menu row — a 44px thumb target with a hairline under it. */
-const ROW =
-  'flex min-h-11 w-full items-start gap-2 border-b border-dialog-edge px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none';
-/** The badge a row hangs on its right edge, exactly as `StartOption` draws it. */
-const CHIP =
-  'mt-0.5 shrink-0 border border-edge px-1 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint';
 
 /** How many crumbs stay on screen. A path too long for 390px elides from the LEFT. */
 const CRUMB_TAIL = 3;
+
+/**
+ * The sheet's own leading edge, shared by its crumb bar, its rows and its footer, so
+ * a path, the folder it lists and the folder you are about to commit all start at the
+ * same x. They used to start at four different ones.
+ */
+const SHEET_EDGE = 'px-3';
 
 interface Crumb {
   label: string;
@@ -72,14 +77,27 @@ function entryHint(entry: BrowseEntry): string {
   return entry.branch ? `${count} · ${entry.branch}` : count;
 }
 
+/** One project this machine already owns, as the portal lists it. */
+export interface ManagedProject {
+  /** The name the sessions list titles it with. */
+  name: string;
+  /** Canonical root on that machine — the identity, and what removal acts on. */
+  root: string;
+  /** How many transcripts it holds. */
+  count: number;
+  /** How many of those are running right now. */
+  live: number;
+}
+
 export function ManageProjectsSheet({
   label,
   client,
   startAt,
   knownRoots,
-  at,
+  projects,
   onCancel,
   onChoose,
+  onRemove,
 }: {
   /** The machine whose files these are — the title says it, so no row has to. */
   label: string;
@@ -88,11 +106,18 @@ export function ManageProjectsSheet({
   startAt: string | null;
   /** Roots this machine already runs sessions in, so the common case is recognised. */
   knownRoots: Set<string>;
-  /** The control this came from, so desktop anchors it where a phone docks it. */
-  at: MenuPosition | null;
+  /** What this machine ALREADY has. The portal opens on these, not on a filesystem. */
+  projects: ManagedProject[];
   onCancel: () => void;
   onChoose: (root: string) => void;
+  /** Remove every transcript in one project. The caller owns the confirmation. */
+  onRemove: (project: ManagedProject) => void;
 }) {
+  // The portal opens on what this machine HAS; the filesystem is one step in, behind
+  // the verb that needs it. It used to open on `GET /v1/fs` — a folder browser called
+  // "Manage projects", which could add a project and never showed you the ones you
+  // had, let alone remove one.
+  const [adding, setAdding] = useState(projects.length === 0);
   const [dir, setDir] = useState<string>(startAt ?? '~');
   const [listing, setListing] = useState<{
     path: string;
@@ -191,178 +216,252 @@ export function ManageProjectsSheet({
     return () => window.removeEventListener('keydown', onKey);
   }, [onCancel]);
 
+  // The pencil is a control like any other, so it is the app's icon button: the same
+  // box, the same focus ring and the same desktop rhythm as the `⋯` that opened this
+  // sheet. Hand-built, it was a borderless 44px slab that never shrank under a mouse
+  // and answered neither hover nor focus.
+  //
+  // `quiet` keeps the promise this file opened with — the pencil is INK, never a box,
+  // because a bordered button beside the path reads as a second action competing with
+  // it. The frame arrives on hover and focus, where it answers "can I press this".
   const pencil = (
-    <button
+    <IconButton
       ref={pencilRef}
-      type="button"
-      aria-label={typed === null ? 'Type a path' : 'Back to browsing'}
+      variant="quiet"
+      label={typed === null ? 'Type a path' : 'Back to browsing'}
       aria-pressed={typed !== null}
-      className={`inline-flex size-11 shrink-0 items-center justify-center ${
-        typed === null ? 'text-dialog-hint' : 'text-accent-ink'
-      }`}
+      className={typed === null ? '' : 'text-accent-ink'}
       onClick={() => setTyped(typed === null ? homeify(here, home) : null)}
     >
       <PencilIcon className="size-4" />
-    </button>
+    </IconButton>
   );
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 bg-black/40"
-      role="presentation"
-      onClick={onCancel}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Manage projects on ${label}`}
-        className="absolute inset-x-0 bottom-0 flex max-h-[82vh] flex-col border-t-2 border-accent bg-panel pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-auto sm:bottom-auto sm:left-[var(--menu-left)] sm:top-[var(--menu-top)] sm:max-h-[70vh] sm:w-96 sm:border sm:border-dialog-edge sm:pb-0 sm:shadow-[8px_8px_0_var(--line2)]"
-        style={
-          at
-            ? ({ '--menu-top': `${at.top}px`, '--menu-left': `${at.left}px` } as CSSProperties)
-            : undefined
-        }
-        onClick={(event) => event.stopPropagation()}
-      >
-        <p className={`${BAND} ${QUIET_BAND} shrink-0 truncate`}>Manage projects · {label}</p>
+  // What the commit button is aimed at, in the SAME language the crumbs above speak.
+  // The footer used to print the raw absolute path while the crumbs said `~ › vis`,
+  // so one sheet named one folder two ways.
+  const aiming = folder === null ? target : here && `${here}/${folder.trim()}`;
 
-        {typed === null ? (
-          <div className="flex shrink-0 items-center gap-1 border-b border-dialog-edge bg-panel-2 px-3 py-2">
-            {crumbs.length > shown.length && (
-              <span className="shrink-0 font-mono text-meta text-dialog-hint">…</span>
+  return (
+    <Modal size="lg" onDismiss={onCancel}>
+      <DialogFrame
+        className="flex max-h-[80vh] flex-col"
+        title="Manage projects"
+        subtitle={label}
+        onClose={onCancel}
+      >
+
+      {!adding ? (
+        <>
+          {/* WHAT THIS MACHINE HAS. Each row is the project: press it to make it the
+              machine's current one, or take the trash beside it. Removal lives here
+              because this is the portal that manages projects — it was a `⋯` on every
+              project header opening a popover with one destructive row in it. */}
+          <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0">
+            {projects.length === 0 ? (
+              <MenuNote>This machine has no projects yet.</MenuNote>
+            ) : (
+              projects.map((entry) => (
+                <MenuItem
+                  key={entry.root}
+                  icon={<ProjectsIcon className="size-4" />}
+                  title={entry.name}
+                  hint={`${entry.count} ${entry.count === 1 ? 'transcript' : 'transcripts'}${
+                    entry.live > 0 ? `, ${entry.live} running` : ''
+                  } · ${homeify(entry.root, home) || entry.root}`}
+                  onSelect={() => onChoose(entry.root)}
+                  action={
+                    <IconButton
+                      edge
+                      variant="quiet"
+                      label={`Remove every transcript in ${entry.name}`}
+                      className="text-err"
+                      onClick={() => onRemove(entry)}
+                    >
+                      <TrashIcon className="size-4" />
+                    </IconButton>
+                  }
+                />
+              ))
             )}
-            <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
-              {shown.map((crumb, index) => (
-                <span key={crumb.path} className="flex min-w-0 items-center gap-1">
-                  <span aria-hidden className="shrink-0 font-mono text-meta text-dialog-hint">
-                    <ChevronIcon className="size-3 text-dialog-hint" aria-hidden />
-                  </span>
+          </div>
+          <div className={`shrink-0 border-t border-dialog-edge bg-panel-2 py-2 ${SHEET_EDGE}`}>
+            <div className="flex items-center justify-end">
+              <Button variant="ghost" onClick={() => setAdding(true)}>
+                Add project…
+              </Button>
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+      {projects.length > 0 && (
+        <MenuBack label="Back to this machine's projects" onBack={() => setAdding(false)}>
+          Add a project
+        </MenuBack>
+      )}
+
+      {typed === null ? (
+        <div
+          className={`flex min-h-11 shrink-0 items-center gap-1 border-b border-dialog-edge bg-panel-2 mouse:min-h-9 ${SHEET_EDGE}`}
+        >
+          {crumbs.length > shown.length && (
+            <span className="shrink-0 font-mono text-meta text-dialog-hint" aria-hidden>
+              …
+            </span>
+          )}
+          <span className="flex min-w-0 flex-1 items-center overflow-hidden">
+            {shown.map((crumb, index) => {
+              const isHere = index === shown.length - 1;
+              return (
+                <span key={crumb.path} className="flex min-w-0 items-center">
+                  {/* A separator BETWEEN crumbs, never in front of the first one: the
+                      bar used to open `› ~ › vis`, a chevron pointing at nothing. */}
+                  {(index > 0 || crumbs.length > shown.length) && (
+                    <ChevronIcon className="mx-0.5 size-3 shrink-0 text-dialog-hint" aria-hidden />
+                  )}
+                  {/* A crumb is a real target: the text-only ones were 14px tall in a
+                      sheet whose every other row was 44. */}
                   <button
                     type="button"
-                    disabled={index === shown.length - 1}
-                    className={`truncate font-mono text-meta ${
-                      index === shown.length - 1 ? 'font-bold text-white' : 'text-accent-ink'
+                    disabled={isHere}
+                    aria-current={isHere ? 'location' : undefined}
+                    className={`min-h-11 truncate px-1 font-mono text-meta transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none mouse:min-h-6 ${
+                      isHere
+                        ? 'font-bold text-white'
+                        : 'text-accent-ink hover:bg-hover focus-visible:bg-hover'
                     }`}
                     onClick={() => enter(crumb.path)}
                   >
                     {crumb.label}
                   </button>
                 </span>
-              ))}
-            </span>
-            {pencil}
-          </div>
-        ) : (
-          <div className="flex shrink-0 items-center gap-2 border-b border-dialog-edge bg-panel px-3 py-1">
-            <Input
-              autoFocus
-              value={typed}
-              aria-label="Path on this machine"
-              placeholder="~/code/thing"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              onChange={(event) => setTyped(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter') return;
-                if (exact) enter(exact.path);
-                else void commit();
-              }}
-            />
-            {pencil}
-          </div>
-        )}
-
-        {folder !== null && (
-          <div className="flex shrink-0 items-center gap-2 border-b border-dialog-edge bg-panel px-3 py-1.5">
-            <span aria-hidden className="shrink-0 font-mono text-ui text-accent-ink">
-              +
-            </span>
-            <Input
-              autoFocus
-              value={folder}
-              maxLength={64}
-              aria-label="New folder name"
-              placeholder="band-repaint"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              onChange={(event) => setFolder(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') void commit();
-              }}
-            />
-          </div>
-        )}
-
-        <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain">
-          {error ? (
-            <p className="px-3 py-3 font-mono text-meta text-err">{error}</p>
-          ) : busy && !listing ? (
-            <p className="flex items-center gap-2 px-3 py-3 font-mono text-meta text-dialog-hint">
-              <Spinner className="text-accent-ink" />
-              Reading folders...
-            </p>
-          ) : rows.length === 0 ? (
-            <p className="px-3 py-3 font-mono text-meta text-dialog-hint">
-              {typedSplit?.leaf ? 'No folder here starts with that.' : 'No folders in here.'}
-            </p>
-          ) : (
-            rows.map((entry) => (
-              <button
-                key={entry.path}
-                type="button"
-                className={`${ROW} ${folder === null ? '' : 'opacity-40'}`}
-                onClick={() => enter(entry.path)}
-              >
-                <ChevronIcon className="mt-0.5 size-3.5 shrink-0 text-dialog-hint" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-mono text-ui text-white">{entry.name}/</span>
-                  <span className="mt-0.5 block truncate font-mono text-meta text-dialog-hint">
-                    {entryHint(entry)}
-                  </span>
-                </span>
-                {/* One badge look in the whole app (`StartOption`'s): the WORD says
-                    whether Vis already knows this folder or merely that it is a repo. */}
-                {knownRoots.has(entry.path) ? (
-                  <span className={CHIP}>project</span>
-                ) : entry.is_repo ? (
-                  <span className={CHIP}>git</span>
-                ) : null}
-              </button>
-            ))
-          )}
-          {listing?.is_truncated && (
-            <p className="px-3 py-2 font-mono text-meta text-dialog-hint">
-              Only the first folders are listed — type the path instead.
-            </p>
-          )}
+              );
+            })}
+          </span>
+          {pencil}
         </div>
+      ) : (
+        <div
+          className={`flex min-h-11 shrink-0 items-center gap-2 border-b border-dialog-edge bg-panel mouse:min-h-9 ${SHEET_EDGE}`}
+        >
+          <Input
+            autoFocus
+            value={typed}
+            aria-label="Path on this machine"
+            placeholder="~/code/thing"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            onChange={(event) => setTyped(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter') return;
+              if (exact) enter(exact.path);
+              else void commit();
+            }}
+          />
+          {pencil}
+        </div>
+      )}
 
-        <div className="shrink-0 border-t border-dialog-edge bg-panel-2 px-3 py-2">
-          <p className="truncate font-mono text-meta text-dialog-hint">
-            {folder === null ? target || '…' : `${here}/${folder.trim()}`}
-          </p>
-          {/* `quiet` beside `solid` on purpose: two bordered boxes side by side read
-              as rivals, which is the whole reason the shipped Button has that variant. */}
-          <div className="mt-1.5 flex items-center justify-between gap-2">
-            <Button
-              variant="quiet"
-              disabled={saving || !here}
-              onClick={() => setFolder(folder === null ? '' : null)}
-            >
-              {folder === null ? 'New folder' : 'Cancel'}
-            </Button>
-            <Button
-              disabled={saving || !target || (folder !== null && !folder.trim())}
-              onClick={() => void commit()}
-            >
-              {folder === null ? 'Use project' : 'Create project'}
-            </Button>
+      {folder !== null && (
+        <div
+          className={`flex min-h-11 shrink-0 items-center gap-2 border-b border-dialog-edge bg-panel mouse:min-h-9 ${SHEET_EDGE}`}
+        >
+          <span aria-hidden className="shrink-0 font-mono text-ui text-accent-ink">
+            +
+          </span>
+          <Input
+            autoFocus
+            value={folder}
+            maxLength={64}
+            aria-label="New folder name"
+            placeholder="band-repaint"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            onChange={(event) => setFolder(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') void commit();
+            }}
+          />
+        </div>
+      )}
+
+      {/* The last folder drops its rule so it cannot land on the footer's own — see
+          `Menu`, which makes the same promise for the same reason. */}
+      <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0 [&>div>*:last-child]:border-b-0">
+        {error ? (
+          <p className={`py-3 font-mono text-meta text-err ${SHEET_EDGE}`}>{error}</p>
+        ) : busy && !listing ? (
+          <MenuNote>
+            <Spinner className="text-accent-ink" />
+            Reading folders...
+          </MenuNote>
+        ) : rows.length === 0 ? (
+          <MenuNote>
+            {typedSplit?.leaf ? 'No folder here starts with that.' : 'No folders in here.'}
+          </MenuNote>
+        ) : (
+          // A folder row IS a menu row — a glyph, a name, the consequence of choosing
+          // it, and an optional badge — so it is the app's menu row, not a fourth
+          // near-copy of one. The badge's WORD says whether Vis already knows this
+          // folder or merely that it is a repo.
+          // `inert`, not `aria-hidden`: while a new folder is being named these rows
+          // are out of play, and a container that is merely hidden from the a11y tree
+          // still hands its buttons to the Tab key.
+          <div className={folder === null ? '' : 'opacity-40'} inert={folder !== null}>
+            {rows.map((entry) => (
+              <MenuItem
+                key={entry.path}
+                icon={<ChevronIcon className="size-3.5" />}
+                title={`${entry.name}/`}
+                hint={entryHint(entry)}
+                badge={
+                  knownRoots.has(entry.path) ? 'project' : entry.is_repo ? 'git' : undefined
+                }
+                onSelect={() => enter(entry.path)}
+              />
+            ))}
           </div>
+        )}
+        {listing?.is_truncated && (
+          <MenuNote>Only the first folders are listed — type the path instead.</MenuNote>
+        )}
+      </div>
+
+      <div className={`shrink-0 border-t border-dialog-edge bg-panel-2 py-2 ${SHEET_EDGE}`}>
+        <p className="truncate font-mono text-meta text-dialog-hint" title={aiming || undefined}>
+          {aiming ? homeify(aiming, home) : '…'}
+        </p>
+        {/* Both buttons at the TRAILING edge, primary last, because that is where the
+            thumb already is and where every other footer in this app commits. Thrown
+            to opposite ends of a 384px panel they read as two unrelated screens. */}
+        <div className="mt-1.5 flex items-center justify-end gap-2">
+          {/* `ghost` beside `solid`, `justify-end gap-2`: the exact footer every other
+              dialog in this app commits with. It was the one surface pairing `quiet`
+              with the primary — and `quiet` is frameless until it is hovered, which on
+              a phone is never, so the secondary read as a caption rather than a
+              button. `quiet` is for a control inside a line of METADATA (the machine
+              header's Retry), not for one of the two verbs a dialog ends on. */}
+          <Button
+            variant="ghost"
+            disabled={saving || !here}
+            onClick={() => setFolder(folder === null ? '' : null)}
+          >
+            {folder === null ? 'New folder' : 'Cancel'}
+          </Button>
+          <Button
+            disabled={saving || !target || (folder !== null && !folder.trim())}
+            onClick={() => void commit()}
+          >
+            {folder === null ? 'Use project' : 'Create project'}
+          </Button>
         </div>
       </div>
-    </div>,
-    document.body,
+        </>
+      )}
+      </DialogFrame>
+    </Modal>
   );
 }

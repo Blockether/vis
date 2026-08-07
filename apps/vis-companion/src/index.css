@@ -225,6 +225,16 @@
   --color-footer-error: var(--footer-error);
   --color-cancelled: var(--cancelled-bg);
   --color-cancelled-foreground: var(--cancelled-fg);
+  /* DEPTH, as paper. The sessions list is machine -> project -> session, and the two
+     header bands were told apart by `--surface` against `--panel2` — which is the
+     SAME VALUE in both bundled palettes (#faf3eb light, #161820 dark), so that step
+     has never once rendered. A gateway may or may not give the two tokens different
+     values, so depth cannot be a token: it is DERIVED, by mixing the page's own ink
+     into its own paper. That flips direction on its own — a light theme darkens, a
+     dark theme lightens — so every gateway palette gets the same three legible steps
+     with nothing to override and no per-theme fork. */
+  --color-level-machine: color-mix(in oklab, var(--fg) 9%, var(--surface));
+  --color-level-project: color-mix(in oklab, var(--fg) 4%, var(--surface));
   --font-sans: 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono Variable', 'SFMono-Regular', Consolas, monospace;
 }

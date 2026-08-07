@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
 import type { ModelPref, RouterProvider } from '../lib/types';
-import { Banner, Button } from '../components/ui';
-import { ChevronIcon, CloseIcon } from '../components/icons';
+import { Banner, Button, DialogHeader } from '../components/ui';
+import { ChevronIcon } from '../components/icons';
 import {
   defaultFirstProviders,
   isProviderAuthed,
@@ -101,27 +101,13 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
         aria-modal="true"
         aria-labelledby="provider-router-title"
       >
-        <header className="flex min-h-12 shrink-0 items-center bg-dialog-title text-dialog-title-foreground">
-          <div className="min-w-0 flex-1 px-3 py-2 sm:px-4">
-            <h2
-              id="provider-router-title"
-              className="truncate font-mono text-body font-bold tracking-wide"
-            >
-              Model
-            </h2>
-            <p className="truncate font-mono text-meta text-dialog-title-foreground/70">
-              {pref?.model ? `Current: ${pref.provider ?? '?'}/${pref.model}` : 'No model pinned'}
-            </p>
-          </div>
-          <button
-            type="button"
-            className="grid min-h-10 min-w-10 place-items-center border-l border-dialog-title-foreground/20 text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
-            onClick={onClose}
-            aria-label="Close model picker"
-          >
-            <CloseIcon />
-          </button>
-        </header>
+        <DialogHeader
+          titleId="provider-router-title"
+          title="Model"
+          subtitle={pref?.model ? `Current: ${pref.provider ?? '?'}/${pref.model}` : 'No model pinned'}
+          closeLabel="Close model picker"
+          onClose={onClose}
+        />
 
         <div className="flex-1 touch-pan-y space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain border-t border-dialog-edge p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4">
           {err && <Banner kind="err">{err.text}</Banner>}

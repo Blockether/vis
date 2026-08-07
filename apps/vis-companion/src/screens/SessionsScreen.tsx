@@ -8,8 +8,11 @@ import {
   HeaderTally,
   HeaderTitle,
   HeaderToggle,
+  IconButton,
   Input,
   KebabButton,
+  LIST_EDGE,
+  LIST_FRAME,
   LiveCount,
   LiveTally,
   MachineBanner,
@@ -18,11 +21,20 @@ import {
   MachineRail,
   Modal,
   NewSessionButton,
+  RowDisclosure,
   SectionHeader,
   Spinner,
   UnreadBadge,
 } from '../components/ui';
-import { Menu, MenuBack, MenuHeading, MenuItem, MenuNote, MENU_WIDTH } from '../components/Menu';
+import {
+  Menu,
+  MenuBack,
+  MenuHeading,
+  MenuItem,
+  MenuNote,
+  MENU_WIDTH,
+  PANEL_SIZES,
+} from '../components/Menu';
 import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { GatewayConn, Session, SessionUsage, WorkspaceDraft } from '../lib/types';
@@ -42,8 +54,18 @@ import {
   type ListAnchor,
 } from '../lib/list-scroll';
 import { SwipeActions } from '../components/SwipeActions';
-import { ManageProjectsSheet } from '../components/ManageProjectsSheet';
-import { ChevronIcon, PencilIcon, StarIcon, TrashIcon } from '../components/icons';
+import {
+  ManageProjectsSheet,
+  type ManagedProject,
+} from '../components/ManageProjectsSheet';
+import {
+  CloseIcon,
+  PencilIcon,
+  ProjectsIcon,
+  SettingsIcon,
+  StarIcon,
+  TrashIcon,
+} from '../components/icons';
 import { DEFAULT_SESSION_PAGE_SIZE, getOfferDrafts, getSessionsPerPage, subscribeOfferDrafts, subscribeSessionsPerPage } from '../lib/storage';
 import { hostOf } from '../lib/endpoints';
 import {
@@ -200,10 +222,11 @@ function useNow(intervalMs: number): number {
 
 /**
  * How wide the folder browser is placed from. The sheet is RIGHT-aligned to the
- * control it hangs from, so the anchor math needs the width before it has ever
- * been measured; it must stay equal to the width `ManageProjectsSheet` paints.
+ * control it hangs from, so the anchor math needs the width before it has ever been
+ * measured — which is exactly why the number and the class that paints it live
+ * together in `PANEL_SIZES` rather than being restated here.
  */
-const BROWSE_WIDTH = 384;
+const BROWSE_WIDTH = PANEL_SIZES.browse.width;
 
 /**
  * Where a new session begins. `trunk` is the plain session this screen always made:
@@ -241,6 +264,31 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
   const [query, setQuery] = useState('');
   // Keep keystrokes immediate even when a large session fleet is regrouped.
   const deferredQuery = useDeferredValue(query);
+  // `/` jumps to the filter. It is unannounced on purpose — the band printed a `kbd`
+  // chip for it and that chip was one more thing sitting in a row whose job is to be
+  // empty until you type. The shortcut costs nothing to leave bound.
+  const filterRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return;
+      // Never steal the key from someone already typing — a `/` belongs to the
+      // field, the textarea or the contenteditable that has focus.
+      const at = document.activeElement as HTMLElement | null;
+      if (
+        at &&
+        (at.isContentEditable ||
+          at.tagName === 'INPUT' ||
+          at.tagName === 'TEXTAREA' ||
+          at.tagName === 'SELECT')
+      ) {
+        return;
+      }
+      event.preventDefault();
+      filterRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   const [transcriptMatches, setTranscriptMatches] = useState<Map<string, SessionMatch> | null>(null);
   // Sessions a transcript hit named that this machine had not paged in yet, per
   // machine key. Kept beside the list instead of merged into it: the 10s poll
@@ -1026,6 +1074,20 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
     [filtered],
   );
 
+  // The projects the "remove sessions" step offers are the ones this machine is
+  // SHOWING, read from the same grouping the list renders — a row that promises to
+  // remove 975 transcripts under a header reading 712 is a row nobody should press.
+  const managedProjects = useCallback(
+    (machine: FleetMachine): ManagedProject[] =>
+      groupByWorkDir(machine.sessions ?? []).map(([, sessions]) => ({
+        name: projectLabel(sessions[0]!),
+        root: projectRoot(sessions),
+        count: sessions.length,
+        live: sessions.filter(sessionIsLive).length,
+      })),
+    [],
+  );
+
   // A dead gateway is not a sessions problem: there is nothing to navigate, so the
   // shell drops us on the Machines screen instead of rendering a session list
   // shaped like an error. Reporting it is this screen's only job here.
@@ -1059,8 +1121,14 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
           second hairline on top of it, so the Sessions tab wore a 2px seam while
           Machines (which floats its cards below a gap) wore 1px. Bottom edge only;
           the full box comes back once the panel detaches at `sm`. */}
-      <div className="flex h-full min-h-0 flex-col overflow-hidden border-b border-dialog-edge bg-panel sm:border">
-        <div className="border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
+      {/* The card owns three sides. Its LEFT edge belongs to whatever is standing
+          there — a neutral 2px rule under the chrome bands, the machine's own hue
+          down everything that machine owns — because a rail beside a border is two
+          lines doing one job, and a rail that is a BORDER also steals 2px of layout
+          the trailing edge has no match for. Both sides are 2px now, so the ink
+          lands symmetrically whichever one is painting. */}
+        <div className="flex h-full min-h-0 flex-col overflow-hidden border-b border-r-2 border-dialog-edge bg-panel sm:border-y sm:border-r-2">
+        <div className={`border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4 ${LIST_FRAME}`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate font-mono text-ui font-bold text-white">
@@ -1154,7 +1222,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
             nothing else on the screen changes: multi-machine costs the solo user
             nothing. */}
         {hasScopeStrip && (
-          <div className="flex items-center gap-1.5 overflow-x-auto bg-panel px-3 py-2 sm:px-4">
+          <div className={`flex items-center gap-1.5 overflow-x-auto bg-panel px-3 py-2 sm:px-4 ${LIST_FRAME}`}>
             <button
               type="button"
               aria-pressed={scope === null}
@@ -1197,22 +1265,62 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
           </div>
         )}
 
-        <div className="flex min-h-10 items-center border-b border-dialog-edge bg-panel px-3 mouse:min-h-9 sm:px-4">
-          <ChevronIcon className="size-3.5 text-accent-ink" />
+        {/* THE BAND IS THE FIELD.
+            It wore a `›` first — this app's disclosure glyph, borrowed as a terminal
+            caret, so the one control you type into said "open me". Then it wore a
+            generic bordered `Input`, which put a box inside a box and stretched an
+            empty 1352px rectangle across the desktop.
+            A list made of bands does not need a form control dropped into one: the
+            band takes the INPUT PAPER — the only band in the list that does, so it is
+            unmistakable at rest without a frame of its own — keeps the list's leading
+            edge, and answers focus by inking its own rule amber. Its trailing cluster
+            is where every other row keeps its controls, and it earns its keep: the key
+            that focuses it while it is empty, what it found once it is not. */}
+        <div className={`flex min-h-11 items-stretch border-b border-dialog-edge bg-input transition-colors duration-150 focus-within:border-accent motion-reduce:transition-none mouse:min-h-9 ${LIST_FRAME}`}>
           <input
+            ref={filterRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="min-w-0 flex-1 bg-transparent px-2 py-2 font-mono text-ui text-white outline-none placeholder:text-dialog-hint"
+            className={`min-w-0 flex-1 bg-transparent font-mono text-ui text-white outline-none placeholder:text-dialog-hint ${LIST_EDGE}`}
             placeholder="Filter title, project, session"
             aria-label="Filter sessions"
           />
+          <HeaderActions>
+            {query ? (
+              <>
+                {/* What the filter DID, in the header's own quiet voice — and the
+                    reason the desktop footer no longer prints the same fraction. */}
+                <HeaderMeta>
+                  <span className="tabular-nums" role="status" aria-live="polite">
+                    <span className="sr-only">
+                      {totals.shown} of {totals.all} sessions match
+                    </span>
+                    <span aria-hidden="true">
+                      {totals.shown}/{totals.all}
+                    </span>
+                  </span>
+                </HeaderMeta>
+                <IconButton
+                  edge
+                  variant="quiet"
+                  label="Clear filter"
+                  onClick={() => {
+                    setQuery('');
+                    filterRef.current?.focus();
+                  }}
+                >
+                  <CloseIcon className="size-3" />
+                </IconButton>
+              </>
+            ) : null}
+          </HeaderActions>
         </div>
 
         <div ref={listRef} className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable]">
         {sessions === null ? (
           <NavigatorSkeleton />
         ) : scopedError && !visible?.length ? (
-          <div className="px-5 py-16 text-center">
+          <div className={`px-5 py-16 text-center ${LIST_FRAME}`}>
             <p className="font-mono text-body font-bold text-white/70">
               {scopeMachine ? `${machineLabel(scopeMachine.conn)} is not answering` : 'No machine is answering'}
             </p>
@@ -1224,7 +1332,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
             </div>
           </div>
         ) : visible?.length === 0 ? (
-          <div className="px-5 py-16 text-center">
+          <div className={`px-5 py-16 text-center ${LIST_FRAME}`}>
             <p className="font-mono text-body font-bold text-white/70">
               {query ? 'No matching sessions' : 'No sessions yet'}
             </p>
@@ -1246,21 +1354,28 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                       label is read. It is charged once per EXTRA machine — the first
                       block starts flush, and a solo fleet never pays it. */}
                   {index > 0 && <MachineGap />}
-                  {/* Everything one machine owns hangs off ITS rail: a project
-                      boundary is a hairline, a machine boundary is a colour
-                      change, so where `tower` ends is seen before it is read.
-                      The rail and panel remain visible even for a solo machine. */}
+                  {/* Everything one machine owns hangs off ITS rail, and that rail IS
+                      the card's left frame here — a project boundary is a hairline, a
+                      machine boundary is a colour change, so where `tower` ends is seen
+                      before it is read. The panel is always rendered for the machine
+                      whose projects follow, fleet view or scoped view alike. */}
                   <MachineRail color={machineColor(machineColors, key)}>
-                  {/* The machine panel is always rendered for the machine whose projects
-                      follow, whether this is the whole fleet or a scoped view. */}
                     <MachineBanner>
                       {/* The machine's hue, not its health: health is a WORD
                           here (`offline`, with a Retry beside it), while the
                           colour is the only thing tying this banner to the
                           rail below it and to the chip above it. */}
+                      {/* Name, then the thing that tells two of them apart — the same
+                          sentence the project header below says with `vis  ~/vis`. A
+                          machine with no label of its own is NAMED by its address, so
+                          the qualifier is dropped rather than printed twice. */}
                       <HeaderTitle
-                        mark={<MachineMark color={machineColor(machineColors, key)} />}
+                        mark={<MachineMark size="banner" color={machineColor(machineColors, key)} />}
                         name={machineLabel(machine.conn)}
+                        qualifier={
+                          machine.conn.label?.trim() ? hostOf(machine.conn.url) : undefined
+                        }
+                        qualifierTitle={machine.conn.url}
                       />
                       {/* The trailing half of the header is ONE component, shared with every
                           project header below it: the same gap in front of it, the same gap
@@ -1324,7 +1439,6 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                           onOpen={onOpen}
                           onRename={startRename}
                           onDelete={startDelete}
-                          onDeleteProject={startProjectDelete}
                           onNewSession={(root) => void createSession({ kind: 'trunk' }, machine.conn, root)}
                           expanded={expanded.has(`${key}\u0000${groupRoot}`)}
                           forceExpand={forceExpand}
@@ -1341,9 +1455,15 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
         )}
         </div>
 
-        <footer className="hidden items-center justify-end border-t border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-meta text-dialog-hint sm:flex sm:px-4">
-          <span>{sessions ? `${totals.shown} of ${totals.all} sessions` : 'Reading sessions...'}</span>
-        </footer>
+        {/* Only the WAIT is left here. The fraction moved into the filter band, which
+            is where the filtering happens — printing "708 of 970" in a footer while
+            the control that produced it said nothing was the same fact in the wrong
+            place, and the third copy of it on the screen. */}
+        {sessions === null && (
+          <footer className={`hidden items-center justify-end border-t border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-meta text-dialog-hint sm:flex sm:px-4 ${LIST_FRAME}`}>
+            <span>Reading sessions...</span>
+          </footer>
+        )}
       </div>
 
       {rowAction && rowCopy && (
@@ -1435,8 +1555,9 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                   BEHIND this control with the other ones instead of sitting beside it
                   as a second word-button in the header's right corner. */}
               <MenuItem
+                icon={<ProjectsIcon className="size-4" />}
                 title="Manage projects"
-                hint="browse, create, and choose this machine's project folders"
+                hint="add, choose, and remove this machine's projects"
                 onSelect={(anchor) => {
                   const at = menuPosition(anchor.getBoundingClientRect(), BROWSE_WIDTH);
                   if (!at || !targetMachine) return;
@@ -1446,6 +1567,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
               />
               {onMachineSettings && (
                 <MenuItem
+                  icon={<SettingsIcon className="size-4" />}
                   title="Machine settings"
                   hint="name, pairing, unpair"
                   onSelect={() => {
@@ -1548,9 +1670,19 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
           client={clientFor(target)}
           startAt={project?.path ?? null}
           knownRoots={knownRoots}
-          at={browseAt}
+          projects={targetMachine ? managedProjects(targetMachine) : []}
           onCancel={() => setStartFlow(startFlowBack)}
           onChoose={(root) => void createSession({ kind: 'trunk' }, target, root)}
+          onRemove={(entry) => {
+            const machine = targetMachine;
+            if (!machine) return;
+            leaveStart();
+            startProjectDelete(
+              entry.name,
+              (machine.sessions ?? []).filter((session) => projectPath(session) === entry.root),
+              target,
+            );
+          }}
         />
       )}
 
@@ -1564,9 +1696,17 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
               .map(projectPath)
               .filter((path): path is string => !!path),
           )}
-          at={manageProjects.at}
+          projects={managedProjects(manageProjects.machine)}
           onCancel={() => setManageProjects(null)}
           onChoose={(_root: string) => setManageProjects(null)}
+          onRemove={(entry) => {
+            const conn = manageProjects.machine.conn;
+            const sessions = (manageProjects.machine.sessions ?? []).filter(
+              (session) => projectPath(session) === entry.root,
+            );
+            setManageProjects(null);
+            startProjectDelete(entry.name, sessions, conn);
+          }}
         />
       )}
 
@@ -1670,7 +1810,6 @@ const ProjectGroup = memo(function ProjectGroup({
   onOpen,
   onRename,
   onDelete,
-  onDeleteProject,
   onNewSession,
   expanded,
   forceExpand,
@@ -1689,7 +1828,6 @@ const ProjectGroup = memo(function ProjectGroup({
   onOpen: Props['onOpen'];
   onRename: (session: Session, conn: GatewayConn) => void;
   onDelete: (session: Session, conn: GatewayConn) => void;
-  onDeleteProject: (project: string, sessions: Session[], conn: GatewayConn) => void;
   onNewSession: (root: string) => void;
   expanded: boolean;
   forceExpand: boolean;
@@ -1708,38 +1846,6 @@ const ProjectGroup = memo(function ProjectGroup({
   // memoized row does not re-render on every paint of its parent.
   const renameRow = useCallback((session: Session) => onRename(session, conn), [onRename, conn]);
   const deleteRow = useCallback((session: Session) => onDelete(session, conn), [onDelete, conn]);
-
-  // The group's destructive action lives behind a kebab, not a bare ✕: a ✕ reads as
-  // "close," and one that deletes 40 sessions is drawn identically to one that deletes 1.
-  // The ⋯ is a neutral overflow control; "Delete all N" rides inside it carrying its count.
-  const [menu, setMenu] = useState<{ top: number; left: number } | null>(null);
-  const kebabRef = useRef<HTMLButtonElement>(null);
-  const openMenu = useCallback(() => {
-    setMenu(menuPosition(kebabRef.current?.getBoundingClientRect(), MENU_WIDTH));
-  }, []);
-  const closeMenu = useCallback((restoreFocus = false) => {
-    setMenu(null);
-    if (restoreFocus) kebabRef.current?.focus();
-  }, []);
-  // Same lifecycle as the start-in menu: Escape closes and hands focus back, and a resize
-  // (the phone keyboard alone fires one) RE-ANCHORS rather than dismissing — a control that
-  // closes on the frame it opens reads as dead. The kebab scrolls with the list, so a scroll
-  // closes it instead of leaving a detached popover pinned to where the kebab used to be.
-  useEffect(() => {
-    if (!menu) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeMenu(true);
-    };
-    const onScroll = () => setMenu(null);
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('resize', openMenu);
-    document.addEventListener('scroll', onScroll, true);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('resize', openMenu);
-      document.removeEventListener('scroll', onScroll, true);
-    };
-  }, [menu, closeMenu, openMenu]);
 
   // A coarse clock ages the recency window: an hour past its last activity a session
   // that is idle, answered and read leaves the collapsed peek on its own, no refresh
@@ -1805,16 +1911,6 @@ const ProjectGroup = memo(function ProjectGroup({
             where={project}
             onPress={() => onNewSession(root)}
           />
-          {/* Gone while a query is live: a group showing 3 of 40 matches must never
-              offer a control that deletes 40. */}
-          {!needle && (
-            <KebabButton
-              ref={kebabRef}
-              isOpen={menu !== null}
-              label={`Actions for ${project}`}
-              onClick={() => (menu ? closeMenu() : openMenu())}
-            />
-          )}
         </HeaderActions>
       </SectionHeader>
       {rows.length > 0 && (
@@ -1844,23 +1940,6 @@ const ProjectGroup = memo(function ProjectGroup({
         </div>
       )}
     </section>
-      {menu && (
-        <Menu label={`Actions for ${project}`} at={menu} onDismiss={() => closeMenu(true)}>
-          {/* The same band the machine's `⋯` opens with, naming what these rows act
-              on: two menus one row apart must not be two different objects. */}
-          <MenuHeading>{project}</MenuHeading>
-          <MenuItem
-            tone="danger"
-            icon={<TrashIcon className="size-4" />}
-            title="Remove sessions"
-            hint="Removes every transcript in this project on this machine. This cannot be undone."
-            onSelect={() => {
-              closeMenu();
-              onDeleteProject(project, sessions, conn);
-            }}
-          />
-        </Menu>
-      )}
     </>
   );
 });
@@ -1963,75 +2042,98 @@ const SessionRow = memo(function SessionRow({
       <div className="flex items-stretch">
         <button
           type="button"
-          className="group flex min-h-14 min-w-0 flex-1 items-start py-2.5 pl-2 pr-3 text-left transition-colors duration-150 hover:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:min-h-12 mouse:py-2 sm:pr-4"
+          className={`group flex min-h-12 min-w-0 flex-1 items-center py-1.5 text-left transition-colors duration-150 hover:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:min-h-8 mouse:py-1 ${LIST_EDGE}`}
           data-session-id={session.id}
           onClick={() => void onOpen(conn, session.id)}
         >
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-start justify-between gap-3">
+        {/* One row of facts, laid out twice from ONE dom order.
+            A phone stacks it: what the session IS on the first line, what it has DONE
+            on the second, each line's own trailing fact right-aligned against it.
+            From `sm:` up there is room for the whole sentence on one line, and the
+            facts stop floating: the wrapper below turns to `contents` so its children
+            become grid items of the row itself, and id / turns / status / time land on
+            FIXED tracks. That is the difference between a list and a phone list
+            stretched to 1400px, where a title sat at x=56 and its own status badge at
+            x=1325 with nothing between them to carry the eye across. */}
+        <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_5rem_6rem] sm:gap-y-0">
+          {/* Everything that NAMES the session travels with its name — the unread
+              badge, the unsent-work flag, the star, the draft it was forked into. */}
+          <span className="col-start-1 row-start-1 flex min-w-0 items-center gap-1.5 sm:col-start-auto sm:row-start-auto">
+            {/* The LEAF, and the smallest name on the screen: 15 / 13 / 10 down the
+                machine -> project -> session ladder. It stays the strongest thing in
+                its OWN row — semibold, full ink, against the hint-grey `text-chip`
+                facts beside it — so shrinking it costs the scan nothing. */}
             <span
-              className={`block min-w-0 truncate font-mono text-ui font-semibold ${
+              className={`min-w-0 truncate font-mono text-meta font-semibold ${
                 session.title?.trim() ? 'text-white' : 'text-white/45'
               }`}
             >
               {title}
             </span>
-          <span className="flex shrink-0 items-center gap-1.5">
             {unread > 0 && (
-              <span className="inline-flex items-center bg-accent px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
+              <span className="shrink-0 bg-accent px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
                 {unread > 1 ? `${unread} new` : 'new'}
               </span>
             )}
             {hasUnsent && (
               <span
-                className="inline-flex items-center border border-warn-strong px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-warn-strong"
+                className="shrink-0 border border-warn-strong px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-warn-strong"
                 title="Unsent message waiting in this session's composer"
               >
                 dirty
               </span>
             )}
-            <span className={`inline-flex shrink-0 items-center gap-1 font-mono text-chip font-bold tracking-[0.08em] ${statusTone(session)}`}>
-              <span className={`size-1.5 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`} />
-              {status}
-            </span>
+            {draftName !== '' && (
+              <span
+                className="shrink-0 border border-warn-strong px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-warn-strong"
+                title={session.workspace?.root}
+              >
+                draft {draftName}
+              </span>
+            )}
             {isStarred && (
-              <span className="mt-px shrink-0">
+              <span className="shrink-0 text-accent-ink">
                 <StarIcon filled className="size-3" />
                 <span className="sr-only">Favorite</span>
               </span>
             )}
           </span>
+          {/* `sm:contents` is what lets one dom order be two layouts: on a phone this
+              is a single line of prose under the title, and from `sm:` up it dissolves
+              so that the id and the turn count become columns in their own right. */}
+          <span className="col-start-1 row-start-2 flex min-w-0 items-center gap-x-2 font-mono text-chip text-dialog-hint sm:contents">
+            <span className="truncate text-white/55 tabular-nums">{shortId(session.id)}</span>
+            <span className="opacity-40 sm:hidden" aria-hidden="true">·</span>
+            <span className="whitespace-nowrap font-mono text-chip text-dialog-hint tabular-nums">
+              {turns} {turns === 1 ? 'turn' : 'turns'}
+            </span>
           </span>
-          <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-chip text-dialog-hint">
-            <span className="text-white/55">{shortId(session.id)}</span>
-            <span className="opacity-40" aria-hidden="true">·</span>
-            <span>{turns} {turns === 1 ? 'turn' : 'turns'}</span>
-            {draftName !== '' && (
-              <>
-                <span className="opacity-40" aria-hidden="true">·</span>
-                <span
-                  className="inline-flex items-center font-bold uppercase tracking-[0.08em] text-warn-strong"
-                  title={session.workspace?.root}
-                >
-                  draft {draftName || ''}
-                </span>
-              </>
-            )}
-            <span className="ml-auto shrink-0 pl-2" title={formatExact(timestamp)}>{timeLabel(timestamp)}</span>
+          <span
+            className={`col-start-2 row-start-1 inline-flex shrink-0 items-center gap-1 justify-self-end font-mono text-chip font-bold tracking-[0.08em] sm:col-start-auto sm:row-start-auto sm:justify-self-start ${statusTone(session)}`}
+          >
+            <span
+              className={`size-1.5 shrink-0 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
+            />
+            {status}
+          </span>
+          <span
+            className="col-start-2 row-start-2 justify-self-end whitespace-nowrap font-mono text-chip text-dialog-hint tabular-nums sm:col-start-auto sm:row-start-auto sm:justify-self-start"
+            title={formatExact(timestamp)}
+          >
+            {timeLabel(timestamp)}
           </span>
         </span>
         </button>
-        <button
-          type="button"
-          aria-expanded={statsOpen}
-          aria-label={`${statsOpen ? 'Hide' : 'Show'} details for ${title}`}
-          onClick={toggleStats}
-          className={`flex w-8 shrink-0 items-start justify-center pt-2.5 transition-[background-color,opacity] duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:w-9 sm:pt-2 ${
-            statsOpen ? 'bg-hover opacity-100' : 'opacity-40 hover:opacity-100'
-          }`}
-        >
-          <ChevronIcon open={statsOpen} className="size-3.5 text-dialog-hint" />
-        </button>
+        {/* The same box, the same column and the same right edge as the `⋯` in the
+            project header directly above: both promise "there is more here", so
+            neither is allowed its own geometry. */}
+        <HeaderActions>
+          <RowDisclosure
+            isOpen={statsOpen}
+            label={`${statsOpen ? 'Hide' : 'Show'} details for ${title}`}
+            onClick={toggleStats}
+          />
+        </HeaderActions>
       </div>
       </SwipeActions>
       {/* Height eases through a 0fr -> 1fr grid track: the one pure-CSS way to
@@ -2087,7 +2189,7 @@ function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }
   const errors = usage?.top_errors ?? [];
 
   return (
-    <div className="border-t border-dialog-edge bg-panel-2 py-2.5 pl-10 pr-3 sm:pl-11 sm:pr-4">
+    <div className={`border-t border-dialog-edge bg-panel-2 py-2.5 pr-3 sm:pr-4 ${LIST_EDGE}`}>
       {phase === 'loading' && (
         <p className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
           Reading usage…
@@ -2274,24 +2376,20 @@ function SkeletonBar({
 
 function NavigatorSkeleton() {
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      aria-label="Loading sessions"
-    >
+    <div role="status" aria-live="polite" aria-label="Loading sessions" className={LIST_FRAME}>
       <div className="animate-pulse motion-reduce:animate-none" aria-hidden="true">
         {SKELETON_GROUPS.map((rows, group) => (
           <div key={group}>
             {/* The list's OWN header band, so a loading screen can never stand at a
                 different height from the screen it turns into. */}
             <SectionHeader tone="project">
+              {/* One line, because the header it stands in for is one line: a
+                  skeleton two lines tall collapses to one the moment data lands. */}
               <HeaderTitle
                 name={
-                  <span className="block">
+                  <span className="flex items-baseline gap-2">
                     <SkeletonBar type="text-ui" width="w-28" baz="h-2.5" tone="bg-muted/40" />
-                    <span className="mt-0.5 block">
-                      <SkeletonBar type="text-chip" width="w-40" baz="h-1.5" tone="bg-muted/20" />
-                    </span>
+                    <SkeletonBar type="text-chip" width="w-40" baz="h-1.5" tone="bg-muted/20" />
                   </span>
                 }
               />
@@ -2299,29 +2397,35 @@ function NavigatorSkeleton() {
                 <SkeletonBar type="text-chip" width="w-14" baz="h-1.5" tone="bg-muted/25" />
               </HeaderActions>
             </SectionHeader>
-            {/* mirrors SessionRow's <button> */}
+            {/* Mirrors `SessionRow` — the SAME grid, the same leading edge, the same
+                trailing column — because a skeleton that stands anywhere else is a
+                layout jump the user pays for on every cold open. It used to carry an
+                `invisible` chevron and `px-3`, indenting its bars 32px in a list whose
+                real rows started their titles at 8px. */}
             <div className="border-b border-dialog-edge">
               {rows.map((width, row) => (
                 <div
                   key={row}
-                  className="flex min-h-14 w-full items-start gap-2 px-3 py-2.5 [&+&]:border-t [&+&]:border-dialog-edge mouse:min-h-12 sm:px-4 mouse:py-2"
+                  className={`flex min-h-12 w-full items-center py-1.5 [&+&]:border-t [&+&]:border-dialog-edge mouse:min-h-8 mouse:py-1 ${LIST_EDGE}`}
                 >
-                  <ChevronIcon className="mt-0.5 invisible size-3" />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex min-w-0 items-start justify-between gap-3">
-                      <SkeletonBar type="text-ui" width={width} baz="h-2.5" tone="bg-muted/30" />
-                      <span className="shrink-0">
-                        <SkeletonBar type="text-chip" width="w-12" baz="h-1.5" tone="bg-muted/25" />
-                      </span>
+                  <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_5rem_6rem] sm:gap-y-0">
+                    <span className="col-start-1 row-start-1 sm:col-start-auto sm:row-start-auto">
+                      <SkeletonBar type="text-meta" width={width} baz="h-2.5" tone="bg-muted/30" />
                     </span>
-                    <span className="mt-1 flex items-center gap-x-2 font-mono text-chip">
-                      <SkeletonBar type="text-chip" width="w-10" baz="h-1.5" tone="bg-muted/20" />
+                    <span className="col-start-1 row-start-2 flex items-center gap-x-2 sm:contents">
                       <SkeletonBar type="text-chip" width="w-14" baz="h-1.5" tone="bg-muted/20" />
-                      <span className="ml-auto shrink-0 pl-2">
-                        <SkeletonBar type="text-chip" width="w-12" baz="h-1.5" tone="bg-muted/20" />
-                      </span>
+                      <SkeletonBar type="text-chip" width="w-10" baz="h-1.5" tone="bg-muted/20" />
+                    </span>
+                    <span className="col-start-2 row-start-1 justify-self-end sm:col-start-auto sm:row-start-auto sm:justify-self-start">
+                      <SkeletonBar type="text-chip" width="w-12" baz="h-1.5" tone="bg-muted/25" />
+                    </span>
+                    <span className="col-start-2 row-start-2 justify-self-end sm:col-start-auto sm:row-start-auto sm:justify-self-start">
+                      <SkeletonBar type="text-chip" width="w-12" baz="h-1.5" tone="bg-muted/20" />
                     </span>
                   </span>
+                  <HeaderActions>
+                    <span className="w-7 sm:w-8 mouse:w-6" />
+                  </HeaderActions>
                 </div>
               ))}
             </div>
@@ -2462,7 +2566,7 @@ function MatchPreview({ match, needle }: { match: SessionMatch; needle: string }
         ].filter((h) => h.snippet.length > 0);
   if (rows.length === 0) return null;
   return (
-    <div className="border-t border-dialog-edge bg-ink/30 py-1.5 pl-10 pr-3 sm:pl-11 sm:pr-4">
+    <div className={`border-t border-dialog-edge bg-ink/30 py-1.5 pr-3 sm:pr-4 ${LIST_EDGE}`}>
       <div className="divide-y divide-dialog-edge/70">
         {rows.map((hit, index) => (
           <div

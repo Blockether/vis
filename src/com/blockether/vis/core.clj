@@ -154,6 +154,8 @@
              [gateway-session-model-cached gateway-client/session-model-cached]
              [gateway-set-session-model! gateway-client/set-session-model!]
              [gateway-provider-status gateway-client/provider-status]
+             [gateway-router-fleet gateway-client/router]
+             [gateway-router-diagnostics gateway-client/router-diagnostics]
              [gateway-provider-limits gateway-client/provider-limits]
              [gateway-provider-model-options gateway-client/provider-models]
              [gateway-set-router-default! gateway-client/set-router-default!]

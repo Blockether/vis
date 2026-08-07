@@ -1863,3 +1863,128 @@
         ;; `│`; an uncovered-and-blanked row carries only the frame's two.
         (expect (re-find #"\w" host-row))
         (expect (<= 3 (count (re-seq #"│" host-row)))))))
+
+;; ── Regression (user report): "Opening providers is slow" ────────────────────
+;; Settings read the gateway MCP list AND every provider's auth status before it
+;; painted its first frame, so `C-x o` — and the boot path that opens Settings ›
+;; Providers when no provider is configured — sat on the old screen for the
+;; length of those round trips (a cold daemon: seconds; a gateway on another
+;; machine: one RTT per provider). The frame comes first, the fleet lands in it.
+(defdescribe
+  settings-opens-before-the-gateway-answers-test
+  (it
+    "paints the Settings frame first and fills the provider fleet in afterwards"
+    (let
+      [inventory
+       (var-get #'dlg/provider-inventory)
+
+       mcp
+       (var-get #'dlg/mcp-inventory)
+
+       original
+       @inventory
+
+       original-mcp
+       @mcp
+
+       gateway-calls
+       (atom 0)]
+
+      (try
+        ;; Nothing cached: the very first open is the one that used to stall.
+        (reset! inventory {:status :unloaded :providers [] :error nil})
+        (reset! mcp {:status :unloaded :servers [] :error nil})
+        (with-redefs
+          [vis/load-config
+           (constantly {:providers [{:id :acme-llm}]})
+
+           vis/configured-providers
+           (constantly [{:id :acme-llm}])
+
+           vis/authenticated-preset-providers
+           (constantly [])
+
+           vis/gateway-mcp-servers
+           (fn []
+             (swap! gateway-calls inc)
+             [])
+
+           vis/gateway-router-fleet
+           (fn []
+             (swap! gateway-calls inc)
+             [{"id" "acme-llm" "status" {"is_authenticated" true}}])]
+
+          (let
+            [res
+             (cap/capture! {:cols 100
+                            :rows 30
+                            :keys [:esc]
+                            :paint!
+                            (fn [{:keys [screen]}]
+                              (dlg/settings-dialog! screen {} {:focus-section "Providers"}))})
+
+             _
+             (when-let [t (:error res)]
+               (throw t))
+
+             frames
+             (mapv #(cap/frame-text res %) (range (count (:frames res))))]
+
+            ;; The dialog is on the terminal BEFORE the gateway is asked …
+            (expect (<= 2 (count frames)))
+            (expect (str/includes? (first frames) "Settings"))
+            (expect (str/includes? (first frames) "Loading providers"))
+            (expect (not (str/includes? (first frames) "acme-llm")))
+            ;; … and the fleet arrives into that already-painted frame.
+            (expect (str/includes? (last frames) "acme-llm"))
+            (expect (pos? @gateway-calls))))
+        (finally (reset! inventory original) (reset! mcp original-mcp))))))
+
+;; The provider dialog used to open with 2×N gateway calls — one status probe and
+;; one limits probe per provider — even though `GET /v1/router` already carries
+;; both for the whole fleet.
+(defdescribe
+  provider-dialog-single-gateway-call-test
+  (it
+    "loads every provider's status and limits from ONE gateway call"
+    (let
+      [router-calls
+       (atom 0)
+
+       statuses
+       (atom {})
+
+       limits
+       (atom {})
+
+       providers
+       [{:id :openai :models [{:name "gpt-5"}]} {:id :anthropic :models [{:name "claude"}]}]]
+
+      (with-redefs
+        [vis/worker-future
+         (fn [_label thunk]
+           (let [value (thunk)]
+             (future value)))
+
+         vis/gateway-router-diagnostics
+         (fn []
+           (swap! router-calls inc)
+           {:openai {:status {"is_authenticated" true}
+                     :limits {:provider-id :openai :status :ready}}
+            :anthropic {:status {"is_authenticated" false}
+                        :limits {:provider-id :anthropic :status :ready}}})
+
+         vis/gateway-provider-status
+         (fn [_]
+           (throw (ex-info "per-provider status probe must not run" {})))
+
+         vis/gateway-provider-limits
+         (fn [_]
+           (throw (ex-info "per-provider limits probe must not run" {})))]
+
+        (@#'provider/refresh-providers-diagnostics! providers statuses limits)
+        (expect (= 1 @router-calls))
+        (expect (= true (get-in @statuses [:openai "is_authenticated"])))
+        (expect (= false (get-in @statuses [:anthropic "is_authenticated"])))
+        (expect (= :ready (get-in @limits [:openai :status])))
+        (expect (= :ready (get-in @limits [:anthropic :status])))))))

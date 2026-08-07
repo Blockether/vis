@@ -101,19 +101,30 @@ export function CloseIcon({ className }: { className?: string }) {
  * A disclosure. ONE icon in two states: it points right when closed and turns a
  * quarter clockwise when open, so opening a section is a MOVE the eye follows
  * rather than one character being swapped for a different character.
+ *
+ * `back` is the third state, and it exists because the two controls in this app that
+ * mean "return to where you came from" — the session header's back button and a
+ * menu's `MenuBack` band — both drew this glyph pointing FORWARD. A chevron is a
+ * direction before it is a decoration: an arrow aimed at the rest of the app,
+ * labelled "Back to sessions", tells the eye the opposite of what the button does.
+ * It is a rotation rather than a second path so the two can never drift in stroke,
+ * cap or weight.
  */
 export function ChevronIcon({
   open = false,
+  back = false,
   className,
 }: {
   open?: boolean;
+  /** Points the way OUT — a back button, a step retraced. Ignored while `open`. */
+  back?: boolean;
   className?: string;
 }) {
   return (
     <Icon
       className={classes(
         "transition-transform duration-150 motion-reduce:transition-none",
-        open && "rotate-90",
+        open ? "rotate-90" : back && "rotate-180",
         className,
       )}
     >
@@ -291,6 +302,20 @@ export function MachinesIcon({ className }: { className?: string }) {
     <Icon className={className}>
       <path d="M4.95 5.54h14.1v4.7H4.95zM4.95 13.76h14.1v4.7H4.95z" />
       <path d="M7.89 7.89h0.01M7.89 16.11h0.01" />
+    </Icon>
+  );
+}
+
+/**
+ * A project: a folder, drawn in the same flat-cornered geometry as `MachinesIcon`
+ * and `TranscriptsIcon` rather than the rounded folder every icon set ships. A
+ * project in this app IS a directory on a machine, so the tab is not decoration —
+ * it is the one shape that separates "a place on disk" from a document.
+ */
+export function ProjectsIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M4.66 6.4h5.18l1.6 2.14h7.9v9.06H4.66z" />
     </Icon>
   );
 }

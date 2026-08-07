@@ -173,7 +173,10 @@ export function DocAnnotateBar({
             disabled={page <= 1}
             aria-label="Previous page"
           >
-            <ChevronIcon className="size-3" aria-hidden />
+            {/* Two buttons, opposite directions, one glyph: the pager used to draw the
+                same right-pointing chevron on both halves, so only the disabled state
+                said which way you were going. */}
+            <ChevronIcon back className="size-3" aria-hidden />
           </Button>
           <span
             className="flex min-h-7 min-w-24 items-center justify-center border-y border-edge-strong px-2 text-chip text-muted sm:min-h-8"

@@ -22,9 +22,83 @@ import { createPortal } from 'react-dom';
 
 import type { MenuPosition } from '../lib/anchored-menu';
 import { ChevronIcon } from './icons';
+import { DialogClose } from './ui';
+
+/**
+ * The two widths an anchored panel comes in, each paired with the class that paints
+ * it. An anchored popover is PLACED from its own width before it has ever been
+ * measured, so the number and the class have to travel together or they drift — and
+ * a drifted pair is a menu that right-aligns to nothing.
+ */
+export const PANEL_SIZES = {
+  /** A list of verbs. */
+  menu: { width: 320, className: 'sm:w-80' },
+  /** A list of folders, which need room for a name and a hint on one line. */
+  browse: { width: 384, className: 'sm:w-96' },
+} as const;
+
+export type PanelSize = keyof typeof PANEL_SIZES;
 
 /** Desktop width in px. Must stay equal to the `sm:w-80` the panel paints. */
-export const MENU_WIDTH = 320;
+export const MENU_WIDTH = PANEL_SIZES.menu.width;
+
+/**
+ * THE PANEL, and every layer this app anchors to a control is it.
+ *
+ * A sheet docked to the bottom edge of a phone over a scrim, capped by the
+ * Blockether rule and clear of the home indicator; an anchored popover pinned under
+ * the control it came from from `sm:` up. `Menu` is one of these and the folder
+ * browser is the other — and the browser used to spell the whole box out again by
+ * hand, forty characters of it, which is how it ended up as the one surface in the
+ * app with no way out but the scrim.
+ *
+ * It is a COLUMN, and it caps its own height; what scrolls inside it is the caller's
+ * decision, because a menu scrolls whole while a browser has to keep its path and its
+ * commit button still. The height cap is the one `anchored-menu.ts` places against,
+ * so the two must agree: see `MAX_HEIGHT_FRACTION` there.
+ */
+export function AnchoredPanel({
+  size,
+  role,
+  label,
+  at,
+  onDismiss,
+  children,
+}: {
+  size: PanelSize;
+  /** `menu` for a list of verbs, `dialog` for a surface that holds a task. */
+  role: 'menu' | 'dialog';
+  /** What this panel is about, for a reader who cannot see where it hangs. */
+  label: string;
+  /** Where the popover sits from `sm:` up; the phone sheet ignores it. */
+  at: MenuPosition | null;
+  onDismiss: () => void;
+  children: ReactNode;
+}) {
+  return createPortal(
+    <div
+      className={`fixed inset-0 z-50 bg-black/40 ${role === 'menu' ? 'sm:bg-transparent' : ''}`}
+      role="presentation"
+      onClick={onDismiss}
+    >
+      <div
+        role={role}
+        aria-modal={role === 'dialog' ? true : undefined}
+        aria-label={label}
+        className={`absolute inset-x-0 bottom-0 flex max-h-[82vh] flex-col border-t-2 border-accent bg-panel pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-auto sm:bottom-auto sm:left-[var(--menu-left)] sm:top-[var(--menu-top)] sm:max-h-[70vh] sm:border sm:border-dialog-edge sm:pb-0 sm:shadow-[8px_8px_0_var(--line2)] ${PANEL_SIZES[size].className}`}
+        style={
+          at
+            ? ({ '--menu-top': `${at.top}px`, '--menu-left': `${at.left}px` } as CSSProperties)
+            : undefined
+        }
+        onClick={(event) => event.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>,
+    document.body,
+  );
+}
 
 /** The band's shared geometry: one line of small caps, the width of the menu. */
 const BAND = 'px-3 py-2 font-mono text-chip font-bold uppercase tracking-[0.08em]';
@@ -56,28 +130,19 @@ export function Menu({
   onDismiss: () => void;
   children: ReactNode;
 }) {
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 bg-black/40 sm:bg-transparent"
-      role="presentation"
-      onClick={onDismiss}
-    >
-      <div
-        role="menu"
-        aria-label={label}
-        className="absolute inset-x-0 bottom-0 max-h-[70vh] touch-pan-y overflow-y-auto overscroll-contain border-t-2 border-accent bg-panel pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-auto sm:bottom-auto sm:left-[var(--menu-left)] sm:top-[var(--menu-top)] sm:w-80 sm:border sm:border-dialog-edge sm:pb-0 sm:shadow-[8px_8px_0_var(--line2)]"
-        style={
-          {
-            '--menu-top': `${at.top}px`,
-            '--menu-left': `${at.left}px`,
-          } as CSSProperties
-        }
-        onClick={(event) => event.stopPropagation()}
-      >
+  return (
+    <AnchoredPanel size="menu" role="menu" label={label} at={at} onDismiss={onDismiss}>
+      {/* A menu is one list and scrolls whole; only its own body may take the drag,
+          so a long list of verbs never rubber-bands the screen behind it.
+
+          The LAST row drops its rule: every row draws the line under itself, and the
+          bottom one's line lands exactly on the panel's own bottom edge — two
+          hairlines in one pixel row on desktop, and a rule floating over the home
+          indicator on a phone, where the panel has no bottom edge to agree with. */}
+      <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0">
         {children}
       </div>
-    </div>,
-    document.body,
+    </AnchoredPanel>
   );
 }
 
@@ -88,12 +153,28 @@ export function Menu({
  */
 export function MenuHeading({
   tone = 'loud',
+  onClose,
   children,
 }: {
   tone?: 'loud' | 'quiet';
+  /**
+   * The way out, for a panel that holds a TASK rather than a list of verbs. A menu
+   * is left by picking from it or by tapping the paper around it, so it needs none;
+   * a folder browser is a place you can be halfway through, and the scrim behind it
+   * on a phone is a 130px strip most thumbs never reach. It is `DialogClose` — the
+   * app has exactly one way out and this band does not get to invent a second.
+   */
+  onClose?: () => void;
   children: ReactNode;
 }) {
-  return <p className={`${BAND} ${tone === 'loud' ? LOUD : QUIET} truncate`}>{children}</p>;
+  const skin = tone === 'loud' ? LOUD : QUIET;
+  if (!onClose) return <p className={`${BAND} ${skin} truncate`}>{children}</p>;
+  return (
+    <header className={`flex min-h-11 shrink-0 items-stretch mouse:min-h-9 ${skin}`}>
+      <p className={`${BAND} min-w-0 flex-1 self-center truncate`}>{children}</p>
+      <DialogClose label="Close" tone="panel" onClose={onClose} />
+    </header>
+  );
 }
 
 /**
@@ -116,7 +197,7 @@ export function MenuBack({
       aria-label={label}
       onClick={onBack}
     >
-      <ChevronIcon className="size-3" aria-hidden />
+      <ChevronIcon back className="size-3" aria-hidden />
       {children}
     </button>
   );
@@ -137,6 +218,7 @@ export function MenuItem({
   badge,
   icon,
   tone = 'default',
+  action,
   onSelect,
 }: {
   title: string;
@@ -144,15 +226,24 @@ export function MenuItem({
   badge?: string;
   icon?: ReactNode;
   tone?: 'default' | 'danger';
+  /**
+   * A SECOND verb on the same row — the trash beside a project you can also choose.
+   * Buttons cannot nest, so the row splits into a pressable half and this one; the
+   * hairline moves to the wrapper so the two halves still read as one row. Without
+   * it the row is a plain button, exactly as before.
+   */
+  action?: ReactNode;
   /** Receives the row itself, so a sheet can be anchored on what opened it. */
   onSelect: (anchor: HTMLElement) => void;
 }) {
   const danger = tone === 'danger';
-  return (
+  const row = (
     <button
       type="button"
       role="menuitem"
-      className={`flex min-h-11 w-full items-start gap-2 border-b border-dialog-edge px-3 py-2 text-left transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none ${
+      className={`flex min-h-11 items-start gap-2 px-3 py-2 text-left transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none mouse:min-h-9 ${
+        action ? 'min-w-0 flex-1' : 'w-full border-b border-dialog-edge'
+      } ${
         danger ? 'hover:bg-err/15 focus-visible:bg-err/15' : 'hover:bg-hover focus-visible:bg-hover'
       }`}
       onClick={(event) => onSelect(event.currentTarget)}
@@ -176,6 +267,13 @@ export function MenuItem({
         </span>
       )}
     </button>
+  );
+  if (!action) return row;
+  return (
+    <div className="flex items-stretch border-b border-dialog-edge">
+      {row}
+      {action}
+    </div>
   );
 }
 

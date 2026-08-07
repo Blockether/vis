@@ -3809,23 +3809,41 @@
           (remove #(contains? configured-ids (:id %)))
           (try (vis/authenticated-preset-providers) (catch Throwable _ nil)))))
 
+(defn- gateway-auth-index
+  "ONE gateway round trip for the WHOLE fleet. `GET /v1/router` already carries
+   every provider's `status`, so Settings asks once instead of once per provider
+   — a fleet of eight used to cost eight requests to the daemon, in parallel but
+   each with its own connection and its own tail latency.
+
+   Returns `{provider-id-string is-authenticated?}`, or nil when the gateway
+   refused: a read that failed is an `:off` row, never a throw into the loop."
+  []
+  (try (into {}
+             (keep (fn [entry]
+                     (when-let [id (get entry "id")]
+                       [id (boolean (get-in entry ["status" "is_authenticated"]))])))
+             (vis/gateway-router-fleet))
+       (catch Throwable _ nil)))
+
 (defn- provider-auth-state
   "`:local` for a provider that needs no credentials at all, otherwise the
-   GATEWAY's verdict: `:on` authenticated, `:off` not. The TUI must not read the
-   auth file itself — the gateway may be on another machine and it is the one
-   process that owns credential resolution."
-  [provider]
+   GATEWAY's verdict, read out of the one fleet-wide `auth-index`: `:on`
+   authenticated, `:off` not. The TUI must not read the auth file itself — the
+   gateway may be on another machine and it is the one process that owns
+   credential resolution."
+  [provider auth-index]
   (cond (contains? vis/provider-local-no-auth-ids (:id provider)) :local
-        (try (boolean (get (vis/gateway-provider-status (:id provider)) "is_authenticated"))
-             (catch Throwable _ false))
+        (get auth-index
+             (some-> (:id provider)
+                     name))
         :on
         :else :off))
 
 (defn load-provider-inventory!
   "Refresh the cached provider fleet from config + gateway. Never throws: a
    gateway that is down becomes an inline row instead of yet another modal. The
-   auth probes fan out, because one serial round trip per provider would stall
-   the dialog for as long as the slowest provider takes.
+   auth verdicts come from a SINGLE `/v1/router` read covering every provider,
+   so opening Settings costs one round trip whatever the fleet size.
 
    Router selection is part of the fleet, not a separate lookup: each entry
    carries whether it is the default or the fallback AND the model that choice
@@ -3847,20 +3865,17 @@
                                   (some-> (:fallback-provider config)
                                           name)
 
-                                  states
-                                  (mapv (fn [provider]
-                                          (vis/worker-future "vis-tui-settings-provider-auth"
-                                                             #(provider-auth-state provider)))
-                                        fleet)]
+                                  auth-index
+                                  (gateway-auth-index)]
 
                                  {:status :ok
                                   :providers
-                                  (mapv (fn [provider state]
+                                  (mapv (fn [provider]
                                           (let
                                             [pid (some-> (:id provider)
                                                          name)]
                                             {:provider provider
-                                             :auth @state
+                                             :auth (provider-auth-state provider auth-index)
                                              :default? (= default-id pid)
                                              :default-model (when (= default-id pid)
                                                               (some-> (:default-model config)
@@ -3869,8 +3884,7 @@
                                              :fallback-model (when (= fallback-id pid)
                                                                (some-> (:fallback-model config)
                                                                        name))}))
-                                        fleet
-                                        states)
+                                        fleet)
                                   :error nil})
                                (catch Exception e
                                  {:status :error :providers [] :error (ex-message e)}))))
@@ -3928,9 +3942,13 @@
           (when (seq (str error))
             [{:type :info :tone :bad :label "Providers unavailable" :description (str error)}])
           (when (and (empty? providers) (empty? (str error)))
-            [{:type :info
-              :label "No providers yet"
-              :description "Add one below, or declare them under providers: in vis.yml."}])
+            (if (= :loading status)
+              [{:type :info
+                :label "Loading providers…"
+                :description "Reading the fleet from the gateway"}]
+              [{:type :info
+                :label "No providers yet"
+                :description "Add one below, or declare them under providers: in vis.yml."}]))
           [{:type :action
             :id :provider-add
             :label "Add provider…"
@@ -3972,13 +3990,37 @@
                 (when (seq (str error))
                   [{:type :info :tone :bad :label "MCP unavailable" :description (str error)}])
                 (when (and (empty? servers) (empty? (str error)))
-                  [{:type :info
-                    :label "No MCP servers yet"
-                    :description "Add one below, or declare them under mcp: in vis.yml."}])
+                  (if (= :loading status)
+                    [{:type :info
+                      :label "Loading MCP servers…"
+                      :description "Reading them from the gateway"}]
+                    [{:type :info
+                      :label "No MCP servers yet"
+                      :description "Add one below, or declare them under mcp: in vis.yml."}]))
                 [{:type :action
                   :id :mcp-add
                   :label "Add MCP server…"
                   :description "Register a new one with the gateway"}])))))
+
+(defn- mark-inventories-loading!
+  "Arm both gateway-backed inventories for a refresh WITHOUT clearing what they
+   already hold: a re-opened Settings shows the fleet it last read and refreshes
+   it in place, and a first open shows a `Loading…` row — never a blank pane and
+   never a wait before the frame."
+  []
+  (swap! provider-inventory assoc :status :loading)
+  (swap! mcp-inventory assoc :status :loading))
+
+(defn- load-inventories!
+  "Read both gateway inventories, in PARALLEL: the MCP list and the provider
+   fleet are independent round trips, so one open costs the SLOWER of the two
+   instead of their sum. Called only AFTER the settings frame is on the
+   terminal."
+  []
+  (let [mcp (vis/worker-future "vis-tui-settings-mcp-inventory" load-mcp-inventory!)]
+    (load-provider-inventory!)
+    @mcp
+    nil))
 
 (defn- settings-rows
   "Every settings row in ONE flat, grouped list — no tabs (mirrors the web
@@ -4594,10 +4636,16 @@
       (extension-option-rows)
 
       ;; MCP servers and providers are settings sections now, so both
-      ;; inventories are read once when the dialog opens instead of from behind
-      ;; dialogs of their own.
+      ;; inventories are read once per open instead of from behind dialogs of
+      ;; their own — but NOT here. Opening Settings costs one paint, never a
+      ;; gateway round trip (a daemon that still has to start takes seconds; a
+      ;; gateway on another machine costs an RTT per provider). The loop reads
+      ;; them once its first frame is on the terminal.
       _
-      (do (load-mcp-inventory!) (load-provider-inventory!))
+      (mark-inventories-loading!)
+
+      inventories-pending
+      (volatile! true)
 
       selected
       (atom (settings-initial-index (settings-rows extension-rows) (:focus-section callbacks)))
@@ -4959,139 +5007,157 @@
                           ["Esc" "clear/close"]])
          (.setCursorPosition screen search-cursor)
          (.refresh screen Screen$RefreshType/DELTA)
-         (let
-           [key
-            (read-modal-key! screen)
+         (if @inventories-pending
+           ;; The frame is ON the terminal now — only then pay for the gateway,
+           ;; and repaint into the dialog the user is already looking at.
+           ;; `focus-section` is re-parked because the rows the read added sit
+           ;; under its own section header.
+           (do (vreset! inventories-pending false)
+               (load-inventories!)
+               (reset! selected (settings-initial-index (settings-rows extension-rows)
+                                                        (:focus-section callbacks)))
+               (recur))
+           (let
+             [key
+              (read-modal-key! screen)
 
-            selected-row
-            (when (pos? n) (nth rows (p/clamp @selected 0 (dec n))))]
+              selected-row
+              (when (pos? n) (nth rows (p/clamp @selected 0 (dec n))))]
 
-           (when key
-             (cond
-               (instance? MouseAction key)
-               (let
-                 [^MouseAction ma
-                  key
+             (when key
+               (cond
+                 (instance? MouseAction key)
+                 (let
+                   [^MouseAction ma
+                    key
 
-                  action
-                  (.getActionType ma)
+                    action
+                    (.getActionType ma)
 
-                  pos
-                  (.getPosition ma)
+                    pos
+                    (.getPosition ma)
 
-                  mx
-                  (.getColumn pos)
+                    mx
+                    (.getColumn pos)
 
-                  my
-                  (.getRow pos)
+                    my
+                    (.getRow pos)
 
-                  bar-col
-                  (+ lleft linner)
+                    bar-col
+                    (+ lleft linner)
 
-                  geom
-                  (scrollbar/geometry visual-n visible-h visible-h @scroll)]
+                    geom
+                    (scrollbar/geometry visual-n visible-h visible-h @scroll)]
 
-                 (cond
-                   ;; Mouse wheel anywhere in the dialog — scroll the
-                   ;; list view; selection follows the wheel direction
-                   ;; so the cursor stays in the visible window without
-                   ;; the user having to chase it with arrow keys.
-                   (or (= action MouseActionType/SCROLL_UP) (= action MouseActionType/SCROLL_DOWN))
-                   (let
-                     [step (or (modal-wheel-step key)
-                               (if (= action MouseActionType/SCROLL_UP) -1 1))]
-                     (swap! selected #(move-settings-selection rows % step))
-                     (recur))
-                   ;; CLICK_DOWN on the scrollbar thumb — start drag,
-                   ;; preserve the grip so the row under the cursor
-                   ;; stays glued to the same point on the thumb.
-                   (and (= action MouseActionType/CLICK_DOWN)
-                        (some? geom)
-                        (scrollbar/on-thumb? mx my {:col bar-col :top list-top} geom))
-                   (let [thumb-top (+ list-top (long (:thumb-top-rel geom)))]
-                     (vreset! scrollbar-drag-offset (- my thumb-top))
-                     (recur))
-                   ;; CLICK_DOWN on the scrollbar TRACK off-thumb —
-                   ;; jump-to-position (modern macOS behaviour). Then
-                   ;; arm a drag with a centred grip so an immediate
-                   ;; follow-up motion tracks naturally.
-                   (and (= action MouseActionType/CLICK_DOWN)
-                        (some? geom)
-                        (scrollbar/on-track? mx my {:col bar-col :top list-top :track-h visible-h}))
-                   (let [grip (long (quot (long (:thumb-h geom)) 2))]
-                     (vreset! scrollbar-drag-offset grip)
-                     (reset! scroll (or (scrollbar/scroll-from-mouse-y my
-                                                                       list-top
-                                                                       visible-h
-                                                                       visual-n
-                                                                       visible-h
-                                                                       grip)
-                                        0))
-                     (recur))
-                   ;; DRAG continues to track the cursor while the
-                   ;; user holds the button after a thumb grab.
-                   (and (= action MouseActionType/DRAG) (some? @scrollbar-drag-offset) (some? geom))
-                   (do (reset! scroll (or (scrollbar/scroll-from-mouse-y my
+                   (cond
+                     ;; Mouse wheel anywhere in the dialog — scroll the
+                     ;; list view; selection follows the wheel direction
+                     ;; so the cursor stays in the visible window without
+                     ;; the user having to chase it with arrow keys.
+                     (or (= action MouseActionType/SCROLL_UP)
+                         (= action MouseActionType/SCROLL_DOWN))
+                     (let
+                       [step (or (modal-wheel-step key)
+                                 (if (= action MouseActionType/SCROLL_UP) -1 1))]
+                       (swap! selected #(move-settings-selection rows % step))
+                       (recur))
+                     ;; CLICK_DOWN on the scrollbar thumb — start drag,
+                     ;; preserve the grip so the row under the cursor
+                     ;; stays glued to the same point on the thumb.
+                     (and (= action MouseActionType/CLICK_DOWN)
+                          (some? geom)
+                          (scrollbar/on-thumb? mx my {:col bar-col :top list-top} geom))
+                     (let [thumb-top (+ list-top (long (:thumb-top-rel geom)))]
+                       (vreset! scrollbar-drag-offset (- my thumb-top))
+                       (recur))
+                     ;; CLICK_DOWN on the scrollbar TRACK off-thumb —
+                     ;; jump-to-position (modern macOS behaviour). Then
+                     ;; arm a drag with a centred grip so an immediate
+                     ;; follow-up motion tracks naturally.
+                     (and (= action MouseActionType/CLICK_DOWN)
+                          (some? geom)
+                          (scrollbar/on-track? mx
+                                               my
+                                               {:col bar-col :top list-top :track-h visible-h}))
+                     (let [grip (long (quot (long (:thumb-h geom)) 2))]
+                       (vreset! scrollbar-drag-offset grip)
+                       (reset! scroll (or (scrollbar/scroll-from-mouse-y my
                                                                          list-top
                                                                          visible-h
                                                                          visual-n
                                                                          visible-h
-                                                                         (long
-                                                                           @scrollbar-drag-offset))
+                                                                         grip)
                                           0))
                        (recur))
-                   (= action MouseActionType/CLICK_RELEASE) (do (vreset! scrollbar-drag-offset nil)
-                                                                (recur))
-                   :else (recur)))
-               :else
-               (condp = (key-type key)
-                 ;; Esc clears an active search first, then closes on the next press.
-                 KeyType/Escape (if (str/blank? @query)
-                                  @values
-                                  (do (reset! query "")
-                                      (reset! selected (first-selectable-index all-rows))
-                                      (reset! scroll 0)
-                                      (recur)))
-                 KeyType/ArrowUp (do (swap! selected #(move-settings-selection rows % -1)) (recur))
-                 KeyType/ArrowDown (do (swap! selected #(move-settings-selection rows % 1)) (recur))
-                 ;; Backspace edits the live search query.
-                 KeyType/Backspace (do (when (seq @query)
-                                         (swap! query #(subs % 0 (dec (count %))))
-                                         (reset! selected (first-selectable-index
-                                                            (filter-settings-rows all-rows @query)))
-                                         (reset! scroll 0))
-                                       (recur))
-                 ;; Any printable character types into the search query (VS Code feel);
-                 ;; Enter is the only key that toggles/activates the selected row.
-                 KeyType/Character (let [c (key-character key)]
-                                     (if (and c (>= (int c) 32))
-                                       (do (swap! query str c)
-                                           (reset! selected (first-selectable-index
-                                                              (filter-settings-rows all-rows
-                                                                                    @query)))
-                                           (reset! scroll 0)
+                     ;; DRAG continues to track the cursor while the
+                     ;; user holds the button after a thumb grab.
+                     (and (= action MouseActionType/DRAG)
+                          (some? @scrollbar-drag-offset)
+                          (some? geom))
+                     (do (reset! scroll (or (scrollbar/scroll-from-mouse-y
+                                              my
+                                              list-top
+                                              visible-h
+                                              visual-n
+                                              visible-h
+                                              (long @scrollbar-drag-offset))
+                                            0))
+                         (recur))
+                     (= action MouseActionType/CLICK_RELEASE)
+                     (do (vreset! scrollbar-drag-offset nil) (recur))
+                     :else (recur)))
+                 :else (condp = (key-type key)
+                         ;; Esc clears an active search first, then closes on the next press.
+                         KeyType/Escape (if (str/blank? @query)
+                                          @values
+                                          (do (reset! query "")
+                                              (reset! selected (first-selectable-index all-rows))
+                                              (reset! scroll 0)
+                                              (recur)))
+                         KeyType/ArrowUp (do (swap! selected #(move-settings-selection rows % -1))
+                                             (recur))
+                         KeyType/ArrowDown (do (swap! selected #(move-settings-selection rows % 1))
+                                               (recur))
+                         ;; Backspace edits the live search query.
+                         KeyType/Backspace (do (when (seq @query)
+                                                 (swap! query #(subs % 0 (dec (count %))))
+                                                 (reset! selected (first-selectable-index
+                                                                    (filter-settings-rows all-rows
+                                                                                          @query)))
+                                                 (reset! scroll 0))
+                                               (recur))
+                         ;; Any printable character types into the search query (VS Code feel);
+                         ;; Enter is the only key that toggles/activates the selected row.
+                         KeyType/Character
+                         (let [c (key-character key)]
+                           (if (and c (>= (int c) 32))
+                             (do (swap! query str c)
+                                 (reset! selected (first-selectable-index
+                                                    (filter-settings-rows all-rows @query)))
+                                 (reset! scroll 0)
+                                 (recur))
+                             (recur)))
+                         KeyType/Enter (do (when selected-row
+                                             (activate-settings-row!
+                                               screen
+                                               g
+                                               {:left left
+                                                :inner-w inner-w
+                                                :hint-row hint-row
+                                                :text-w (max 1 (- (long inner-w) 2))
+                                                :min-row list-top
+                                                ;; One snapshot per
+                                                ;; activation: a
+                                                ;; shorter band gives
+                                                ;; the rows a taller
+                                                ;; one covered back to
+                                                ;; the list itself.
+                                                :restore! (frame-restorer screen)}
+                                               values
+                                               callbacks
+                                               selected-row))
                                            (recur))
-                                       (recur)))
-                 KeyType/Enter (do (when selected-row
-                                     (activate-settings-row! screen
-                                                             g
-                                                             {:left left
-                                                              :inner-w inner-w
-                                                              :hint-row hint-row
-                                                              :text-w (max 1 (- (long inner-w) 2))
-                                                              :min-row list-top
-                                                              ;; One snapshot per
-                                                              ;; activation: a
-                                                              ;; shorter band gives
-                                                              ;; the rows a taller
-                                                              ;; one covered back to
-                                                              ;; the list itself.
-                                                              :restore! (frame-restorer screen)}
-                                                             values
-                                                             callbacks
-                                                             selected-row))
-                                   (recur))
-                 (recur))))))))))
+                         (recur)))))))))))
 
 ;;; ── Session picker ─────────────────────────────────────────────────────
 (defn- short-session-id
@@ -6334,6 +6400,12 @@
                             (or prompt-h tr/prompt-rows))
        :restore! restore!)]
 
+    ;; The band owns the keyboard while it is up, so it owns the CURSOR: left
+    ;; where the last session paint parked it, the hardware caret went on
+    ;; blinking inside the prompt behind the hydra, as if the band were not
+    ;; there. Anything inside the band that reads typed text (`band-questions`)
+    ;; places it again for itself.
+    (.setCursorPosition screen nil)
     (try (body g region)
          (finally (when restore! (restore!))
                   (.setCursorPosition screen nil)

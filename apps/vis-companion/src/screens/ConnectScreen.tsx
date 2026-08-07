@@ -9,7 +9,7 @@ import {
   normalizeGatewayUrl,
   reachOf,
 } from '../lib/endpoints';
-import { Banner, Button, Input } from '../components/ui';
+import { Banner, Button, DialogHeader, Input } from '../components/ui';
 import { ChevronIcon } from '../components/icons';
 
 // The QR scanner drags in jsqr (~250 kB of source, a fifth of the launch chunk)
@@ -293,9 +293,7 @@ export function ConnectScreen({
 
       {conns.length > 0 && (
         <section className="overflow-hidden border border-dialog-edge bg-panel shadow-none sm:shadow-[4px_4px_0_var(--dialog-shadow)]">
-          <header className="flex min-h-9 items-center bg-dialog-title px-3 py-2 text-dialog-title-foreground">
-            <h2 className="font-mono text-body font-black uppercase tracking-[0.12em]">Saved machines</h2>
-          </header>
+          <DialogHeader title="Saved machines" />
           <div className="divide-y divide-dialog-edge border-t border-dialog-edge">
             {conns.map((conn) => {
               const selected = active?.url === conn.url;

@@ -670,8 +670,9 @@
 
    The band is BORDERED: its opening and closing rules are corner-capped and
    every row between them carries a `│` in the same two columns. The hint bar
-   rides INSIDE that box, on the row directly above the closing rule, so the
-   footer wears the same paper and the same rails as the commands it explains."
+   rides INSIDE that box, on the row directly above the closing rule, under its
+   OWN rule and on its own slightly darker paper (`t/band-footer-bg`), so the
+   footer is a strip rather than one more body row."
   [{:keys [g hint-bar!]} {:keys [left inner-w restore!] :as region}
    {panes :panes n :row-count pane-w :pane-w grid :columns hints :hint-pairs title :title} state]
   (binding [t/dialog-bg (if (:is-sideless region) (t/band-bg) t/dialog-bg)]
@@ -684,6 +685,11 @@
        ;; footer is inside the box. A framed popup keeps the host's own order.
        hint-at (long (if sideless? foot-rule-row foot-row))
        rule-at (long (if sideless? foot-row foot-rule-row))
+       ;; The footer is a STRIP: its own rule above it and its own darker paper,
+       ;; so it is not read as one more command row. The row it costs is the
+       ;; body's bottom [[band-body-pad]] blank, not a verb.
+       hint-rule-at (long (if sideless? (dec hint-at) hint-at))
+       visible (long (if sideless? (max 1 (dec (long visible))) visible))
        left (long left)
        inner-w (long inner-w)
        pane-w (long (if (pos? (long (or pane-w 0))) pane-w inner-w))
@@ -704,6 +710,9 @@
       (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
         (clear-row! foot-rule-row))
       (when (> rule-at (max (long sep-row) (long top-limit))) (draw-rule! g region rule-at))
+      (when (and sideless? (> hint-rule-at (max (long sep-row) (long top-limit))))
+        (clear-row! hint-rule-at)
+        (draw-rule! g region hint-rule-at))
       (p/set-colors! g t/dialog-hint-key t/dialog-bg)
       (dotimes [i visible]
         (let [row (+ (long body-top) (long i))]
@@ -735,7 +744,9 @@
                    value (when is-valued (get (:options state) id))]
 
                   (draw-item! g pane-left row pane-w grid it active? value)))))))
-      (hint-bar! g left hint-at inner-w hints)
+      (binding [t/dialog-bg (if sideless? (t/band-footer-bg) t/dialog-bg)]
+        (when (>= hint-at (long top-limit)) (clear-row! hint-at))
+        (hint-bar! g left hint-at inner-w hints))
       ;; The band's own BORDER: corner-capped rules with a `│` down both edge
       ;; columns, so a sideless transient is a closed box over the transcript —
       ;; the hint bar included.
@@ -747,8 +758,10 @@
             (p/set-char! g right sep-row p/BOX_TR))
           (doseq [^long r (range (inc (long sep-row)) rule-at)]
             (when (>= r (long top-limit))
+              (p/set-colors! g t/border-fg (if (= r hint-at) (t/band-footer-bg) t/dialog-bg))
               (p/set-char! g left r p/BOX_V)
               (p/set-char! g right r p/BOX_V)))
+          (p/set-colors! g t/border-fg t/dialog-bg)
           (when (> rule-at (max (long sep-row) (long top-limit)))
             (p/set-char! g left rule-at p/BOX_BL)
             (p/set-char! g right rule-at p/BOX_BR))

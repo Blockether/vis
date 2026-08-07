@@ -1,6 +1,6 @@
 import type { Compat } from '../lib/compat';
 import type { GatewayConn } from '../lib/types';
-import { Button } from '../components/ui';
+import { Button, DialogHeader } from '../components/ui';
 
 interface Props {
   compat: Compat;
@@ -63,11 +63,7 @@ export function IncompatibleScreen({ compat, conn, onRetry, onBack, isChecking =
 
       {compat.remedy.length > 0 && (
         <section className="border border-dialog-edge bg-panel">
-          <header className="flex min-h-9 items-center bg-dialog-title px-3 py-2 text-dialog-title-foreground">
-            <h2 className="font-mono text-body font-black uppercase tracking-[0.12em]">
-              How to fix it
-            </h2>
-          </header>
+          <DialogHeader title="How to fix it" />
           <ol className="divide-y divide-dialog-edge border-t border-dialog-edge">
             {compat.remedy.map((step, i) => (
               <li key={step} className="flex items-start gap-3 px-3 py-2.5">

@@ -41,7 +41,7 @@ import { DocFrame } from './DocArtifact';
 import { ImageViewer } from './ImageViewer';
 import { TextFrame } from './TextArtifact';
 import { AlertIcon, ArrowDownIcon, ClipIcon, PlayIcon } from './icons';
-import { DialogClose, KebabButton } from './ui';
+import { DialogClose, DialogHeader, KebabButton } from './ui';
 
 /**
  * Two documents produced by the same turn have to stay distinguishable at a
@@ -409,19 +409,12 @@ function DetailOverlay({
       aria-label={name}
       className="absolute inset-0 z-40 flex flex-col bg-ink"
     >
-      <header className="relative flex min-h-9 shrink-0 items-center justify-center border-t border-dialog-title-foreground/20 bg-dialog-title px-12 py-1.5 text-dialog-title-foreground mouse:min-h-8">
-        <h2
-          className="min-w-0 truncate text-center font-mono text-body font-bold tracking-wide"
-          title={name}
-        >
-          {name}
-        </h2>
-        <DialogClose
-          label="Back to artifacts"
-          className="absolute inset-y-0 right-0"
-          onClose={onClose}
-        />
-      </header>
+      <DialogHeader
+        className="border-t border-dialog-title-foreground/20"
+        title={name}
+        closeLabel="Back to artifacts"
+        onClose={onClose}
+      />
       <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
         {children}
       </div>

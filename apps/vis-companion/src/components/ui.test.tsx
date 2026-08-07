@@ -19,6 +19,7 @@ import {
   MachineMark,
   MachineRail,
   NewSessionButton,
+  RowDisclosure,
   SectionHeader,
   UnreadBadge,
 } from './ui';
@@ -132,94 +133,90 @@ describe('MachineGap', () => {
   });
 });
 
+describe('MachineRail', () => {
+  // A machine's hue separates two computers before a word is read. It ran as a 2px
+  // border INSIDE the card, one pixel from the card's own border — a grey hairline
+  // immediately followed by a coloured one, doing one job twice — and, being a
+  // border, it also stole 2px of layout the trailing edge had no match for (left ink
+  // 19px against right ink 17px). It is the card's LEFT FRAME now: the card gives
+  // that side up, both sides are 2px, and the rail simply colours one of them.
+  it('is the frame, in the machine colour', () => {
+    const html = renderToStaticMarkup(<MachineRail color={MACHINE_COLORS[3]!}>rows</MachineRail>);
+    expect(html).toContain('border-l-2');
+    expect(html).toContain(MACHINE_COLORS[3]!.rail);
+    expect(html).toContain('rows');
+  });
+
+  it('gives two machines two different rails', () => {
+    const first = renderToStaticMarkup(<MachineRail color={MACHINE_COLORS[0]!}>a</MachineRail>);
+    const second = renderToStaticMarkup(<MachineRail color={MACHINE_COLORS[1]!}>a</MachineRail>);
+    expect(first).not.toBe(second);
+  });
+
+  // Without a hue it still has to PAINT: this is the card's edge, and a frame that
+  // disappears where a colour is missing is a hole in the panel, not a subtlety.
+  it('falls back to the list frame rather than vanishing', () => {
+    const html = renderToStaticMarkup(<MachineRail>rows</MachineRail>);
+    expect(html).toContain('border-l-2');
+    expect(html).toContain('border-dialog-edge');
+  });
+});
+
 describe('MachineBanner', () => {
-  // Regression, reported machine block overflow: its banner was narrower than
-  // every session row and used a stronger rule, so the machine looked clipped
-  // instead of belonging to the same list.
-  it('fills the machine block and uses the session-row boundary', () => {
-    const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
-
-    expect(html).toContain('<header');
+  // The hue lives on the RAIL. A banner that also inked its outgoing rule wore the
+  // machine's colour twice in one corner.
+  it('keeps the list hairline, leaving the colour to the rail', () => {
+    const html = renderToStaticMarkup(<MachineBanner>rows</MachineBanner>);
     expect(html).toContain('border-b border-dialog-edge');
-    expect(html).not.toContain('border-edge-strong');
-    expect(html).not.toContain('mr-2');
-    expect(html).not.toContain('sm:mr-0');
+    expect(html).not.toContain('border-b-2');
   });
 
-  // Regression, user report: the banner's top rule stacked on the filter or machine-gap
-  // boundary, so one visual seam had multiple DOM owners and rendered heavier than the next.
-  it('owns only its outgoing edge and never overlaps a neighboring band', () => {
-    const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
-
-    expect(html).toContain('border-b border-dialog-edge');
-    expect(html).not.toContain('border-y');
-    expect(html).not.toContain('border-t');
-    expect(html).not.toContain('-mt-px');
-  });
-
-  it('uses the same unforced title and metadata typography as project headers', () => {
-    const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
-
-    expect(html).not.toContain('uppercase');
-    expect(html).not.toContain('tracking-[0.12em]');
-    expect(html).not.toContain('font-bold');
-  });
-
-  // Regression, user report ("THEY LOOK FUCKING SHITTY ON THE IPHONE — see the machine
-  // height project heights"): measured at 390px this banner stood 61px tall, because it
-  // padded itself (`py-2`) around a control that is already 44px, while the project
-  // header directly below it stood 49px. Both are one band now.
-  it('is the list’s one header band, at the project header’s exact height', () => {
+  it('makes the machine band one deliberate step taller than the project band', () => {
     const machine = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
     const project = renderToStaticMarkup(<SectionHeader tone="project">vis</SectionHeader>);
 
-    const band = (html: string) => html.slice(0, html.indexOf('>') + 1);
-    expect(band(machine).replace('sticky top-0 z-10 bg-panel', 'bg-panel-2')).toBe(band(project));
+    expect(machine).toContain('min-h-14');
+    expect(machine).toContain('mouse:min-h-10');
+    expect(project).toContain('min-h-13');
+    expect(project).toContain('mouse:min-h-9');
+
     for (const html of [machine, project]) {
-      expect(html).toContain('min-h-12');
-      expect(html).toContain('mouse:min-h-9');
       expect(html).toContain('items-stretch');
-      expect(html).not.toContain('min-h-11');
       expect(html).not.toContain('py-2');
     }
   });
 
-  // A machine can hold hundreds of sessions; scrolled past, the name is the
-  // only thing that answers "which computer is this row on".
-  it('sticks to the top of the scroller', () => {
-    const html = renderToStaticMarkup(<MachineBanner>studio-mbp</MachineBanner>);
-
-    expect(html).toContain('sticky');
-    expect(html).toContain('top-0');
-    expect(html).toContain('studio-mbp');
-  });
-});
-
-// A machine's hue is what separates two computers before a single word is read:
-// the rail runs down everything it owns, and the same hue marks its banner and
-// its scope chip so the chip you tapped and the rows you got back match.
-describe('MachineRail', () => {
-  it('draws the machine colour as a 2px rail down its block', () => {
-    const html = renderToStaticMarkup(
-      <MachineRail color={MACHINE_COLORS[3]}>rows</MachineRail>,
-    );
-
-    expect(html).toContain('border-l-2');
-    expect(html).toContain(MACHINE_COLORS[3].rail);
-    expect(html).toContain('rows');
+  it('gives each level its own step on the type scale', () => {
+    expect(
+      renderToStaticMarkup(
+        <MachineBanner>
+          <HeaderTitle name="studio-mbp" />
+        </MachineBanner>,
+      ),
+    ).toContain('text-subhead');
+    expect(
+      renderToStaticMarkup(
+        <SectionHeader tone="project">
+          <HeaderTitle name="vis" />
+        </SectionHeader>,
+      ),
+    ).toContain('text-title');
+    expect(renderToStaticMarkup(<HeaderTitle name="orphan" />)).toContain('text-title');
   });
 
-  it('gives two machines two DIFFERENT rails', () => {
-    const first = renderToStaticMarkup(<MachineRail color={MACHINE_COLORS[0]}>a</MachineRail>);
-    const second = renderToStaticMarkup(<MachineRail color={MACHINE_COLORS[1]}>a</MachineRail>);
-
-    expect(first).not.toBe(second);
+  it('stands each level on its own paper', () => {
+    const machine = renderToStaticMarkup(<MachineBanner>x</MachineBanner>);
+    const project = renderToStaticMarkup(<SectionHeader tone="project">x</SectionHeader>);
+    expect(machine).toContain('bg-level-machine');
+    expect(project).toContain('bg-level-project');
+    for (const html of [machine, project]) {
+      expect(html).not.toContain('bg-panel-2');
+    }
   });
 
-  // One machine paired is not a boundary, so the concept has to vanish entirely
-  // rather than indent the whole list by two pixels of some arbitrary hue.
-  it('is nothing at all without a colour', () => {
-    expect(renderToStaticMarkup(<MachineRail>rows</MachineRail>)).toBe('rows');
+  it('marks a machine with a block bigger than a session status dot', () => {
+    expect(renderToStaticMarkup(<MachineMark size="banner" color={MACHINE_COLORS[2]!} />)).toContain('size-2.5');
+    expect(renderToStaticMarkup(<MachineMark color={MACHINE_COLORS[2]!} />)).toContain('size-1.5');
   });
 });
 
@@ -492,5 +489,94 @@ describe('HeaderTally', () => {
     expect(renderToStaticMarkup(<HeaderTally count={1} unit="project" />)).toContain(
       '<span class="sr-only">1 project</span>',
     );
+  });
+});
+
+// Regression, user report ("some things are having margin left like the ⋯ then
+// chevrons to open the session details are not having — i dnt want these margins"):
+// measured on a 390px iPhone, the machine's mark began at x=14 but its NAME at 28,
+// the project's name at 36, and a session's title at 10 — the deepest thing on the
+// screen starting furthest left, so depth read backwards. On the other side the two
+// header `⋯` stopped at x=378 while the session row's disclosure ran flush to 390.
+describe('the list grid', () => {
+  const leading = (html: string) => html.includes('pl-3') && html.includes('sm:pl-4');
+
+  it('starts every header on one leading edge', () => {
+    expect(
+      leading(renderToStaticMarkup(<HeaderTitle mark={<MachineMark color={MACHINE_COLORS[0]!} />} name="tower" />)),
+    ).toBe(true);
+    expect(
+      leading(
+        renderToStaticMarkup(
+          <HeaderToggle isOpen={false} onToggle={() => {}} name="vis" path="~/vis" />,
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  // The last 8px of the same misalignment: a 6px machine mark and a 14px project
+  // chevron each sized to its own ink put the two header NAMES 8px apart.
+  it('gives a machine mark and a project chevron one glyph column', () => {
+    const title = renderToStaticMarkup(
+      <HeaderTitle mark={<MachineMark color={MACHINE_COLORS[0]!} />} name="tower" />,
+    );
+    const toggle = renderToStaticMarkup(
+      <HeaderToggle isOpen={false} onToggle={() => {}} name="vis" path="~/vis" />,
+    );
+    for (const html of [title, toggle]) {
+      expect(html).toContain('grid size-3.5 shrink-0 place-items-center');
+    }
+  });
+
+  // The trailing gutter lives INSIDE the last control, not on the cluster: a box
+  // that respects the gutter and then centres a 12px glyph in 28px of its own put
+  // the right-hand INK 30px from the paper while the left-hand ink sat at 19px.
+  it('ends every row on one trailing edge, carried by the control itself', () => {
+    // The cluster owns the gutter unconditionally — a project header drops its `⋯`
+    // while a filter is live, and the amber verb must not then run to the paper.
+    const cluster = renderToStaticMarkup(<HeaderActions>x</HeaderActions>);
+    expect(cluster).toContain('pr-3');
+    expect(cluster).toContain('sm:pr-4');
+
+    for (const html of [
+      renderToStaticMarkup(<KebabButton label="Actions for vis" />),
+      renderToStaticMarkup(<RowDisclosure isOpen={false} label="Show details" />),
+    ]) {
+      expect(html).toContain('pr-3');
+      expect(html).toContain('sm:pr-4');
+      expect(html).toContain('justify-items-end');
+      // ...and reclaims the cluster's gutter, so the BOX reaches the paper while the
+      // GLYPH stops where the leading glyph starts.
+      expect(html).toContain('-mr-3');
+      expect(html).toContain('sm:-mr-4');
+      // It ends ON the paper's edge, which already draws that line.
+      expect(html).toContain('border-r-0');
+    }
+  });
+});
+
+// The disclosure is the `⋯`'s sibling — the rarer FACTS of a row where the kebab
+// holds its rarer VERBS — so it is the same box in the same column, not a hand-built
+// strip welded to the screen edge at 40% opacity.
+describe('RowDisclosure', () => {
+  const html = (isOpen: boolean) =>
+    renderToStaticMarkup(<RowDisclosure isOpen={isOpen} label="Show details for Untitled" />);
+
+  it('is the same button as the kebab beside it', () => {
+    const kebab = renderToStaticMarkup(<KebabButton label="Actions for vis" />);
+    for (const token of ['min-w-10', 'sm:min-w-12', 'mouse:min-w-10', 'h-11', 'mouse:h-6']) {
+      expect(html(false)).toContain(token);
+      expect(kebab).toContain(token);
+    }
+  });
+
+  it('names what it opens and reports whether it is open', () => {
+    expect(html(false)).toContain('aria-expanded="false"');
+    expect(html(true)).toContain('aria-expanded="true"');
+    expect(html(false)).toContain('aria-label="Show details for Untitled"');
+  });
+
+  it('never rests on an opacity that would fail contrast while it does', () => {
+    expect(html(false)).not.toContain('opacity-40');
   });
 });

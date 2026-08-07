@@ -1579,7 +1579,10 @@
        (var-get #'dlg/provider-inventory)
 
        original
-       @inventory]
+       @inventory
+
+       router-reads
+       (atom 0)]
 
       (try (with-redefs
              [vis/load-config
@@ -1592,9 +1595,11 @@
               vis/authenticated-preset-providers
               (constantly [{:id :openai :models ["gpt"]} {:id :anthropic :models []}])
 
-              vis/gateway-provider-status
-              (fn [pid]
-                {"is_authenticated" (= :anthropic pid)})]
+              vis/gateway-router-fleet
+              (fn []
+                (swap! router-reads inc)
+                [{"id" "anthropic" "status" {"is_authenticated" true}}
+                 {"id" "openai" "status" {"is_authenticated" false}}])]
 
              (dlg/load-provider-inventory!)
              (let [{:keys [status providers]} @inventory]
@@ -1603,6 +1608,9 @@
                (expect (= [:anthropic :ollama :openai] (mapv #(:id (:provider %)) providers)))
                ;; a local provider needs no credential, so the gateway is never asked
                (expect (= [:on :local :off] (mapv :auth providers)))
+               ;; …and it costs ONE gateway read for the WHOLE fleet, never one
+               ;; per provider
+               (expect (= 1 @router-reads))
                ;; the router selection travels WITH the entry — Settings can only
                ;; show what `d`/`f` did if the model comes back on the row
                (expect (= [true false false] (mapv :default? providers)))
@@ -1642,8 +1650,8 @@
               vis/authenticated-preset-providers
               (constantly [])
 
-              vis/gateway-provider-status
-              (constantly {"is_authenticated" false})]
+              vis/gateway-router-fleet
+              (constantly [{"id" "openai" "status" {"is_authenticated" false}}])]
 
              (reset! inventory {:status :unloaded :providers [] :error nil})
              (activate! nil

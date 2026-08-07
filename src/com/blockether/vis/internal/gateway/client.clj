@@ -1448,6 +1448,25 @@
     (ensure-client! entry)
     (get (send-json-with-entry! entry "GET" path) "providers")))
 
+(defn router-diagnostics
+  "The WHOLE provider dialog in ONE gateway call.
+
+   `GET /v1/router` already carries every provider's `status` and `limits`, so a
+   client that wants both for N providers reads it once instead of firing 2×N
+   per-provider probes. Keyed by provider-id keyword:
+   `{:openai {:status {\"is_authenticated\" …} :limits {…}}}` — `:status` stays
+   VERBATIM snake_case strings (same shape `provider-status` returns) and
+   `:limits` is restored to the engine shape `provider-limits` returns, so both
+   values drop straight into the callers those two functions already have."
+  []
+  (into {}
+        (keep (fn [entry]
+                (when-let [id (get entry "id")]
+                  [(keyword id)
+                   {:status (or (get entry "status") {})
+                    :limits (provider-limits<-wire (get entry "limits"))}])))
+        (router)))
+
 (defn- patch-router!
   "PATCH /v1/router with `body`, returning the raw snake_case answer (both tags)."
   [body]

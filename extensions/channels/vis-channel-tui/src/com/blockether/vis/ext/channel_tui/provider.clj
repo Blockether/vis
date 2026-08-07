@@ -845,10 +845,44 @@
                        #(swap! limits assoc pid (gateway-provider-limits-safe provider))))
   nil)
 
+(defn- gateway-router-diagnostics-safe
+  "Every provider's status AND limits from ONE `GET /v1/router`, or nil when that
+   single call fails or outruns the probe wall — the caller then falls back to
+   per-provider probes rather than showing a dialog full of errors."
+  []
+  (probe-within "vis-tui-router-diagnostics-probe"
+                (fn []
+                  (try (vis/gateway-router-diagnostics) (catch Throwable _ nil)))
+                (fn [_message]
+                  nil)))
+
 (defn- refresh-providers-diagnostics!
+  "Fill the whole dialog from ONE gateway call.
+
+   `GET /v1/router` already carries `status` and `limits` for every provider, so
+   opening the provider manager costs one request instead of 2×N — N status
+   probes and N limits probes, each with its own 6s wall. Only when that single
+   read fails do we fan out per provider."
   [providers statuses limits]
   (doseq [provider providers]
-    (refresh-provider-diagnostics! provider statuses limits))
+    (swap! statuses assoc (:id provider) (initial-provider-status provider))
+    (swap! limits assoc (:id provider) (initial-provider-limits provider)))
+  (vis/worker-future
+    "vis-tui-router-diagnostics"
+    (fn []
+      (if-let [fleet (gateway-router-diagnostics-safe)]
+        (doseq [provider providers]
+          (let
+            [pid (:id provider)
+             entry (get fleet pid)]
+
+            (if entry
+              (do (swap! statuses assoc pid (:status entry))
+                  (swap! limits assoc pid (:limits entry)))
+              (do (swap! statuses assoc pid (gateway-provider-status-safe provider))
+                  (swap! limits assoc pid (gateway-provider-limits-safe provider))))))
+        (doseq [provider providers]
+          (refresh-provider-diagnostics! provider statuses limits)))))
   nil)
 
 (defn- provider-diagnostics-loading?

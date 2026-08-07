@@ -43,7 +43,7 @@ export const PROJECT_STATES: Record<string, string[]> = {
 /* Every class string below is LIFTED from the screen it belongs to, never
    approximated: the list, its menus and its rows come from `SessionsScreen`, the
    panel header and the switch from `SettingsScreen`, the field from `ui.tsx`'s
-   `Input`, and the machine chrome is the app's OWN `MachineBanner`, `MachineRail`
+   `Input`, and the machine chrome is the app's OWN `MachineBanner`
    and `MachineMark` rather than a look-alike. A proposal drawn in classes this
    app does not use is a proposal about a different app. */
 
@@ -253,8 +253,8 @@ function SessionRow({ session }: { session: FleetSession }) {
 
 /**
  * The shipped list, with every row's actions supplied by the proposal: the app's
- * own `MachineGap` between machines, its `MachineRail` down everything one machine
- * owns, its `MachineBanner` on top and its project header inside. A machine that is
+ * own `MachineGap` between machines, its `MachineBanner` — hue-ruled — on top and
+ * its project header inside. A machine that is
  * not answering says `offline` and offers a Retry — a design is only reviewable
  * next to the machine it cannot start a session on.
  */
@@ -291,7 +291,7 @@ function FleetList({
           return (
             <section key={machine.id}>
               {index > 0 && <MachineGap />}
-              <MachineRail color={machineHue(machine)}>
+                  <MachineRail color={machineHue(machine)}>
                   <MachineBanner>
                     <span className="flex min-w-0 items-center gap-2">
                       <MachineMark color={machineHue(machine)} />
@@ -313,6 +313,7 @@ function FleetList({
                       {machineAction?.(machine)}
                     </span>
                   </MachineBanner>
+                  </MachineRail>
                 {dead ? (
                   <p className="px-3 py-3 font-mono text-meta text-dialog-hint">
                     This machine is not answering.
@@ -364,7 +365,6 @@ function FleetList({
                     );
                   })
                 )}
-              </MachineRail>
             </section>
           );
         })}

@@ -304,6 +304,13 @@
   []
   (mix-color terminal-bg text-fg 0.1))
 
+(defn band-footer-bg
+  "Paper the band's HINT BAR sits on — one more step of ink than [[band-bg]], so
+   the footer reads as its own strip under the rule that separates it from the
+   commands above it, instead of as one more body row."
+  []
+  (mix-color terminal-bg text-fg 0.2))
+
 (defn table-head-bg
   "Background for a table's HEADER row: `bg` driven MOST of the way to the
    theme's ink.

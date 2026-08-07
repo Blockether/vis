@@ -882,3 +882,37 @@
     (is (= "flat reason" (ex-message (refusal-ex 400 "{\"message\":\"flat reason\"}")))))
   (testing "a reasonless refusal keeps the bare status text"
     (is (= "gateway HTTP 503" (ex-message (refusal-ex 503 ""))))))
+
+;; The provider dialog fanned out 2×N per-provider probes because no client
+;; function handed back the whole fleet's status AND limits from the one
+;; /v1/router read that already carries both.
+(deftest router-diagnostics-loads-the-whole-fleet-in-one-call
+  (let
+    [calls
+     (atom 0)
+
+     fleet
+     [{"id" "openai"
+       "status" {"is_authenticated" true "source" "gateway"}
+       "limits" {"provider_id" "openai"
+                 "status" "ready"
+                 "static" {"rpm" 10}
+                 "dynamic" {"limits" [{"id" "requests" "scope" "account" "is_unlimited" false}]}}}
+      {"id" "anthropic" "status" {"is_authenticated" false} "limits" nil}]
+
+     result
+     (with-redefs-fn {#'client/router (fn []
+                                        (swap! calls inc)
+                                        fleet)}
+       #(client/router-diagnostics))]
+
+    (testing "one gateway read serves every provider"
+      (is (= 1 @calls))
+      (is (= #{:openai :anthropic} (set (keys result)))))
+    (testing "status stays verbatim wire strings and limits are engine-shaped"
+      (is (= true (get-in result [:openai :status "is_authenticated"])))
+      (is (= false (get-in result [:anthropic :status "is_authenticated"])))
+      (is (= :ready (get-in result [:openai :limits :status])))
+      (is (= {:rpm 10} (get-in result [:openai :limits :static])))
+      (is (= :requests (get-in result [:openai :limits :dynamic :limits 0 :id])))
+      (is (nil? (get-in result [:anthropic :limits]))))))
