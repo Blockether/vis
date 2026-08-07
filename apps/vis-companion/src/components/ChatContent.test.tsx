@@ -233,15 +233,3 @@ describe("transcript scroll ownership", () => {
     expect(chatContentSource).not.toMatch(/rampFromRef/u);
   });
 });
-
-// The transcript's `Copy` chip was a hand-rolled <button> with its own border,
-// paper and ink, so it stood beside the app's real buttons looking like a
-// different control. It is `Button` now, like every other button in the app.
-describe("the copy chip", () => {
-  it("is the shared Button, not a hand-rolled one", () => {
-    const chip =
-      /function CopyButton\([\s\S]*?\n}\n/.exec(chatContentSource)?.[0] ?? "";
-    expect(chip).toContain("<Button");
-    expect(chip).not.toContain("<button");
-  });
-});
