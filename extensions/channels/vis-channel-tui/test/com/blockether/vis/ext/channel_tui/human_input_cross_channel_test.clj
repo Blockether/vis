@@ -69,9 +69,18 @@
                   (= request-id (or (get-in event ["request" "id"]) (get event "request_id")))))
     @seen))
 
+(defn- attach!
+  "Point the terminal at `sid`.
+
+   A form is shown on the tab whose session it parks and on no other, so a
+   surface test is attached to that session before anything asks."
+  [sid]
+  (swap! state/app-db assoc :session {:id sid}))
+
 (defn- ask!
   "Park an extension on a typed request, exactly like an extension would."
   [sid request-id fields]
+  (attach! sid)
   (future (engine/request! {:id request-id
                             :session-id sid
                             :title "Deploy?"
@@ -291,11 +300,12 @@
          (str "expired-" (random-uuid))
 
          answer
-         (future (engine/request! {:id rid
-                                   :session-id sid
-                                   :title "Deploy?"
-                                   :timeout-ms 400
-                                   :fields [{:id "user" :type "plaintext" :label "User"}]}))]
+         (do (attach! sid)
+             (future (engine/request! {:id rid
+                                       :session-id sid
+                                       :title "Deploy?"
+                                       :timeout-ms 400
+                                       :fields [{:id "user" :type "plaintext" :label "User"}]})))]
 
         (is (await-true #(tui-open? rid)))
         (testing "nobody answered: the extension resumes and no surface keeps a dead form"
@@ -320,11 +330,12 @@
          (str "forever-" (random-uuid))
 
          answer
-         (future (engine/request! {:id rid
-                                   :session-id sid
-                                   :title "Deploy?"
-                                   :timeout-ms 0
-                                   :fields [{:id "user" :type "plaintext" :label "User"}]}))]
+         (do (attach! sid)
+             (future (engine/request! {:id rid
+                                       :session-id sid
+                                       :title "Deploy?"
+                                       :timeout-ms 0
+                                       :fields [{:id "user" :type "plaintext" :label "User"}]})))]
 
         (try (is (await-true #(tui-open? rid)))
              (is (await-true #(seq (gw/pending sid))))
@@ -400,13 +411,15 @@
          (str "must-answer-" (random-uuid))
 
          answer
-         (future (engine/request!
-                   {:id rid
-                    :session-id sid
-                    :title "Deploy?"
-                    :is-cancellable false
-                    :timeout-ms 5000
-                    :fields [{:id "note" :type "plaintext" :label "Note" :is-required true}]}))]
+         (do (attach! sid)
+             (future (engine/request!
+                       {:id rid
+                        :session-id sid
+                        :title "Deploy?"
+                        :is-cancellable false
+                        :timeout-ms 5000
+                        :fields
+                        [{:id "note" :type "plaintext" :label "Note" :is-required true}]})))]
 
         (try (is (await-true #(tui-open? rid)))
              (is (await-true #(seq (events-of seen "human_input.request" rid))))
@@ -685,7 +698,7 @@
 ;; the gateway's own session event — and the second arrival queued a duplicate
 ;; dialog behind the first, leaving a zombie form open after the answer.
 (deftest a-request-that-arrives-on-both-routes-opens-one-dialog-test
-  (reset! state/app-db {:render-version 0})
+  (reset! state/app-db {:render-version 0 :session {:id "s1"}})
   (try (let [form (hi/init-form (daemon-view "req-dup"))]
          (state/dispatch [:human-input-open form])
          (state/dispatch [:human-input-open form])
@@ -745,6 +758,8 @@
      calls
      (atom [])]
 
+    ;; The tab is attached to `sid` — a replayed form belongs to that session.
+    (swap! state/app-db assoc :session {:id sid})
     (try
       (with-redefs
         [vis/gateway-human-input-requests

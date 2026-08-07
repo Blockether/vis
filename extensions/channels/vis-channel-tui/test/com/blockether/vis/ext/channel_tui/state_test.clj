@@ -5048,6 +5048,44 @@
                  (state/dispatch [:human-input-close nil])
                  (expect (nil? (:human-input @state/app-db)))))
 
+;; Regression (reported: "the HITL which runs from session A can be SHOWN on the
+;; TUI in session B"): a human-input request opened its dialog on whatever tab
+;; the operator happened to be looking at. A pause raised by session A's run took
+;; over session B's tab, stole B's keyboard, and let the operator answer — and so
+;; release — a run that was not the one in front of them. A request parks exactly
+;; ONE session, so it is shown on exactly that session's tab and nowhere else.
+(defdescribe
+  human-input-session-scope-test
+  (it "opens the dialog on the tab that OWNS the request's session"
+      (reset! state/app-db {:render-version 0
+                            :tabs [{:id :main :label "A" :active? true} {:id :tab-b :label "B"}]
+                            :active-tab-id :main
+                            :session {:id "sid-a"}
+                            :tab-locals {:tab-b {:session {:id "sid-b"}}}})
+      (state/dispatch [:human-input-open {:request {:id "r-b" :session-id "sid-b"}}])
+      (expect (nil? (:human-input @state/app-db)))
+      (expect (= "r-b" (get-in @state/app-db [:tab-locals :tab-b :human-input :request :id])))
+      ;; The active tab's own request still lands in front of the operator.
+      (state/dispatch [:human-input-open {:request {:id "r-a" :session-id "sid-a"}}])
+      (expect (= "r-a" (get-in @state/app-db [:human-input :request :id]))))
+  (it "ignores a request for a session no tab is showing"
+      (reset! state/app-db {:render-version 0
+                            :tabs [{:id :main :label "A" :active? true}]
+                            :active-tab-id :main
+                            :session {:id "sid-a"}})
+      (state/dispatch [:human-input-open {:request {:id "r-x" :session-id "sid-x"}}])
+      (expect (nil? (:human-input @state/app-db)))
+      (expect (empty? (:human-input-queue @state/app-db))))
+  (it "closes a request parked on a BACKGROUND tab"
+      (reset! state/app-db {:render-version 0
+                            :tabs [{:id :main :label "A" :active? true} {:id :tab-b :label "B"}]
+                            :active-tab-id :main
+                            :session {:id "sid-a"}
+                            :tab-locals {:tab-b {:session {:id "sid-b"}}}})
+      (state/dispatch [:human-input-open {:request {:id "r-b" :session-id "sid-b"}}])
+      (state/dispatch [:human-input-close "r-b"])
+      (expect (nil? (get-in @state/app-db [:tab-locals :tab-b :human-input])))))
+
 ;;; ── Where a MAIN-SCREEN transient sits ───────────────────────────────────────
 ;; Every band on the session screen is anchored by ONE value read here, instead
 ;; of three call sites each re-spelling `[:layout :messages-top]` and

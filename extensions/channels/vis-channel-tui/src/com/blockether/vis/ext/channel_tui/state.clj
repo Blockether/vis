@@ -134,7 +134,7 @@
    :slash-command-hidden? :submitted-input :pending-sends :retracted-sends :queue-paused :pastes
    :paste-counter :loading? :cancel-token :cancelling? :cancelling-at-ms :cancel-awaiting-client-id
    :gateway-turn-id :live-turn-client-id :progress :turn-start-ms :detail-expansions
-   :mouse-selection :session-model-pref])
+   :mouse-selection :session-model-pref :human-input :human-input-queue])
 
 (defn- empty-tab-state
   []
@@ -169,7 +169,11 @@
    :turn-start-ms nil
    :detail-expansions {}
    :mouse-selection nil
-   :session-model-pref nil})
+   :session-model-pref nil
+   ;; A human-input pause belongs to ONE session, so the dialog belongs to ONE
+   ;; tab: session A's form must never take over the tab showing session B.
+   :human-input nil
+   :human-input-queue []})
 
 (defn- tab-snapshot [db] (merge (empty-tab-state) (select-keys db tab-state-keys)))
 
@@ -2608,40 +2612,93 @@
                   (update db :channel-status dissoc id)
                   db)))
 
+(defn- human-input-target-tab
+  "The tab a human-input form is allowed to appear on.
+
+   A request PARKS EXACTLY ONE SESSION, so it is shown on that session's tab and
+   on no other. `:not-here` means the request belongs to a session this terminal
+   is not showing — another tab's daemon run, or a session open somewhere else
+   entirely — and the form is dropped rather than dumped on whatever tab the
+   operator happened to be looking at. A form that names no session at all is a
+   locally built one (a request raised before a session was bound) and stays on
+   the current tab.
+
+   The ACTIVE tab is matched against the db root's own `:session` rather than
+   through `tab-id-for-session`, because a terminal showing a single session has
+   no `:tabs` entry to resolve an id to."
+  [db form]
+  (let
+    [sid
+     (some-> (get-in form [:request :session-id])
+             str
+             str/trim
+             not-empty)
+
+     root-sid
+     (some-> db
+             :session
+             :id
+             str
+             not-empty)]
+
+    (cond (nil? sid) (current-tab-id db)
+          (= sid root-sid) (current-tab-id db)
+          :else (or (tab-id-for-session db sid) :not-here))))
+
+(defn- open-human-input
+  "Install `form` in ONE tab's db half. IDEMPOTENT BY REQUEST ID: one request
+   reaches a tab twice whenever the run parks in THIS process — once on the
+   in-process `:tui` channel bus, once as the gateway's `human_input.request`
+   session event (which is the only route when the run parks in the serve
+   daemon). Opening the same form twice would leave a zombie behind the
+   answered one."
+  [db form]
+  (let
+    [rid
+     (get-in form [:request :id])
+
+     same?
+     #(and rid (= rid (get-in % [:request :id])))]
+
+    (cond (same? (:human-input db)) db
+          (some same? (:human-input-queue db)) db
+          (:human-input db) (update db :human-input-queue (fnil conj []) form)
+          :else (assoc db :human-input form))))
+
 (reg-event-db :human-input-open
               (fn [db [_ form]]
-                ;; IDEMPOTENT BY REQUEST ID. One request reaches this tab twice
-                ;; whenever the run parks in THIS process: once on the in-process
-                ;; `:tui` channel bus, once as the gateway's `human_input.request`
-                ;; session event (which is the only route when the run parks in
-                ;; the serve daemon). Opening the same form twice would leave a
-                ;; zombie behind the answered one.
-                (let
-                  [rid
-                   (get-in form [:request :id])
-
-                   same?
-                   #(and rid (= rid (get-in % [:request :id])))]
-
-                  (cond (same? (:human-input db)) db
-                        (some same? (:human-input-queue db)) db
-                        (:human-input db) (update db :human-input-queue (fnil conj []) form)
-                        :else (assoc db :human-input form)))))
+                (let [target (human-input-target-tab db form)]
+                  (if (= :not-here target) db (update-tab db target #(open-human-input % form))))))
 
 (reg-event-db :human-input-form
               (fn [db [_ form]]
                 (assoc db :human-input form)))
 
+(defn- close-human-input
+  "Drop `request-id` from ONE tab's db half, promoting the next queued form."
+  [db request-id]
+  (if (or (nil? request-id) (= request-id (get-in db [:human-input :request :id])))
+    (let [queue (vec (:human-input-queue db))]
+      (assoc db
+        :human-input (first queue)
+        :human-input-queue (vec (rest queue))))
+    (assoc db
+      :human-input-queue (vec (remove #(= request-id (get-in % [:request :id]))
+                                (:human-input-queue db))))))
+
 (reg-event-db :human-input-close
               (fn [db [_ request-id]]
-                (if (or (nil? request-id) (= request-id (get-in db [:human-input :request :id])))
-                  (let [queue (vec (:human-input-queue db))]
-                    (assoc db
-                      :human-input (first queue)
-                      :human-input-queue (vec (rest queue))))
-                  (assoc db
-                    :human-input-queue (vec (remove #(= request-id (get-in % [:request :id]))
-                                              (:human-input-queue db)))))))
+                ;; A settle reaches every surface, and the form it settles may be
+                ;; parked on a BACKGROUND tab, so a close is looked for in every
+                ;; tab. An UNADDRESSED close (nil id) still means "the dialog in
+                ;; front of me" and touches the active tab alone.
+                (let [db (close-human-input db request-id)]
+                  (if request-id
+                    (reduce (fn [acc tab-id]
+                              (update-tab acc tab-id #(close-human-input % request-id)))
+                            db
+                            (remove #(= % (current-tab-id db)) (map :id (:tabs db))))
+                    db))))
 
 (defn- drop-pending-turn-messages
   "Remove the transient user + assistant placeholder pair created by
