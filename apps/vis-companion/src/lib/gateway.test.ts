@@ -132,3 +132,92 @@ describe('GatewayClient turn cancellation', () => {
     );
   });
 });
+
+// Regression, user report: saving a new revision of an artifact reported the new
+// version, but the artifacts sheet kept listing the old cut and the comments and
+// highlights just written were nowhere on screen. A revision is appended to an
+// iteration that ALREADY exists, so the session row never moves, the transcript
+// revalidation is a no-op, and the turns the sheet is derived from stay stale.
+describe('GatewayClient artifact revisions', () => {
+  const held = () => [
+    {
+      id: 'turn-1',
+      iterations: [
+        {
+          id: 'iteration-1',
+          attachments: [
+            {
+              index: 0,
+              iteration_id: 'iteration-1',
+              filename: 'notes.md',
+              media_type: 'text/markdown',
+              version: 1,
+            },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const revisionFetch = () =>
+    vi.fn().mockImplementation((input: unknown) =>
+      Promise.resolve(
+        String(input).includes('/attachments')
+          ? new Response(
+              JSON.stringify({
+                index: 1,
+                iteration_id: 'iteration-1',
+                filename: 'notes.md',
+                media_type: 'text/markdown',
+                version: 2,
+              }),
+              { status: 201 },
+            )
+          : new Response(JSON.stringify({ turns: held() })),
+      ),
+    );
+
+  it('folds a saved revision into the transcript it holds and hands it back', async () => {
+    vi.stubGlobal('fetch', revisionFetch());
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+    await client.transcript('session-1');
+
+    const seen: unknown[] = [];
+    const stop = client.onArtifactRevision('session-1', (turns) => seen.push(turns));
+    const saved = await client.saveArtifactText(
+      'session-1',
+      'iteration-1',
+      'notes.md',
+      'text/markdown',
+      '# annotated',
+    );
+    stop();
+
+    expect(saved.version).toBe(2);
+    expect(saved.iteration_id).toBe('iteration-1');
+    const cached = client.cachedTranscript('session-1');
+    expect(cached?.[0].iterations?.[0].attachments).toHaveLength(2);
+    expect(cached?.[0].iterations?.[0].attachments?.[1].version).toBe(2);
+    expect(seen).toEqual([cached]);
+  });
+
+  it('stops telling a screen that left', async () => {
+    vi.stubGlobal('fetch', revisionFetch());
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+    await client.transcript('session-1');
+
+    const seen: unknown[] = [];
+    client.onArtifactRevision('session-1', (turns) => seen.push(turns))();
+    await client.saveArtifactText(
+      'session-1',
+      'iteration-1',
+      'notes.md',
+      'text/markdown',
+      '# annotated',
+    );
+
+    expect(seen).toEqual([]);
+  });
+});

@@ -1174,6 +1174,14 @@ export function SessionScreen({
     () => collapseArtifactVersions(collectArtifacts(turns, earlierRemaining)),
     [turns, earlierRemaining],
   );
+  // A revision the human saves from inside this screen — a commented note, an
+  // inked figure, a stamped PDF page — is appended to an ITERATION THAT ALREADY
+  // EXISTS, so the session row never moves and the transcript revalidation
+  // correctly refetches nothing. The sheet is derived from these very turns, so
+  // without this the save reported "v2" while the gallery kept listing v1 and the
+  // comments just written were nowhere on screen. The client folds the descriptor
+  // into the transcript it holds and hands it straight back.
+  useEffect(() => client.onArtifactRevision(sid, setTurns), [client, sid]);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [slashCommands, setSlashCommands] =
     useState<SlashCommand[]>(FALLBACK_SLASHES);

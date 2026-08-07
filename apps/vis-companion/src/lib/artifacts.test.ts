@@ -11,6 +11,7 @@ import {
   attachmentIsVideo,
   collapseArtifactVersions,
   collectArtifacts,
+  withSavedAttachment,
   docKindLabel,
   isDocMedia,
   isMarkdownMedia,
@@ -382,5 +383,73 @@ describe("pageBySize", () => {
   it("gives the thumbnail grid a bigger page than the transcript rail", () => {
     expect(SHEET_PAGE.items).toBeGreaterThan(RAIL_PAGE.items);
     expect(SHEET_PAGE.bytes).toBeGreaterThan(RAIL_PAGE.bytes);
+  });
+});
+
+// Regression, user report: saving a revision of an artifact answered "the version
+// was updated", but the artifacts sheet went on listing the old cut and reopening
+// the note showed none of the comments that had just been saved. A revision is
+// appended to an ITERATION THAT ALREADY EXISTS, so it moves neither the turn count
+// nor the transcript stamp: every refresh the app makes is a no-op and the held
+// transcript — the only thing the gallery is derived from — never learns about it.
+describe("folding a saved revision back into the transcript", () => {
+  const turns = (): TranscriptTurn[] =>
+    [
+      {
+        id: "t1",
+        iterations: [
+          {
+            id: "i1",
+            attachments: [
+              { index: 0, filename: "notes.md", media_type: "text/markdown" },
+            ],
+          },
+        ],
+      },
+      { id: "t2", iterations: [{ id: "i2", attachments: [] }] },
+    ] as unknown as TranscriptTurn[];
+
+  const saved: IterationAttachment = {
+    index: 1,
+    iteration_id: "i1",
+    filename: "notes.md",
+    media_type: "text/markdown",
+    version: 2,
+    size: 64,
+  };
+
+  it("appends the cut to the iteration that owns it", () => {
+    const next = withSavedAttachment(turns(), saved);
+    expect(next[0].iterations?.[0].attachments).toEqual([
+      { index: 0, filename: "notes.md", media_type: "text/markdown" },
+      saved,
+    ]);
+  });
+
+  it("leaves every other turn identical, so only that row repaints", () => {
+    const held = turns();
+    const next = withSavedAttachment(held, saved);
+    expect(next).not.toBe(held);
+    expect(next[1]).toBe(held[1]);
+  });
+
+  it("makes the gallery show the new version with its thread behind it", () => {
+    const [note] = collapseArtifactVersions(
+      collectArtifacts(withSavedAttachment(turns(), saved)),
+    );
+    expect(note.version).toBe(2);
+    expect(note.index).toBe(1);
+    expect(note.versions?.map((cut) => cut.version)).toEqual([2, 1]);
+  });
+
+  it("re-reads a cut that lands on an index it already holds", () => {
+    const next = withSavedAttachment(turns(), { ...saved, index: 0 });
+    expect(next[0].iterations?.[0].attachments).toEqual([{ ...saved, index: 0 }]);
+  });
+
+  it("changes nothing when the iteration is not in the window we hold", () => {
+    const held = turns();
+    expect(withSavedAttachment(held, { ...saved, iteration_id: "i9" })).toBe(held);
+    expect(withSavedAttachment(held, { ...saved, iteration_id: undefined })).toBe(held);
   });
 });

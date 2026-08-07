@@ -30,6 +30,7 @@ import type {
   FileSuggestion,
   GatewayStatus,
   GatewayTheme,
+  IterationAttachment,
   Session,
   SessionUsage,
   SettingsResponse,
@@ -58,6 +59,7 @@ import type {
   BrowseListing,
 } from "./types";
 import { PROTOCOL_HEADERS } from "./compat";
+import { withSavedAttachment } from "./artifacts";
 import {
   humanInputRequestsFromWire,
   type HumanInputOutcome,
@@ -298,6 +300,22 @@ export interface TranscriptWindow {
  * continue and the UI can say how much history is still on the gateway.
  */
 const transcriptWindows = new Map<string, TranscriptWindow>();
+
+/**
+ * Screens waiting to hear that an artifact in one session grew a NEW VERSION,
+ * keyed by that session's transcript snapshot.
+ *
+ * A revision is the one transcript change no revalidation can see: it is
+ * appended to an iteration that already exists, so the turn count and the meta
+ * row are exactly where they were and `transcriptIfMoved` correctly decides
+ * nothing moved. The client therefore says so itself, at the moment it files the
+ * descriptor — which is why the sheet shows the new cut, and the comments on it,
+ * without refetching tens of megabytes of transcript.
+ */
+const revisionWatchers = new Map<
+  string,
+  Set<(turns: TranscriptTurn[]) => void>
+>();
 
 function transcriptStamp(row: Session | null | undefined): string {
   if (!row) return "";
@@ -2683,7 +2701,7 @@ export class GatewayClient {
     filename: string,
     mediaType: string,
     text: string,
-  ): Promise<{ index?: number; version?: number; filename?: string }> {
+  ): Promise<IterationAttachment> {
     return this.saveArtifactBytes(
       sid,
       iterationId,
@@ -2704,14 +2722,58 @@ export class GatewayClient {
     filename: string,
     mediaType: string,
     bytes: Uint8Array,
-  ): Promise<{ index?: number; version?: number; filename?: string }> {
+  ): Promise<IterationAttachment> {
     let binary = "";
     for (const byte of bytes) binary += String.fromCharCode(byte);
-    return this.request(
+    const filed = await this.request<IterationAttachment>(
       "POST",
       `/v1/sessions/${encodeURIComponent(sid)}/iterations/${encodeURIComponent(iterationId)}/attachments`,
       { filename, media_type: mediaType, base64: btoa(binary) },
     );
+    // The route is scoped to one iteration, so that IS the cut's home: stamping
+    // it here means the descriptor can be folded into the transcript and opened
+    // through `attachmentUrl` without another round trip.
+    const saved = { ...filed, iteration_id: iterationId };
+    this.noteArtifactRevision(sid, saved);
+    return saved;
+  }
+
+  /**
+   * Hear about a revision saved into `sid` while this screen is mounted; the
+   * returned function stops listening.
+   *
+   * The transcript handed to the watcher is the folded one, so a screen that
+   * derives its artifacts from turns simply adopts it.
+   */
+  onArtifactRevision(
+    sid: string,
+    watcher: (turns: TranscriptTurn[]) => void,
+  ): () => void {
+    const key = this.snapshotKey("transcript", sid);
+    const held = revisionWatchers.get(key) ?? new Set<typeof watcher>();
+    held.add(watcher);
+    revisionWatchers.set(key, held);
+    return () => {
+      const live = revisionWatchers.get(key);
+      if (!live) return;
+      live.delete(watcher);
+      if (live.size === 0) revisionWatchers.delete(key);
+    };
+  }
+
+  /**
+   * File one saved cut into the transcript this client holds, then tell whoever
+   * is painting it. No snapshot means nothing to correct — the next read of the
+   * session brings the revision with it.
+   */
+  private noteArtifactRevision(sid: string, saved: IterationAttachment): void {
+    const key = this.snapshotKey("transcript", sid);
+    const held = readSnapshot<TranscriptTurn[]>(key);
+    if (!held) return;
+    const next = withSavedAttachment(held, saved);
+    if (next === held) return;
+    writeSnapshot(key, next);
+    for (const watcher of revisionWatchers.get(key) ?? []) watcher(next);
   }
 
   private static attachmentKey(

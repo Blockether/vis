@@ -264,6 +264,57 @@ export function collapseArtifactVersions(
 }
 
 /**
+ * A HUMAN'S REVISION, FOLDED BACK INTO THE TRANSCRIPT IT CAME FROM.
+ *
+ * Saving an annotated note (or an inked PDF, or a drawn-on picture) POSTs the
+ * whole document under the SAME filename, and the gateway answers with the
+ * descriptor of the cut it filed. The transcript the app holds was read before
+ * that, and a revision is appended to AN ITERATION THAT ALREADY EXISTS: it moves
+ * neither the turn count nor the transcript stamp, so the revalidation that
+ * keeps a session current is a no-op and the new cut never arrives. The sheet is
+ * derived from those very turns, so it keeps listing the old version — the
+ * comments the human just wrote are on the gateway and nowhere on screen.
+ *
+ * The descriptor is therefore folded in at the seam it belongs to: the one
+ * iteration that owns it. Every other turn keeps its identity, so React repaints
+ * the row that changed and nothing else, and an iteration outside the window we
+ * hold returns `turns` untouched rather than inventing a home for it.
+ */
+export function withSavedAttachment(
+  turns: TranscriptTurn[],
+  saved: IterationAttachment,
+): TranscriptTurn[] {
+  const owner = saved.iteration_id ?? "";
+  if (!owner) return turns;
+  let landed = false;
+  const next = turns.map((turn) => {
+    const iterations = turn.iterations ?? [];
+    if (!iterations.some((iteration) => iteration.id === owner)) return turn;
+    landed = true;
+    return {
+      ...turn,
+      iterations: iterations.map((iteration) => {
+        if (iteration.id !== owner) return iteration;
+        const held = iteration.attachments ?? [];
+        // The index IS the identity at the byte endpoint, so a descriptor that
+        // names one we already hold REPLACES it instead of doubling the tile.
+        const at = held.findIndex((entry) => entry.index === saved.index);
+        return {
+          ...iteration,
+          attachments:
+            at < 0
+              ? [...held, saved]
+              : held.map((entry, position) =>
+                  position === at ? saved : entry,
+                ),
+        };
+      }),
+    };
+  });
+  return landed ? next : turns;
+}
+
+/**
  * The kind filter. `All` lists every kind rather than skipping the check, so a
  * kind that is added to `ArtifactKind` and forgotten here disappears from the
  * sheet loudly instead of only from one chip.
