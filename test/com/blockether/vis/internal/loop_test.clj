@@ -2083,38 +2083,10 @@
           (expect (empty? (notes suffix)))))))
 
 (defdescribe
-  answer-gallery-test
-  "`vis_attach(..., in_answer=True)` collects figures onto the TURN and the ANSWER
-   paints them once, under the prose. That is the whole point: a human reviews one
-   gallery where the conclusion is instead of scrolling a long run for pictures."
-  (it "splices every in_answer artifact under the answer prose as a vis-image fence"
-      (let [env {:turn-state-atom (atom {}) :ctx-atom (atom {})}
-            _ (#'lp/remember-answer-gallery!
-                env
-                [{:filename "phone.png" :media-type "image/png" :size 2048
-                  :label "solo machine, phone" :is-in-answer true
-                  :display-path "/tmp/att-1.png" :display-width 390 :display-height 844}
-                 {:filename "trace.csv" :media-type "text/csv" :size 12 :is-in-answer true}
-                 {:filename "noise.png" :media-type "image/png" :size 9}])
-            value (with-redefs [ctx-loop/finalize-turn! (fn [_ _] nil)]
-                    (#'lp/finalize-answer! env "Scoped to one machine."))
-            shown (:answer-markdown (:best-answer @(:turn-state-atom env)))]
-        ;; Collected in production order, and ONLY the rows that asked to be there.
-        (expect (= ["phone.png" "trace.csv"]
-                   (mapv :filename (:answer-gallery @(:turn-state-atom env)))))
-        ;; The model's prose stays first; the gallery is appended exactly once.
-        (expect (str/starts-with? shown "Scoped to one machine.\n\n"))
-        (expect (re-find
-                  #"````vis-image\n\[Image: phone\.png 390×844, [^\]]*\] solo machine, phone\n/tmp/att-1\.png\nimage/png\n390x844\n"
-                  shown))
-        ;; A non-image row is a named bullet: there is no picture to show and a
-        ;; half-filled fence is worse than a line of prose.
-        (expect (str/includes? shown "- trace.csv"))
-        (expect (not (str/includes? shown "noise.png")))
-        ;; The stored answer VALUE carries the gallery too, so a replayed transcript
-        ;; shows the same figures the live answer did.
-        (expect (= shown (if (map? value) (:answer value) value)))))
-  (it "leaves an answer with no in_answer artifact exactly as the model wrote it"
+  finalize-answer-test
+  "The ANSWER is the model's own prose and NOTHING else: `finalize-answer!` stores
+   it verbatim as the turn's best answer — no artifact is ever spliced under it."
+  (it "leaves the answer exactly as the model wrote it"
       (let [env {:turn-state-atom (atom {}) :ctx-atom (atom {})}
             value (with-redefs [ctx-loop/finalize-turn! (fn [_ _] nil)]
                     (#'lp/finalize-answer! env "Just prose."))]

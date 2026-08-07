@@ -290,7 +290,7 @@
   vis-attach-discovery-test
   (it "surfaces vis_attach / vis_attach_bytes / vis_attachments via apropos and doc"
       (let [pctx (ctx-with-root (temp-root))]
-        (expect (= ["vis_attach" "vis_attach_bytes" "vis_attachment_version"
+        (expect (= ["vis_attach" "vis_attach_bytes" "vis_attachment" "vis_attachment_version"
                     "vis_attachment_versions" "vis_attachments"]
                    (vec (ev pctx "sorted(apropos('vis_attach'))"))))
         (expect (false? (ev pctx "'attach' in apropos('attach')")))
@@ -473,10 +473,11 @@
 
 (defdescribe
   vis-attachments-reader-test
-  "Read-back twins: with `*attachment-reader*` bound, `vis_attachments()` lists
-   the session's artifacts (snake_case keys) and `vis_read_attachment(id)` fetches
-   one back as bytes through the confined sandbox. Unbound, both raise a clear
-   RuntimeError instead of silently returning nothing."
+  "Read-back twins: with `*attachment-reader*` bound, `vis_attachments()` lists the
+   session's artifacts as descriptor DICTS (snake_case keys), `vis_attachment(id)` is
+   the one descriptor for an id, and `vis_read_attachment(id)` hands back the raw
+   BYTES and nothing else. Unbound, they raise a clear RuntimeError instead of
+   silently returning nothing."
   (it "lists metadata and reads the bytes back"
       (let
         [pctx
@@ -484,19 +485,18 @@
 
          out
          (binding [mpl-capture/*attachment-reader* (fake-reader)]
-           (block
-             pctx
-             (str
-               "a = vis_attachments()[0]\n" "r = vis_read_attachment('a1')\n"
-               "print(a['id'], a['media_type'], a['tool_call_id'], a['iteration_id'])\n"
-               "print(r['bytes'].decode('utf-8'), r['media_type'], r['filename'], r['size'])\n")))
+           (block pctx
+                  (str "a = vis_attachments()[0]\n"
+                       "d = vis_attachment('a1')\n" "r = vis_read_attachment('a1')\n"
+                       "print(a['id'], a['media_type'], a['tool_call_id'], a['iteration_id'])\n"
+                       "print(type(r).__name__, r.decode('utf-8'), d['filename'], d['size'])\n")))
 
          so
          (str (:stdout out))]
 
         (expect (nil? (:error out)))
         (expect (re-find #"a1 image/png call-1 it1" so))
-        (expect (re-find #"PNGDATA image/png chart.png 7" so))))
+        (expect (re-find #"bytes PNGDATA chart.png 7" so))))
   (it
     "queues a persisted image for one model reinspection without duplicating it"
     (let
@@ -576,16 +576,13 @@
    default) is painted for the human AND sent to the model, \"user\" is stored and
    painted but never becomes a wire image block (the opt-out for the one cost
    multimodal history cannot undo: an image RE-UPLOADED in full on every later
-   request), \"model\" rides the request and is never painted. `in_answer=True`
-   paints the artifact in the producing result and also collects it in the final
-   answer gallery, so neither surface silently loses the figure."
+   request), \"model\" rides the request and is never painted."
   (it "defaults to audience \"both\" and paints the inline image fence"
       (let [out (attach-out "vis_attach_bytes(b'PNGDATA', 'chart.png', media_type='image/png')\n")]
         (expect (nil? (:error out)))
         (expect (= 1 (count (:attachments out))))
         (expect (= "chart.png" (:filename (:row out))))
-        (expect (= "both" (:audience (:row out))))
-        (expect (nil? (:is-in-answer (:row out))))))
+        (expect (= "both" (:audience (:row out))))))
   (it "stamps audience \"user\" so the send-time gate keeps the bytes off the wire"
       (let
         [out (attach-out (str "vis_attach_bytes(b'PNGDATA', 'chart.png', media_type='image/png', "
@@ -602,28 +599,6 @@
         ;; Staying silent IS the feature: no fence, no caption line, nothing in
         ;; the block naming an artifact the human was never meant to review.
         (expect (not (re-find #"chart\.png" (str (:stdout out)))))))
-  ;; Regression, session 617d3b77-8522-4866-b4b4-01cc8253bf1a: `in_answer=True`
-  ;; withheld the image fence from the tool result, leaving only an answer-gallery label.
-  (it
-    "paints an in_answer image in the result and marks it for the final gallery"
-    (let
-      [out
-       (attach-out
-         (str
-           "import base64\n"
-           "png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')\n"
-           "vis_attach_bytes(png, 'chart.png', in_answer=True, " "label='fleet, phone width')\n"))
-
-       stdout
-       (str (:stdout out))]
-
-      (expect (nil? (:error out)))
-      (expect (true? (:is-in-answer (:row out))))
-      (expect (= "fleet, phone width" (:label (:row out))))
-      (expect (= "both" (:audience (:row out))))
-      (expect (re-find #"\[Answer gallery: chart\.png\] fleet, phone width" stdout))
-      (expect (re-find #"vis-image" stdout))
-      (expect (re-find #"\[Image: chart\.png 1×1," stdout))))
   (it "refuses an audience outside the closed vocabulary"
       (let
         [out (attach-out (str "try:\n"
@@ -631,15 +606,6 @@
                               "audience='everyone')\n"
                               "except ValueError as e:\n"
                               "    print('RAISED', 'both' in str(e))\n"))]
-        (expect (empty? (:attachments out)))
-        (expect (re-find #"RAISED True" (str (:stdout out))))))
-  (it "refuses in_answer with audience \"model\": nothing would ever be shown"
-      (let
-        [out (attach-out (str "try:\n"
-                              "    vis_attach_bytes(b'PNGDATA', 'c.png', media_type='image/png', "
-                              "audience='model', in_answer=True)\n"
-                              "except ValueError as e:\n"
-                              "    print('RAISED', 'human-visible' in str(e))\n"))]
         (expect (empty? (:attachments out)))
         (expect (re-find #"RAISED True" (str (:stdout out)))))))
 

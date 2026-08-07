@@ -911,7 +911,10 @@ every `sub_loop` fork) and loaded lazily on first import:
 - Time — `zoneinfo` (604+ zones from `java.time`), `dateutil`.
 - Ops / testing — `paramiko`, `pytest` (the same shim the test runner installs).
 - Globals, no import needed — `vis_attach` / `vis_attachments` /
-  `vis_read_attachment` and `nippy_encode` / `nippy_decode`. **Same document,
+  `vis_attachment` / `vis_read_attachment` and `nippy_encode` / `nippy_decode`.
+  `vis_attachments()` and `vis_attachment(id)` return descriptor dicts (id,
+  filename, version, media type, kind, size); `vis_read_attachment(id)` returns
+  the raw bytes and nothing else. **Same document,
   same name**: a revision of an artifact you already attached goes back under
   its own filename — `report.png` again, never `report_v2.png` beside it — and
   is stored as the next **version** of that one artifact, so a document reads as

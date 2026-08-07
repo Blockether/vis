@@ -3859,29 +3859,7 @@
             (expect (str/includes? txt "[Image #1: shot.png 1200×800, 245KB]"))
             (expect (not (str/includes? txt "▸ [Image #1")))
             (expect (str/includes? txt "shot.png"))
-            (expect (str/includes? txt "1200×800"))))))
-  ;; Regression, live TUI report: `in_answer=True` was persisted under the answer,
-  ;; but a turn with tool trace rendered the fence as ordinary code instead of the image.
-  (it "renders an in_answer gallery image in a traced assistant answer"
-      (with-redefs [timg/images-protocol (constantly :kitty)]
-        (render/invalidate-cache!)
-        (let
-          [answer (str "Done.\n\n````vis-image\n"
-                       "[Image: hitl.png 1000×880, 90KB]\n"
-                       "/tmp/hitl.png\nimage/png\n1000x880\n90KB\n````")
-           {:keys [line-meta]} (render/format-answer-with-thinking-data
-                                 answer
-                                 [{:forms
-                                   [{:code "print('captured')" :result "None" :success? true}]}]
-                                 76
-                                 {:show-iterations true}
-                                 nil
-                                 false
-                                 {:session-id "s1" :session-turn-id "turn-1" :detail-expansions {}})
-           rows (filter #(#{:image :image-pad} (:kind %)) line-meta)]
-
-          (expect (seq rows))
-          (expect (= "/tmp/hitl.png" (:path (:img (first rows)))))))))
+            (expect (str/includes? txt "1200×800")))))))
 
 (def ^:private render-iteration-entries @#'render/render-iteration-entries)
 

@@ -226,17 +226,12 @@ def __vis_install_attach__():
         print(chr(10).join(lines))
         return True
 
-    def __vis_audience(audience, in_answer, mt=None):
+    def __vis_audience(audience, mt=None):
         aud = str(audience if audience is not None else "both").strip().lower()
         if aud not in ("both", "user", "model"):
             raise ValueError(
                 "vis_attach: audience must be 'both', 'user' or 'model', got "
                 + repr(audience)
-            )
-        if in_answer and aud == "model":
-            raise ValueError(
-                "vis_attach: in_answer=True needs a human-visible audience "
-                "('both' or 'user'), not 'model'"
             )
         if __vis_is_doc(mt):
             # A document can never be an image block, so 'model' would mean
@@ -262,7 +257,6 @@ def __vis_install_attach__():
         media_type=None,
         label=None,
         audience="both",
-        in_answer=False,
     ):
         if isinstance(data, str):
             data = data.encode("utf-8")
@@ -271,23 +265,18 @@ def __vis_install_attach__():
         mt = media_type or __vis_guess_media_type(name, data)
         knd = kind or __vis_kind_for(mt)
         cap = __vis_caption(label)
-        aud = __vis_audience(audience, in_answer, mt)
+        aud = __vis_audience(audience, mt)
         b64 = _b64.b64encode(data).decode("ascii")
         rec = globals().get("__vis_record_attachment__")
         if rec is None:
             raise RuntimeError("vis_attach: capture bridge not bound in this sandbox")
-        env = rec(knd, mt, b64, name, len(data), aud, bool(in_answer), cap)
+        env = rec(knd, mt, b64, name, len(data), aud, cap)
         if not env[0]:
             raise RuntimeError("vis_attach: " + str(env[1]))
         if aud == "model":
             # audience='model': the bytes ride the next request and NOTHING is
             # painted for the human. Staying silent here is the whole point.
             return None
-        if in_answer:
-            # The row marker keeps this artifact in the final answer gallery, but
-            # the producing tool result is also a human-visible surface: paint the
-            # same persisted image there instead of replacing it with a label.
-            print("[Answer gallery: " + name + "]" + ((" " + cap) if cap else ""))
         disp = env[1] if len(env) > 1 else None
         if __vis_is_doc(mt):
             if not __vis_emit_doc_fence(disp, name, mt, len(data), cap):
@@ -309,7 +298,6 @@ def __vis_install_attach__():
         filename=None,
         label=None,
         audience="both",
-        in_answer=False,
     ):
         if hasattr(path, "savefig"):
             import io
@@ -331,7 +319,6 @@ def __vis_install_attach__():
                 media_type=media_type,
                 label=label,
                 audience=audience,
-                in_answer=in_answer,
             )
         with open(path, "rb") as f:
             data = f.read()
@@ -343,7 +330,6 @@ def __vis_install_attach__():
             media_type=media_type,
             label=label,
             audience=audience,
-            in_answer=in_answer,
         )
 
     def vis_attachments():
@@ -360,6 +346,15 @@ def __vis_install_attach__():
         rows = _json.loads(env[1])
 
         return [{str(k).replace("-", "_"): v for k, v in r.items()} for r in rows]
+
+    def vis_attachment(attachment_id):
+        target = str(attachment_id)
+        for r in vis_attachments():
+            if str(r.get("id")) == target:
+                return r
+        raise LookupError(
+            "vis_attachment: no attachment with id " + repr(target) + " in this session"
+        )
 
     def vis_attachment_versions(name):
         target = str(name)
@@ -418,18 +413,10 @@ def __vis_install_attach__():
         env = rd(str(attachment_id))
         if not env[0]:
             raise RuntimeError("vis_read_attachment: " + str(env[1]))
-        row = env[1]
-        b64 = row[0]
-        data = _b64.b64decode(b64) if b64 else None
-        return {
-            "bytes": data,
-            "media_type": row[1],
-            "filename": row[2],
-            "kind": row[3],
-            "size": row[4],
-            "id": row[5],
-            "storage_uri": row[6],
-        }
+        b64 = env[1]
+        # BYTES, nothing else: the descriptor is one vis_attachment(id) away, so
+        # printing this call can never spill a metadata map nobody asked for.
+        return _b64.b64decode(b64) if b64 else b""
 
     vis_attach.__doc__ = (
         "Persist a produced file as a durable attachment. SAME DOCUMENT, SAME "
@@ -445,9 +432,7 @@ def __vis_install_attach__():
         "routes it: 'both' (default) shows the human AND sends it to the model, "
         "'user' shows the human only and never enters the model's context, "
         "'model' sends it to the model only and paints nothing for the human. "
-        "in_answer=True ALSO places it in the gallery under the FINAL ANSWER; the "
-        "tool result still paints it where it was produced. This is the only way "
-        "to put an image IN the answer. The sandbox-confined path is read, its "
+        "The sandbox-confined path is read, its "
         "media type inferred, and its bytes stored across restarts; images can "
         "replay to vision models. A CSV/TSV file attaches as a live TABLE: the "
         "transcript paints it as a sortable, pageable grid, and its rows never "
@@ -459,8 +444,8 @@ def __vis_install_attach__():
         "kind, media_type and filename override inference. label is a one-line "
         "caption printed with the artifact, so a series of shots says which shot "
         "is which. Returns None: call directly, do not print. Use "
-        "vis_attachments() for metadata and vis_attach_bytes() for in-memory "
-        "bytes/str."
+        "vis_attachments() / vis_attachment(id) for metadata and "
+        "vis_attach_bytes() for in-memory bytes/str."
     )
     vis_attach_bytes.__doc__ = (
         "Persist bytes (or a UTF-8 str) as a durable attachment without a "
@@ -471,15 +456,14 @@ def __vis_install_attach__():
         "ARTIFACTS PER TURN and COMPOSE many images into a single sheet rather "
         "than attaching each one. audience is 'both' (human and model), 'user' "
         "(human only, never in the model's context) or 'model' (model only, "
-        "nothing painted for the human); in_answer=True defers it to the gallery "
-        "under the final answer. Name it *.csv/*.tsv and it attaches as a live "
+        "nothing painted for the human). Name it *.csv/*.tsv and it attaches as a live "
         "TABLE the transcript paints as a grid, with the rows kept out of the "
         "model's context; name it *.pdf/*.html and it attaches as a DOCUMENT "
         "for the HUMAN only (a card that opens it; HTML renders in a sandboxed "
         "frame), never as an image, and audience='model' is refused. "
         "label is a one-line caption printed with the artifact. "
-        "Returns None: call directly, do not print. Use vis_attachments() for "
-        "metadata."
+        "Returns None: call directly, do not print. Use vis_attachments() / "
+        "vis_attachment(id) for metadata."
     )
     vis_attachment_versions.__doc__ = (
         "Every VERSION of one artifact, oldest first. Attaching the same "
@@ -495,11 +479,19 @@ def __vis_install_attach__():
         "vis_read_attachment() for the bytes. Raises LookupError when the name "
         "or the version does not exist."
     )
+    vis_attachment.__doc__ = (
+        "ONE artifact's DESCRIPTOR dict - id, filename, version, media_type, "
+        "kind, size, audience and where it was produced - and never its bytes. "
+        "This is what you read to find out WHAT an attachment is; "
+        "vis_read_attachment(id) is what you call when you actually want the "
+        "payload. Raises LookupError when this session has no such id."
+    )
 
     g = globals()
     g["vis_attach"] = vis_attach
     g["vis_attach_bytes"] = vis_attach_bytes
     g["vis_attachments"] = vis_attachments
+    g["vis_attachment"] = vis_attachment
     g["vis_attachment_versions"] = vis_attachment_versions
     g["vis_attachment_version"] = vis_attachment_version
     g["vis_read_attachment"] = vis_read_attachment
@@ -510,7 +502,7 @@ def __vis_install_attach__():
     docs = g.setdefault("__vis_docs__", {})
     docs["vis_attach"] = (
         "vis_attach(path, kind=None, media_type=None, filename=None, label=None, "
-        "audience='both', in_answer=False): persist a produced file as a durable "
+        "audience='both'): persist a produced file as a durable "
         "attachment across restarts. SAME DOCUMENT, SAME NAME - a revision of an "
         "artifact you already attached goes back under its own filename and "
         "becomes its next VERSION, never report_v2.png beside report.png; a new "
@@ -521,9 +513,7 @@ def __vis_install_attach__():
         "separate shots. audience='both' shows the human and sends it to the "
         "model; 'user' shows the human ONLY and never enters the model's context; "
         "'model' sends it to the model ONLY and paints nothing for the human. "
-        "in_answer=True ALSO places it in the gallery under the FINAL ANSWER; the "
-        "tool result still paints it where it was produced. Prefer it for the one "
-        "or two figures that make your point. Images replay to vision "
+        "Images replay to vision "
         "models; a CSV/TSV attaches as a live TABLE the transcript paints as a "
         "sortable, pageable grid whose rows stay OUT of the model's context "
         "(vis_read_attachment(id) reads them back); a *.pdf/*.html attaches as "
@@ -535,15 +525,15 @@ def __vis_install_attach__():
     )
     docs["vis_attach_bytes"] = (
         "vis_attach_bytes(data, filename, kind=None, media_type=None, label=None, "
-        "audience='both', in_answer=False): persist bytes/str as a durable "
+        "audience='both'): persist bytes/str as a durable "
         "attachment. SAME DOCUMENT, SAME NAME - re-attaching a filename you "
         "already used stores the next VERSION of that artifact, so keep one "
         "continuous thread per document. "
         "ATTACH ONE OR TWO ARTIFACTS PER TURN and COMPOSE many images "
         "into ONE sheet instead of attaching each one. audience routes it to "
         "'both', 'user' (human only, out of the model's context) or 'model' "
-        "(model only, nothing painted for the human); in_answer=True defers it to "
-        "the gallery under the FINAL ANSWER. A *.csv/*.tsv filename attaches as a "
+        "(model only, nothing painted for the human). "
+        "A *.csv/*.tsv filename attaches as a "
         "live TABLE in the transcript with its rows out of context; a *.pdf or "
         "*.html filename attaches as a DOCUMENT for the HUMAN only, never an "
         "image, and audience='model' is refused. label is a "
@@ -556,10 +546,18 @@ def __vis_install_attach__():
         "detail is auto, low, or high; unknown/non-image ids raise RuntimeError."
     )
     docs["vis_attachments"] = (
-        "vis_attachments(): list THIS session's persisted artifact metadata: id, "
-        "filename, version, media_type, kind, size, position, tool_call_id, "
-        "iteration_id. Attaching the same filename again bumps version instead "
-        "of creating a second artifact. Pass an id to vis_read_attachment()."
+        "vis_attachments(): every artifact of THIS session as a list of "
+        "DESCRIPTOR dicts - id, filename, version, media_type, kind, size, "
+        "audience, position, tool_call_id, iteration_id - and never any bytes. "
+        "Attaching the same filename again bumps version instead "
+        "of creating a second artifact. Pass an id to vis_attachment(id) for one "
+        "descriptor, or to vis_read_attachment(id) for that artifact's bytes."
+    )
+    docs["vis_attachment"] = (
+        "vis_attachment(id): ONE artifact's descriptor dict, the same shape "
+        "vis_attachments() lists, with no bytes in it. Ask this WHAT an "
+        "attachment is; ask vis_read_attachment(id) only when you want the "
+        "payload itself. LookupError when this session has no such id."
     )
     docs["vis_attachment_versions"] = (
         "vis_attachment_versions(name): every version of ONE artifact, oldest "
@@ -574,8 +572,9 @@ def __vis_install_attach__():
         "read its bytes with vis_read_attachment(id)."
     )
     docs["vis_read_attachment"] = (
-        "vis_read_attachment(id): fetch persisted artifact bytes and metadata as "
-        "{bytes, media_type, filename, kind, size, id, storage_uri}."
+        "vis_read_attachment(id): the artifact's raw BYTES and nothing else. "
+        "Metadata lives in vis_attachment(id) / vis_attachments(), so reading a "
+        "payload never drags a descriptor map into the transcript with it."
     )
 
 

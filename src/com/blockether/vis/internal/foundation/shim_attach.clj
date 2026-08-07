@@ -91,22 +91,13 @@
                      [(.getAbsolutePath f) w h])))))
        (catch Throwable _ nil)))
 
-(defn- truthy-flag?
-  "Tolerant reading of a boolean argument crossing the shim bridge: Python hands
-   us a bool, but a hand-rolled caller may send 0/1, \"\" or nil, and a mis-read
-   here would silently start (or stop) showing someone's screenshots."
-  [v]
-  (boolean (and (some? v) (not (false? v)) (not= 0 v) (not= 0.0 v) (not= "" v))))
-
 (defn- record-attachment-call
   "Body of `__vis_record_attachment__`: validate the already-decided attachment
    fields and append the map to the active per-block artifact sink.
 
    The image probe runs ONCE: its `[path w h]` is returned to the shim for the
-   inline `vis-image` fence and, for an `in_answer` artifact, also stamped onto the
-   row so the answer's gallery can paint the same persisted image later without
-   re-decoding the bytes."
-  [kind media-type b64 filename size audience in-answer label]
+   inline `vis-image` fence."
+  [kind media-type b64 filename size audience label]
   (attach-envelope
     #(cond (str/blank? (str b64)) (throw (ex-info "vis_attach: empty payload (no bytes to persist)"
                                                   {}))
@@ -123,44 +114,29 @@
                                 "python_execution block so the produced artifact can be "
                                 "attached to that iteration")
                            {}))
-           :else (let
-                   [info
-                    (display-info (str media-type) (str b64))
+           :else (let [info (display-info (str media-type) (str b64))]
+                   (mpl-capture/record-attachment! (cond->
+                                                     {:kind (or (not-empty (str kind)) "file")
+                                                      :media-type (str media-type)
+                                                      :base64 (str b64)
+                                                      :size (long (or size 0))
+                                                      ;; One funnel: a PDF/HTML document is clamped to "user" by
+                                                      ;; `attachment-audience` itself, so no caller can put a
+                                                      ;; document on the wire as an image block.
+                                                      :audience (attachments/attachment-audience
+                                                                  {:media-type (str media-type)
+                                                                   :audience audience})}
+                                                     (not (str/blank? (str filename)))
+                                                     (assoc :filename (str filename))
 
-                    answer?
-                    (truthy-flag? in-answer)]
-
-                   (mpl-capture/record-attachment!
-                     (cond->
-                       {:kind (or (not-empty (str kind)) "file")
-                        :media-type (str media-type)
-                        :base64 (str b64)
-                        :size (long (or size 0))
-                        ;; One funnel: a PDF/HTML document is clamped to "user" by
-                        ;; `attachment-audience` itself, so no caller can put a
-                        ;; document on the wire as an image block.
-                        :audience (attachments/attachment-audience {:media-type (str media-type)
-                                                                    :audience audience})}
-                       (not (str/blank? (str filename)))
-                       (assoc :filename (str filename))
-
-                       (not (str/blank? (str label)))
-                       (assoc :label (str/trim (str label)))
-
-                       answer?
-                       (assoc :is-in-answer true)
-
-                       (and answer? info)
-                       (assoc :display-path
-                         (nth info 0) :display-width
-                         (nth info 1) :display-height
-                         (nth info 2))))
+                                                     (not (str/blank? (str label)))
+                                                     (assoc :label (str/trim (str label)))))
                    info))))
 
 (defn- attach-bridge-bindings
   "Host callable the `vis_attach` shim delegates to. `__vis_record_attachment__`
    takes the already-decided attachment fields (kind / media-type / base64 /
-   filename / size / audience / in-answer / label) and appends the map to the
+   filename / size / audience / label) and appends the map to the
    active per-block artifact sink via `mpl-capture/record-attachment!`. Returns
    [true display-info] once recorded, or [false message] when there is no active
    capture sink (called outside a driven `python_execution` block) or a field is
@@ -170,12 +146,11 @@
    `\"user\"` (the human sees it, the bytes never reach the wire — an image
    replays IN FULL on every later request, so a screenshot the model does not
    need is re-billed forever) or `\"model\"` (the model gets it, the human's
-   transcript stays clean). `in-answer` also adds the artifact to the gallery under
-   the final answer; its producing tool result remains visible in the run."
+   transcript stays clean)."
   []
   {"__vis_record_attachment__"
-   (fn record-attachment [kind media-type b64 filename size audience in-answer label]
-     (record-attachment-call kind media-type b64 filename size audience in-answer label))
+   (fn record-attachment [kind media-type b64 filename size audience label]
+     (record-attachment-call kind media-type b64 filename size audience label))
    "__vis_list_attachments__"
    (fn []
      (attach-envelope
@@ -188,8 +163,7 @@
      (attach-envelope
        #(if-let [r mpl-capture/*attachment-reader*]
           (if-let [a ((:read r) (str id))]
-            [(:base64 a) (:media-type a) (:filename a) (:kind a) (long (or (:size a) 0))
-             (str (:id a)) (:storage-uri a)]
+            (:base64 a)
             (throw (ex-info
                      (str "vis_read_attachment: no attachment with id " id " in this session")
                      {})))
@@ -223,8 +197,8 @@
           "SAME DOCUMENT, SAME NAME: a revision goes back under the filename it already had and "
           "is stored as that artifact's next VERSION, so one document stays one continuous "
           "thread. ONE OR TWO artifacts per turn: `audience` routes each one to "
-          "`both`/`user`/`model` and `in_answer=True` collects the figures into a single gallery "
-          "under the final answer.")
+          "`both`/`user`/`model`. `vis_attachments()` lists compact descriptor dicts; "
+          "`vis_read_attachment(id)` returns the raw bytes alone.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -232,8 +206,9 @@
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "attach"
-       :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_read_attachment"
-                      "vis_reinspect_attachment" "vis_attachment_versions" "vis_attachment_version"]
+       :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_attachment"
+                      "vis_read_attachment" "vis_reinspect_attachment" "vis_attachment_versions"
+                      "vis_attachment_version"]
        :shim/description
        (str
          "`vis_attach`/`vis_attach_bytes` persist artifacts (images, CSV/TSV tables, JSON, "
@@ -244,8 +219,9 @@
          "different document, and `vis_attachment_versions(name)` / "
          "`vis_attachment_version(name, n)` walk that thread. Multiple images compose into "
          "one sheet (a matplotlib grid, one montage) for a single call; "
-         "`audience='both'|'user'|'model'` routes who sees it, and `in_answer=True` paints it "
-         "in the tool result AND places it in the FINAL ANSWER's gallery. Vis-native; no upstream library.")
+         "`audience='both'|'user'|'model'` routes who sees it. `vis_attachments()` lists compact "
+         "descriptor DICTS and `vis_attachment(id)` is one of them; `vis_read_attachment(id)` "
+         "returns the raw BYTES alone. Vis-native; no upstream library.")
        :shim/bindings attach-bridge-bindings
        :shim/source "vis-shims/attach.py"}]}))
 

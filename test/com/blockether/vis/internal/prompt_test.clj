@@ -153,7 +153,7 @@
     "advertises exact model-facing Python capabilities, never internal shim ids"
     (let
       [shims [{:shim/name "attach"
-               :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments"
+               :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_attachment"
                               "vis_read_attachment" "vis_reinspect_attachment"]
                :shim/description
                "Persist artifacts as durable attachments. Vis-native; no upstream library."}
@@ -176,8 +176,8 @@
             (expect (str/includes? text (str "`" module "`"))))
           (expect (str/includes? text "Prebound shim globals"))
           (doseq
-            [global ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_read_attachment"
-                     "vis_reinspect_attachment"]]
+            [global ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_attachment"
+                     "vis_read_attachment" "vis_reinspect_attachment"]]
             (expect (str/includes? text (str "`" global "`"))))
           (expect (not (str/includes? text "`attach`")))
           ;; NAMES ALONE ARE A TRAP. Every shim is a reimplementation, so the surface
@@ -188,10 +188,10 @@
           (expect (str/includes?
                     text
                     "- `numpy`: Pure-Python `numpy` subset. Not supported: eig/svd/qr."))
-          (expect (str/includes?
-                    text
-                    (str "- `vis_attach`, `vis_attach_bytes`, `vis_attachments`, "
-                         "`vis_read_attachment`, `vis_reinspect_attachment`: Persist artifacts")))
+          (expect (str/includes? text
+                                 (str "- `vis_attach`, `vis_attach_bytes`, `vis_attachments`, "
+                                      "`vis_attachment`, `vis_read_attachment`, "
+                                      "`vis_reinspect_attachment`: Persist artifacts")))
           ;; A shim that documents nothing contributes no empty bullet.
           (expect (not (str/includes? text "- `brotli`")))
           ;; With no shell layer active the block must SAY the process surface is
