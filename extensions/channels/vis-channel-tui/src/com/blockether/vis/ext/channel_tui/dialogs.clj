@@ -2432,19 +2432,36 @@
 ;; and under it sits the ONE thing that can answer it: a real input row for typed
 ;; text, the answers themselves (`y`/`n`, a list of choices) for a keyed one.
 
+(defn host-band-region
+  "ONE band INSTANCE inside a frame the host already painted: the caller's
+   `tr/run!` geometry plus the single frame snapshot the whole flow shares.
+
+   Taken at the FIRST band, the snapshot holds the host exactly as the user last
+   saw it — the settings list, the provider cards, the transcript — so every band
+   after it can hand back the rows a taller predecessor covered. A host that
+   already made one keeps its own."
+  [^TerminalScreen screen region]
+  (update region :restore! #(or % (frame-restorer screen))))
+
 (defn embed-transient!
   "Run ONE transient (`tr/run!`) INSIDE a frame someone else owns — same box,
-   same hint row, no second window.
+   same hint row, no second window. THE band component: the session screen, the
+   magit status buffer, Settings, the provider manager and `transient-dialog!`
+   are all separate INSTANCES of it, differing only in the region they hand in.
 
    `region` is already in `tr/run!` geometry (`:left`, `:inner-w`, `:hint-row`,
-   `:text-w`, plus the optional `:min-row` floor and the `:restore!` snapshot a
-   host that pages bands of different heights hands in). Returns `tr/run!`'s
-   `{:action :switches :options}`, or nil on Esc.
+   `:text-w`, plus the optional `:min-row` floor and the `:restore!` snapshot
+   `host-band-region` takes). Returns `tr/run!`'s `{:action :switches :options}`,
+   or nil on Esc.
+
+   With a `title`, the title is inked ON the band's opening rule, so the first
+   row is chrome and every row under it is the column grid.
 
    This is THE seam between a Lanterna surface and the host-agnostic transient
    component. Nothing else calls `tr/run!` with a `transient-host`."
-  [^TerminalScreen screen g region spec]
-  (tr/run! (transient-host screen g) region spec))
+  ([^TerminalScreen screen g region spec] (tr/run! (transient-host screen g) region spec))
+  ([^TerminalScreen screen g region title spec]
+   (embed-transient! screen g region (assoc spec :title title))))
 
 (defn- band-question-frame!
   "Repaint `region` as a band holding ONE question: the host rows a taller band
@@ -4345,17 +4362,6 @@
       (preview! selected)
       (preview! original))))
 
-(defn- settings-transient!
-  "Run ONE magit transient as a band INSIDE the Settings frame — same box, same
-   hint bar, no second window — and return the action it fired, or nil on Esc.
-
-   `region` is already in `tr/run!` geometry (`:left`, `:inner-w`, `:hint-row`,
-   `:text-w`, `:min-row`); the band floors itself under the row list so the rows
-   it is about stay painted above it. It NEVER wipes them: the settings list is
-   the context the band is about, exactly what magit keeps visible behind a
-   popup."
-  [^TerminalScreen screen g region spec]
-  (:action (embed-transient! screen g region spec)))
 
 (defn- activate-settings-row!
   [^TerminalScreen screen g region values callbacks row]
@@ -4378,7 +4384,8 @@
     :mcp
     (do (when-let
           [action
-           (settings-transient! screen g region (mcp-model/server-transient-spec (:server row)))]
+           (:action
+             (embed-transient! screen g region (mcp-model/server-transient-spec (:server row))))]
           (when-let [f (:mcp-action callbacks)]
             (f {:server (:server row) :action action}))
           (load-mcp-inventory!))
@@ -6297,72 +6304,19 @@
     (tr/paint! host region spec {:switches #{} :options {}})
     (refresh!)))
 
-(defn session-band!
-  "Run ONE transient as a magit BAND inside the LIVE SESSION frame — the same
-   in-frame band the human-input form and the magit status buffer use, painted
-   over the bottom of the transcript instead of in a window of its own.
+(defn- session-band-instance!
+  "ONE band INSTANCE in the LIVE SESSION frame, opened around `body`.
 
-   `anchor` is `state/band-anchor`: `:content-top` is the first row the band
-   may touch and `:prompt-h` the live height of the prompt it sits above, so
-   the header and the session it is about stay readable. The frame is
-   snapshotted before the band paints and put
-   back on the way out — the transcript underneath is never repainted from
-   scratch and never blanked.
+   `anchor` is `state/band-anchor`: `:content-top` is the first row the band may
+   touch and `:prompt-h` the live height of the prompt it sits above, so the
+   band always lands ABOVE the input box and under the header. The frame is
+   snapshotted before the band paints and put back on the way out — the
+   transcript underneath is never repainted from scratch and never blanked.
 
-   `f` is called with `{:screen :g :region :result}` ONLY when the transient
-   produced an action, on the band's own rows: that is where an inline
-   minibuffer (`magit-mini-read!`, `magit-mini-choose!`, `magit-mini-confirm!`)
-   asks its follow-up question, on the hint row, instead of opening a modal.
-   Returns `f`'s value, or nil on Esc.
-
-   `pressed` is that action ALREADY chosen — a slash that names one command of
-   this band (`/draft new`) is exactly that key, pre-pressed, so the band paints
-   itself and goes straight to the question instead of waiting for a keystroke
-   the human already typed."
-  ([^TerminalScreen screen anchor spec f] (session-band! screen anchor spec f nil))
-  ([^TerminalScreen screen {:keys [content-top prompt-h]} spec f pressed]
-   (let
-     [size
-      (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-
-      cols
-      (.getColumns size)
-
-      rows
-      (.getRows size)
-
-      g
-      (.newTextGraphics screen)
-
-      restore!
-      (frame-restorer screen)
-
-      region
-      (assoc (tr/band-region cols rows (or content-top 1) (or prompt-h tr/prompt-rows))
-        :restore! restore!)]
-
-     (try (when-let
-            [result (if pressed
-                      (do (band-frame! screen g region spec)
-                          {:action pressed :switches #{} :options {}})
-                      (embed-transient! screen g region spec))]
-            (f {:screen screen :g g :region region :result result}))
-          (finally (when restore! (restore!))
-                   (.setCursorPosition screen nil)
-                   (.refresh screen Screen$RefreshType/DELTA))))))
-
-(defn prefix-band!
-  "The C-x HYDRA: paint `spec` as a band in the LIVE SESSION frame, read exactly
-   ONE keystroke, restore the frame and hand that keystroke BACK raw.
-
-   It is deliberately not a `tr/run!`: the band advertises the chord, it does not
-   own it. `input/resolve-prefix-key` still decides what the second key means, so
-   C-x TAB, C-x ←/→ and C-x 1…9 keep working even though no row lists them, and a
-   verb can never be reachable in the band but dead from the keyboard.
-
-   Returns the `KeyStroke` (Esc included — the resolver reads it as an abort), or
-   nil when the terminal had nothing to give."
-  [^TerminalScreen screen {:keys [content-top prompt-h]} spec]
+   `body` is called with `[g region]`, the same two handles every other host of
+   `embed-transient!` composes. This is the only place the session screen turns
+   an anchor into a band region: a second one is how two bands drift apart."
+  [^TerminalScreen screen {:keys [content-top prompt-h]} body]
   (let
     [size
      (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
@@ -6380,11 +6334,56 @@
                             (or prompt-h tr/prompt-rows))
        :restore! restore!)]
 
-    (try (band-frame! screen g region spec)
-         (read-modal-key! screen)
+    (try (body g region)
          (finally (when restore! (restore!))
                   (.setCursorPosition screen nil)
                   (.refresh screen Screen$RefreshType/DELTA)))))
+
+(defn session-band!
+  "Run ONE transient as a magit BAND inside the LIVE SESSION frame — the same
+   `embed-transient!` component the magit status buffer, Settings and the
+   provider manager embed, instanced here over the session's own region
+   (`session-band-instance!`) instead of in a window of its own.
+
+   `f` is called with `{:screen :g :region :result}` ONLY when the transient
+   produced an action, on the band's own rows: that is where an inline
+   minibuffer (`band-questions`) asks its follow-up question, on the hint row,
+   instead of opening a modal. Returns `f`'s value, or nil on Esc.
+
+   `pressed` is that action ALREADY chosen — a slash that names one command of
+   this band (`/draft new`) is exactly that key, pre-pressed, so the band paints
+   itself and goes straight to the question instead of waiting for a keystroke
+   the human already typed."
+  ([^TerminalScreen screen anchor spec f] (session-band! screen anchor spec f nil))
+  ([^TerminalScreen screen anchor spec f pressed]
+   (session-band-instance! screen
+                           anchor
+                           (fn [g region]
+                             (when-let
+                               [result (if pressed
+                                         (do (band-frame! screen g region spec)
+                                             {:action pressed :switches #{} :options {}})
+                                         (embed-transient! screen g region spec))]
+                               (f {:screen screen :g g :region region :result result}))))))
+
+(defn prefix-band!
+  "The C-x HYDRA: paint `spec` as a band in the LIVE SESSION frame, read exactly
+   ONE keystroke, restore the frame and hand that keystroke BACK raw.
+
+   Same band instance as `session-band!` (`session-band-instance!`), but
+   deliberately not a `tr/run!`: the band advertises the chord, it does not own
+   it. `input/resolve-prefix-key` still decides what the second key means, so
+   C-x TAB, C-x ←/→ and C-x 1…9 keep working even though no row lists them, and a
+   verb can never be reachable in the band but dead from the keyboard.
+
+   Returns the `KeyStroke` (Esc included — the resolver reads it as an abort), or
+   nil when the terminal had nothing to give."
+  [^TerminalScreen screen anchor spec]
+  (session-band-instance! screen
+                          anchor
+                          (fn [g region]
+                            (band-frame! screen g region spec)
+                            (read-modal-key! screen))))
 
 ;;; ── Questions a band asks on its OWN hint row ───────────────────────────────
 ;; `ctx` is what `session-band!` hands its `f`: the screen, its graphics and the

@@ -1393,9 +1393,9 @@
        fired
        (atom [])]
 
-      (try (with-redefs-fn {#'dlg/settings-transient! (fn [_screen _g _region s]
-                                                        (reset! spec s)
-                                                        :kill)}
+      (try (with-redefs-fn {#'dlg/embed-transient! (fn [_screen _g _region s]
+                                                     (reset! spec s)
+                                                     {:action :kill})}
              (fn []
                (with-redefs [vis/gateway-mcp-servers (constantly [server])]
                  (reset! inventory {:status :unloaded :servers [] :error nil})
@@ -1771,3 +1771,54 @@
                (expect (str/includes? painted "No"))
                (expect (not (str/includes? painted "Abandon draft"))))
              (finally (.stopScreen screen))))))
+
+;;; ── One band COMPONENT, one instance per host ────────────────────────────────
+;; `embed-transient!` is the band; a host differs only by the region it hands in.
+;; Settings and the provider manager each kept their own one-line wrapper around
+;; it (`settings-transient!`, `provider/run-transient!` + `provider/band-region`)
+;; and the session screen spelled its own frame snapshot twice — four copies of a
+;; component that has exactly one implementation.
+(defdescribe
+  band-instance-test
+  (it
+    "the session screen and a host frame are two INSTANCES of the same band"
+    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
+      (try
+        (let
+          [spec {:groups [{:items [{:key "a" :type :action :id :aa :label "Alpha"}]}]}
+           rows (.getRows (.getTerminalSize screen))
+           seen (atom nil)
+           _ (.addInput terminal (term/keystroke \a))
+           result (dlg/session-band! screen
+                                     {:content-top 1 :prompt-h 3}
+                                     spec
+                                     (fn [{:keys [region result]}]
+                                       (reset! seen region)
+                                       (:action result)))
+           session-region @seen]
+
+          ;; the band painted, took the keystroke, and put the frame back
+          (expect (= :aa result))
+          ;; the session INSTANCE is anchored above the prompt and carries
+          ;; the one frame snapshot the whole flow restores from
+          (expect (= (- (long rows) 3 3) (long (:hint-row session-region))))
+          (expect (ifn? (:restore! session-region)))
+          ;; the SAME component in a host's own frame (magit, Settings,
+          ;; providers): a different region, one snapshot, one `:title`
+          ;; inked on the band's opening rule
+          (let
+            [host-region
+             (dlg/host-band-region screen {:left 2 :inner-w 40 :hint-row 20 :text-w 38 :min-row 3})]
+            (expect (ifn? (:restore! host-region)))
+            (expect (identical? (:restore! host-region)
+                                (:restore! (dlg/host-band-region screen host-region))))
+            (.addInput terminal (term/keystroke \a))
+            (expect (= :aa
+                       (:action (dlg/embed-transient! screen
+                                                      (.newTextGraphics screen)
+                                                      host-region
+                                                      "Alpha band"
+                                                      spec))))
+            (expect (str/includes? (str/join "\n" (map :text (term/painted-rows terminal)))
+                                   "Alpha band"))))
+        (finally (.stopScreen screen))))))

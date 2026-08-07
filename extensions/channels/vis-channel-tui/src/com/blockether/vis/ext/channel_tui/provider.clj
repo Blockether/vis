@@ -1058,31 +1058,7 @@
                         (when show-all?
                           [{:key "*" :type :action :id :show-all :label "Show every model"}])}))))
 
-(defn- band-region
-  "The caller's rectangle with ONE frame snapshot for the whole band flow.
 
-   Taken here, at the first band, the snapshot holds the host EXACTLY as the
-   user last saw it — the settings list, the provider cards — so every band
-   after it can hand back the rows a taller predecessor covered. A host that
-   already made one (Settings makes one per activation) keeps its own."
-  [^TerminalScreen screen region]
-  (update region :restore! #(or % (dlg/frame-restorer screen))))
-
-(defn- run-transient!
-  "Embed ONE transient INSIDE the caller's own frame (`dlg/embed-transient!`):
-   same box, same hint row, no second window. Nothing in this dialog is a flag,
-   so the spec needs no option reader.
-
-   The band paints ITS OWN rows and nothing above them: whatever the caller has
-   on screen — the card, the settings list — stays visible behind it, exactly
-   like magit. A caller that pages bands of different heights hands the region a
-   `:restore!` snapshot, and the rows a taller band covered are handed back to
-   the host instead of blanked.
-
-   A band paints no title row: `title` is inked ON its opening rule, so the
-   first row is chrome and every row under it is the column grid."
-  [^TerminalScreen screen g region title spec]
-  (dlg/embed-transient! screen g region (assoc spec :title title)))
 
 (defn- run-paged-transient!
   "Run a `paged-key-groups` band until one of its items is chosen, paging in
@@ -1097,9 +1073,9 @@
    default or fallback model from Settings blanked the settings pane behind the
    popup, frame and all."
   [^TerminalScreen screen g geom title spec-of]
-  (let [geom (band-region screen geom)]
+  (let [geom (dlg/host-band-region screen geom)]
     (loop [page 0]
-      (let [picked (:action (run-transient! screen g geom title (spec-of page)))]
+      (let [picked (:action (dlg/embed-transient! screen g geom title (spec-of page)))]
         (cond (nil? picked) nil
               (= picked ::next-page) (recur (inc page))
               (= picked ::prev-page) (recur (dec page))
@@ -1112,7 +1088,7 @@
   [^TerminalScreen screen g geom provider entries preferred marks page-size]
   (let
     [geom
-     (band-region screen geom)
+     (dlg/host-band-region screen geom)
 
      title
      (str (or (:label provider) (vis/display-label (:id provider))) " — models")]
@@ -1344,7 +1320,7 @@
   [^TerminalScreen screen g region provider-id]
   (let
     [region
-     (band-region screen region)
+     (dlg/host-band-region screen region)
 
      config
      (or (vis/load-config) {:providers []})
@@ -1382,11 +1358,11 @@
                                 (tagged? provider default-selection))
 
          picked
-         (:action (run-transient! screen
-                                  g
-                                  region
-                                  (str (vis/display-label (:id provider)) " — actions")
-                                  (provider-transient-spec actions)))
+         (:action (dlg/embed-transient! screen
+                                        g
+                                        region
+                                        (str (vis/display-label (:id provider)) " — actions")
+                                        (provider-transient-spec actions)))
 
          action
          (some #(when (= picked (:id %)) %) actions)]
@@ -1464,12 +1440,12 @@
   [^TerminalScreen screen g region preset]
   (let
     [{:keys [action options]}
-     (run-transient! screen
-                     g
-                     region
-                     (str (:label preset) " — setup")
-                     (assoc (local-setup-transient-spec (:label preset) (:base-url preset))
-                       :read-option (dlg/region-option-reader screen g region)))]
+     (dlg/embed-transient! screen
+                           g
+                           region
+                           (str (:label preset) " — setup")
+                           (assoc (local-setup-transient-spec (:label preset) (:base-url preset))
+                             :read-option (dlg/region-option-reader screen g region)))]
     (when (= :add action)
       (or (some-> (:base-url options)
                   str
@@ -1547,18 +1523,19 @@
       (vec (remove #(contains? existing (:id %)) (vis/provider-presets)))
 
       region
-      (band-region screen region)]
+      (dlg/host-band-region screen region)]
 
      (if (empty? available)
-       (do (run-transient! screen
-                           g
-                           region
-                           "Add provider"
-                           {:groups [{:title "Nothing to add"
-                                      :items [{:key "q"
-                                               :type :action
-                                               :id :done
-                                               :label "Every provider is already configured"}]}]})
+       (do (dlg/embed-transient! screen
+                                 g
+                                 region
+                                 "Add provider"
+                                 {:groups [{:title "Nothing to add"
+                                            :items [{:key "q"
+                                                     :type :action
+                                                     :id :done
+                                                     :label
+                                                     "Every provider is already configured"}]}]})
            nil)
        (when-let
          [pid (run-paged-transient! screen
@@ -2004,12 +1981,12 @@
                                                  (get @limits (:id provider))
                                                  @default-selection
                                                  @fallback-selection)
-                          picked (:action (run-transient! screen
-                                                          g
-                                                          geom
-                                                          (str (vis/display-label (:id provider))
-                                                               " — actions")
-                                                          (provider-transient-spec actions)))
+                          picked (:action (dlg/embed-transient!
+                                            screen
+                                            g
+                                            geom
+                                            (str (vis/display-label (:id provider)) " — actions")
+                                            (provider-transient-spec actions)))
                           action (some #(when (= picked (:id %)) %) actions)]
 
                          (case (:id action)
