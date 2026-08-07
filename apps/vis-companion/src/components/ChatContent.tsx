@@ -25,7 +25,7 @@ import {
   pageBySize,
   RAIL_PAGE,
 } from "../lib/artifacts";
-import { PROSE, PROSE_RAGGED, Spinner } from "./ui";
+import { Button, PROSE, PROSE_RAGGED, Spinner } from "./ui";
 import "prismjs/components/prism-bash";
 import "prismjs/components/prism-clojure";
 import "prismjs/components/prism-css";
@@ -140,15 +140,20 @@ function CopyButton({
   }
 
   return (
-    <button
-      type="button"
-      // min-w keeps 'Copy' and 'Copied' the same width so the chip never jumps.
-      className={`${className} min-w-[6ch] border border-dialog-edge bg-button px-1.5 py-0.5 text-center font-mono text-chip text-button-foreground transition-colors hover:bg-hover`}
+    // A chip in the transcript is still a BUTTON: the app's own control, so the
+    // `Copy` beside a tool card and the `Copy` beside a code fence cannot drift
+    // apart from each other or from every other button on the screen. Only the
+    // width is spelled here, and only so 'Copy' and 'Copied' never jump.
+    <Button
+      variant="ghost"
+      density="compact"
+      pressEffect="none"
+      className={`${className} min-w-[6ch] text-center font-mono`}
       onClick={copy}
       aria-label={label}
     >
       {copied ? "Copied" : "Copy"}
-    </button>
+    </Button>
   );
 }
 

@@ -169,7 +169,11 @@ export const DocPreview = memo(function DocPreview({
           {[name, sizeLabel].filter(Boolean).join(" · ")}
         </span>
       </div>
-      <div className="min-w-0">
+      {/* Every document preview in the transcript is the SAME box: a PDF in its
+          frame and a note read by the app both stand 60vh tall and scroll inside
+          themselves, so a long note no longer swallows the turn that made it.
+          Opened from the artifacts sheet it still takes the whole screen. */}
+      <div className="max-h-[60vh] min-w-0 overflow-y-auto">
         {failed ? (
           <p className="px-2 py-3 text-meta text-footer-muted">
             This document could not be loaded from the gateway.

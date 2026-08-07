@@ -136,6 +136,25 @@ describe("DocPreview", () => {
     expect(body).not.toContain("New tab");
     expect(preview()).not.toContain("<button");
   });
+
+  // A markdown note read by the app used to grow without bound inside the turn
+  // that produced it, while the PDF beside it stood in a 60vh frame: one preview,
+  // two heights.
+  it("stands in the same bounded box whatever it holds", () => {
+    expect(preview()).toContain("max-h-[60vh]");
+    expect(
+      renderToStaticMarkup(
+        <DocPreview
+          name="PLAN.md"
+          mime="text/markdown"
+          sizeLabel="6.4KB"
+          url="blob:x"
+          failed={false}
+          onNeeded={() => undefined}
+        />,
+      ),
+    ).toContain("max-h-[60vh]");
+  });
 });
 
 // Regression: an opened attachment was read in a letterbox — the document frame
