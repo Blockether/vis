@@ -141,6 +141,20 @@ describe("marking up the passages a comment is about", () => {
       host.querySelector('button[aria-label="Remove comment 2"]'),
     ).not.toBeNull();
 
+    // The card's ordinal is a plain number in its comment's colour: no filled
+    // circle, no background, nothing that reads as a control.
+    const cardOrdinals = Array.from(
+      host.querySelectorAll<HTMLElement>(
+        'ul[aria-label="Comments"] > li > span',
+      ),
+    );
+    expect(cardOrdinals.map((chip) => chip.textContent)).toEqual(["1", "2"]);
+    for (const [at, chip] of cardOrdinals.entries()) {
+      expect(chip.style.backgroundColor).toBe("");
+      expect(chip.className).not.toContain("rounded");
+      expect(chip.style.color).toBe(asRgb(annotationColor(at)));
+    }
+
     act(() => {
       root.unmount();
     });

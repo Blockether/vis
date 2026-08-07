@@ -298,8 +298,8 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
             >
               <span
                 aria-hidden="true"
-                className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full font-mono text-chip text-white"
-                style={{ backgroundColor: annotationColor(at) }}
+                className="mt-0.5 shrink-0 font-mono text-chip font-bold"
+                style={{ color: annotationColor(at) }}
               >
                 {at + 1}
               </span>
