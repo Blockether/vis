@@ -96,7 +96,7 @@ describe("an artifact opened from the transcript", () => {
       );
     });
     await settle();
-    expect(host.textContent).toContain("Select a passage to comment on it.");
+    expect(host.textContent).toContain("Tap a passage to comment on it.");
     expect(host.querySelector("h1")?.textContent).toBe("Release plan");
   });
 

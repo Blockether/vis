@@ -82,3 +82,21 @@ describe("reading the bytes", () => {
     await expect(readArtifactText("blob:two")).rejects.toThrow("404");
   });
 });
+
+// A plan sitting INLINE in the session is source, not a rendered document: the
+// turn that produced it was being swallowed by a wall of headings.
+describe("a markdown artifact inline in the session", () => {
+  it("shows the source verbatim when asked for the raw form", () => {
+    const markup = html(
+      <TextBody
+        text={"# Ship it\n\n- one\n"}
+        mime="text/markdown"
+        name="PLAN.md"
+        raw
+      />,
+    );
+    expect(markup).toContain("<pre");
+    expect(markup).toContain("# Ship it");
+    expect(markup).not.toContain("<h1");
+  });
+});

@@ -41,12 +41,19 @@ export const TextBody = memo(function TextBody({
   text,
   mime,
   name,
+  raw = false,
 }: {
   text: string;
   mime?: string;
   name?: string;
+  /**
+   * Show the SOURCE, not the document. A note sitting inline in the session is a
+   * plan someone is still writing: rendering it there turns the turn that made it
+   * into a wall of headings. Inline is the source; opening it is what renders.
+   */
+  raw?: boolean;
 }) {
-  if (isMarkdownMedia(mime, name)) {
+  if (!raw && isMarkdownMedia(mime, name)) {
     return (
       <article className="min-w-0 bg-panel px-3 py-3 font-sans text-body text-foreground sm:px-4">
         <Markdown>{text}</Markdown>
@@ -66,12 +73,15 @@ export const TextFrame = memo(function TextFrame({
   mime,
   name,
   fill = false,
+  raw = false,
 }: {
   url: string;
   mime: string;
   name: string;
   /** Opened rather than previewed: fill the box and scroll inside it. */
   fill?: boolean;
+  /** Paint markdown as its own source rather than as a rendered document. */
+  raw?: boolean;
 }) {
   const [text, setText] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -99,7 +109,7 @@ export const TextFrame = memo(function TextFrame({
       </p>
     );
   }
-  const body = <TextBody text={text} mime={mime} name={name} />;
+  const body = <TextBody text={text} mime={mime} name={name} raw={raw} />;
   if (!fill) return body;
   return (
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-3 sm:p-4">

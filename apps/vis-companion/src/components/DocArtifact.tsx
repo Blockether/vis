@@ -173,9 +173,10 @@ function DocBody({
   if (!url)
     return <p className="px-2 py-3 text-meta text-footer-muted">Loading…</p>;
   // Markdown and plain text are read by the APP: an iframe would paint
-  // `# Heading` as `# Heading`, the source instead of the document.
+  // `# Heading` as `# Heading`, the source instead of the document. Inline in the
+  // session, though, a note IS its source: only the opened artifact renders.
   return isTextMedia(mime, name) ? (
-    <TextFrame url={url} mime={mime} name={name} fill={fill} />
+    <TextFrame url={url} mime={mime} name={name} fill={fill} raw={!fill} />
   ) : (
     <DocFrame url={url} mime={mime} name={name} fill={fill} />
   );
@@ -262,7 +263,7 @@ export const DocOverlay = memo(function DocOverlay({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex min-h-0 min-w-0 flex-col bg-panel">
+    <div className="fixed inset-0 z-50 flex h-[100dvh] min-h-0 min-w-0 flex-col overflow-hidden bg-panel pt-[env(safe-area-inset-top)]">
       <DocCaption
         mime={mime}
         name={name}

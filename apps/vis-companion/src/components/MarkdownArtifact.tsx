@@ -11,6 +11,9 @@ import { Markdown } from "./ChatContent";
 import { readArtifactText } from "./TextArtifact";
 import { Button } from "./ui";
 
+/** The blocks a tap may quote: one paragraph, heading, item or cell. */
+const QUOTABLE_BLOCKS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,pre,td,th";
+
 /**
  * A MARKDOWN NOTE, READ AS PROSE AND MARKED UP BY HAND.
  *
@@ -105,18 +108,37 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
 
-  // A selection is only ours when it lives inside the prose: the comments list
-  // and the composer are on the same screen, and quoting a comment with itself
-  // is noise rather than an annotation.
-  const pickSelection = useCallback(() => {
-    const selection = window.getSelection?.();
-    const node = selection?.anchorNode ?? null;
-    const inside = !!node && !!proseRef.current?.contains(node);
-    const picked = quoteOf(selection?.toString() ?? "");
-    if (!inside || picked.length === 0) return;
-    setQuote(picked);
-    setStatus("");
-  }, []);
+  // ON A PHONE A PASSAGE IS TAPPED, NOT DRAGGED.
+  //
+  // iOS answers a long press inside prose with its OWN callout (Copy / Look Up /
+  // Share) and only settles the range after it: a `touchend` handler either sees
+  // nothing or is buried under the native menu, which is why commenting was
+  // unusable on an iPhone. So the block IS the unit of annotation on touch — one
+  // tap on a paragraph, a heading or a list item quotes it — and text selection
+  // is left switched on for a mouse only (`mouse:select-text`), where dragging a
+  // range is natural and no callout exists.
+  const pickSelection = useCallback(
+    (event: React.MouseEvent | React.PointerEvent) => {
+      const prose = proseRef.current;
+      if (!prose) return;
+      // A real drag-selection inside the prose wins; otherwise the tapped block.
+      const selection = window.getSelection?.();
+      const node = selection?.anchorNode ?? null;
+      const dragged =
+        !!node && prose.contains(node)
+          ? quoteOf(selection?.toString() ?? "")
+          : "";
+      const target = event.target as HTMLElement | null;
+      const block = target?.closest?.(QUOTABLE_BLOCKS) as HTMLElement | null;
+      const tapped =
+        block && prose.contains(block) ? quoteOf(block.textContent ?? "") : "";
+      const picked = dragged || tapped;
+      if (picked.length === 0) return;
+      setQuote(picked);
+      setStatus("");
+    },
+    [],
+  );
 
   const addComment = useCallback(() => {
     if (!quote || draft.trim().length === 0) return;
@@ -144,18 +166,21 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   }, [onSave, body, comments]);
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      {/* The prose is the only part that grows: everything under it is pinned, so
+          a long note scrolls inside its own box instead of pushing Save off the
+          bottom of an iPhone. */}
       <div
         ref={proseRef}
+        onClick={pickSelection}
         onMouseUp={pickSelection}
-        onTouchEnd={pickSelection}
-        className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-panel px-3 py-3 font-sans text-body text-foreground sm:px-4"
+        className="min-h-0 min-w-0 flex-1 touch-manipulation overflow-y-auto bg-panel px-3 py-3 font-sans text-body [-webkit-touch-callout:none] text-foreground select-none sm:px-4 mouse:select-text"
       >
         <Markdown>{body}</Markdown>
       </div>
 
       {quote ? (
-        <div className="flex flex-col gap-2 border-t border-dialog-edge bg-panel-2 px-3 py-3 sm:px-4">
+        <div className="flex shrink-0 flex-col gap-2 border-t border-dialog-edge bg-panel-2 px-3 py-3 sm:px-4">
           <p className="text-meta text-dialog-hint">Comment on “{quote}”</p>
           <textarea
             autoFocus
@@ -182,15 +207,15 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
           </div>
         </div>
       ) : (
-        <p className="border-t border-dialog-edge px-3 py-2 text-meta text-dialog-hint sm:px-4">
-          Select a passage to comment on it.
+        <p className="shrink-0 border-t border-dialog-edge px-3 py-2 text-meta text-dialog-hint sm:px-4">
+          Tap a passage to comment on it.
         </p>
       )}
 
       {comments.length > 0 ? (
         <ul
           aria-label="Comments"
-          className="flex flex-col gap-2 border-t border-dialog-edge px-3 py-3 sm:px-4"
+          className="flex max-h-[35vh] shrink-0 flex-col gap-2 overflow-y-auto border-t border-dialog-edge px-3 py-3 sm:px-4"
         >
           {comments.map((comment, at) => (
             <li
@@ -214,7 +239,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         </ul>
       ) : null}
 
-      <div className="flex items-center gap-3 border-t border-dialog-edge px-3 py-3 sm:px-4">
+      <div className="flex shrink-0 items-center gap-3 border-t border-dialog-edge px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4">
         <Button type="button" onClick={save} disabled={!dirty || saving}>
           {saving ? "Saving…" : "Save"}
         </Button>
