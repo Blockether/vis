@@ -84,11 +84,21 @@ export const Button = forwardRef<
   // and `active:scale-[0.98]` have equal specificity, so a call-site override would
   // be decided by Tailwind's emission order, not by the call site.
   const press = pressEffect === 'scale' ? 'active:scale-[0.98] disabled:active:scale-100' : '';
-  // Touch gets a 44px box centred in whatever row it was dropped into — a header
-  // control that STRETCHES is 28px on one row and 48px on the next, which is how
-  // the machine's `⋯` and the project's `⋯` stopped looking like one control.
+  // A 32px FACE with a 44px TARGET.
+  //
+  // The box used to BE 44px on touch, so the amber "New session" slab filled the
+  // whole header band edge to edge and read as a toolbar rather than as a button —
+  // on a 390px iPhone it was the loudest thing on the screen. A hit box is not a
+  // paint job: the visible control is now the header's own 32px rhythm (`min-h-8`,
+  // the same box the desktop `sm:` step already uses) and the missing 6px above and
+  // below are restored as an invisible `::after` that the finger still lands on.
+  // So Apple's 44pt target survives untouched while the ink stops shouting; the
+  // `⋯` beside it shrinks by exactly the same amount, because a header that holds
+  // one 32px button and one 44px button holds two different affordances.
   const scale =
-    density === 'compact' ? 'h-11 self-center mouse:h-6 mouse:min-h-6 mouse:text-meta' : '';
+    density === 'compact'
+      ? 'relative h-8 self-center after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] mouse:h-6 mouse:min-h-6 mouse:text-meta mouse:after:content-none'
+      : '';
 
   return (
     <button

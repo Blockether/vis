@@ -262,7 +262,7 @@ describe('NewSessionButton', () => {
     expect(html()).toContain('mouse:h-6');
     expect(html()).toContain('mouse:min-h-6');
     expect(html()).toContain('self-center');
-    expect(html()).toContain('h-11');
+    expect(html()).toContain(' h-8 ');
     expect(html()).toContain('mouse:text-meta');
     expect(html()).not.toContain('mouse:h-7');
   });
@@ -291,13 +291,27 @@ describe('IconButton', () => {
     expect(html()).toContain('focus-visible:ring-accent/60');
   });
 
-  it('wears the same compact desktop box as the yellow button beside it', () => {
+  // Reported: "the height of the new session button on iOS is too big". The touch
+  // box WAS the paint (`h-11`), so the amber slab filled the whole header band.
+  it('wears the same compact box as the yellow button beside it', () => {
     const primary = renderToStaticMarkup(<NewSessionButton machine="tower" onPress={() => {}} />);
 
-    for (const rhythm of ['h-11', 'self-center', 'mouse:h-6', 'mouse:min-h-6']) {
+    for (const rhythm of [' h-8 ', 'self-center', 'mouse:h-6', 'mouse:min-h-6']) {
       expect(html()).toContain(rhythm);
       expect(primary).toContain(rhythm);
     }
+  });
+
+  it('keeps the 44px finger target the 32px face gave up', () => {
+    const primary = renderToStaticMarkup(<NewSessionButton machine="tower" onPress={() => {}} />);
+
+    // 32px of ink + 6px above + 6px below = 44px of touchable button.
+    for (const reach of ['after:absolute', 'after:-top-1.5', 'after:-bottom-1.5']) {
+      expect(html()).toContain(reach);
+      expect(primary).toContain(reach);
+    }
+    // A cursor needs no invisible reach, and the desktop box is 24px anyway.
+    expect(primary).toContain('mouse:after:content-none');
   });
 
   it('is named, because it carries no word', () => {
@@ -366,7 +380,7 @@ describe('KebabButton', () => {
   });
 
   it('keeps the header’s compact rhythm and one glyph size', () => {
-    expect(html()).toContain('h-11');
+    expect(html()).toContain(' h-8 ');
     expect(html()).toContain('mouse:h-6');
     expect(html()).not.toContain('active:scale');
   });
@@ -376,7 +390,7 @@ describe('KebabButton', () => {
   it('has an overlay face for the artifact tile, with no height of its own', () => {
     const over = html({ variant: 'overlay', density: 'default' });
     expect(over).toContain('bg-ink/80');
-    expect(over).not.toContain('h-11');
+    expect(over).not.toContain('self-center');
   });
 });
 
@@ -564,7 +578,7 @@ describe('RowDisclosure', () => {
 
   it('is the same button as the kebab beside it', () => {
     const kebab = renderToStaticMarkup(<KebabButton label="Actions for vis" />);
-    for (const token of ['min-w-10', 'sm:min-w-12', 'mouse:min-w-10', 'h-11', 'mouse:h-6']) {
+    for (const token of ['min-w-10', 'sm:min-w-12', 'mouse:min-w-10', ' h-8 ', 'mouse:h-6']) {
       expect(html(false)).toContain(token);
       expect(kebab).toContain(token);
     }
