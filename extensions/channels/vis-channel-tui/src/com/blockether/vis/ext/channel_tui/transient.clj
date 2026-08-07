@@ -662,20 +662,28 @@
    everything under it is the column grid, because a heading over columns that
    already name themselves is a row of chrome bought with a row of content.
 
-   A SIDELESS band is not a dialog: it lies on the LIVE transcript and wears the
-   TERMINAL's own background, so it is the border that says where the band is —
-   no tinted slab. That is bound ONCE here, so every painter below — rules,
-   rows, hint bar — follows without carrying a colour argument of its own.
+   A SIDELESS band is not a dialog: it lies on the LIVE transcript, so its paper
+   is the terminal's own background nudged one notch darker (`t/band-bg`) — just
+   enough to lift the slab off the transcript without becoming a second window.
+   That is bound ONCE here, so every painter below — rules, rows, hint bar —
+   follows without carrying a colour argument of its own.
 
    The band is BORDERED: its opening and closing rules are corner-capped and
-   every row between them carries a `│` in the same two columns, so a transient
-   is a box laid over the transcript instead of a pair of loose lines."
+   every row between them carries a `│` in the same two columns. The hint bar
+   rides INSIDE that box, on the row directly above the closing rule, so the
+   footer wears the same paper and the same rails as the commands it explains."
   [{:keys [g hint-bar!]} {:keys [left inner-w restore!] :as region}
    {panes :panes n :row-count pane-w :pane-w grid :columns hints :hint-pairs title :title} state]
-  (binding [t/dialog-bg (if (:is-sideless region) t/terminal-bg t/dialog-bg)]
+  (binding [t/dialog-bg (if (:is-sideless region) (t/band-bg) t/dialog-bg)]
     (let
       [{:keys [sep-row body-top foot-rule-row foot-row wipe-top visible top-limit]}
        (band-geometry region n)
+       sideless? (boolean (:is-sideless region))
+       ;; A sideless band CLOSES below its footer: the hint bar takes the row the
+       ;; rule used to own and the rule drops onto the host's hint row, so the
+       ;; footer is inside the box. A framed popup keeps the host's own order.
+       hint-at (long (if sideless? foot-rule-row foot-row))
+       rule-at (long (if sideless? foot-row foot-rule-row))
        left (long left)
        inner-w (long inner-w)
        pane-w (long (if (pos? (long (or pane-w 0))) pane-w inner-w))
@@ -692,11 +700,10 @@
         (draw-rule! g region sep-row title))
       ;; The closing rule and the hint bar are the band's own rows too: they are
       ;; papered first, so the slab's edges are the same colour all the way down.
-      (when (and (> (long foot-row) (long foot-rule-row)) (>= (long foot-row) (long top-limit)))
-        (clear-row! foot-row))
+      (when (>= (long foot-row) (long top-limit)) (clear-row! foot-row))
       (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
-        (clear-row! foot-rule-row)
-        (draw-rule! g region foot-rule-row))
+        (clear-row! foot-rule-row))
+      (when (> rule-at (max (long sep-row) (long top-limit))) (draw-rule! g region rule-at))
       (p/set-colors! g t/dialog-hint-key t/dialog-bg)
       (dotimes [i visible]
         (let [row (+ (long body-top) (long i))]
@@ -728,24 +735,24 @@
                    value (when is-valued (get (:options state) id))]
 
                   (draw-item! g pane-left row pane-w grid it active? value)))))))
+      (hint-bar! g left hint-at inner-w hints)
       ;; The band's own BORDER: corner-capped rules with a `│` down both edge
-      ;; columns, so a sideless transient is a closed box over the transcript.
-      ;; The hint bar stays OUTSIDE it, directly under the closing rule.
-      (when (:is-sideless region)
+      ;; columns, so a sideless transient is a closed box over the transcript —
+      ;; the hint bar included.
+      (when sideless?
         (let [right (+ left inner-w 1)]
           (p/set-colors! g t/border-fg t/dialog-bg)
           (when (>= (long sep-row) (long top-limit))
             (p/set-char! g left sep-row p/BOX_TL)
             (p/set-char! g right sep-row p/BOX_TR))
-          (doseq [^long r (range (inc (long sep-row)) (long foot-rule-row))]
+          (doseq [^long r (range (inc (long sep-row)) rule-at)]
             (when (>= r (long top-limit))
               (p/set-char! g left r p/BOX_V)
               (p/set-char! g right r p/BOX_V)))
-          (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
-            (p/set-char! g left foot-rule-row p/BOX_BL)
-            (p/set-char! g right foot-rule-row p/BOX_BR))
-          (p/set-colors! g t/dialog-fg t/dialog-bg)))
-      (hint-bar! g left foot-row inner-w hints))))
+          (when (> rule-at (max (long sep-row) (long top-limit)))
+            (p/set-char! g left rule-at p/BOX_BL)
+            (p/set-char! g right rule-at p/BOX_BR))
+          (p/set-colors! g t/dialog-fg t/dialog-bg))))))
 
 (defn paint!
   "Paint ONE frame of `spec` at `state` into `region` on `host`. Pure geometry,

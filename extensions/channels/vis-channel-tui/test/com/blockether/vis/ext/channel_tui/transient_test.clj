@@ -636,14 +636,14 @@
                     (assoc commit-transient-spec :title "Commit"))
            (term/grid terminal))
 
-       ;; every row the band owns, from its opening rule to its hint bar
+       ;; every row the band owns, from its opening rule to its closing one
        rule-rows
        (keep-indexed (fn [i s]
                        (when (str/includes? s "────") i))
                      painted)
 
        band-rows
-       (range (long (first rule-rows)) (inc (inc (long (last rule-rows)))))
+       (range (long (first rule-rows)) (inc (long (last rule-rows))))
 
        left
        (long (:left region))
@@ -652,12 +652,13 @@
        (long (:inner-w region))]
 
       (doseq [y band-rows]
-        ;; the band wears the TERMINAL's own paper — no tinted slab anywhere,
-        ;; inside its rules or beside them: the border is what marks the band.
-        (expect (= t/terminal-bg (bg-at (inc left) y)))
-        (expect (= t/terminal-bg (bg-at (+ left inner-w) y)))
+        ;; the band's own paper is a NOTCH darker than the transcript it lies on,
+        ;; and it stops at its rules: the margins keep the terminal's own bg.
+        (expect (= (t/band-bg) (bg-at (inc left) y)))
+        (expect (= (t/band-bg) (bg-at (+ left inner-w) y)))
         (expect (= t/terminal-bg (bg-at 0 y)))
-        (expect (= t/terminal-bg (bg-at (+ left inner-w 1) y)))
+        ;; the rails themselves stand on the band's paper, not on the transcript's
+        (expect (= (t/band-bg) (bg-at (+ left inner-w 1) y)))
         (expect (= t/terminal-bg (bg-at 79 y))))
       ;; and it is BORDERED: corner-capped rules with rails down both edges.
       (let
