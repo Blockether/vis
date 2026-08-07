@@ -448,7 +448,7 @@
                             (mapv (comp :id :item)
                                   (filter #(= :item (:kind %)) (apply concat ps))))))
         (expect (= 5 (count (filter #(= :header (:kind %)) (apply concat ps)))))))
-  (it "a tall BAND wraps into columns rather than running up the transcript"
+  (it "EVERY CATEGORY GETS ITS OWN COLUMN on a band wide enough to hold them"
       (let
         [n
          (tr/pane-count leader-spec leader-band-region)
@@ -456,17 +456,24 @@
          lay
          (tr/layout leader-spec leader-band-region)]
 
-        (expect (> n 1))
+        (expect (= (count (:groups leader-spec)) n))
         (expect (= n (:pane-count lay)))
-        ;; the band claims at most half the rows the host offered it
-        (expect (<= (:row-count lay) (quot (- (dec 20) 3) 2)))
+        ;; one heading per pane: no category is stacked under another
+        (expect (= (repeat n 1)
+                   (map (fn [pane]
+                          (count (filter #(= :header (:kind %)) pane)))
+                        (:panes lay))))
         ;; and the panes share the width, the `│` gaps already paid for
         (expect (<= (+ (* n (:pane-w lay)) (* 3 (dec n))) 100))))
+  (it "width is the only bound: a narrow band packs categories together"
+      (expect (< (tr/pane-count leader-spec (assoc leader-band-region :inner-w 40))
+                 (count (:groups leader-spec)))))
   (it "a MODAL keeps magit's single column: its paper is sized to the spec"
       (expect (= 1 (tr/pane-count leader-spec (dissoc leader-band-region :is-sideless))))
       (expect (= 1 (tr/pane-count leader-spec nil))))
-  (it "a short band is already a band: nothing wraps"
-      (expect (= 1 (tr/pane-count commit-transient-spec leader-band-region)))))
+  (it "a short band still gets one column per category"
+      (expect (= (count (:groups commit-transient-spec))
+                 (tr/pane-count commit-transient-spec leader-band-region)))))
 
 (defdescribe
   transient-contract-test

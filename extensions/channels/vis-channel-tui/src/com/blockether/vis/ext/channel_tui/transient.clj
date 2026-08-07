@@ -199,8 +199,10 @@
 
 (defn panes
   "PURE: `spec`'s groups dealt into at most `n` side-by-side panes, in order,
-   balanced by row count and NEVER splitting a group — a heading and the verbs
-   under it are one block or the column has lied about what it groups.
+   ONE GROUP PER PANE while there is a pane for it — a category IS a column,
+   heading and verbs together, so the grid reads like which-key's own. Only when
+   there are more groups than panes are neighbours packed together, balanced by
+   row count and still NEVER splitting a group.
 
    Every pane is padded with blanks to the tallest, so pane `j` row `i` is always
    the cell at that grid position and a painter walks a rectangle instead of a
@@ -219,17 +221,19 @@
      (max 1 (long (Math/ceil (/ (double total) (double (max 1 n))))))
 
      packed
-     (reduce (fn [acc block]
-               (let [cur (peek acc)]
-                 (if (and (seq cur) (< (count acc) n) (> (+ (count cur) 1 (count block)) target))
-                   (conj acc (vec block))
-                   (conj (pop acc)
-                         (into (cond-> cur
-                                 (seq cur)
-                                 (conj {:kind :blank}))
-                               block)))))
-             [[]]
-             blocks)
+     (if (>= n (count blocks))
+       (mapv vec blocks)
+       (reduce (fn [acc block]
+                 (let [cur (peek acc)]
+                   (if (and (seq cur) (< (count acc) n) (> (+ (count cur) 1 (count block)) target))
+                     (conj acc (vec block))
+                     (conj (pop acc)
+                           (into (cond-> cur
+                                   (seq cur)
+                                   (conj {:kind :blank}))
+                                 block)))))
+               [[]]
+               blocks))
 
      h
      (long (reduce max 0 (map count packed)))]
@@ -241,14 +245,11 @@
 (defn pane-count
   "PURE: how many side-by-side panes `spec` is dealt into inside `region`.
 
-   A band is a BAND: it never claims more than half the rows the host offered it
-   while the width can buy that height back. So a short magit popup stays the
-   single column magit paints, and a tall leader menu — the C-x hydra — reads as
-   emacs' own which-key grid, columns separated by `│`, instead of a list running
-   up the transcript.
-
-   Bounded by the groups there are (a pane is whole groups) and by the width a
-   pane needs for its own key and label columns. No region ⇒ one column."
+   EVERY CATEGORY GETS ITS OWN COLUMN: as many panes as the spec has groups, so
+   a heading is never stacked under another heading while the terminal is wide
+   enough to stand them side by side. The only bound is the width one pane needs
+   for its own key and label columns; when the groups outnumber that capacity the
+   leftovers are packed by [[panes]]. No region ⇒ one column."
   ^long [spec region]
   (if (or (nil? region) (not (:is-sideless region)))
     1
@@ -263,21 +264,9 @@
        (long (or (:inner-w region) 0))
 
        capacity
-       (max 1 (quot (+ inner-w (long pane-gap)) (+ natural (long pane-gap))))
+       (max 1 (quot (+ inner-w (long pane-gap)) (+ natural (long pane-gap))))]
 
-       body-h
-       (max 1 (- (dec (long (or (:hint-row region) 1))) (+ (long (or (:min-row region) 0)) 2)))
-
-       budget
-       (max 1 (quot body-h 2))
-
-       upper
-       (max 1 (min (count (:groups spec)) capacity))]
-
-      (or (first (filter (fn [^long n]
-                           (<= (count (first (panes spec n))) budget))
-                         (range 1 (inc upper))))
-          upper))))
+      (max 1 (min (count (:groups spec)) capacity)))))
 
 (defn pane-width
   "PURE: the columns ONE of `n` panes gets inside `region`'s inner width, the
