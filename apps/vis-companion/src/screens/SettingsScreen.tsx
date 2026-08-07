@@ -69,7 +69,7 @@ import {
   setThemePref,
 } from "../lib/storage";
 import { BUNDLED_THEMES } from "../lib/palettes";
-import { Banner, Button, DialogFrame, Input, Modal } from '../components/ui';
+import { Banner, Button, DialogFrame, Input, Modal } from "../components/ui";
 import {
   REACH_HINT,
   REACH_LABEL,
@@ -229,7 +229,6 @@ export function GatewaySettingsDialog({
         onClose={onClose}
         footer={`${settingCount} ${settingCount === 1 ? "option" : "options"}`}
       >
-
         <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
           <p className="text-pretty text-justify text-ui text-dialog-hint">
             These settings are stored by this gateway and shared with its TUI
@@ -499,7 +498,6 @@ export function GatewaySettingsDialog({
             ))
           )}
         </div>
-
       </DialogFrame>
     </Modal>
   );
@@ -1298,7 +1296,11 @@ export function ApplicationSettingsDialog({
           <SettingsPanel
             title="Offer drafts"
             description="A draft is a private copy of a project, so an agent can work without touching the repo. With this off, a new session always starts in the project itself and the question is never asked."
-            meta={offerDrafts ? "on" : "off"}
+            meta={
+              <span className="inline-block w-6 text-right">
+                {offerDrafts ? "on" : "off"}
+              </span>
+            }
           >
             <button
               type="button"
@@ -1317,7 +1319,10 @@ export function ApplicationSettingsDialog({
                     : "a machine's menu starts in the project"}
                 </span>
               </span>
-              <span className="shrink-0 font-mono text-chip uppercase tracking-wider">
+              {/* A state word that CHANGES has to reserve the widest of its states:
+                  `on` is 12px and `off` is 18px, so a `justify-between` row slid its
+                  chip 6px left on every tap. Fixed box, right-aligned ink. */}
+              <span className="inline-block w-6 shrink-0 text-right font-mono text-chip uppercase tracking-wider">
                 {offerDrafts ? "on" : "off"}
               </span>
             </button>
@@ -1645,7 +1650,9 @@ function NotificationsPanel({
 
 function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
   const [perm, setPerm] = useState<PushPermission>(webPushPermission());
-  const [subscription, setSubscription] = useState<PushSubscription | null>(null);
+  const [subscription, setSubscription] = useState<PushSubscription | null>(
+    null,
+  );
   const [notify, setNotify] = useState(true);
   const [busy, setBusy] = useState<"enable" | "disable" | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -1654,14 +1661,15 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([getGatewayNotify(gateway.url), getExistingWebPushSubscription(gateway.url)]).then(
-      ([wanted, current]) => {
-        if (cancelled) return;
-        setNotify(wanted);
-        setSubscription(current);
-        setPerm(webPushPermission());
-      },
-    );
+    void Promise.all([
+      getGatewayNotify(gateway.url),
+      getExistingWebPushSubscription(gateway.url),
+    ]).then(([wanted, current]) => {
+      if (cancelled) return;
+      setNotify(wanted);
+      setSubscription(current);
+      setPerm(webPushPermission());
+    });
     return () => {
       cancelled = true;
     };
@@ -1672,11 +1680,14 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
     setErr(null);
     setNote(null);
     try {
-      if (!supported) throw new Error("This browser does not support background Web Push.");
+      if (!supported)
+        throw new Error("This browser does not support background Web Push.");
       const permission = await requestWebPushPermission();
       setPerm(permission);
       if (permission !== "granted")
-        throw new Error("Notifications are blocked in this browser. Allow them in browser settings first.");
+        throw new Error(
+          "Notifications are blocked in this browser. Allow them in browser settings first.",
+        );
       const target = new GatewayClient(gateway).pushTarget();
       const status = await target.status();
       const next = await ensureWebPushSubscription(
@@ -1700,7 +1711,8 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
     setErr(null);
     setNote(null);
     try {
-      const current = subscription ?? (await getExistingWebPushSubscription(gateway.url));
+      const current =
+        subscription ?? (await getExistingWebPushSubscription(gateway.url));
       if (current) await unregisterWebPushForGateway(gateway, current);
       await applyWebGatewayNotify(gateway.url, false);
       setNotify(false);
@@ -1712,7 +1724,8 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
     }
   }, [gateway, subscription]);
 
-  const notifying = supported && notify && perm === "granted" && subscription !== null;
+  const notifying =
+    supported && notify && perm === "granted" && subscription !== null;
   return (
     <SettingsPanel
       title="Notifications"
@@ -1723,13 +1736,18 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
         {err && <Banner kind="err">{err}</Banner>}
         {note && <Banner kind="ok">{note}</Banner>}
         {supported ? (
-          <Banner kind="ok">Background Web Push is available in this browser.</Banner>
+          <Banner kind="ok">
+            Background Web Push is available in this browser.
+          </Banner>
         ) : (
-          <Banner kind="warn">This browser does not support background Web Push.</Banner>
+          <Banner kind="warn">
+            This browser does not support background Web Push.
+          </Banner>
         )}
         {supported && perm === "denied" && (
           <Banner kind="warn">
-            Notifications are blocked in this browser — allow them in browser settings first.
+            Notifications are blocked in this browser — allow them in browser
+            settings first.
           </Banner>
         )}
         <div className="flex flex-wrap gap-2">
@@ -1749,7 +1767,9 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
               disabled={busy !== null}
               onClick={() => void disable()}
             >
-              {busy === "disable" ? "Disabling…" : "Stop notifying me from this machine"}
+              {busy === "disable"
+                ? "Disabling…"
+                : "Stop notifying me from this machine"}
             </Button>
           )}
         </div>
