@@ -67,7 +67,7 @@ import {
   StarIcon,
   TrashIcon,
 } from '../components/icons';
-import { DEFAULT_SESSION_PAGE_SIZE, getOfferDrafts, getSessionsPerPage, subscribeOfferDrafts, subscribeSessionsPerPage } from '../lib/storage';
+import { DEFAULT_SESSION_PAGE_SIZE, getSessionsPerPage, subscribeSessionsPerPage } from '../lib/storage';
 import { hostOf } from '../lib/endpoints';
 import {
   clearDraftMessage,
@@ -320,9 +320,6 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
   // button when that machine has no project yet, or the solo fleet bar's. An element,
   // not a ref, because every header carries its own pair.
   const startAnchorEl = useRef<HTMLElement | null>(null);
-  // Drafts are an expert move, off by default: with the switch off "New session" is
-  // one verb and the private-copy question is never asked. See Settings.
-  const [offerDrafts, setOfferDrafts] = useState(false);
   // One entry per machine+repo, kept across openings; see `forgetParkedDrafts`.
   const [draftsCache, setDraftsCache] = useState<
     Record<string, { rows: WorkspaceDraft[]; error: string | null }>
@@ -770,11 +767,6 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
     }
     return roots;
   }, [targetMachine]);
-
-  useEffect(() => {
-    void getOfferDrafts().then(setOfferDrafts);
-    return subscribeOfferDrafts(setOfferDrafts);
-  }, []);
 
   // The parked drafts are read for the question that OFFERS them, and for nothing
   // else: the verb menu never waits on a list it does not show.
@@ -1464,11 +1456,9 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                           onRename={startRename}
                           onDelete={startDelete}
                           onNewSession={(root) => void createSession({ kind: 'trunk' }, machine.conn, root)}
-                          onNewDraft={
-                            offerDrafts
-                              ? (anchor, root) => openDraftsAt(anchor, machine.conn, root)
-                              : undefined
-                          }
+                          // A draft is not a preference: every project header offers
+                          // the private copy beside its own "New session".
+                          onNewDraft={(anchor, root) => openDraftsAt(anchor, machine.conn, root)}
                           expanded={expanded.has(`${key}\u0000${groupRoot}`)}
                           forceExpand={forceExpand}
                           onToggle={toggleProject}
@@ -1852,7 +1842,7 @@ const ProjectGroup = memo(function ProjectGroup({
   onRename: (session: Session, conn: GatewayConn) => void;
   onDelete: (session: Session, conn: GatewayConn) => void;
   onNewSession: (root: string) => void;
-  /** Undefined while `Offer drafts` is off — then the button has no second half. */
+  /** Opens the private-copy question for this project, anchored on the button. */
   onNewDraft?: (anchor: HTMLElement, root: string) => void;
   expanded: boolean;
   forceExpand: boolean;

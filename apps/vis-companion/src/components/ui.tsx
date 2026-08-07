@@ -1041,7 +1041,7 @@ export function NewSessionButton({
   where?: string | null;
   disabled?: boolean;
   onPress: (anchor: HTMLElement) => void;
-  /** Omitted while `Offer drafts` is off — then there is no second half at all. */
+  /** Omitted when the surface has no draft question — then there is no second half. */
   onDraft?: (anchor: HTMLElement) => void;
 }) {
   const verb = (

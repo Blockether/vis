@@ -58,12 +58,10 @@ import {
 import {
   DEFAULT_SESSION_PAGE_SIZE,
   getGatewayNotify,
-  getOfferDrafts,
   getSessionsPerPage,
   getThemePalette,
   getThemePref,
   loadConnections,
-  setOfferDrafts as setOfferDraftsPref,
   setSessionsPerPage,
   setThemePalette,
   setThemePref,
@@ -1094,12 +1092,6 @@ export function ApplicationSettingsDialog({
     dedupeThemes(...cachedThemeCatalogs(), BUNDLED_THEMES),
   );
   const [pageSize, setPageSize] = useState(DEFAULT_SESSION_PAGE_SIZE);
-  // A draft is an expert move, so the sessions list only asks about one when it was
-  // told to. Off, "New session" is a single verb that starts in the project itself.
-  const [offerDrafts, setOfferDrafts] = useState(false);
-  useEffect(() => {
-    void getOfferDrafts().then(setOfferDrafts);
-  }, []);
   const [pending, setPending] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -1178,18 +1170,6 @@ export function ApplicationSettingsDialog({
     }
   }
 
-  async function chooseOfferDrafts(next: boolean) {
-    setPending("offerDrafts");
-    try {
-      await setOfferDraftsPref(next);
-      setOfferDrafts(next);
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setPending(null);
-    }
-  }
-
   return (
     // The app's ONE dialog: `Modal` + `DialogFrame`, the same outer component
     // "Manage projects" and every ask already open in. This screen used to hand-roll
@@ -1254,35 +1234,6 @@ export function ApplicationSettingsDialog({
                   onClick={() => void choosePageSize(size)}
                 />
               ))}
-            </div>
-          </SettingsPanel>
-
-          {/* The odd one out until now: a lone on/off button whose label, its
-              sub-line AND a chip all changed at once, so the row said "on",
-              "off" and two different sentences about menus and nobody could
-              tell what it did. It is a CHOICE, like every other setting in this
-              dialog — two named outcomes, the same cell, the ring on the one
-              you have. */}
-          <SettingsPanel
-            title="Where a new session starts"
-            description="A draft is a private copy of a project. An agent can work in a draft without touching your real files, and you throw it away when you are done."
-            meta="saved on this device"
-          >
-            <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-2">
-              <ChoiceCell
-                title="In the project"
-                sub="start straight away"
-                selected={!offerDrafts}
-                disabled={pending === "offerDrafts"}
-                onClick={() => void chooseOfferDrafts(false)}
-              />
-              <ChoiceCell
-                title="Ask me first"
-                sub="project or a draft"
-                selected={offerDrafts}
-                disabled={pending === "offerDrafts"}
-                onClick={() => void chooseOfferDrafts(true)}
-              />
             </div>
           </SettingsPanel>
         </div>

@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import uiSource from "./ui.tsx?raw";
+import storageSource from "../lib/storage.ts?raw";
 import sessionsListSource from "../screens/SessionsScreen.tsx?raw";
 import settingsSource from "../screens/SettingsScreen.tsx?raw";
 
@@ -797,27 +798,27 @@ describe("a row's pressable slab", () => {
   });
 });
 
-// Regression, user report ("the offer drafts is jumping ... left right",
-// then "we need to normalize this setting because it's so hard to read"): the
-// setting was a lone on/off button whose title, sub-line and a trailing state word
-// all changed at once — and the auto-width `on`/`off` slid the row 6px sideways on
-// every tap. It is a CHOICE now, spelled with the dialog's one choice control.
+// Regression, user report ("remove this setting and always show the icon with draft"):
+// "Where a new session starts" was an app switch that hid the draft half of the
+// project header's split button, so the private copy — the reason drafts exist —
+// was invisible until you found a preference in a dialog two screens away.
 describe("where a new session starts", () => {
-  it("is a pair of named choices, not a toggle with a changing state word", () => {
-    expect(settingsSource).not.toContain('offerDrafts ? "on" : "off"');
-    expect(settingsSource).toContain('title="Where a new session starts"');
-    expect(settingsSource).toContain('title="In the project"');
-    expect(settingsSource).toContain('title="Ask me first"');
-    expect(settingsSource).toContain("selected={!offerDrafts}");
+  it("is not a setting at all: no draft preference is left anywhere", () => {
+    expect(settingsSource).not.toContain("offerDrafts");
+    expect(settingsSource).not.toContain("Where a new session starts");
+    expect(storageSource).not.toContain("OfferDrafts");
+    expect(sessionsListSource).not.toContain("offerDrafts");
+  });
+
+  it("always offers the draft half of the project header's button", () => {
+    expect(sessionsListSource).toContain(
+      "onNewDraft={(anchor, root) => openDraftsAt(anchor, machine.conn, root)}",
+    );
   });
 
   it("picks every setting with the one ChoiceCell, spelled once", () => {
-    expect(settingsSource.match(/<ChoiceCell/g)?.length).toBe(4);
+    expect(settingsSource.match(/<ChoiceCell/g)?.length).toBe(2);
     expect(settingsSource.match(/function ChoiceCell\(/g)?.length).toBe(1);
-    // No hand-rolled copy of it left behind.
-    expect(settingsSource).not.toContain(
-      '{selected ? "\u25cf" : "\u25cb"}\n                    </span>',
-    );
   });
 });
 
@@ -828,7 +829,12 @@ describe("where a new session starts", () => {
 describe("NewSessionButton, split", () => {
   it("carries the draft as a joined second half, not a second button", () => {
     const html = renderToStaticMarkup(
-      <NewSessionButton machine="visgw" where="vis" onPress={() => {}} onDraft={() => {}} />,
+      <NewSessionButton
+        machine="visgw"
+        where="vis"
+        onPress={() => {}}
+        onDraft={() => {}}
+      />,
     );
     // One cluster, two halves of the same amber box: the verb drops its trailing
     // border and the draft half wears the seam.
@@ -836,7 +842,9 @@ describe("NewSessionButton, split", () => {
     expect(html).toContain("border-l-accent-foreground/30");
     // It NAMES the project it forks and the machine it forks on: several headers are
     // on screen at once and "New session" alone says nothing to a screen reader.
-    expect(html).toContain('aria-label="New session in a draft of vis on visgw"');
+    expect(html).toContain(
+      'aria-label="New session in a draft of vis on visgw"',
+    );
   });
 
   it("is a plain button when drafts are not offered", () => {
