@@ -2405,56 +2405,59 @@
         (= :file kind) {:ok? false :msg "Not staged"}
         :else nil))
 
-;;; ── Magit inline minibuffer ─────────────────────────────────────────────────
-;; magit's prompts live in the buffer's OWN bottom row (the hint-bar line), the
-;; way `y-or-n-p` / `completing-read` do in Emacs — NOT as centered modal boxes.
-;; Each primitive overlays the already-painted status buffer's hint row and runs
-;; a tiny read loop; on return the caller repaints and the hint bar comes back.
+;;; ── One question, in the band's own frame ───────────────────────────────────
+;; A band asks its follow-up question by REPLACING the commands that led to it.
+;; Painting `Name the draft:` over the hint row while `c`/`d`/`s`/`k` were still
+;; listed above it advertised commands the reader had already stolen: every
+;; letter typed into the name looked like a command that did nothing. So a
+;; question is a BAND, like everything else here — the prompt is its bold title,
+;; and under it sits the ONE thing that can answer it: a real input row for typed
+;; text, the answers themselves (`y`/`n`, a list of choices) for a keyed one.
 
-(defn- magit-mini-confirm!
-  "Inline y/n confirmation painted over the magit hint-bar row. Returns
-   true / false / nil (Esc or q)."
-  [^TerminalScreen screen g left inner-w hint-row text-w prompt]
-  (let [full (str prompt " (y or n)")]
-    (loop []
+(defn embed-transient!
+  "Run ONE transient (`tr/run!`) INSIDE a frame someone else owns — same box,
+   same hint row, no second window.
 
-      (p/set-colors! g t/dialog-fg t/dialog-bg)
-      (p/fill-rect! g (inc (long left)) hint-row inner-w 1)
-      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-      (p/put-str! g (+ (long left) 2) hint-row (ellipsize full text-w))
-      (.setCursorPosition screen nil)
-      (.refresh screen Screen$RefreshType/DELTA)
-      (let [key (read-modal-key! screen)]
-        (if (nil? key)
-          (recur)
-          (condp = (key-type key)
-            KeyType/Escape nil
-            KeyType/Character (case (lower-key-character key)
-                                \y
-                                true
+   `region` is already in `tr/run!` geometry (`:left`, `:inner-w`, `:hint-row`,
+   `:text-w`, plus the optional `:min-row` floor and the `:restore!` snapshot a
+   host that pages bands of different heights hands in). Returns `tr/run!`'s
+   `{:action :switches :options}`, or nil on Esc.
 
-                                \n
-                                false
+   This is THE seam between a Lanterna surface and the host-agnostic transient
+   component. Nothing else calls `tr/run!` with a `transient-host`."
+  [^TerminalScreen screen g region spec]
+  (tr/run! (transient-host screen g) region spec))
 
-                                \q
-                                nil
-
-                                (recur))
-            (recur)))))))
+(defn- band-question-frame!
+  "Repaint `region` as a band holding ONE question: the host rows a taller band
+   covered are handed back, the chrome is redrawn, `title` is the band's own bold
+   title and `hints` its hint bar. Returns the single body row the answer is
+   painted on."
+  [g {:keys [left inner-w text-w restore!] :as region} title hints]
+  (let
+    [{:keys [sep-row title-row title-rule-row body-top foot-rule-row foot-row wipe-top top-limit]}
+     (tr/band-geometry region 1)]
+    (when restore! (restore! top-limit (dec (long wipe-top))))
+    (tr/clear-rows! g region (max (long top-limit) (long wipe-top)) foot-row)
+    (when (>= (long sep-row) (long top-limit)) (tr/draw-rule! g region sep-row))
+    (when (> (long title-rule-row) (long title-row)) (tr/draw-rule! g region title-rule-row))
+    (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
+      (tr/draw-rule! g region foot-rule-row))
+    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+    (p/styled g [p/BOLD] (p/put-str! g (+ (long left) 2) title-row (ellipsize (str title) text-w)))
+    (draw-hint-bar! g left foot-row inner-w hints)
+    body-top))
 
 (defn magit-mini-read!
-  "Inline editable minibuffer painted over the magit hint-bar row:
-   `<label> <text>` with a live cursor. Enter submits the trimmed string (may
-   be empty), Esc returns nil. Opts: :initial (seed text), :mask (echo char)."
-  [^TerminalScreen screen g left inner-w hint-row text-w label {:keys [initial mask]}]
+  "Ask ONE typed question in the band's own frame: `label` becomes the band's
+   title and the answer is typed into a real input row under it, so nothing the
+   keyboard no longer owns stays advertised. Enter submits the trimmed string
+   (may be empty), Esc returns nil. Opts: :initial (seed text), :mask (echo
+   char), :placeholder (dim hint while the field is empty)."
+  [^TerminalScreen screen g {:keys [left inner-w] :as region} label
+   {:keys [initial mask placeholder]}]
   (let
-    [prefix
-     (str label " ")
-
-     pw
-     (p/display-width prefix)
-
-     text
+    [text
      (atom (vec (or initial "")))
 
      cursor
@@ -2463,25 +2466,19 @@
     (loop []
 
       (let
-        [txt
+        [row
+         (band-question-frame! g region label [["Enter" "submit"] ["Esc" "cancel"]])
+
+         txt
          (apply str @text)
 
          display
          (if mask (apply str (repeat (count txt) mask)) txt)
 
-         field-w
-         (max 1 (- (long text-w) pw))
+         pos
+         (draw-input-item! g left row inner-w true display @cursor placeholder)]
 
-         cx
-         (min (+ (long left) 2 pw (long @cursor)) (+ (long left) (long inner-w)))]
-
-        (p/set-colors! g t/dialog-fg t/dialog-bg)
-        (p/fill-rect! g (inc (long left)) hint-row inner-w 1)
-        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-        (p/put-str! g (+ (long left) 2) hint-row prefix)
-        (p/set-colors! g t/dialog-fg t/dialog-bg)
-        (p/put-str! g (+ (long left) 2 pw) hint-row (ellipsize display field-w))
-        (.setCursorPosition screen (p/cursor-pos cx hint-row))
+        (.setCursorPosition screen pos)
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
           (if (nil? key)
@@ -2507,56 +2504,47 @@
   "A `:read-option` for a transient EMBEDDED in someone else's frame.
 
    `transient-dialog!` builds this for its own modal; a band painted into a host
-   region (Settings, the provider manager) needs the same minibuffer, on the
-   host's hint row, so an OPTION is typed without opening a second window."
-  [^TerminalScreen screen g {:keys [left inner-w hint-row text-w]}]
+   region (Settings, the provider manager) needs the same question, in the same
+   frame, so an OPTION is typed without opening a second window."
+  [^TerminalScreen screen g region]
   (fn [{:keys [label prompt mask]} current]
-    (magit-mini-read! screen
-                      g
-                      left
-                      inner-w
-                      hint-row
-                      text-w
-                      (or prompt (str label ":"))
-                      {:initial current :mask mask})))
+    (magit-mini-read! screen g region (or prompt (str label ":")) {:initial current :mask mask})))
 
 (defn- magit-mini-choose!
-  "Inline single-key chooser painted over the magit hint-bar row. `choices` is a
-   vec of {:key char :label str :id kw}; renders `<title>  [k] label …` and
-   returns the chosen :id, or nil on Esc."
-  [^TerminalScreen screen g left inner-w hint-row text-w title choices]
-  (let
-    [by-key
-     (into {}
-           (map (fn [{:keys [key] :as it}]
-                  [(Character/toLowerCase (char key)) it]))
-           choices)
+  "Ask WHICH one in the band's own frame. `choices` is a vec of
+   {:key char :label str :id kw}, painted as the band's OWN rows — the answers
+   are the only thing on screen while the question stands. Returns the chosen
+   `:id`, or nil on Esc."
+  [^TerminalScreen screen g region title choices]
+  (:action (embed-transient! screen
+                             g
+                             region
+                             {:title title
+                              :groups [{:title "Choose"
+                                        :items
+                                        (mapv (fn [{:keys [key label id]}]
+                                                {:key (str key) :type :action :id id :label label})
+                                              choices)}]})))
 
-     full
-     (str title
-          "  "
-          (str/join "   "
-                    (map (fn [{:keys [key label]}]
-                           (str "[" key "] " label))
-                         choices)))]
+(defn- magit-mini-confirm!
+  "Ask y/n in the band's own frame: the question is the band's title and `Yes` /
+   `No` are the only rows under it. Returns true / false / nil (Esc)."
+  [^TerminalScreen screen g region question]
+  (case
+    (:action (embed-transient! screen
+                               g
+                               region
+                               {:title question
+                                :groups [{:title "Confirm"
+                                          :items [{:key "y" :type :action :id :yes :label "Yes"}
+                                                  {:key "n" :type :action :id :no :label "No"}]}]}))
+    :yes
+    true
 
-    (loop []
+    :no
+    false
 
-      (p/set-colors! g t/dialog-fg t/dialog-bg)
-      (p/fill-rect! g (inc (long left)) hint-row inner-w 1)
-      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-      (p/put-str! g (+ (long left) 2) hint-row (ellipsize full text-w))
-      (.setCursorPosition screen nil)
-      (.refresh screen Screen$RefreshType/DELTA)
-      (let [key (read-modal-key! screen)]
-        (if (nil? key)
-          (recur)
-          (condp = (key-type key)
-            KeyType/Escape nil
-            KeyType/Character (if-let [it (get by-key (lower-key-character key))]
-                                (:id it)
-                                (recur))
-            (recur)))))))
+    nil))
 
 (defn- magit-discard-flow!
   [mini root {:keys [kind area path] :as row}]
@@ -2614,39 +2602,25 @@
 ;; reaches for `tr/run!` plus `transient-host` itself, is how two bands drift
 ;; apart.
 
-(defn embed-transient!
-  "Run ONE transient (`tr/run!`) INSIDE a frame someone else owns — same box,
-   same hint row, no second window.
-
-   `region` is already in `tr/run!` geometry (`:left`, `:inner-w`, `:hint-row`,
-   `:text-w`, plus the optional `:min-row` floor and the `:restore!` snapshot a
-   host that pages bands of different heights hands in). Returns `tr/run!`'s
-   `{:action :switches :options}`, or nil on Esc.
-
-   This is THE seam between a Lanterna surface and the host-agnostic transient
-   component. Nothing else calls `tr/run!` with a `transient-host`."
-  [^TerminalScreen screen g region spec]
-  (tr/run! (transient-host screen g) region spec))
-
 (defn band-questions
   "Everything a band can ASK, bound to its own `region` once:
 
-     `:read!`        one line of text on the hint row — `[label]` / `[label opts]`
+     `:read!`        one typed answer, in the band's own frame — `[label]` / `[label opts]`
      `:choose!`      WHICH one, single-key — `[title choices]`, returns the `:id`
      `:confirm!`     y/n — `[question]`
      `:transient!`   ANOTHER transient over the SAME band region — `[spec]`
      `:read-option`  the `:read-option` a spec with OPTION items hands `tr/run!`
 
-   A transient that opens a transient, and a question asked on the hint row
-   instead of in a window, is how magit asks a second thing without a second
-   frame — every band in the TUI does both through this map."
-  [^TerminalScreen screen g {:keys [left inner-w hint-row text-w] :as region}]
+   A transient that opens a transient, and a question that REPLACES the commands
+   that led to it instead of opening a second frame, is how magit asks a second
+   thing — every band in the TUI does both through this map."
+  [^TerminalScreen screen g region]
   {:read! (fn read! ([label] (read! label {}))
-            ([label opts] (magit-mini-read! screen g left inner-w hint-row text-w label opts)))
+            ([label opts] (magit-mini-read! screen g region label opts)))
    :choose! (fn [title choices]
-              (magit-mini-choose! screen g left inner-w hint-row text-w title choices))
+              (magit-mini-choose! screen g region title choices))
    :confirm! (fn [question]
-               (magit-mini-confirm! screen g left inner-w hint-row text-w question))
+               (magit-mini-confirm! screen g region question))
    :transient! (fn [spec]
                  (embed-transient! screen g region spec))
    :read-option (region-option-reader screen g region)})

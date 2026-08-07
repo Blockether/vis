@@ -2,9 +2,11 @@
   (:require [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
+            [com.blockether.vis.ext.channel-tui.drafts :as drafts]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.terminals :as term]
+            [com.blockether.vis.ext.channel-tui.transient :as tr]
             [com.blockether.vis.core :as vis]
             ;; Loaded for its side effect: registers the :shell/enabled toggle
             ;; (internal foundation, at ns load), which the settings-rows test asserts.
@@ -1681,11 +1683,14 @@
                                 (if (= :enter k) (KeyStroke. KeyType/Enter) (term/keystroke k)))))]
 
           (expect (= #{:read! :choose! :confirm! :transient! :read-option} (set (keys questions))))
-          ;; One line of text, asked on the hint row of THIS region and
-          ;; nowhere else — row 20, not a window.
+          ;; One typed answer, in THIS region's own band and nowhere else: the
+          ;; prompt is the band's title (row 16) and the text is typed into a
+          ;; field under it (row 18), directly above the region's hint row.
           (feed! \h \i :enter)
           (expect (= "hi" ((:read! questions) "Name:")))
-          (expect (= "Name: hi" (str/trim (nth (term/grid terminal) 20))))
+          (let [grid (vec (term/grid terminal))]
+            (expect (str/includes? (nth grid 16) "Name:"))
+            (expect (str/includes? (nth grid 18) "hi")))
           ;; y/n and WHICH-one, same row, single key.
           (feed! \y)
           (expect (true? ((:confirm! questions) "Sure?")))
@@ -1711,3 +1716,58 @@
           (feed! \z \z :enter)
           (expect (= "zz" ((:read-option questions) {:label "Token" :prompt "Token:"} nil))))
         (finally (.stopScreen screen))))))
+
+;; Regression (reported from the TUI, screenshot of the draft band): a band asked
+;; its follow-up question on its own hint row while its COMMAND rows stayed
+;; painted right above it — `c`, `d`, `s` and `k` still advertised as verbs while
+;; every one of those keys typed a letter into the draft's name — and the answer
+;; itself was a bare label on the footer line instead of a field anyone could see
+;; they were typing into.
+(defdescribe
+  band-question-test
+  (it "a band's typed question REPLACES its commands and is drawn as an INPUT"
+      (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
+        (try (let
+               [g (.newTextGraphics screen)
+                region (assoc (tr/band-region 80 30 1) :restore! (dlg/frame-restorer screen))
+                rows [{"workspace_id" "ws-a" "label" "feature-a" "is_current" true}]
+                host (dlg/transient-host screen g)
+                _ (do (tr/paint! host region (drafts/spec rows) {:switches #{} :options {}})
+                      ((:refresh! host)))
+                _ (doseq
+                    [k (concat (map term/keystroke "wire-rework") [(KeyStroke. KeyType/Enter)])]
+                    (.addInput terminal k))
+                answer ((:read! (dlg/band-questions screen g region))
+                         "Name the draft (with my changes):")
+                painted (str/join "\n" (map :text (term/painted-rows terminal)))]
+
+               (expect (= "wire-rework" answer))
+               ;; The question owns the band: its own title row, and the line being
+               ;; typed on the very field surface the human-input form paints.
+               (expect (str/includes? painted "Name the draft (with my changes):"))
+               (expect (str/includes? painted "wire-rework"))
+               ;; …and NOTHING on screen still claims a command key does something,
+               ;; because every key belongs to the field now.
+               (expect (not (str/includes? painted "New draft from the committed HEAD")))
+               (expect (not (str/includes? painted "New draft with my uncommitted changes")))
+               (expect (not (str/includes? painted "Switch to another draft"))))
+             (finally (.stopScreen screen)))))
+  (it "a band's y/n question is a band too — the question, then Yes and No on their own keys"
+      (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
+        (try (let
+               [g (.newTextGraphics screen)
+                region (assoc (tr/band-region 80 30 1) :restore! (dlg/frame-restorer screen))
+                rows [{"workspace_id" "ws-a" "label" "feature-a" "is_current" true}]
+                host (dlg/transient-host screen g)
+                _ (do (tr/paint! host region (drafts/spec rows) {:switches #{} :options {}})
+                      ((:refresh! host)))
+                _ (.addInput terminal (term/keystroke \y))
+                answer ((:confirm! (dlg/band-questions screen g region)) "Discard 'feature-a'?")
+                painted (str/join "\n" (map :text (term/painted-rows terminal)))]
+
+               (expect (true? answer))
+               (expect (str/includes? painted "Discard 'feature-a'?"))
+               (expect (str/includes? painted "Yes"))
+               (expect (str/includes? painted "No"))
+               (expect (not (str/includes? painted "Abandon draft"))))
+             (finally (.stopScreen screen))))))
