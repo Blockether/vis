@@ -2084,6 +2084,66 @@
 
                           idx))))))))))
 
+;; Regression: the companion's Save on an annotated artifact answered "Could not
+;; save this revision" — the URL it posts to was served by no route at all, so a
+;; human's comments and drawings could never become the next version.
+(deftest the-companions-save-url-routes-to-the-attachment-append-handler
+  (let
+    [match-by-path
+     (requiring-resolve 'reitit.core/match-by-path)
+
+     router
+     ((rv 'router) "token" [])
+
+     sid
+     (str (random-uuid))
+
+     iid
+     (str (random-uuid))
+
+     path
+     (str "/v1/sessions/" sid "/iterations/" iid "/attachments")]
+
+    (testing "POST of a revision reaches the append handler"
+      (is (= @(rv 'append-attachment-handler)
+             (get-in (match-by-path router path) [:data :post :handler]))))
+    (testing "and the bytes of one version are still read back beside it"
+      (is (= @(rv 'attachment-bytes-handler)
+             (get-in (match-by-path router (str path "/0")) [:data :get :handler]))))))
+
+;; Regression, same report: saving an annotated note must file it under its OWN
+;; filename, which is what makes the revision the NEXT VERSION of that artifact
+;; rather than a second file beside it.
+(deftest saving-a-revision-stores-it-under-the-artifacts-own-filename
+  (let
+    [seen
+     (atom nil)
+
+     iid
+     (str (random-uuid))
+
+     body
+     {"filename" "PLAN.md"
+      "media_type" "text/markdown"
+      "base64" (.encodeToString (java.util.Base64/getEncoder)
+                                (.getBytes "# Release plan\n" "UTF-8"))}]
+
+    (with-redefs-fn {(rv 'body-json) (constantly body)
+                     (rv 'path-sid) (constantly (str (random-uuid)))
+                     #'state/append-iteration-attachment!
+                     (fn [iteration-id attachment]
+                       (reset! seen [iteration-id attachment])
+                       {:index 1 :filename "PLAN.md" :version 2})}
+      (fn []
+        (let [response ((rv 'append-attachment-handler) {:path-params {:iid iid}})]
+          (is (= 201 (:status response)))
+          (is (= 2 (get (wire/parse-json (:body response)) "version")))
+          (let [[iteration-id attachment] @seen]
+            (is (= iid iteration-id))
+            (is (= "PLAN.md" (:filename attachment)))
+            (is (= "text/markdown" (:media-type attachment)))
+            (is (= "user" (:audience attachment)))))))))
+
 ;; The session-creation UX picks a workspace root by RECOGNITION, so the gateway
 ;; has to be able to show the machine's own folders. `/v1/fs` is that surface and
 ;; nothing more: directories only, the two facts a chooser reads (how much is in
@@ -2201,29 +2261,25 @@
 ;; project's pages were sliced out of a list it had already downloaded in full.
 (deftest sessions-window-narrows-to-one-project
   (testing "GET /v1/sessions?root= hands the project down to the windowing engine"
-    (let
-      [seen
-       (atom nil)]
-      (with-redefs [state/list-sessions-page (fn [channel opts]
-                                               (reset! seen [channel opts])
-                                               {:sessions [] :total 0 :offset 0 :limit 20
-                                                :order-digest "x" :has-more false})]
+    (let [seen (atom nil)]
+      (with-redefs
+        [state/list-sessions-page
+         (fn [channel opts]
+           (reset! seen [channel opts])
+           {:sessions [] :total 0 :offset 0 :limit 20 :order-digest "x" :has-more false})]
         (let
-          [response
-           ((rv 'list-sessions-handler)
-             {:query-params {"limit" "20" "offset" "0" "root" "/Users/dev/vis"}})
-
-           body
-           (wire/parse-json (:body response))]
+          [response ((rv 'list-sessions-handler)
+                      {:query-params {"limit" "20" "offset" "0" "root" "/Users/dev/vis"}})
+           body (wire/parse-json (:body response))]
 
           (is (= 200 (:status response)))
           (is (= [:all {:limit 20 :offset 0 :root "/Users/dev/vis"}] @seen))
           (is (= "/Users/dev/vis" (get body "root")))))
-
       (testing "and a listing with no `root` is still the whole fleet"
-        (with-redefs [state/list-sessions-page (fn [channel opts]
-                                                 (reset! seen [channel opts])
-                                                 {:sessions [] :total 0 :offset 0 :limit nil
-                                                  :order-digest "x" :has-more false})]
+        (with-redefs
+          [state/list-sessions-page
+           (fn [channel opts]
+             (reset! seen [channel opts])
+             {:sessions [] :total 0 :offset 0 :limit nil :order-digest "x" :has-more false})]
           ((rv 'list-sessions-handler) {:query-params {}})
           (is (nil? (:root (second @seen)))))))))
