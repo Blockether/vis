@@ -193,4 +193,30 @@ describe('where "New session" lives', () => {
     expect(appSource).toContain('loadConnectionsSync');
     expect(appSource).toContain('useState<GatewayConn[]>(loadConnectionsSync)');
   });
+  // Regression, user report: the NEW badge belongs in a column of its own. The
+  // unread/dirty/draft/star flags used to sit INSIDE the title cell, so each row
+  // started its flags wherever its title happened to end and a long title pushed
+  // them off the line.
+  it('gives the row flags their own grid column, next to the title and not inside it', () => {
+    const grid =
+      'grid-cols-[minmax(0,1fr)_3.5rem_6.75rem] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_4.5rem_5rem_6rem]';
+    // The row and the skeleton that stands in for it share ONE track list, or the
+    // columns jump the moment the rows land.
+    expect(source.match(new RegExp(grid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))?.length).toBe(2);
+    const flags = source.slice(
+      source.indexOf('col-start-2 row-start-1 flex min-w-0 items-center justify-end gap-1.5'),
+    );
+    // Every flag lives in that cell...
+    for (const flag of ['? `${unread} new` : ', 'dirty', 'draft {draftName}', '<StarIcon filled']) {
+      expect(flags.slice(0, flags.indexOf('</span>\n          {/* `sm:contents`'))).toContain(flag);
+    }
+    // ...and the title cell holds the title alone.
+    const name = source.slice(
+      source.indexOf('<span className="col-start-1 row-start-1 flex min-w-0 items-center sm:'),
+    );
+    expect(name.slice(0, name.indexOf('{/* What the session HAS'))).not.toContain('unread > 0');
+    // Status and time moved one column out to make room.
+    expect(source).toContain('col-start-3 row-start-1 inline-flex shrink-0');
+    expect(source).toContain('col-start-3 row-start-2 justify-self-end whitespace-nowrap');
+  });
 });

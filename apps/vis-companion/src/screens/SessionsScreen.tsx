@@ -2020,10 +2020,12 @@ const SessionRow = memo(function SessionRow({
             FIXED tracks. That is the difference between a list and a phone list
             stretched to 1400px, where a title sat at x=56 and its own status badge at
             x=1325 with nothing between them to carry the eye across. */}
-        <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_5rem_6rem] sm:gap-y-0">
-          {/* Everything that NAMES the session travels with its name — the unread
-              badge, the unsent-work flag, the star, the draft it was forked into. */}
-          <span className="col-start-1 row-start-1 flex min-w-0 items-center gap-1.5 sm:col-start-auto sm:row-start-auto">
+        <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_3.5rem_6.75rem] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_4.5rem_5rem_6rem] sm:gap-y-0">
+          {/* The NAME, and nothing but the name. The badges used to ride inside this
+              cell, so every row started its flags at a different x — the longer the
+              title, the further right its `NEW` — and a long title pushed them off
+              the line entirely. They have their own column now. */}
+          <span className="col-start-1 row-start-1 flex min-w-0 items-center sm:col-start-auto sm:row-start-auto">
             {/* The LEAF, and the smallest name on the screen: 15 / 13 / 10 down the
                 machine -> project -> session ladder. It stays the strongest thing in
                 its OWN row — semibold, full ink, against the hint-grey `text-chip`
@@ -2035,6 +2037,14 @@ const SessionRow = memo(function SessionRow({
             >
               {title}
             </span>
+          </span>
+          {/* What the session HAS — unread answers, unsent words, the draft it was
+              forked into, a star — in ONE column of its own, so the flags of every
+              row line up with each other instead of with the end of a title. The
+              track is FIXED — a column that sizes to its own row is not a column at
+              all: each row is its own grid, so `auto` gave every row a different
+              boundary and the flags marched with the titles again. */}
+          <span className="col-start-2 row-start-1 flex min-w-0 items-center justify-end gap-1.5 font-mono text-chip sm:col-start-auto sm:row-start-auto">
             {unread > 0 && (
               <span className="shrink-0 bg-accent px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
                 {unread > 1 ? `${unread} new` : 'new'}
@@ -2074,7 +2084,7 @@ const SessionRow = memo(function SessionRow({
             </span>
           </span>
           <span
-            className={`col-start-2 row-start-1 inline-flex shrink-0 items-center gap-1 justify-self-end font-mono text-chip font-bold tracking-[0.08em] sm:col-start-auto sm:row-start-auto sm:justify-self-start ${statusTone(session)}`}
+            className={`col-start-3 row-start-1 inline-flex shrink-0 items-center gap-1 justify-self-end font-mono text-chip font-bold tracking-[0.08em] sm:col-start-auto sm:row-start-auto sm:justify-self-start ${statusTone(session)}`}
           >
             <span
               className={`size-1.5 shrink-0 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
@@ -2082,7 +2092,7 @@ const SessionRow = memo(function SessionRow({
             {status}
           </span>
           <span
-            className="col-start-2 row-start-2 justify-self-end whitespace-nowrap font-mono text-chip text-dialog-hint tabular-nums sm:col-start-auto sm:row-start-auto sm:justify-self-start"
+            className="col-start-3 row-start-2 justify-self-end whitespace-nowrap font-mono text-chip text-dialog-hint tabular-nums sm:col-start-auto sm:row-start-auto sm:justify-self-start"
             title={formatExact(timestamp)}
           >
             {timeLabel(timestamp)}
@@ -2373,7 +2383,7 @@ function NavigatorSkeleton() {
                   key={row}
                   className={`flex min-h-12 w-full items-center py-1.5 [&+&]:border-t [&+&]:border-dialog-edge mouse:min-h-8 mouse:py-1 ${LIST_EDGE}`}
                 >
-                  <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_5rem_6rem] sm:gap-y-0">
+                  <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_3.5rem_6.75rem] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_4.5rem_5rem_6rem] sm:gap-y-0">
                     <span className="col-start-1 row-start-1 sm:col-start-auto sm:row-start-auto">
                       <SkeletonBar type="text-meta" width={width} baz="h-2.5" tone="bg-muted/30" />
                     </span>
@@ -2381,10 +2391,14 @@ function NavigatorSkeleton() {
                       <SkeletonBar type="text-chip" width="w-14" baz="h-1.5" tone="bg-muted/20" />
                       <SkeletonBar type="text-chip" width="w-10" baz="h-1.5" tone="bg-muted/20" />
                     </span>
-                    <span className="col-start-2 row-start-1 justify-self-end sm:col-start-auto sm:row-start-auto sm:justify-self-start">
+                    {/* The flag column a real row keeps for `NEW` / `dirty` / a star.
+                        Nothing is loading in it, but the track has to exist or the
+                        columns shift the moment the rows arrive. */}
+                    <span className="col-start-2 row-start-1 sm:col-start-auto sm:row-start-auto" />
+                    <span className="col-start-3 row-start-1 justify-self-end sm:col-start-auto sm:row-start-auto sm:justify-self-start">
                       <SkeletonBar type="text-chip" width="w-12" baz="h-1.5" tone="bg-muted/25" />
                     </span>
-                    <span className="col-start-2 row-start-2 justify-self-end sm:col-start-auto sm:row-start-auto sm:justify-self-start">
+                    <span className="col-start-3 row-start-2 justify-self-end sm:col-start-auto sm:row-start-auto sm:justify-self-start">
                       <SkeletonBar type="text-chip" width="w-12" baz="h-1.5" tone="bg-muted/20" />
                     </span>
                   </span>
