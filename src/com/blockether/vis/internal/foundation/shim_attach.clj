@@ -1,8 +1,9 @@
 (ns com.blockether.vis.internal.foundation.shim-attach
-  "Built-in sandbox SHIM: `vis_attach` / `vis_attach_bytes` — the GENERIC
+  "Built-in sandbox SHIM: `vis_attach` — the GENERIC
    producer twin of the matplotlib capture. A tool running in `python_execution`
    writes any artifact (a PNG it rendered, a CSV/JSON/PDF/wav it built, whatever)
-   and hands it to `vis_attach(path)` (or `vis_attach_bytes(data, name)`); the
+   and hands it to `vis_attach(path)` (or `vis_attach(data, name)` for bytes it
+   never wrote out); the
    engine then OWNS the bytes as a durable `session_iteration_attachment` row,
    exactly like a matplotlib figure — surviving a web/TUI restart and (for image
    media-types) replayable to a vision model cross-turn.
@@ -189,7 +190,7 @@
   (vis/extension
     {:ext/name "foundation-shim-attach"
      :ext/description
-     (str "Sandbox `vis_attach(path)`/`vis_attach_bytes(data, filename)`: "
+     (str "Sandbox `vis_attach(source)` — a confined path, in-memory bytes, or a figure: "
           "persists any artifact — image, CSV/TSV, JSON, PDF, wav — "
           "as a durable session attachment without stdout parsing. "
           "Survives restart; `image/*` replays to vision models across turns; a CSV/TSV becomes "
@@ -206,12 +207,12 @@
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "attach"
-       :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_attachment"
+       :shim/globals ["vis_attach" "vis_attachments" "vis_attachment"
                       "vis_read_attachment" "vis_reinspect_attachment" "vis_attachment_versions"
                       "vis_attachment_version"]
        :shim/description
        (str
-         "`vis_attach`/`vis_attach_bytes` persist artifacts (images, CSV/TSV tables, JSON, "
+         "`vis_attach` persists artifacts (images, CSV/TSV tables, JSON, "
          "PDF, audio) as durable DB-owned iteration attachments with sniffed media types, "
          "surviving restarts. SAME DOCUMENT, SAME NAME — a new revision of an artifact you "
          "already attached goes back under its OWN filename and becomes that artifact's next "

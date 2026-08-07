@@ -147,7 +147,7 @@
   "THE single per-artifact byte cap (32 MiB) — the one source of truth every
    producer path shares. The filesystem outbox/temp tap (`record-file!`) SKIPS a
    larger file silently (an incidental write must not throw); the explicit
-   `vis_attach`/`vis_attach_bytes` shim REJECTS one with a clear error (a
+   `vis_attach` shim REJECTS one with a clear error (a
    deliberate attach deserves a signal, not a silent drop). Either way a huge
    write can't OOM the engine or bloat the DB."
   (* 32 1024 1024))

@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.foundation.shim-attach-test
-  "The generic attachment shim (`vis_attach` / `vis_attach_bytes`) installed into
+  "The generic attachment shim (`vis_attach`) installed into
    every sandbox context via the sandbox-shim mechanism. A tool PRODUCES an
    artifact and hands it to `vis_attach`; the bytes are captured AT THE SOURCE
    into the per-block sink (drained into the block outcome's `:attachments`, which the
@@ -36,14 +36,14 @@
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
 
 (defdescribe
-  vis-attach-bytes-capture-test
+  vis-attach-in-memory-capture-test
   (it "records an in-memory artifact without returning displayable metadata"
       (let
         [pctx
          (ctx-with-root (temp-root))
 
          out
-         (block pctx "vis_attach_bytes('a,b\\n1,2\\n', 'notes.txt')\n")
+         (block pctx "vis_attach(b'a,b\\n1,2\\n', 'notes.txt')\n")
 
          [att]
          (:attachments out)]
@@ -69,7 +69,7 @@
          out
          (block pctx
                 (str "png = bytes([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A]) + b'body'\n"
-                     "vis_attach_bytes(png, 'fig.dat')\n"))
+                     "vis_attach(png, 'fig.dat')\n"))
 
          [att]
          (:attachments out)]
@@ -90,7 +90,7 @@
          (str
            "import base64\n"
            "png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')\n"
-           "vis_attach_bytes(png, 'dot.png')\n"))
+           "vis_attach(png, 'dot.png')\n"))
 
        so
        (str (:stdout out))]
@@ -111,7 +111,7 @@
          (ctx-with-root (temp-root))
 
          out
-         (block pctx "vis_attach_bytes('<svg/>', 'a.svg', media_type='image/svg+xml')\n")]
+         (block pctx "vis_attach(b'<svg/>', 'a.svg', media_type='image/svg+xml')\n")]
 
         (expect (nil? (:error out)))
         (expect (not (re-find #"vis-image" (str (:stdout out)))))
@@ -122,7 +122,7 @@
          (ctx-with-root (temp-root))
 
          out
-         (block pctx "vis_attach_bytes('just words', 'note')\n")
+         (block pctx "vis_attach(b'just words', 'note')\n")
 
          [att]
          (:attachments out)]
@@ -136,7 +136,7 @@
 
          out
          (block pctx
-                "vis_attach_bytes('x', 'weird.bin', kind='image', media_type='image/svg+xml')\n")
+                "vis_attach(b'x', 'weird.bin', kind='image', media_type='image/svg+xml')\n")
 
          [att]
          (:attachments out)]
@@ -149,7 +149,7 @@
          (ctx-with-root (temp-root))
 
          out
-         (block pctx (str "vis_attach_bytes('1', 'a.txt')\n" "vis_attach_bytes('2', 'b.json')\n"))]
+         (block pctx (str "vis_attach(b'1', 'a.txt')\n" "vis_attach(b'2', 'b.json')\n"))]
 
         (expect (= ["a.txt" "b.json"] (mapv :filename (:attachments out))))))
   (it "renders and captures a matplotlib Figure with a positional filename"
@@ -182,7 +182,7 @@
          (str
            "import base64\n"
            "png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')\n"
-           "vis_attach_bytes(png, 'dot.png', label='Scoped to studio: 89 matches')\n"))
+           "vis_attach(png, 'dot.png', label='Scoped to studio: 89 matches')\n"))
 
        so
        (str (:stdout out))]
@@ -197,7 +197,7 @@
          (ctx-with-root (temp-root))
 
          out
-         (block pctx "vis_attach_bytes('hello there', 'notes.txt', label='fleet counts')\n")]
+         (block pctx "vis_attach(b'hello there', 'notes.txt', label='fleet counts')\n")]
 
         (expect (nil? (:error out)))
         (expect (re-find #"\[Attached: notes\.txt\] fleet counts" (str (:stdout out))))))
@@ -228,7 +228,7 @@
          (ctx-with-root (temp-root))
 
          out
-         (block pctx "vis_attach_bytes('a,b\\n1,2\\nx,3\\n', 'data.csv', label='fleet counts')\n")
+         (block pctx "vis_attach(b'a,b\\n1,2\\nx,3\\n', 'data.csv', label='fleet counts')\n")
 
          [att]
          (:attachments out)]
@@ -288,9 +288,9 @@
 
 (defdescribe
   vis-attach-discovery-test
-  (it "surfaces vis_attach / vis_attach_bytes / vis_attachments via apropos and doc"
+  (it "surfaces vis_attach / vis_attachments via apropos and doc"
       (let [pctx (ctx-with-root (temp-root))]
-        (expect (= ["vis_attach" "vis_attach_bytes" "vis_attachment" "vis_attachment_version"
+        (expect (= ["vis_attach" "vis_attachment" "vis_attachment_version"
                     "vis_attachment_versions" "vis_attachments"]
                    (vec (ev pctx "sorted(apropos('vis_attach'))"))))
         (expect (false? (ev pctx "'attach' in apropos('attach')")))
@@ -314,7 +314,7 @@
         ;; a bare .eval does NOT bind the per-block sink, so the bridge refuses
         (expect (re-find #"no active capture sink"
                          (ev pctx
-                             (str "\ntry:\n" "    vis_attach_bytes('x', 'y.txt')\n"
+                             (str "\ntry:\n" "    vis_attach(b'x', 'y.txt')\n"
                                   "    _r = 'NO-RAISE'\n" "except Exception as e:\n"
                                   "    _r = str(e)\n" "_r")))))))
 
@@ -408,7 +408,7 @@
   "Regression (turn 28/29): an artifact produced by a tool running INSIDE
    `await gather(...)` executes on a gather-executor virtual thread, not the
    block thread. `bound-fn*` must convey the per-block `*attachment-sink*` to
-   that thread so `vis_attach_bytes` still lands in the block's `:attachments`
+   that thread so `vis_attach` still lands in the block's `:attachments`
    — no silent drop, no nil sink."
   (it "captures every gather-produced artifact into the block's :attachments"
       (let
@@ -420,7 +420,7 @@
 
          out
          (try (block pctx
-                     (str "async def mk(name):\n" "    return vis_attach_bytes('payload', name)\n"
+                     (str "async def mk(name):\n" "    return vis_attach(b'payload', name)\n"
                           "r = await gather(mk('a.txt'), mk('b.txt'), mk('c.txt'))\n"
                           "print(len(r))\n"))
               (finally (.shutdownNow ex)))
@@ -580,20 +580,20 @@
    multimodal history cannot undo: an image RE-UPLOADED in full on every later
    request), \"model\" rides the request and is never painted."
   (it "defaults to audience \"both\" and paints the inline image fence"
-      (let [out (attach-out "vis_attach_bytes(b'PNGDATA', 'chart.png', media_type='image/png')\n")]
+      (let [out (attach-out "vis_attach(b'PNGDATA', 'chart.png', media_type='image/png')\n")]
         (expect (nil? (:error out)))
         (expect (= 1 (count (:attachments out))))
         (expect (= "chart.png" (:filename (:row out))))
         (expect (= "both" (:audience (:row out))))))
   (it "stamps audience \"user\" so the send-time gate keeps the bytes off the wire"
       (let
-        [out (attach-out (str "vis_attach_bytes(b'PNGDATA', 'chart.png', media_type='image/png', "
+        [out (attach-out (str "vis_attach(b'PNGDATA', 'chart.png', media_type='image/png', "
                               "audience='user')\n"))]
         (expect (nil? (:error out)))
         (expect (= "user" (:audience (:row out))))))
   (it "says NOTHING to the human for audience \"model\""
       (let
-        [out (attach-out (str "vis_attach_bytes(b'PNGDATA', 'chart.png', media_type='image/png', "
+        [out (attach-out (str "vis_attach(b'PNGDATA', 'chart.png', media_type='image/png', "
                               "audience='model', label='for my own eyes')\n"))]
         (expect (nil? (:error out)))
         (expect (= 1 (count (:attachments out))))
@@ -604,7 +604,7 @@
   (it "refuses an audience outside the closed vocabulary"
       (let
         [out (attach-out (str "try:\n"
-                              "    vis_attach_bytes(b'PNGDATA', 'c.png', media_type='image/png', "
+                              "    vis_attach(b'PNGDATA', 'c.png', media_type='image/png', "
                               "audience='everyone')\n"
                               "except ValueError as e:\n"
                               "    print('RAISED', 'both' in str(e))\n"))]
@@ -691,7 +691,7 @@
         (expect (re-find #"(?i)next VERSION" descr))
         (expect (re-find #"(?i)different document" descr)))
       (let [pctx (ctx-with-root (temp-root))]
-        (doseq [n ["vis_attach" "vis_attach_bytes"]]
+        (doseq [n ["vis_attach"]]
           ;; The rule is on the callable's own docstring...
           (expect (true? (ev pctx (str "'SAME DOCUMENT, SAME NAME' in " n ".__doc__")))
                   (str n ".__doc__ must state the same-name rule"))

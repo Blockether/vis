@@ -1,4 +1,4 @@
-# vis sandbox attachment shim: vis_attach / vis_attach_bytes.
+# vis sandbox attachment shim: vis_attach.
 #
 # A tool that PRODUCES an artifact (image/csv/json/pdf/wav/...) persists it as a
 # durable iteration attachment (a session_iteration_attachment DB row) so it
@@ -250,18 +250,7 @@ def __vis_install_attach__():
             return "user"
         return aud
 
-    def vis_attach_bytes(
-        data,
-        filename,
-        kind=None,
-        media_type=None,
-        label=None,
-        audience="both",
-    ):
-        if isinstance(data, str):
-            data = data.encode("utf-8")
-        data = bytes(data)
-        name = str(filename) if filename else "artifact"
+    def __vis_attach_data(data, name, kind, media_type, label, audience):
         mt = media_type or __vis_guess_media_type(name, data)
         knd = kind or __vis_kind_for(mt)
         cap = __vis_caption(label)
@@ -292,45 +281,42 @@ def __vis_install_attach__():
         return None
 
     def vis_attach(
-        path,
+        source,
+        filename=None,
         kind=None,
         media_type=None,
-        filename=None,
         label=None,
         audience="both",
     ):
-        if hasattr(path, "savefig"):
+        # ONE attach verb, three shapes of source: a confined PATH, in-memory
+        # BYTES (a str is a path, so encode text you produced), or anything with
+        # `savefig` - the matplotlib idiom `vis_attach(fig, 'plot.png')`.
+        if isinstance(source, (bytes, bytearray, memoryview)):
+            return __vis_attach_data(
+                bytes(source),
+                str(filename) if filename else "artifact",
+                kind,
+                media_type,
+                label,
+                audience,
+            )
+        if hasattr(source, "savefig"):
             import io
 
-            # Support the natural matplotlib idiom `vis_attach(fig, 'plot.png')`
-            # without requiring a sandbox-visible temporary file.
             buf = io.BytesIO()
-            path.savefig(buf, format="png")
-            if (
-                filename is None
-                and isinstance(kind, str)
-                and kind.lower().endswith(".png")
-            ):
-                filename, kind = kind, None
-            return vis_attach_bytes(
+            source.savefig(buf, format="png")
+            return __vis_attach_data(
                 buf.getvalue(),
-                filename or "figure.png",
-                kind=kind,
-                media_type=media_type,
-                label=label,
-                audience=audience,
+                str(filename) if filename else "figure.png",
+                kind,
+                media_type,
+                label,
+                audience,
             )
-        with open(path, "rb") as f:
+        with open(source, "rb") as f:
             data = f.read()
-        name = filename or _os.path.basename(str(path)) or "artifact"
-        return vis_attach_bytes(
-            data,
-            name,
-            kind=kind,
-            media_type=media_type,
-            label=label,
-            audience=audience,
-        )
+        name = filename or _os.path.basename(str(source)) or "artifact"
+        return __vis_attach_data(data, str(name), kind, media_type, label, audience)
 
     def vis_attachments():
         lst = globals().get("__vis_list_attachments__")
@@ -444,26 +430,7 @@ def __vis_install_attach__():
         "kind, media_type and filename override inference. label is a one-line "
         "caption printed with the artifact, so a series of shots says which shot "
         "is which. Returns None: call directly, do not print. Use "
-        "vis_attachments() / vis_attachment(id) for metadata and "
-        "vis_attach_bytes() for in-memory bytes/str."
-    )
-    vis_attach_bytes.__doc__ = (
-        "Persist bytes (or a UTF-8 str) as a durable attachment without a "
-        "temporary file; filename drives media-type inference. SAME DOCUMENT, "
-        "SAME NAME: re-attach a revision under the filename you already used "
-        "and it becomes the next VERSION of that artifact - keep one thread of "
-        "work, do not invent report_v2.csv. ATTACH ONE OR TWO "
-        "ARTIFACTS PER TURN and COMPOSE many images into a single sheet rather "
-        "than attaching each one. audience is 'both' (human and model), 'user' "
-        "(human only, never in the model's context) or 'model' (model only, "
-        "nothing painted for the human). Name it *.csv/*.tsv and it attaches as a live "
-        "TABLE the transcript paints as a grid, with the rows kept out of the "
-        "model's context; name it *.pdf/*.html and it attaches as a DOCUMENT "
-        "for the HUMAN only (a card that opens it; HTML renders in a sandboxed "
-        "frame), never as an image, and audience='model' is refused. "
-        "label is a one-line caption printed with the artifact. "
-        "Returns None: call directly, do not print. Use vis_attachments() / "
-        "vis_attachment(id) for metadata."
+        "vis_attachments() / vis_attachment(id) for metadata."
     )
     vis_attachment_versions.__doc__ = (
         "Every VERSION of one artifact, oldest first. Attaching the same "
@@ -489,7 +456,6 @@ def __vis_install_attach__():
 
     g = globals()
     g["vis_attach"] = vis_attach
-    g["vis_attach_bytes"] = vis_attach_bytes
     g["vis_attachments"] = vis_attachments
     g["vis_attachment"] = vis_attachment
     g["vis_attachment_versions"] = vis_attachment_versions
@@ -501,12 +467,13 @@ def __vis_install_attach__():
 
     docs = g.setdefault("__vis_docs__", {})
     docs["vis_attach"] = (
-        "vis_attach(path, kind=None, media_type=None, filename=None, label=None, "
+        "vis_attach(source, filename=None, kind=None, media_type=None, label=None, "
         "audience='both'): persist a produced file as a durable "
         "attachment across restarts. SAME DOCUMENT, SAME NAME - a revision of an "
         "artifact you already attached goes back under its own filename and "
         "becomes its next VERSION, never report_v2.png beside report.png; a new "
-        "name is for a genuinely different document. "
+        "name is for a genuinely different document. source is a confined PATH, "
+        "in-memory BYTES (name them with filename), or a matplotlib figure. "
         "ATTACH ONE OR TWO ARTIFACTS PER TURN - a "
         "human cannot review a filmstrip: COMPOSE many images into ONE sheet (a "
         "matplotlib subplot grid, a single montage PNG) and attach that, never N "
@@ -522,23 +489,6 @@ def __vis_install_attach__():
         "label is a one-line caption "
         "printed with the artifact. Returns None; call, do not print. Use "
         "vis_attachments() for metadata."
-    )
-    docs["vis_attach_bytes"] = (
-        "vis_attach_bytes(data, filename, kind=None, media_type=None, label=None, "
-        "audience='both'): persist bytes/str as a durable "
-        "attachment. SAME DOCUMENT, SAME NAME - re-attaching a filename you "
-        "already used stores the next VERSION of that artifact, so keep one "
-        "continuous thread per document. "
-        "ATTACH ONE OR TWO ARTIFACTS PER TURN and COMPOSE many images "
-        "into ONE sheet instead of attaching each one. audience routes it to "
-        "'both', 'user' (human only, out of the model's context) or 'model' "
-        "(model only, nothing painted for the human). "
-        "A *.csv/*.tsv filename attaches as a "
-        "live TABLE in the transcript with its rows out of context; a *.pdf or "
-        "*.html filename attaches as a DOCUMENT for the HUMAN only, never an "
-        "image, and audience='model' is refused. label is a "
-        "one-line caption printed with the artifact. Returns None; call, do not "
-        "print. Use vis_attachments() for metadata."
     )
     docs["vis_reinspect_attachment"] = (
         "vis_reinspect_attachment(id, detail='auto'): queue this session's persisted "

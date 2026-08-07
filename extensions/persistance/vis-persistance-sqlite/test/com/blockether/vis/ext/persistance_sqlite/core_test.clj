@@ -3265,7 +3265,7 @@
          s
          {:session-turn-id tid
           :status :done
-          :code "vis_attach_bytes(png, 'fig.png', audience='user')"
+          :code "vis_attach(png, 'fig.png', audience='user')"
           :attachments
           [{:tool-call-id "call_A"
             :media-type "image/png"
