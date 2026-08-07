@@ -446,6 +446,7 @@
              :kind "image"
              :size 7
              :position 0
+             :turn-id "turn-1"
              :tool-call-id "call-1"
              :iteration-id "it1"}])
    :read (fn [id]
@@ -486,16 +487,17 @@
          out
          (binding [mpl-capture/*attachment-reader* (fake-reader)]
            (block pctx
-                  (str "a = vis_attachments()[0]\n"
-                       "d = vis_attachment('a1')\n" "r = vis_read_attachment('a1')\n"
-                       "print(a['id'], a['media_type'], a['tool_call_id'], a['iteration_id'])\n"
+                  (str "a = vis_attachments()[0]\n" "d = vis_attachment('a1')\n"
+                       "r = vis_read_attachment('a1')\n"
+                       "print(a['id'], a['media_type'], a['tool_call_id'], a['iteration_id'],\n"
+                       "      a['turn_id'])\n"
                        "print(type(r).__name__, r.decode('utf-8'), d['filename'], d['size'])\n")))
 
          so
          (str (:stdout out))]
 
         (expect (nil? (:error out)))
-        (expect (re-find #"a1 image/png call-1 it1" so))
+        (expect (re-find #"a1 image/png call-1 it1 turn-1" so))
         (expect (re-find #"bytes PNGDATA chart.png 7" so))))
   (it
     "queues a persisted image for one model reinspection without duplicating it"

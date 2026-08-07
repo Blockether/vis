@@ -523,6 +523,37 @@
                      (java.time.Duration/ofMillis (long GUEST_INTERRUPT_GRACE_MS))))
        (catch Throwable _ nil)))
 
+(defn attachment-descriptor
+  "One `session_attachment` row as the compact DESCRIPTOR `vis_attachments()` and
+   `vis_attachment(id)` hand the model: identity, provenance and shape, and never
+   any bytes.
+
+   PROVENANCE STARTS AT THE TURN. Every row carries `session_turn_soul_id`, so
+   every descriptor carries `:turn-id` — a user image and a tool artifact are
+   placed the same way and a rail can be grouped by turn without a second
+   lookup. `:iteration-id` / `:tool-call-id` are the FINER grain only a tool
+   artifact has, so a user image omits both instead of carrying nils that say
+   nothing."
+  [a]
+  (cond->
+    {:id (:id a)
+     :source (:source a)
+     :filename (:filename a)
+     ;; VERSION: same filename in this session = one artifact
+     ;; iterated. The rail is a set of version CHAINS, not loose files.
+     :version (:version a)
+     :media-type (:media-type a)
+     :kind (:kind a)
+     :size (:size a)
+     :position (:position a)
+     :turn-id (:turn-soul-id a)
+     :audience (attachments/attachment-audience a)}
+    (= :tool (:source a))
+    (assoc :iteration-id
+      (:iteration-id a) :tool-call-id
+      (:tool-call-id a))))
+
+
 (defn- run-python-code
   "Run an agent code block through the embedded GraalPy sandbox. Wraps the
    worker-future + cancellation + tool-event/render sinks + `*1`/`*e` recovery
@@ -549,28 +580,7 @@
 
        (when (and d sid)
          {:list (fn []
-                  (try (->> (persistance/db-list-session-attachments d sid)
-                            (mapv
-                              (fn [a]
-                                (cond->
-                                  {:id (:id a)
-                                   :source (:source a)
-                                   :filename (:filename a)
-                                   ;; VERSION: same filename in this session =
-                                   ;; one artifact iterated. The rail is a set
-                                   ;; of version CHAINS, not loose files.
-                                   :version (:version a)
-                                   :media-type (:media-type a)
-                                   :kind (:kind a)
-                                   :size (:size a)
-                                   :position (:position a)
-                                   :tool-call-id (:tool-call-id a)
-                                   :audience (attachments/attachment-audience a)}
-                                  (= :tool (:source a))
-                                  (assoc :iteration-id (:iteration-id a))
-
-                                  (= :user (:source a))
-                                  (assoc :turn-id (:turn-soul-id a))))))
+                  (try (mapv attachment-descriptor (persistance/db-list-session-attachments d sid))
                        (catch Throwable _ [])))
           :read (fn [id]
                   ;; Never turn a UUID into cross-session read authority: prove it

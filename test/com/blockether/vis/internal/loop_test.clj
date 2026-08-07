@@ -6064,3 +6064,46 @@
   (it "wires reload-router! as the providers router-rebuild hook"
       (expect (identical? (providers/router-rebuild-hook-val)
                           lp/reload-router!))))
+
+;; Regression: `vis_attachments()` located a TOOL artifact by its iteration
+;; alone, so a descriptor for anything the model produced carried no turn id at
+;; all — only a user image got `:turn-id` — and nothing on the rail could be
+;; grouped by the turn it belongs to without a second lookup.
+(defdescribe
+  attachment-descriptor-test
+  "Every `session_attachment` row carries `session_turn_soul_id`, so EVERY
+   descriptor carries `:turn-id`. The iteration / tool-call grain is the FINER
+   provenance a tool artifact also has, and a user image omits it rather than
+   carrying nils."
+  (it "gives a tool artifact its turn id, not only its iteration"
+      (let [d (lp/attachment-descriptor {:id "a1"
+                                         :source :tool
+                                         :filename "chart.png"
+                                         :version 2
+                                         :media-type "image/png"
+                                         :kind "image"
+                                         :size 7
+                                         :position 0
+                                         :turn-soul-id "turn-1"
+                                         :iteration-id "it-1"
+                                         :tool-call-id "call-1"
+                                         :base64 "PNGDATA"})]
+        (expect (= "turn-1" (:turn-id d)))
+        (expect (= "it-1" (:iteration-id d)))
+        (expect (= "call-1" (:tool-call-id d)))
+        (expect (= 2 (:version d)))
+        ;; A descriptor is metadata: the payload never rides along.
+        (expect (nil? (:base64 d)))))
+  (it "gives a user image the same turn id and no tool grain"
+      (let [d (lp/attachment-descriptor {:id "u1"
+                                         :source :user
+                                         :filename "photo.png"
+                                         :version 1
+                                         :media-type "image/png"
+                                         :kind "image"
+                                         :size 3
+                                         :position 0
+                                         :turn-soul-id "turn-1"})]
+        (expect (= "turn-1" (:turn-id d)))
+        (expect (not (contains? d :iteration-id)))
+        (expect (not (contains? d :tool-call-id))))))

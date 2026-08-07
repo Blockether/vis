@@ -548,7 +548,8 @@ def __vis_install_attach__():
     docs["vis_attachments"] = (
         "vis_attachments(): every artifact of THIS session as a list of "
         "DESCRIPTOR dicts - id, filename, version, media_type, kind, size, "
-        "audience, position, tool_call_id, iteration_id - and never any bytes. "
+        "audience, position, turn_id, plus tool_call_id and iteration_id on a "
+        "tool artifact - and never any bytes. "
         "Attaching the same filename again bumps version instead "
         "of creating a second artifact. Pass an id to vis_attachment(id) for one "
         "descriptor, or to vis_read_attachment(id) for that artifact's bytes."
