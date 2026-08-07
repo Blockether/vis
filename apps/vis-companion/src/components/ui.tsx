@@ -338,17 +338,22 @@ export function Modal({
 }) {
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/60 sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))]"
+      className="fixed inset-0 z-50 flex items-stretch justify-center bg-ink/85 backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))]"
       role="presentation"
       onClick={onDismiss}
     >
       {/* ONE SIZE. On the phone a dialog IS the screen — full bleed, full height,
           so a list inside it gets every pixel the glass has and the verbs at its
           foot are always in the same place. From `sm:` up every dialog is the same
-          box (`sm:max-w-lg`, `DIALOG_DESKTOP_HEIGHT`): a question and a file browser
-          that open over the same screen used to be two different rectangles. */}
+          box (`sm:max-w-xl`, `DIALOG_DESKTOP_HEIGHT`): a question and a file browser
+          that open over the same screen used to be two different rectangles.
+
+          The scrim is application settings' own — ink at 85% under a 2px blur, faded
+          in rather than snapped on. That dialog was hand-rolled beside this one and
+          was the better looking of the two, so its glass moved IN HERE and the copy
+          moved out; `sm:max-w-xl` is its width, for the same reason. */}
       <div
-        className={`flex w-full flex-col sm:max-w-lg ${DIALOG_DESKTOP_HEIGHT}`}
+        className={`flex w-full flex-col sm:max-w-xl ${DIALOG_DESKTOP_HEIGHT}`}
         role="presentation"
         onClick={(event) => event.stopPropagation()}
       >

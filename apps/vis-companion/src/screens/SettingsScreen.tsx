@@ -69,7 +69,7 @@ import {
   setThemePref,
 } from "../lib/storage";
 import { BUNDLED_THEMES } from "../lib/palettes";
-import { Banner, Button, DialogHeader, Input } from '../components/ui';
+import { Banner, Button, DialogFrame, Input, Modal } from '../components/ui';
 import {
   REACH_HINT,
   REACH_LABEL,
@@ -221,25 +221,14 @@ export function GatewaySettingsDialog({
         : { dot: "○", label: "Saved", tone: "text-dialog-hint" };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-ink/85 p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:p-5"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <section
-        className="flex h-[92%] max-h-[calc(100%-env(safe-area-inset-top))] w-full max-w-3xl flex-col overflow-hidden border-x border-t border-dialog-edge bg-panel shadow-none transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-6 starting:opacity-0 motion-reduce:transition-none sm:h-auto sm:max-h-full sm:border sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:starting:translate-y-2"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="gateway-settings-title"
+    // The app's ONE dialog, same as every other layer that opens over a screen.
+    <Modal onDismiss={onClose}>
+      <DialogFrame
+        title="Machine settings"
+        subtitle={gateway.url}
+        onClose={onClose}
+        footer={`${settingCount} ${settingCount === 1 ? "option" : "options"}`}
       >
-        <DialogHeader
-          titleId="gateway-settings-title"
-          title="Machine settings"
-          subtitle={gateway.url}
-          closeLabel="Close machine settings"
-          onClose={onClose}
-        />
 
         <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
           <p className="text-pretty text-justify text-ui text-dialog-hint">
@@ -251,7 +240,7 @@ export function GatewaySettingsDialog({
         {/* Groups run FULL BLEED and are divided by one rule, so the dialog's own
             frame is the only box on the screen. A banner still needs air, so it
             brings its own rather than padding every group to get it. */}
-        <div className="min-h-0 flex-1 touch-pan-y divide-y divide-dialog-edge overflow-x-hidden overflow-y-auto overscroll-contain">
+        <div className="touch-pan-y divide-y divide-dialog-edge overflow-x-hidden">
           {err && (
             <div className="p-3 sm:p-4">
               <Banner kind="err">{err}</Banner>
@@ -511,13 +500,8 @@ export function GatewaySettingsDialog({
           )}
         </div>
 
-        <footer className="flex shrink-0 items-center border-t border-dialog-edge bg-panel-2 px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] font-mono text-chip text-dialog-hint sm:px-4 sm:py-2">
-          <span>
-            {settingCount} {settingCount === 1 ? "option" : "options"}
-          </span>
-        </footer>
-      </section>
-    </div>
+      </DialogFrame>
+    </Modal>
   );
 }
 
@@ -1209,26 +1193,17 @@ export function ApplicationSettingsDialog({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-ink/85 p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:p-5"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <section
-        className="flex h-[92%] max-h-[calc(100%-env(safe-area-inset-top))] w-full max-w-xl flex-col overflow-hidden border-x border-t border-dialog-edge bg-panel shadow-none transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-6 starting:opacity-0 motion-reduce:transition-none sm:h-auto sm:max-h-full sm:border sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:starting:translate-y-2"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="application-settings-title"
+    // The app's ONE dialog: `Modal` + `DialogFrame`, the same outer component
+    // "Manage projects" and every ask already open in. This screen used to hand-roll
+    // its own scrim and its own `<section>` beside them — two dialogs, two heights,
+    // two entrances. The scrim it had was the better one, so it moved INTO `Modal`
+    // and the copy here is gone rather than reconciled.
+    <Modal onDismiss={onClose}>
+      <DialogFrame
+        title="Application settings"
+        subtitle="This device"
+        onClose={onClose}
       >
-        <DialogHeader
-          titleId="application-settings-title"
-          title="Application settings"
-          subtitle="This device"
-          closeLabel="Close application settings"
-          onClose={onClose}
-        />
-
         <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
           <p className="text-pretty text-justify text-ui text-dialog-hint">
             These choices affect this copy of Vis only. They are never sent to a
@@ -1236,7 +1211,7 @@ export function ApplicationSettingsDialog({
           </p>
         </div>
 
-        <div className="min-h-0 flex-1 divide-y divide-dialog-edge overflow-y-auto overscroll-contain">
+        <div className="divide-y divide-dialog-edge">
           {err && (
             <div className="p-3 sm:p-4">
               <Banner kind="err">{err}</Banner>
@@ -1348,8 +1323,8 @@ export function ApplicationSettingsDialog({
             </button>
           </SettingsPanel>
         </div>
-      </section>
-    </div>
+      </DialogFrame>
+    </Modal>
   );
 }
 

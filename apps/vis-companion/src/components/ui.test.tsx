@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import uiSource from './ui.tsx?raw';
+import settingsSource from '../screens/SettingsScreen.tsx?raw';
 
 import { MACHINE_COLORS } from '../lib/machine-colors';
 import {
@@ -612,7 +613,7 @@ describe('Modal and DialogFrame as a phone sheet', () => {
   const source = uiSource;
 
   it('lets the sheet take the whole glass on a phone and centres it from sm: up', () => {
-    expect(source).toContain('flex items-stretch justify-center bg-black/60');
+    expect(source).toContain('flex items-stretch justify-center bg-ink/85');
     expect(source).toContain('sm:items-center');
     // No padding at all on the phone: a sheet touches all four edges.
     expect(source).toContain('sm:pb-[max(1rem,env(safe-area-inset-bottom))]');
@@ -620,9 +621,10 @@ describe('Modal and DialogFrame as a phone sheet', () => {
 
   it('gives every dialog ONE desktop box and a full-height phone sheet', () => {
     expect(source).toContain("DIALOG_DESKTOP_HEIGHT = 'sm:h-[min(38rem,100%)]'");
-    expect(source).toContain('flex w-full flex-col sm:max-w-lg ${DIALOG_DESKTOP_HEIGHT}');
+    expect(source).toContain('flex w-full flex-col sm:max-w-xl ${DIALOG_DESKTOP_HEIGHT}');
     // One width, so a question and a file browser are the same rectangle.
     expect(source).not.toContain('sm:max-w-md');
+    expect(source).not.toContain('sm:max-w-lg');
   });
 
   it('slides the frame in from below by its own height, and only tips in on desktop', () => {
@@ -638,5 +640,28 @@ describe('Modal and DialogFrame as a phone sheet', () => {
     expect(html).toContain('sm:pb-0');
     // A column that fills its parent, so the body scrolls and the footer docks.
     expect(html).toContain('flex min-h-0 flex-1 flex-col');
+  });
+});
+
+// Regression, user report ("the cog dialog looks slightly better than manage
+// projects — make manage projects use the same outer component, canonicalize"):
+// application settings hand-rolled its own scrim and its own `<section>` beside
+// `Modal`/`DialogFrame`, so the app had two dialogs with two heights, two widths
+// and two entrances. There is one now, and it wears the better glass of the two.
+describe('one outer dialog component', () => {
+  const settings = settingsSource;
+
+  it('opens application settings in Modal + DialogFrame like every other dialog', () => {
+    expect(settings).toContain('<Modal onDismiss={onClose}>');
+    expect(settings).toContain('<DialogFrame');
+    // No second scrim, no second dialog box, no second close button.
+    expect(settings).not.toContain('fixed inset-0 z-50');
+    expect(settings).not.toContain('aria-modal="true"');
+    expect(settings).not.toContain('max-h-[calc(100%-env(safe-area-inset-top))]');
+  });
+
+  it('keeps the glass that dialog had, in the one Modal', () => {
+    expect(uiSource).toContain('bg-ink/85 backdrop-blur-[2px]');
+    expect(uiSource).toContain('starting:opacity-0');
   });
 });
