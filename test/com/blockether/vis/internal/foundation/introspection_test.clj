@@ -42,7 +42,6 @@
                   session-state-doc
                   "await session_state(session_id=None)  # current session by default"))
         (expect (str/includes? session-state-doc "\"usage\""))
-        (expect (str/includes? session-state-doc "\"folds\""))
         (expect (re-find #"tool rows overlap" session-state-doc))
         (expect (re-find #"recovery path for raw folded current-session" session-state-doc))
         (expect (re-find #"does not undo fold intents or restore them" session-state-doc))
@@ -60,23 +59,7 @@
          (inspect-data {:session-id "current-session" :db-info nil} nil)]
 
         (expect (= "current-session" (:session-id data)))
-        (expect (contains? data :usage))))
-  (it "exposes the current session's ordered fold history without putting it in the prompt context"
-      (let
-        [inspect-data
-         @#'introspection/foundation-inspect-data
-
-         history
-         [{"scopes" #{"t1/i1"} "gist" "first" "at_turn" 2}
-          {"scopes" #{"t1"} "gist" "broader" "at_turn" 3}]
-
-         data
-         (inspect-data {:session-id "current-session"
-                        :db-info nil
-                        :ctx-atom (atom {"session_fold_history" history})}
-                       nil)]
-
-        (expect (= history (:folds data))))))
+        (expect (contains? data :usage)))))
 
 (defdescribe
   session-usage-ledger-test

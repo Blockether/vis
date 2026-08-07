@@ -64,8 +64,13 @@
   (it
     "keeps the sectioned core contract explicit and non-contradictory"
     (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-      ;; Typed fold instructions cost a small fixed amount; keep the core compact.
-      (expect (< (count text) 5400))
+      ;; Context safety is worth a small fixed prompt cost; keep the whole core below 4.7k.
+      ;; The ratchet must never squeeze out §7's teardown rule again: compressing it to a
+      ;; bare "finish clean" is how sessions started leaking REPLs. The budget moved 4.5k →
+      ;; 4.7k exactly once, when REPL-first reproduction and the "unverified until a test
+      ;; covers it" rule landed: those rules pay for themselves, and paying for them by
+      ;; shaving other rules' wording is the squeeze this lock exists to stop.
+      (expect (< (count text) 4700))
       (let
         [steps (mapv #(str/index-of text %)
                      ["`grep` locates unknown code" "`struct_index` every known file"
@@ -109,16 +114,12 @@
           "rerun after the fix" "unverified until a test covers it" "BATCH every tool"
           "Write only files the task asked" "Commit, push, publish" "Treat context as a budget"
           "at most two targeted" "named unresolved decision blocks the edit"
-          "no repeated search/read" "Fold settled work into typed data" "recorded thinking"
-          "in-flight hidden reasoning remain" "When ready, patch first"
-          "Before an unavoidable fold, checkpoint"]]
-        (expect (str/includes? text required)))
-      (doseq
-        [required ["exact paths; confirm reduction" "Fold only settled steps"
-                   "completed-task/unrelated-task boundary" "decision/change" "files/symbols"
-                   "verification" "risks/follow-up" "dirty/clean state" "audit/recovery"
-                   "fresh reasoning" "new task + only the relevant checkpoint"
-                   "Do not auto-fold an immediate related follow-up"]]
+          "no repeated search/read" "Fold obsolete settled work" "one broad `through`/range fold"
+          "When edit-ready and headroom permits, patch before folding"
+          "Before unavoidable folds, checkpoint"
+          "paths/symbols, hypothesis, edit/test, and dirty files"
+          "decisions, verification, recovery IDs" "exact paths; confirm reduction"
+          "Fold only settled steps through the last completed scope"]]
         (expect (str/includes? text required)))
       ;; Regression, user report: blanket resource cleanup stopped a healthy dev server
       ;; that the user had explicitly asked the agent to open and keep available.
@@ -148,15 +149,6 @@
                   ;; op `wait`), never the tool-local prohibition.
                   "`time.sleep`" "`asyncio.sleep`" "poll in Python"]]
         (expect (not (str/includes? text surplus))))))
-  (it "requires typed fold records and derived Markdown breadcrumbs"
-      (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-        (doseq
-          [required ["Fold settled work into typed data" "`goal`" "`previous_goal`" "`confirmed`"
-                     "`exploration_dead_ends`" "`worth_exploring`" "`hypothesis`"
-                     "{text, references}" "Markdown is derived only"]]
-          (expect (str/includes? text required)))
-        (expect (not (str/includes? text "## Next")))
-        (expect (not (str/includes? text "Previous state")))))
   (it
     "advertises exact model-facing Python capabilities, never internal shim ids"
     (let

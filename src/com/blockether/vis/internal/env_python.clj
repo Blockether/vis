@@ -1118,7 +1118,7 @@
     (set-python-binding-doc!
       ctx
       'session-fold
-      "session_fold(target, gist=None) -> str. Collapse SETTLED steps: prior turns and the current turn only through its last completed iteration; live/future steps cannot fold. Targets: step/turn ids or through/from/to/since selectors; an id may be a compact anchor spelled exactly as the ledger prints it (`t3/i89-i141`, `t3/i1-i2,i5`, `t2-t4/*`, `t*`). Folding replaces eligible settled transcript text — including recorded thinking and tool results — in later model requests with the gist. It changes rendering, not storage, and cannot erase an in-flight model's hidden reasoning; there is no destructive unfold command. `ntr` never stores a `session_fold` receipt. Recover a folded result with its `# saved:` coordinate, `ntr[\"tN/iM/fK\"]`; if absent, use `s = await session_state()` and filter `['transcript']['turns'][...]['iterations'][...]['blocks']`. A broader newer fold supersedes fully covered breadcrumbs; equal scope keeps newer. Partial overlaps remain separate.")))
+      "session_fold(target, gist=None) -> str. Collapse SETTLED steps: prior turns and the current turn only through its last completed iteration; live/future steps cannot fold. Targets: step/turn ids or through/from/to/since selectors. Folding changes rendering, not storage; there is no destructive unfold command. `ntr` never stores a `session_fold` receipt. Recover a folded result with its `# saved:` coordinate, `ntr[\"tN/iM/fK\"]`; if absent, use `s = await session_state()` and filter `['transcript']['turns'][...]['iterations'][...]['blocks']`. A broader newer fold supersedes fully covered breadcrumbs; equal scope keeps newer. Partial overlaps remain separate.")))
 
 
 (def ^:private posix-compat-shim-src

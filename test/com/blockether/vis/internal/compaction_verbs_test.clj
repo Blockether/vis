@@ -25,22 +25,7 @@
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(def ^:private raw-compaction-verbs (var-get #'lp/compaction-verbs))
-
-;; Existing selector/card cases predate typed content. Keep them focused on selector
-;; behavior; typed public-call coverage below exercises the real bound verb.
-(defn- compaction-verbs
-  [ctx-atom & [session-rebase-atom]]
-  (let
-    [verbs
-     (raw-compaction-verbs ctx-atom session-rebase-atom)
-
-     fold
-     (get verbs 'session-fold)]
-
-    (assoc verbs
-      'session-fold (fn [target & [content]]
-                      (fold target (if (string? content) {"goal" content} (or content {})))))))
+(def ^:private compaction-verbs (var-get #'lp/compaction-verbs))
 
 (def ^:private rebase-session-context! (var-get #'lp/rebase-session-context!))
 
@@ -84,62 +69,213 @@
 
 (defdescribe
   compaction-verbs-python-test
-  ;; Regression, issue #fold-typed-content: a fold used to persist one opaque gist
-  ;; string, losing goal changes and the evidence behind the recorded conclusion.
+  (it "session_fold(list, gist): records a \"scopes\" intent + returns a visible confirmation"
+      (let
+        [[ca ev]
+         (with-verbs)
+
+         out
+         (ev "session_fold([\"t1/i2\", \"t1/i3\"], \"explored auth\")")]
+
+        (expect
+          (= [{"scopes" #{"t1/i2" "t1/i3"} "issued_turn" 99 "at_turn" 99 "gist" "explored auth"}]
+             (get @ca "session_summaries")))
+        (expect (re-find #"^folded " out))
+        (expect (re-find #"explored auth" out))))
+  (it "normalizes a provider's JSON-encoded string target before selecting scopes"
+      (let
+        [[ca ev]
+         (with-verbs)
+
+         out
+         (ev "session_fold('[\"t1/i2\", \"t1/i3\"]', \"encoded target\")")]
+
+        (expect
+          (= [{"scopes" #{"t1/i2" "t1/i3"} "issued_turn" 99 "at_turn" 99 "gist" "encoded target"}]
+             (get @ca "session_summaries")))
+        (expect (str/includes? out "folded t1/i2, t1/i3"))))
+  (it "session_fold excludes an active skill scope and folds the remaining target"
+      (let
+        [[ca ev]
+         (with-verbs)
+
+         _
+         (swap! ca assoc
+           "engine_iter_universe" ["t1/i1" "t1/i2"]
+           "engine_protected_iter_scopes" #{"t1/i1"})
+
+         out
+         (ev "session_fold([\"t1/i1\", \"t1/i2\"], \"trim\")")]
+
+        (expect (= [{"scopes" #{"t1/i2"} "issued_turn" 99 "at_turn" 99 "gist" "trim"}]
+                   (get @ca "session_summaries")))
+        (expect (str/includes? out "kept active skill t1/i1"))))
+  (it "session_fold records nothing when every selected scope is an active skill"
+      (let
+        [[ca ev]
+         (with-verbs)
+
+         _
+         (swap! ca assoc "engine_iter_universe" ["t1/i1"] "engine_protected_iter_scopes" #{"t1/i1"})
+
+         out
+         (ev "session_fold([\"t1/i1\"], \"trim\")")]
+
+        (expect (nil? (get @ca "session_summaries")))
+        (expect (str/includes? out "nothing else to fold"))))
+  (it "session_fold({\"through\": …}): the options DICT marshals to a \"through\" cursor"
+      (let
+        [[ca ev]
+         (with-verbs)
+
+         out
+         (ev "session_fold({\"through\": \"t1/i5\"}, \"early reads\")")]
+
+        (expect (= [{"through" "t1/i5" "issued_turn" 99 "at_turn" 99 "gist" "early reads"}]
+                   (get @ca "session_summaries")))
+        (expect (re-find #"through t1/i5" out))))
+  ;; A foreign ProxyExecutable is positional-only, so the sandbox folds Python
+  ;; **kwargs into ONE trailing dict for the DIRECT verbs and the verb unfolds it.
+  ;; All three keyword spellings must bind exactly like the positional call.
+  (it "session_fold(dict, gist=…): a trailing KEYWORD gist binds like the positional one"
+      (let
+        [[ca ev]
+         (with-verbs)
+
+         out
+         (ev "session_fold({\"through\": \"t1/i5\"}, gist=\"early reads\")")]
+
+        (expect (= [{"through" "t1/i5" "issued_turn" 99 "at_turn" 99 "gist" "early reads"}]
+                   (get @ca "session_summaries")))
+        (expect (re-find #"through t1/i5" out))
+        (expect (re-find #"early reads" out))))
+  (it "session_fold(target=…, gist=…): a fully KEYWORD call selects and summarizes"
+      (let
+        [[ca ev]
+         (with-verbs)
+
+         out
+         (ev "session_fold(target=[\"t1/i2\", \"t1/i3\"], gist=\"explored auth\")")]
+
+        (expect
+          (= [{"scopes" #{"t1/i2" "t1/i3"} "issued_turn" 99 "at_turn" 99 "gist" "explored auth"}]
+             (get @ca "session_summaries")))
+        (expect (re-find #"explored auth" out))))
+  (it "session_fold(through=…, gist=…): selector KEYWORDS spread at the top level"
+      (let
+        [[ca ev]
+         (with-verbs)
+
+         out
+         (ev "session_fold(through=\"t1/i5\", gist=\"early reads\")")]
+
+        (expect (= [{"through" "t1/i5" "issued_turn" 99 "at_turn" 99 "gist" "early reads"}]
+                   (get @ca "session_summaries")))
+        (expect (re-find #"through t1/i5" out))))
+  (it "session_fold({\"from\": …, \"to\": …}): a WINDOW dict marshals to from/to keys"
+      (let
+        [[ca ev]
+         (with-verbs)
+
+         out
+         (ev "session_fold({\"from\": \"t1/i2\", \"to\": \"t1/i4\"}, \"middle\")")]
+
+        (expect (= [{"from" "t1/i2" "to" "t1/i4" "issued_turn" 99 "at_turn" 99 "gist" "middle"}]
+                   (get @ca "session_summaries")))
+        (expect (re-find #"window t1/i2\.\.t1/i4" out))))
+  (it "session_fold({\"since\": …}): a SINCE dict marshals to a since cursor"
+      (let
+        [[ca ev]
+         (with-verbs)
+
+         out
+         (ev "session_fold({\"since\": \"t2/i1\"})")]
+
+        (expect (= [{"since" "t2/i1" "issued_turn" 99 "at_turn" 99}] (get @ca "session_summaries")))
+        (expect (re-find #"^folded since t2/i1" out))))
   (it
-    "records named structured content and derives a Markdown breadcrumb"
+    "session_fold({\"since\": …}) FREEZES to concrete scopes at fold time when a universe exists — no rolling swallow of future work"
     (let
       [[ca ev]
        (with-verbs)
 
-       out
-       (ev
-         (str
-           "session_fold([\"t1/i2\", \"t1/i3\"], "
-           "goal=\"Ship typed fold history\", " "previous_goal=\"Expose fold history\", "
-           "confirmed=[{\"text\": \"history is append-only\", \"references\": [\"t1/i1\"]}], "
-           "exploration_dead_ends=[{\"text\": \"opaque gist loses intent\"}], "
-           "worth_exploring=[{\"text\": \"show history from session_state\", \"references\": [\"t1/i2\"]}], "
-           "hypothesis={\"action\": \"render Markdown from the record\", \"rationale\": \"storage stays queryable\", \"references\": [\"t1/i3\"]})"))
+       _
+       (swap! ca assoc "engine_iter_universe" ["t1/i1" "t1/i2" "t1/i3"])
 
-       [recorded]
+       out
+       (ev "session_fold({\"since\": \"t1/i2\"}, \"tail\")")
+
+       [intent]
        (get @ca "session_summaries")]
 
-      (expect (= #{"t1/i2" "t1/i3"} (get recorded "scopes")))
-      (expect (= "Expose fold history" (get recorded "previous_goal")))
-      (expect (= "Ship typed fold history" (get recorded "goal")))
-      (expect (= [{"text" "history is append-only" "references" ["t1/i1"]}]
-                 (get recorded "confirmed")))
-      (expect (= {"action" "render Markdown from the record"
-                  "rationale" "storage stays queryable"
-                  "references" ["t1/i3"]}
-                 (get recorded "hypothesis")))
-      (expect (= [recorded] (get @ca "session_fold_history")))
-      (expect (str/includes? out "Ship typed fold history"))))
-  (it "rejects the removed positional gist and unknown content keys"
+      ;; frozen to the scopes present NOW — the raw `since` selector is gone
+      (expect (= {"scopes" #{"t1/i2" "t1/i3"} "issued_turn" 99 "at_turn" 99 "gist" "tail"} intent))
+      (expect (not (contains? intent "since")))
+      (expect (re-find #"^folded since t1/i2" out))
+      ;; and because it's frozen, a LATER-grown universe can't swallow new iters
+      (expect (= #{"t1/i2" "t1/i3"}
+                 (get (first (expand-through [intent] ["t1/i1" "t1/i2" "t1/i3" "t1/i4" "t1/i5"]))
+                      "scopes")))))
+  (it "session_fold({\"from\": …}) with NO \"to\" also freezes its open ceiling at fold time"
       (let
-        [ca
-         (atom {"session_turn" 99})
+        [[ca ev]
+         (with-verbs)
 
-         ctx
-         (:python-context (ep/create-python-context (raw-compaction-verbs ca)))
+         _
+         (swap! ca assoc "engine_iter_universe" ["t1/i1" "t1/i2" "t2/i1"])
 
-         ev
-         (fn [code]
-           (.asString (.eval ^org.graalvm.polyglot.Context ctx "python" code)))]
+         _
+         (ev "session_fold({\"from\": \"t1/i2\"}, \"open\")")
 
-        (doseq
-          [source ["session_fold([\"t1/i1\"], \"old gist\")"
-                   "session_fold([\"t1/i1\"], gist=\"old gist\")"
-                   "session_fold([\"t1/i1\"], bogus=\"nope\")"]]
-          (let [ex (try (ev source) nil (catch Throwable e e))]
-            (expect (some? ex))
-            (expect (str/includes? (ex-message ex) "session_fold:"))))))
-  (it "keeps a no-content fold as a pure compaction"
-      (let [[ca ev] (with-verbs)]
-        (ev "session_fold([\"t1/i1\"])")
+         [intent]
+         (get @ca "session_summaries")]
+
+        ;; frozen scopes PLUS the whole-turn intent the open range carried at
+        ;; fold time (it covered ALL of t2) — dropping it on freeze would
+        ;; resurrect t2's Q/A recap downstream.
+        (expect
+          (= {"scopes" #{"t1/i2" "t2/i1"} "issued_turn" 99 "at_turn" 99 "gist" "open" "turns" #{2}}
+             intent))
+        (expect (not (contains? intent "from")))
+        (expect (= #{"t1/i2" "t2/i1"}
+                   (get (first (expand-through [intent] ["t1/i1" "t1/i2" "t2/i1" "t2/i2"]))
+                        "scopes")))))
+  (it
+    "bounded selectors (through / from+to) stay RAW even with a universe — their ceiling already blocks new scopes"
+    (let
+      [[ca ev]
+       (with-verbs)
+
+       _
+       (swap! ca assoc "engine_iter_universe" ["t1/i1" "t1/i2" "t1/i3"])
+
+       _
+       (ev "session_fold({\"through\": \"t1/i2\"}, \"early\")")]
+
+      (expect (= [{"through" "t1/i2" "issued_turn" 99 "at_turn" 99 "gist" "early"}]
+                 (get @ca "session_summaries")))))
+  (it "session_fold([\"t2\"]): a bare turn id records as a whole-turn scope token"
+      (let
+        [[ca ev]
+         (with-verbs)
+
+         out
+         (ev "session_fold([\"t2\"], \"whole turn 2\")")]
+
+        (expect (= [{"scopes" #{"t2"} "issued_turn" 99 "at_turn" 99 "gist" "whole turn 2"}]
+                   (get @ca "session_summaries")))
+        (expect (re-find #"^folded t2 " out))))
+  (it "session_fold WITHOUT a gist records a gist-less collapse (replaces session_drop)"
+      (let
+        [[ca ev]
+         (with-verbs)
+
+         out
+         (ev "session_fold([\"t1/i1\"])")]
+
         (expect (= [{"scopes" #{"t1/i1"} "issued_turn" 99 "at_turn" 99}]
-                   (get @ca "session_summaries")))))
+                   (get @ca "session_summaries")))
+        (expect (re-find #"^folded t1/i1" out))))
   (it "an empty/blank target is a no-op: records nothing, returns a hint"
       (let
         [[ca ev]
@@ -160,57 +296,6 @@
 
         (expect (nil? (get @ca "session_summaries")))
         (expect (re-find #"nothing to fold" out))))
-  ;; Regression, session 91576db9: `session_fold("t3/i89-i141")` — the ledger's OWN
-  ;; compact anchor grammar handed straight back — was kept verbatim as one id,
-  ;; matched no wire iteration and was STILL recorded and acked as
-  ;; `folded t3/i89-i141 · saved ~0 tokens`. Three such folds in a row reclaimed
-  ;; nothing while the model believed it had compacted.
-  (it
-    "coerces the ledger's own anchor grammar (a range, a turn, a bare iter) into the scopes it names"
-    (let
-      [mk
-       (fn []
-         (atom {"session_turn" 3
-                "engine_iter_universe" ["t3/i1" "t3/i2" "t3/i89" "t3/i90" "t3/i141"]}))
-
-       folded
-       (fn [target]
-         (let [ca (mk)]
-           ((get (compaction-verbs ca) 'session-fold) target "ranged")
-           (dissoc (last (get @ca "session_summaries")) "issued_turn" "at_turn" "goal")))]
-
-      ;; A RANGE is the scopes it names, however it is spelled or wrapped.
-      (doseq [target ["t3/i89-i141" ["t3/i89-i141"] ["t3/i89" "t3/i89-i141"] "T3/I89 .. i141"]]
-        (expect (= {"scopes" #{"t3/i89" "t3/i90" "t3/i141"}} (folded target)) (pr-str target)))
-      (expect (= {"scopes" #{"t3/i1" "t3/i2" "t3/i89"}} (folded "t3/i1-i2,i89")))
-      (expect (= {"scopes" #{"t3/i1" "t3/i2" "t3/i89" "t3/i90" "t3/i141"}} (folded "t3/*")))
-      ;; A CURSOR is one point: a span collapses to its own edge, and a bound
-      ;; that dropped its turn borrows the window's.
-      (expect (= {"through" "t3/i141"} (folded {"through" "t3/i89-i141"})))
-      (expect (= {"from" "t3/i89" "to" "t3/i141"} (folded {"from" "t3/i89" "to" "i141"})))
-      ;; `since` freezes its ceiling, so "turn 3" resolves to turn 3 entire.
-      (expect (= {"scopes" #{"t3/i1" "t3/i2" "t3/i89" "t3/i90" "t3/i141"} "turns" #{3}}
-                 (folded {"since" "turn 3"})))
-      ;; The ack speaks that same grammar back — and names what it ACTUALLY
-      ;; folded: the universe holds no i91..i140, so the run is `i89-i90,i141`.
-      (expect (= "folded t3/i89-i90,i141 → ranged"
-                 ((get (compaction-verbs (mk)) 'session-fold) "t3/i89-i141" "ranged")))))
-  (it "refuses a target that names NO scope instead of acking a fold of nothing"
-      (let
-        [ca
-         (atom {"session_turn" 3 "engine_iter_universe" ["t3/i89" "t3/i90" "t3/i141"]})
-
-         sf
-         (get (compaction-verbs ca) 'session-fold)]
-
-        (doseq
-          [target ["banana" ["t3/i89" "kaboom"] {"through" "later"} {"since" "yesterday"}
-                   {"from" "t3/i89" "to" "the end"}]]
-          (let [ex (try (sf target "nope") nil (catch clojure.lang.ExceptionInfo e e))]
-            (expect (= :vis/session-fold-invalid-scope (:type (ex-data ex))) (pr-str target))
-            (expect (str/includes? (ex-message ex) "cannot resolve scope"))
-            (expect (str/includes? (ex-message ex) "Nothing was folded"))))
-        (expect (nil? (get @ca "session_summaries")))))
   (it "blocks only the LIVE (unsettled) iteration of the current turn and any future turn"
       (let
         [ca
@@ -254,7 +339,7 @@
          (get (compaction-verbs ca) 'session-fold)]
 
         (expect (re-find #"^folded t1" (sf ["t1"] "done")))
-        (expect (= [{"scopes" #{"t1"} "issued_turn" 2 "at_turn" 2 "goal" "done"}]
+        (expect (= [{"scopes" #{"t1"} "issued_turn" 2 "at_turn" 2 "gist" "done"}]
                    (get @ca "session_summaries")))))
   (it "fails closed when the current turn is unavailable"
       (let
@@ -363,7 +448,7 @@
          (trailer "t1/i1" "t1/i2" "t1/i3")
 
          out
-         (apply-summaries tr [{"through" "t1/i2" "goal" "G"}])
+         (apply-summaries tr [{"through" "t1/i2" "gist" "G"}])
 
          [[_ r1] [_ r2] [_ r3]]
          out
@@ -376,7 +461,7 @@
         (expect (not (:collapsed? r3))) ; the tail step is untouched
         (expect (= [] (:forms-vec r2))) ; collapsed body left the wire
         (expect (= 1 (count sfs)))      ; ONE breadcrumb
-        (expect (= "## Goal\nG" (:summary-markdown (first sfs))))
+        (expect (= "G" (:summary-gist (first sfs))))
         ;; the breadcrumb is injected at the EARLIEST collapsed step (t1/i1)
         (expect (some :summary? (:forms-vec r1)))
         (expect (= ["t1/i1" "t1/i2"] (:summary-iters (first sfs))))))
@@ -445,10 +530,7 @@
            sfs (summary-forms out)]
 
           (expect (= 1 (count sfs)))
-          (expect (= "## Goal\nB" (:summary-markdown (first sfs))))
-          ;; The active breadcrumb is superseded, but Python recovery keeps
-          ;; both fold intents in the order they were issued.
-          (expect (= ["A" "B"] (mapv #(get % "goal") (get @ca "session_fold_history"))))
+          (expect (= "B" (:summary-gist (first sfs))))
           (expect (every? (fn [[_ r]]
                             (:collapsed? r))
                           out)))))
@@ -462,7 +544,7 @@
            sfs (summary-forms out)]
 
           (expect (= 1 (count sfs)))
-          (expect (= "## Goal\nbroad" (:summary-markdown (first sfs)))))))
+          (expect (= "broad" (:summary-gist (first sfs)))))))
   (it "FOLD OF FOLD: one whole-turn re-fold swallows TWO finer folds into one breadcrumb"
       (let [[ca ev] (with-verbs)]
         ;; two disjoint finer folds recorded first…
@@ -479,14 +561,14 @@
           ;; meta gist survives, and every iteration collapses off the wire.
           (expect (= 1 (count (get @ca "session_summaries"))))
           (expect (= 1 (count sfs)))
-          (expect (= "## Goal\nmeta: the whole turn" (:summary-markdown (first sfs))))
+          (expect (= "meta: the whole turn" (:summary-gist (first sfs))))
           (expect (every? (fn [[_ r]]
                             (:collapsed? r))
                           out))))))
 
 ;; ── layer 4: native tool_use surface ─────────────────────────────────────────
 
-(def ^:private native-shapes {"session_fold" {:pos ["target"] :rest :always}})
+(def ^:private native-shapes {"session_fold" {:pos ["target"] :opt-pos ["gist"]}})
 
 (defdescribe
   session-fold-native-tool-test
@@ -494,12 +576,7 @@
       (let [t (session-fold-tool)]
         (expect (= "session_fold" (:name t)))
         (expect (str/starts-with? (:description t) "Collapse SETTLED wire steps"))
-        (doseq
-          [section ["named structured content" "`goal`" "`previous_goal`" "`references`"
-                    "Markdown is derived"]]
-          (expect (str/includes? (:description t) section)))
-        (expect (str/includes? (:description t) "never a gist"))
-        (expect (not (str/includes? (:description t) "`Next:`")))
+        (expect (str/includes? (:description t) "fold a step once its takeaway is captured"))
         (expect (str/includes? (:description t) "The live iteration and future steps are refused"))
         (expect (str/includes? (:description t) "this turn's finished iterations"))
         (expect (str/includes? (:description t) "folding changes rendering, not storage"))
@@ -510,20 +587,20 @@
         (let
           [on (with-redefs [toggles/enabled? (constantly true)]
                 (session-fold-tool))]
-          (expect (str/includes? (:description on) "session_state()[\"folds\"]"))
+          (expect (str/includes? (:description on) "`await session_state()`"))
           (expect (str/includes? (:description on) "`transcript/turns/iterations/blocks`")))
         (expect (str/includes? (:description t)
                                "Broader/newer folds supersede fully covered breadcrumbs"))
         (expect (str/includes? (:description t) "partial overlaps remain"))
         (expect (contains? (:properties (:schema t)) "target"))
         (expect (= ["target"] (:required (:schema t))))))
-  (it "native dispatch synthesizes a named content map after target"
-      (expect (= "session_fold([\"t1/i2\", \"t1/i3\"], {\"goal\": \"G\"})"
+  (it "native dispatch synthesizes a POSITIONAL call for a list target + gist"
+      (expect (= "session_fold([\"t1/i2\", \"t1/i3\"], \"G\")"
                  (tool-call->python-source native-shapes
                                            {:name "session_fold"
-                                            :input {"target" ["t1/i2" "t1/i3"] "goal" "G"}}))))
-  (it "native dispatch synthesizes a selector target plus an empty content map"
-      (expect (= "session_fold({\"through\": \"t1/i2\"}, {})"
+                                            :input {"target" ["t1/i2" "t1/i3"] "gist" "G"}}))))
+  (it "native dispatch synthesizes a DICT selector target, gist omitted"
+      (expect (= "session_fold({\"through\": \"t1/i2\"})"
                  (tool-call->python-source native-shapes
                                            {:name "session_fold"
                                             :input {"target" {"through" "t1/i2"}}}))))
@@ -535,10 +612,10 @@
          src
          (tool-call->python-source native-shapes
                                    {:name "session_fold"
-                                    :input {"target" ["t2/i4"] "goal" "native"}})]
+                                    :input {"target" ["t2/i4"] "gist" "native"}})]
 
         (ev src)
-        (expect (= [{"scopes" #{"t2/i4"} "issued_turn" 99 "at_turn" 99 "goal" "native"}]
+        (expect (= [{"scopes" #{"t2/i4"} "issued_turn" 99 "at_turn" 99 "gist" "native"}]
                    (get @ca "session_summaries"))))))
 
 ;; ── layer 5: session-bag reflection (the CTX delta) ──────────────────────────
@@ -798,9 +875,12 @@
         (let [hint (eng/over-budget-hint required 6 6)]
           (doseq
             [text ["ACTION REQUIRED" "210k" "200k" "Fold settled search/tool sweeps"
-                   "one broad session_fold" "last completed scope" "typed fold data" "previous_goal"
-                   "references" "hypothesis with action and rationale" "dirty files"
-                   "never bare or abbreviated filenames" "confirm the receipt saved tokens"]]
+                   "one broad session_fold" "last completed scope"
+                   "preserve decisions, edits, and verification" "preserve exact physical paths"
+                   "If the edit is ready and the next patch fits available headroom, patch first"
+                   "compact actionable checkpoint" "exact paths/symbols" "hypothesis"
+                   "intended edit/test" "dirty files" "never bare or abbreviated filenames"
+                   "confirm the receipt saved tokens"]]
             (expect (str/includes? hint text)))))
     (it "never silently expires while pressure remains"
         (expect (some? (eng/over-budget-hint required 6 6)))
@@ -992,12 +1072,12 @@
                                          "model_input_limit" 100000}}))]
       ;; The #88 shape: 3 enumerated iteration ids, 2 of them weightless.
       (expect
-        (= (str "folded t1/i1-i2 t2/i1 · saved ~8k tokens · ~13% of budget"
+        (= (str "folded t1/i1, t1/i2, t2/i1 · saved ~8k tokens · ~13% of budget"
                 " · context 30%→~22% (30k→22k tokens)"
                 " · 2/3 scopes already off-wire — fold t1 to drop their recaps → enumerated")
            ((get (compaction-verbs (mk)) 'session-fold) ["t1/i1" "t1/i2" "t2/i1"] "enumerated")))
       ;; A fold that frees nothing at all still names the shape that would.
-      (expect (= (str "folded t1/i1-i2 · saved ~0 tokens · context 30% (30k/100k tokens)"
+      (expect (= (str "folded t1/i1, t1/i2 · saved ~0 tokens · context 30% (30k/100k tokens)"
                       " · 2/2 scopes already off-wire — fold t1 to drop their recaps → nothing")
                  ((get (compaction-verbs (mk)) 'session-fold) ["t1/i1" "t1/i2"] "nothing")))
       ;; The whole-turn shape DOES charge and remove the recap, so it needs no nudge.
@@ -1068,31 +1148,34 @@
         (=
           "folded t1/i1 · saved ~60k tokens · ~67% of budget · context 94%→~31% (90k→30k tokens) → bigger task"
           (sf ["t1/i1"] "bigger task")))))
-  (it "the note ALSO lands in the persistent breadcrumb, not just the tool card"
-      ;; regression: the saved-tokens + projected suffix must ride the durable
-      ;; `# ⋯ folded …` label the human reads on scroll-back, NOT only the
-      ;; transient tool-return confirmation.
-      (let
-        [ctx
-         (priced-ctx)
+  (it
+    "the note ALSO lands in the persistent breadcrumb, not just the tool card"
+    ;; regression: the saved-tokens + projected suffix must ride the durable
+    ;; `# ⋯ folded …` label the human reads on scroll-back, NOT only the
+    ;; transient tool-return confirmation.
+    (let
+      [ctx
+       (priced-ctx)
 
-         sf
-         (get (compaction-verbs ctx) 'session-fold)
+       sf
+       (get (compaction-verbs ctx) 'session-fold)
 
-         _
-         (sf ["t1/i1"] "big cat dump")
+       _
+       (sf ["t1/i1"] "big cat dump")
 
-         trailer
-         [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "big"}]}]]
+       trailer
+       [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "big"}]}]]
 
-         out
-         (apply-summaries trailer (get @ctx "session_summaries"))
+       out
+       (apply-summaries trailer (get @ctx "session_summaries"))
 
-         line
-         (:content (irm (second (first out))))]
+       line
+       (:content (irm (second (first out))))]
 
-        (expect (str/includes? line "big cat dump"))
-        (expect (str/includes? line "## Goal"))))
+      (expect
+        (=
+          "# ⋯ folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44%→~31% (42k→30k tokens) · big cat dump"
+          line))))
   (it "a fold breadcrumb points to ntr.describe() without carrying result ids"
       ;; The durable breadcrumb stays short even when a fold covers many calls.
       ;; `ntr.describe()` is the labelled discovery surface; drops and
@@ -1110,18 +1193,19 @@
             [{:scope "t1/i2/f1" :svar/tool-call-id "toolu_B" :result "b" :vis/tool-name "cat"}]}]]
 
          folded
-         (apply-summaries tr [{"scopes" #{"t1/i1" "t1/i2"} "goal" "did it"}])
+         (apply-summaries tr [{"scopes" #{"t1/i1" "t1/i2"} "gist" "did it"}])
 
          dropped
-         (apply-summaries tr [{"scopes" #{"t1/i1"} "drop" true "note" "misread"}])
+         (apply-summaries tr [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])
 
          printed
          (apply-summaries [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "p"}]}]]
-                          [{"scopes" #{"t1/i1"} "goal" "no store"}])]
+                          [{"scopes" #{"t1/i1"} "gist" "no store"}])]
 
-        (expect (str/includes? (:content (irm (second (first folded)))) "did it"))
-        (expect (str/includes? (:content (irm (second (first dropped)))) "dropped t1/i1"))
-        (expect (str/includes? (:content (irm (second (first printed)))) "no store"))))
+        (expect (= "# ⋯ folded t1/i1-i2 · more results: ntr.describe() · did it"
+                   (:content (irm (second (first folded))))))
+        (expect (= "# ⋯ dropped t1/i1 · misread" (:content (irm (second (first dropped))))))
+        (expect (= "# ⋯ folded t1/i1 · no store" (:content (irm (second (first printed))))))))
   (it "with NO stamped utilization the card degrades to the bare confirmation"
       (let [sf (get (compaction-verbs (atom {"session_turn" 2})) 'session-fold)]
         (expect (= "folded t1/i1 → g" (sf ["t1/i1"] "g")))))

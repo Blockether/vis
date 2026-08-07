@@ -1709,170 +1709,6 @@
 
 (declare form-wire-chars)
 
-(defn- fold-invalid!
-  [message data]
-  (throw (ex-info (str "session_fold: " message)
-                  (assoc data :type :vis/session-fold-invalid-content))))
-
-(defn- fold-references
-  [field value]
-  (cond (nil? value) []
-        (sequential? value) (mapv (fn [reference]
-                                    (let
-                                      [reference (some-> reference
-                                                         str
-                                                         str/trim
-                                                         not-empty)]
-                                      (or reference
-                                          (fold-invalid!
-                                            (str field " references must be non-blank strings")
-                                            {:field field :value value}))))
-                                  value)
-        :else (fold-invalid! (str field " references must be a list") {:field field :value value})))
-
-(defn- fold-item
-  [field value]
-  (when-not (map? value)
-    (fold-invalid! (str field " entries must be objects") {:field field :value value}))
-  (let
-    [unknown
-     (not-empty (set/difference (set (keys value)) #{"text" "references"}))
-
-     text
-     (some-> (get value "text")
-             str
-             str/trim
-             not-empty)]
-
-    (when unknown
-      (fold-invalid! (str field " has unknown keys " (sort unknown)) {:field field :value value}))
-    (when-not text
-      (fold-invalid! (str field " entries require non-blank text") {:field field :value value}))
-    (cond-> {"text" text}
-      (contains? value "references")
-      (assoc "references" (fold-references field (get value "references"))))))
-
-(defn- fold-content
-  "Normalize the typed, durable content of a session fold. Markdown is derived at render time."
-  [value]
-  (when-not (map? value) (fold-invalid! "content must be named parameters" {:value value}))
-  (let
-    [allowed
-     #{"goal" "previous_goal" "confirmed" "exploration_dead_ends" "worth_exploring" "hypothesis"}
-
-     unknown
-     (not-empty (set/difference (set (keys value)) allowed))
-
-     text
-     (fn [field]
-       (when (contains? value field)
-         (or (some-> (get value field)
-                     str
-                     str/trim
-                     not-empty)
-             (fold-invalid! (str field " must be a non-blank string")
-                            {:field field :value (get value field)}))))
-
-     items
-     (fn [field]
-       (when (contains? value field)
-         (let [entries (get value field)]
-           (when-not (sequential? entries)
-             (fold-invalid! (str field " must be a list") {:field field :value entries}))
-           (mapv #(fold-item field %) entries))))
-
-     hypothesis
-     (when (contains? value "hypothesis")
-       (let
-         [h
-          (get value "hypothesis")
-
-          unknown-h
-          (when (map? h)
-            (not-empty (set/difference (set (keys h)) #{"action" "rationale" "references"})))
-
-          action
-          (some-> (get h "action")
-                  str
-                  str/trim
-                  not-empty)
-
-          rationale
-          (some-> (get h "rationale")
-                  str
-                  str/trim
-                  not-empty)]
-
-         (when-not (map? h)
-           (fold-invalid! "hypothesis must be an object" {:field "hypothesis" :value h}))
-         (when unknown-h
-           (fold-invalid! (str "hypothesis has unknown keys " (sort unknown-h))
-                          {:field "hypothesis" :value h}))
-         (when-not action
-           (fold-invalid! "hypothesis requires non-blank action" {:field "hypothesis" :value h}))
-         (cond-> {"action" action}
-           rationale
-           (assoc "rationale" rationale)
-
-           (contains? h "references")
-           (assoc "references" (fold-references "hypothesis" (get h "references"))))))]
-
-    (when unknown (fold-invalid! (str "unknown content keys " (sort unknown)) {:value value}))
-    (cond-> {}
-      (contains? value "goal")
-      (assoc "goal" (text "goal"))
-
-      (contains? value "previous_goal")
-      (assoc "previous_goal" (text "previous_goal"))
-
-      (contains? value "confirmed")
-      (assoc "confirmed" (items "confirmed"))
-
-      (contains? value "exploration_dead_ends")
-      (assoc "exploration_dead_ends" (items "exploration_dead_ends"))
-
-      (contains? value "worth_exploring")
-      (assoc "worth_exploring" (items "worth_exploring"))
-
-      hypothesis
-      (assoc "hypothesis" hypothesis))))
-
-(defn- fold-reference-suffix
-  [references]
-  (when (seq references) (str " (" (str/join ", " (map #(str "`" % "`") references)) ")")))
-
-(defn- fold-markdown
-  "The only Markdown view of typed fold content; it is never persisted."
-  [summary]
-  (let
-    [items
-     (fn [title entries]
-       (when (seq entries)
-         (str "## " title
-              "\n" (str/join
-                     "\n"
-                     (map #(str "- " (get % "text") (fold-reference-suffix (get % "references")))
-                          entries)))))
-
-     hypothesis
-     (get summary "hypothesis")]
-
-    (not-empty (str/join "\n\n"
-                         (remove nil?
-                           [(when-let [goal (get summary "goal")]
-                              (str "## Goal\n" goal))
-                            (when-let [previous-goal (get summary "previous_goal")]
-                              (str "## Previous goal\n" previous-goal))
-                            (items "Confirmed" (get summary "confirmed"))
-                            (items "Exploration dead ends" (get summary "exploration_dead_ends"))
-                            (items "Worth exploring" (get summary "worth_exploring"))
-                            (when hypothesis
-                              (str "## Hypothesis\n"
-                                   (get hypothesis "action")
-                                   (when-let [rationale (get hypothesis "rationale")]
-                                     (str "\n\n" rationale))
-                                   (fold-reference-suffix (get hypothesis "references"))))])))))
-
 (defn- prior-turn-scope-index
   "Lean per-form scope index for ONE prior turn's `forms`, reshaped by the model's
    fold/drop `summaries` — the cross-process RESUME view. Folds are recorded at
@@ -1901,22 +1737,23 @@
      sums
      (ctx-engine/supersede-summaries (ctx-engine/expand-through (or summaries []) universe))
 
-     ;; Summary intents are string-keyed and persist inside the ctx nippy blob.
+     ;; Summary intents are STRING-KEYED ({"scopes" "gist" "drop" "through"})
+     ;; — they persist inside the ctx nippy blob, and the DB is strings-only.
      drop-of
      (into {}
            (mapcat (fn [s]
                      (when (get s "drop")
                        (map (fn [sc]
-                              [sc (fold-markdown s)])
+                              [sc (get s "gist")])
                             (get s "scopes"))))
                    sums))
 
-     markdown-of
+     gist-of
      (into {}
            (mapcat (fn [s]
-                     (when-let [markdown (fold-markdown s)]
+                     (when (and (not (get s "drop")) (get s "gist"))
                        (map (fn [sc]
-                              [sc markdown])
+                              [sc (get s "gist")])
                             (get s "scopes"))))
                    sums))]
 
@@ -1943,17 +1780,17 @@
                                    (cond-> {:scope isc :dropped? true}
                                      note
                                      (assoc :note note))) (conj seen k)]))
-                        (and isc (contains? markdown-of isc))
+                        (and isc (contains? gist-of isc)) ; folded → ONE line per distinct gist
                         (let
-                          [markdown
-                           (get markdown-of isc)
+                          [gist
+                           (get gist-of isc)
 
                            k
-                           [:markdown markdown]]
+                           [:gist gist]]
 
                           (if (contains? seen k)
                             [acc seen]
-                            [(conj acc {:scope isc :markdown markdown}) (conj seen k)]))
+                            [(conj acc {:scope isc :gist gist}) (conj seen k)]))
                         (and sc
                              (or (some? (:result f)) (some? (:stdout f))) ; live, worth listing
                              (not= "vis_silent" (:result f)))
@@ -2928,7 +2765,21 @@
     (ctx-renderer/render-ctx-delta {} cur)))
 
 (defn- compaction-verbs
-  "Build the model-facing typed `session_fold` verb. `target` selects settled scopes; all retained content arrives in named structured parameters and is stored as data. Markdown is derived only when rendering the breadcrumb."
+  "Build the model-facing compaction verb bound into the sandbox as
+   `session_fold`, closing over `ctx-atom`. It records a `:session/summaries`
+   intent the wire applies via `apply-summaries`, and RETURNS a visible
+   confirmation string (NOT the `\"vis_silent\"` row-suppression sentinel) so the
+   action shows in the Python result instead of vanishing.
+
+   First positional arg selects the target: a list/string of explicit scopes, or
+   a `{\"through\" \"tN/iN\"}` options dict (Python kwargs don't cross `wrap-ifn`;
+   `->clj` keeps dict keys as VERBATIM STRINGS, so `\"through\"` is the accessor).
+   The second arg — the gist — is OPTIONAL: pass it to KEEP a one-line takeaway,
+   OMIT it to simply DISCARD the step (this replaces the old `session_drop`; a
+   gist-less fold collapses the step with no summary line). Intents are
+   STRING-KEYED (they persist inside the ctx nippy blob — strings-only DB):
+     {\"scopes\" #{…}|\"through\" \"tN/iN\", \"gist\" <takeaway>?}
+   `apply-summaries` still renders any legacy persisted `{\"drop\" true}` intents."
   [ctx-atom & [session-rebase-atom]]
   (let
     [normalize-target
@@ -2947,80 +2798,6 @@
                    (string? scopes) [scopes]
                    :else nil)))
 
-     current-turn
-     (fn []
-       (let
-         [v (some-> ctx-atom
-                    deref
-                    (get "session_turn"))]
-         (cond (integer? v) (long v)
-               (string? v) (parse-long (str/trim v))
-               :else nil)))
-
-     universe-now
-     (fn []
-       (or (some-> ctx-atom
-                   deref
-                   (get "engine_iter_universe"))
-           []))
-
-     scope-id?
-     (fn [s]
-       (boolean (or (ctx-engine/scope-key s) (ctx-engine/turn-key s))))
-
-     ;; The ledger, the fold card and the transcript breadcrumb all PRINT scopes
-     ;; in the compact anchor grammar (`ctx-engine/pretty-scopes`): `t3/i89-i141`,
-     ;; `t3/i1-i2,i5 t4/*`. That is therefore the spelling the model reads on
-     ;; scroll-back and hands straight back — and `t3/i89-i141`, a RANGE spelled as
-     ;; ONE id, used to be kept verbatim, match no wire iteration and collapse
-     ;; nothing while the receipt still said `folded … saved ~0 tokens` (session
-     ;; 91576db9: three such folds in a row, the window growing the whole time).
-     ;; What the engine prints, the engine PARSES: `ctx-engine/parse-anchor`
-     ;; COERCES the anchor — a range, a whole-turn `t3/*`, `turn 3`, a `to` missing
-     ;; its turn — into the concrete scopes it names. Only a string that names NO
-     ;; scope at all is refused, and then loudly: a fold of nothing that acks like
-     ;; a fold is how a model stops trying to compact.
-     refuse!
-     (fn [bad]
-       (when-let [bad (not-empty (into (sorted-set) (remove nil?) bad))]
-         (throw (ex-info (str
-                           "session_fold: cannot resolve scope " (str/join ", " (map pr-str bad))
-                           " — a scope is \"tN/iM\", a whole turn \"tN\", or the ledger's own "
-                           "compact range (\"t3/i89-i141\", \"t3/i1-i2,i5\", \"t2-t4/*\"), which "
-                           "is coerced for you; a cursor may name a span and collapses to its "
-                           "edge. Nothing was folded.")
-                         {:type :vis/session-fold-invalid-scope :scopes bad}))))
-
-     coerce-ids
-     ;; An id the resolver already understands (`tN/iM`, `tN/iM/fK`, a whole-turn
-     ;; `tN`) is kept VERBATIM so `expand-through` keeps owning its semantics;
-     ;; anything else is read as an anchor and expanded to the scopes it names.
-     (fn [ids]
-       (let
-         [[ok bad]
-          (reduce (fn [[ok bad] s]
-                    (if (scope-id? s)
-                      [(conj ok s) bad]
-                      (if-let [got (seq (ctx-engine/parse-anchor s (universe-now) (current-turn)))]
-                        [(into ok got) bad]
-                        [ok (conj bad s)])))
-                  [#{} []]
-                  ids)]
-         (refuse! bad)
-         ok))
-
-     coerce-cursor
-     ;; A cursor is one POINT, so an anchor naming a span collapses to its own
-     ;; edge: the LAST scope it names for an upper bound (`through`, `to`), the
-     ;; FIRST for a lower one (`since`, `from`).
-     (fn [s edge default-turn]
-       (when s
-         (if (ctx-engine/scope-key s)
-           s
-           (when-let
-             [got (seq (ctx-engine/parse-anchor s (universe-now) (or default-turn (current-turn))))]
-             (if (= :end edge) (last got) (first got))))))
-
      freeze
      (fn [intent]
        ;; Unbounded-above selectors (`since`, or `from` without `to`) would
@@ -3038,7 +2815,9 @@
               (and (contains? intent "from") (not (contains? intent "to"))))
 
           universe
-          (universe-now)]
+          (some-> ctx-atom
+                  deref
+                  (get "engine_iter_universe"))]
 
          (if (and unbounded? (seq universe))
            (first (ctx-engine/expand-through [intent] universe))
@@ -3057,37 +2836,20 @@
               thr (pick "through")
               snc (pick "since")
               frm (pick "from")
-              to (pick "to")
-              thr* (coerce-cursor thr :end nil)
-              snc* (coerce-cursor snc :start nil)
-              frm* (coerce-cursor frm :start nil)
-              ;; `{"from": "t3/i89", "to": "i141"}` — the window's own turn
-              ;; completes a bound that dropped it.
-              to* (coerce-cursor to :end (first (ctx-engine/scope-key frm*)))]
+              to (pick "to")]
 
-             (refuse! (keep (fn [[raw resolved]]
-                              (when (and raw (nil? resolved)) raw))
-                            [[thr thr*] [snc snc*] [frm frm*] [to to*]]))
-             (cond thr* [{"through" thr*} (str "through " thr*)]
-                   snc* [(freeze {"since" snc*}) (str "since " snc*)]
-                   (or frm* to*) [(freeze (cond-> {}
-                                            frm*
-                                            (assoc "from" frm*)
+             (cond thr [{"through" thr} (str "through " thr)]
+                   snc [(freeze {"since" snc}) (str "since " snc)]
+                   (or frm to) [(freeze (cond-> {}
+                                          frm
+                                          (assoc "from" frm)
 
-                                            to*
-                                            (assoc "to" to*)))
-                                  (str "window " (or frm* "start") ".." (or to* "end"))]
+                                          to
+                                          (assoc "to" to)))
+                                (str "window " (or frm "start") ".." (or to "end"))]
                    :else nil))
-           (let [ss (coerce-ids (->set scopes))]
-             (when (seq ss)
-               [{"scopes" ss}
-                ;; ONE anchor vocabulary: the ack names the fold in the very
-                ;; grammar the breadcrumb and the ledger print (`t1/i1-i2 t2/i1`,
-                ;; not `t1/i1, t1/i2, t2/i1`) — which `parse-anchor` now takes
-                ;; straight back. A whole-turn `tN` has no iteration key, so a
-                ;; target carrying one keeps the plain list.
-                (or (when (every? ctx-engine/scope-key ss) (ctx-engine/pretty-scopes ss []))
-                    (str/join ", " (sort ss)))])))))
+           (let [ss (->set scopes)]
+             (when (seq ss) [{"scopes" ss} (str/join ", " (sort ss))])))))
 
      exclude-protected
      (fn [intent]
@@ -3120,13 +2882,23 @@
                 (assoc "scopes" kept))
             intent) omitted]))
 
+     current-turn
+     (fn []
+       (let
+         [v (some-> ctx-atom
+                    deref
+                    (get "session_turn"))]
+         (cond (integer? v) (long v)
+               (string? v) (parse-long (str/trim v))
+               :else nil)))
+
      record!
      (fn [intent]
        (when ctx-atom
          (swap! ctx-atom
            (fn [ctx]
              (let
-               [recorded
+               [candidates
                 ;; Stamp the RECORDING turn onto the intent: a range
                 ;; cursor is re-resolved against every LATER turn's live
                 ;; universe, so without this stamp a stale/foreign-numbered
@@ -3134,12 +2906,10 @@
                 ;; collapses the whole live turn and the model goes blind.
                 ;; `apply-summaries` lets a summary touch LIVE-turn scopes
                 ;; only when `at_turn` IS that turn.
-                (cond-> intent
-                  (current-turn)
-                  (assoc "at_turn" (current-turn)))
-
-                candidates
-                (conj (vec (get ctx "session_summaries")) recorded)
+                (conj (vec (get ctx "session_summaries"))
+                      (cond-> intent
+                        (current-turn)
+                        (assoc "at_turn" (current-turn))))
 
                 ;; The supersede universe is the live wire PLUS every
                 ;; concrete scope the candidates themselves name — so a
@@ -3165,10 +2935,10 @@
                 kept
                 (into #{} (map #(get % "__record_idx")) winners)]
 
-               ;; Keep the complete, ordered ledger for Python recovery while
-               ;; active summaries remain only the non-superseded candidates.
+               ;; Persist the original selector shape for stable receipts/tests,
+               ;; but discard superseded intents NOW. Rendering no longer has to
+               ;; refine an ever-growing fold-of-fold chain on every request.
                (assoc ctx
-                 "session_fold_history" (conj (vec (get ctx "session_fold_history")) recorded)
                  "session_summaries" (into []
                                            (keep-indexed (fn [idx summary]
                                                            (when (contains? kept idx) summary)))
@@ -3412,31 +3182,27 @@
             (catch Throwable _ nil)))]
 
     {'session-fold
-     (fn session-fold [scopes & [params]]
-       ;; Python kwargs cross as ONE trailing dict (`__vis_direct_kwargs__`). A
-       ;; target can stay positional, while all retained fold content is named.
+     (fn session-fold [scopes & [gist]]
+       ;; Python kwargs cross as ONE trailing dict (`__vis_direct_kwargs__`):
+       ;; `session_fold(sel, gist="…")` arrives as (sel {"gist" "…"}) and a fully
+       ;; keyword call as ({"target" … "gist" …}). Unwrap both so keyword and
+       ;; positional calls bind identically; a SELECTOR dict carries only
+       ;; through/since/from/to, never these keys, so it is never mistaken for
+       ;; kwargs.
        (let
-         [content-keys
-          #{"goal" "previous_goal" "confirmed" "exploration_dead_ends" "worth_exploring"
-            "hypothesis"}
-
-          kwargs?
+         [kwargs?
           (fn [m]
-            (and (map? m) (or (contains? m "target") (some #(contains? m %) content-keys))))
+            (and (map? m) (or (contains? m "target") (contains? m "gist"))))
 
-          [scopes params]
-          (cond (string? params) (fold-invalid!
-                                   "positional gist text is not supported; use named fold content"
-                                   {:value params})
-                (and (map? params) (contains? params "target")) [(get params "target")
-                                                                 (dissoc params "target")]
-                (and (nil? params) (kwargs? scopes))
-                [(or (get scopes "target") (not-empty (apply dissoc scopes content-keys)))
-                 (apply dissoc scopes (conj content-keys "target"))]
-                :else [scopes (or params {})])
-
-          content
-          (fold-content params)]
+          [scopes gist]
+          (cond (kwargs? gist) [(if (contains? gist "target") (get gist "target") scopes)
+                                (get gist "gist")]
+                (and (nil? gist) (kwargs? scopes))
+                ;; A fully keyword call: `target=` when given, otherwise the
+                ;; selector keywords (`through=`, `since=`, `from=`/`to=`) were
+                ;; spread at the TOP level - the remaining keys ARE the selector.
+                [(or (get scopes "target") (not-empty (dissoc scopes "gist"))) (get scopes "gist")]
+                :else [scopes gist])]
 
          (if-let [[base label] (target scopes)]
            (let
@@ -3484,7 +3250,10 @@
                [[base omitted] (exclude-protected base)
                 kept-note (when (seq omitted)
                             (str " · kept active skill " (str/join ", " (sort omitted))))
-                headline (get content "goal")]
+                g (some-> gist
+                          str
+                          str/trim
+                          not-empty)]
 
                (if (and (seq omitted) (empty? (get base "scopes")))
                  (str "session_fold: nothing else to fold" kept-note)
@@ -3496,9 +3265,12 @@
                     ;; Q/A recap next request (the answer is produced after the fold;
                     ;; the gist can't summarize it). `turn` is always non-nil here —
                     ;; the guard above throws when it can't prove the current turn.
-                    intent (cond-> (merge base content)
+                    intent (cond-> base
                              turn
                              (assoc "issued_turn" turn)
+
+                             g
+                             (assoc "gist" g)
 
                              (not (str/blank? note))
                              (assoc "note" note))]
@@ -3513,12 +3285,7 @@
                              :pending? (>= (long total) (long SESSION_REBASE_RECLAIMED_TOKENS)))))))
                    (tel/log! {:level :info :id ::session-fold :data {:intent intent}}
                              "model folded scopes")
-                   (str "folded "
-                        label
-                        note
-                        recover
-                        kept-note
-                        (when headline (str " → " headline)))))))
+                   (str "folded " label note recover kept-note (when g (str " → " g)))))))
            (str "session_fold: nothing to fold — pass [\"t1/i2\", …] (a bare \"t1\" folds "
                 "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
                 "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}"))))}))
@@ -3792,11 +3559,19 @@
       (assoc :body (str "\n" body)))))
 
 (defn- apply-summaries
-  "Wire-only rewrite of `trailer-iters` applying typed `session_fold` intents at
-   iteration granularity. A summary has a selector plus optional structured content;
-   `fold-markdown` derives its one breadcrumb when rendering. Every covered iteration
-   collapses: its output leaves the wire and the earliest covered iteration receives
-   the derived Markdown checkpoint. Pure and deterministic."
+  "Wire-only rewrite of `trailer-iters` applying the model's `session_fold`/
+   `session_drop` intents at ITERATION granularity. Each summary is
+   `{\"scopes\" #{\"tN/iN\" …} \"gist\" <string|nil>}` (drop = nil gist), or a range
+   `{\"through\" \"tN/iN\" …}` which `expand-through` resolves to the trailer's own
+   iteration scopes ≤ the cursor. Every iteration whose `tN/iN` scope is
+   summarized COLLAPSES: its output is removed and it's tagged `:collapsed? true`
+   so `conversation-suffix` drops its assistant + tool_result pair entirely; at
+   the EARLIEST iteration of each group one gist form is injected, rendered as
+   `# -- tN/iN … -- summarized: <gist>` (or `-- dropped`). Real compaction: the
+   whole iteration leaves the wire, replaced by one line.
+
+   Pure and deterministic (same summaries → same output → prefix-cacheable).
+   Operates on a COPY; persisted iter-records are untouched."
   [trailer-iters summaries & [protected-scopes]]
   (if (empty? summaries)
     (vec trailer-iters)
@@ -3895,7 +3670,7 @@
                    (update m
                            idx
                            (fnil conj [])
-                           {:markdown (fold-markdown s)
+                           {:gist (get s "gist")
                             :drop? (get s "drop")
                             :summary-iters (vec (sort (get s "scopes")))
                             :note (get s "note")
@@ -3926,7 +3701,7 @@
                             (mapv (fn [g]
                                     {:scope :summary
                                      :summary? true
-                                     :summary-markdown (:markdown g)
+                                     :summary-gist (:gist g)
                                      :summary-drop? (:drop? g)
                                      :summary-iters (:summary-iters g)
                                      :summary-note (:note g)
@@ -4309,8 +4084,12 @@
                    (or (seq (:forms b)) [b]))
                  (:blocks iter-record)))
 
-     ;; Synthetic fold forms render first as one comment naming the collapsed
-     ;; iteration scopes and their derived Markdown checkpoint.
+     ;; `session_fold(...)` / `session_drop(...)` folds (synthetic forms
+     ;; apply-summaries injected) render FIRST as one Python comment naming the
+     ;; iteration scopes they replaced. `:summary-drop?` picks the label; the
+     ;; gist carries the takeaway (fold) or the reason (drop):
+     ;;   # ⋯ folded t1/i1-i2 · <gist>
+     ;;   # ⋯ dropped t1/i3 · <why>
      summary-lines
      (keep (fn [f]
              (when (:summary? f)
@@ -4322,8 +4101,8 @@
                   note
                   (:summary-note f)
 
-                  markdown
-                  (:summary-markdown f)
+                  g
+                  (:summary-gist f)
 
                   ;; Fold breadcrumbs carry their OWN `ntr[<id>]` accessors so a
                   ;; restart (or the collapsed per-call `# saved:` lines) can't
@@ -4336,7 +4115,7 @@
                       at
                       note
                       recover
-                      (when markdown (str " · " markdown))))))
+                      (when g (str " · " g))))))
            forms)
 
      ;; What becomes context:
@@ -5000,62 +4779,38 @@
 
 
 (defn- session-fold-tool
-  "Engine-level schema for the typed context-compaction verb shared by native dispatch and sandbox Python."
+  "Engine-level schema for the context-compaction verb shared by native dispatch
+   and sandbox Python."
   []
-  (let
-    [references
-     {:type "array" :items {:type "string" :minLength 1}}
-
-     item
-     {:type "object"
-      :properties {"text" {:type "string" :minLength 1} "references" references}
-      :required ["text"]
-      :additionalProperties false}
-
-     items
-     {:type "array" :items item}
-
-     hypothesis
-     {:type "object"
-      :properties {"action" {:type "string" :minLength 1}
-                   "rationale" {:type "string" :minLength 1}
-                   "references" references}
-      :required ["action"]
-      :additionalProperties false}]
-
-    {:name "session_fold"
-     :description
-     (str
-       "Collapse SETTLED wire steps into a breadcrumb; folding changes rendering, not storage. "
-       "Settled = prior turns plus this turn's finished iterations (see `session[\"turn\"]`). "
-       "Pass named structured content, never a gist or Markdown: `goal`, optional `previous_goal`, "
-       "`confirmed`, `exploration_dead_ends`, `worth_exploring`, and `hypothesis`. Entries use "
-       "`text` plus optional `references` (for example `tN/iN`); Markdown is derived only for the breadcrumb. "
-       "The live iteration and future steps are refused. "
-       "Folded data-tool results stay recoverable at their `# saved:` coordinate (`ntr[\"tN/iM/fK\"]`, no rerun, survives restart), "
-       "but `ntr` never stores fold receipts"
-       (if (toggles/enabled? "introspection")
-         "; `await session_state()[\"folds\"]` returns the append-only structured fold history; `transcript/turns/iterations/blocks` recovers raw content"
-         "")
-       ". Broader/newer folds supersede fully covered breadcrumbs; equal scopes keep the newer fold; partial overlaps remain.")
-     :result
-     "String receipt naming the folded scope and, when available, its `ntr.describe()` results."
-     :schema
-     {:type "object"
-      :properties
-      {"target"
-       {:description
-        "List of ids, a bare turn id, or one through/since/from/to selector; compact scope ranges are accepted."
-        :oneOf [{:type "array" :items {:type "string" :minLength 1} :minItems 1}
-                {:type "string" :minLength 1} {:type "object"}]}
-       "goal" {:type "string" :minLength 1}
-       "previous_goal" {:type "string" :minLength 1}
-       "confirmed" items
-       "exploration_dead_ends" items
-       "worth_exploring" items
-       "hypothesis" hypothesis}
-      :required ["target"]
-      :additionalProperties false}}))
+  {:name "session_fold"
+   :description
+   (str
+     "Collapse SETTLED wire steps into a breadcrumb; folding changes rendering, not storage. "
+     "Settled = prior turns plus this turn's finished iterations (see `session[\"turn\"]`); fold a step "
+     "once its takeaway is captured. The live iteration and future steps are refused. "
+     "Folded data-tool results stay recoverable at their `# saved:` coordinate (`ntr[\"tN/iM/fK\"]`, "
+     "no rerun, survives restart), but "
+     "`ntr` never stores fold receipts"
+     (if (toggles/enabled? "introspection")
+       "; `await session_state()` keeps `transcript/turns/iterations/blocks` (`code`/`result`)"
+       "")
+     ". Broader/newer folds supersede fully covered breadcrumbs; equal scopes keep the newer gist; "
+     "partial overlaps remain.")
+   :result
+   "String receipt naming the folded scope and, when available, its `ntr.describe()` results."
+   :schema
+   {:type "object"
+    :properties
+    {"target" {:description
+               (str
+                 "List of ids [\"t2/i3\",\"t2/i4\"] (bare \"t2\" = whole turn), or ONE selector: "
+                 "{\"through\":\"tN/iN\"}; {\"from\":\"tA/iA\",\"to\":\"tB/iB\"} inclusive window "
+                 "(either bound optional); {\"since\":\"tN/iN\"} through newest.")}
+     "gist" {:type "string"
+             :description (str "Durable one-line takeaway: finding, consequence, and a useful "
+                               "path:line/symbol/anchor. Omit when none.")}}
+    :required ["target"]
+    :additionalProperties false}})
 
 (defn- apropos-tool
   "Engine-level native schema for the sandbox's existing `apropos(query)`
@@ -5088,7 +4843,7 @@
 (def ^:private engine-native-tool-call-shapes
   {"apropos" {:py-name "__vis_apropos_table__" :opt-pos ["query"]}
    "doc" {:pos ["name"]}
-   "session_fold" {:pos ["target"] :rest :always}})
+   "session_fold" {:pos ["target"] :opt-pos ["gist"]}})
 
 (defn- native-tools
   "The complete provider-visible native surface. Extension tools arrive finalized

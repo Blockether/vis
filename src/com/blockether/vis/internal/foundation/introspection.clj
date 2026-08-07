@@ -1122,17 +1122,6 @@
          (if (nil? v) default v))
        (catch Throwable _ default)))
 
-(defn- fold-history
-  "The current session's append-only fold ledger. It intentionally stays out of
-   the model's standing `session` map; `session_state()` exposes it on demand."
-  [env session-id]
-  (if (same-uuid? session-id (:session-id env))
-    (vec (or (some-> (:ctx-atom env)
-                     deref
-                     (get "session_fold_history"))
-             []))
-    []))
-
 (defn- retries-by-turn
   [env turns]
   (into {}
@@ -1172,9 +1161,6 @@
      turn-retries
      (safe-call #(retries-by-turn env (:turns transcript-data)) {})
 
-     folds
-     (safe-call #(fold-history env resolved-id) [])
-
      usage
      (safe-call #(foundation-usage-data env resolved-id) {})]
 
@@ -1188,7 +1174,6 @@
      :diagnosis diagnosis
      :session-forks forks
      :turn-retries turn-retries
-     :folds folds
      :usage usage
      :transcript transcript-data}))
 
@@ -1272,7 +1257,7 @@
 (def
   ^{:doc
     "await session_state(session_id=None)  # current session by default; pass id for another
-String-keyed fields: `session`, `current_turn`, `folds`, `failures`, `diagnosis`, `session_forks`, `turn_retries`, \"usage\", `transcript`. Access the current session's ordered, append-only structured fold history with `await session_state()[\"folds\"]`: each entry retains its selectors, typed goal evolution (`previous_goal`/`goal`), findings with references, hypothesis, and issuing turn even when a later fold supersedes it. \"usage\" is compact token/cost/outcome/error/routing; tool rows overlap, so never sum them. Filter `transcript/turns/iterations/blocks` (`code`/`result`) in python_execution; don't dump. Use live `session` for current state. This is the recovery path for raw folded current-session content; it does not undo fold intents or restore them. Find ids via `sessions()`."
+String-keyed fields: `session`, `current_turn`, `failures`, `diagnosis`, `session_forks`, `turn_retries`, \"usage\", `transcript`. \"usage\" is compact token/cost/outcome/error/routing; tool rows overlap, so never sum them. Filter `transcript/turns/iterations/blocks` (`code`/`result`) in python_execution; don't dump. Use live `session` for current state. This is the recovery path for raw folded current-session content; it does not undo fold intents or restore them. Find ids via `sessions()`."
     :arglists '([] [session-id])}
   session-state
   foundation-inspect)
@@ -1320,7 +1305,7 @@ String-keyed rows: `{id,channel,title,turn_count,created_at,modified_at}`; optio
     "## Session introspection\n"
     "- Raw wire history: `~/.vis/gateway/events/<id>.ndjson`; never grep `.`.\n"
     "- Call `await session_state()` once. `usage` summarizes per-turn/iteration/tool/provider routing; tool rows overlap, never sum them.\n"
-    "- Current fold history: `s = await session_state(); folds = s[\"folds\"]`. Current transcript and folded-content recovery: `transcript/turns/iterations/blocks` (`code`/`result`).\n"
+    "- Current transcript and folded-content recovery: `transcript/turns/iterations/blocks` (`code`/`result`).\n"
     "- Other conversation: `await sessions()`, then `await session_state(id)`.\n"
     "- Filter in `python_execution`; never dump whole structures.\n"))
 

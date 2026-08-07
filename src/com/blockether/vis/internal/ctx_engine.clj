@@ -657,123 +657,6 @@
   [scopes universe]
   (join-scopes (compress-scopes (filter scope-key scopes) (or universe []))))
 
-(defn parse-anchor
-  "INVERSE of `pretty-scopes`: read the compact anchor grammar the fold ledger, the
-   fold card and the transcript breadcrumb all PRINT — `t3/i89-i141`,
-   `t3/i1-i2,i5,i9`, `t2-t4/*`, `t*` — back into the concrete `tN/iM` scopes it
-   names, resolved against `universe` (the caller's live wire scopes). What the
-   engine prints, the engine PARSES: that spelling is exactly what a model reads
-   on scroll-back and hands straight back to `session_fold`, where a RANGE
-   spelled as one id used to be kept verbatim, match no iteration and fold
-   nothing at all.
-
-   The near-misses a hand-written selector arrives in are coerced too: upper
-   case, `turn 3`, `..` / `-` / `->` / `to` as the range separator, spaces around
-   `/` and `,`, several space-separated tokens, a bare `i7` (in `default-turn`,
-   or in the last turn an earlier token named), and a cross-turn window
-   `t2/i9-t3/i2`.
-
-   Returns a distinct, ordered, NON-EMPTY vector of scopes, or nil when the
-   string names no scope at all — so a caller refuses instead of folding nothing.
-   With an EMPTY universe an explicit iteration range enumerates itself (capped),
-   so the grammar still works before anything is live. Pure."
-  ([s universe] (parse-anchor s universe nil))
-  ([s universe default-turn]
-   (when (string? s)
-     (let
-       [keyed
-        (into []
-              (keep (fn [sc]
-                      (when-let [k (scope-key sc)]
-                        [k sc])))
-              (or universe []))
-
-        within
-        (fn [lo hi]
-          (into []
-                (comp (filter (fn [[k _]]
-                                (and (<= 0 (compare k lo)) (<= (compare k hi) 0))))
-                      (map second))
-                keyed))
-
-        whole-turns
-        (fn [a b]
-          (within [a Long/MIN_VALUE] [b Long/MAX_VALUE]))
-
-        iters
-        (fn [t a b]
-          (if (seq keyed)
-            (within [t a] [t b])
-            (let
-              [a
-               (long a)
-
-               b
-               (long b)]
-
-              (mapv #(str "t" t "/i" %) (range a (inc (min b (+ a 999))))))))
-
-        part
-        (fn [t p]
-          (let
-            [rng
-             (re-matches #"i?(\d+)-i?(\d+)" p)
-
-             one
-             (re-matches #"i?(\d+)(?:/f\d+)?" p)]
-
-            (cond (nil? t) nil
-                  rng (iters t (parse-long (nth rng 1)) (parse-long (nth rng 2)))
-                  one [(str "t" t "/i" (parse-long (nth one 1)))]
-                  :else nil)))
-
-        parts
-        (fn [t body]
-          (let [ps (mapv #(part t %) (str/split body #","))]
-            (when (every? some? ps) (into [] cat ps))))
-
-        token
-        (fn [turn tok]
-          (let [m #(re-matches % tok)]
-            (or (when (m #"t?\*") (mapv second keyed))
-                (when-let [g (m #"t(\d+)-t(\d+)/\*")]
-                  (whole-turns (parse-long (nth g 1)) (parse-long (nth g 2))))
-                (when-let [g (m #"t(\d+)(?:/\*)?")]
-                  (whole-turns (parse-long (nth g 1)) (parse-long (nth g 1))))
-                (when-let [g (m #"t(\d+)/i(\d+)(?:/f\d+)?-t(\d+)/i(\d+)(?:/f\d+)?")]
-                  (within [(parse-long (nth g 1)) (parse-long (nth g 2))]
-                          [(parse-long (nth g 3)) (parse-long (nth g 4))]))
-                (when-let [g (m #"t(\d+)/(.+)")]
-                  (parts (parse-long (nth g 1)) (nth g 2)))
-                (parts turn tok))))
-
-        tokens
-        (re-seq #"[^\s;]+"
-                (-> (str/lower-case (str/trim s))
-                    (str/replace #"\s*(?:\.{2,3}|—|–|→|->|\bto\b)\s*" "-")
-                    (str/replace #"\bturns?\s*" "t")
-                    (str/replace #"\s*([/,])\s*" "$1")))
-
-        walked
-        (reduce (fn [acc tok]
-                  (if-let [got (token (:turn acc) tok)]
-                    {:turn (or (some-> (re-find #"^t(\d+)" tok)
-                                       (nth 1)
-                                       parse-long)
-                               (:turn acc))
-                     :out (into (:out acc) got)}
-                    (reduced nil)))
-                {:turn default-turn :out []}
-                tokens)]
-
-       (when (seq tokens)
-         (some->> walked
-                  :out
-                  distinct
-                  (sort-by scope-key)
-                  vec
-                  not-empty))))))
-
 (defn- fmt-toks
   "Compact token count for the model-facing budget: `1000+` → `\"<n>k\"`, else the
    raw integer. Matches the `session_fold` card's `~<n>k tokens` spelling so the
@@ -934,7 +817,7 @@
           "Fold settled search/tool sweeps and superseded reads NOW with one broad session_fold through the last completed scope"
           (str "Use one broad session_fold through the last completed scope"
                (when urgent? " before another large tool call")))
-        "; If the edit is ready and the next patch fits available headroom, patch first; otherwise preserve typed fold data: goal; previous_goal when the objective changed; confirmed, exploration_dead_ends, and worth_exploring entries with references; hypothesis with action and rationale; plus dirty files, decisions, verification, recovery IDs, and exact physical paths—never bare or abbreviated filenames—then confirm the receipt saved tokens."))))
+        "; If the edit is ready and the next patch fits available headroom, patch first; otherwise preserve a compact actionable checkpoint: exact paths/symbols, hypothesis, intended edit/test, and dirty files; preserve decisions, edits, and verification; preserve exact physical paths—never bare or abbreviated filenames—then confirm the receipt saved tokens."))))
 
 (defn session-view
   "THE single projection from engine-internal ctx to the model-facing
