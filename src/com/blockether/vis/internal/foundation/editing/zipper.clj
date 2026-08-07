@@ -714,31 +714,89 @@
             (let [n (named-count lang source p)]
               (if (and n (pos? (long n))) (recur (conj p (dec (long n)))) p))))))))
 
-(defn- dfs-find
-  "DFS-FORWARD from `start` (find-NEXT: begins AFTER the current node) for the
-   first node whose data satisfies `pred`, or nil."
-  [lang source start pred]
-  (loop [p (dfs-next lang source start)]
-    (cond (nil? p) nil
-          (pred (inspect lang source p)) p
-          :else (recur (dfs-next lang source p)))))
+(defn- path-after?
+  "True when pre-order path `p` comes strictly AFTER `start`. A DESCENDANT of
+   `start` counts, because depth-first next visits children before siblings."
+  [p start]
+  (let
+    [n
+     (count start)
+
+     m
+     (count p)]
+
+    (loop [i 0]
+      (cond (= i n) (> m n)
+            (= i m) false
+            :else (let
+                    [a (long (nth p i))
+                     b (long (nth start i))]
+
+                    (cond (> a b) true
+                          (< a b) false
+                          :else (recur (inc i))))))))
+
+(defn- scan-node
+  "Pre-order scan of the ALREADY-PARSED subtree rooted at `node` (itself at
+   `path`): the first path strictly after `start` whose node satisfies `match?`,
+   never entering a subtree `descend?` rejects. Every child handle is closed."
+  [^Node node path start match? descend?]
+  (or (when (and (path-after? path start) (match? node)) path)
+      (when (descend? node)
+        (let [n (.namedChildCount node)]
+          (loop [i 0]
+            (when (< i n)
+              (or (when-let [^Node c (.orElse (.namedChild node (int i)) nil)]
+                    (try (scan-node c (conj path i) start match? descend?) (finally (.close c))))
+                  (recur (inc i)))))))))
+
+(defn- scan-tree
+  "Search `source` with ONE parse and ONE depth-first walk. The previous
+   `inspect`-per-node search re-parsed the whole file (and re-rendered its text
+   and s-expression) for EVERY node it visited, so a `{find: …}` on a 7k-line
+   file never returned."
+  [lang source start match? descend?]
+  (when-let [^Tree tree (and lang (parse-tree lang source))]
+    (try (let [^Node root (.rootNode tree)]
+           (try (scan-node root [] (vec start) match? descend?) (finally (.close root))))
+         (finally (.close tree)))))
 
 (defn- find-text
   "Locate the TIGHTEST node whose text contains `needle`: the first pre-order
    match after `start`, then descend into whichever child still contains the
    whole needle. So {find: \"(* base 2)\"} lands ON `(* base 2)`, not on the
-   outermost form that merely encloses it. nil when nothing matches."
+   outermost form that merely encloses it. nil when nothing matches. A node
+   without the needle cannot have a descendant with it, so its whole subtree is
+   skipped."
   [lang source start needle]
-  (when-let [hit (dfs-find lang source start #(str/includes? (str (:text %)) needle))]
-    (loop [p hit]
-      (let
-        [n (or (named-count lang source p) 0)
-         child (some (fn [i]
-                       (let [cp (conj p i)]
-                         (when (str/includes? (str (:text (inspect lang source cp))) needle) cp)))
-                     (range n))]
+  (let
+    [src-bytes
+     (utf8 source)
 
-        (if child (recur child) p)))))
+     has?
+     (fn [^Node n]
+       (str/includes? (byte-slice src-bytes (.startByte n) (.endByte n)) needle))
+
+     tightest?
+     (fn [^Node n]
+       (and (has? n)
+            (not (some (fn [i]
+                         (when-let [^Node c (.orElse (.namedChild n (int i)) nil)]
+                           (try (has? c) (finally (.close c)))))
+                       (range (.namedChildCount n))))))]
+
+    (scan-tree lang source start tightest? has?)))
+
+(defn- find-kind
+  "First node after `start` whose tree-sitter kind is `kind`, or nil."
+  [lang source start kind]
+  (scan-tree lang
+             source
+             start
+             (fn [^Node n]
+               (= kind (.kind n)))
+             (fn [_]
+               true)))
 
 (defn navigate
   "Resolve `at` (a named-child index path) + a sequence of relative `moves`
@@ -816,7 +874,7 @@
            (or (find-text lang source path (str arg)) :err-find)
 
            :find-kind
-           (or (dfs-find lang source path #(= (str arg) (:kind %))) :err-find))]
+           (or (find-kind lang source path (str arg)) :err-find))]
 
         ;; `step` is INTERNAL: `case op` yields either a path vector or an
         ;; `:err-*` sentinel keyword minted right here (never model/Python data),

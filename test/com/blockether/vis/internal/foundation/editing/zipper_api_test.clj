@@ -276,3 +276,44 @@
                    ;; every ancestor prefix is itself a valid, inspectable node (no gaps)
                    (expect (every? #(:ok? (z/inspect "clojure" deep-src (subvec stepwise 0 %)))
                                    (range (inc (count stepwise))))))))
+
+;; ── 6. A {find:…} over a BIG file must not re-parse per node ──────────────────
+;; Regression (reported timeout): `struct_nodes` with `nav [{"find": "prefix-band!"}]`
+;; on a 7k-line file never returned — the search called `inspect` (a FULL re-parse
+;; plus node text and s-expression) once per visited node, so a whole-file find took
+;; minutes and was killed by the 120s tool timeout.
+(def ^:private big-src
+  (str "(ns big)\n"
+       (apply str
+         (for [i (range 2000)]
+           (str "(defn f" i " [x]\n  (let [y (+ x " i ")]\n    (inc y)))\n\n")))
+       "(defn prefix-band! [screen]\n  (paint! screen :band))\n"))
+
+(defdescribe big-file-find-test
+             (it "finds a needle near the end of a 6k-line file in well under a second"
+                 (let
+                   [t0
+                    (System/nanoTime)
+
+                    r
+                    (z/navigate "clojure" big-src [] [{"find" "prefix-band!"}])
+
+                    ms
+                    (/ (- (System/nanoTime) t0) 1e6)]
+
+                   (expect (:ok? r) (pr-str r))
+                   (expect (= "prefix-band!" (:text (z/inspect "clojure" big-src (:path r)))))
+                   (expect (< ms 5000) (str "whole-file find took " ms "ms"))))
+             (it "finds by kind over the same file just as cheaply"
+                 (let
+                   [t0
+                    (System/nanoTime)
+
+                    r
+                    (z/navigate "clojure" big-src [] [{"find_kind" "vec_lit"}])
+
+                    ms
+                    (/ (- (System/nanoTime) t0) 1e6)]
+
+                   (expect (:ok? r) (pr-str r))
+                   (expect (< ms 5000) (str "whole-file find_kind took " ms "ms")))))
