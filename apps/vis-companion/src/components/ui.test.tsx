@@ -23,7 +23,6 @@ import {
   KebabButton,
   LiveCount,
   LiveTally,
-  MachineBanner,
   MachineGap,
   MachineMark,
   MachineRail,
@@ -185,45 +184,29 @@ describe("MachineRail", () => {
   });
 });
 
-describe("MachineBanner", () => {
-  // The hue lives on the RAIL. A banner that also inked its outgoing rule wore the
-  // machine's colour twice in one corner.
-  it("keeps the list hairline, leaving the colour to the rail", () => {
-    const html = renderToStaticMarkup(<MachineBanner>rows</MachineBanner>);
+describe("SectionHeader", () => {
+  // Regression, user report ("there is no much difference visually between the machine
+  // and the project"): the list carried two bands one hairline apart. There is one
+  // band now — the project's — and the machine is a chip above the list.
+  it("is one band, with no second tone to be confused with", () => {
+    const html = renderToStaticMarkup(<SectionHeader>rows</SectionHeader>);
     expect(html).toContain("border-b border-dialog-edge");
     expect(html).not.toContain("border-b-2");
+    expect(html).toContain("min-h-13");
+    expect(html).toContain("mouse:min-h-9");
+    expect(html).toContain("items-stretch");
+    expect(html).not.toContain("py-2");
+    // The only header in the list is the one that sticks.
+    expect(html).toContain("sticky top-0 z-10");
+    expect(html).toContain("bg-level-project");
+    expect(html).not.toContain("bg-level-machine");
+    expect(html).not.toContain("bg-panel-2");
   });
 
-  it("makes the machine band one deliberate step taller than the project band", () => {
-    const machine = renderToStaticMarkup(
-      <MachineBanner>studio-mbp</MachineBanner>,
-    );
-    const project = renderToStaticMarkup(
-      <SectionHeader tone="project">vis</SectionHeader>,
-    );
-
-    expect(machine).toContain("min-h-14");
-    expect(machine).toContain("mouse:min-h-10");
-    expect(project).toContain("min-h-13");
-    expect(project).toContain("mouse:min-h-9");
-
-    for (const html of [machine, project]) {
-      expect(html).toContain("items-stretch");
-      expect(html).not.toContain("py-2");
-    }
-  });
-
-  it("gives each level its own step on the type scale", () => {
+  it("gives its title the list's own type step", () => {
     expect(
       renderToStaticMarkup(
-        <MachineBanner>
-          <HeaderTitle name="studio-mbp" />
-        </MachineBanner>,
-      ),
-    ).toContain("text-subhead");
-    expect(
-      renderToStaticMarkup(
-        <SectionHeader tone="project">
+        <SectionHeader>
           <HeaderTitle name="vis" />
         </SectionHeader>,
       ),
@@ -231,18 +214,6 @@ describe("MachineBanner", () => {
     expect(renderToStaticMarkup(<HeaderTitle name="orphan" />)).toContain(
       "text-title",
     );
-  });
-
-  it("stands each level on its own paper", () => {
-    const machine = renderToStaticMarkup(<MachineBanner>x</MachineBanner>);
-    const project = renderToStaticMarkup(
-      <SectionHeader tone="project">x</SectionHeader>,
-    );
-    expect(machine).toContain("bg-level-machine");
-    expect(project).toContain("bg-level-project");
-    for (const html of [machine, project]) {
-      expect(html).not.toContain("bg-panel-2");
-    }
   });
 
   it("marks a machine with a block bigger than a session status dot", () => {
@@ -487,9 +458,9 @@ describe("HeaderActions", () => {
   });
 
   it("is the only one padding that side, so the header stops doing it", () => {
-    const banner = renderToStaticMarkup(<MachineBanner>machine</MachineBanner>);
-    expect(banner).not.toContain("pr-");
-    expect(banner).not.toContain("px-");
+    const band = renderToStaticMarkup(<SectionHeader>project</SectionHeader>);
+    expect(band).not.toContain("pr-");
+    expect(band).not.toContain("px-");
     // The leading edge belongs to whichever half starts the header, so a pressable
     // one can reach the screen edge with its hover.
     expect(renderToStaticMarkup(<HeaderTitle name="tower" />)).toContain(

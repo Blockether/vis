@@ -15,7 +15,7 @@ import {
   LIST_FRAME,
   LiveCount,
   LiveTally,
-  MachineBanner,
+  EditableName,
   MachineGap,
   MachineMark,
   MachineRail,
@@ -704,6 +704,13 @@ export function SessionsScreen({
     ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
     : null;
   const hasScopeStrip = showsScopeStrip(machines);
+  // THE MACHINE IS SELECTION, NOT STRUCTURE.
+  // The list used to carry two bands one hairline apart — a machine header and a
+  // project header, same x, same trailing cluster — so nothing said the second was
+  // inside the first. The chip strip answers "which machine", the chrome above the
+  // list NAMES the one in scope and carries its verbs, and the list below holds one
+  // header kind. `null` only while the bar speaks for several machines at once.
+  const scopeChrome = scopeMachine ?? (machines.length === 1 ? (machines[0] ?? null) : null);
 
   // One hue per paired machine, assigned from the machine's own key, so a rail
   // keeps its colour across reloads and reorderings and two machines side by side
@@ -1136,9 +1143,21 @@ export function SessionsScreen({
         <div className={`border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4 ${LIST_FRAME}`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="truncate font-mono text-ui font-bold text-white">
-                {scopeMachine ? machineLabel(scopeMachine.conn) : machines.length > 1 ? 'Fleet' : 'Projects'}
-              </p>
+              {/* The machine in scope is NAMED here, once, and the name is the rename
+                  control: the band that used to carry it is gone, so this is where a
+                  human owns the word. Same box editing or resting — no jump. */}
+              {scopeChrome && onRenameMachine ? (
+                <EditableName
+                  className="truncate font-mono text-ui font-bold text-white"
+                  label={`Rename ${machineLabel(scopeChrome.conn)}`}
+                  value={machineLabel(scopeChrome.conn)}
+                  onCommit={(next) => onRenameMachine(scopeChrome.conn, next)}
+                />
+              ) : (
+                <p className="truncate font-mono text-ui font-bold text-white">
+                  {scopeChrome ? machineLabel(scopeChrome.conn) : 'Fleet'}
+                </p>
+              )}
               <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-chip text-dialog-hint">
                 {sessions === null ? (
                   <>
@@ -1213,6 +1232,37 @@ export function SessionsScreen({
                 <span aria-live="polite" className="font-mono text-chip text-dialog-hint">
                   {createBusyLabel}
                 </span>
+              )}
+              {/* The machine's two verbs, on the chrome that names it rather than on a
+                  band of its own: ADD a project, and open this machine's settings. With
+                  several machines speaking at once there is no machine to act on — a
+                  workspace only exists on one — so the chip is asked first. */}
+              {scopeChrome && !scopeChrome.error && (
+                <IconButton
+                  variant="quiet"
+                  label={`Add a project on ${machineLabel(scopeChrome.conn)}`}
+                  title="Add a project"
+                  onClick={(event) => {
+                    const at = menuPosition(
+                      event.currentTarget.getBoundingClientRect(),
+                      BROWSE_WIDTH,
+                    );
+                    if (!at) return;
+                    setManageProjects({ machine: scopeChrome, at });
+                  }}
+                >
+                  <PlusIcon className="size-4" />
+                </IconButton>
+              )}
+              {scopeChrome && onMachineSettings && (
+                <IconButton
+                  variant="quiet"
+                  label={`Settings for ${machineLabel(scopeChrome.conn)}`}
+                  title="Machine settings"
+                  onClick={() => onMachineSettings(scopeChrome.conn)}
+                >
+                  <SettingsIcon className="size-4" />
+                </IconButton>
               )}
             </div>
           </div>
@@ -1365,103 +1415,32 @@ export function SessionsScreen({
                       before it is read. The panel is always rendered for the machine
                       whose projects follow, fleet view or scoped view alike. */}
                   <MachineRail color={machineColor(machineColors, key)}>
-                    <MachineBanner>
-                      {/* The machine's hue, not its health: health is a WORD
-                          here (`offline`, with a Retry beside it), while the
-                          colour is the only thing tying this banner to the
-                          rail below it and to the chip above it. */}
-                      {/* Name, then the thing that tells two of them apart — the same
-                          sentence the project header below says with `vis  ~/vis`. A
-                          machine with no label of its own is NAMED by its address, so
-                          the qualifier is dropped rather than printed twice. */}
-                      <HeaderTitle
-                        mark={<MachineMark size="banner" color={machineColor(machineColors, key)} />}
-                        name={machineLabel(machine.conn)}
-                        onRename={
-                          onRenameMachine
-                            ? (next) => onRenameMachine(machine.conn, next)
-                            : undefined
-                        }
-                        renameLabel={`Rename ${machineLabel(machine.conn)}`}
-                        qualifier={
-                          machine.conn.label?.trim() ? hostOf(machine.conn.url) : undefined
-                        }
-                        qualifierTitle={machine.conn.url}
-                      />
-                      {/* The trailing half of the header is ONE component, shared with every
-                          project header below it: the same gap in front of it, the same gap
-                          between its controls, the same right edge. What this machine reports,
-                          then what it offers — and everything rarer than reading the list (its
-                          files, the machine itself) lives behind the `⋯`, so the header never
-                          grows a second bespoke word-button beside it. */}
-                      <HeaderActions>
-                        <HeaderMeta>
-                          {machine.error ? (
-                            <span>offline</span>
-                          ) : (
-                            <HeaderTally count={groups.length} unit="project" />
-                          )}
-                          {/* The strip above carries this machine's live and unread counts,
-                              and it does NOT scroll away with the list, so a section header
-                              that repeated them only printed the same two numbers a second
-                              time. */}
-                        </HeaderMeta>
-                        {/* Retrying is a button, so it is THE button: the same box and rhythm
-                            as the `⋯` beside it, quiet because it sits inside a line of
-                            metadata. */}
-                        {machine.error && (
-                          <Button
-                            type="button"
-                            variant="quiet"
-                            density="compact"
-                            pressEffect="none"
-                            onClick={() => void loadMachine(machine.conn)}
-                          >
-                            Retry
-                          </Button>
-                        )}
-                        {/* The machine's two verbs, spelled out instead of parked behind a
-                            `⋯`: ADD a project, and open the machine's own settings. A
-                            two-item menu costs a tap and a guess to say what two glyphs
-                            say on the band itself. */}
-                        <IconButton
-                          variant="quiet"
-                          label={`Add a project on ${machineLabel(machine.conn)}`}
-                          title="Add a project"
-                          onClick={(event) => {
-                            const at = menuPosition(
-                              event.currentTarget.getBoundingClientRect(),
-                              BROWSE_WIDTH,
-                            );
-                            if (!at) return;
-                            setManageProjects({ machine, at });
-                          }}
-                        >
-                          <PlusIcon className="size-4" />
-                        </IconButton>
-                        {onMachineSettings && (
-                          <IconButton
-                            variant="quiet"
-                            label={`Settings for ${machineLabel(machine.conn)}`}
-                            title="Machine settings"
-                            onClick={() => onMachineSettings(machine.conn)}
-                          >
-                            <SettingsIcon className="size-4" />
-                          </IconButton>
-                        )}
-                      </HeaderActions>
-                    </MachineBanner>
                   {groups.length === 0
                     ? (
-                        <p className="px-3 py-3 font-mono text-meta text-dialog-hint sm:px-4">
-                          {machine.error
-                            ? 'This machine is not answering.'
-                            : machine.sessions === null
-                              ? 'Reading sessions...'
-                              : searching
-                                ? 'No matches on this machine.'
-                                : 'No sessions on this machine yet.'}
-                        </p>
+                        <div className="flex flex-wrap items-center gap-3 px-3 py-3 sm:px-4">
+                          <p className="font-mono text-meta text-dialog-hint">
+                            {machine.error
+                              ? `${machineLabel(machine.conn)} is not answering.`
+                              : machine.sessions === null
+                                ? 'Reading sessions...'
+                                : searching
+                                  ? 'No matches on this machine.'
+                                  : 'No sessions on this machine yet.'}
+                          </p>
+                          {/* The band that used to carry this machine's Retry is gone, so
+                              the offer stands where its sessions would have been. */}
+                          {machine.error && (
+                            <Button
+                              type="button"
+                              variant="quiet"
+                              density="compact"
+                              pressEffect="none"
+                              onClick={() => void loadMachine(machine.conn)}
+                            >
+                              Retry
+                            </Button>
+                          )}
+                        </div>
                       )
                     : groups.map(([groupRoot, projectSessions]) => (
                         <ProjectGroup
@@ -1911,7 +1890,7 @@ const ProjectGroup = memo(function ProjectGroup({
   return (
     <>
     <section aria-label={`${project} sessions`}>
-      <SectionHeader tone="project">
+      <SectionHeader>
         {/* The leading half only NAMES the project now: its folder name and the path
             that tells two `vis` checkouts apart. It was a disclosure button, which
             hid a whole project's history behind a tap and said nothing about how
@@ -2416,7 +2395,7 @@ function NavigatorSkeleton() {
           <div key={group}>
             {/* The list's OWN header band, so a loading screen can never stand at a
                 different height from the screen it turns into. */}
-            <SectionHeader tone="project">
+            <SectionHeader>
               {/* One line, because the header it stands in for is one line: a
                   skeleton two lines tall collapses to one the moment data lands. */}
               <HeaderTitle

@@ -1,7 +1,5 @@
 import {
-  createContext,
   forwardRef,
-  useContext,
   useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
@@ -615,12 +613,15 @@ export function MachineGap() {
  * to be seen: 13px against 12px is a step you can measure and cannot notice.
  *
  *   level     type              band (touch / mouse)   paper
- *   machine   text-subhead 15   56 / 40                level-machine
  *   project   text-title   13   52 / 36                level-project
  *   session   text-ui      11   48 / 32                the page's own surface
  *
  * Two points of type per step, four pixels of band per step, and one derived step of
  * paper per level (see `--color-level-*` in `index.css`).
+ *
+ * There is no machine step any more: the machine is SELECTION (a chip in the scope
+ * strip, the title of the chrome above the list), not a band, so a second header tone
+ * one hairline from this one could only ever read as the same thing said twice.
  *
  * The LEAF is the shortest, not the tallest. A session row used to stand 48px against
  * a 36px project band — the child bigger than the thing that contains it — which is
@@ -628,26 +629,11 @@ export function MachineGap() {
  * is ONE line there, so 32px holds it exactly. Touch keeps every level at 44px or
  * more, so the ladder survives a thumb.
  */
-const HEADER_TYPE = {
-  machine: 'text-subhead',
-  project: 'text-title',
-} as const;
+const HEADER_TYPE = 'text-title';
 
-/** The band a machine's header stands in, against the one a project's stands in. */
-const HEADER_BAND = {
-  machine: 'flex min-h-14 items-stretch mouse:min-h-10',
-  project: 'flex min-h-13 items-stretch mouse:min-h-9',
-} as const;
-
-/**
- * Which level the header belongs to, read by the halves inside it.
- *
- * `SectionHeader` already knows its tone, so nothing below it restates one: a title
- * that took its own `tone` prop would be a second place for the answer to live, and
- * two places holding one answer is how the machine and the project came to be the
- * same 11px in the first place.
- */
-const HeaderTone = createContext<'machine' | 'project'>('project');
+/** The band every header in the list stands in. It sticks; nothing above it does. */
+const HEADER_BAND =
+  'flex min-h-13 items-stretch mouse:min-h-9 sticky top-0 z-10 bg-level-project';
 
 /**
  * THE LEADING EDGE OF THE LIST, and every row in it starts here.
@@ -746,44 +732,20 @@ const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-3 sm:pr-4'
 const HEADER_GLYPH = 'grid size-3.5 shrink-0 place-items-center';
 
 export function SectionHeader({
-  tone,
   rule,
   children,
 }: {
-  tone: 'machine' | 'project';
   /**
    * A border-colour class for the band's OUTGOING rule, when that rule carries
-   * meaning — a machine's own hue. It replaces the hairline rather than joining it:
-   * a coloured line beside a grey one is the double border this list was reported
-   * for, and the band only ever draws one.
+   * meaning. It replaces the hairline rather than joining it: a coloured line beside
+   * a grey one is the double border this list was reported for, and the band only
+   * ever draws one.
    */
   rule?: string;
   children: ReactNode;
 }) {
-  // A machine ORGANIZES everything under it, so its band is the taller of the two,
-  // the darkest paper of the three, and sticks to the top of the scroller; a project
-  // is a section inside that machine and sits one step nearer the page.
-  const paper =
-    tone === 'machine' ? 'sticky top-0 z-10 bg-level-machine' : 'bg-level-project';
   const edge = rule ? `border-b-2 ${rule}` : 'border-b border-dialog-edge';
-  return (
-    <HeaderTone.Provider value={tone}>
-      <header className={`${HEADER_BAND[tone]} ${edge} ${paper}`}>{children}</header>
-    </HeaderTone.Provider>
-  );
-}
-
-/**
- * A machine header is the sticky `SectionHeader`: its rail and hue distinguish the
- * computer from its projects while its band, its edges and its trailing cluster are
- * the same ones every project header below it wears. It fills the machine block just
- * like a session row; leaving a scrollbar-sized side margin made the machine boundary
- * look clipped and introduced a false horizontal edge on narrow screens.
- */
-export function MachineBanner({ children }: { children: ReactNode }) {
-  // No coloured rule here: the hue is the RAIL now, and one machine wearing its
-  // colour twice in the same corner is the barcode this list was reported for.
-  return <SectionHeader tone="machine">{children}</SectionHeader>;
+  return <header className={`${HEADER_BAND} ${edge}`}>{children}</header>;
 }
 
 /**
@@ -800,7 +762,7 @@ export function MachineBanner({ children }: { children: ReactNode }) {
  * Enter commits, Escape restores, and leaving commits too — a phone keyboard is
  * dismissed far more often than Enter is pressed.
  */
-function EditableName({
+export function EditableName({
   value,
   label,
   className,
@@ -879,7 +841,6 @@ export function HeaderTitle({
   qualifier?: ReactNode;
   qualifierTitle?: string;
 }) {
-  const tone = useContext(HeaderTone);
   return (
     // The glyph centres against the LINE (`items-center`)
     // while the name and its qualifier share a BASELINE inside it. Baseline-aligning
@@ -894,14 +855,14 @@ export function HeaderTitle({
       <span className="flex min-w-0 items-baseline gap-2">
         {onRename ? (
           <EditableName
-            className={`shrink-0 truncate font-mono font-bold text-white ${qualifier ? 'max-w-[60%]' : 'min-w-0'} ${HEADER_TYPE[tone]}`}
+            className={`shrink-0 truncate font-mono font-bold text-white ${qualifier ? 'max-w-[60%]' : 'min-w-0'} ${HEADER_TYPE}`}
             label={renameLabel ?? 'Rename'}
             value={typeof name === 'string' ? name : ''}
             onCommit={onRename}
           />
         ) : (
           <span
-            className={`shrink-0 truncate font-mono font-bold text-white ${qualifier ? 'max-w-[60%]' : 'min-w-0'} ${HEADER_TYPE[tone]}`}
+            className={`shrink-0 truncate font-mono font-bold text-white ${qualifier ? 'max-w-[60%]' : 'min-w-0'} ${HEADER_TYPE}`}
           >
             {name}
           </span>

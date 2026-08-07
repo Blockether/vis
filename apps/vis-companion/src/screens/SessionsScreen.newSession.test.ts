@@ -36,17 +36,17 @@ describe('where "New session" lives', () => {
       "label={`Actions for ${machineLabel(machine.conn)}`}",
     );
     expect(source).toContain(
-      "label={`Add a project on ${machineLabel(machine.conn)}`}",
+      "label={`Add a project on ${machineLabel(scopeChrome.conn)}`}",
     );
     expect(source).toContain('title="Add a project"');
     expect(source).toContain('<PlusIcon className="size-4" />');
     expect(source).toContain(
-      "label={`Settings for ${machineLabel(machine.conn)}`}",
+      "label={`Settings for ${machineLabel(scopeChrome.conn)}`}",
     );
     expect(source).toContain('title="Machine settings"');
-    expect(source).toContain("onMachineSettings(machine.conn)");
+    expect(source).toContain("onMachineSettings(scopeChrome.conn)");
     // The `+` opens the SAME sheet the menu row opened, aimed at this machine.
-    expect(source).toContain("setManageProjects({ machine, at })");
+    expect(source).toContain("setManageProjects({ machine: scopeChrome, at })");
   });
 
   // Regression, user report: "when I open the ⋯ the view is not coherent between the
@@ -92,12 +92,12 @@ describe('where "New session" lives', () => {
   // with both — their disclosure ran flush to the screen edge, 12px past the `⋯`
   // directly above it, in what the eye reads as a single column of controls.
   it("gives every row the same trailing cluster, so the right edge is one decision", () => {
-    // Machine header, project header, session row, the filter band, and the two
+    // Project header, session row, the filter band, and the two
     // skeletons that stand in for a project header and a session row while the list
     // loads — one cluster, so the loading screen cannot be a different shape from the
     // screen it becomes, and the filter's own controls land in the same column as
     // every `⋯` above and below them.
-    expect(source.match(/<HeaderActions>/g)?.length).toBe(6);
+    expect(source.match(/<HeaderActions>/g)?.length).toBe(5);
     // The disclosure is that cluster's own control, never a hand-built strip: a `w-8`
     // welded to the edge at 40% opacity is how it drifted out of the column.
     expect(source).toContain("<RowDisclosure");
@@ -106,7 +106,7 @@ describe('where "New session" lives', () => {
     // Both headers now REPORT in the same voice too — and so does the filter, whose
     // match count is the same kind of fact in the same cluster: the project's counts
     // moved out of the toggle's fixed column into the one the machine header used.
-    expect(source.match(/<HeaderMeta>/g)?.length).toBe(3);
+    expect(source.match(/<HeaderMeta>/g)?.length).toBe(2);
     expect(source).not.toContain(
       "flex shrink-0 items-center justify-end gap-2 font-mono",
     );
@@ -152,7 +152,8 @@ describe('where "New session" lives', () => {
     expect(source).toContain("<section aria-label={`${project} sessions`}>");
     // The header's own band — its rule, its paper, its height — belongs to
     // `SectionHeader`, and is pinned once in `ui.test.tsx`.
-    expect(source).toContain('<SectionHeader tone="project">');
+    expect(source).toContain("<SectionHeader>");
+    expect(source).not.toContain('tone="machine"');
     expect(source).toContain(
       '      {rows.length > 0 && (\n        <div className="border-b border-dialog-edge">',
     );
@@ -198,7 +199,6 @@ describe('where "New session" lives', () => {
     expect(source).toContain(
       "<MachineRail color={machineColor(machineColors, key)}>",
     );
-    expect(source).toContain("<MachineBanner>");
     expect(source).toContain(
       "border-b border-r-2 border-dialog-edge bg-panel sm:border-y sm:border-r-2",
     );
@@ -216,9 +216,10 @@ describe('where "New session" lives', () => {
   // project header also hid its own name behind a fixed 160px count column, so `~/vis`
   // rendered as `~/v…` on a phone. Every header in the list is ONE component now.
   it("builds both list headers from one band, so neither spells its own box", () => {
-    expect(source).toContain('<SectionHeader tone="project">');
+    expect(source).toContain("<SectionHeader>");
+    expect(source).not.toContain('tone="machine"');
     expect(source).toContain("<HeaderTitle");
-    expect(source.match(/<HeaderTally/g)?.length).toBe(2);
+    expect(source.match(/<HeaderTally/g)?.length).toBe(1);
     // Not one height, padding or paper spelled at a call site.
     expect(source).not.toContain("<header className=");
     expect(source).not.toContain("min-h-11 min-w-0 flex-1");
@@ -317,8 +318,8 @@ describe("the machine header's own verbs", () => {
   });
 
   it("makes the machine name itself the rename control", () => {
-    expect(source).toContain("onRenameMachine(machine.conn, next)");
-    expect(source).toContain("renameLabel={`Rename ${machineLabel(machine.conn)}`}");
+    expect(source).toContain("onRenameMachine(scopeChrome.conn, next)");
+    expect(source).toContain("label={`Rename ${machineLabel(scopeChrome.conn)}`}");
   });
 
   // Regression, user report: the `+` and the gear on a machine header were boxes.
@@ -329,5 +330,33 @@ describe("the machine header's own verbs", () => {
       /<IconButton\s+variant="quiet"\s+label=\{`Add a project on/,
     );
     expect(source).toMatch(/<IconButton\s+variant="quiet"\s+label=\{`Settings for/);
+  });
+});
+
+// Regression, user report ("there is no much difference visually between the machine
+// and the project"): the list carried TWO bands one hairline apart, both starting at
+// the same x and both ending in the same trailing cluster, so nothing said the second
+// was inside the first. The machine is SELECTION now — a chip in the strip and the
+// title of the chrome — and the project header is the only header kind in the list.
+describe("the machine is a chip, not a second band", () => {
+  it("leaves exactly one header shape inside the list", () => {
+    expect(source).not.toContain("MachineBanner");
+    expect(source).not.toContain('tone="machine"');
+    // The hue still says which computer owns a block; it is a rail, not a band.
+    expect(source).toContain(
+      "<MachineRail color={machineColor(machineColors, key)}>",
+    );
+  });
+
+  it("gives the machine's verbs to the chrome that names it", () => {
+    // One `+` and one gear on the screen, both acting on the machine in scope.
+    expect(source.match(/<PlusIcon className="size-4" \/>/g)?.length).toBe(1);
+    expect(source).toContain("label={`Add a project on ${machineLabel(scopeChrome.conn)}`}");
+    expect(source).toContain("label={`Settings for ${machineLabel(scopeChrome.conn)}`}");
+    expect(source).toContain("onRenameMachine(scopeChrome.conn, next)");
+  });
+
+  it("keeps a dead machine's Retry where its sessions would have been", () => {
+    expect(source).toContain("onClick={() => void loadMachine(machine.conn)}");
   });
 });
