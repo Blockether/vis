@@ -1,38 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import {
-  editedFilename,
-  fileBaseName,
-  pageCaptureFilename,
-  sheetDismissed,
-  viewCaptureFilename,
-} from './image-file';
+import { editedFilename, fileBaseName, sheetDismissed } from './image-file';
 
-// The model never receives the PDF or the HTML page itself, so a capture's NAME
-// is the only thing that says what it is a picture of. `report-p3.png` answers
-// "which page did the human draw on"; `capture.png` would not.
+// A picture's NAME is the only thing that says what it is a picture of, so it is
+// derived from the original rather than invented.
 describe('capture filenames', () => {
-  it('carries the page number of a PDF page', () => {
-    expect(pageCaptureFilename('report.pdf', 3)).toBe('report-p3.png');
-    expect(pageCaptureFilename('Q3 report.pdf', 12)).toBe('Q3-report-p12.png');
-  });
-
-  it('never invents a page zero', () => {
-    expect(pageCaptureFilename('report.pdf', 0)).toBe('report-p1.png');
-    expect(pageCaptureFilename('report.pdf', -4)).toBe('report-p1.png');
-    expect(pageCaptureFilename('report.pdf', 2.7)).toBe('report-p2.png');
-  });
-
-  it('says capture, not page, for an artifact that has no pages', () => {
-    expect(viewCaptureFilename('page.html')).toBe('page-capture.png');
-  });
-
   it('always ends up with a usable png name', () => {
     expect(fileBaseName('')).toBe('document');
     expect(fileBaseName('.hidden')).toBe('document');
     expect(fileBaseName('a/b\\c.html')).toBe('a-b-c');
-    expect(viewCaptureFilename('../../etc/passwd')).toBe(
-      'etc-passwd-capture.png',
-    );
+    expect(editedFilename('../../etc/passwd')).toBe('etc-passwd.png');
   });
 
   // One helper, two callers: a shared picture and a captured page cannot drift

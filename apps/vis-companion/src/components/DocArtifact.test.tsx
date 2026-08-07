@@ -1,12 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import {
-  DocAnnotateBar,
-  DocCard,
-  DocFrame,
-  docSandbox,
-  parseDocBlock,
-} from './DocArtifact';
+import { DocCard, DocFrame, DocPreview, docSandbox, parseDocBlock } from './DocArtifact';
 
 /** The block `vis_attach` emits for a document artifact: five header lines, no payload. */
 const fence = [
@@ -106,64 +100,34 @@ describe('DocCard', () => {
     ).not.toContain('<iframe');
   });
 });
-// Rasterising a document is the only way its content ever reaches a model: the
-// bytes are clamped to `audience: "user"`, so what travels is a PICTURE of the
-// page the human chose — and the page number has to be visible while choosing.
-describe('DocAnnotateBar', () => {
-  const bar = (props: Partial<Parameters<typeof DocAnnotateBar>[0]> = {}) =>
+// A document is READ where it sits: no capture strip, no collapse toggle and no
+// new-tab escape hatch — the frame is the whole surface.
+describe('DocPreview', () => {
+  const preview = () =>
     renderToStaticMarkup(
-      <DocAnnotateBar
-        page={1}
-        pageCount={0}
-        busy={false}
-        disabled={false}
-        notice=""
-        onPage={() => undefined}
-        onCapture={() => undefined}
-        {...props}
+      <DocPreview
+        name="report.pdf"
+        mime="application/pdf"
+        sizeLabel="1.2 MB"
+        url="blob:x"
+        failed={false}
+        onNeeded={() => undefined}
       />,
     );
 
-  it('says which page of a PDF the capture will be', () => {
-    const body = text(bar({ page: 3, pageCount: 12 }));
-    expect(body).toContain('Page 3 of 12');
-    expect(body).toContain('Draw on page 3');
+  it('names the artifact and paints it in the sandboxed frame', () => {
+    const html = preview();
+    expect(text(html)).toContain('report.pdf');
+    expect(text(html)).toContain('1.2 MB');
+    expect(html).toContain('<iframe');
   });
 
-  it('offers no page picker for an artifact that has no pages', () => {
-    const body = text(bar());
-    expect(body).not.toContain('Page 1 of');
-    expect(body).toContain('Draw on page');
-  });
-
-  it('stops at the first and the last page', () => {
-    const first = bar({ page: 1, pageCount: 5 });
-    expect(first).toContain('disabled="" aria-label="Previous page"');
-    expect(first).not.toContain('disabled="" aria-label="Next page"');
-    const last = bar({ page: 5, pageCount: 5 });
-    expect(last).toContain('disabled="" aria-label="Next page"');
-    expect(last).not.toContain('disabled="" aria-label="Previous page"');
-  });
-
-  it('reports the render in progress and what came of it', () => {
-    expect(text(bar({ busy: true }))).toContain('Rendering');
-    expect(bar({ busy: true })).toContain('disabled=""');
-    expect(
-      text(bar({ notice: 'Attached report-p3.png to your message.' })),
-    ).toContain('Attached report-p3.png to your message.');
-  });
-
-  // A document whose page count is not known yet cannot be captured by page.
-  it('waits for a PDF to be parsed before it will draw', () => {
-    expect(bar({ disabled: true })).toContain('disabled=""');
-  });
-
-  // Density follows the pointer, not the width: these are the same shared
-  // `Button` component every other control in the app uses — never a bespoke
-  // touch target.
-  it('renders the pager and draw button with the shared Button component', () => {
-    const rendered = bar({ page: 2, pageCount: 4 });
-    expect(rendered).not.toContain('min-h-11');
-    expect(rendered.match(/sm:min-h-8/g)?.length).toBeGreaterThanOrEqual(3);
+  it('offers no draw, hide or new tab control', () => {
+    const body = text(preview());
+    expect(body).not.toContain('Draw');
+    expect(body).not.toContain('Hide');
+    expect(body).not.toContain('Open');
+    expect(body).not.toContain('New tab');
+    expect(preview()).not.toContain('<button');
   });
 });

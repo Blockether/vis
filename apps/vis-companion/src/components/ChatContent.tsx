@@ -2,6 +2,7 @@ import {
   Fragment,
   isValidElement,
   memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -1700,11 +1701,10 @@ function recordedFiles(attachments: IterationAttachment[]): RecordedFile[] {
   return [...byIdentity.values()];
 }
 
-// The reader for a document artifact. Nothing is fetched until it is asked for:
-// a transcript holding a dozen reports must not download and decode a dozen PDFs
-// to paint. The bytes then land inside `DocPreview`'s sandboxed frame, which is
-// a separate document with its own CSS scope and an opaque origin — untrusted
-// markup can neither restyle the app nor read its storage. See `DocArtifact`.
+// The reader for a document artifact. The bytes are fetched once the tile is on
+// screen and land inside `DocPreview`'s sandboxed frame, which is a separate
+// document with its own CSS scope and an opaque origin — untrusted markup can
+// neither restyle the app nor read its storage. See `DocArtifact`.
 const AttachmentDocTile = memo(function AttachmentDocTile({
   client,
   sid,
@@ -1720,6 +1720,7 @@ const AttachmentDocTile = memo(function AttachmentDocTile({
   const iterationId = attachment.iteration_id ?? "";
   const index = attachment.index ?? 0;
   const name = attachment.filename || "document";
+  const needed = useCallback(() => setWanted(true), []);
 
   useEffect(() => {
     if (!wanted || !iterationId || !sid) return;
@@ -1748,9 +1749,7 @@ const AttachmentDocTile = memo(function AttachmentDocTile({
       sizeLabel={attachmentBytes(attachment.size)}
       url={url}
       failed={failed}
-      onOpen={(open) => {
-        if (open) setWanted(true);
-      }}
+      onNeeded={needed}
     />
   );
 });

@@ -1,15 +1,14 @@
 /**
  * One picture as a FILE: what it is called, and how its bytes are read.
  *
- * The name is a contract, not a detail. A capture is the ONLY thing the model
- * ever receives about a document it may not read, so `report-p3.png` is what
- * says which page a human drew on; `capture.png` would leave that
- * unanswerable. Everything here is pure apart from the two byte readers, which
- * is why naming can be stated in tests instead of demonstrated in a browser.
+ * The name is a contract, not a detail: an edited picture keeps the name of the
+ * one it came from, so what travels is never an anonymous `capture.png`.
+ * Everything here is pure apart from the two byte readers, which is why naming
+ * can be stated in tests instead of demonstrated in a browser.
  *
- * It lives on its own because THREE callers had grown their own copy: the
- * document capture, the attachment intake and the image viewer each carried a
- * slug regex, a `toBlob` wrapper and a data-URL reader of their own.
+ * It lives on its own because callers had grown their own copy: the attachment
+ * intake and the image viewer each carried a slug regex, a `toBlob` wrapper and
+ * a data-URL reader of their own.
  */
 
 /** `report.pdf` -> `report`: filesystem-safe, extension dropped, never empty. */
@@ -19,20 +18,6 @@ export function fileBaseName(name: string, fallback = 'document'): string {
     .replace(/[^a-zA-Z0-9._-]+/gu, '-')
     .replace(/^[-.]+|-+$/gu, '');
   return base || fallback;
-}
-
-/**
- * The name a captured PDF page is attached under. The page number is IN the
- * filename because that is the only thing the model receives about it.
- */
-export function pageCaptureFilename(name: string, page: number): string {
-  const index = Math.max(1, Math.trunc(page) || 1);
-  return `${fileBaseName(name)}-p${index}.png`;
-}
-
-/** The name a captured HTML artifact is attached under: it has no pages. */
-export function viewCaptureFilename(name: string): string {
-  return `${fileBaseName(name)}-capture.png`;
 }
 
 /**
