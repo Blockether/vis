@@ -312,7 +312,7 @@
         (try (.setContextClassLoader
                thread
                (URLClassLoader. (into-array URL [(.toURL (.toURI ^java.io.File dir))]) prior))
-             ;; what `/healthz`, `/v1/capabilities` and the ACP handshake advertise
+             ;; what `/healthz` and `/v1/capabilities` advertise
              (expect (= stamped (protocol/release-version)))
              (finally (.setContextClassLoader thread prior) (delete-tree! dir))))))
 

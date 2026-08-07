@@ -227,8 +227,8 @@
   (swap! killed disj server)
   server)
 
-;; Session-scoped servers — servers a CLIENT attaches to ONE session (an ACP
-;; editor's `session/new` / `session/load` `mcpServers`). They are NEVER written
+;; Session-scoped servers — servers a CLIENT attaches to ONE session when it
+;; opens or loads that session. They are NEVER written
 ;; to config and never leak into another session: an editor wiring a server for
 ;; its own workspace must not mutate the daemon for the TUI, the phone, and every
 ;; other session. Their pool is keyed by `[session-id server]`, so a session
@@ -1149,7 +1149,7 @@
    able to tell \"no such server\" from \"stopped - start it again\" from \"signed
    out\" (`\"needs_auth\"` - an OAuth server with no live token, where asking for
    tools can only produce a refusal). The daemon-wide pool is shared across every
-   session; servers a client attached to THIS session (ACP `mcpServers`) are
+   session; servers a client attached to THIS session are
    listed alongside it and shadow a global one of the same name, marked
    `\"scope\": \"session\"`."
   [env]
