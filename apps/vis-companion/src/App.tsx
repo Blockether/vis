@@ -42,6 +42,7 @@ import {
 import { applyTheme, resolveLocalTheme } from "./lib/theme";
 import { getThemePalette, getThemePref } from "./lib/storage";
 import {
+  PlusIcon,
   SettingsIcon,
 } from "./components/icons";
 import { ConnectScreen } from "./screens/ConnectScreen";
@@ -931,7 +932,10 @@ export function App() {
   return (
     <Shell>
       {isChromeVisible && (
-        <Header onAppSettings={() => setAppSettingsOpen(true)} />
+        <Header
+          onPair={() => setTab("connect")}
+          onAppSettings={() => setAppSettingsOpen(true)}
+        />
       )}
 
       <main
@@ -945,7 +949,6 @@ export function App() {
               onUnreachable={handleUnreachable}
               onOpen={openGatewaySession}
               onMachineSettings={openSettings}
-              onPairMachine={() => setTab("connect")}
               onRenameMachine={async (conn, label) => {
                 await upsertConnection({ ...conn, label: label || undefined });
                 await refresh();
@@ -1056,7 +1059,13 @@ export function App() {
   );
 }
 
-export function Header({ onAppSettings }: { onAppSettings: () => void }) {
+export function Header({
+  onPair,
+  onAppSettings,
+}: {
+  onPair: () => void;
+  onAppSettings: () => void;
+}) {
   return (
     <header className="relative z-30 shrink-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
       <div className="mx-auto flex h-12 w-full max-w-[1400px] items-center pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
@@ -1070,6 +1079,22 @@ export function Header({ onAppSettings }: { onAppSettings: () => void }) {
             VIS
           </span>
         </div>
+        {/* PAIRING IS APP CHROME, NOT A ROW IN THE LIST.
+            It was the last chip of the fleet strip, so the one verb that ADDS a machine
+            moved with the fleet, changed shape with it, and vanished behind a scroll on
+            a phone once four machines were paired. It sits here instead — one fixed
+            place, beside the app's own cog, whether nothing is paired or ten things
+            are — and the strip below is left to answer "which machine" and nothing
+            else. */}
+        <button
+          type="button"
+          className="ml-auto grid min-h-12 min-w-12 place-items-center text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+          onClick={onPair}
+          aria-label="Pair a machine"
+          title="Pair a machine"
+        >
+          <PlusIcon className="size-4" />
+        </button>
         {/* ONE SCREEN, ONE COG.
             The app used to carry a two-item tab bar whose second item existed for a
             verb used twice a year — pairing — and a nav duplicating it at `sm:`. The
@@ -1087,7 +1112,7 @@ export function Header({ onAppSettings }: { onAppSettings: () => void }) {
             below wears a 2px frame and its trailing ink lands 14px in. */}
         <button
           type="button"
-          className="-mr-3 ml-auto grid min-h-12 min-w-12 items-center justify-items-end pr-3.5 text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent sm:-mr-4 sm:pr-4.5"
+          className="-mr-3 grid min-h-12 min-w-12 items-center justify-items-end pr-3.5 text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent sm:-mr-4 sm:pr-4.5"
           onClick={onAppSettings}
           aria-label="Open preferences"
         >

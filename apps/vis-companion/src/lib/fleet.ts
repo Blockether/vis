@@ -164,18 +164,6 @@ export function machineCounts(
 }
 
 /**
- * Whether the scope strip is on screen — and therefore where the fleet's live
- * and unread counts are stated. The strip exists only when there is more than
- * one machine to choose between, and every chip in it carries its machine's
- * two numbers, so the header line and the machine headers stay quiet while it
- * is up. With a single machine paired there is no strip, which is why the
- * header line takes the counts back instead of the screen going silent.
- */
-export function showsScopeStrip(machines: FleetMachine[]): boolean {
-  return machines.length > 1;
-}
-
-/**
  * What the live filter matched, and on how many machines. A search spans every
  * machine in scope, so the header has to be able to SAY so: "12 matches across
  * 2 of 3 machines" is the only proof the query left this gateway. Machines with

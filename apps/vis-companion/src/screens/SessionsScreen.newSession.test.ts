@@ -202,9 +202,6 @@ describe('where "New session" lives', () => {
     expect(source).toContain(
       "border-b border-r-2 border-dialog-edge bg-panel sm:border-y sm:border-r-2",
     );
-    expect(source).toContain(
-      "const hasScopeStrip = showsScopeStrip(machines);",
-    );
     expect(source).toContain("{index > 0 && <MachineGap />}");
     expect(source).not.toContain("showMachineHeaders");
   });
@@ -361,17 +358,16 @@ describe("the machine is a chip, not a second band", () => {
   });
 });
 
-// Regression, user report ("the PAIRING is just one fucking ICON so we dont have two
-// tabs"): pairing lived in a tab of its own, so the strip that answers "which machine"
-// could not add one.
-describe('the pairing chip', () => {
-  it('ends the machine strip, and is the reason a solo user still sees the row', () => {
-    expect(source).toContain('{(hasScopeStrip || onPairMachine) && (');
-    expect(source).toContain("label={'Pair a machine'}");
-    expect(source).toContain('onClick={onPairMachine}');
+// Regression, user report ("PLEASE MAKE THE UNIFIED VIEW REGARDLESS IF WE HAVE ON
+// MACHINE OR MANY MACHINES IN FLEET"): the strip appeared only above two machines, and
+// carried a pairing chip that a solo user saw instead of chips — two different screens.
+describe('the machine strip', () => {
+  it('is one row, paired one machine or many', () => {
+    expect(source).not.toContain('hasScopeStrip');
+    expect(source).not.toContain('showsScopeStrip');
   });
 
-  it('keeps the chips themselves a multi-machine cost only', () => {
-    expect(source).toContain('{hasScopeStrip && (');
+  it('does not pair — that is app chrome now', () => {
+    expect(source).not.toContain('onPairMachine');
   });
 });

@@ -102,7 +102,6 @@ import {
   sessionOrder,
   timeLabel,
   withSearchHits,
-  showsScopeStrip,
   isDraftWorkspace,
   projectPath,
   startAsk,
@@ -233,8 +232,6 @@ interface Props {
   onOpen: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
   /** Open that machine's own settings — the last verb in its `⋯` menu. */
   onMachineSettings?: (conn: GatewayConn) => void;
-  /** Pair another machine. The `⊕` chip that ends the scope strip. */
-  onPairMachine?: () => void;
   /** Renames the machine in place from its own header. '' clears the name. */
   onRenameMachine?: (conn: GatewayConn, label: string) => void;
 }
@@ -245,7 +242,6 @@ export function SessionsScreen({
   onUnreachable,
   onOpen,
   onMachineSettings,
-  onPairMachine,
   onRenameMachine,
 }: Props) {
   // A machine OWNS its projects: every row belongs to exactly one gateway, and a
@@ -706,7 +702,6 @@ export function SessionsScreen({
   const scopeMachine = scope
     ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
     : null;
-  const hasScopeStrip = showsScopeStrip(machines);
   // THE MACHINE IS SELECTION, NOT STRUCTURE.
   // The list used to carry two bands one hairline apart — a machine header and a
   // project header, same x, same trailing cluster — so nothing said the second was
@@ -1199,31 +1194,10 @@ export function SessionsScreen({
                           {totals.all} {totals.all === 1 ? 'session' : 'sessions'}
                         </span>
                         {/* WHERE the two numbers live is a one-place question.
-                            While the scope strip is on screen every chip
-                            carries its machine's live and unread and the All
-                            chip carries the fleet's, one row below this line —
-                            so saying it here was the same fact twice, and a
-                            third time in every machine header. One machine
-                            paired means there is no strip at all: then, and
-                            only then, this line takes the counts back. */}
-                        {!hasScopeStrip && (
-                          <>
-                            <span
-                              className={`whitespace-nowrap ${totals.live > 0 ? 'font-bold text-ok' : ''}`}
-                            >
-                              {totals.live} live
-                            </span>
-                            {totals.unread > 0 && (
-                              <span
-                                className="whitespace-nowrap font-bold text-accent-ink"
-                                role="status"
-                                aria-live="polite"
-                              >
-                                {totals.unread} unread
-                              </span>
-                            )}
-                          </>
-                        )}
+                            The scope strip is always on screen, and every chip
+                            carries its machine's live and unread while the All
+                            chip carries the fleet's — one row below this line.
+                            Saying it here too was the same fact twice. */}
                       </>
                     )}
                   </>
@@ -1276,17 +1250,13 @@ export function SessionsScreen({
           )}
         </div>
 
-        {/* The scope strip. It answers "which machine", and it is now also where a
-            machine COMES FROM: pairing used to be a whole tab of a two-tab bar, for a
-            verb used twice a year. The `⊕` chip ends the strip, so a machine is added
-            exactly where machines live.
-            The chips themselves still cost the solo user nothing — one machine paired
-            means no All, no machine chip, no count here — but the row survives for the
-            one control everybody needs. */}
-        {(hasScopeStrip || onPairMachine) && (
-          <div className={`flex items-center gap-1.5 overflow-x-auto bg-panel px-3 py-2 sm:px-4 ${LIST_FRAME}`}>
-            {hasScopeStrip && (
-              <>
+        {/* The scope strip. It answers "which machine", and it answers it the SAME WAY
+            whether one machine is paired or six: All plus one chip per machine, each
+            carrying that machine's live and unread. It used to appear only above two
+            machines, so a solo user met a different screen — no chips, counts moved up
+            into the header line — and pairing a second machine rearranged the app.
+            Pairing itself is app chrome now and lives in the bar. */}
+        <div className={`flex items-center gap-1.5 overflow-x-auto bg-panel px-3 py-2 sm:px-4 ${LIST_FRAME}`}>
             <button
               type="button"
               aria-pressed={scope === null}
@@ -1326,22 +1296,7 @@ export function SessionsScreen({
                 </button>
               );
             })}
-              </>
-            )}
-            {onPairMachine && (
-              <button
-                type="button"
-                className={chipClass(false)}
-                aria-label={'Pair a machine'}
-                title={'Pair a machine'}
-                onClick={onPairMachine}
-              >
-                <PlusIcon className="size-3" />
-                Pair
-              </button>
-            )}
           </div>
-        )}
 
         {/* THE BAND IS THE FIELD.
             It wore a `›` first — this app's disclosure glyph, borrowed as a terminal

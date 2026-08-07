@@ -23,7 +23,6 @@ import {
   sessionOrder,
   timeLabel,
   withSearchHits,
-  showsScopeStrip,
   startAsk,
   START_IDLE,
   startFlowName,
@@ -353,15 +352,6 @@ describe('timeLabel', () => {
 // still wearing its unread badge, the very thing the push notification was about —
 // disappeared an hour later, and a session merely waiting for human input went
 // with it. Age may only ever hide a session that is idle, answered and read.
-
-describe('showsScopeStrip', () => {
-  it('is the strip, and therefore who states the tallies', () => {
-    expect(showsScopeStrip([machine(studio, []), machine(tower, [])])).toBe(true);
-    // Solo: no strip, so the header line is the only surface left to count on.
-    expect(showsScopeStrip([machine(studio, [])])).toBe(false);
-    expect(showsScopeStrip([])).toBe(false);
-  });
-});
 
 // Unsent work lives on THIS device only, and the session holding it is usually
 // empty, so it sorts below everything else there is. So it is pinned to the top

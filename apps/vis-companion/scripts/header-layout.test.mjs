@@ -38,8 +38,19 @@ describe('app bar', () => {
     expect(app).not.toContain('export function TabBar');
   });
 
-  it('hands the free space to the one control it has left', () => {
-    expect(cog).toContain('ml-auto');
+  // Regression, user report ("PAIR SHOULD BE ON THE FUCKING HEADER"): pairing was a
+  // chip at the end of the list's fleet strip, so it moved and changed shape with the
+  // fleet. It is app chrome: it belongs beside the app's own cog, always in one place.
+  it('pairs from the bar, immediately before the cog', () => {
+    const pair = app.indexOf('aria-label="Pair a machine"');
+    const preferences = app.indexOf('aria-label="Open preferences"');
+    expect(pair).toBeGreaterThan(0);
+    expect(pair).toBeLessThan(preferences);
+    expect(classes(openingTag(app, 'Pair a machine'))).toContain('ml-auto');
+  });
+
+  it('hands the free space to the trailing cluster', () => {
+    expect(classes(openingTag(app, 'Pair a machine'))).toContain('ml-auto');
     // Nothing else competes for that space now, so there is no breakpoint at which
     // the cog gives it up.
     expect(cog).not.toContain('sm:ml-0');

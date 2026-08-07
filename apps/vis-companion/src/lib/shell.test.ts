@@ -138,8 +138,10 @@ describe('one screen, pairing is a chip', () => {
     expect(appSource).toContain('aria-label="Open preferences"');
   });
 
-  it('hands the list the pairing verb and gives Machines a way back', () => {
-    expect(appSource).toContain('onPairMachine={() => setTab("connect")}');
+  it('pairs from the app bar and gives Machines a way back', () => {
+    expect(appSource).toContain('aria-label="Pair a machine"');
+    expect(appSource).toContain('onPair={() => setTab("connect")}');
+    expect(appSource).not.toContain('onPairMachine');
     expect(appSource).toContain('onClose={hasConn ? () => setTab("sessions") : undefined}');
   });
 });
