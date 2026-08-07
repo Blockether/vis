@@ -157,8 +157,14 @@ export const IconButton = forwardRef<
 ) {
   // `border-r-0`: this box ends ON the paper's own edge, and the paper already draws
   // that line. A hover frame that redraws it puts two hairlines in one pixel column.
+  //
+  // `h-auto self-stretch`: it ends a ROW, so its hover is the row's own height. The
+  // compact scale's 32px face centred in a 44px row painted a floating band with a
+  // 6px dead strip above and below it — the trash in "Manage projects" hovered short
+  // of the row it belongs to. Stretching also makes the invisible `after:` reach
+  // pointless, so it is dropped (`after:content-none`) rather than left to overhang.
   const box = edge
-    ? 'min-w-10 justify-items-end border-r-0 pl-0 pr-3 -mr-3 sm:min-w-12 sm:pr-4 sm:-mr-4 mouse:min-w-10'
+    ? 'h-auto min-w-10 justify-items-end self-stretch border-r-0 pl-0 pr-3 -mr-3 after:content-none sm:min-w-12 sm:pr-4 sm:-mr-4 mouse:min-w-10'
     : 'min-w-7 place-items-center px-0 sm:min-w-8 sm:px-0 mouse:min-w-6';
   return (
     <Button

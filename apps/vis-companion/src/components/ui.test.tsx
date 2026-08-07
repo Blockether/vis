@@ -665,3 +665,19 @@ describe('one outer dialog component', () => {
     expect(uiSource).toContain('starting:opacity-0');
   });
 });
+
+// Regression, user report ("why doesn't the delete button on a project have the
+// hover of the full height of its parent?"): an `edge` IconButton wore the compact
+// scale's fixed 32px face and centred it, so the trash ending a "Manage projects"
+// row painted a floating hover band inside a taller row, with a dead strip above
+// and below it. A control that ENDS a row hovers the row.
+describe('a row-ending icon button fills its row', () => {
+  it('stretches instead of centring a fixed face', () => {
+    const edge = uiSource.slice(uiSource.indexOf('const box = edge'));
+    const line = edge.slice(0, edge.indexOf('\n', edge.indexOf('?')));
+    expect(line).toContain('h-auto');
+    expect(line).toContain('self-stretch');
+    // A stretched box needs no invisible reach for its target.
+    expect(line).toContain('after:content-none');
+  });
+});
