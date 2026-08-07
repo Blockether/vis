@@ -238,7 +238,7 @@ describe('where "New session" lives', () => {
   // them off the line.
   it("gives the row flags their own grid column, next to the title and not inside it", () => {
     const grid =
-      "grid-cols-[minmax(0,1fr)_auto_3.5rem] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_4.5rem_5rem_6rem]";
+      "grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_4.5rem_5rem_6rem]";
     // The row and the skeleton that stands in for it share ONE track list, or the
     // columns jump the moment the rows land.
     expect(
@@ -273,7 +273,7 @@ describe('where "New session" lives', () => {
     // Status and time moved one column out to make room.
     expect(source).toContain("col-start-3 row-start-1 inline-flex shrink-0");
     expect(source).toContain(
-      "col-start-3 row-start-2 justify-self-end whitespace-nowrap",
+      "col-start-2 col-end-4 row-start-2 justify-self-end whitespace-nowrap",
     );
   });
   // Regression, user report: on a phone the NEW badge should sit NEXT TO `IDLE`.
@@ -284,11 +284,26 @@ describe('where "New session" lives', () => {
   // `WAITING` with the label aligned to its start, so every row's status begins on
   // the same x one gutter after the badge.
   it("sits the phone flags directly beside the status they qualify", () => {
-    expect(source).toContain("grid-cols-[minmax(0,1fr)_auto_3.5rem]");
+    expect(source).toContain("grid-cols-[minmax(0,1fr)_auto_auto]");
     expect(source).not.toContain("grid-cols-[minmax(0,1fr)_3.5rem_6.75rem]");
     expect(source).toContain("return 'WAITING'");
+  });
+
+  // Regression, user report: on a phone `NEW IDLE` should END where `7 hours ago`
+  // ends. The status was aligned to the START of its track while the timestamp
+  // sharing that track on the line below was aligned to its END, so the two lines
+  // of the same row stopped on two different right margins. Both end on the track's
+  // end now; only the wide `sm:` layout, which puts them on their own columns of a
+  // single line, aligns them to the start.
+  it("ends the phone status on the same edge as the timestamp under it", () => {
     expect(source).toContain(
-      "col-start-3 row-start-1 inline-flex shrink-0 items-center gap-1 justify-self-start",
+      "col-start-3 row-start-1 inline-flex shrink-0 items-center gap-1 justify-self-end",
+    );
+    expect(source).toContain(
+      "sm:col-start-auto sm:row-start-auto sm:justify-self-start ${statusTone(session)}",
+    );
+    expect(source).toContain(
+      "col-start-2 col-end-4 row-start-2 justify-self-end whitespace-nowrap",
     );
   });
 });

@@ -2043,7 +2043,7 @@ const SessionRow = memo(function SessionRow({
             FIXED tracks. That is the difference between a list and a phone list
             stretched to 1400px, where a title sat at x=56 and its own status badge at
             x=1325 with nothing between them to carry the eye across. */}
-        <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_3.5rem] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_4.5rem_5rem_6rem] sm:gap-y-0">
+        <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_4.5rem_5rem_6rem] sm:gap-y-0">
           {/* The NAME, and nothing but the name. The badges used to ride inside this
               cell, so every row started its flags at a different x — the longer the
               title, the further right its `NEW` — and a long title pushed them off
@@ -2069,12 +2069,12 @@ const SessionRow = memo(function SessionRow({
               it right-aligned four characters inside 108px and parked the badge 86px
               away from the word it belongs to. The flag track is `auto` and the
               status track next to it is fixed at the width of its longest label
-              (`WAITING`), with the status aligned to that track's START — so every
-              row's status begins on the same x and the badge ends exactly one gutter
-              before it. Sizing the status track to its CONTENT does not work: the
-              timestamp shares that column on the second line and is the wider of the
-              two, so the track would follow the clock and drag the badge away
-              again. */}
+              (`WAITING`), aligned to that track's END — the same right margin the
+              timestamp on the line below stops on, so `NEW IDLE` and `7 hours ago`
+              finish on one edge instead of the badge floating mid-row. The clock
+              SPANS both columns rather than sharing the status one: sharing it, the
+              wider of the two sized the track and pushed `IDLE` 48px away from the
+              `NEW` it qualifies. */}
           <span className="col-start-2 row-start-1 flex min-w-0 items-center justify-end gap-1.5 font-mono text-chip sm:col-start-auto sm:row-start-auto">
             {unread > 0 && (
               <span className="shrink-0 bg-accent px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
@@ -2115,7 +2115,7 @@ const SessionRow = memo(function SessionRow({
             </span>
           </span>
           <span
-            className={`col-start-3 row-start-1 inline-flex shrink-0 items-center gap-1 justify-self-start font-mono text-chip font-bold tracking-[0.08em] sm:col-start-auto sm:row-start-auto ${statusTone(session)}`}
+            className={`col-start-3 row-start-1 inline-flex shrink-0 items-center gap-1 justify-self-end font-mono text-chip font-bold tracking-[0.08em] sm:col-start-auto sm:row-start-auto sm:justify-self-start ${statusTone(session)}`}
           >
             <span
               className={`size-1.5 shrink-0 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
@@ -2123,7 +2123,7 @@ const SessionRow = memo(function SessionRow({
             {status}
           </span>
           <span
-            className="col-start-3 row-start-2 justify-self-end whitespace-nowrap font-mono text-chip text-dialog-hint tabular-nums sm:col-start-auto sm:row-start-auto sm:justify-self-start"
+            className="col-start-2 col-end-4 row-start-2 justify-self-end whitespace-nowrap font-mono text-chip text-dialog-hint tabular-nums sm:col-start-auto sm:col-end-auto sm:row-start-auto sm:justify-self-start"
             title={formatExact(timestamp)}
           >
             {timeLabel(timestamp)}
@@ -2414,7 +2414,7 @@ function NavigatorSkeleton() {
                   key={row}
                   className={`flex min-h-12 w-full items-center py-1.5 [&+&]:border-t [&+&]:border-dialog-edge mouse:min-h-8 mouse:py-1 ${LIST_EDGE}`}
                 >
-                  <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_3.5rem] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_4.5rem_5rem_6rem] sm:gap-y-0">
+                  <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_4.5rem_5rem_6rem] sm:gap-y-0">
                     <span className="col-start-1 row-start-1 sm:col-start-auto sm:row-start-auto">
                       <SkeletonBar type="text-meta" width={width} baz="h-2.5" tone="bg-muted/30" />
                     </span>
