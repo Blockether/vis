@@ -2,6 +2,12 @@
 
 Read only the section relevant to the change. Keep this file for durable, repo-wide contracts; put local implementation detail beside the code and inspect source/tests before changing a contract.
 
+## No profanity, anywhere (HARD RULE)
+
+- This repository contains **no profanity or vulgarity** — not in code, comments, docstrings, tests, test names, fixtures, commit messages, branch names, docs, UI copy, logs, or error text. This is not a style preference; it is a hard rule with no exceptions.
+- **Quoting a bug report is not an exception.** When a user report contains profanity, paraphrase it: `;; Regression, issue #N: the dialog height jumped on toggle` — never reproduce the original wording. The report's *meaning* is what the comment owes the next reader.
+- Applies to every language and every file in the tree, including scratch edits that are about to be deleted. If you find an existing occurrence, remove it in the same commit as whatever brought you there.
+
 ## Engineering defaults
 
 - Do not preserve backward compatibility. Remove obsolete paths instead of adding compatibility layers, fallbacks, or migrations.
