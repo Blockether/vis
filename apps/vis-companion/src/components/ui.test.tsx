@@ -6,6 +6,7 @@ import storageSource from "../lib/storage.ts?raw";
 import sessionsListSource from "../screens/SessionsScreen.tsx?raw";
 import gatewaySource from "../lib/gateway.ts?raw";
 import settingsSource from "../screens/SettingsScreen.tsx?raw";
+import chatSource from "./ChatContent.tsx?raw";
 
 import { MACHINE_COLORS } from "../lib/machine-colors";
 import {
@@ -475,8 +476,8 @@ describe("HeaderActions", () => {
     expect(html).toContain("sm:pr-4");
   });
 
-  it("puts a gap in front of the cluster and between its controls", () => {
-    expect(html).toContain("pl-2");
+  it("spaces its controls from each other and nothing else", () => {
+    expect(html).not.toContain("pl-2");
     expect(html).toContain("gap-2");
   });
 
@@ -879,6 +880,19 @@ describe("a row's pressable slab", () => {
   });
 });
 
+// Regression, user report ("there is too much margin between the > for a session and
+// the live/idle stuff"): the trailing cluster added a gutter of its OWN in front of a
+// control that already carries its hit box as padding, so on a 390px iPhone the status
+// ink stopped at 328 and the chevron's glyph started at 362 — a 34px hole on the left
+// of a mark sitting 13px from the paper on its right.
+describe("the trailing control cluster", () => {
+  it("adds no gutter of its own in front of the first control", () => {
+    expect(uiSource).toContain(
+      "const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-3 sm:pr-4';",
+    );
+  });
+});
+
 // Regression, user report ("remove this setting and always show the icon with draft"):
 // "Where a new session starts" was an app switch that hid the draft half of the
 // project header's split button, so the private copy — the reason drafts exist —
@@ -967,5 +981,32 @@ describe("a project's pages are cut by the gateway", () => {
     expect(sessions).not.toContain("HeaderToggle");
     expect(sessions).not.toContain("Show {remaining} more");
     expect(sessions).toContain("<Pager");
+  });
+});
+
+// Regression, user report ("the components on the WEB like the answers"): running
+// prose was justified in three different spellings — the chat's own local
+// `runningText` with hyphenation, and Settings' paragraphs justified with NO
+// hyphenation at all, which is what turns a narrow column into rivers. There is now
+// one rule, `PROSE`, and one ragged fallback for a run that cannot be broken.
+describe("running prose has exactly one rule", () => {
+  const RULE = "hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty";
+
+  it("declares it once in ui.tsx, justified, with hyphenation attached", () => {
+    expect(uiSource).toContain(`export const PROSE =\n  '${RULE} text-justify';`);
+    expect(uiSource).toContain(
+      `export const PROSE_RAGGED =\n  '${RULE} text-left';`,
+    );
+  });
+
+  it("is what the answers and the user bubble wear", () => {
+    expect(chatSource).toContain("const runningText = PROSE;");
+    expect(chatSource).toContain("isJustifiable ? PROSE : PROSE_RAGGED");
+  });
+
+  it("leaves no hand-spelled justification anywhere else", () => {
+    for (const source of [chatSource, settingsSource, sessionsListSource]) {
+      expect(source).not.toContain("text-justify");
+    }
   });
 });

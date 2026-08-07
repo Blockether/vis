@@ -664,6 +664,27 @@ const HeaderTone = createContext<'machine' | 'project'>('project');
 export const LIST_EDGE = 'pl-3 sm:pl-4';
 
 /**
+ * RUNNING PROSE, and the app has exactly ONE rule for it.
+ *
+ * Justification is a WIDTH trade: word-spacing is the only slack a justified line
+ * has, so it is only safe when the breaker is given enough stops — hence
+ * `hyphens-auto` with a 6/3/3 limit and `text-pretty` ride WITH `text-justify`
+ * and are never spelled apart from it. Settings used to justify without
+ * hyphenation in three places while the chat justified with it, which is the same
+ * paragraph set two different ways on one screen. This mirrors the TUI's single
+ * justifier (`markdown-layout/justify-line-runs` → lanterna `justifyLine`).
+ *
+ * A caller that owns an UNBREAKABLE atom it cannot scope `break-all` to (one raw
+ * text run: the user bubble) takes `PROSE_RAGGED` instead — same typography, flush
+ * left — rather than dropping the whole rule or re-spelling half of it.
+ */
+export const PROSE_RAGGED =
+  'hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty text-left';
+
+export const PROSE =
+  'hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty text-justify';
+
+/**
  * THE INNER EDGE OF A PRESSABLE ROW, and the other half of `LIST_EDGE`.
  *
  * A row's pressable half is a HOVER SLAB: it fills the row from the leading edge up to
@@ -705,7 +726,13 @@ export const LIST_FRAME = 'border-l-2 border-dialog-edge';
 // last thing in the row. An `edge` IconButton reclaims this padding with a matching
 // negative margin, so a bare GLYPH runs to the paper while a filled BOX stops at the
 // gutter — and both are true whichever one happens to be last.
-const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pl-2 pr-3 sm:pr-4';
+//
+// It adds NO gutter in front of itself: the first control already carries its 44px hit
+// box as padding around a 14px mark, so a `pl-2` on top of the slab's own `pr-3` put
+// 34px between a session's `IDLE` and the `›` that follows it while the same `›` sat
+// 13px from the paper on its other side. `gap-2` still separates two controls from
+// each other, which is the only distance this cluster has to invent.
+const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-3 sm:pr-4';
 
 /**
  * The leading GLYPH of a header, in a box the width of the widest one.
