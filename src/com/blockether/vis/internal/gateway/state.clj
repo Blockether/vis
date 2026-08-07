@@ -2170,14 +2170,33 @@
     (cond (and p m) (str p " / " m)
           :else (or p m))))
 
+(defn- stall-reached-provider?
+  "Whether this turn ever got as far as the provider. The `:provider-call` marker
+   is what stamps attribution, and streamed output can only have come from a
+   provider — so before either of those, the turn stalled with NO provider
+   involved at all: queueing for the execution permit, or building/entering its
+   own session engine."
+  [stall]
+  (let
+    [{:keys [provider produced?]} (some-> stall
+                                          deref)]
+    (boolean (or provider produced?))))
+
 (defn- stall-failure-text
   "The stall failure a human reads. `Provider stream stalled: no output for
    362142ms in phase :provider-call` named the symptom and nothing else, so the
    card could not say that it was github-copilot-enterprise / claude-opus-5 whose
-   connection died — the log knew, the turn did not."
+   connection died — the log knew, the turn did not.
+
+   A turn that never reached a provider must not blame one either: a turn parked
+   on its own session's wedged engine died with `Provider stream stalled: no
+   output for 360047ms in phase :awaiting-permit`, sending the reader after a
+   network that was never touched."
   [stall]
   (let [who (stall-attribution stall)]
-    (str "Provider stream stalled" (when who (str " (" who ")")) ": " (stall-detail-text stall))))
+    (if (stall-reached-provider? stall)
+      (str "Provider stream stalled" (when who (str " (" who ")")) ": " (stall-detail-text stall))
+      (str "Turn stalled before reaching the provider: " (stall-detail-text stall)))))
 
 (def ^:private stall-exempt-phases
   "Phases where a running turn may legitimately produce NO chunk for a long time
@@ -2667,7 +2686,8 @@
          ;; and no :error all they can paint is a fabricated bare "Turn failed."
          ;; row - the unstyled line reported next to a lost answer.
          failure-code
-         (cond stalled? "provider_stream_stalled"
+         (cond stalled?
+               (if (stall-reached-provider? stall) "provider_stream_stalled" "turn_stalled")
                (and (= "failed" status) (empty? content-blocks)) "turn_failed")
 
          failure-text
@@ -2925,6 +2945,14 @@
              :last-ms (System/currentTimeMillis))
            (if (acquire-turn-permit! cancel-token)
              (do (swap! turns-executing inc)
+                 ;; The permit is IN HAND: everything from here on — building or
+                 ;; entering this session's engine, then the first provider
+                 ;; request — is execution, not queueing. Leaving the
+                 ;; `:awaiting-permit` stamp standing made a turn parked on its
+                 ;; own session's wedged engine report a phase it had already
+                 ;; left, kept it exempt from the first-output ceiling for six
+                 ;; minutes, and blamed a provider it never reached.
+                 (swap! stall assoc :phase :engine-start :last-ms (System/currentTimeMillis))
                  (try (run-turn! sid
                                  tid
                                  request

@@ -3428,8 +3428,8 @@
                                         "no output for 362142ms in phase :provider-call"
                                         :provider :github-copilot-enterprise
                                         :model "claude-opus-5"})))))
-    (it "still reads as a sentence when the turn never reached a provider"
-        (expect (= "Provider stream stalled: no worker activity for 5ms"
+    (it "refuses to blame a provider the turn never reached"
+        (expect (= "Turn stalled before reaching the provider: no worker activity for 5ms"
                    (failure-text (atom {:stall-detail "no worker activity for 5ms"})))))))
 
 ;; Regression, issue #128: a session was keyed by whatever spelling the caller
@@ -3467,3 +3467,49 @@
                         (expect (= (state/current-seq sid) (state/current-seq (str sid))))
                         (expect (= 1 (count (state/events-since (str sid) 0))))
                         (finally (state/unsubscribe! (str sid) "sub-2"))))))
+
+;; Regression, session e8c9dbc9-388d-43a4-8264-9dd5adec4449: the message typed into a
+;; wedged session queued, TOOK its execution permit, then parked on that session's dead
+;; engine lock — but the stall state still read `:awaiting-permit`, the stamp the worker
+;; writes BEFORE it queues. So the turn kept the queueing exemption from the first-output
+;; ceiling, sat six minutes on a spinner, and died as "Provider stream stalled: no output
+;; for 360047ms in phase :awaiting-permit" — naming a provider it had never contacted and
+;; a phase it had already left.
+(defdescribe
+  stall-before-the-provider-test
+  (let [failure-text @#'state/stall-failure-text]
+    (it "leaves :awaiting-permit behind the moment the permit is in hand"
+        (let
+          [registry @#'state/registry
+           sid (str "engine-start-" (java.util.UUID/randomUUID))
+           tid "turn-1"
+           seen (promise)]
+
+          (try (swap! registry assoc
+                 sid
+                 {:next-seq 0
+                  :current-turn tid
+                  :turns {tid {:turn_id tid :session_id sid :status "running" :started_at 123}}})
+               (with-redefs-fn {#'state/append-event! (fn [& _]
+                                                        nil)
+                                #'state/run-turn! (fn [_sid _tid _request {:keys [stall]}]
+                                                    (deliver seen (:phase @stall))
+                                                    {:status :ok})}
+                 (fn []
+                   (#'state/launch-turn-worker!
+                    sid
+                    tid
+                    "hello"
+                    {:cancel-token (cancellation/cancellation-token)})
+                   (expect (= :engine-start (deref seen 4000 ::timeout)))))
+               (finally (swap! registry dissoc sid)))))
+    (it "keeps naming the provider once a stream had actually produced output"
+        (expect (= "Provider stream stalled: no output for 362142ms in phase :content"
+                   (failure-text (atom {:stall-detail "no output for 362142ms in phase :content"
+                                        :produced? true})))))
+    (it
+      "says what a turn wedged before its first provider call really did"
+      (expect
+        (=
+          "Turn stalled before reaching the provider: no output for 360047ms in phase :engine-start"
+          (failure-text (atom {:stall-detail "no output for 360047ms in phase :engine-start"})))))))
