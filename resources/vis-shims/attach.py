@@ -313,9 +313,21 @@ def __vis_install_attach__():
                 label,
                 audience,
             )
-        with open(source, "rb") as f:
-            data = f.read()
-        name = filename or _os.path.basename(str(source)) or "artifact"
+        # A PATH in any spelling a human types: a str, an os.PathLike (pathlib),
+        # with `~` and $VARS expanded - the string that works in a shell works
+        # here - and a plain sentence instead of a bare OSError when it is wrong.
+        raw = _os.fspath(source) if hasattr(source, "__fspath__") else str(source)
+        path = _os.path.expanduser(_os.path.expandvars(raw))
+        if _os.path.isdir(path):
+            raise IsADirectoryError(
+                "vis_attach: " + path + " is a directory - attach one file"
+            )
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except FileNotFoundError:
+            raise FileNotFoundError("vis_attach: no such file: " + path) from None
+        name = filename or _os.path.basename(path) or "artifact"
         return __vis_attach_data(data, str(name), kind, media_type, label, audience)
 
     def vis_attachments():

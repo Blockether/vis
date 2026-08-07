@@ -135,8 +135,7 @@
          (ctx-with-root (temp-root))
 
          out
-         (block pctx
-                "vis_attach(b'x', 'weird.bin', kind='image', media_type='image/svg+xml')\n")
+         (block pctx "vis_attach(b'x', 'weird.bin', kind='image', media_type='image/svg+xml')\n")
 
          [att]
          (:attachments out)]
@@ -245,53 +244,76 @@
                         "x,3\n" "````\n")
                    (str (:stdout out)))))))
 
-(defdescribe vis-attach-path-test
-             (it "reads a confined file from disk and captures it"
-                 (let
-                   [root
-                    (temp-root)
+(defdescribe
+  vis-attach-path-test
+  (it "reads a confined file from disk and captures it"
+      (let
+        [root
+         (temp-root)
 
-                    pctx
-                    (ctx-with-root root)
+         pctx
+         (ctx-with-root root)
 
-                    out
-                    (block pctx
-                           (str "with open('"
-                                root
-                                "/report.json','w') as f:\n"
-                                "    f.write('{}')\n"
-                                "vis_attach('"
-                                root
-                                "/report.json')\n"))
+         out
+         (block pctx
+                (str "with open('"
+                     root
+                     "/report.json','w') as f:\n"
+                     "    f.write('{}')\n"
+                     "vis_attach('"
+                     root
+                     "/report.json')\n"))
 
-                    [att]
-                    (:attachments out)]
+         [att]
+         (:attachments out)]
 
-                   (expect (nil? (:error out)))
-                   (expect (= "report.json" (:filename att)))
-                   (expect (= "application/json" (:media-type att)))))
-             (it "refuses a path outside the filesystem roots"
-                 (let
-                   [pctx
-                    (ctx-with-root (temp-root))
+        (expect (nil? (:error out)))
+        (expect (= "report.json" (:filename att)))
+        (expect (= "application/json" (:media-type att)))))
+  (it "refuses a path outside the filesystem roots"
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
 
-                    out
-                    (block pctx
-                           (str "try:\n"
-                                "    vis_attach('/etc/hosts')\n" "    print('NO-RAISE')\n"
-                                "except Exception as e:\n"
-                                "    print('RAISED', type(e).__name__)\n"))]
+         out
+         (block pctx
+                (str "try:\n"
+                     "    vis_attach('/etc/hosts')\n" "    print('NO-RAISE')\n"
+                     "except Exception as e:\n" "    print('RAISED', type(e).__name__)\n"))]
 
-                   (expect (nil? (:error out)))
-                   (expect (re-find #"RAISED" (str (:stdout out))))
-                   (expect (empty? (:attachments out))))))
+        (expect (nil? (:error out)))
+        (expect (re-find #"RAISED" (str (:stdout out))))
+        (expect (empty? (:attachments out)))))
+  (it "takes a pathlib.Path and a `~`-relative path, and names the file plainly when it is missing"
+      (let
+        [root
+         (temp-root)
+
+         pctx
+         (ctx-with-root root)
+
+         out
+         (block pctx
+                (str "import os, pathlib\n"
+                     "root = " (pr-str root)
+                     "\n" "with open(root + '/report.json','w') as f:\n"
+                     "    f.write('{}')\n" "os.environ['HOME'] = root\n"
+                     "vis_attach(pathlib.Path(root + '/report.json'), 'pathlib.json')\n"
+                     "vis_attach('~/report.json', 'tilde.json')\n"
+                     "try:\n" "    vis_attach(root + '/nope.json')\n"
+                     "except Exception as e:\n" "    print('RAISED', e)\n"))]
+
+        (expect (nil? (:error out)))
+        (expect (= ["pathlib.json" "tilde.json"]
+                   (filterv #{"pathlib.json" "tilde.json"} (mapv :filename (:attachments out)))))
+        (expect (re-find #"RAISED vis_attach: no such file: .*nope\.json" (str (:stdout out)))))))
 
 (defdescribe
   vis-attach-discovery-test
   (it "surfaces vis_attach / vis_attachments via apropos and doc"
       (let [pctx (ctx-with-root (temp-root))]
-        (expect (= ["vis_attach" "vis_attachment" "vis_attachment_version"
-                    "vis_attachment_versions" "vis_attachments"]
+        (expect (= ["vis_attach" "vis_attachment" "vis_attachment_version" "vis_attachment_versions"
+                    "vis_attachments"]
                    (vec (ev pctx "sorted(apropos('vis_attach'))"))))
         (expect (false? (ev pctx "'attach' in apropos('attach')")))
         (expect (true? (ev pctx "'callable' in doc('vis_attach')")))
