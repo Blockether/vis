@@ -252,10 +252,6 @@
     grep
     ["find_files" "find"]
 
-    ;; `fs_tool` reads naturally next to the other verbs in Python.
-    fs
-    ["fs_tool"]
-
     find_files
     ["find"]
 
@@ -1123,14 +1119,14 @@
 
 (def ^:private posix-compat-shim-src
   "Pure-Python source that replaces `subprocess` / `os.system` / `os.popen`
-   with thin wrappers that DELEGATE to the ONE vis shell tool (`shell`, whose
-   `op` covers run / background / logs / send / stop). The body lives in the
+   with thin wrappers that DELEGATE to the vis shell tools (`shell_run`,
+   `shell_background`, `shell_logs`, `shell_type`, `shell_stop`). The body lives in the
    `vis-shims/posix.py` CLASSPATH RESOURCE (`resources/vis-shims/posix.py`) -
    real Python in a real `.py` file, never a Clojure string - and is embedded in
    the native image by build.clj's `-H:IncludeResources=vis-shims/.*`.
    Tool callables are looked up in `globals()` at CALL time, so it self-adapts:
-   when the shell tool is absent or its toggle is off it raises a clear 'enable
-   the shell tool' message. Soft string-level coupling to the tool NAME only."
+   when the shell tools are absent or their toggle is off it raises a clear 'enable
+   the shell tools' message. Soft string-level coupling to the tool NAMES only."
   (runtime-python-src "vis-shims/posix.py"))
 
 (def ^:private posix-lazy-init-python
@@ -2504,8 +2500,8 @@
      ;; Runtime `NameError: name 'X' is not defined`. The #1 cause of an
      ;; undefined TOOL name is an extension toggled OFF — the engine REMOVES
      ;; its symbols when inactive, so the call raises a plain NameError with
-     ;; no hint that the tool merely needs enabling (e.g. a call to `shell`
-     ;; while the "shell" toggle is off only yields "shell is not defined").
+     ;; no hint that the tool merely needs enabling (e.g. a call to `shell_run`
+     ;; while the "shell" toggle is off only yields "shell_run is not defined").
      ;; Point it at apropos + the user instead
      ;; of letting it retry a name that will never resolve on its own.
      undefined-name

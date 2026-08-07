@@ -102,15 +102,18 @@
       ;; Failed native tools keep source context for channels that need it.
       (expect (not (form/hide-tool-code? {:vis/tool-name "cat" :error "boom"})))
       (expect (not (form/hide-tool-code? {:vis/tool-name "cat" :success? false})))
-      ;; While a call is still RUNNING only shell/python keep their submitted
-      ;; source; every other native tool spins behind its badge alone.
-      (expect (form/show-running-tool-code? {:vis/tool-name "shell"}))
+      ;; While a call is still RUNNING only shell_run/shell_background and python
+      ;; keep their submitted source; every other native tool spins behind its
+      ;; badge alone.
+      (expect (form/show-running-tool-code? {:vis/tool-name "shell_run"}))
+      (expect (form/show-running-tool-code? {:vis/tool-name "shell_background"}))
+      (expect (not (form/show-running-tool-code? {:vis/tool-name "shell_logs"})))
       (expect (form/show-running-tool-code? {:vis/tool-name "python_execution"}))
       (expect (not (form/show-running-tool-code? {:vis/tool-name "cat"})))
       (expect (not (form/show-running-tool-code? {:vis/tool-name "run_tests"})))
       ;; …and NOT even then once the tool authored its own pending card body: that
       ;; body already IS the submitted command, rendered as the card renders it.
-      (expect (not (form/show-running-tool-code? {:vis/tool-name "shell"
+      (expect (not (form/show-running-tool-code? {:vis/tool-name "shell_run"
                                                   :pending-render
                                                   "**COMMAND**\n```bash\nnpm test\n```"})))
       ;; A non-tool form has no op-card to hide behind, so it always shows.

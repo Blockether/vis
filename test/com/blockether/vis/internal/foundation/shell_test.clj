@@ -24,11 +24,9 @@
 
 (def ^:private shell-logs* @#'shell/shell-logs-impl)
 
-(def ^:private shell-wait* @#'shell/shell-wait-impl)
-
 (def ^:private shell-send* @#'shell/shell-send-impl)
 
-(def ^:private shell* shell/shell)
+(def ^:private shell* @#'shell/shell-dispatch)
 
 (def ^:private render-shell-run-result @#'shell/render-shell-run-result)
 
@@ -73,8 +71,8 @@
 
 (defdescribe shell-env-injection-test
              (it "uses declarative env injection rather than a before middleware shim"
-                 (expect (true? (:ext.symbol/inject-env? shell/shell-symbol)))
-                 (expect (nil? (:ext.symbol/before-fn shell/shell-symbol))))
+                 (expect (true? (:ext.symbol/inject-env? shell/shell-run-symbol)))
+                 (expect (nil? (:ext.symbol/before-fn shell/shell-run-symbol))))
              (it "a failing or nil session policy denies spawn instead of failing open"
                  (binding [workspace/*workspace-root* (workspace/trunk-root)]
                    (expect (threw? #(shell-run* {:session-id "t"
@@ -387,8 +385,7 @@
                    (expect (= (get first-run "pid") (get again "pid")))
                    (expect (true? (get again "already_running")))
                    (expect (= "running" (get again "status")))
-                   (expect (str/includes? (get again "note")
-                                          "await shell({\"op\": \"logs\", \"id\": \"dup\"})"))
+                   (expect (str/includes? (get again "note") "await shell_logs(\"dup\")"))
                    ;; the shared identity core rides EVERY stage
                    (expect (= "background" (get again "stage")))
                    (expect (contains? again "attach"))
@@ -615,235 +612,6 @@
                          (expect (= "running" (get registered "status")))))))
                  (finally (deliver release true) (resources/stop-all! sid)))))))))
 
-(defdescribe
-  shell-wait-test
-  (it "waits for completion on the host and returns the final bounded log tail"
-      (with-shell-on
-        (fn []
-          (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let
-              [sid (str "shell-wait-exit-" (System/nanoTime))
-               env {:session-id sid}]
-
-              (try (shell-bg* env "job" "printf 'one\\ntwo\\n'; sleep 0.2; exit 7")
-                   (let [r (:result (shell-wait* env "job" 5 1 "NEVER-MATCHES"))]
-                     (expect (= "wait" (get r "stage")))
-                     (expect (= "exited" (get r "status")))
-                     (expect (= 7 (get r "exit")))
-                     (expect (false? (get r "timed_out")))
-                     ;; The process ENDED without ever printing the condition, and
-                     ;; `is_matched` says exactly that — no line is reported.
-                     (expect (false? (get r "is_matched")))
-                     (expect (nil? (get r "matched")))
-                     (expect (= 5 (get r "timeout_secs")))
-                     (expect (= ["two"] (get r "lines")))
-                     (expect (= 2 (get r "line_count")))
-                     (expect (number? (get r "duration_ms"))))
-                   (finally (resources/stop-all! sid))))))))
-  (it "times out without stopping or unregistering a still-running shell"
-      (with-shell-on (fn []
-                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         (let
-                           [sid (str "shell-wait-timeout-" (System/nanoTime))
-                            env {:session-id sid}]
-
-                           (try (shell-bg* env "job" "echo started; sleep 30")
-                                (let [r (:result (shell-wait* env "job" 1 10 "NEVER-MATCHES"))]
-                                  (expect (= "wait" (get r "stage")))
-                                  (expect (= "running" (get r "status")))
-                                  (expect (nil? (get r "exit")))
-                                  (expect (true? (get r "timed_out")))
-                                  (expect (= 1 (get r "timeout_secs")))
-                                  (expect (str/includes? (get r "note") "still running"))
-                                  (expect (some? (first (resources/list-resources sid)))))
-                                (finally (resources/stop-all! sid))))))))
-  (it "returns the moment a log line matches `until`, leaving the process running"
-      (with-shell-on
-        (fn []
-          (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let
-              [sid (str "shell-wait-until-" (System/nanoTime))
-               env {:session-id sid}]
-
-              (try (shell-bg* env "job" "echo booting; sleep 0.2; echo READY on 5273; sleep 60")
-                   ;; Through DISPATCH, so the wire key `until` is proven to reach the impl.
-                   (let
-                     [r (:result
-                          (shell*
-                            env
-                            {"op" "wait" "id" "job" "until" "READY on \\d+" "timeout_secs" 30}))]
-                     (expect (= "wait" (get r "stage")))
-                     ;; A condition ended this wait, not the clock: still running, not timed
-                     ;; out, and back long before the 30s backstop.
-                     (expect (= "running" (get r "status")))
-                     (expect (nil? (get r "exit")))
-                     (expect (false? (get r "timed_out")))
-                     (expect (= "READY on \\d+" (get r "until")))
-                     (expect (true? (get r "is_matched")))
-                     (expect (= "READY on 5273" (get r "matched")))
-                     (expect (str/includes? (get r "note") "STILL RUNNING"))
-                     (expect (> 30000 (long (get r "duration_ms"))))
-                     (expect (some? (first (resources/list-resources sid)))))
-                   (finally (resources/stop-all! sid))))))))
-  (it "sizes the returned tail with `n` without narrowing what `until` scans"
-      (with-shell-on
-        (fn []
-          (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let
-              [sid (str "shell-wait-until-tail-" (System/nanoTime))
-               env {:session-id sid}]
-
-              (try
-                (shell-bg*
-                  env
-                  "job"
-                  "echo XV-TAIL-MARKER; for i in $(seq 1 300); do echo \"line $i\"; done; sleep 60")
-                ;; Land every line FIRST, so the match is provably 300 lines above the
-                ;; returned tail instead of racing it.
-                (poll #(:result (shell-logs* env "job" 1)) #(= 301 (long (get % "line_count"))))
-                (let [r (:result (shell-wait* env "job" 30 3 "XV-TAIL-MARKER"))]
-                  (expect (true? (get r "is_matched")))
-                  (expect (= "XV-TAIL-MARKER" (get r "matched")))
-                  (expect (false? (get r "timed_out")))
-                  ;; `n` is a CONTEXT BUDGET on the reply, not the window the predicate
-                  ;; saw: 3 lines back, the match 300 lines older, nothing evicted.
-                  (expect (= ["line 298" "line 299" "line 300"] (get r "lines")))
-                  (expect (= 301 (long (get r "line_count"))))
-                  (expect (zero? (long (get r "dropped")))))
-                (finally (resources/stop-all! sid))))))))
-  (it
-    "matches an `until` pattern through the ANSI color a PTY makes tools emit"
-    (with-shell-on
-      (fn []
-        (binding [workspace/*workspace-root* (workspace/trunk-root)]
-          (let
-            [sid (str "shell-wait-until-ansi-" (System/nanoTime))
-             env {:session-id sid}]
-
-            (try
-              ;; A dev server announces readiness IN COLOR, and the escapes sit between
-              ;; the words: `^Local:\\s+http` only works if matching strips them first.
-              (shell-bg*
-                env
-                "job"
-                "printf '\\033[1mLocal\\033[22m:   \\033[36mhttp://127.0.0.1:5273/\\033[39m\\n'; sleep 60")
-              (let [r (:result (shell-wait* env "job" 30 10 "^Local:\\s+http"))]
-                (expect (= "running" (get r "status")))
-                (expect (false? (get r "timed_out")))
-                (expect (str/includes? (str (get r "matched")) "http://127.0.0.1:5273/"))
-                ;; `matched` stays the RAW line, so it is still one of `lines`.
-                (expect (contains? (set (get r "lines")) (get r "matched"))))
-              (finally (resources/stop-all! sid))))))))
-  (it "reports the exit and no match when the job finishes without ever printing the pattern"
-      (with-shell-on (fn []
-                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         (let
-                           [sid (str "shell-wait-until-exit-" (System/nanoTime))
-                            env {:session-id sid}]
-
-                           (try (shell-bg* env "job" "echo working; sleep 0.2; exit 3")
-                                (let [r (:result (shell-wait* env "job" 30 10 "NEVER-MATCHES"))]
-                                  (expect (= "exited" (get r "status")))
-                                  (expect (= 3 (get r "exit")))
-                                  (expect (nil? (get r "matched")))
-                                  (expect (= "NEVER-MATCHES" (get r "until")))
-                                  (expect (false? (get r "timed_out")))
-                                  (expect (false? (get r "is_matched")))
-                                  (expect (nil? (get r "note"))))
-                                (finally (resources/stop-all! sid))))))))
-  (it "still times out observationally when neither the pattern nor the exit arrives"
-      (with-shell-on (fn []
-                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         (let
-                           [sid (str "shell-wait-until-timeout-" (System/nanoTime))
-                            env {:session-id sid}]
-
-                           (try (shell-bg* env "job" "echo working; sleep 30")
-                                (let [r (:result (shell-wait* env "job" 1 10 "NEVER-MATCHES"))]
-                                  (expect (true? (get r "timed_out")))
-                                  (expect (nil? (get r "matched")))
-                                  (expect (= "NEVER-MATCHES" (get r "until")))
-                                  (expect (= "running" (get r "status")))
-                                  (expect (str/includes? (get r "note") "still running"))
-                                  (expect (some? (first (resources/list-resources sid)))))
-                                (finally (resources/stop-all! sid))))))))
-  (it "reports a match on an EMPTY line, which `matched` alone cannot express"
-      (with-shell-on (fn []
-                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         (let
-                           [sid (str "shell-wait-until-blank-" (System/nanoTime))
-                            env {:session-id sid}]
-
-                           (try (shell-bg* env "job" "printf '\\n'; sleep 30")
-                                (let [r (:result (shell-wait* env "job" 5 20 "^$"))]
-                                  ;; `matched` is "" here, which is FALSY in Python — only the total
-                                  ;; `is_matched` can tell an empty matching line from no match at all.
-                                  (expect (true? (get r "is_matched")))
-                                  (expect (= "" (get r "matched")))
-                                  (expect (false? (get r "timed_out")))
-                                  (expect (= "running" (get r "status"))))
-                                (finally (resources/stop-all! sid))))))))
-  (it "calls an unreapable death an ENDING, not a still-running process"
-      (with-shell-on
-        (fn []
-          (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let
-              [sid (str "shell-wait-unreapable-" (System/nanoTime))
-               env {:session-id sid}]
-
-              (try (shell-bg* env "job" "sleep 30")
-                   (let
-                     [real (:proc (@#'shell/bg-entry sid "job"))
-                      ;; The OS says the process is gone, but its exit code cannot be
-                      ;; read. Reporting "running"/`timed_out` is then a lie the caller
-                      ;; acts on: it would wait again on something already over.
-                      _ (swap! @#'shell/bg-procs update-in
-                          [sid "job"]
-                          assoc
-                          :proc {:alive? (constantly false)
-                                 :wait (fn []
-                                         (throw (RuntimeException. "unreapable")))}
-                          :pump nil)
-                      r (:result (shell-wait* env "job" 5 20 "NEVER"))]
-
-                     (swap! @#'shell/bg-procs update-in [sid "job"] assoc :proc real)
-                     (expect (= "exited" (get r "status")))
-                     (expect (nil? (get r "exit")))
-                     (expect (false? (get r "timed_out")))
-                     (expect (false? (get r "is_matched")))
-                     (expect (str/includes? (get r "note") "could not be read")))
-                   (finally (resources/stop-all! sid))))))))
-  (it "refuses a `wait` with no `until`, a broken regex, and `until` on any other op"
-      (with-shell-on
-        (fn []
-          (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let
-              [sid (str "shell-wait-until-bad-" (System/nanoTime))
-               env {:session-id sid}]
-
-              (try (shell-bg* env "job" "sleep 30")
-                   ;; A `wait` with no condition is a wait on a CLOCK — the very
-                   ;; thing this op refuses to be. Refused via dispatch AND impl,
-                   ;; and a blank pattern is no pattern.
-                   (expect (threw? #(shell* env {"op" "wait" "id" "job"})))
-                   (expect (threw? #(shell* env {"op" "wait" "id" "job" "until" "  "})))
-                   (expect (threw? #(shell-wait* env "job" 1 10 nil)))
-                   (expect (threw? #(shell-wait* env "job" 1 10 "READY(")))
-                   ;; `until` on `run` would promise a condition nothing evaluates — and it
-                   ;; must be refused BEFORE the command runs.
-                   (expect (threw? #(shell* env {"commands" ["true"] "until" "x"})))
-                   ;; Regression: a start may carry a stale wait predicate, but `background`
-                   ;; owns no `until`; coercion must remove it before dispatch.
-                   (let
-                     [r (:result (shell* env
-                                         {"commands" ["printf READY"]
-                                          "op" "background"
-                                          "id" "job"
-                                          "until" "READY"}))]
-                     (expect (= "background" (get r "stage")))
-                     (expect (not (contains? r "until"))))
-                   (expect (threw? #(shell* env {"op" "logs" "id" "job" "until" "x"})))
-                   (finally (resources/stop-all! sid)))))))))
 
 (defdescribe shell-send-test
              (it "types into a running background shell's stdin and the program reads it"
@@ -925,8 +693,7 @@
                    (expect (threw? #(shell* {} {"cmd" "echo legacy"})))
                    (expect (threw? #(shell* {} {"text" "echo wrong"})))))
              (it "uses text only inside the send map"
-                 (expect (threw?
-                           #(shell* {:session-id "shell-positional-id"} "ghost" {"op" "logs"})))
+                 (expect (threw? #(shell* {:session-id "shell-positional-id"} "ghost")))
                  (expect (threw? #(shell* {:session-id "shell-positional-id"}
                                           {"op" "send" "id" "ghost" "commands" ["nope"]})))))
 
@@ -1132,9 +899,8 @@
 (defdescribe
   shell-mistaken-shape-test
   ;; Both of these were got wrong by a caller mid-task, not imagined: the `git`
-  ;; habit put this call's OWN options inside `commands`, and a JSON string
-  ;; double-escaped a backslash in `until`. A wrong shape has to say where the
-  ;; argument belongs — restating its type is what makes the tool look broken.
+  ;; habit put this call's OWN options inside `commands`. A wrong shape has to say
+  ;; where the argument belongs — restating its type is what makes the tool look broken.
   (it "names the top-level lifecycle arguments when an options map lands in `commands`"
       (let [msg (throw-message #(shell* {} {"commands" [{"op" "logs" "id" "build" "n" 30}]}))]
         (expect (some? msg))
@@ -1147,43 +913,39 @@
            r (:result (shell* {} {"commands" [argv]}))]
 
           (expect (= ["printf %s 'two words'"] (mapv #(get % "command") (get r "commands"))))
-          (expect (= "two words" (str/trim (get-in r ["commands" 0 "stdout"])))))))
-  (it "teaches the one backslash level a bad `until` regex needs"
-      ;; `error\\[` — an escaped backslash and then a character class that never
-      ;; closes: exactly what one escaping level too many produces.
-      (let [msg (throw-message #(@#'shell/until-pattern "error\\\\["))]
-        (expect (some? msg))
-        (expect (str/includes? msg "is not a valid regex"))
-        (expect (str/includes? msg "escaped ONCE")))))
+          (expect (= "two words" (str/trim (get-in r ["commands" 0 "stdout"]))))))))
 
 (defdescribe
   shell-native-contract-test
-  (it "advertises exactly one native shell tool covering the lifecycle"
-      (expect (= ["shell"]
+  ;; Regression, un-unified shell: ONE `shell` tool with an `op` enum made the model
+  ;; disambiguate five mutually-exclusive shapes on every call.
+  (it "advertises five native shell tools, one per verb"
+      (expect (= ["shell_run" "shell_background" "shell_logs" "shell_type" "shell_stop"]
                  (mapv :ext.symbol/name (filter :ext.symbol/native-tool? shell/shell-symbols))))
-      (expect (= 1 (count shell/shell-symbols))))
-  (it "documents and schemas the one-map commands grammar"
-      (let
-        [d
-         (:ext.symbol/description shell/shell-symbol)
-
-         props
-         (get-in shell/shell-symbol [:ext.symbol/schema :properties])]
-
-        (expect (str/includes? d "ONE options map"))
-        (expect (str/includes? d "never a positional string or array"))
-        (expect (contains? props "commands"))
-        (expect (contains? props "text"))
-        (expect (not (contains? props "cmd")))
-        (expect (= ["run" "background" "logs" "wait" "send" "stop"] (get-in props ["op" :enum])))
-        ;; The wait predicate is part of the ADVERTISED contract, not a hidden option.
-        (expect (= "string" (get-in props ["until" :type])))
-        (expect (str/includes? (get-in props ["until" :description]) "regex"))
-        (expect (str/includes? (get-in props ["until" :description]) "required"))
-        (expect (= "array" (get-in props ["commands" :type])))))
-  (it "closes every native shell input schema"
+      (expect (= 5 (count shell/shell-symbols))))
+  (it "gives each tool a satisfiable schema with no op discriminator and no blocking knobs"
       (doseq [s shell/shell-symbols]
-        (expect (false? (get-in s [:ext.symbol/schema :additionalProperties]))))))
+        (let [props (get-in s [:ext.symbol/schema :properties])]
+          ;; Closed input, and the merged tool's three confusions are gone everywhere:
+          ;; the discriminator, the wait predicate, and the timeout that meant three things.
+          (expect (false? (get-in s [:ext.symbol/schema :additionalProperties])))
+          (expect (not (contains? props "op")))
+          (expect (not (contains? props "until")))
+          (expect (not (contains? props "timeout_secs")))
+          (expect (not (contains? props "cmd"))))))
+  (it "puts commands only on the two tools that start a process, and text only on type"
+      (let
+        [props (fn [s]
+                 (get-in s [:ext.symbol/schema :properties]))]
+        (expect (= "array" (get-in (props shell/shell-run-symbol) ["commands" :type])))
+        (expect (= "array" (get-in (props shell/shell-background-symbol) ["commands" :type])))
+        (expect (not (contains? (props shell/shell-logs-symbol) "commands")))
+        (expect (contains? (props shell/shell-type-symbol) "text"))
+        (expect (= ["id"] (get-in shell/shell-stop-symbol [:ext.symbol/schema :required])))))
+  (it "points the background verbs at the Python loop that replaced `wait`"
+      (expect (str/includes? (:ext.symbol/description shell/shell-run-symbol) "python_execution"))
+      (expect (str/includes? (:ext.symbol/description shell/shell-logs-symbol)
+                             "python_execution"))))
 
 (defdescribe shell-extension-shape-test
              (it "is a registered builtin extension exposing the ONE bare `shell` symbol"
@@ -1192,7 +954,8 @@
                  ;; next to git / cat / grep, so there is no `shell.run(…)` namespace.
                  (expect (true? (get-in shell/vis-extension [:ext/engine :ext.engine/builtin?])))
                  (expect (nil? (get-in shell/vis-extension [:ext/engine :ext.engine/alias])))
-                 (expect (= ['shell] (mapv :ext.symbol/symbol shell/shell-symbols)))))
+                 (expect (= '[shell-run shell-background shell-logs shell-type shell-stop]
+                            (mapv :ext.symbol/symbol shell/shell-symbols)))))
 
 (defdescribe
   shell-pending-call-render-test
@@ -1202,7 +965,7 @@
          ["echo one && echo two" "ls -1"]
 
          display
-         (render-shell-call {"commands" commands "op" "run"})]
+         (render-shell-call "run" {"commands" commands})]
 
         ;; Built by the SAME section builder as the completed card, so the running
         ;; block IS the block it becomes — no pending dialect, no comment band.
@@ -1217,32 +980,20 @@
         (expect (= "$ echo one && echo two · +1 more (running)" (:summary display)))))
   (it "accepts the ONE-COMMAND spelling and keyword-keyed input"
       (expect (= {:summary "$ ls -1 (running)" :render "**COMMAND**\n```bash\nls -1\n```"}
-                 (render-shell-call {:commands "ls -1"}))))
-  (it "wears the background START headline even when the call carries commands"
+                 (render-shell-call "run" {:commands "ls -1"}))))
+  (it "wears the background START headline, which comes from the TOOL and not the arguments"
       ;; A background start is a lifecycle card, not a run: it reports the handle
       ;; the session will keep, exactly like the finished `▸ background … started`.
       (expect (= {:summary "▸ background `dev` starting"
                   :render (str "**COMMAND**\n```bash\nnpm run dev\n```\n\n"
                                "**STATUS**\n```\nid: dev\n```")}
-                 (render-shell-call {"op" "background" "id" "dev" "commands" ["npm run dev"]}))))
-  ;; Regression, reported wait card: an irrelevant lifecycle placeholder command
-  ;; used to replace the WAIT headline and add a bogus COMMAND section.
-  (it "puts only what a `wait` is waiting for in the card's STATUS rows"
-      ;; The wall a wait puts up IS its `until` regex plus the backstop it gives
-      ;; up after — the same rows the finished wait card reports.
-      (expect (= {:summary "◷ `dev` waiting · until Local:.*http · timeout 600s"
-                  :render "**STATUS**\n```\nid: dev\nuntil: Local:.*http\ntimeout: 600s\n```"}
-                 (render-shell-call {"op" "wait"
-                                     "id" "dev"
-                                     "commands" ["true"]
-                                     "until" "Local:.*http"
-                                     "timeout_secs" 600}))))
-  (it "reports a `send` by its keystroke label, never a byte count"
+                 (render-shell-call "background" {"id" "dev" "commands" ["npm run dev"]}))))
+  (it "reports a `type` by its keystroke label, never a byte count"
       (expect (= {:summary "↵ `dev` sending \"y\" ↵"
                   :render "**STATUS**\n```\nid: dev\nkeys: \"y\" ↵\n```"}
-                 (render-shell-call {"op" "send" "id" "dev" "text" "y\n"}))))
+                 (render-shell-call "send" {"id" "dev" "text" "y\n"}))))
   (it "shows a lifecycle target's OWN command, read live from the registry"
-      ;; A wait/logs/send/stop runs no command of its own, but the bash it acts on
+      ;; A logs/type/stop runs no command of its own, but the bash it acts on
       ;; is right there in `bg-procs` — so its pending card carries a real COMMAND
       ;; section too instead of narrating the stage in prose.
       (let
@@ -1256,18 +1007,20 @@
           (swap! @#'shell/bg-procs assoc-in [sid id] {:script "npm run dev"})
           (expect
             (= (str "**COMMAND**\n```bash\nnpm run dev\n```\n\n" "**STATUS**\n```\nid: " id "\n```")
-               (:render (render-shell-call {"op" "logs" "id" id}))))
+               (:render (render-shell-call "logs" {"id" id}))))
           (finally (swap! @#'shell/bg-procs dissoc sid)))
         ;; No live shell answers to that id: the STATUS rows stand alone.
         (expect (= (str "**STATUS**\n```\nid: " id "\n```")
-                   (:render (render-shell-call {"op" "logs" "id" id}))))))
+                   (:render (render-shell-call "logs" {"id" id}))))))
   (it "keeps the raw invocation when there is neither a command nor a target"
-      (expect (nil? (render-shell-call {"op" "run"})))
+      (expect (nil? (render-shell-call "run" {})))
       ;; A malformed batch is the CALL's error to report, never this preview's.
-      (expect (nil? (render-shell-call {"commands" [""]}))))
-  (it "publishes the renderer under the tool's wire name so the loop can reach it"
-      (expect (fn? (get (extension/native-tool-start-call-renderers [shell/vis-extension])
-                        "shell")))))
+      (expect (nil? (render-shell-call "run" {"commands" [""]}))))
+  (it "publishes a renderer under EVERY tool's wire name so the loop can reach it"
+      (let [rs (extension/native-tool-start-call-renderers [shell/vis-extension])]
+        (expect (= ["shell_run" "shell_background" "shell_logs" "shell_type" "shell_stop"]
+                   (vec (keys rs))))
+        (expect (every? fn? (vals rs))))))
 
 (defdescribe
   macos-jailed-pty-e2e-test
@@ -1345,47 +1098,46 @@
 (defdescribe
   python-sandbox-surface-test
   "The bare Python global has only the one-map shell grammar."
-  (it "binds exactly one shell symbol into sandbox globals, with a doc"
+  (it "binds the five shell symbols into sandbox globals, each with a doc"
       (let [bind (extension/builtin-sandbox-bindings (constantly nil))]
-        (expect (= ['shell] (sort (filter #(str/includes? (name %) "shell") (keys bind)))))
-        (expect (contains? (extension/sandbox-symbol-docs) 'shell))))
-  (it "documents map calls and rejects positional commands"
+        (expect (= '[shell-background shell-logs shell-run shell-stop shell-type]
+                   (vec (sort (filter #(str/includes? (name %) "shell") (keys bind))))))
+        (expect (contains? (extension/sandbox-symbol-docs) 'shell-run))))
+  (it "documents the commands array on the run tool"
       (let
         [source-doc
-         (:doc (meta #'shell/shell))
+         (:doc (meta #'shell/shell-run))
 
          d
-         (str (py (py-ctx {}) "doc('shell')"))]
+         (str (py (py-ctx {}) "doc('shell_run')"))]
 
-        (expect (str/includes? source-doc "await shell({\"commands\": [\"git status\"]})"))
-        (expect (not (str/includes? source-doc "await shell(\"git status\")")))
+        (expect (str/includes? source-doc "await shell_run([\"git status\"])"))
         (expect (str/includes? d "`commands`"))))
-  (it
-    "runs and backgrounds commands through the bare shell global using maps"
-    (let
-      [sid
-       (str "py-shell-" (System/nanoTime))
+  (it "runs and backgrounds commands through the bare shell global using maps"
+      (let
+        [sid
+         (str "py-shell-" (System/nanoTime))
 
-       c
-       (py-ctx {:session-id sid})]
+         c
+         (py-ctx {:session-id sid})]
 
-      (try
-        (expect (= ["run" "hi" "echo hi"]
-                   (py c
-                       (str "r = __vis_settle__(shell({'commands':['echo hi']}))\n"
-                            "x = r['commands'][0]\n"
-                            "[r['stage'], x['stdout'].strip(), x['command']]"))))
-        (expect
-          (=
-            ["background" "logs" "stop"]
-            (py
-              c
-              (str
-                "b = __vis_settle__(shell({'commands':['echo alive; sleep 30'], 'op':'background', 'id':'pyjob'}))\n"
-                "l = __vis_settle__(shell({'op':'logs','id':'pyjob','n':10}))\n"
-                "s = __vis_settle__(shell({'op':'stop','id':'pyjob'}))\n"
-                "[b['stage'], l['stage'], s['stage']]"))))
-        (finally (resources/stop-all! sid)))))
+        (try
+          (expect (= ["run" "hi" "echo hi"]
+                     (py c
+                         (str "r = __vis_settle__(shell_run(['echo hi']))\n"
+                              "x = r['commands'][0]\n"
+                              "[r['stage'], x['stdout'].strip(), x['command']]"))))
+          (expect
+            (=
+              ["background" "logs" "stop"]
+              (py
+                c
+                (str
+                  "b = __vis_settle__(shell_background(['echo alive; sleep 30'], {'id':'pyjob'}))\n"
+                  "l = __vis_settle__(shell_logs('pyjob', {'n':10}))\n"
+                  "s = __vis_settle__(shell_stop('pyjob'))\n"
+                  "[b['stage'], l['stage'], s['stage']]"))))
+          (finally (resources/stop-all! sid)))))
   (it "removes the binding when the shell toggle is off"
       (let
         [before
@@ -1401,7 +1153,7 @@
 
         (try (toggles/set-enabled! "shell" false)
              (lp/sync-active-extension-symbols! env)
-             (expect (false? (boolean (py c "'shell' in globals()"))))
+             (expect (false? (boolean (py c "'shell_run' in globals()"))))
              (finally (toggles/set-enabled! "shell" before)))))
   ;; Regression, issue #106: turning Shell commands back ON from a settings
   ;; dialog left every session that was already open without the `shell` global
@@ -1426,65 +1178,38 @@
 
         (try (toggles/set-enabled! "shell" false)
              (lp/sync-active-extension-symbols! env)
-             (expect (false? (boolean (py c "'shell' in globals()"))))
+             (expect (false? (boolean (py c "'shell_run' in globals()"))))
              ;; No explicit sync and no HTTP handler: the toggle flip alone has
              ;; to reach this session's live Python globals.
              (toggles/set-enabled! "shell" true)
-             (expect (true? (boolean (py c "'shell' in globals()"))))
+             (expect (true? (boolean (py c "'shell_run' in globals()"))))
              (finally (swap! (deref #'lp/cache) dissoc (:id cached))
                       (toggles/set-enabled! "shell" before)))))
-  (it
-    "routes map-only logs and stop calls through the native Python bridge"
-    ;; Regression: a stale positional wrapper invoked shell-dispatch as
-    ;; (env command options), which made these lifecycle maps fail before the
-    ;; dispatcher ran with "Wrong number of args ... shell-dispatch".
-    (let
-      [sid
-       (str "py-shell-lifecycle-" (System/nanoTime))
+  (it "routes the lifecycle tools through the native Python bridge"
+      ;; Regression: a stale positional wrapper invoked shell-dispatch as
+      ;; (env command options), which made these lifecycle calls fail before the
+      ;; dispatcher ran with "Wrong number of args ... shell-dispatch".
+      (let
+        [sid
+         (str "py-shell-lifecycle-" (System/nanoTime))
 
-       c
-       (py-ctx {:session-id sid})]
+         c
+         (py-ctx {:session-id sid})]
 
-      (try
-        (expect
-          (=
-            ["background" "logs" "stop"]
-            (py
-              c
-              (str
-                "job = "
-                (pr-str sid)
-                "\n"
-                "b = __vis_settle__(shell({'commands':['echo ready; sleep 30'], 'op':'background', 'id':job}))\n"
-                "l = __vis_settle__(shell({'op':'logs', 'id':job, 'n':1}))\n"
-                "s = __vis_settle__(shell({'op':'stop', 'id':job}))\n"
-                "[b['stage'], l['stage'], s['stage']]"))))
-        (finally (resources/stop-all! sid))))))
+        (try (expect
+               (= ["background" "logs" "stop"]
+                  (py
+                    c
+                    (str
+                      "job = "
+                      (pr-str sid)
+                      "\n"
+                      "b = __vis_settle__(shell_background(['echo ready; sleep 30'], {'id':job}))\n"
+                      "l = __vis_settle__(shell_logs(job, {'n':1}))\n"
+                      "s = __vis_settle__(shell_stop(job))\n"
+                      "[b['stage'], l['stage'], s['stage']]"))))
+             (finally (resources/stop-all! sid))))))
 
-(defdescribe
-  python-shell-wait-surface-test
-  (it
-    "exposes the host-side wait stage through ordinary Python shell calls"
-    (let
-      [sid
-       (str "py-shell-wait-" (System/nanoTime))
-
-       c
-       (py-ctx {:session-id sid})]
-
-      (try
-        (expect
-          (=
-            ["wait" "exited" 0 ["done"] false]
-            (py
-              c
-              (str
-                "job = " (pr-str sid)
-                "\n"
-                "__vis_settle__(shell({'commands':['sleep 0.1; echo done'], 'op':'background', 'id':job}))\n"
-                "w = __vis_settle__(shell({'op':'wait', 'id':job, 'until':'NEVER', 'timeout_secs':5}))\n"
-                "[w['stage'], w['status'], w['exit'], w['lines'], w['is_matched']]"))))
-        (finally (resources/stop-all! sid))))))
 
 (def ^:private fd-exhaustion? @#'shell/fd-exhaustion?)
 

@@ -3,13 +3,14 @@
 # The agent sandbox is deny-by-default (no native access), so CPython's real
 # `subprocess` / `os.system` cannot spawn — they fail with an opaque error.
 # This shim replaces them with a thin layer that DELEGATES to the vis shell
-# TOOL (`shell`, one name whose `op` covers run / background / logs / send / stop), so the
+# TOOLS (`shell_run`, `shell_background`, `shell_logs`, `shell_type`,
+# `shell_stop` — one verb each), so the
 # model's ordinary Python (`subprocess.run([...])`, `os.system(...)`) just works
 # and still rides the workspace-cwd containment, timeout,
 # process-tree kill, output bounding, render badge, and trace recording.
 #
 # It is tool-AGNOSTIC by construction: the tool callables are looked up in
-# globals() at CALL time, not bound at import. So if the shell tool is absent
+# globals() at CALL time, not bound at import. So if the shell tools are absent
 # (extension not installed), the shim raises a clear message instead of a
 # confusing spawn failure; when present, subprocess/os.system route to it.
 #
@@ -24,19 +25,19 @@ def __vis_install_posix_compat__():
     import time
 
     _SHELL_DISABLED = (
-        "The `shell` tool is not enabled in this vis sandbox, so subprocess / "
+        "The shell tools are not enabled in this vis sandbox, so subprocess / "
         "os.system / os.popen cannot run. Turn on 'Shell commands' in the "
         "settings dialog."
     )
 
-    def _shell():
-        # Extension contexts expose `vis.shell` instead of native process
-        # access. Agent sandboxes keep their ordinary `shell` tool. Both paths
-        # use the same one-options-map lifecycle grammar.
-        fn = globals().get("shell")
+    def _tool(name):
+        # Extension contexts expose `vis.shell_run` & co. instead of native
+        # process access; agent sandboxes bind the same names bare. One lookup
+        # helper serves every stage, so a stage is named exactly once below.
+        fn = globals().get(name)
         if fn is None:
             vis = sys.modules.get("vis")
-            fn = getattr(vis, "shell", None) if vis is not None else None
+            fn = getattr(vis, name, None) if vis is not None else None
         if fn is None:
             raise RuntimeError(_SHELL_DISABLED)
         # Tools are async-DEFERRED (return a thunk); this internal bridge calls
@@ -121,17 +122,14 @@ def __vis_install_posix_compat__():
         # `text`/`universal_newlines` decide bytes-vs-str on the returned
         # streams; capture_output/stdout/stderr are accepted but the shell tool
         # always captures, so they only affect whether we surface the text.
-        sr = _shell()
+        sr = _tool("shell_run")
         cmd = _to_cmd(args, shell)
         opts = {}
         if timeout is not None:
             opts["timeout_secs"] = int(timeout)
         if cwd is not None:
             opts["cwd"] = str(cwd)
-        # Shell has one public call shape: one map carrying a batch of lines.
-        request = dict(opts)
-        request["commands"] = [cmd]
-        r = sr(request)
+        r = sr([cmd], opts)
         # A run is ALWAYS a batch, so this one command's own stdout/stderr/exit
         # is its entry in "commands"; the top level only summarises the group.
         cmds = r.get("commands") or []
@@ -185,28 +183,25 @@ def __vis_install_posix_compat__():
         return getstatusoutput(cmd)[1]
 
     class Popen(object):
-        # Background process backed by the `shell` tool's background op (a
-        # session resource). Auto picks an id; terminate/kill use its stop op,
-        # poll/wait use logs status, and communicate drains the log buffer.
+        # Background process backed by `shell_background` (a session resource).
+        # Auto picks an id; terminate/kill use `shell_stop`, poll/wait read
+        # `shell_logs` status, and communicate drains the log buffer.
         _counter = [0]
 
         def __init__(self, args, shell=False, cwd=None, **kwargs):
-            sb = _shell()
+            sb = _tool("shell_background")
             Popen._counter[0] += 1
             self._id = "popen_" + str(Popen._counter[0])
             self.args = args
-            opts = {"op": "background", "id": self._id}
+            opts = {"id": self._id}
             if cwd is not None:
                 opts["cwd"] = str(cwd)
-            request = dict(opts)
-            request["commands"] = [_to_cmd(args, shell)]
-            reg = sb(request)
+            reg = sb([_to_cmd(args, shell)], opts)
             self.pid = reg.get("pid")
             self.returncode = None
 
         def _logs(self):
-            sl = _shell()
-            return sl({"op": "logs", "id": self._id})
+            return _tool("shell_logs")(self._id)
 
         def poll(self):
             r = self._logs()
@@ -229,8 +224,7 @@ def __vis_install_posix_compat__():
             return (out, "")
 
         def terminate(self):
-            ss = _shell()
-            ss({"op": "stop", "id": self._id})
+            _tool("shell_stop")(self._id)
             self.returncode = self.returncode if self.returncode is not None else -15
 
         kill = terminate

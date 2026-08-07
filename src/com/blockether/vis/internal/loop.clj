@@ -4679,11 +4679,11 @@
      "natives, then print only needed output. State persists; project packages need a project REPL. "
      "Only `print` returns; bare expressions drop and errors surface. Native results return inline and stay "
      "at their `# saved:` coordinate (`ntr[\"t5/i1/f2\"]`); engine-bound natives are bare snake_case, "
-     "native-only ones absent. Never "
-     "`time.sleep`/poll for background shells \u2014 use `shell` op `wait` (a REQUIRED `until` regex ends it "
-     "line), via `gather` when parallel. Close what you open (`with open(...)`): a dropped file handle is "
+     "native-only ones absent. A background shell is WATCHED here: `shell_background`, then a BOUNDED "
+     "loop that calls `shell_logs` and breaks on what it read (an error line, a parsed port) — no tool "
+     "waits for you. Close what you open (`with open(...)`): a dropped file handle is "
      "NOT auto-closed here, so the sandbox reclaims leaked descriptors and refuses more than 512 held at "
-     "once (`VIS_PY_MAX_OPEN_FILES`) — leaked descriptors stop the process spawning `shell`/`git` children."
+     "once (`VIS_PY_MAX_OPEN_FILES`) — leaked descriptors stop the process spawning `shell_run`/`git` children."
      (when-let [cap (python-execution-capability-line caps)]
        (str " " cap)))
    :result
@@ -9221,10 +9221,10 @@
      enabled?
      (toggles/enabled? "shell")
 
-     ;; ONE shell tool for both kinds: the background one differs by its `op`
-     ;; argument, not by a second tool name.
+     ;; The renderer is looked up by the tool NAME, and a bang picks the same
+     ;; tool the model would: a foreground run or a background start.
      tool-name
-     "shell"
+     (if (= kind :bg) "shell_background" "shell_run")
 
      t0
      (System/currentTimeMillis)
@@ -9251,17 +9251,17 @@
 
      envelope
      (when enabled?
-       (try (let [shell-fn (requiring-resolve 'com.blockether.vis.internal.foundation.shell/shell)]
+       (try (let
+              [shell-fn (requiring-resolve
+                          (if (= kind :bg)
+                            'com.blockether.vis.internal.foundation.shell/shell-background
+                            'com.blockether.vis.internal.foundation.shell/shell-run))]
               ;; Calling the shell var directly skips the symbol-call seam, so the
               ;; workspace view stays unbound and `resolve-dir` falls back to the
               ;; PROCESS cwd — a bang inside a draft would then run on trunk.
-              (extension/with-context {:env env}
-                                      (shell-fn env
-                                                (cond-> {"commands" [cmd]}
-                                                  (= kind :bg)
-                                                  (assoc "op"
-                                                    "background" "id"
-                                                    id)))))
+              (extension/with-context
+                {:env env}
+                (if (= kind :bg) (shell-fn env [cmd] {"id" id}) (shell-fn env [cmd]))))
             (catch Throwable t
               (tel/log! {:level :warn :id ::bang-run-threw :data {:cmd cmd :error (ex-message t)}})
               {:result nil :error {:message (or (ex-message t) (str t))}})))
@@ -9300,12 +9300,12 @@
      block
      (cond->
        {:code (if (= kind :bg)
-                (str "await shell({\"commands\": ["
+                (str "await shell_background({\"commands\": ["
                      (pr-str cmd)
-                     "], \"op\": \"background\", \"id\": "
+                     "], \"id\": "
                      (pr-str id)
                      "})")
-                (str "await shell({\"commands\": [" (pr-str cmd) "]})"))
+                (str "await shell_run({\"commands\": [" (pr-str cmd) "]})"))
         :svar/tool-call-id (str "bang-" (subs (str (java.util.UUID/randomUUID)) 0 8))
         :vis/tool-name tool-name
         :envelope {:started-at-ms t0 :finished-at-ms t1}}

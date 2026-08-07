@@ -185,9 +185,10 @@
    long-running op. Every other native tool just spins behind its badge: a 200ms
    `cat`/`grep` must not flash a bordered code frame with a copy control for
    something nobody reads. `python_execution` additionally keeps its source after
-   completion (see `hide-tool-code?`); `shell` only while it runs, because the
-   finished command is already carried by its op-card headline."
-  #{"python_execution" "shell"})
+   completion (see `hide-tool-code?`); `shell_run`/`shell_background` only while
+   they run, because the finished command is already carried by its op-card
+   headline."
+  #{"python_execution" "shell_run" "shell_background"})
 
 (defn show-running-tool-code?
   "Should a channel show a STILL-RUNNING form's invocation source even though

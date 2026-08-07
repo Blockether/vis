@@ -2740,13 +2740,13 @@
         ;; malfunction and invites a pointless re-run (the shape that spins).
         (let
           [m
-           (irm {:tool-calls [{:id "F" :name "fs"}]
+           (irm {:tool-calls [{:id "F" :name "delete"}]
                  :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "F"}]})
 
            c
            (get-in m [:content 0 :content])]
 
-          (expect (str/includes? c "`fs`"))
+          (expect (str/includes? c "`delete`"))
           (expect (str/includes? c "NOT a failure"))
           (expect (not (str/includes? c "print()")))
           ;; still a plain result, never flagged as an error
@@ -3749,8 +3749,7 @@
                  "errors surface"
                  ;; The sleep/poll prohibition lives HERE and nowhere else: the core
                  ;; prompt deliberately dropped its duplicate copy.
-                 "`time.sleep`/poll for background shells" "`shell` op `wait`"
-                 "REQUIRED `until` regex"
+                 "`shell_logs`" "`shell_background`" "no tool waits for you"
                  ;; Sandbox Python does NOT close a dropped file handle, so an
                  ;; unclosed `open(...)` leaks a PROCESS descriptor until a GC —
                  ;; enough of them and no `shell`/`git` child can be spawned at
@@ -3834,21 +3833,21 @@
         ;; `cat` is plural-only (`paths`), so it declares NO positional shape.
         (expect (nil? (get real-call-shapes "cat")))
         (expect (= {:lead-opt "language" :rest :always} (get real-call-shapes "repl_eval")))
-        (expect (= {:pos ["path"]} (get real-call-shapes "file_exists")))
+        (expect (= {:pos ["paths"]} (get real-call-shapes "file_exists")))
         (expect (fn? (get real-call-shapes "patch")))
         ;; lint_code takes a whole dict → it declares NO :call and uses the default.
         (expect (nil? (get real-call-shapes "lint_code")))
-        ;; Shell and Git are one-map calls too; neither may grow a positional shape.
-        (expect (nil? (get real-call-shapes "shell")))
-        (expect (nil? (get real-call-shapes "git"))))
+        ;; Every shell verb and Git are one-map calls; none may grow a positional shape.
+        (doseq [n ["shell_run" "shell_background" "shell_logs" "shell_type" "shell_stop" "git"]]
+          (expect (nil? (get real-call-shapes n)))))
     (it "a tool with NO :call gets the generic whole-dict call"
         (expect (= "rg({\"query\": [\"x\"]})" (synth {:name "rg" :input {"query" ["x"]}})))
         (expect (= "grep({\"query\": \"x\"})" (synth {:name "grep" :input {"query" "x"}})))
         (expect (= "struct_index({\"paths\": [\"src/x.clj\"]})"
                    (synth {:name "struct_index" :input {"paths" ["src/x.clj"]}})))
         (expect (= "lint_code({\"code\": \"x\"})" (synth {:name "lint_code" :input {"code" "x"}})))
-        (expect (= "shell({\"commands\": [\"ls\"]})"
-                   (synth {:name "shell" :input {"commands" ["ls"]}})))
+        (expect (= "shell_run({\"commands\": [\"ls\"]})"
+                   (synth {:name "shell_run" :input {"commands" ["ls"]}})))
         (expect (= "git({\"commands\": [[\"status\", \"--short\"]]})"
                    (synth {:name "git" :input {"commands" [["status" "--short"]]}}))))
     (it "python_execution still passes the model's code through"
@@ -3878,7 +3877,7 @@
         (expect (not (.contains ^String prog "\n")))
         (expect (.startsWith ^String prog "struct_patch("))))
     (it
-      "positional + optional-rest-dict shapes (copy/shell) and plural-only dicts"
+      "positional + optional-rest-dict shapes (copy/shell_run) and plural-only dicts"
       ;; `cat` is plural-only, so it rides the generic whole-dict form.
       (expect (= "cat({\"paths\": [\"a.clj\"]})" (synth {:name "cat" :input {"paths" ["a.clj"]}})))
       (expect (= "cat({\"paths\": [\"a.clj\"], \"ranges\": [[1, 2]]})"
@@ -3889,24 +3888,25 @@
       (expect (= "copy(\"a\", \"b\")" (synth {:name "copy" :input {"src" "a" "dest" "b"}})))
       (expect (= "copy(\"a\", \"b\", {\"is_overwrite\": True})"
                  (synth {:name "copy" :input {"src" "a" "dest" "b" "is_overwrite" true}})))
-      (expect (= "shell({\"commands\": [\"ls\"], \"timeout_secs\": 30})"
-                 (synth {:name "shell" :input {"commands" ["ls"] "timeout_secs" 30}}))))
+      (expect (= "shell_run({\"commands\": [\"ls\"], \"cwd\": \"/tmp\"})"
+                 (synth {:name "shell_run" :input {"commands" ["ls"] "cwd" "/tmp"}}))))
     (it "all-positional + optional-trailing-positional shapes"
         (expect (= "move(\"a\", \"b\")" (synth {:name "move" :input {"src" "a" "dest" "b"}})))
-        (expect (= "delete(\"p\")" (synth {:name "delete" :input {"path" "p"}})))
-        (expect (= "create_dirs(\"d\")" (synth {:name "create_dirs" :input {"path" "d"}})))
-        (expect (= "file_exists(\"d\")" (synth {:name "file_exists" :input {"path" "d"}})))
-        ;; Shell always receives its complete request as one map.
-        (expect (= "shell({\"id\": \"x\", \"commands\": [\"sleep 1\"], \"op\": \"background\"})"
-                   (synth {:name "shell" :input {"id" "x" "commands" ["sleep 1"] "op" "background"}})))
-        (expect (= "shell({\"id\": \"x\", \"n\": 50, \"op\": \"logs\"})"
-                   (synth {:name "shell" :input {"id" "x" "n" 50 "op" "logs"}})))
+        (expect (= "delete([\"p\"])" (synth {:name "delete" :input {"paths" ["p"]}})))
+        (expect (= "create_directory([\"d\"])"
+                   (synth {:name "create_directory" :input {"paths" ["d"]}})))
+        (expect (= "file_exists([\"d\"])" (synth {:name "file_exists" :input {"paths" ["d"]}})))
+        ;; Every shell verb receives its complete request as one map.
+        (expect (= "shell_background({\"id\": \"x\", \"commands\": [\"sleep 1\"]})"
+                   (synth {:name "shell_background" :input {"id" "x" "commands" ["sleep 1"]}})))
+        (expect (= "shell_logs({\"id\": \"x\", \"n\": 50})"
+                   (synth {:name "shell_logs" :input {"id" "x" "n" 50}})))
         (expect (= "struct_rename(\"a\", \"b\")"
                    (synth {:name "struct_rename" :input {"name" "a" "new_name" "b"}})))
-        (expect (= "shell({\"id\": \"x\", \"op\": \"logs\"})"
-                   (synth {:name "shell" :input {"id" "x" "op" "logs"}}))))
+        (expect (= "shell_stop({\"id\": \"x\"})"
+                   (synth {:name "shell_stop" :input {"id" "x"}}))))
     (it "file_exists synthesizes its wire name file_exists (bound name matches)"
-        (expect (= "file_exists(\"p\")" (synth {:name "file_exists" :input {"path" "p"}}))))
+        (expect (= "file_exists([\"p\"])" (synth {:name "file_exists" :input {"paths" ["p"]}}))))
     (it "patch projects its one native shape to the edits vector"
         (expect (= "patch([{\"path\": \"a.clj\", \"from_anchor\": \"1:a\"}])"
                    (synth {:name "patch"
@@ -4047,15 +4047,15 @@
 (defdescribe
   native-tool-call-block-test
   ;; REGRESSION: only the `:handler` branch carried `:vis/native-input`, so every
-  ;; sandbox-bound native tool — `shell` above all — lost the input its own
+  ;; sandbox-bound native tool — the `shell_*` verbs above all — lost the input its own
   ;; `:render-start-call-fn` needs and painted raw invocation JSON for the whole run.
   (it "carries the call input on the synthesized-python branch too"
       (let
-        [tc {:id "c1" :name "shell" :input {"op" "wait" "id" "dev" "until" "ready"}}
+        [tc {:id "c1" :name "shell_logs" :input {"id" "dev" "n" 50}}
          block (native-tool-call-block {} nil tc)]
 
         (expect (= "python" (:lang block)))
-        (expect (= {"op" "wait" "id" "dev" "until" "ready"} (:vis/native-input block)))))
+        (expect (= {"id" "dev" "n" 50} (:vis/native-input block)))))
   (it "keeps carrying it for a `:handler` tool dispatched in Clojure"
       (let
         [tc {:id "c2" :name "search_web" :input {"query" "vis"}}
@@ -4066,15 +4066,15 @@
 
         (expect (= "native" (:lang block)))
         (expect (= {"query" "vis"} (:vis/native-input block)))))
-  (it "renders a pending `shell` wait as the op-card it becomes, not the call JSON"
+  (it "renders a pending `shell_logs` call as the op-card it becomes, not the call JSON"
       ;; End to end over the real seam: the block's input reaches the tool's own
       ;; `:render-start-call-fn`, so the running form is the shell CARD its result card
-      ;; completes instead of `shell({\"op\": \"wait\", …})`.
+      ;; completes instead of `shell_logs({\"id\": …})`.
       (let
         [renderers (extension/native-tool-start-call-renderers [sh/vis-extension])
          tc {:id "c4"
-             :name "shell"
-             :input {"op" "wait" "id" "svar-verify" "until" "VERIFY_EXIT=" "timeout_secs" 600}}
+             :name "shell_logs"
+             :input {"id" "svar-verify" "n" 200}}
          block (native-tool-call-block {} nil tc)
          display (pending-call-display renderers
                                        (:vis/tool-name block)
@@ -4082,14 +4082,14 @@
 
         ;; The card BODY, built by the very sections the finished card uses — no
         ;; comment band invented for pending calls…
-        (expect (= "**STATUS**\n```\nid: svar-verify\nuntil: VERIFY_EXIT=\ntimeout: 600s\n```"
+        (expect (= "**STATUS**\n```\nid: svar-verify\n```"
                    (:pending-render display)))
         ;; …and therefore no separate code band saying the same thing in JSON.
         (expect (nil? (:display-code display)))
         (expect (nil? (:display-language display)))
         ;; …under the op-card HEADLINE, so the running block is the shell CARD in
         ;; its awaiting state rather than a naked band.
-        (expect (= "◷ `svar-verify` waiting · until VERIFY_EXIT= · timeout 600s"
+        (expect (= "◷ `svar-verify` reading logs"
                    (:pending-summary display)))
         ;; A pending display is never mistaken for an outcome.
         (expect (nil? (:result-summary display)))
@@ -5898,9 +5898,9 @@
       (let [door #'lp/normalize-tool-calls
             calls (door [{:id "t1" :name "patch"
                           :input {:edits [{:path "a.clj" :from_anchor "1:aa" :replace "x"}]}}
-                         {:id "t2" :name "fs" :input {:op :delete :paths ["x"]}}])]
+                         {:id "t2" :name "delete" :input {:paths ["x"]}}])]
         (expect (= [{"edits" [{"path" "a.clj" "from_anchor" "1:aa" "replace" "x"}]}
-                    {"op" "delete" "paths" ["x"]}]
+                    {"paths" ["x"]}]
                    (mapv :input calls)))
         (expect (= ["t1" "t2"] (mapv :id calls)))))
     (it "repairs a model-drift `\":path\"` key at every depth"

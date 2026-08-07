@@ -70,7 +70,10 @@
       ;; 4.7k exactly once, when REPL-first reproduction and the "unverified until a test
       ;; covers it" rule landed: those rules pay for themselves, and paying for them by
       ;; shaving other rules' wording is the squeeze this lock exists to stop.
-      (expect (< (count text) 4700))
+      ;; 4.7k → 4.75k exactly once more, when the merged `shell`/`fs` mega-tools split into
+      ;; named verbs: §2's non-blocking rule and §3's five filesystem names are what stop the
+      ;; model guessing an `op` discriminator that no longer exists.
+      (expect (< (count text) 4750))
       (let
         [steps (mapv #(str/index-of text %)
                      ["`grep` locates unknown code" "`struct_index` every known file"
@@ -86,7 +89,11 @@
       (expect (str/includes? text "only for product questions"))
       (expect (str/includes? text "locates unknown code"))
       (expect (str/includes? text "**Filesystem work goes through native tools**"))
-      (expect (str/includes? text "keep `shell` for running programs"))
+      ;; The routing rule NAMES the whole filesystem surface: an omitted verb silently
+      ;; re-opens the `mkdir -p`/`test -f` shell reflex it exists to close.
+      (doseq [verb ["`copy`" "`move`" "`delete`" "`create_directory`" "`file_exists`"]]
+        (expect (str/includes? text verb)))
+      (expect (str/includes? text "`shell_run` runs programs"))
       (expect (< (str/index-of text "`grep` FIRST") (str/index-of text "`vis_docs()`")))
       (doseq
         [heading ["## 1. Identity + Epistemic stance" "## 2. Execution surfaces" "## 3. Inspect"
@@ -104,7 +111,9 @@
           "Native descriptions and JSON Schemas are authoritative" "follow the documented contract"
           "hard preconditions" "`python_execution`" "`await gather(...)` only for independent calls"
           "Direct native tools: single operations" "default for most Python/data work"
-          "`shell` op `wait`" "REQUIRED `until` regex"
+          ;; No tool blocks on the model's behalf: the old `shell` op `wait`/`until`
+          ;; is gone, so core routes to background + a poll the model can read.
+          "Nothing blocks for you" "`shell_background`" "poll `shell_logs`"
           "functions that accept or return\n  callables"
           "NEVER paste a near-identical loop or block twice" "define once and reuse"
           "second occurrence factor it out and call it" "raw data, not rendered text"
@@ -209,7 +218,7 @@
       ;; Invocation syntax belongs to the shell symbol docs; this supplemental
       ;; block only exposes otherwise-undiscoverable compatibility routing.
       (let [text (#'prompt/sandbox-shims-prompt-block [{:ext/name "foundation-shell"}])]
-        (expect (str/includes? text "active `shell` tool"))
+        (expect (str/includes? text "active `shell_run`/`shell_background` shell tools"))
         (expect (not (str/includes? text "DISABLED")))
         (expect (str/includes? text "subprocess"))
         (expect (str/includes? text "os.system"))

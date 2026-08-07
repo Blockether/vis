@@ -107,8 +107,8 @@
           ;; back in prior-turn context, tagged so channels suppress the trace.
           (expect (= 1 (count turns)))
           (expect (= :user-shell (:tag form)))
-          (expect (= "shell" (:vis/tool-name form)))
-          (expect (= "await shell({\"commands\": [\"echo hi-from-bang\"]})" (:src form)))
+          (expect (= "shell_run" (:vis/tool-name form)))
+          (expect (= "await shell_run({\"commands\": [\"echo hi-from-bang\"]})" (:src form)))
           ;; a run is ALWAYS a batch: the command's own output is its entry
           (expect (= "hi-from-bang\n" (get (first (get (:result form) "commands")) "stdout")))
           (expect (= 0 (get (:result form) "exit"))))))))

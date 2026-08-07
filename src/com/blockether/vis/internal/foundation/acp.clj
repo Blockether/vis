@@ -439,10 +439,11 @@
     ("grep" "apropos" "doc")
     "search"
 
-    ("shell" "run_tests" "repl_eval" "repl" "python_execution")
+    ("shell_run" "shell_background" "shell_logs" "shell_type" "shell_stop"
+     "run_tests" "repl_eval" "repl" "python_execution")
     "execute"
 
-    "fs"
+    ("copy" "move" "delete" "create_directory" "file_exists")
     "move"
 
     "search"

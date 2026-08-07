@@ -106,25 +106,25 @@
 
 (defdescribe python-binding-aliases-test
              ;; A native tool is reachable in the sandbox under its canonical Python name
-             ;; PLUS the intentional compatibility aliases. `fs` also answers to `fs_tool`
-             ;; so it reads as a verb next to `shell`/`grep`; a missing alias is a bare
+             ;; PLUS the intentional compatibility aliases; a missing alias is a bare
              ;; NameError to the model, which reads as "the tool is gone" and invites a spin.
-             (it "exposes fs as both fs and fs_tool, grep as grep/find_files/find"
-                 (expect (= ["fs" "fs_tool"] (ep/python-binding-names 'fs)))
-                 (expect (= ["grep" "find_files" "find"] (ep/python-binding-names 'grep))))
+             (it "exposes grep as grep/find_files/find and unaliased tools as themselves"
+                 (expect (= ["grep" "find_files" "find"] (ep/python-binding-names 'grep)))
+                 (expect (= ["shell_run"] (ep/python-binding-names 'shell_run)))
+                 (expect (= ["file_exists"] (ep/python-binding-names 'file-exists))))
              (it "routes every alias to the SAME tool in a live context"
                  (let
                    [ctx
-                    (:python-context (ep/create-python-context {'fs (fn fs-stub [& args]
-                                                                      {"op" "fs"
-                                                                       "args" (vec args)})}))
+                    (:python-context (ep/create-python-context {'grep (fn grep-stub [& args]
+                                                                       {"op" "grep"
+                                                                        "args" (vec args)})}))
 
                     result
                     (ep/run-python-block ctx
-                                         (str "print(fs('exists')['op'], fs('exists')['args'])\n"
-                                              "print(fs_tool('x')['op'], fs_tool('x')['args'])"))]
+                                         (str "print(grep('a')['op'], grep('a')['args'])\n"
+                                              "print(find('x')['op'], find_files('x')['args'])"))]
 
-                   (expect (= "fs ['exists']\nfs ['x']\n" (:stdout result))))))
+                   (expect (= "grep ['a']\ngrep ['x']\n" (:stdout result))))))
 
 (defdescribe
   proxy-and-capture-test
