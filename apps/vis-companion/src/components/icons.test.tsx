@@ -476,11 +476,14 @@ describe("the shipped screens", () => {
 // the draft verb sat directly under `Manage projects` in the same menu band, but
 // only one of the two carried a mark, so the pair read as a heading and an item.
 describe("DraftIcon", () => {
-  it("is the project folder, copied", () => {
+  // Follow-up report: the copied-folder mark was too weak to read at 16px.
+  it("is the project folder with a branch forking inside it", () => {
     const html = renderToStaticMarkup(<DraftIcon />);
-    // The front folder is `ProjectsIcon`'s own outline, translated.
-    expect(html).toContain("h5.18l1.6 2.14h7.9v9.06");
+    // The folder is `ProjectsIcon`'s own outline, unchanged.
+    expect(html).toContain("M4.66 6.4h5.18l1.6 2.14h7.9v9.06H4.66z");
+    // ...and the fork is a stem into two nodes, never a second folder.
     expect(html.match(/<path/g)?.length).toBe(2);
+    expect(html.match(/<circle/g)?.length).toBe(2);
   });
 
   it("marks the draft verb in the start menu", () => {

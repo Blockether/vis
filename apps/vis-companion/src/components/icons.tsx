@@ -321,16 +321,21 @@ export function ProjectsIcon({ className }: { className?: string }) {
 }
 
 /**
- * A DRAFT: the project folder, copied. Same flat-cornered folder as
- * `ProjectsIcon` with a second one standing behind it, because a draft is not a
- * different kind of place — it is this project, duplicated. The verb it marks
- * sits directly under "Manage projects", so the two marks have to be relatives.
+ * A DRAFT: the project folder with a BRANCH growing inside it. The outline is
+ * `ProjectsIcon`'s own folder — a draft lives on disk like any project — and the
+ * two-node fork inside says what makes it a draft: this project, split off, so
+ * work happens away from the trunk. It replaces an earlier second folder drawn
+ * behind the first, which at 16px was two nearly parallel outlines 2px apart and
+ * read as a smudge rather than a mark. A fork reads at a glance and cannot be
+ * mistaken for the `Manage projects` folder directly beneath it.
  */
 export function DraftIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
-      <path d="M7.06 4.8h4.3l1.33 1.78h6.55v7.2" />
-      <path d="M3.7 7.6h5.18l1.6 2.14h7.9v9.06H3.7z" />
+      <path d="M4.66 6.4h5.18l1.6 2.14h7.9v9.06H4.66z" />
+      <path d="M9.1 14.95V13.6c0-0.72 0.58-1.3 1.3-1.3h3" />
+      <circle cx="9.1" cy="15.9" r="0.95" />
+      <circle cx="14.35" cy="12.3" r="0.95" />
     </Icon>
   );
 }
