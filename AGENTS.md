@@ -140,24 +140,23 @@ Render paint work in the `vis-channel-tui` REPL using Lanterna `DefaultVirtualTe
 - `cinema/grid->png!` draws one captured grid with the imaging cdylib at the same `cell-metrics` the MP4 screencast uses, and both go through `paint-grid!`, so a still and a frame of the video are the same picture. Box-drawing cells are painted as BARS through the cell centre, not as glyphs, so a border has no seams between columns. Nothing in this path needs Python, PIL, a JSON journal, or a font installed on the machine.
 - Keep both: the PNG is what you eyeball, the lazytest terminal-grid assertions are the regression gate.
 
-## Companion GUI design shots
+## Companion UI proposals are ASCII (HARD RULE)
 
-UX proposals are **made in the app and photographed**, never described in prose. The TUI has `cap/shot!`; the companion has the design gallery.
+**A design proposal is ASCII art in the answer. Never in the application.** Do not build a proposal into the product, do not add a variant component, a dev route, a gallery, a fixture screen or a screenshot script, and do not start a browser to photograph an idea. A proposal costs zero files: it is a monospace sketch of the layout, in the chat, with a one-line rationale under it.
 
-- The harness lives in `apps/vis-companion`: `src/dev/fleet.ts` (fixture data), `src/dev/variants.tsx` (one exported component per proposal, driven by a `state` prop), `src/dev/DesignGallery.tsx` (the `DESIGN_VARIANTS` registry), `scripts/design-shots.mjs` (`npm run design:shots`).
-- Dev-only route: `#/__design` lists the proposals, `#/__design?v=<id>&state=<state>&theme=light|dark` renders exactly one alone, so the viewport IS the proposal. `main.tsx` reaches it behind `import.meta.env.DEV`; nothing shipped imports `src/dev/**`.
-- The **page** owns the matrix, not the script: the gallery publishes `window.__designShots` (`{id, state}` per registered state) and `design-shots.mjs` reads it, so adding a variant needs no script edit.
-- Variants reuse the real chrome (`Header`, `TabBar`, `Shell` exported from `App.tsx`) and only Tailwind design tokens — a proposal that cannot be built with the design system cannot be photographed either.
-- `design:shots` spawns vite, then per shot runs `spel open --viewport WxH`, `spel wait --fn window.__designReady`, `spel screenshot`, writing `/tmp/vis-ui/<variant>-<state>-<theme>-<viewport>.png`. Flags: `--only`, `--viewport`, `--theme`, `--out`, `--keep`.
-- Always **all three viewports** (390x844 phone, 834x1194 iPad Pro 11" portrait, 1280x900 desktop) and **both palettes** (`applyTheme` with `BUNDLED_LIGHT`/`BUNDLED_DARK` in a layout effect, before the ready flag): the same amber that reads as an accent on paper is a flare on ink, and the tablet is the only shot that catches a desktop-density control under a finger or a phone layout stretched to 834px.
-- Flip `window.__designReady` only after `document.fonts.ready` AND a paint. A shot taken earlier renders in a fallback face and every measurement in it is a lie.
-- **Look at the pixels, not at the file list.** Attach every shot with `vis_attach("/tmp/vis-ui/<name>.png")` and actually read it: that is how `state === 'filter'` against a registry declaring `'filtered'` was caught — three "different" states had produced byte-identical PNGs. `PIL.Image.paste` is not bound in this sandbox, so attach the raw PNGs individually instead of composing a contact sheet.
-- Give every design a state that can **falsify** it: the solo state (one machine paired, the whole concept must disappear) and a degraded state (a machine offline) are what expose a layout that only works in the demo.
-- The gallery is production code: `npm run typecheck`, `npm run lint`, and `npm run build` must be clean before it ships.
-- A design that survived the gallery is still unproven: shoot the SHIPPED screen against **real gateways** too. Start it with `npm run dev`, which auto-loads every live local gateway registry entry and its token, then photograph the same states into `/tmp/vis-e2e/`. Add one unreachable connection only when the state under test requires it. That is where "scoped to the offline machine" turned out to render `No sessions yet`.
+- Sketch at the widths that decide the layout — 390px phone first, then desktop when they differ — and label each block with its real component name (`SectionHeader`, `HeaderTitle`, `HeaderActions`, `NewSessionButton`, `KebabButton`). A sketch that cannot name its controls is not a proposal.
+- Always offer SEVERAL numbered versions, and include the state that can falsify each one: one machine paired, a machine not answering, a long name, a project with no sessions.
+- Nothing is written to the repo until the human picks a version. Then it is built once, in the real screen, with its tests.
+- Legacy `src/dev/**` design-gallery files and `npm run design:shots` are not to be extended; delete them when a change brings you into that code.
+
+## Proving SHIPPED companion UI
+
+Proof is about the screen that ships, never about a proposal.
+
+- Run the real app with `npm run dev` (it loads every live local gateway registry entry and its token) and inspect the shipped screen.
 - Drive that browser by **`@ref` from `spel snapshot -i -c`**, not by `find role button --name`: name matching is a substring match, so `--name 'New session'` also matches `aria-label="Choose which machine the new session runs on"` and the ambiguous click silently does nothing. If a control has no name in the snapshot, that is a real accessibility bug — give it an `aria-label` instead of working around it.
 - When a click seems to do nothing, confirm it against `spel eval-js "…element.click()"` before blaming the app: the DOM path proves whether the handler or the locator is at fault. `spel console` dumps every entry ever captured — read `spel errors` instead.
-- **A layout claim is proven by NUMBERS, never by looking at the screenshot.** A shot says a thing looks about right; it cannot say whether two controls share an edge, and the eye will happily sign off on a 12px discrepancy it is looking straight at. Every geometric assertion — an edge, a gutter, an indent, a hit box, a baseline, an overflow — is read out of the live DOM with `spel eval-js` and `getBoundingClientRect()`, per viewport, and REPORTED as the figures:
+- **A layout claim is proven by NUMBERS, never by looking at a screenshot.** Every geometric assertion — an edge, a gutter, an indent, a hit box, a baseline, an overflow — is read out of the live DOM with `spel eval-js` and `getBoundingClientRect()`, per viewport, and REPORTED as the figures:
 
   ```
   spel --session s eval-js '(() => {
@@ -167,7 +166,7 @@ UX proposals are **made in the app and photographed**, never described in prose.
   })()'
   ```
 
-  What that catches and a screenshot does not: two trailing controls ending at 378 and 390; a name at x=28 above a name at x=36; a 44px thumb target that quietly became 32; a panel whose `top + height` exceeds `innerHeight`, which is a primary button rendered below the fold. Check the numbers you are asserting on — `getBoundingClientRect()` is post-transform and viewport-relative, so measure after fonts load and after any open/close transition has settled. Screenshots stay in the loop for what only an eye can judge (weight, colour, rhythm, whether it is ugly); they are never the evidence for a measurement.
+  What that catches and an eye does not: two trailing controls ending at 378 and 390; a name at x=28 above a name at x=36; a 44px thumb target that quietly became 32; a panel whose `top + height` exceeds `innerHeight`, which is a primary button rendered below the fold. Measure after fonts load and after any open/close transition has settled.
 
 ## Shipping verified work
 
