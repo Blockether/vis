@@ -306,13 +306,23 @@ export function Section({ title, children }: { title: string; children: ReactNod
 }
 
 /**
- * THE ONE MODAL: a SHEET on a phone, a dialog centred over a scrim on a desktop.
+ * ONE DESKTOP BOX for every dialog: the same height, whatever is inside it.
+ *
+ * A dialog that sizes itself to its content makes the scrim jump — "Manage projects"
+ * stood two-thirds of the window tall while the question beside it was a strip. Above
+ * `sm:` they are the same rectangle and the CONTENT scrolls inside it; below it the
+ * sheet is simply the whole phone.
+ */
+export const DIALOG_DESKTOP_HEIGHT = 'sm:h-[min(38rem,100%)]';
+
+/**
+ * THE ONE MODAL: a FULL-SCREEN sheet on a phone, a fixed dialog over a scrim on a desktop.
  *
  * iOS taught the thumb that a surface which arrives from the bottom edge is the one
  * it can reach and flick away, so `Menu` already slid up from there while a dialog
  * with the very same job — "Manage projects" — dropped into the middle of the glass.
- * Two layers, two physics, one hand. The sheet wins below `sm:`: full width, docked
- * to the bottom safe area, travelling its own height on the way in.
+ * Two layers, two physics, one hand. The sheet wins below `sm:`: it takes the WHOLE
+ * glass, owns both safe areas itself, and travels its own height on the way in.
  *
  * `Menu` is the other half of that contract — a sheet on a phone, a popover under
  * the control it came from. Between them they are every layer this app puts over
@@ -320,23 +330,25 @@ export function Section({ title, children }: { title: string; children: ReactNod
  * had already drifted into two copies of the same forty characters.
  */
 export function Modal({
-  size = 'md',
   onDismiss,
   children,
 }: {
-  /** `lg` is for a dialog that holds a LIST rather than a question. */
-  size?: 'md' | 'lg';
   onDismiss: () => void;
   children: ReactNode;
 }) {
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 pt-[max(1.5rem,env(safe-area-inset-top))] sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))]"
+      className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/60 sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))]"
       role="presentation"
       onClick={onDismiss}
     >
+      {/* ONE SIZE. On the phone a dialog IS the screen — full bleed, full height,
+          so a list inside it gets every pixel the glass has and the verbs at its
+          foot are always in the same place. From `sm:` up every dialog is the same
+          box (`sm:max-w-lg`, `DIALOG_DESKTOP_HEIGHT`): a question and a file browser
+          that open over the same screen used to be two different rectangles. */}
       <div
-        className={`w-full ${size === 'lg' ? 'sm:max-w-lg' : 'sm:max-w-md'}`}
+        className={`flex w-full flex-col sm:max-w-lg ${DIALOG_DESKTOP_HEIGHT}`}
         role="presentation"
         onClick={(event) => event.stopPropagation()}
       >
@@ -426,7 +438,7 @@ export function DialogFrame({
 }) {
   return (
     <section
-      className={`overflow-hidden border-t-2 border-accent bg-panel pb-[env(safe-area-inset-bottom)] shadow-none transition-[opacity,transform,translate,scale,rotate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-full starting:opacity-0 motion-reduce:transition-none sm:border sm:border-dialog-edge sm:pb-0 sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:duration-200 sm:starting:translate-y-2 ${className}`}
+      className={`flex min-h-0 flex-1 flex-col overflow-hidden border-t-2 border-accent bg-panel pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-none transition-[opacity,transform,translate,scale,rotate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-full starting:opacity-0 motion-reduce:transition-none sm:border sm:border-dialog-edge sm:pt-0 sm:pb-0 sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:duration-200 sm:starting:translate-y-2 ${className}`}
       role="dialog"
       aria-modal="true"
       aria-label={title}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Banner, Button, DialogFrame, Input } from './ui';
+import { Banner, Button, DIALOG_DESKTOP_HEIGHT, DialogFrame, Input } from './ui';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
@@ -224,14 +224,17 @@ export function HumanInputSheet({
   onSubmit: () => void;
   onCancel: () => void;
 }) {
-  // A phone answers with its thumb, so the sheet sits on the BOTTOM edge and
-  // only becomes a centred card once there is a mouse-sized window.
+  // A phone answers with its thumb, so the ask takes the WHOLE glass; from `sm:`
+  // up it is the same box every other dialog is (`DIALOG_DESKTOP_HEIGHT`).
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 pt-[max(1.5rem,env(safe-area-inset-top))] sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))]"
+      className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/60 sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))]"
       role="presentation"
     >
-      <div className="w-full sm:max-w-md" role="presentation">
+      <div
+        className={`flex w-full flex-col sm:max-w-lg ${DIALOG_DESKTOP_HEIGHT}`}
+        role="presentation"
+      >
         <DialogFrame
           title={request.title}
           {...(request.is_cancellable ? { onClose: onCancel } : {})}

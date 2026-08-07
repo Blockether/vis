@@ -256,9 +256,8 @@ export function ManageProjectsSheet({
   );
 
   return (
-    <Modal size="lg" onDismiss={onCancel}>
+    <Modal onDismiss={onCancel}>
       <DialogFrame
-        className="flex max-h-[80vh] flex-col"
         title="Manage projects"
         subtitle={label}
         onClose={onCancel}

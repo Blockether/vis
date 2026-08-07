@@ -605,18 +605,24 @@ describe('RowDisclosure', () => {
 // The dialog that "Manage projects" opens arrived by dropping into the middle of
 // the glass while the `⋯` menu beside it slid up from the bottom edge: two layers
 // with the same job and two physics. Below `sm:` a dialog is a SHEET.
+// Regression, user report ("dialogs should occupy full height on the iPhone, and on
+// desktop they should have similar heights and widths"): the sheet stopped at its
+// content's height and `size` gave two different desktop widths.
 describe('Modal and DialogFrame as a phone sheet', () => {
   const source = uiSource;
 
-  it('docks the scrim to the bottom edge on a phone and centres it from sm: up', () => {
-    expect(source).toContain('flex items-end justify-center bg-black/60');
+  it('lets the sheet take the whole glass on a phone and centres it from sm: up', () => {
+    expect(source).toContain('flex items-stretch justify-center bg-black/60');
     expect(source).toContain('sm:items-center');
-    // No bottom/side padding on the phone: a sheet touches three edges.
+    // No padding at all on the phone: a sheet touches all four edges.
     expect(source).toContain('sm:pb-[max(1rem,env(safe-area-inset-bottom))]');
   });
 
-  it('lets the sheet span the full width until there is a mouse-sized window', () => {
-    expect(source).toContain("size === 'lg' ? 'sm:max-w-lg' : 'sm:max-w-md'");
+  it('gives every dialog ONE desktop box and a full-height phone sheet', () => {
+    expect(source).toContain("DIALOG_DESKTOP_HEIGHT = 'sm:h-[min(38rem,100%)]'");
+    expect(source).toContain('flex w-full flex-col sm:max-w-lg ${DIALOG_DESKTOP_HEIGHT}');
+    // One width, so a question and a file browser are the same rectangle.
+    expect(source).not.toContain('sm:max-w-md');
   });
 
   it('slides the frame in from below by its own height, and only tips in on desktop', () => {
@@ -626,8 +632,11 @@ describe('Modal and DialogFrame as a phone sheet', () => {
     // The menu sheet's own top edge, so the two layers read as one family.
     expect(html).toContain('border-t-2 border-accent');
     expect(html).toContain('sm:border sm:border-dialog-edge');
-    // Docked to the bottom edge, it owns the home indicator itself.
+    // Full-bleed on the phone, it owns BOTH safe areas itself.
+    expect(html).toContain('pt-[env(safe-area-inset-top)]');
     expect(html).toContain('pb-[env(safe-area-inset-bottom)]');
     expect(html).toContain('sm:pb-0');
+    // A column that fills its parent, so the body scrolls and the footer docks.
+    expect(html).toContain('flex min-h-0 flex-1 flex-col');
   });
 });

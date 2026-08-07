@@ -23,7 +23,7 @@ describe('ManageProjectsSheet paints no box of its own', () => {
   // dropdown. It is the app's normalized dialog now: `Modal` + `DialogFrame`, the
   // same header and the same way out as every other dialog on the screen.
   it('is the app’s normalized dialog, not a panel of its own', () => {
-    expect(source).toContain('<Modal size="lg"');
+    expect(source).toContain('<Modal onDismiss=');
     expect(source).toContain('<DialogFrame');
     expect(source).not.toContain('<AnchoredPanel');
     expect(source).not.toContain('createPortal');
@@ -131,5 +131,14 @@ describe('a folder that is already a project offers no verb', () => {
     expect(source).toContain(
       '<p className="mr-auto text-meta text-dialog-hint">It\u2019s already a project</p>',
     );
+  });
+});
+
+// Regression, user report ("dialogs should occupy full height on the iPhone"): the
+// sheet capped itself at `max-h-[80vh]` at the call site, so it stopped 169px short
+// of the glass and the frame's own geometry never applied.
+describe('the sheet does not size itself', () => {
+  it('leaves height to DialogFrame', () => {
+    expect(source).not.toContain('max-h-[80vh]');
   });
 });
