@@ -307,3 +307,17 @@ describe('where "New session" lives', () => {
     );
   });
 });
+
+// Regression, user report: the `+` on a machine header opened the project
+// INVENTORY, so adding a project meant finding "Add project…" inside it; and the
+// machine's name was only editable from the settings screen.
+describe("the machine header's own verbs", () => {
+  it("opens the folder browser directly from `+`", () => {
+    expect(source).toContain("isAdding");
+  });
+
+  it("makes the machine name itself the rename control", () => {
+    expect(source).toContain("onRenameMachine(machine.conn, next)");
+    expect(source).toContain("renameLabel={`Rename ${machineLabel(machine.conn)}`}");
+  });
+});

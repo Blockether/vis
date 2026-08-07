@@ -631,6 +631,41 @@ describe("HeaderTally", () => {
 // the project's name at 36, and a session's title at 10 — the deepest thing on the
 // screen starting furthest left, so depth read backwards. On the other side the two
 // header `⋯` stopped at x=378 while the session row's disclosure ran flush to 390.
+// Regression, user report: the machine name had to be editable from the list
+// itself ("clicking on machine name to edit it and save"), and the edit must not
+// move anything. The resting name and the field it becomes are one box: same class
+// list, and the field is sized in CHARACTERS of the header's mono face, so the
+// address beside it does not shift when the caret arrives.
+describe("HeaderTitle rename", () => {
+  const resting = renderToStaticMarkup(
+    <HeaderTitle name="tower" qualifier="10.0.0.5:7890" />,
+  );
+  const editable = renderToStaticMarkup(
+    <HeaderTitle
+      name="tower"
+      qualifier="10.0.0.5:7890"
+      onRename={() => {}}
+      renameLabel="Rename tower"
+    />,
+  );
+
+  it("is INK, not a second control: the name keeps its own face", () => {
+    const face = "font-mono font-bold text-white max-w-[60%]";
+    expect(resting).toContain(face);
+    expect(editable).toContain(face);
+    // No border, no box, no height of its own — anything that paints a frame
+    // around the name is a control competing with the two buttons beside it.
+    expect(editable).not.toContain("border");
+    expect(editable).not.toContain("min-h-");
+  });
+
+  it("names the press for a screen reader and stays a name without the callback", () => {
+    expect(editable).toContain('aria-label="Rename tower"');
+    expect(editable).toContain("<button");
+    expect(resting).not.toContain("<button");
+  });
+});
+
 describe("the list grid", () => {
   const leading = (html: string) =>
     html.includes("pl-3") && html.includes("sm:pl-4");

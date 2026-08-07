@@ -120,6 +120,7 @@ export interface ManagedProject {
 
 export function ManageProjectsSheet({
   label,
+  isAdding,
   at,
   client,
   startAt,
@@ -131,6 +132,12 @@ export function ManageProjectsSheet({
 }: {
   /** The machine whose files these are — the title says it, so no row has to. */
   label: string;
+  /**
+   * Opens straight on the folder browser. The machine header's `+` MEANS "add a
+   * project": landing on the inventory first and making a human hunt for
+   * "Add project…" is a tap spent on a verb the button already named.
+   */
+  isAdding?: boolean;
   /** Where the panel hangs from `sm:` up — the control that opened it. */
   at: MenuPosition | null;
   client: GatewayClient;
@@ -149,7 +156,7 @@ export function ManageProjectsSheet({
   // the verb that needs it. It used to open on `GET /v1/fs` — a folder browser called
   // "Manage projects", which could add a project and never showed you the ones you
   // had, let alone remove one.
-  const [adding, setAdding] = useState(projects.length === 0);
+  const [adding, setAdding] = useState(isAdding || projects.length === 0);
   const [dir, setDir] = useState<string>(startingDir(startAt) ?? '~');
   const [listing, setListing] = useState<{
     path: string;

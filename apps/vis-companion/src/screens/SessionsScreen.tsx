@@ -233,9 +233,18 @@ interface Props {
   onOpen: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
   /** Open that machine's own settings — the last verb in its `⋯` menu. */
   onMachineSettings?: (conn: GatewayConn) => void;
+  /** Renames the machine in place from its own header. '' clears the name. */
+  onRenameMachine?: (conn: GatewayConn, label: string) => void;
 }
 
-export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, onMachineSettings }: Props) {
+export function SessionsScreen({
+  conns,
+  subscriptions,
+  onUnreachable,
+  onOpen,
+  onMachineSettings,
+  onRenameMachine,
+}: Props) {
   // A machine OWNS its projects: every row belongs to exactly one gateway, and a
   // project only exists inside the machine it lives on. The fleet is therefore
   // one entry per paired machine, seeded from that machine's last known list so
@@ -421,6 +430,16 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
     },
     [loadMachine],
   );
+
+  // A machine's NAME is not its transport, so renaming it must not refetch a thing —
+  // but the banner reads that name off `machine.conn`, and `fleetKey` deliberately
+  // ignores it, so an in-place rename saved to storage and then painted the old name
+  // until the next pairing change. Re-hydrating keeps every row (`reconcileMachines`
+  // hands the surviving machine its new connection) and reloads nothing.
+  const fleetNames = conns.map((conn) => `${conn.url}\u0000${conn.label ?? ''}`).join('|');
+  useEffect(() => {
+    setMachines((current) => hydrateMachines(connsRef.current, current));
+  }, [fleetNames]);
 
   // Pairing changes rebuild the fleet; machines that stayed keep their rows.
   useEffect(() => {
@@ -1358,6 +1377,12 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
                       <HeaderTitle
                         mark={<MachineMark size="banner" color={machineColor(machineColors, key)} />}
                         name={machineLabel(machine.conn)}
+                        onRename={
+                          onRenameMachine
+                            ? (next) => onRenameMachine(machine.conn, next)
+                            : undefined
+                        }
+                        renameLabel={`Rename ${machineLabel(machine.conn)}`}
                         qualifier={
                           machine.conn.label?.trim() ? hostOf(machine.conn.url) : undefined
                         }
@@ -1689,6 +1714,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
       {manageProjects && (
         <ManageProjectsSheet
           label={machineLabel(manageProjects.machine.conn)}
+          isAdding
           at={manageProjects.at}
           client={clientFor(manageProjects.machine.conn)}
           startAt={machineProject(manageProjects.machine)?.path ?? null}

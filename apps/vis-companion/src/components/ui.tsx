@@ -2,6 +2,7 @@ import {
   createContext,
   forwardRef,
   useContext,
+  useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
@@ -759,6 +760,65 @@ export function MachineBanner({ children }: { children: ReactNode }) {
 }
 
 /**
+ * A name that edits IN PLACE, and does not move when it does.
+ *
+ * The resting name and the field it becomes are the same box: the same class list,
+ * and a field stripped of every browser default it would otherwise bring (`border-0
+ * bg-transparent p-0`, no ring), sized by `size` in CHARACTERS — the header is a mono
+ * face, so one character is one column and the field is exactly as wide as the word it
+ * replaced. Anything width-guessing (a `w-full` field, a measured span) shifts the
+ * qualifier beside it the moment the caret arrives, which is the jump this exists to
+ * refuse.
+ *
+ * Enter commits, Escape restores, and leaving commits too — a phone keyboard is
+ * dismissed far more often than Enter is pressed.
+ */
+function EditableName({
+  value,
+  label,
+  className,
+  onCommit,
+}: {
+  value: string;
+  label: string;
+  className: string;
+  onCommit: (name: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  if (draft === null)
+    return (
+      <button
+        type="button"
+        aria-label={label}
+        title={label}
+        onClick={() => setDraft(value)}
+        className={`${className} text-left hover:underline focus-visible:outline-none focus-visible:underline`}
+      >
+        {value}
+      </button>
+    );
+  const commit = () => {
+    setDraft(null);
+    if (draft.trim() !== value) onCommit(draft.trim());
+  };
+  return (
+    <input
+      autoFocus
+      aria-label={label}
+      value={draft}
+      size={Math.max(draft.length, 1)}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') commit();
+        if (event.key === 'Escape') setDraft(null);
+      }}
+      className={`${className} border-0 bg-transparent p-0 focus:outline-none`}
+    />
+  );
+}
+
+/**
  * The leading half of a header that only NAMES its section: an optional mark, then the
  * name, truncated. It takes the width the trailing cluster leaves and no more.
  */
@@ -767,9 +827,19 @@ export function HeaderTitle({
   name,
   qualifier,
   qualifierTitle,
+  onRename,
+  renameLabel,
 }: {
   mark?: ReactNode;
   name: ReactNode;
+  /**
+   * Makes the NAME itself the rename control: press it, type, Enter saves and
+   * Escape puts it back. A machine's name is the one thing on this band a human
+   * owns, and sending them into a settings screen to change a word is a trip.
+   */
+  onRename?: (name: string) => void;
+  /** What the pressable name is called to a screen reader. */
+  renameLabel?: string;
   /**
    * What the name alone cannot settle — the address behind a machine's label, the
    * way a project header carries the path behind its folder name.
@@ -795,11 +865,20 @@ export function HeaderTitle({
           further left, which is hierarchy read backwards. */}
       <span className={HEADER_GLYPH}>{mark}</span>
       <span className="flex min-w-0 items-baseline gap-2">
-        <span
-          className={`shrink-0 truncate font-mono font-bold text-white ${qualifier ? 'max-w-[60%]' : 'min-w-0'} ${HEADER_TYPE[tone]}`}
-        >
-          {name}
-        </span>
+        {onRename ? (
+          <EditableName
+            className={`shrink-0 truncate font-mono font-bold text-white ${qualifier ? 'max-w-[60%]' : 'min-w-0'} ${HEADER_TYPE[tone]}`}
+            label={renameLabel ?? 'Rename'}
+            value={typeof name === 'string' ? name : ''}
+            onCommit={onRename}
+          />
+        ) : (
+          <span
+            className={`shrink-0 truncate font-mono font-bold text-white ${qualifier ? 'max-w-[60%]' : 'min-w-0'} ${HEADER_TYPE[tone]}`}
+          >
+            {name}
+          </span>
+        )}
         {qualifier && (
           <span
             className="min-w-0 truncate font-mono text-chip text-dialog-hint"
