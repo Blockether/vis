@@ -260,15 +260,16 @@ export function SessionsScreen({
   // machine key. Kept beside the list instead of merged into it: the 10s poll
   // rewrites `machine.sessions` from the gateway's own paged answer.
   const [searchHits, setSearchHits] = useState<Map<string, Session[]>>(() => new Map());
-  const [createBusy, setCreateBusy] = useState(false);
+  // The create in flight, and WHERE it was started: `at` is the project header whose
+  // own button is saying the word, and null when the app bar's menu started it.
+  // "Creating..." is a lie while a 12k-file repo is being cloned, so the busy word
+  // follows the WORK: fork, enter, or plain create.
+  const [creating, setCreating] = useState<{ at: string | null; label: string } | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [manageProjects, setManageProjects] = useState<{
     machine: FleetMachine;
     at: { top: number; left: number };
   } | null>(null);
-  // "Creating..." is a lie while a 12k-file repo is being cloned, so the busy word
-  // follows the WORK: fork, enter, or plain create.
-  const [createBusyLabel, setCreateBusyLabel] = useState('Creating...');
   // The `⋯` order — which machine, which workspace, what to call the draft — is ONE
   // value, so leaving it anywhere forgets every answer in it. The yellow button beside
   // it needs none of those answers: it starts where the machine already is. Portalled
@@ -886,10 +887,12 @@ export function SessionsScreen({
       openStartMenu();
       return;
     }
-    setCreateBusy(true);
-    setCreateBusyLabel(
-      startIn.kind === 'fork' ? 'Forking...' : startIn.kind === 'resume' ? 'Entering...' : 'Creating...',
-    );
+    setCreating({
+      // WHICH button was pressed, so only that project header goes busy.
+      at: root ? `${clientFor(on).base}\u0000${root}` : null,
+      label:
+        startIn.kind === 'fork' ? 'Forking...' : startIn.kind === 'resume' ? 'Entering...' : 'Creating...',
+    });
     setCreateError(null);
     leaveStart();
     try {
@@ -914,7 +917,7 @@ export function SessionsScreen({
     } catch (cause) {
       setCreateError((cause as Error).message);
     } finally {
-      setCreateBusy(false);
+      setCreating(null);
     }
   }
 
@@ -1224,9 +1227,12 @@ export function SessionsScreen({
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {createBusy && (
+              {/* Only when no button can speak for it: a create started from this bar's
+                  own menu belongs to no project header. Every header-started create
+                  wears its word INSIDE the button that was pressed. */}
+              {creating && creating.at === null && (
                 <span aria-live="polite" className="font-mono text-chip text-dialog-hint">
-                  {createBusyLabel}
+                  {creating.label}
                 </span>
               )}
               {/* The machine's two verbs, on the chrome that names it rather than on a
@@ -1366,6 +1372,7 @@ export function SessionsScreen({
                           onRename={startRename}
                           onDelete={startDelete}
                           onNewSession={(root) => void createSession({ kind: 'trunk' }, machine.conn, root)}
+                          creating={creating}
                           // A draft is not a preference: every project header offers
                           // the private copy beside its own "New session".
                           onNewDraft={(anchor, root) => openDraftsAt(anchor, machine.conn, root)}
@@ -1393,7 +1400,7 @@ export function SessionsScreen({
       </div>
 
       {rowAction && rowCopy && (
-        <Modal onDismiss={closeRowAction}>
+        <Modal size="fit" onDismiss={closeRowAction}>
             <DialogFrame title={rowCopy.title} onClose={closeRowAction}>
               <div className="space-y-3 p-4">
                 <p className="truncate font-mono text-meta text-dialog-hint">{rowCopy.subject}</p>
@@ -1730,6 +1737,7 @@ const ProjectGroup = memo(function ProjectGroup({
   onRename,
   onDelete,
   onNewSession,
+  creating,
   onNewDraft,
   pageSize,
 }: {
@@ -1744,6 +1752,11 @@ const ProjectGroup = memo(function ProjectGroup({
   onRename: (session: Session, conn: GatewayConn) => void;
   onDelete: (session: Session, conn: GatewayConn) => void;
   onNewSession: (root: string) => void;
+  /**
+   * The create this very project header started, so its own button can say the word
+   * instead of a label parked on the app bar saying it for the whole fleet.
+   */
+  creating: { at: string | null; label: string } | null;
   /** Opens the private-copy question for this project, anchored on the button. */
   onNewDraft?: (anchor: HTMLElement, root: string) => void;
   pageSize: number;
@@ -1823,6 +1836,9 @@ const ProjectGroup = memo(function ProjectGroup({
           <NewSessionButton
             machine={machineLabel(conn)}
             where={project}
+            busyLabel={
+              creating && creating.at === `${base}\u0000${root}` ? creating.label : null
+            }
             onPress={() => onNewSession(root)}
             onDraft={onNewDraft ? (anchor) => onNewDraft(anchor, root) : undefined}
           />

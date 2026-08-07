@@ -403,29 +403,46 @@ export const DIALOG_DESKTOP_HEIGHT = 'sm:h-[min(38rem,100%)]';
  */
 export function Modal({
   onDismiss,
+  size = 'full',
   children,
 }: {
   onDismiss: () => void;
+  /**
+   * `full` is the screen: a list, a browser, anything that wants every pixel.
+   *
+   * `fit` is a QUESTION — "Delete this session?" is two lines and two verbs, and
+   * taking the whole phone for it makes a confirmation look like a destination.
+   * It rides up from the bottom edge like the full sheet does, but only as tall as
+   * what it holds, and on the desktop it is the same box without the fixed height.
+   */
+  size?: 'full' | 'fit';
   children: ReactNode;
 }) {
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-stretch justify-center bg-ink/85 backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))]"
+      className={`fixed inset-0 z-50 flex justify-center bg-ink/85 backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))] ${
+        size === 'fit' ? 'items-end' : 'items-stretch'
+      }`}
       role="presentation"
       onClick={onDismiss}
     >
-      {/* ONE SIZE. On the phone a dialog IS the screen — full bleed, full height,
+      {/* ONE SIZE. On the phone a full dialog IS the screen — full bleed, full height,
           so a list inside it gets every pixel the glass has and the verbs at its
           foot are always in the same place. From `sm:` up every dialog is the same
           box (`sm:max-w-xl`, `DIALOG_DESKTOP_HEIGHT`): a question and a file browser
           that open over the same screen used to be two different rectangles.
+
+          A `fit` dialog is the one exception, and it is a SIZE rather than a second
+          modal: same scrim, same physics, same box — it simply stops at its content.
 
           The scrim is application settings' own — ink at 85% under a 2px blur, faded
           in rather than snapped on. That dialog was hand-rolled beside this one and
           was the better looking of the two, so its glass moved IN HERE and the copy
           moved out; `sm:max-w-xl` is its width, for the same reason. */}
       <div
-        className={`flex w-full flex-col sm:max-w-xl ${DIALOG_DESKTOP_HEIGHT}`}
+        className={`flex w-full flex-col sm:max-w-xl ${
+          size === 'fit' ? 'max-h-full sm:h-auto' : DIALOG_DESKTOP_HEIGHT
+        }`}
         role="presentation"
         onClick={(event) => event.stopPropagation()}
       >
@@ -1315,28 +1332,40 @@ export function NewSessionButton({
   machine,
   where,
   disabled,
+  busyLabel,
   onPress,
   onDraft,
 }: {
   machine: string;
   where?: string | null;
   disabled?: boolean;
+  /**
+   * The work THIS button started, spoken inside it: "Creating...", "Forking...".
+   *
+   * A busy word parked beside the control said the screen was busy without saying
+   * which of a fleet's headers had been pressed; the verb that was pressed is the
+   * only honest place for it, so the button wears its own progress and refuses a
+   * second press while it does.
+   */
+  busyLabel?: string | null;
   onPress: (anchor: HTMLElement) => void;
   /** Omitted when the surface has no draft question — then there is no second half. */
   onDraft?: (anchor: HTMLElement) => void;
 }) {
+  const isBusy = Boolean(busyLabel);
   const verb = (
     <Button
       type="button"
       pressEffect="none"
       density="compact"
-      disabled={disabled}
+      disabled={disabled || isBusy}
+      aria-live="polite"
       aria-label={`New session on ${machine}`}
       title={where ? `New session on ${machine}, in ${where}` : `New session on ${machine}`}
       className={`shrink-0 whitespace-nowrap${onDraft ? ' border-r-0' : ''}`}
       onClick={(event) => onPress(event.currentTarget)}
     >
-      New session
+      {busyLabel ?? 'New session'}
     </Button>
   );
   if (!onDraft) return verb;
@@ -1350,7 +1379,7 @@ export function NewSessionButton({
         type="button"
         pressEffect="none"
         density="compact"
-        disabled={disabled}
+        disabled={disabled || isBusy}
         aria-label={`New session in a draft of ${where ?? 'this project'} on ${machine}`}
         title={`New session in a draft — a private copy of ${where ?? 'this project'}`}
         className="shrink-0 border-l-accent-foreground/30 px-2"

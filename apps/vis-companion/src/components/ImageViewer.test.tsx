@@ -59,6 +59,16 @@ describe("ImageViewer", () => {
     expect(control("Reset zoom").textContent).toBe("100%");
   });
 
+  // Regression, user report ("the close buttons, instead of being just the X mark,
+  // are shown as `Close`"): the image viewer's header carried a ghost text button
+  // where every other surface wears `DialogClose`.
+  it("leaves through the app's one X, named after the picture", () => {
+    const close = control("Close chart.png");
+    expect(close.textContent).toBe("");
+    expect(close.querySelector("svg")).not.toBeNull();
+    expect(close.className).toContain("border-l");
+  });
+
   // Regression, reported attachment filename click: an image edit could only be opened
   // by striking its thumbnail; the adjacent filename looked like part of the same chip
   // but was not a trigger.

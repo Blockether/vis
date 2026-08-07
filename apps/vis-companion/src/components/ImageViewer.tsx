@@ -29,7 +29,7 @@ import {
   PenToolbar,
   type AnnotationSurface,
 } from "./AnnotationLayer";
-import { Button } from "./ui";
+import { Button, DialogClose } from "./ui";
 
 interface ExpandableImageProps {
   src: string;
@@ -300,9 +300,12 @@ export function ImageViewer({
         <div className="min-w-0 flex-1 truncate font-mono text-ui text-dialog-hint-key">
           {name}
         </div>
-        <Button variant="ghost" onClick={onClose} autoFocus>
-          Close
-        </Button>
+        <DialogClose
+          label={`Close ${name}`}
+          tone="panel"
+          className="-mb-2 -mr-[max(0.75rem,env(safe-area-inset-right))] -mt-[max(0.5rem,env(safe-area-inset-top))] self-stretch"
+          onClose={onClose}
+        />
       </header>
 
       <div

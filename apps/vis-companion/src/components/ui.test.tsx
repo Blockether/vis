@@ -760,7 +760,8 @@ describe("Modal and DialogFrame as a phone sheet", () => {
   const source = uiSource;
 
   it("lets the sheet take the whole glass on a phone and centres it from sm: up", () => {
-    expect(source).toContain("flex items-stretch justify-center bg-ink/85");
+    expect(source).toContain("fixed inset-0 z-50 flex justify-center bg-ink/85");
+    expect(source).toContain("'items-end' : 'items-stretch'");
     expect(source).toContain("sm:items-center");
     // No padding at all on the phone: a sheet touches all four edges.
     expect(source).toContain("sm:pb-[max(1rem,env(safe-area-inset-bottom))]");
@@ -770,9 +771,8 @@ describe("Modal and DialogFrame as a phone sheet", () => {
     expect(source).toContain(
       "DIALOG_DESKTOP_HEIGHT = 'sm:h-[min(38rem,100%)]'",
     );
-    expect(source).toContain(
-      "flex w-full flex-col sm:max-w-xl ${DIALOG_DESKTOP_HEIGHT}",
-    );
+    expect(source).toContain("flex w-full flex-col sm:max-w-xl ${");
+    expect(source).toContain("'max-h-full sm:h-auto' : DIALOG_DESKTOP_HEIGHT");
     // One width, so a question and a file browser are the same rectangle.
     expect(source).not.toContain("sm:max-w-md");
     expect(source).not.toContain("sm:max-w-lg");
@@ -1071,5 +1071,64 @@ describe("MachineSwitcher", () => {
     expect(news).not.toMatch(/>\s*\d+\s*</);
     expect(quiet).not.toContain("bg-accent");
     expect(quiet).toContain("text-dialog-hint");
+  });
+});
+
+// Regression, user report ("when we create a new session there's this 'Creating' showing
+// but not in the new session button but outside — I want it to show in the button
+// itself"): the busy word was parked on the app bar, so the fleet said it was busy while
+// the button that had actually been pressed sat there looking untouched.
+describe("NewSessionButton, busy", () => {
+  const busy = renderToStaticMarkup(
+    <NewSessionButton machine="tower" busyLabel="Creating..." onPress={() => {}} />,
+  );
+
+  it("wears the work in its own face, where the press happened", () => {
+    expect(busy).toContain(">Creating...<");
+    expect(busy).not.toContain(">New session<");
+  });
+
+  it("refuses a second press while that create is in flight", () => {
+    expect(busy).toContain('disabled=""');
+    // The draft half is the same create on the same project: it goes with it.
+    const split = renderToStaticMarkup(
+      <NewSessionButton
+        machine="tower"
+        where="vis"
+        busyLabel="Forking..."
+        onPress={() => {}}
+        onDraft={() => {}}
+      />,
+    );
+    expect(split.match(/disabled=""/g)?.length).toBe(2);
+  });
+
+  it("still names its machine, so the announcement says which one", () => {
+    expect(busy).toContain('aria-label="New session on tower"');
+    expect(busy).toContain('aria-live="polite"');
+  });
+
+  it("is fed by the header that started the create, not by the whole screen", () => {
+    // The busy word is keyed to one project header; the bar keeps it only for a create
+    // started from its own menu, where no button exists to speak for it.
+    expect(sessionsListSource).toContain("busyLabel={");
+    expect(sessionsListSource).toContain("creating && creating.at === null");
+    expect(sessionsListSource).not.toContain("createBusyLabel");
+  });
+});
+
+// Regression, user report ("when we want to remove the session it's showing the full
+// dialogue instead of just a small dialogue on the phone"): a two-line confirmation took
+// the whole glass, so "Delete this session?" read like a screen you had navigated to.
+describe("Modal, fit", () => {
+  it("has a size that stops at its content, next to the full-screen one", () => {
+    expect(uiSource).toContain("size?: 'full' | 'fit';");
+    // The sheet still arrives from the bottom edge — same scrim, same physics.
+    expect(uiSource).toContain("size === 'fit' ? 'items-end' : 'items-stretch'");
+    expect(uiSource).toContain("size === 'fit' ? 'max-h-full sm:h-auto' : DIALOG_DESKTOP_HEIGHT");
+  });
+
+  it("is what the rename/delete question opens in", () => {
+    expect(sessionsListSource).toContain('<Modal size="fit" onDismiss={closeRowAction}>');
   });
 });
