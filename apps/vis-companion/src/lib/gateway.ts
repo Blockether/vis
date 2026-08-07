@@ -2684,7 +2684,27 @@ export class GatewayClient {
     mediaType: string,
     text: string,
   ): Promise<{ index?: number; version?: number; filename?: string }> {
-    const bytes = new TextEncoder().encode(text);
+    return this.saveArtifactBytes(
+      sid,
+      iterationId,
+      filename,
+      mediaType,
+      new TextEncoder().encode(text),
+    );
+  }
+
+  /**
+   * The same revision, for an artifact whose content is BYTES rather than text —
+   * a drawn-on picture, a stamped PDF. Same filename, so the gateway files it as
+   * the next version of that artifact rather than as a second file.
+   */
+  async saveArtifactBytes(
+    sid: string,
+    iterationId: string,
+    filename: string,
+    mediaType: string,
+    bytes: Uint8Array,
+  ): Promise<{ index?: number; version?: number; filename?: string }> {
     let binary = "";
     for (const byte of bytes) binary += String.fromCharCode(byte);
     return this.request(

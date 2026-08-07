@@ -1,6 +1,26 @@
 import { memo, useCallback, useEffect, useState } from "react";
-import { docKindLabel, isPdfMedia, isTextMedia } from "../lib/artifacts";
+import type { GatewayClient } from "../lib/gateway";
+import {
+  docKindLabel,
+  isMarkdownMedia,
+  isPdfMedia,
+  isTextMedia,
+} from "../lib/artifacts";
+import { MarkdownArtifact } from "./MarkdownArtifact";
+import { PdfAnnotator } from "./PdfArtifact";
 import { TextFrame } from "./TextArtifact";
+
+/**
+ * What an OPENED artifact needs in order to be marked up: which session and
+ * iteration own it, and a client to save the revision through. Given this, a
+ * note opened from the transcript is annotatable and a PDF can be drawn on —
+ * both saving under the same filename, which is the next version.
+ */
+export type AnnotateContext = {
+  client: GatewayClient;
+  sid: string;
+  iterationId: string;
+};
 
 // A PDF or an HTML page is a DOCUMENT, not a picture and not data: nothing in it
 // is worth spending a model's context on, so `vis_attach` clamps it to
@@ -221,6 +241,7 @@ export const DocOverlay = memo(function DocOverlay({
   sizeLabel,
   url,
   failed,
+  annotate,
   onClose,
 }: {
   name: string;
@@ -228,6 +249,8 @@ export const DocOverlay = memo(function DocOverlay({
   sizeLabel?: string;
   url: string | null;
   failed: boolean;
+  /** Present when the human may mark this artifact up. */
+  annotate?: AnnotateContext;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -253,7 +276,31 @@ export const DocOverlay = memo(function DocOverlay({
         }
       />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <DocBody name={name} mime={mime} url={url} failed={failed} fill />
+        {/* Opened, the artifact is not only READ: a note can be commented on and a
+            PDF drawn on, and either one saves as the next version of the same
+            filename. */}
+        {annotate && url && !failed && isMarkdownMedia(mime, name) ? (
+          <MarkdownArtifact
+            client={annotate.client}
+            sid={annotate.sid}
+            iterationId={annotate.iterationId}
+            name={name}
+            mediaType={mime}
+            url={url}
+          />
+        ) : annotate && url && !failed && isPdfMedia(mime) ? (
+          <PdfAnnotator
+            client={annotate.client}
+            sid={annotate.sid}
+            iterationId={annotate.iterationId}
+            name={name}
+            mediaType={mime}
+            url={url}
+            frame={<DocFrame url={url} mime={mime} name={name} fill />}
+          />
+        ) : (
+          <DocBody name={name} mime={mime} url={url} failed={failed} fill />
+        )}
       </div>
     </div>
   );
@@ -270,6 +317,7 @@ export const DocPreview = memo(function DocPreview({
   sizeLabel,
   url,
   failed,
+  annotate,
   onNeeded,
 }: {
   name: string;
@@ -278,6 +326,8 @@ export const DocPreview = memo(function DocPreview({
   /** The artifact's object URL, or null while it is still being fetched. */
   url: string | null;
   failed: boolean;
+  /** Present when the opened artifact may be marked up. */
+  annotate?: AnnotateContext;
   /** Asked for the bytes — the parent starts the fetch. */
   onNeeded: () => void;
 }) {
@@ -319,6 +369,7 @@ export const DocPreview = memo(function DocPreview({
           sizeLabel={sizeLabel}
           url={url}
           failed={failed}
+          annotate={annotate}
           onClose={close}
         />
       )}

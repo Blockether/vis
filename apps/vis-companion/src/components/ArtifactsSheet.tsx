@@ -30,6 +30,7 @@ import {
   ARTIFACT_FILTERS,
   docKindLabel,
   isMarkdownMedia,
+  isPdfMedia,
   isTextMedia,
   pageBySize,
   SHEET_PAGE,
@@ -41,6 +42,7 @@ import type { GatewayClient } from "../lib/gateway";
 import { DocFrame } from "./DocArtifact";
 import { ImageViewer } from "./ImageViewer";
 import { MarkdownArtifact } from "./MarkdownArtifact";
+import { PdfAnnotator } from "./PdfArtifact";
 import { TextFrame } from "./TextArtifact";
 import { AlertIcon, ArrowDownIcon, ClipIcon, PlayIcon } from "./icons";
 import { DialogClose, DialogHeader, KebabButton } from "./ui";
@@ -480,12 +482,20 @@ function ArtifactDetail({
         src={url}
         name={artifact.name}
         onClose={onClose}
-        applyLabel="Attach to message"
-        onApply={
-          attach
-            ? (edited) => attach(edited, editedFilename(artifact.name))
-            : undefined
-        }
+        // Drawing on a picture is an ANSWER to it, so the ink is saved back
+        // under the same filename — the next version of that artifact, the way
+        // a commented note is — and the drawing is attached to the message too.
+        applyLabel="Save as new version"
+        onApply={async (edited: Blob) => {
+          await client.saveArtifactBytes(
+            sid,
+            artifact.iterationId,
+            artifact.name,
+            artifact.mediaType || "image/png",
+            new Uint8Array(await edited.arrayBuffer()),
+          );
+          if (attach) attach(edited, editedFilename(artifact.name));
+        }}
       />
     );
   }
@@ -538,9 +548,27 @@ function ArtifactDetail({
     );
   }
 
+  // A PDF is READ in its frame and DRAWN ON through the pen: the page is
+  // rasterised, the ink stamped back onto it, and the stamped PDF saved under
+  // the same filename — the next version, like an annotated note.
+  const frame = (
+    <DocFrame url={url} mime={artifact.mediaType} name={artifact.name} fill />
+  );
   return (
     <DetailOverlay name={artifact.name} onClose={onClose} fill>
-      <DocFrame url={url} mime={artifact.mediaType} name={artifact.name} fill />
+      {isPdfMedia(artifact.mediaType) ? (
+        <PdfAnnotator
+          client={client}
+          sid={sid}
+          iterationId={artifact.iterationId}
+          name={artifact.name}
+          mediaType={artifact.mediaType}
+          url={url}
+          frame={frame}
+        />
+      ) : (
+        frame
+      )}
     </DetailOverlay>
   );
 }
