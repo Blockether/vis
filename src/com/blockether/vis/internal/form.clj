@@ -58,8 +58,9 @@
    (RG, CAT, PATCH); a few don't — `python_execution` is the model writing/running
    code, but its card surfaces what that run produced, so it reads `RESULT`;
    `repl_eval` reads as the terse `REPL` badge its collapsed/expanded card wants.
-   `shell` needs no override: it is ONE tool whose op-card already says which op
-   ran, so its badge is the plain uppercased `SHELL`."
+   Everything else — including each `shell_*` and each filesystem verb — needs no
+   override: the wire name already names the op, so the badge is the plain
+   uppercased name (`SHELL_RUN`, `DELETE`)."
   {"python_execution" "RESULT" "native_call" "NATIVE CALL" "repl_eval" "REPL"})
 
 
