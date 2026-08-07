@@ -303,9 +303,17 @@
           :else nil)))
 
 (defn- log-file
-  "Subprocess log path under `~/.vis/logs` (never inside the user's project
-   tree, never the OS temp dir), namespaced by the target dir so each managed
-   REPL gets its own log. The logs dir is created on demand."
+  "MINT a fresh subprocess log path under `~/.vis/logs` (never inside the user's
+   project tree, never the OS temp dir) for ONE nREPL start.
+
+   Called exactly once per spawn, and every call returns a DIFFERENT file: the
+   dir-derived stem keeps the log greppable, the random suffix makes it the
+   private log of that one process. A name keyed by the directory alone was a
+   shared file — `ProcessBuilder`'s output redirect TRUNCATES, so a second
+   session (or a plain restart) in the same directory erased the log the live
+   REPL was still writing into, and every resource view pointed at that one
+   path. The `~/.vis/logs` sweep (`foundation.housekeeping`) is what bounds the
+   resulting one-file-per-start growth. The logs dir is created on demand."
   ^java.io.File [dir]
   (let
     [home
@@ -327,7 +335,7 @@
      (io/file home ".vis" "logs")]
 
     (.mkdirs logs-dir)
-    (io/file logs-dir (str "vis-nrepl-" safe ".log"))))
+    (io/file logs-dir (str "vis-nrepl-" safe "-" (java.util.UUID/randomUUID) ".log"))))
 
 (def ^:private default-log-line-limit 500)
 
@@ -479,8 +487,11 @@
         true "host"
         (or (:host info) "localhost"))
 
-      (and running? (not (:external? info)))
-      (assoc "log" (or (:log info) (.getAbsolutePath (log-file dir)))))))
+      ;; The log path is the one MINTED for this very process at spawn, never
+      ;; recomputed: `log-file` mints a fresh name per call, so a derived path
+      ;; would name a file nothing has ever written.
+      (and running? (not (:external? info)) (:log info))
+      (assoc "log" (:log info)))))
 
 (defn health
   "Coarse LIVE health of THIS session's REPL for `dir`:
@@ -644,7 +655,6 @@
                   "tool" (name tool)
                   "aliases" (mapv name aliases)
                   "cmd" cmd
-                  "log" (.getAbsolutePath (log-file dir))
                   "message" (str "Could not start nREPL launcher: " (.getMessage e))}))
              {"result" "no-launcher"
               "status" "down"
@@ -835,8 +845,8 @@
                      true :host
                      (or (:host info) "localhost"))
 
-                   (not (:external? info))
-                   (assoc :log (or (:log info) (.getAbsolutePath (log-file (:dir info)))))))))
+                   (and (not (:external? info)) (:log info))
+                   (assoc :log (:log info))))))
        (sort-by :dir)
        vec))
 

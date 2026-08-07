@@ -531,6 +531,32 @@
                    (spit f "a\nb\n")
                    (expect (= ["a" "b"] (rm/tail-log (str f)))))))
 
+;; Regression: every managed nREPL rooted in the SAME directory got the SAME
+;; `~/.vis/logs/vis-nrepl-<dir>.log`. ProcessBuilder's output redirect TRUNCATES,
+;; so a second session — or simply a restart — in that directory wiped the log the
+;; first REPL was still writing into, and both resources reported one path.
+(defdescribe log-file-test
+             (it "mints a UNIQUE log file per REPL start, under ~/.vis/logs, keyed by dir"
+                 (let
+                   [dir
+                    "/tmp/vis-rm-log-uniqueness"
+
+                    a
+                    (#'rm/log-file dir)
+
+                    b
+                    (#'rm/log-file dir)]
+
+                   (expect (not= (.getName a) (.getName b)))
+                   (expect (= (.getParentFile a) (.getParentFile b)))
+                   (expect (str/starts-with? (.getName a) "vis-nrepl-"))
+                   (expect (str/ends-with? (.getName a) ".log"))
+                   ;; the project dir stays legible in the name, so a log is greppable
+                   (expect (str/includes? (.getName a) "tmp_vis_rm_log_uniqueness"))))
+             (it "keeps different directories in different log files"
+                 (expect (not= (.getName (#'rm/log-file "/tmp/vis-rm-log-a"))
+                               (.getName (#'rm/log-file "/tmp/vis-rm-log-b"))))))
+
 (defdescribe clj-eval-cwd-routing-test
              ;; Regression: clj-eval-fn must READ `cwd` from the arg map and hand the
              ;; RESOLVED (canonical) directory to resolve-target! as its default-dir — so a
