@@ -142,3 +142,26 @@ describe('the sheet does not size itself', () => {
     expect(source).not.toContain('max-h-[80vh]');
   });
 });
+
+// Regression, user report ("clicking the edit button in choosing the project flickers
+// and reflows"): the pencil handed the input `~/vis`, whose DIR is the parent — so the
+// toggle re-listed one level up, filtered it to `vis*`, and the rows jumped; and even
+// the same folder under its other spelling triggered a fresh fetch.
+describe('taking the pencil does not move the list', () => {
+  it('hands over a path that names the folder itself', () => {
+    expect(source).toContain('function withSlash(path: string): string');
+    expect(source).toContain('setTyped(typed === null ? withSlash(homeify(here, home)) : null)');
+  });
+
+  it('skips the fetch when the wanted directory is the one already listed', () => {
+    expect(source).toContain('if (settled) return;');
+    expect(source).toContain(
+      "(wanted === listing.path || wanted === homeify(listing.path, listing.home))",
+    );
+  });
+
+  it('paints the typed band on the crumb band\u2019s own paper', () => {
+    const bands = source.match(/bg-panel-2 mouse:min-h-9/g) ?? [];
+    expect(bands.length).toBeGreaterThanOrEqual(2);
+  });
+});

@@ -65,6 +65,11 @@ export function homeify(path: string, home: string): string {
   return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
 }
 
+/** A path that names the folder ITSELF rather than its parent. `/` is already one. */
+function withSlash(path: string): string {
+  return path.endsWith('/') ? path : `${path}/`;
+}
+
 /** What a typed path is asking for: the folder to LIST, and the leaf to match in it. */
 export function splitTyped(typed: string): { dir: string; leaf: string } {
   const cut = typed.lastIndexOf('/');
@@ -153,7 +158,16 @@ export function ManageProjectsSheet({
   // One read path for both modes: the directory being listed is a value, and typing
   // just moves it. A keystroke inside one folder must not re-ask the gateway for it.
   const wanted = typedSplit ? typedSplit.dir : dir;
+  // Taking the pencil changes the INPUT, not the PLACE: `~/vis/` names the very folder
+  // already on screen, so the fetch is skipped and the rows never move. Without this the
+  // toggle re-listed the same directory under its other spelling — the list blanked to
+  // the folder it had, then landed again, one frame later and one row taller.
+  const settled =
+    listing !== null &&
+    (wanted === listing.path || wanted === homeify(listing.path, listing.home));
+  const isTyping = typedSplit !== null;
   useEffect(() => {
+    if (settled) return;
     const controller = new AbortController();
     const timer = window.setTimeout(
       () => {
@@ -172,13 +186,13 @@ export function ManageProjectsSheet({
             if (!controller.signal.aborted) setBusy(false);
           });
       },
-      typedSplit ? 180 : 0,
+      isTyping ? 180 : 0,
     );
     return () => {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [client, wanted, typedSplit !== null]);
+  }, [client, wanted, settled, isTyping]);
 
   const home = listing?.home ?? '';
   const here = listing?.path ?? '';
@@ -249,7 +263,10 @@ export function ManageProjectsSheet({
       label={typed === null ? 'Type a path' : 'Back to browsing'}
       aria-pressed={typed !== null}
       className={typed === null ? '' : 'text-accent-ink'}
-      onClick={() => setTyped(typed === null ? homeify(here, home) : null)}
+      // The path is handed over with its trailing slash: `~/vis/` LISTS `~/vis`, so the
+      // pencil keeps the folder you are in. `~/vis` would have listed the PARENT and
+      // filtered it to names starting with `vis` — the list jumped a level on a toggle.
+      onClick={() => setTyped(typed === null ? withSlash(homeify(here, home)) : null)}
     >
       <PencilIcon className="size-4" />
     </IconButton>
@@ -356,7 +373,7 @@ export function ManageProjectsSheet({
         </div>
       ) : (
         <div
-          className={`flex min-h-11 shrink-0 items-center gap-2 border-b border-dialog-edge bg-panel mouse:min-h-9 ${SHEET_EDGE}`}
+          className={`flex min-h-11 shrink-0 items-center gap-2 border-b border-dialog-edge bg-panel-2 mouse:min-h-9 ${SHEET_EDGE}`}
         >
           <Input
             autoFocus
