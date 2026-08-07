@@ -42,9 +42,7 @@ import {
 import { applyTheme, resolveLocalTheme } from "./lib/theme";
 import { getThemePalette, getThemePref } from "./lib/storage";
 import {
-  MachinesIcon,
   SettingsIcon,
-  TranscriptsIcon,
 } from "./components/icons";
 import { ConnectScreen } from "./screens/ConnectScreen";
 import { SessionsScreen } from "./screens/SessionsScreen";
@@ -933,12 +931,7 @@ export function App() {
   return (
     <Shell>
       {isChromeVisible && (
-        <Header
-          tab={hasConn ? tab : "connect"}
-          hasConn={hasConn}
-          onTab={setTab}
-          onAppSettings={() => setAppSettingsOpen(true)}
-        />
+        <Header onAppSettings={() => setAppSettingsOpen(true)} />
       )}
 
       <main
@@ -952,6 +945,7 @@ export function App() {
               onUnreachable={handleUnreachable}
               onOpen={openGatewaySession}
               onMachineSettings={openSettings}
+              onPairMachine={() => setTab("connect")}
               onRenameMachine={async (conn, label) => {
                 await upsertConnection({ ...conn, label: label || undefined });
                 await refresh();
@@ -968,6 +962,7 @@ export function App() {
             onSettings={openSettings}
             offlineError={blocked ? offline : null}
             onRetry={() => setOffline(null)}
+            onClose={hasConn ? () => setTab("sessions") : undefined}
           />
         )}
         {shellView === "incompatible" && sessionConn && compat && (
@@ -997,8 +992,6 @@ export function App() {
           />
         )}
       </main>
-
-      {hasConn && isChromeVisible && <TabBar tab={tab} onTab={setTab} />}
 
       {settingsTarget && settingsClient && (
         <GatewaySettingsDialog
@@ -1063,17 +1056,7 @@ export function App() {
   );
 }
 
-export function Header({
-  tab,
-  hasConn,
-  onTab,
-  onAppSettings,
-}: {
-  tab: Tab;
-  hasConn: boolean;
-  onTab: (tab: Tab) => void;
-  onAppSettings: () => void;
-}) {
+export function Header({ onAppSettings }: { onAppSettings: () => void }) {
   return (
     <header className="relative z-30 shrink-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
       <div className="mx-auto flex h-12 w-full max-w-[1400px] items-center pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
@@ -1087,98 +1070,31 @@ export function Header({
             VIS
           </span>
         </div>
-        {/* The desktop tabs sit at the RIGHT, grouped with the cog, so the header is a
-            wordmark at one edge and every control you can press at the other; `mx-auto`
-            floated them in the middle of a 1400px header, tied to neither. Exactly one
-            element may claim the free space: the nav takes it at `sm:` and the cog then
-            follows it (`sm:ml-0`), while below the breakpoint the nav is `hidden` and
-            the cog's own `ml-auto` holds the edge. Two auto margins would split it. */}
-        <nav
-          className="hidden h-full items-stretch sm:ml-auto sm:flex"
-          aria-label="Primary navigation"
-        >
-          {(hasConn
-            ? (["sessions", "connect"] as Tab[])
-            : (["connect"] as Tab[])
-          ).map((item) => (
-            <button
-              type="button"
-              key={item}
-              onClick={() => onTab(item)}
-              className={`relative flex min-w-28 items-center justify-center gap-2 px-4 font-mono text-meta font-bold uppercase tracking-[0.1em] transition-[color,background-color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${tab === item ? "bg-panel text-white after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:bg-accent" : "text-dialog-hint hover:bg-hover hover:text-white"}`}
-              aria-current={tab === item ? "page" : undefined}
-            >
-              <NavIcon id={item} />
-              {item === "sessions" ? "Sessions" : "Machines"}
-            </button>
-          ))}
-        </nav>
-        {/* The cog is an ICON, not the `⚙` character: the glyph falls back to an emoji
+        {/* ONE SCREEN, ONE COG.
+            The app used to carry a two-item tab bar whose second item existed for a
+            verb used twice a year — pairing — and a nav duplicating it at `sm:`. The
+            fleet strip in the list already answers "which machine", so pairing became
+            the `⊕` chip at its end and both navigations are gone. What is left here is
+            the wordmark and the one cog on the whole app, and it means PREFERENCES:
+            this device's own settings, never a gateway's. A machine's settings hang
+            off that machine (the list's own ⚙), so two gears can no longer sit 40px
+            apart meaning different things.
+            The cog is an ICON, not the `⚙` character: the glyph falls back to an emoji
             font whose advance width and baseline differ per platform, so it never sat
-            centred in its 48px cell. A stroked `size-4` icon matches `NavIcon` exactly.
-            The negative right margin cancels the header's own gutter so the tap target
-            reaches the physical edge; the icon is then PADDED away from that edge
-            rather than centred in its own 48px cell, because the list below is not
-            flush with the screen — it wears a 2px frame (`border-r-2`, the match for
-            the machine rail on its left), so its trailing ink lands 14px in while a
-            centred cog landed 16px in. Two glyphs in one column, 2px apart, is a kink
-            you can see straight down the right edge of a phone. `pr-3.5`/`sm:pr-4.5`
-            is the list's own gutter plus that frame. */}
+            centred in its 48px cell. The negative right margin cancels the header's own
+            gutter so the tap target reaches the physical edge; the icon is then PADDED
+            away from that edge rather than centred in its own cell, because the list
+            below wears a 2px frame and its trailing ink lands 14px in. */}
         <button
           type="button"
-          className="-mr-3 ml-auto grid min-h-12 min-w-12 items-center justify-items-end pr-3.5 text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent sm:-mr-4 sm:ml-0 sm:pr-4.5"
+          className="-mr-3 ml-auto grid min-h-12 min-w-12 items-center justify-items-end pr-3.5 text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent sm:-mr-4 sm:pr-4.5"
           onClick={onAppSettings}
-          aria-label="Open application settings"
+          aria-label="Open preferences"
         >
           <SettingsIcon className="size-4" />
         </button>
       </div>
     </header>
-  );
-}
-
-export function TabBar({
-  tab,
-  onTab,
-}: {
-  tab: Tab;
-  onTab: (tab: Tab) => void;
-}) {
-  const items: { id: Tab; label: string }[] = [
-    { id: "sessions", label: "Sessions" },
-    { id: "connect", label: "Machines" },
-  ];
-
-  return (
-    <nav
-      className="relative z-30 grid shrink-0 grid-cols-2 border-t border-dialog-edge bg-panel-2 pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))] pb-[max(0.35rem,var(--safe-bottom,env(safe-area-inset-bottom)))] pt-1 sm:hidden"
-      aria-label="Primary navigation"
-    >
-      {items.map((item) => (
-        <button
-          type="button"
-          key={item.id}
-          onClick={() => onTab(item.id)}
-          className={`relative flex min-h-12 items-center justify-center gap-2 font-mono text-meta font-bold uppercase tracking-[0.08em] transition-[color,background-color,transform,translate,scale,rotate] duration-150 active:scale-[0.98] motion-reduce:transition-none ${
-            tab === item.id
-              ? "bg-panel text-white after:absolute after:inset-x-5 after:top-0 after:h-0.5 after:bg-accent"
-              : "text-dialog-hint active:bg-hover active:text-white"
-          }`}
-          aria-current={tab === item.id ? "page" : undefined}
-        >
-          <NavIcon id={item.id} />
-          <span>{item.label}</span>
-        </button>
-      ))}
-    </nav>
-  );
-}
-
-function NavIcon({ id }: { id: Tab }) {
-  return id === "sessions" ? (
-    <TranscriptsIcon className="size-4" />
-  ) : (
-    <MachinesIcon className="size-4" />
   );
 }
 

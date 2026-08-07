@@ -360,3 +360,18 @@ describe("the machine is a chip, not a second band", () => {
     expect(source).toContain("onClick={() => void loadMachine(machine.conn)}");
   });
 });
+
+// Regression, user report ("the PAIRING is just one fucking ICON so we dont have two
+// tabs"): pairing lived in a tab of its own, so the strip that answers "which machine"
+// could not add one.
+describe('the pairing chip', () => {
+  it('ends the machine strip, and is the reason a solo user still sees the row', () => {
+    expect(source).toContain('{(hasScopeStrip || onPairMachine) && (');
+    expect(source).toContain("label={'Pair a machine'}");
+    expect(source).toContain('onClick={onPairMachine}');
+  });
+
+  it('keeps the chips themselves a multi-machine cost only', () => {
+    expect(source).toContain('{hasScopeStrip && (');
+  });
+});

@@ -233,6 +233,8 @@ interface Props {
   onOpen: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
   /** Open that machine's own settings — the last verb in its `⋯` menu. */
   onMachineSettings?: (conn: GatewayConn) => void;
+  /** Pair another machine. The `⊕` chip that ends the scope strip. */
+  onPairMachine?: () => void;
   /** Renames the machine in place from its own header. '' clears the name. */
   onRenameMachine?: (conn: GatewayConn, label: string) => void;
 }
@@ -243,6 +245,7 @@ export function SessionsScreen({
   onUnreachable,
   onOpen,
   onMachineSettings,
+  onPairMachine,
   onRenameMachine,
 }: Props) {
   // A machine OWNS its projects: every row belongs to exactly one gateway, and a
@@ -1273,11 +1276,17 @@ export function SessionsScreen({
           )}
         </div>
 
-        {/* The scope strip. One machine paired → this whole row is absent, and
-            nothing else on the screen changes: multi-machine costs the solo user
-            nothing. */}
-        {hasScopeStrip && (
+        {/* The scope strip. It answers "which machine", and it is now also where a
+            machine COMES FROM: pairing used to be a whole tab of a two-tab bar, for a
+            verb used twice a year. The `⊕` chip ends the strip, so a machine is added
+            exactly where machines live.
+            The chips themselves still cost the solo user nothing — one machine paired
+            means no All, no machine chip, no count here — but the row survives for the
+            one control everybody needs. */}
+        {(hasScopeStrip || onPairMachine) && (
           <div className={`flex items-center gap-1.5 overflow-x-auto bg-panel px-3 py-2 sm:px-4 ${LIST_FRAME}`}>
+            {hasScopeStrip && (
+              <>
             <button
               type="button"
               aria-pressed={scope === null}
@@ -1317,6 +1326,20 @@ export function SessionsScreen({
                 </button>
               );
             })}
+              </>
+            )}
+            {onPairMachine && (
+              <button
+                type="button"
+                className={chipClass(false)}
+                aria-label={'Pair a machine'}
+                title={'Pair a machine'}
+                onClick={onPairMachine}
+              >
+                <PlusIcon className="size-3" />
+                Pair
+              </button>
+            )}
           </div>
         )}
 

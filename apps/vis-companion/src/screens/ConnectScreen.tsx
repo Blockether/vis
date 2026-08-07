@@ -34,6 +34,12 @@ interface Props {
   offlineError?: string | null;
   /** Retry the active gateway and go back to sessions if it answers. */
   onRetry?: () => void;
+  /**
+   * Leave the pairing screen. There is no tab bar to walk back through any more:
+   * the `⊕` chip in the session list opens this, so this hands the way back.
+   * Absent while nothing is paired — then this screen IS the app.
+   */
+  onClose?: () => void;
 }
 
 /**
@@ -96,6 +102,7 @@ export function ConnectScreen({
   onSettings,
   offlineError,
   onRetry,
+  onClose,
 }: Props) {
   const [payload, setPayload] = useState('');
   const [url, setUrl] = useState('');
@@ -293,7 +300,7 @@ export function ConnectScreen({
 
       {conns.length > 0 && (
         <section className="overflow-hidden border border-dialog-edge bg-panel shadow-none sm:shadow-[4px_4px_0_var(--dialog-shadow)]">
-          <DialogHeader title="Saved machines" />
+          <DialogHeader title="Saved machines" closeLabel="Close machines" onClose={onClose} />
           <div className="divide-y divide-dialog-edge border-t border-dialog-edge">
             {conns.map((conn) => {
               const selected = active?.url === conn.url;

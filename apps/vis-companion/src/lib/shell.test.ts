@@ -121,3 +121,25 @@ describe('status bar padding', () => {
     );
   });
 });
+
+// Regression, user report ("maybe we do different that we have only one screen and
+// the PAIRING is just one fucking ICON so we dont have two tabs"): pairing owned a
+// whole tab of a two-tab bar for a verb used twice a year, and a second cog sat
+// 40px from the app's own, so two different gears meant two different things.
+describe('one screen, pairing is a chip', () => {
+  it('has no tab bar and no primary navigation at all', () => {
+    expect(appSource).not.toContain('export function TabBar');
+    expect(appSource).not.toContain('Primary navigation');
+    expect(appSource).not.toContain("label: 'Machines'");
+    expect(appSource).not.toContain('label: "Machines"');
+  });
+
+  it('names the remaining cog Preferences', () => {
+    expect(appSource).toContain('aria-label="Open preferences"');
+  });
+
+  it('hands the list the pairing verb and gives Machines a way back', () => {
+    expect(appSource).toContain('onPairMachine={() => setTab("connect")}');
+    expect(appSource).toContain('onClose={hasConn ? () => setTab("sessions") : undefined}');
+  });
+});
