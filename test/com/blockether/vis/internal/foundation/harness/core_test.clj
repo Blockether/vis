@@ -4,6 +4,7 @@
             [com.blockether.vis.internal.foundation.harness.discovery :as d]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe it expect]]))
 
 (def ^:private skill-result @#'core/skill-result)
@@ -90,7 +91,59 @@
   (it "carries a nested skill's owning project into its prompt template"
       (with-redefs
         [d/skills (constantly [{:name "demo" :description "d" :project-root "/repo/apps/demo"}])]
-        (expect (= "/repo/apps/demo" (:project-root (first (skill-template-entries))))))))
+        (expect (= "/repo/apps/demo" (:project-root (first (skill-template-entries)))))))
+  ;; Regression: `/impeccable` typed from the repository root expanded to
+  ;; apps/vis-companion's SKILL.md with nothing in the message saying the skill
+  ;; belonged to that app, so its relative instructions were followed at the root.
+  (it "states the owning project before the body it expands"
+      (let
+        [s
+         {:name "demo"
+          :description "d"
+          :body "BODY"
+          :dir "/repo/apps/demo/.agents/skills/demo"
+          :project-root "/repo/apps/demo"
+          :resources []}
+
+         text
+         (skill-template-text {} s "")]
+
+        (expect (str/includes? text "/repo/apps/demo"))
+        (expect (< (.indexOf ^String text "/repo/apps/demo") (.indexOf ^String text "BODY"))))))
+
+(defdescribe skill-ownership-test
+             ;; Regression: a repository-root session that activated a nested project's
+             ;; skill (apps/vis-companion's `impeccable`) received a payload of
+             ;; {name description body cwd resources} only — no key and no sentence said
+             ;; the skill belonged to that app, so the model kept working at the root.
+             (it "the activation payload names the owning project and where to work"
+                 (let
+                   [payload ((deref #'core/skill-payload)
+                              {:name "demo"
+                               :description "d"
+                               :body "BODY"
+                               :dir "/repo/apps/demo/.agents/skills/demo"
+                               :project-root "/repo/apps/demo"
+                               :resources []})]
+                   (expect (= "/repo/apps/demo" (get payload "project_root")))
+                   (expect (str/includes? (str (get payload "note")) "/repo/apps/demo"))))
+             (it "a skill owned by the session's own root carries no owner note"
+                 (let
+                   [payload ((deref #'core/skill-payload)
+                              {:name "demo"
+                               :description "d"
+                               :body "BODY"
+                               :dir ".vis/skills/demo"
+                               :project-root (.getCanonicalPath (workspace/cwd))
+                               :resources []})]
+                   (expect (nil? (get payload "note")))))
+             (it "the cheap prompt listing tags a nested skill with its project"
+                 (with-redefs
+                   [d/skills (constantly [{:name "demo"
+                                           :description "Demo skill"
+                                           :project-root (str (.getCanonicalPath (workspace/cwd))
+                                                              "/apps/demo")}])]
+                   (expect (str/includes? ((deref #'core/skills-prompt) {}) "demo [apps/demo]")))))
 
 (defdescribe
   skill-native-tool-test

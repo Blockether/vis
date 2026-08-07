@@ -29,6 +29,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
+            [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.harness.discovery :as d]))
 
 ;; =============================================================================
@@ -44,13 +45,58 @@
 ;; skill(name) — activate one SKILL.md on demand, once per live provider tape
 ;; =============================================================================
 
+(defn- canonical-path
+  [p]
+  (when-not (str/blank? (str p))
+    (try (.getCanonicalPath (java.io.File. (str p))) (catch Throwable _ (str p)))))
+
+(defn- session-root
+  "Canonical root of the workspace this turn runs in."
+  []
+  (try (canonical-path (.getPath (workspace/cwd))) (catch Throwable _ nil)))
+
+(defn- owner-root
+  "The project that OWNS a skill, when that project is NOT the session's own
+   root. A repository-root session discovers the skills of every nested project
+   (`apps/vis-companion/.agents/skills/impeccable`), and such a SKILL.md was
+   written for ITS tree — so every surface that hands the skill over says whose
+   it is. Same-root skills carry no owner and read exactly as before."
+  [s]
+  (let [owner (canonical-path (:project-root s))]
+    (when (and owner (not= owner (session-root))) owner)))
+
+(defn- owner-note
+  "The one sentence an owned skill is announced with."
+  [owner]
+  (when owner
+    (str "This skill belongs to the project at "
+         owner
+         " — work under that directory: its paths, guidance and tooling are relative to it.")))
+
+(defn- owner-label
+  "Session-relative path of a skill's owning project (`apps/vis-companion`) for
+   the cheap prompt listing, or nil when the skill is the session's own."
+  [s]
+  (when-let [owner (owner-root s)]
+    (let [root (session-root)]
+      (if (and root (str/starts-with? owner (str root "/")))
+        (subs owner (inc (count root)))
+        owner))))
+
 (defn- skill-payload
   [s]
-  {"name" (:name s)
-   "description" (:description s)
-   "body" (:body s)
-   "cwd" (:dir s)
-   "resources" (mapv #(str (:dir s) "/" %) (:resources s))})
+  (let [owner (owner-root s)]
+    (cond->
+      {"name" (:name s)
+       "description" (:description s)
+       "body" (:body s)
+       "cwd" (:dir s)
+       "resources" (mapv #(str (:dir s) "/" %) (:resources s))}
+      (:project-root s)
+      (assoc "project_root" (:project-root s))
+
+      owner
+      (assoc "note" (owner-note owner)))))
 
 (defn- current-iter-scope
   [env]
@@ -107,15 +153,18 @@
   [env input]
   (skill-result env (skill-name-arg input)))
 
-(def ^{:doc (str
-              "await skill(name)\n"
-              "Activate a harness SKILL from `python_execution` — the same verb as the "
-              "native tool. First load on the live provider tape returns the full SKILL.md "
-              "as {\"name\", \"description\", \"body\", \"cwd\", \"resources\"}; a repeat returns "
-              "{\"name\", \"status\", \"scope\", \"note\"}; an unknown name returns "
-              "{\"error\", \"available\": [names]}.")
-       :arglists '([name])}
-     skill
+(def
+  ^{:doc
+    (str
+      "await skill(name)\n"
+      "Activate a harness SKILL from `python_execution` — the same verb as the "
+      "native tool. First load on the live provider tape returns the full SKILL.md "
+      "as {\"name\", \"description\", \"body\", \"cwd\", \"resources\"} — plus \"project_root\" and a "
+      "\"note\" naming the nested project that owns it; a repeat returns "
+      "{\"name\", \"status\", \"scope\", \"note\"}; an unknown name returns "
+      "{\"error\", \"available\": [names]}.")
+    :arglists '([name])}
+  skill
   ;; The ENGINE-BOUND twin of `skill-tool`: identical semantics, wrapped in the
   ;; canonical envelope `invoke-symbol-wrapper` asserts on every bound verb.
   (fn skill-impl [env input]
@@ -142,9 +191,10 @@
                   true)
      :tag :observation
      :native-tool? true
-     :result (str
-               "Loaded `{name,description,body,cwd,resources}`; active `{name,status,scope,note}`; "
-               "unknown `{error,available}`. All have string keys and `op`.")
+     :result
+     (str "Loaded `{name,description,body,cwd,resources}`, plus `project_root` and a `note` when a "
+          "nested project owns the skill; active `{name,status,scope,note}`; "
+          "unknown `{error,available}`. All have string keys and `op`.")
      :name "skill"
      :description
      (str "Activate an advertised skill. First load on a live provider tape returns full SKILL.md; "
@@ -163,7 +213,9 @@
 
 (defn- skill-template-text
   "Expanded user-message text for a `/<name> [task]` invocation:
-   the full SKILL.md plus the optional task."
+   the full SKILL.md plus the optional task. A skill owned by a nested project
+   ALSO says so — the turn is re-rooted there (`prompt-templates/expand`
+   carries `:project-root`), and the message must not leave that silent."
   [_env s args]
   (let
     [r
@@ -172,12 +224,16 @@
      ;; index; its body lives in the current user message.
      (skill-payload s)
 
+     note
+     (owner-note (owner-root s))
+
      task
      (when-not (str/blank? (str args)) (str "\n\nTask: " args))]
 
     (str "Use the skill \""
          (:name s)
          "\" for this task — its full SKILL.md follows. Follow these instructions.\n\n"
+         (when note (str note "\n\n"))
          (get r "body")
          (when (seq (get r "resources"))
            (str "\n\nBundled resources (read them with the file tools as needed):\n"
@@ -291,9 +347,17 @@
       (str/join
         "\n"
         (cons
-          "Harness SKILLS available — call skill(\"name\") to load the FULL instructions on demand:"
+          (str
+            "Harness SKILLS available — call skill(\"name\") to load the FULL instructions on demand"
+            " (a `[project]` tag names the nested project that OWNS a skill — work under that"
+            " directory when you use it):")
           (for [s ss]
-            (str "  " (:name s) " — " (clip (:description s) 180))))))))
+            (str "  "
+                 (:name s)
+                 (when-let [o (owner-label s)]
+                   (str " [" o "]"))
+                 " — "
+                 (clip (:description s) 180))))))))
 
 (defn- agents-prompt
   [_env]

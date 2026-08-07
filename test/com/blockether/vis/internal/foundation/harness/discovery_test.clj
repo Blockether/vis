@@ -115,6 +115,21 @@
              (let [rs ((deref #'d/skill-resources) root)]
                (expect (= ["scripts/run.sh" "template.json"] rs))
                (expect (not-any? #(= "SKILL.md" %) rs)))
+             (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root)))))))
+  ;; Regression: the bundled-resource walk was Clojure `file-seq` instead of the
+  ;; Rust engine every other traversal uses, and an ignore-aware walk would drop
+  ;; exactly the files a nested project's (routinely gitignored) skill ships.
+  (it "walks hidden and repository-ignored bundled files too"
+      (let
+        [root (.toFile (Files/createTempDirectory "vis-skill-hidden" (make-array FileAttribute 0)))]
+        (try (spit (io/file root "SKILL.md") "---\nname: demo\ndescription: d\n---\nbody")
+             (spit (io/file root ".gitignore") "ignored/\n")
+             (io/make-parents (io/file root "ignored" "asset.txt"))
+             (spit (io/file root "ignored" "asset.txt") "x")
+             (io/make-parents (io/file root "refs" "deep" "note.md"))
+             (spit (io/file root "refs" "deep" "note.md") "n")
+             (expect (= [".gitignore" "ignored/asset.txt" "refs/deep/note.md"]
+                        ((deref #'d/skill-resources) root)))
              (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
 
 (defdescribe

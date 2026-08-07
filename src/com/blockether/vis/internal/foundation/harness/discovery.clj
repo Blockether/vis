@@ -19,7 +19,6 @@
             [clojure.string :as str]
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.fff-index :as fff-index]
-            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace :as workspace]))
 
 ;; =============================================================================
@@ -256,17 +255,30 @@
 
 (defn- name-stem [^String filename] (str/replace filename #"\.md\z" ""))
 
+(def ^:private skill-resource-max-depth
+  "Depth bound for the bundled-resource walk. `fff/list-directory` takes a
+   POSITIVE bound (its own `0` lists the immediate children only), and no skill
+   nests resources anywhere near this deep."
+  64)
+
 (defn- skill-resources
   "Relative paths of every file in a skill dir EXCEPT SKILL.md — the bundled
-   resources the model reads with the existing file tools. Recursive, bounded."
+   resources the model reads with the existing file tools.
+
+   ONE stateless `fff/list-directory` walk: the same Rust engine every other
+   traversal in vis goes through, with no `Fff` instance, no index and no pool
+   slot to evict the workspace's own. Hidden files are included and ignore files
+   are OFF — a bundled resource belongs to its skill even when the repository
+   ignores its path, which is exactly how a nested project's skill ships."
   [^java.io.File skill-dir]
-  (let [root (.toPath skill-dir)]
-    (->> (file-seq skill-dir)
-         (filter #(.isFile ^java.io.File %))
-         (remove #(= "SKILL.md" (.getName ^java.io.File %)))
-         (map #(paths/unixify (.relativize root (.toPath ^java.io.File %))))
-         (sort)
-         (vec))))
+  (->> (fff/list-directory
+         (.getPath skill-dir)
+         {:max-depth skill-resource-max-depth :include-hidden? true :respect-ignore-files? false})
+       (remove :dir?)
+       (map :relative-path)
+       (remove #(= "SKILL.md" (peek (str/split % #"/"))))
+       (sort)
+       (vec)))
 ;; =============================================================================
 ;; Discovery (filesystem → deduped entries)
 ;; =============================================================================
