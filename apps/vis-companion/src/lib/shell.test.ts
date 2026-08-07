@@ -150,7 +150,7 @@ describe('one screen, pairing is a chip', () => {
   // the bar's two verbs were hand-rolled `<button className=…>` slabs of bare text,
   // so the one control on the screen that looked pressed-able was `New session`.
   it('wears the app\'s own Button, not a hand-rolled slab', () => {
-    expect(appSource).toContain('import { Button, IconButton } from "./components/ui";');
+    expect(appSource).toContain('import { Button, SearchField } from "./components/ui";');
     expect(appSource).not.toMatch(/<button\s+type="button"/);
     // The verb that ADDS is the amber primary, exactly like `New session`; the
     // preferences cog beside it is its framed sibling, never a second amber.
@@ -161,13 +161,22 @@ describe('one screen, pairing is a chip', () => {
   // in the header" — the field sat UNDER the chip naming one machine, so a fleet-wide
   // query read as a filter inside that machine, three rows down on a phone.
   it('makes search the app bar, above every machine chip', () => {
-    expect(appSource).toContain('aria-label="Search sessions on every machine"');
+    expect(appSource).toContain('label="Search sessions on every machine"');
     expect(appSource).toContain('placeholder="Search all machines…"');
     // Above the chips means owned by the bar: the list takes the query as a prop.
     expect(appSource).toContain('query={query}');
     expect(appSource).toContain('onQuery={setQuery}');
     // The rarest verb no longer holds prime real estate beside it.
     expect(appSource).not.toContain('>Pair machine</Button>');
+  });
+
+  // Regression, user report ("it should be this search more subtle and looking more
+  // connected to our designs"): the field was a hand-rolled white-filled rounded box,
+  // taller and louder than every 32px flat control beside it. It is `SearchField` now —
+  // the app's own control, on `Button`'s exact metrics, paper at rest.
+  it('wears the app\'s own search control, on the button rhythm', () => {
+    expect(appSource).toContain('<SearchField');
+    expect(appSource).not.toMatch(/<label className="mx-3 flex h-8/);
   });
 
   it('pairs from Preferences and gives Machines a way back', () => {

@@ -43,13 +43,14 @@ describe('app bar', () => {
   // chip naming one machine. It is the bar's own middle now — nothing scopes it — and
   // it takes the free space, so the cog still holds the right edge.
   it('gives the bar\'s middle to a fleet-wide search', () => {
-    const search = app.indexOf('aria-label="Search sessions on every machine"');
+    const search = app.indexOf('label="Search sessions on every machine"');
     const preferences = app.indexOf('aria-label="Open preferences"');
     expect(search).toBeGreaterThan(0);
     expect(search).toBeLessThan(preferences);
-    expect(classes(openingTag(app, 'Search sessions on every machine'))).toContain(
-      'flex-1',
-    );
+    // The field is the app's own `SearchField` now, so the call site may only
+    // POSITION it — the face (Button's box, paper at rest) belongs to the component.
+    expect(app).toContain('<SearchField');
+    expect(app).toContain('className="mx-3 flex-1"');
     // Pairing is a twice-a-year verb; it stopped renting the bar.
     expect(app).not.toContain('aria-label="Pair a machine"');
   });

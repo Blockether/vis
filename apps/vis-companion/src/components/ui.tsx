@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useRef,
   useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
@@ -7,6 +8,7 @@ import {
 } from 'react';
 
 import type { MachineColor } from '../lib/machine-colors';
+import type { RefObject } from 'react';
 import { createPortal } from 'react-dom';
 
 import { ChevronIcon, CloseIcon, DotsIcon, DraftIcon } from './icons';
@@ -278,6 +280,65 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
     );
   },
 );
+
+/**
+ * The app bar's fleet-wide search.
+ *
+ * A FIELD is a control, so it wears the vocabulary's own face: `Button`'s box to the
+ * pixel — flat corners, its 32px face (`h-8`, `mouse:h-6`), its border and type step.
+ * It used to be a hand-rolled `<label className="… h-8 rounded border … bg-input">`: a
+ * white-filled, rounded slab on paper that carries no other box at rest, so the quietest
+ * thing on the bar was also the loudest.
+ *
+ * Resting it is PAPER — border only, no fill — and the input surface plus the ring
+ * arrive with the caret, which is the same rule the terminal already follows
+ * (`t/input-field-bg` active, flat at rest). The Clear glyph is the field's own, so
+ * emptying the query returns the caret rather than dropping focus onto the document.
+ */
+export const SearchField = forwardRef<
+  HTMLInputElement,
+  {
+    value: string;
+    onValue: (value: string) => void;
+    /** Spoken name; the placeholder is the promise, this is the label. */
+    label: string;
+    placeholder?: string;
+    /** POSITION only (`flex-1`, `mx-3`); the face belongs to the component. */
+    className?: string;
+  }
+>(function SearchField({ value, onValue, label, placeholder, className = '' }, ref) {
+  const own = useRef<HTMLInputElement | null>(null);
+  return (
+    <label
+      className={`flex h-8 min-w-0 items-center gap-1 self-center rounded-none border border-edge-strong bg-transparent px-2.5 py-0.5 transition-[background-color,border-color,box-shadow] duration-150 focus-within:border-accent focus-within:bg-input focus-within:ring-1 focus-within:ring-accent/30 motion-reduce:transition-none mouse:h-6 sm:px-3 ${className}`}
+    >
+      <input
+        ref={(node) => {
+          own.current = node;
+          if (typeof ref === 'function') ref(node);
+          else if (ref) (ref as RefObject<HTMLInputElement | null>).current = node;
+        }}
+        value={value}
+        onChange={(event) => onValue(event.target.value)}
+        className="min-w-0 flex-1 bg-transparent font-mono text-meta text-white outline-none placeholder:text-dialog-hint sm:text-ui"
+        placeholder={placeholder}
+        aria-label={label}
+      />
+      {value ? (
+        <IconButton
+          variant="quiet"
+          label="Clear search"
+          onClick={() => {
+            onValue('');
+            own.current?.focus();
+          }}
+        >
+          <CloseIcon className="size-3" />
+        </IconButton>
+      ) : null}
+    </label>
+  );
+});
 
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (

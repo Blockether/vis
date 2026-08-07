@@ -41,8 +41,7 @@ import {
 } from "./lib/share-intake";
 import { applyTheme, resolveLocalTheme } from "./lib/theme";
 import { getThemePalette, getThemePref } from "./lib/storage";
-import { CloseIcon } from "./components/icons";
-import { Button, IconButton } from "./components/ui";
+import { Button, SearchField } from "./components/ui";
 import { ConnectScreen } from "./screens/ConnectScreen";
 import { SessionsScreen } from "./screens/SessionsScreen";
 import { IncompatibleScreen } from "./screens/IncompatibleScreen";
@@ -1123,28 +1122,14 @@ export function Header({
             Pairing left this bar with it. It is a twice-a-year verb and it was renting
             the widest real estate on a 390px phone; it lives in Preferences, beside the
             rest of this device's own setup. */}
-        <label className="mx-3 flex h-8 min-w-0 flex-1 items-center gap-1 rounded border border-dialog-edge bg-input px-2 transition-colors duration-150 focus-within:border-accent motion-reduce:transition-none">
-          <input
-            ref={searchRef}
-            value={query}
-            onChange={(event) => onQuery(event.target.value)}
-            className="min-w-0 flex-1 bg-transparent font-mono text-meta text-white outline-none placeholder:text-dialog-hint"
-            placeholder="Search all machines…"
-            aria-label="Search sessions on every machine"
-          />
-          {query ? (
-            <IconButton
-              variant="quiet"
-              label="Clear search"
-              onClick={() => {
-                onQuery('');
-                searchRef.current?.focus();
-              }}
-            >
-              <CloseIcon className="size-3" />
-            </IconButton>
-          ) : null}
-        </label>
+        <SearchField
+          ref={searchRef}
+          value={query}
+          onValue={onQuery}
+          placeholder="Search all machines…"
+          label="Search sessions on every machine"
+          className="mx-3 flex-1"
+        />
         {/* ONE SCREEN, ONE COG.
             The app used to carry a two-item tab bar whose second item existed for a
             verb used twice a year — pairing — and a nav duplicating it at `sm:`. What
