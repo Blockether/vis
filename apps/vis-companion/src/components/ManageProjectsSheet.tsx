@@ -20,8 +20,9 @@
  * It is `AnchoredPanel` + `MenuHeading` + `MenuItem` now, so it cannot drift again.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, DialogFrame, IconButton, Input, Modal, Spinner } from './ui';
-import { MenuBack, MenuItem, MenuNote } from './Menu';
+import { Button, IconButton, Input, Spinner } from './ui';
+import { AnchoredPanel, MenuBack, MenuHeading, MenuItem, MenuNote } from './Menu';
+import type { MenuPosition } from '../lib/anchored-menu';
 import { ChevronIcon, PencilIcon, ProjectsIcon, TrashIcon } from './icons';
 import type { GatewayClient } from '../lib/gateway';
 import type { BrowseEntry } from '../lib/types';
@@ -119,6 +120,7 @@ export interface ManagedProject {
 
 export function ManageProjectsSheet({
   label,
+  at,
   client,
   startAt,
   knownRoots,
@@ -129,6 +131,8 @@ export function ManageProjectsSheet({
 }: {
   /** The machine whose files these are — the title says it, so no row has to. */
   label: string;
+  /** Where the panel hangs from `sm:` up — the control that opened it. */
+  at: MenuPosition | null;
   client: GatewayClient;
   /** Where browsing opens: the machine's current project, or its home. */
   startAt: string | null;
@@ -282,12 +286,19 @@ export function ManageProjectsSheet({
   );
 
   return (
-    <Modal onDismiss={onCancel}>
-      <DialogFrame
-        title="Manage projects"
-        subtitle={label}
-        onClose={onCancel}
-      >
+    <AnchoredPanel
+      size="browse"
+      role="dialog"
+      label={`Manage projects on ${label}`}
+      at={at}
+      onDismiss={onCancel}
+    >
+      {/* The same panel the draft picker wears, because this asks the same kind of
+          question: one loud band naming what the rows act on, the app's one way
+          out inside it, and rows that are `MenuItem`s. It used to be a full-height
+          `DialogFrame` — a different box, a different header and a different
+          entrance for a list one tap away from the menu that opened it. */}
+      {!adding && <MenuHeading onClose={onCancel}>{`Projects · ${label}`}</MenuHeading>}
 
       {!adding ? (
         <>
@@ -334,10 +345,12 @@ export function ManageProjectsSheet({
         </>
       ) : (
         <>
-      {projects.length > 0 && (
+      {projects.length > 0 ? (
         <MenuBack label="Back to this machine's projects" onBack={() => setAdding(false)}>
           Add a project
         </MenuBack>
+      ) : (
+        <MenuHeading onClose={onCancel}>{`Add a project · ${label}`}</MenuHeading>
       )}
 
       {typed === null ? (
@@ -507,7 +520,6 @@ export function ManageProjectsSheet({
       </div>
         </>
       )}
-      </DialogFrame>
-    </Modal>
+    </AnchoredPanel>
   );
 }

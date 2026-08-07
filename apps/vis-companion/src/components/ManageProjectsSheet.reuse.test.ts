@@ -18,25 +18,26 @@ import { startingDir } from "./ManageProjectsSheet";
 //   * `quiet` for the secondary verb where every other dialog footer uses `ghost`.
 
 describe("ManageProjectsSheet paints no box of its own", () => {
-  // It was an anchored popover hanging off the machine's `⋯` — which is what forced
-  // all the placement maths, and what made a surface that MANAGES things feel like a
-  // dropdown. It is the app's normalized dialog now: `Modal` + `DialogFrame`, the
-  // same header and the same way out as every other dialog on the screen.
-  it("is the app’s normalized dialog, not a panel of its own", () => {
-    expect(source).toContain("<Modal onDismiss=");
-    expect(source).toContain("<DialogFrame");
-    expect(source).not.toContain("<AnchoredPanel");
+  // Regression, user report ("can Manage projects look exactly the same as the draft
+  // picker?"): the draft picker is `AnchoredPanel` + a loud `MenuHeading` + `MenuItem`
+  // rows, and this sheet was the one surface answering the same kind of question through
+  // `Modal` + `DialogFrame` — a different box, a different header, a different entrance
+  // and full-bleed height, one tap away from the menu that opened it.
+  it("is the app’s one anchored panel, not a dialog of its own", () => {
+    expect(source).toContain("<AnchoredPanel");
+    expect(source).toContain('size="browse"');
+    expect(source).toContain('role="dialog"');
+    expect(source).not.toContain("<Modal onDismiss=");
+    expect(source).not.toContain("<DialogFrame");
+    // The panel paints its own box, so this file still paints none of it.
     expect(source).not.toContain("createPortal");
     expect(source).not.toContain("sm:w-96");
     expect(source).not.toContain("'--menu-top'");
-    // Being centred, it needs no anchor at all — the placement props are gone.
-    expect(source).not.toContain("MenuPosition");
   });
 
-  it("names itself with the shipped header and offers the shipped way out", () => {
-    expect(source).toContain('title="Manage projects"');
-    expect(source).toContain("subtitle={label}");
-    expect(source).toContain("onClose={onCancel}");
+  it("names itself with the menu's own band and its one way out", () => {
+    expect(source).toContain("<MenuHeading onClose={onCancel}>");
+    expect(source).not.toContain('title="Manage projects"');
     expect(source).not.toContain("const BAND");
     expect(source).not.toContain("const QUIET_BAND");
   });

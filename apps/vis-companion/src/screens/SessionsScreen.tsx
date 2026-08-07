@@ -1687,6 +1687,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
       {target && browseAt && (
         <ManageProjectsSheet
           label={machineLabel(target)}
+          at={browseAt}
           client={clientFor(target)}
           startAt={project?.path ?? null}
           knownRoots={knownRoots}
@@ -1709,6 +1710,7 @@ export function SessionsScreen({ conns, subscriptions, onUnreachable, onOpen, on
       {manageProjects && (
         <ManageProjectsSheet
           label={machineLabel(manageProjects.machine.conn)}
+          at={manageProjects.at}
           client={clientFor(manageProjects.machine.conn)}
           startAt={machineProject(manageProjects.machine)?.path ?? null}
           knownRoots={new Set(
