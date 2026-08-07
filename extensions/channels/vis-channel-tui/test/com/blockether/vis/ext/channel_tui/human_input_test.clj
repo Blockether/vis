@@ -770,8 +770,14 @@
                          (:buttons (hi/action-bar (hi/init-form (assoc (request)
                                                                   :is-cancellable false)))))))))
   (it "draws no side rails at all"
+      ;; A form that FITS: the only vertical bar this dialog may ever draw is the
+      ;; scrollbar of a body taller than its band, never a frame rail.
       (let [{:keys [screen g]} (virtual-screen)]
-        (hi/paint! g 80 30 (hi/init-form (request)))
+        (hi/paint! g
+                   80
+                   30
+                   (hi/init-form
+                     {:id "r" :title "T" :fields [{:id "a" :type :plaintext :label "A"}]}))
         (let [text (screen-text screen)]
           (expect (not (str/includes? text "│")))
           (expect (not (str/includes? text "├")))
@@ -885,7 +891,10 @@
         ;; A checkbox is a TOGGLE, so that paper is the dialog's own: the typed
         ;; field's surface never gets under a row nobody types into.
         (expect (= t/dialog-bg (:bg cell)))))
-  (it "puts a field's description between its label and its input"
+  (it "puts a field's description between its label and its input, one blank row below the label"
+      ;; The label is the HEADLINE of its own section: whatever it introduces —
+      ;; prose, options, or the input itself — starts one row below it, so a form
+      ;; reads as labelled blocks instead of one unbroken column of text.
       (let
         [rows
          (hi/form-rows (hi/init-form (request)))
@@ -894,14 +903,15 @@
          (row-index rows #(and (= :label (:kind %)) (= "Note" (:text %))))]
 
         (expect (some? i))
+        (expect (= :blank (:kind (nth rows (inc i)))))
         ;; The row also carries `:is-active-field`, the FIELD's own focus, so its
         ;; prose brightens and fades with the field it explains.
         (expect (= {:kind :description :text "Free text"}
-                   (select-keys (nth rows (inc i)) [:kind :text])))
-        (expect (contains? (nth rows (inc i)) :is-active-field))
-        (expect (= :input (:kind (nth rows (+ (long i) 2)))))
-        (expect (= "note" (:field-id (nth rows (+ (long i) 2)))))))
-  (it "leaves a field with no description with just its label and input"
+                   (select-keys (nth rows (+ (long i) 2)) [:kind :text])))
+        (expect (contains? (nth rows (+ (long i) 2)) :is-active-field))
+        (expect (= :input (:kind (nth rows (+ (long i) 3)))))
+        (expect (= "note" (:field-id (nth rows (+ (long i) 3)))))))
+  (it "leaves a field with no description with just its label, the gap, and its input"
       (let
         [rows
          (hi/form-rows (hi/init-form (request)))
@@ -910,7 +920,8 @@
          (row-index rows #(and (= :label (:kind %)) (= "Env" (:text %))))]
 
         (expect (some? i))
-        (expect (= :option (:kind (nth rows (inc (long i))))))))
+        (expect (= :blank (:kind (nth rows (inc (long i))))))
+        (expect (= :option (:kind (nth rows (+ (long i) 2)))))))
   (it "hangs a checkbox description under the box that carries the label"
       (let
         [rows (hi/form-rows (hi/init-form {:id "r"
@@ -995,11 +1006,12 @@
          (long (row-index rows #(= :label (:kind %))))
 
          desc
-         (vec (take-while #(= :description (:kind %)) (drop (inc i) rows)))]
+         (vec (take-while #(= :description (:kind %)) (drop (+ i 2) rows)))]
 
+        (expect (= :blank (:kind (nth rows (inc i)))))
         (expect (< 1 (count desc)))
         (expect (= (str/split prose #"\s+") (prose-words desc)))
-        (expect (= :input (:kind (nth rows (+ i 1 (count desc))))))))
+        (expect (= :input (:kind (nth rows (+ i 2 (count desc))))))))
   (it "leaves the plan unwrapped when no width is offered"
       ;; The pure one-arity plan is what a caller measures without a terminal.
       (let
@@ -1350,10 +1362,16 @@
         (expect (:is-bold theirs))
         (expect (= t/dialog-hint (:fg theirs)))))
   (it "makes the focused field's prose readable and leaves the rest as hints"
-      (let [note-focused (assoc (hi/init-form (request)) :focus 7)]
-        (expect (= t/dialog-fg (:fg (cell-under note-focused "Free text"))))
+      ;; A SHORT form, so both fields' prose is inside the viewport and the
+      ;; comparison is about ink rather than about what scrolled away.
+      (let
+        [two {:id "r"
+              :title "T"
+              :fields [{:id "a" :type :plaintext :label "A" :description "Free text"}
+                       {:id "b" :type :plaintext :label "B" :description "Other prose"}]}]
+        (expect (= t/dialog-fg (:fg (cell-under (hi/init-form two) "Free text"))))
         (expect (= t/dialog-hint
-                   (:fg (cell-under (assoc (hi/init-form (request)) :focus 0) "Free text"))))))
+                   (:fg (cell-under (assoc (hi/init-form two) :focus 1) "Free text"))))))
   (it "paints the OTP boxes on the very same field surface a typed row uses"
       (expect (= t/input-field-bg (:bg (cell-under (otp-form) "[ ]"))))
       (expect (= (t/field-resting-bg) (:bg (cell-under (assoc (otp-form) :focus 0) "[ ]")))))

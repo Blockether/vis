@@ -628,6 +628,8 @@
    heading is one line, ellipsized if the dialog is narrow."
   [text-w {:keys [type text]}]
   (if (= :heading type)
+    ;; No gap of its own: a heading is read together with the paragraph under it,
+    ;; and the field it introduces already opens with the blank its label owns.
     [{:kind :heading :text text}]
     (mapv #(assoc % :kind :paragraph) (description-rows text text-w))))
 
@@ -704,7 +706,7 @@
          (zip-columns (mapv #(vec (field-rows ctx cell-w %)) fields)))
        (into [] (mapcat #(field-rows ctx text-w %)) fields))]
 
-    (into (vec heading) body)))
+    (into (if (seq heading) (conj (vec heading) {:kind :blank}) []) body)))
 
 (defn- field-rows
   "Rows for ONE node of the field tree. `ctx` is the per-paint context built by
@@ -810,20 +812,22 @@
                      (field-options field)))
              :else [])]
 
-      ;; Label, then description, then the input: the italic prose explains the
-      ;; field you are about to fill, so it has to be readable BEFORE it, not
-      ;; discovered underneath it.
+      ;; Label, then a BLANK, then description, then the input: the label is the
+      ;; headline of its own section, and everything it introduces — the italic
+      ;; prose that explains the field, the options, the input itself — starts one
+      ;; row below it. Butted straight against the label, a form of five fields
+      ;; painted as one unbroken column and nothing said where a field began.
       ;;
       ;; A checkbox row already carries its own label — a separate bold label row
       ;; above it would say the same word twice, which no other dialog does — so
-      ;; there its description follows the box instead.
+      ;; there its description follows the box instead, with no gap to open.
       (cond->
         (if (= :checkbox type)
           (into (vec rows) description)
           (into (into [{:kind :label
                         :text (label-text field)
                         :is-required (boolean (:is-required field))
-                        :is-active-field is-active-field}]
+                        :is-active-field is-active-field} {:kind :blank}]
                       description)
                 rows))
         (get errors id)
