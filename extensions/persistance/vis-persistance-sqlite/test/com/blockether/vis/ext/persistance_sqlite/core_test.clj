@@ -388,10 +388,14 @@
       ;; Ordered: turn1 user, turn1 tool, turn2 tool.
       (expect (= [:user :tool :tool] (mapv :source all)))
       (expect (= ["u1.png" "t1.png" "t2.png"] (mapv :filename all)))
-      ;; Provenance: user carries :turn-soul-id (no iteration); tool carries both.
-      (expect (= (str soul1) (:turn-soul-id (first all))))
+      ;; PROVENANCE STARTS AT THE TURN: EVERY row - user image AND tool artifact -
+      ;; carries the soul of the turn it belongs to, so `vis_attachments()` can stamp
+      ;; `turn_id` on all of them. The iteration / tool-call grain is the FINER
+      ;; provenance only a tool artifact also has.
+      (expect (= [(str soul1) (str soul1) (str soul2)] (mapv :turn-soul-id all)))
       (expect (nil? (:iteration-id (first all))))
       (expect (some? (:iteration-id (nth all 1))))
+      (expect (some? (:iteration-id (nth all 2))))
       (expect (= "call_A" (:tool-call-id (nth all 1))))
       (expect (= "call_B" (:tool-call-id (nth all 2))))
       ;; Unknown session -> [].
