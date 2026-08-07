@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Run the whole Lazytest suite as N parallel JVM shards.
+#
+# One `clojure -M:test` pays ~31s to boot a JVM and load every test namespace,
+# then ~250s executing them SERIALLY while most of that time is sleeps, child
+# processes and sockets rather than CPU. Sharding the namespace list across
+# several JVMs turns that tail into wall-clock the machine already had spare.
+#
+#   bin/test-parallel        # shards = a quarter of the cores, capped at 4
+#   bin/test-parallel 4      # explicit shard count
+#   bin/test-parallel 4 -i :integration   # extra args go to every shard
+#
+# Exit status is non-zero when any shard failed; each shard's output is kept in
+# $TMPDIR/vis-test-shard-<n>.log and the failing ones are printed at the end.
+set -uo pipefail
+
+cd "$(dirname "$0")/.."
+
+shards="${1:-}"
+if [[ "$shards" =~ ^[0-9]+$ ]]; then shift; else
+  # Measured on a 14-core box: 4 shards 3m39, 6 shards 4m48, 1 shard 4m31.
+  # These tests spawn child JVMs, GraalPy contexts and sockets, so each shard is
+  # worth far more than one core and over-sharding is SLOWER, not just wasteful.
+  cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+  shards=$(( cores / 4 )); [[ $shards -lt 2 ]] && shards=2
+  [[ $shards -gt 4 ]] && shards=4
+fi
+
+# Test roots: the same directories deps.edn hands to lazytest, discovered rather
+# than copied, so a new extension needs no edit here.
+roots=(test)
+while IFS= read -r d; do roots+=("$d"); done < <(ls -d extensions/*/*/test 2>/dev/null)
+
+# Namespaces, largest file first: file size is the cheapest available proxy for
+# cost, and longest-processing-time-first is what keeps the last shard short.
+files=()
+while IFS= read -r f; do files+=("$f"); done < <(
+  for root in "${roots[@]}"; do
+    find "$root" -name '*_test.clj' -print0 | xargs -0 stat -f '%z %N' 2>/dev/null ||
+      find "$root" -name '*_test.clj' -printf '%s %p\n'
+  done | sort -rn | cut -d' ' -f2-
+)
+
+declare -a bucket
+for i in $(seq 0 $((shards - 1))); do bucket[$i]=""; done
+i=0
+for f in "${files[@]}"; do
+  for root in "${roots[@]}"; do
+    if [[ "$f" == "$root/"* ]]; then rel="${f#"$root"/}"; break; fi
+  done
+  ns="${rel%.clj}"; ns="${ns//\//.}"; ns="${ns//_/-}"
+  bucket[$i]="${bucket[$i]} -n $ns"
+  i=$(( (i + 1) % shards ))
+done
+
+tmp="${TMPDIR:-/tmp}"
+echo "Running ${#files[@]} test namespaces in $shards shards"
+pids=(); logs=()
+for i in $(seq 0 $((shards - 1))); do
+  log="$tmp/vis-test-shard-$i.log"
+  logs+=("$log")
+  # shellcheck disable=SC2086
+  clojure -M:test ${bucket[$i]} "$@" >"$log" 2>&1 &
+  pids+=($!)
+done
+
+status=0
+for i in "${!pids[@]}"; do
+  if wait "${pids[$i]}"; then
+    echo "shard $i ok       $(grep -E '^Ran ' "${logs[$i]}" | tail -1)"
+  else
+    status=1
+    echo "shard $i FAILED   $(grep -E '^Ran ' "${logs[$i]}" | tail -1)"
+  fi
+done
+
+if [[ $status -ne 0 ]]; then
+  echo
+  for log in "${logs[@]}"; do grep -qE '[1-9][0-9]* failures' "$log" && cat "$log"; done
+fi
+exit $status
