@@ -4093,7 +4093,25 @@
                      "lines" {"added" 12 "removed" 3 "modified" 4}}
                     {"path" "src/b.clj" "op" "update" "changed" false}])]
 
-          (expect (= "`src/a.clj` +12 -3 ~4, `src/b.clj`" (:summary card)))))))
+          (expect (= "`src/a.clj` +12 -3 ~4, `src/b.clj`" (:summary card)))))
+    (it "a fan-out beyond three files reports the TOTAL size, not just a count"
+        ;; The collapsed headline named only how many files changed, so a
+        ;; batch edit was the one case that never said how big it was.
+        (let
+          [render
+           @#'editing/render-patch-result
+
+           file
+           (fn [p a r m]
+             {"path" p "op" "update" "changed" true "lines" {"added" a "removed" r "modified" m}})
+
+           card
+           (render [(file "src/a.clj" 1 2 3) (file "src/b.clj" 10 0 0) (file "src/c.clj" 0 5 0)
+                    {"path" "src/d.clj" "op" "update" "changed" false}])]
+
+          (expect (= (str "`src/a.clj` +1 -2 ~3, `src/b.clj` +10, "
+                          "+2 more (3/4 changed) +11 -7 ~3")
+                     (:summary card)))))))
 
 (defdescribe
   render-cat-result-spans-test

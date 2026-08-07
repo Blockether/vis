@@ -6040,7 +6040,8 @@
    operation, so the compact headline contains only affected paths and the SIZE
    of each change (`` `a.clj` +12 -3 ~4 ``) — added, removed and modified lines,
    each part omitted when zero and the whole suffix omitted on a no-op. Large
-   fan-out collapses to the first two paths plus a count. The body is the unified
+   fan-out collapses to the first two paths plus a count AND the TOTAL size over
+   every file, so a batch edit still states how much moved. The body is the unified
    diff(s); a single-file body omits a repeated path heading, while multi-file
    bodies use path-only headings to disambiguate each diff. `r` is a vector of
    per-file summaries `[{:path :op :changed :lines :diff}]`."
@@ -6073,18 +6074,24 @@
        (str "`" (disp-path path) "`" (counts-label lines)))
 
      labels
-     (mapv file-label summaries)]
+     (mapv file-label summaries)
+
+     totals
+     (reduce (fn [acc {:strs [lines]}]
+               (reduce-kv (fn [m k v]
+                            (update m k (fnil + 0) (long (or v 0))))
+                          acc
+                          (or lines {})))
+             {}
+             summaries)]
 
     {:summary (if (<= n 3)
                 (str/join ", " labels)
                 (str (str/join ", " (take 2 labels))
-                     ", +"
-                     (- n 2)
-                     " more ("
-                     (count changed)
-                     "/"
-                     n
-                     " changed)"))
+                     ", +" (- n 2)
+                     " more (" (count changed)
+                     "/" n
+                     " changed)" (counts-label totals)))
      :body (some->> (str/join "\n\n"
                               (for [{:strs [path changed diff]} summaries]
                                 (let
