@@ -42,6 +42,7 @@
     "secrets": "node scripts/secrets.mjs"
   },
   "dependencies": {
+    "@cantoo/pdf-lib": "2.8.1",
     "@capacitor/app": "8.1.1",
     "@capacitor/barcode-scanner": "3.1.0",
     "@capacitor/camera": "8.2.1",
@@ -58,7 +59,6 @@
     "dompurify": "3.4.13",
     "html2canvas-pro": "2.3.3",
     "jsqr": "1.4.0",
-    "pdf-lib": "1.17.1",
     "pdfjs-dist": "6.2.108",
     "prismjs": "1.30.0",
     "react": "19.2.8",

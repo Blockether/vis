@@ -8,7 +8,7 @@
  * what is saved is still a PDF under the same filename — which is what makes
  * the drawing the artifact's NEXT VERSION rather than a picture beside it.
  */
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument } from "@cantoo/pdf-lib";
 
 type PdfLib = typeof import("pdfjs-dist");
 
