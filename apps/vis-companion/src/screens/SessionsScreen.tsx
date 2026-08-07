@@ -8,7 +8,6 @@ import {
   HeaderTally,
   HeaderTitle,
   Pager,
-  IconButton,
   Input,
   LIST_EDGE,
   LIST_EDGE_END,
@@ -60,7 +59,6 @@ import {
 } from '../components/ManageProjectsSheet';
 import {
   PencilIcon,
-  PlusIcon,
   ProjectsIcon,
   SettingsIcon,
   StarIcon,
@@ -1151,19 +1149,21 @@ export function SessionsScreen({
               </button>
             );
           })}
-          {/* ADDING A MACHINE IS THE TAB STRIP'S OWN VERB.
+          {/* ADDING A MACHINE IS THE TAB STRIP'S OWN VERB, AND IT IS A WORD.
               The strip answers "which machine", so "one more machine" belongs at its
-              end, not buried in Preferences: a `+` after the last tab, on the page's
-              own paper, never inside the card it would add a sibling to. */}
+              end, not buried in Preferences. A bare `+` beside named tabs asks the
+              reader to guess what it adds - a project? a session? - so the control
+              says `Add machine`, on the page's own paper, never inside the card it
+              would add a sibling to. */}
           {onPair && (
-            <IconButton
-              label="Pair machine"
+            <Button
               variant="quiet"
-              className="self-center"
+              density="compact"
+              className="shrink-0 self-center whitespace-nowrap"
               onClick={onPair}
             >
-              <PlusIcon />
-            </IconButton>
+              Add machine
+            </Button>
           )}
       </div>
         {/* The card is a CLOSED frame on every width, and it ENDS where its content

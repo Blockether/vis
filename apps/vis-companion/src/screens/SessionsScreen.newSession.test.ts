@@ -72,11 +72,9 @@ describe('where "New session" lives', () => {
     // what this row can do". (The filter's own clear IS a plain icon button — it
     // opens no menu, so it must not wear the control that promises one.)
     expect(source).not.toContain("<DotsIcon");
-    // Every verb in the LIST is a word. The one glyph-only control on this screen is
-    // the machine strip's `+`, which is not a list verb at all: it stands outside the
-    // card, on the tab strip, and "pair another machine" has no word short enough.
-    expect(source.match(/<IconButton/g)?.length).toBe(1);
-    expect(source).toMatch(/<IconButton[\s\S]{0,120}label="Pair machine"/);
+    // Every verb on this screen is a WORD, including the strip's own: there is no
+    // glyph-only control left, so nothing asks the reader to guess what it adds.
+    expect(source).not.toContain("<IconButton");
     expect(source.match(/<Menu[\s>]/g)?.length).toBe(1);
     expect(source.match(/<MenuHeading>/g)?.length).toBe(2);
     expect(source).not.toContain("<StartOption");
@@ -449,11 +447,13 @@ describe('the machine strip', () => {
   });
 
   // Regression, user report ("near this tab there should be a plus icon to add
-  // machine"): pairing another machine was only reachable through Preferences, so
-  // the strip that answers "which machine" could not answer "one more".
-  it('ends with a + that pairs another machine', () => {
+  // machine", then "instead of + we will have add machine?"): pairing another machine
+  // was only reachable through Preferences, and the `+` that fixed that said nothing
+  // about WHAT it adds beside a strip of named tabs.
+  it('ends with an Add machine button that pairs another machine', () => {
     expect(source).toContain('onPair?: () => void;');
-    expect(source).toMatch(/aria-label="Machines"[\s\S]{0,2000}label="Pair machine"/);
-    expect(source).toMatch(/label="Pair machine"[\s\S]{0,200}<PlusIcon \/>/);
+    expect(source).toMatch(/aria-label="Machines"[\s\S]{0,2000}Add machine/);
+    expect(source).toMatch(/onClick=\{onPair\}[\s\S]{0,60}Add machine/);
+    expect(source).not.toContain("<PlusIcon");
   });
 });
