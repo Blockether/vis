@@ -6776,6 +6776,47 @@
 ;; ^ Convenience: the total horizontal gutter consumed on each row.
 ;; `bubble-w = cols - MESSAGE_SIDE_PAD`. Both this file's painter and
 ;; `screen.clj`'s height calculator MUST use this exact derivation.
+
+(def welcome-message-lines
+  "The FIRST message vis says, and the only one — there is no welcome dialog.
+   It is prose in the transcript band, bottom-anchored just above the composer, so
+   the very first thing on screen is the thing you type into. Line 0 is the
+   wordmark (accent); the rest is hint ink."
+  ["◆  v i s — your terminal, now agentic."
+   "Type below to begin. C-x o opens Settings › Providers; F1 lists every key."])
+
+(defn draw-welcome-message!
+  "Paint `welcome-message-lines` centered at the BOTTOM of the transcript band, so
+   it sits directly above the input box and is pushed off by the first real
+   message. No border, no chrome — the band's own paper."
+  [^TextGraphics g cols box-top box-bottom]
+  (let
+    [cols
+     (long cols)
+
+     box-top
+     (long box-top)
+
+     box-bottom
+     (long box-bottom)
+
+     lines
+     welcome-message-lines
+
+     start
+     (long (max box-top (- box-bottom (long (count lines)))))]
+
+    (doseq
+      [[i line]
+       (map-indexed vector lines)
+
+       :let [row
+             (+ start (long i))]
+       :when (< row box-bottom)]
+
+      (p/set-colors! g (if (zero? (long i)) t/header-active-tab-accent t/dialog-hint) t/terminal-bg)
+      (p/put-str! g 0 row (p/center-text line cols)))))
+
 (defn draw-messages-area!
   "Draw structured chat messages as left-aligned blocks inside a clean,
    border-less scrolling area.

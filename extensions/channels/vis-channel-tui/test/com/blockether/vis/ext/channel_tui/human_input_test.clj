@@ -68,6 +68,19 @@
     (.startScreen screen)
     {:screen screen :g (.newTextGraphics screen)}))
 
+(defn- band-paper
+  "The paper an in-session BAND lays its rows on — darker than the transcript,
+   and the dialog paper every painter inside the band sees."
+  []
+  (t/band-bg))
+
+(defn- band-resting-bg
+  "`theme/field-resting-bg` as a field inside a BAND wears it: derived from the
+   band's own paper, not from the modal dialog's."
+  []
+  (binding [t/dialog-bg (t/band-bg)]
+    (t/field-resting-bg)))
+
 (defn- screen-row
   "The rendered characters of one back-buffer row, right-trimmed."
   [^TerminalScreen screen y]
@@ -631,17 +644,37 @@
 (defdescribe
   band-test
   ;; The human-input prompt is a magit-style TRANSIENT inside the session, not a
-  ;; full-screen modal: it takes over the prompt's rows, grows upward over the
-  ;; transcript, and leaves the session's own footer breathing underneath.
+  ;; full-screen modal: it sits ABOVE the prompt box, grows upward over the
+  ;; transcript, and leaves the composer and the session's own footer visible.
+  ;;
+  ;; Regression, issue #147: the band was anchored ON the prompt — it covered the
+  ;; input box and painted on the very same dialog paper, so a transient (drafts,
+  ;; C-x, a HITL form) hid what was being typed and did not read as a layer at
+  ;; all.
+  (it "never covers the prompt box, and wears the band's own darker paper"
+      (let
+        [{:keys [screen g]}
+         (virtual-screen)
+
+         _
+         (hi/paint! g 80 30 (hi/init-form (request)))
+
+         prompt-top
+         (- 30 (long tr/prompt-rows) 3)]
+
+        ;; Every row from the prompt's opening rule down belongs to the session.
+        (expect (every? #(= "" (screen-row screen %)) (range (inc prompt-top) 30)))
+        (expect (= (band-paper) (:bg (cell-under (hi/init-form (request)) "User"))))
+        (expect (not= t/terminal-bg (band-paper)))))
   (it "closes with the host's rule directly above its hint bar"
       (let [{:keys [screen g]} (virtual-screen)]
         ;; Focus the multiline field so the bar has a chord worth printing at
         ;; all — navigation alone no longer earns a hint pair.
         (hi/paint! g 80 30 (assoc (hi/init-form (request)) :focus 7))
-        ;; `rows - 3` is the prompt box's own closing rule; the hint bar lands
-        ;; there and the rule right above it is the band's foot.
-        (expect (str/includes? (screen-row screen 27) "Enter newline"))
-        (expect (rule-row? (screen-row screen 26)))))
+        ;; The band sits ABOVE the prompt box: its hint bar is the echo row at
+        ;; `rows - prompt-h - 3`, and the rule right above it is the band's foot.
+        (expect (str/includes? (screen-row screen 24) "Enter newline"))
+        (expect (rule-row? (screen-row screen 23)))))
   (it "never swallows the session's bottom chrome"
       (let [{:keys [screen g]} (virtual-screen)]
         (hi/paint! g 80 30 (hi/init-form (request)))
@@ -782,9 +815,10 @@
           (expect (not (str/includes? text "├")))
           (expect (not (str/includes? text "┤"))))))
   (it "anchors the band on the prompt's closing rule at any height"
-      ;; PURE: whatever the editor grew to, the band's hint row is `rows - 3`.
-      (expect (= 27 (:hint-row (tr/band-region 80 30 1))))
-      (expect (= 37 (:hint-row (tr/band-region 80 40 1))))
+      ;; PURE: the band sits ABOVE the prompt, so its hint row is
+      ;; `rows - prompt-h - 3` — never on top of the input box.
+      (expect (= 24 (:hint-row (tr/band-region 80 30 1))))
+      (expect (= 34 (:hint-row (tr/band-region 80 40 1))))
       ;; ...unless the transcript's top would be crossed, which wins.
       (expect (= 1 (:left (tr/band-region 80 30 1))))
       (expect (= 12 (:min-row (tr/band-region 80 30 12))))))
@@ -887,9 +921,9 @@
                              [{:id "ok" :type :checkbox :label "Confirm" :is-required true}]})
                           "*")]
         (expect (= t/footer-error-fg (:fg cell)))
-        ;; A checkbox is a TOGGLE, so that paper is the dialog's own: the typed
+        ;; A checkbox is a TOGGLE, so that paper is the band's own: the typed
         ;; field's surface never gets under a row nobody types into.
-        (expect (= t/dialog-bg (:bg cell)))))
+        (expect (= (band-paper) (:bg cell)))))
   (it "puts a field's description between its label and its input, one blank row below the label"
       ;; The label is the HEADLINE of its own section: whatever it introduces —
       ;; prose, options, or the input itself — starts one row below it, so a form
@@ -1320,7 +1354,10 @@
         (expect (str/includes? (screen-row screen 25) "hello draft"))
         (expect (rule-row? (screen-row screen 26)))
         (expect (some? (.getCursorPosition screen)))))
-  (it "blanks the composer while a human-input transient is up"
+  ;; Regression, issue #147: the band was painted OVER the prompt box and the
+  ;; composer was blanked to make room, so the human could not see what they had
+  ;; been typing while the transient asked its question.
+  (it "keeps the composer visible UNDER a human-input transient, minus the keyboard"
       (let
         [screen (bottom-chrome (assoc (idle-db)
                                  :human-input (hi/init-form
@@ -1328,9 +1365,10 @@
                                                  :title "Tiny"
                                                  :fields [{:id "a" :type :checkbox :label "Yes"}]
                                                  :is-cancellable true})))]
-        (expect (= "" (screen-row screen 24)))
-        (expect (= "" (screen-row screen 25)))
-        (expect (= "" (screen-row screen 26)))
+        (expect (rule-row? (screen-row screen 24)))
+        (expect (str/includes? (screen-row screen 25) "hello draft"))
+        (expect (rule-row? (screen-row screen 26)))
+        ;; ...but the form owns the keyboard, so no caret sits in the composer.
         (expect (nil? (.getCursorPosition screen)))))
   (it "keeps the footer alive under the transient"
       (let
@@ -1380,7 +1418,7 @@
         (expect (not= t/dialog-bg (:bg cell)))))
   (it "lets the field the keyboard is NOT in recede to the resting surface"
       (let [cell (cell-under (assoc (hi/init-form (request)) :focus 1) "who")]
-        (expect (= (t/field-resting-bg) (:bg cell)))))
+        (expect (= (band-resting-bg) (:bg cell)))))
   (it "rings the focused field, and rings exactly one"
       (let
         [{:keys [screen g]}
@@ -1426,7 +1464,7 @@
                    (:fg (cell-under (assoc (hi/init-form two) :focus 1) "Free text"))))))
   (it "paints the OTP boxes on the very same field surface a typed row uses"
       (expect (= t/input-field-bg (:bg (cell-under (otp-form) "[ ]"))))
-      (expect (= (t/field-resting-bg) (:bg (cell-under (assoc (otp-form) :focus 0) "[ ]")))))
+      (expect (= (band-resting-bg) (:bg (cell-under (assoc (otp-form) :focus 0) "[ ]")))))
   (it "parks the terminal cursor inside the box the next digit lands in"
       (let
         [{:keys [screen g]}
@@ -1452,7 +1490,7 @@
   ;; once and no row lined up under its own label.
   (it "spells focus with the surface alone — no `•` marker in front of a row"
       (let [form (assoc (hi/init-form (request)) :focus 2)]
-        (doseq [needle ["Dev" "Prod" "Alpha" "Beta" "Confirm"]]
+        (doseq [needle ["Dev" "Prod" "Alpha" "Beta"]]
           (expect (seq (painted-rows form needle)))
           (expect (not-any? #(str/starts-with? % "•") (painted-rows form needle))))))
   ;; Regression: a checkbox, an option and a slider were painted on the TYPED
@@ -1462,8 +1500,8 @@
   (it "keeps a TOGGLE off the typed field's surface — it is not an input"
       (let [form (assoc (hi/init-form (request)) :focus 2)]
         (doseq [needle ["Dev" "Prod" "Alpha" "Beta"]]
-          (expect (= t/dialog-bg (:bg (cell-under form needle)))))
-        (expect (= t/dialog-bg
+          (expect (= (band-paper) (:bg (cell-under form needle)))))
+        (expect (= (band-paper)
                    (:bg (cell-under (assoc (hi/init-form (request)) :focus 6) "Confirm"))))
         ;; The field beside them that IS typed into keeps its surface.
         (expect (= t/input-field-bg
@@ -1781,12 +1819,12 @@
       (let [cell (cell-under (hi/init-form (decorated-request)) "Connection")]
         (expect (:is-bold cell))
         (expect (= t/dialog-fg (:fg cell)))
-        (expect (= t/dialog-bg (:bg cell)))))
+        (expect (= (band-paper) (:bg cell)))))
   (it "paints a paragraph as the prose it is — dim, unbolded, on dialog paper"
       (let [cell (cell-under (hi/init-form (decorated-request)) "Where")]
         (expect (not (:is-bold cell)))
         (expect (= t/dialog-hint (:fg cell)))
-        (expect (= t/dialog-bg (:bg cell)))))
+        (expect (= (band-paper) (:bg cell)))))
   (it "wraps a long paragraph instead of clipping it to a single `…` row"
       (let
         [rows (hi/form-rows (hi/init-form (engine/request->view

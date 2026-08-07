@@ -4567,3 +4567,34 @@
           (expect (str/includes? text "turn_failed Provider stream stalled"))
           (expect (not (str/includes? text "**")))
           (expect (not (str/includes? text "ERROR:")))))))
+
+;; Regression (user report): the first-run welcome DIALOG stood between the user
+;; and the composer — one modal, one Enter, before anything could be typed. There
+;; is no welcome screen any more: the greeting is a message bottom-anchored in
+;; the transcript band, directly above the input box.
+(defdescribe
+  welcome-message-test
+  (it "paints on the last rows of the transcript band, just above the input"
+      (let
+        [captured
+         (cap/capture! {:cols 80
+                        :rows 12
+                        :paint! (fn [{:keys [screen]}]
+                                  (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+                                    (render/draw-welcome-message! (.newTextGraphics s) 80 1 9)
+                                    (.refresh s)))})
+
+         grid
+         (first (:frames captured))
+
+         row-text
+         (fn [i]
+           (str/trim (apply str (map :ch (nth grid i)))))
+
+         n
+         (count render/welcome-message-lines)]
+
+        (expect (nil? (:error captured)))
+        ;; The block ENDS on the band's last row, so the first message pushes it off.
+        (expect (= (mapv str/trim render/welcome-message-lines) (mapv row-text (range (- 9 n) 9))))
+        (expect (str/blank? (row-text (- 9 n 1)))))))

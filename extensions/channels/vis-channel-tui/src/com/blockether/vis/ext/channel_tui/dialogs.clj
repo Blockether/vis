@@ -6320,8 +6320,9 @@
    this band (`/draft new`) is exactly that key, pre-pressed, so the band paints
    itself and goes straight to the question instead of waiting for a keystroke
    the human already typed."
-  ([^TerminalScreen screen content-top spec f] (session-band! screen content-top spec f nil))
-  ([^TerminalScreen screen content-top spec f pressed]
+  ([^TerminalScreen screen content-top prompt-h spec f]
+   (session-band! screen content-top prompt-h spec f nil))
+  ([^TerminalScreen screen content-top prompt-h spec f pressed]
    (let
      [size
       (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
@@ -6339,7 +6340,8 @@
       (frame-restorer screen)
 
       region
-      (assoc (tr/band-region cols rows (or content-top 1)) :restore! restore!)]
+      (assoc (tr/band-region cols rows (or content-top 1) (or prompt-h tr/prompt-rows))
+        :restore! restore!)]
 
      (try (when-let
             [result (if pressed
@@ -6362,7 +6364,7 @@
 
    Returns the `KeyStroke` (Esc included — the resolver reads it as an abort), or
    nil when the terminal had nothing to give."
-  [^TerminalScreen screen content-top spec]
+  [^TerminalScreen screen content-top prompt-h spec]
   (let
     [size
      (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
@@ -6374,7 +6376,10 @@
      (frame-restorer screen)
 
      region
-     (assoc (tr/band-region (.getColumns size) (.getRows size) (or content-top 1))
+     (assoc (tr/band-region (.getColumns size)
+                            (.getRows size)
+                            (or content-top 1)
+                            (or prompt-h tr/prompt-rows))
        :restore! restore!)]
 
     (try (band-frame! screen g region spec)
@@ -6496,12 +6501,13 @@
    (`drafts/slash-band`): `/draft new` IS `d`, already pressed. A command this
    band does not offer right now (`/draft resume` with no drafts) opens the band
    itself rather than firing something the human was never shown."
-  ([^TerminalScreen screen content-top draft-rows]
-   (draft-transient! screen content-top draft-rows nil))
-  ([^TerminalScreen screen content-top draft-rows pressed]
+  ([^TerminalScreen screen content-top prompt-h draft-rows]
+   (draft-transient! screen content-top prompt-h draft-rows nil))
+  ([^TerminalScreen screen content-top prompt-h draft-rows pressed]
    (let [spec (drafts/spec draft-rows)]
      (session-band! screen
                     content-top
+                    prompt-h
                     spec
                     #(draft-band-choice % draft-rows)
                     (when (tr/item-by-id spec pressed) pressed)))))
@@ -6527,8 +6533,8 @@
 
    Returns `{:start-in :trunk}`, `{:start-in :draft :clean? bool :draft {:label :clean?}}`,
    or nil."
-  [^TerminalScreen screen content-top]
-  (session-band! screen content-top drafts/start-in-spec start-in-band-choice))
+  [^TerminalScreen screen content-top prompt-h]
+  (session-band! screen content-top prompt-h drafts/start-in-spec start-in-band-choice))
 
 (def palette-commands
   "Command palette entries. Each is {:id keyword :label str}. The `:id` is the

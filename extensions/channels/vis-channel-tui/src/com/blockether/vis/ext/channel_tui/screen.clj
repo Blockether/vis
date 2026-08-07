@@ -21,6 +21,7 @@
             [com.blockether.vis.ext.channel-tui.selection :as selection]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
+            [com.blockether.vis.ext.channel-tui.transient :as tr]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
@@ -2011,24 +2012,16 @@
    persists underneath the dialog). When `overlay-locked?` the cursor is
    hidden so the overlay owns the interactive surface.
 
-   The ONE exception is a human-input transient: its band is bottom-anchored
-   over exactly these rows and IT owns the keyboard, so a prompt box painted
-   underneath would either peek out above a short band or read as a second,
-   focusable surface. The box is blanked instead of drawn — see
-   `human-input/paint!`."
+   A human-input request is a TRANSIENT, not a modal: its band is anchored
+   directly ABOVE this prompt and never over it, so the box is drawn exactly as
+   always and the operator keeps seeing what they were typing. The band owns the
+   keyboard and the cursor while it is open — `human-input/paint!` places it —
+   which is why the cursor is hidden here."
   [^TerminalScreen screen g db
    {:keys [input input-top text-rows cols now-ms echo-row footer-row slash-suggestions
            slash-command-index]}]
   (let [human-input? (some? (:human-input db))
-        [cx cy] (if human-input?
-                  (do (p/set-colors! g t/text-fg t/terminal-bg)
-                      (p/fill-rect! g
-                                    0
-                                    (long input-top)
-                                    (long cols)
-                                    (+ (long text-rows) 2 (* 2 (long render/input-pad-y))))
-                      [0 0])
-                  (render/draw-input-box! g input input-top text-rows cols nil))]
+        [cx cy] (render/draw-input-box! g input input-top text-rows cols nil)]
     (footer/draw-echo-area! g db echo-row cols now-ms)
     (footer/draw-footer! g db footer-row cols now-ms)
     (when-not human-input?
@@ -2289,6 +2282,14 @@
        (when (tab-content-loading? db)
          (paint-content-loading! g cols messages-top messages-bottom now-ms))
 
+       ;; Empty transcript and nothing hydrating: vis introduces itself HERE,
+       ;; one message directly above the composer. It replaces the first-run
+       ;; welcome DIALOG entirely — a modal in front of the app was one Enter
+       ;; between the user and the thing they came to type into.
+       _
+       (when (and (empty? messages) (not (tab-content-loading? db)))
+         (render/draw-welcome-message! g cols messages-top messages-bottom))
+
        _
        (header/draw-header! g db header-top cols)
 
@@ -2409,7 +2410,7 @@
       ;; past the first message row, so the operator still sees WHAT they are
       ;; answering. It paints last and owns the text cursor while it is open.
       (when-let [human-form (:human-input db)]
-        (if-let [pos (hi/paint! g cols rows human-form messages-top)]
+        (if-let [pos (hi/paint! g cols rows human-form messages-top input-box-h)]
           (.setCursorPosition screen ^TerminalPosition pos)
           (.setCursorPosition screen nil)))
       (cr/commit-frame!)
@@ -2460,6 +2461,10 @@
           (paint-terminal-images!
             (fitting-image-placements @image-sink messages-top messages-bottom))))
       {:cols cols
+       ;; The prompt box's LIVE height: an in-session band (a transient, the C-x
+       ;; hydra, a human-input form) is anchored directly above it, so it has to
+       ;; know how tall the editor grew.
+       :input-h input-box-h
        :rows rows
        :total-h total-h
        :inner-h inner-h
@@ -4487,6 +4492,8 @@
     r
     (if-let [key (with-dialog-lock #(dlg/prefix-band! screen
                                                       (or (get-in db [:layout :messages-top]) 1)
+                                                      (or (get-in db [:layout :input-h])
+                                                          tr/prompt-rows)
                                                       (keymap/prefix-spec db)))]
       (input/resolve-prefix-key key (:state r))
       {:action :continue :state (dissoc (:state r) :prefix)})))
@@ -4882,21 +4889,18 @@
              (when-let [c (or (authenticated-provider-config)
                               (when-not (:dialog-open? @state/app-db)
                                 (with-dialog-lock
-                                  #(if (vis/first-run?)
-                                     ;; First run gets NO provider UI of its own:
-                                     ;; Enter on the welcome screen opens Settings
-                                     ;; parked on `Providers` — the very dialog
-                                     ;; C-x o and the palette open. It persists what
-                                     ;; it saves and dispatches `:set-config`, so the
-                                     ;; freshest config is read back off app-db.
-                                     (provider/show-welcome!
-                                       screen
-                                       (fn []
-                                         (open-settings-modal! screen "Providers")
-                                         (let [c (or (:config @state/app-db) (vis/load-config))]
-                                           (when (seq (:providers c)) c))))
-                                     (provider/show-provider-dialog! screen
-                                                                     (:config @state/app-db))))))]
+                                  #(do
+                                     ;; There is NO welcome screen: a missing provider
+                                     ;; lands DIRECTLY in Settings parked on `Providers`
+                                     ;; — the very dialog C-x o and the palette open. It
+                                     ;; persists what it saves and dispatches
+                                     ;; `:set-config`, so the freshest config is read
+                                     ;; back off app-db. The one-time greeting is a
+                                     ;; message above the composer
+                                     ;; (`render/draw-welcome-message!`), not a modal.
+                                     (open-settings-modal! screen "Providers")
+                                     (let [c (or (:config @state/app-db) (vis/load-config))]
+                                       (when (seq (:providers c)) c))))))]
                (state/dispatch [:set-config c])
                (state/dispatch [:force-provider-limits-refresh])))
            ;; Init session: resume if --session-id given, else fresh. The --session-id case was
@@ -5545,7 +5549,8 @@
                     [choice (with-dialog-lock
                               #(dlg/start-in-transient!
                                  screen
-                                 (or (get-in @state/app-db [:layout :messages-top]) 1)))]
+                                 (or (get-in @state/app-db [:layout :messages-top]) 1)
+                                 (or (get-in @state/app-db [:layout :input-h]) tr/prompt-rows)))]
                     (if (= :trunk (:start-in choice))
                       (do (state/dispatch [:reset-input])
                           (switch-session! {:action :new}))
@@ -5587,7 +5592,13 @@
                            (or (get-in @state/app-db [:layout :messages-top]) 1)
 
                            choice
-                           (with-dialog-lock #(dlg/draft-transient! screen content-top drafts pressed))]
+                           (with-dialog-lock #(dlg/draft-transient! screen
+                                                                    content-top
+                                                                    (or (get-in @state/app-db
+                                                                                [:layout :input-h])
+                                                                        tr/prompt-rows)
+                                                                    drafts
+                                                                    pressed))]
 
                           (when choice
                             ;; A queued or externally-started turn can become active while a

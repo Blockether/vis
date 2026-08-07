@@ -1255,108 +1255,87 @@
    the `TerminalPosition` the caller should place the terminal cursor at (the
    focused text field), or nil when no text field has focus.
 
-   A magit-style TRANSIENT, not a modal. The band is bottom-anchored on the
-   session's bottom chrome — it takes over the prompt's rows and grows UPWARD
-   over the transcript, never past `content-top` — and reads `───` / bold title /
-   `───` / the fields / the action bar / `───` / hint bar, the same chrome every
-   other transient in the TUI wears. The rule directly above the hint bar is the
-   host's closing rule, so the footer below the band is never swallowed.
+   A magit-style TRANSIENT, not a modal. The band is anchored directly ABOVE the
+   session's PROMPT — the input box and the footer stay visible and in place
+   underneath it, exactly like every other transient in the TUI — and it grows
+   UPWARD over the transcript, never past `content-top`. It reads `───` / bold
+   title / `───` / the fields / the action bar / `───` / hint bar, and it wears
+   `theme/band-bg` so a form is visibly a surface laid over the session rather
+   than part of it.
+
+   `prompt-h` is the live height of that input box (`screen`'s `input-box-h`),
+   which is what decides where the band's floor is.
 
    The action bar is PINNED: only the fields scroll under it, so the `Submit`
    and `Cancel` caps stay on screen for a form of any length.
 
    TWO passes over the plan, because a scrollbar costs a column: the first plan
    sizes the band, and an overflowing one re-wraps one column narrower."
-  ([g cols rows form] (paint! g cols rows form 1))
-  ;; NOTE: no primitive hints on this arity — Clojure caps primitive-taking fns
+  ([g cols rows form] (paint! g cols rows form 1 tr/prompt-rows))
+  ([g cols rows form content-top] (paint! g cols rows form content-top tr/prompt-rows))
+  ;; NOTE: no primitive hints on these arities — Clojure caps primitive-taking fns
   ;; at four arguments — so the sizes are coerced inside the `let` instead.
-  ([g cols rows form content-top]
-   (let
-     [cols
-      (long cols)
-
-      {:keys [left inner-w] :as region}
-      (tr/band-region cols (long rows) (long content-top))
-
-      left
-      (long left)
-
-      inner-w
-      (long inner-w)
-
-      baz
-      (hint form)
-
-      actions
-      (action-bar form)
-
-      draft
-      ;; Sizing pass: how many rows the form wants decides where the band's
-      ;; top rule lands. The pinned action bar asks for one row of its own.
-      (form-rows form (prose-width inner-w))
-
-      {:keys [sep-row title-row title-rule-row body-top foot-rule-row foot-row visible top-limit]}
-      (tr/band-geometry region (+ (count draft) (if actions 1 0)))
-
-      visible
-      (long visible)
-
-      body-visible
-      (max 0 (- visible (if actions 1 0)))
-
-      is-overflowing
-      (> (count draft) body-visible)
-
-      row-w
-      (if is-overflowing (dec inner-w) inner-w)
-
-      plan
-      ;; A scrollbar eats one column, so overflowing prose re-wraps one
-      ;; narrower — still overflowing, so this settles in one step.
-      (if is-overflowing (form-rows form (prose-width row-w)) draft)
-
-      total
-      (count plan)
-
-      start
-      (long (if (= :action (:kind (focused-stop form)))
-              ;; Focus is on a pinned button: the fields stay where the operator
-              ;; left them — at the end — instead of snapping back to row 0.
-              (max 0 (- total body-visible))
-              (window-start plan body-visible)))
-
-      shown
-      (subvec (vec plan) (min start total) (min total (+ start body-visible)))]
-
-     (tr/clear-rows! g region (max 0 (long sep-row)) foot-row)
-     (when (>= (long sep-row) (long top-limit)) (tr/draw-rule! g region sep-row))
-     (when (> (long title-rule-row) (long title-row)) (tr/draw-rule! g region title-rule-row))
-     (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
-       (tr/draw-rule! g region foot-rule-row))
-     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-     (p/styled g
-               [p/BOLD]
-               (p/put-str! g
-                           (inc left)
-                           title-row
-                           (dialogs/ellipsize (str (get-in form [:request :title]))
-                                              (max 0 (- inner-w 2)))))
+  ([g cols rows form content-top prompt-h]
+   (binding [t/dialog-bg (t/band-bg)]
      (let
-       [cursor (reduce (fn [acc [i entry]]
-                         (or (paint-row! g left (+ (long body-top) (long i)) row-w entry) acc))
-                       nil
-                       (map-indexed vector shown))]
-       (doseq [i (range (count shown) body-visible)]
-         (paint-row! g left (+ (long body-top) (long i)) row-w {:kind :blank}))
-       (when is-overflowing
-         (scrollbar/draw! g
-                          {:col (+ left inner-w)
-                           :top body-top
-                           :track-h body-visible
-                           :total-h total
-                           :inner-h body-visible
-                           :scroll start}))
-       (when actions (paint-row! g left (+ (long body-top) (long body-visible)) inner-w actions))
-       (dialogs/draw-hint-bar! g left foot-row inner-w baz)
-       (p/clear-styles! g)
-       cursor))))
+       [cols (long cols)
+        {:keys [left inner-w] :as region}
+        (tr/band-region cols (long rows) (long content-top) (long prompt-h))
+        left (long left)
+        inner-w (long inner-w)
+        baz (hint form)
+        actions (action-bar form)
+        draft
+        ;; Sizing pass: how many rows the form wants decides where the band's
+        ;; top rule lands. The pinned action bar asks for one row of its own.
+        (form-rows form (prose-width inner-w))
+        {:keys [sep-row title-row title-rule-row body-top foot-rule-row foot-row visible top-limit]}
+        (tr/band-geometry region (+ (count draft) (if actions 1 0)))
+        visible (long visible)
+        body-visible (max 0 (- visible (if actions 1 0)))
+        is-overflowing (> (count draft) body-visible)
+        row-w (if is-overflowing (dec inner-w) inner-w)
+        plan
+        ;; A scrollbar eats one column, so overflowing prose re-wraps one
+        ;; narrower — still overflowing, so this settles in one step.
+        (if is-overflowing (form-rows form (prose-width row-w)) draft)
+        total (count plan)
+        start (long (if (= :action (:kind (focused-stop form)))
+                      ;; Focus is on a pinned button: the fields stay where the operator
+                      ;; left them — at the end — instead of snapping back to row 0.
+                      (max 0 (- total body-visible))
+                      (window-start plan body-visible)))
+        shown (subvec (vec plan) (min start total) (min total (+ start body-visible)))]
+
+       (tr/clear-rows! g region (max 0 (long sep-row)) foot-row)
+       (when (>= (long sep-row) (long top-limit)) (tr/draw-rule! g region sep-row))
+       (when (> (long title-rule-row) (long title-row)) (tr/draw-rule! g region title-rule-row))
+       (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
+         (tr/draw-rule! g region foot-rule-row))
+       (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+       (p/styled g
+                 [p/BOLD]
+                 (p/put-str! g
+                             (inc left)
+                             title-row
+                             (dialogs/ellipsize (str (get-in form [:request :title]))
+                                                (max 0 (- inner-w 2)))))
+       (let
+         [cursor (reduce (fn [acc [i entry]]
+                           (or (paint-row! g left (+ (long body-top) (long i)) row-w entry) acc))
+                         nil
+                         (map-indexed vector shown))]
+         (doseq [i (range (count shown) body-visible)]
+           (paint-row! g left (+ (long body-top) (long i)) row-w {:kind :blank}))
+         (when is-overflowing
+           (scrollbar/draw! g
+                            {:col (+ left inner-w)
+                             :top body-top
+                             :track-h body-visible
+                             :total-h total
+                             :inner-h body-visible
+                             :scroll start}))
+         (when actions (paint-row! g left (+ (long body-top) (long body-visible)) inner-w actions))
+         (dialogs/draw-hint-bar! g left foot-row inner-w baz)
+         (p/clear-styles! g)
+         cursor)))))

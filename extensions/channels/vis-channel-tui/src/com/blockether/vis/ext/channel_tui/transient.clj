@@ -381,37 +381,50 @@
    it."
   2)
 
+(def prompt-rows
+  "Rows the session's PROMPT box occupies at its resting single-line size: its two
+   rules and one text row (`render/input-pad-y` is 0). A caller that knows the
+   LIVE height — `screen`'s `input-box-h`, which grows with what is typed — passes
+   that instead, so the band stays glued to the prompt however tall it got."
+  3)
+
 (defn band-region
   "PURE: the rectangle an in-session BAND paints into on a `cols`×`rows`
-   terminal whose content starts at `content-top`.
+   terminal whose content starts at `content-top` and whose prompt box is
+   `prompt-h` rows tall.
 
    The session frame is SIDELESS — the prompt is two horizontal rules with no
    `│` rails — so a band that takes it over borrows exactly that: rules inset
    [[band-pad]] columns, text one column further in, and `:is-sideless true`
    so the chrome paints rules instead of `├───┤` junctions and wipes the FULL
    terminal width (a band sits on the live transcript, not on a modal's own
-   paper). `:hint-row` is the prompt box's own closing rule (always `rows - 3`,
-   whatever height the editor grew to), which keeps the echo area's two footer
-   rows below the band alive; `:min-row` is the floor, so however tall the band
-   the header and the top of the transcript stay on screen."
-  [^long cols ^long rows ^long content-top]
-  (let
-    [pad
-     (long band-pad)
+   paper).
 
-     min-row
-     (max 0 content-top)
+   The band sits ABOVE THE PROMPT, never over it. `:hint-row` is the echo-area
+   row directly above the input box (`rows - prompt-h - 3`, mirroring `screen`'s
+   own `input-top`/`echo-row` math), so the thing the human is typing into — and
+   the footer under it — stay visible and in place while a transient, the C-x
+   hydra or a human-input form is up. `:min-row` is the floor, so however tall
+   the band the header and the top of the transcript stay on screen."
+  ([^long cols ^long rows ^long content-top] (band-region cols rows content-top prompt-rows))
+  ([^long cols ^long rows ^long content-top ^long prompt-h]
+   (let
+     [pad
+      (long band-pad)
 
-     inner-w
-     (max 4 (- cols (* 2 pad)))]
+      min-row
+      (max 0 content-top)
 
-    {:left (dec pad)
-     :inner-w inner-w
-     :text-w (max 1 (- inner-w 2))
-     :hint-row (max (+ min-row 3) (- rows 3))
-     :min-row min-row
-     :cols cols
-     :is-sideless true}))
+      inner-w
+      (max 4 (- cols (* 2 pad)))]
+
+     {:left (dec pad)
+      :inner-w inner-w
+      :text-w (max 1 (- inner-w 2))
+      :hint-row (max (+ min-row 3) (- rows prompt-h 3))
+      :min-row min-row
+      :cols cols
+      :is-sideless true})))
 
 ;;; ── Paint ───────────────────────────────────────────────────────────────────
 
@@ -599,73 +612,72 @@
    The body is a GRID: pane `j` starts [[pane-width]] + [[pane-gap]] columns
    after pane `j-1`, and the middle column of every gap carries a `│` down the
    whole body — which is what tells a reader that the next heading is a sibling
-   column and not the continuation of this one."
+   column and not the continuation of this one.
+
+   A SIDELESS band is not a dialog: it lies on the LIVE transcript, so it wears
+   `theme/band-bg` instead of the dialog's paper. That is bound ONCE here, so
+   every painter below — rules, title, rows, hint bar — follows without carrying
+   a colour argument of its own."
   [{:keys [g hint-bar!]} {:keys [left inner-w text-w restore!] :as region}
    {title :title panes :panes n :row-count pane-w :pane-w grid :columns hints :hint-pairs} state]
-  (let
-    [{:keys [sep-row title-row title-rule-row body-top foot-rule-row foot-row wipe-top visible
-             top-limit]}
-     (band-geometry region n)
+  (binding [t/dialog-bg (if (:is-sideless region) (t/band-bg) t/dialog-bg)]
+    (let
+      [{:keys [sep-row title-row title-rule-row body-top foot-rule-row foot-row wipe-top visible
+               top-limit]}
+       (band-geometry region n)
+       left (long left)
+       inner-w (long inner-w)
+       pane-w (long (if (pos? (long (or pane-w 0))) pane-w inner-w))
+       clear-row! (fn [row]
+                    (clear-rows! g region row row))]
 
-     left
-     (long left)
+      ;; A taller band before this one covered rows this one does not. They belong
+      ;; to the HOST again: blanking them left a hole in the list behind the popup,
+      ;; so the host's snapshot is painted back onto them instead.
+      (when restore! (restore! top-limit (dec (long wipe-top))))
+      (dotimes [i (max 1 (- (long body-top) (long wipe-top)))]
+        (clear-row! (+ (long wipe-top) i)))
+      (when (>= (long sep-row) (max (long wipe-top) (long top-limit)))
+        (draw-rule! g region sep-row))
+      (when (> (long title-rule-row) (long title-row)) (draw-rule! g region title-rule-row))
+      (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
+        (draw-rule! g region foot-rule-row))
+      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+      (p/styled g [p/BOLD] (p/put-str! g (+ left 2) title-row (p/ellipsize (str title) text-w)))
+      (dotimes [i visible]
+        (let [row (+ (long body-top) (long i))]
+          (clear-row! row)
+          (dotimes [j (count panes)]
+            (let
+              [pane-left (+ left (* (long j) (+ pane-w (long pane-gap))))
+               r (nth (nth panes j) i)]
 
-     inner-w
-     (long inner-w)
+              (when (pos? (long j))
+                (p/set-colors! g t/border-fg t/dialog-bg)
+                (p/set-char! g (- pane-left 2) row p/BOX_V))
+              (case (:kind r)
+                :header
+                (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                    (p/styled g
+                              [p/BOLD]
+                              (p/put-str! g
+                                          (+ pane-left 2)
+                                          row
+                                          (p/ellipsize (str (:text r)) (max 1 (- pane-w 2))))))
 
-     pane-w
-     (long (if (pos? (long (or pane-w 0))) pane-w inner-w))
+                :blank
+                nil
 
-     clear-row!
-     (fn [row]
-       (clear-rows! g region row row))]
+                :item
+                (let
+                  [{:keys [type id] :as it} (:item r)
+                   {:keys [is-flag is-valued]} (get sp/item-types type)
+                   active? (boolean (or (and is-valued (contains? (:options state) id))
+                                        (and is-flag (contains? (:switches state) id))))
+                   value (when is-valued (get (:options state) id))]
 
-    ;; A taller band before this one covered rows this one does not. They belong
-    ;; to the HOST again: blanking them left a hole in the list behind the popup,
-    ;; so the host's snapshot is painted back onto them instead.
-    (when restore! (restore! top-limit (dec (long wipe-top))))
-    (dotimes [i (max 1 (- (long body-top) (long wipe-top)))]
-      (clear-row! (+ (long wipe-top) i)))
-    (when (>= (long sep-row) (max (long wipe-top) (long top-limit))) (draw-rule! g region sep-row))
-    (when (> (long title-rule-row) (long title-row)) (draw-rule! g region title-rule-row))
-    (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
-      (draw-rule! g region foot-rule-row))
-    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-    (p/styled g [p/BOLD] (p/put-str! g (+ left 2) title-row (p/ellipsize (str title) text-w)))
-    (dotimes [i visible]
-      (let [row (+ (long body-top) (long i))]
-        (clear-row! row)
-        (dotimes [j (count panes)]
-          (let
-            [pane-left (+ left (* (long j) (+ pane-w (long pane-gap))))
-             r (nth (nth panes j) i)]
-
-            (when (pos? (long j))
-              (p/set-colors! g t/border-fg t/dialog-bg)
-              (p/set-char! g (- pane-left 2) row p/BOX_V))
-            (case (:kind r)
-              :header
-              (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                  (p/styled g
-                            [p/BOLD]
-                            (p/put-str! g
-                                        (+ pane-left 2)
-                                        row
-                                        (p/ellipsize (str (:text r)) (max 1 (- pane-w 2))))))
-
-              :blank
-              nil
-
-              :item
-              (let
-                [{:keys [type id] :as it} (:item r)
-                 {:keys [is-flag is-valued]} (get sp/item-types type)
-                 active? (boolean (or (and is-valued (contains? (:options state) id))
-                                      (and is-flag (contains? (:switches state) id))))
-                 value (when is-valued (get (:options state) id))]
-
-                (draw-item! g pane-left row pane-w grid it active? value)))))))
-    (hint-bar! g left foot-row inner-w hints)))
+                  (draw-item! g pane-left row pane-w grid it active? value)))))))
+      (hint-bar! g left foot-row inner-w hints))))
 
 (defn paint!
   "Paint ONE frame of `spec` at `state` into `region` on `host`. Pure geometry,

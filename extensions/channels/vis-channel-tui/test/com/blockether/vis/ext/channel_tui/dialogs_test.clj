@@ -1060,7 +1060,7 @@
            [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
            (try (doseq [k keys]
                   (.addInput terminal k))
-                (dlg/draft-transient! screen 1 rows pressed)
+                (dlg/draft-transient! screen 1 3 rows pressed)
                 (finally (.stopScreen screen)))))]
 
       ;; Switching is its OWN command: `s` opens a second band over the same
