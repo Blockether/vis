@@ -26,6 +26,8 @@ import {
   MachineGap,
   MachineMark,
   MachineRail,
+  MachineSwitcher,
+  MachineTab,
   NewSessionButton,
   RowDisclosure,
   SectionHeader,
@@ -999,5 +1001,51 @@ describe('SearchField', () => {
     expect(field).toContain('bg-transparent');
     expect(field).toContain('focus-within:bg-input');
     expect(field).toContain('focus-within:border-accent');
+  });
+});
+
+// Regression, user report (paraphrased: should the machine tabs be regular buttons?):
+// each tab carried its own border and stood beside a filled button, so the row read as
+// several competing boxes instead of one switch beside one verb.
+describe("MachineSwitcher", () => {
+  it("is one track that stands at the button's own height", () => {
+    const html = renderToStaticMarkup(
+      <MachineSwitcher>
+        <MachineTab isOn onClick={() => {}}>
+          tower
+        </MachineTab>
+      </MachineSwitcher>,
+    );
+    // 2px of track padding around a 28px tile is the 32px of `Button` density
+    // "compact"; `mouse:` takes both down to 24 together.
+    expect(html).toContain("p-0.5");
+    // Track = duller paper, tile = the page's own paper lifted out of it.
+    expect(html).toContain("bg-level-machine");
+    // No frame: 2px padding + a 28px tile is 32px only if nothing borders it.
+    expect(html).not.toContain("border");
+    expect(html).toContain("h-7");
+    expect(html).toContain("mouse:h-5");
+    // Six machines scroll INSIDE the clipped track rather than widening the row.
+    expect(html).toContain("overflow-x-auto");
+  });
+
+  it("gives the chosen machine a raised tile and the rest no box at all", () => {
+    const on = renderToStaticMarkup(
+      <MachineTab isOn onClick={() => {}}>
+        tower
+      </MachineTab>,
+    );
+    const off = renderToStaticMarkup(
+      <MachineTab isOn={false} onClick={() => {}}>
+        mini
+      </MachineTab>,
+    );
+    expect(on).toContain('aria-pressed="true"');
+    expect(on).toContain("bg-panel");
+    // Amber is this product's VERB colour; a selected tab in it reads as a button.
+    expect(on).not.toContain("bg-accent");
+    // Nothing inside the track is bordered, selected or not.
+    for (const html of [on, off]) expect(html).not.toContain("border");
+    expect(off).toContain("text-dialog-hint");
   });
 });

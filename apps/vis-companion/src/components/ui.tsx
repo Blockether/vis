@@ -1211,6 +1211,66 @@ export function MachineMark({ color, size = 'inline' }: { color: MachineColor; s
 }
 
 /**
+ * THE FLEET SWITCHER IS ONE OBJECT, NOT A ROW OF COMPETING BOXES.
+ *
+ * A machine tab is a STATE (one of them is always on, and it stays on after the
+ * finger lifts); `Add machine` beside it is a VERB. They used to wear the same
+ * species — a bordered chip next to a filled button — so the row read as "here are
+ * three things you can do" when it says "you are here, and here is one thing to do".
+ *
+ * So the machines share ONE track and nothing inside it is bordered: the chosen
+ * machine is a raised paper tile, the rest are hint ink on the track's own fill.
+ * The row then holds exactly two objects, the switch and the verb, and they are
+ * told apart by fill logic rather than by colour.
+ *
+ * The track is the BUTTON's box from the outside — 2px of padding around a 28px
+ * tile is exactly the 32px every control on this row stands at, with no frame of its
+ * own: the duller fill IS the track, and a border around it would only re-draw the
+ * edge the fill already has, and `mouse:` takes both
+ * down together to 24px — so the switch and `Add machine` share one baseline
+ * whatever the pointer. Overflow scrolls INSIDE the clipped track, so a fleet of
+ * six never widens the row or pushes the verb off the trailing edge.
+ */
+export function MachineSwitcher({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 shrink items-center gap-0.5 overflow-x-auto rounded-lg bg-level-machine p-0.5">
+      {children}
+    </div>
+  );
+}
+
+/**
+ * One machine inside the switcher's track. Selection is a RAISED TILE — the page's
+ * own paper lifted out of the track — never a border and never the accent: amber is
+ * this product's verb colour, and a selected tab painted in it reads as a button
+ * that will do something when you press it.
+ */
+export function MachineTab({
+  isOn,
+  onClick,
+  children,
+}: {
+  isOn: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={isOn}
+      onClick={onClick}
+      className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none mouse:h-5 ${
+        isOn
+          ? 'bg-panel font-bold text-white shadow-sm'
+          : 'text-dialog-hint hover:text-white'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
  * The verb this screen exists for, on the machine that will run it.
  *
  * It used to be the first row of the header's `⋯` menu: a tap, a popover, a read,
