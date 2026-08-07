@@ -42,6 +42,18 @@ describe("ManageProjectsSheet paints no box of its own", () => {
     expect(source).not.toContain("const QUIET_BAND");
   });
 
+  // Regression, user report: adding a project offered no way out of its own — the
+  // band was a BACK arrow into the project inventory, so the only exit from "add a
+  // project" was a screen the human never asked for. Adding closes, like every
+  // other panel: its band carries the close, and the scrim dismisses it.
+  it("closes out of adding instead of retreating into the inventory", () => {
+    expect(source).not.toContain("<MenuBack");
+    expect(source).toContain(
+      "<MenuHeading onClose={onCancel}>{`Add a project · ${label}`}</MenuHeading>",
+    );
+    expect(source).toContain("onDismiss={onCancel}");
+  });
+
   it("lists folders with the shipped menu row and its badge", () => {
     expect(source).toContain("<MenuItem");
     expect(source).not.toContain("const ROW");

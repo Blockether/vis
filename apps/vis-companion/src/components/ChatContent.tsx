@@ -24,7 +24,7 @@ import {
   pageBySize,
   RAIL_PAGE,
 } from "../lib/artifacts";
-import { Spinner } from "./ui";
+import { PROSE, PROSE_RAGGED, Spinner } from "./ui";
 import "prismjs/components/prism-bash";
 import "prismjs/components/prism-clojure";
 import "prismjs/components/prism-css";
@@ -546,9 +546,9 @@ export const Markdown = memo(function Markdown({
   // every character, so the atom fills the line to the right margin and the gaps stay at their
   // natural width. Justification is therefore UNCONDITIONAL — a folded receipt's gist and its
   // `ntr[…]`-carrying metric bullets are all one flush-both-margins column, matching the TUI
-  // (`markdown-layout/justify-line-runs` → lanterna `justifyLine`).
-  const runningText =
-    "hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty text-justify";
+  // (`markdown-layout/justify-line-runs` → lanterna `justifyLine`). The rule itself is
+  // `PROSE` in `ui.tsx` — one spelling for every running paragraph in the app.
+  const runningText = PROSE;
   // A heading inside a tool result card is a STRUCTURAL divider — one file in a
   // multi-file `cat`, one occurrence in an index, one step in a batch — not a
   // document hierarchy. The card body is `text-meta` (10px), so `### path · L12-30`
@@ -2398,7 +2398,7 @@ export const UserMessage = memo(function UserMessage({
         You
       </div>
       <div
-        className={`block w-full whitespace-pre-wrap break-words hyphens-auto [hyphenate-limit-chars:6_3_3] border-l-2 border-you-role bg-code px-3 py-2 text-ui text-pretty text-you-message-foreground ${isJustifiable ? "text-justify" : "text-left"}`}
+        className={`block w-full whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui text-you-message-foreground ${isJustifiable ? PROSE : PROSE_RAGGED}`}
       >
         {parts.map((part) =>
           part.type === "text" ? (

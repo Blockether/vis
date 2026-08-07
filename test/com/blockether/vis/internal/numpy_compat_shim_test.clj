@@ -5,18 +5,15 @@
    the stdlib (math + random) — an ndarray with broadcasting, reductions, ufuncs,
    indexing, dot/matmul, a linalg submodule and a random submodule. No host bridge."
   (:require [com.blockether.vis.internal.env-python :as ep]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]))
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
 
-;; Context creation initializes every sandbox shim and is much costlier than the
-;; individual pure-Python assertions; test snippets use fresh local names.
-(defonce ^:private python-context* (delay (ep/create-python-context {})))
-
 (defmacro with-python-context
   [& body]
-  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context @python-context*)]
+  `(let [~(with-meta 'python-context {:tag `Context}) (tpc/shared)]
      ~@body))
 
 (defdescribe

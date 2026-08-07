@@ -320,4 +320,14 @@ describe("the machine header's own verbs", () => {
     expect(source).toContain("onRenameMachine(machine.conn, next)");
     expect(source).toContain("renameLabel={`Rename ${machineLabel(machine.conn)}`}");
   });
+
+  // Regression, user report: the `+` and the gear on a machine header were boxes.
+  // A header is chrome, so its glyphs are INK at rest like every other `⋯` beside
+  // them — the frame arrives on hover and focus (`quiet`), never at rest.
+  it("paints the header's two glyphs as ink, not as bordered boxes", () => {
+    expect(source).toMatch(
+      /<IconButton\s+variant="quiet"\s+label=\{`Add a project on/,
+    );
+    expect(source).toMatch(/<IconButton\s+variant="quiet"\s+label=\{`Settings for/);
+  });
 });

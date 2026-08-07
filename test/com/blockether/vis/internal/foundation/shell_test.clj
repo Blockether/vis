@@ -794,7 +794,7 @@
          (render-shell-logs-result
            {"id" "srv" "status" "running" "lines" ["ready"] "line_count" 1 "uptime_ms" 1500})]
 
-        (expect (str/includes? (:summary bg) "▸ background `srv` running · pid 123"))
+        (expect (str/includes? (:summary bg) "▸ `srv` running · pid 123"))
         (expect (str/includes? (:body bg) "**COMMAND**"))
         (expect (str/includes? (:summary logs) "◷ `srv` running · 1 lines · 1.5s"))
         (expect (str/includes? (:body logs) "**LOGS**"))))
@@ -983,8 +983,8 @@
                  (render-shell-call "run" {:commands "ls -1"}))))
   (it "wears the background START headline, which comes from the TOOL and not the arguments"
       ;; A background start is a lifecycle card, not a run: it reports the handle
-      ;; the session will keep, exactly like the finished `▸ background … started`.
-      (expect (= {:summary "▸ background `dev` starting"
+      ;; the session will keep, exactly like the finished `▸ … started`.
+      (expect (= {:summary "▸ `dev` starting"
                   :render (str "**COMMAND**\n```bash\nnpm run dev\n```\n\n"
                                "**STATUS**\n```\nid: dev\n```")}
                  (render-shell-call "background" {"id" "dev" "commands" ["npm run dev"]}))))

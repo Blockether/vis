@@ -4,6 +4,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as ext]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
@@ -34,7 +35,7 @@
              (it "makes every advertised Python name available without an import"
                  (let
                    [ctx
-                    (:python-context (ep/create-python-context {}))
+                    (tpc/shared)
 
                     names
                     (ep/ctx->python-str ep/AUTO_IMPORTED_PYTHON_NAMES)
@@ -55,7 +56,7 @@
              (it "converts a local timestamp as the first call in a fresh context"
                  (let
                    [ctx
-                    (:python-context (ep/create-python-context {}))
+                    (tpc/shared)
 
                     result
                     (ep/run-python-block ctx
@@ -80,7 +81,7 @@
   (it "reports the real Python exception for an uncaught error"
       (let
         [ctx
-         (:python-context (ep/create-python-context {}))
+         (tpc/shared)
 
          err
          (:error (ep/run-python-block ctx "raise ValueError('probe-real')"))]
@@ -90,7 +91,7 @@
   (it "keeps the real exception when the position walk itself fails"
       (let
         [ctx
-         (:python-context (ep/create-python-context {}))
+         (tpc/shared)
 
          _
          (ep/run-python-block ctx
@@ -115,9 +116,8 @@
              (it "routes every alias to the SAME tool in a live context"
                  (let
                    [ctx
-                    (:python-context (ep/create-python-context {'grep (fn grep-stub [& args]
-                                                                       {"op" "grep"
-                                                                        "args" (vec args)})}))
+                    (tpc/shared-with! {'grep (fn grep-stub [& args]
+                                               {"op" "grep" "args" (vec args)})})
 
                     result
                     (ep/run-python-block ctx
@@ -432,7 +432,7 @@
    plain `s = set(); s.add(1)` raised \"'list' object has no attribute 'add'\"."
   (let
     [ctx
-     (:python-context (ep/create-python-context {}))
+     (tpc/shared)
 
      run
      (fn [code]
@@ -581,7 +581,7 @@
    first."
   (let
     [ctx
-     (:python-context (ep/create-python-context {}))
+     (tpc/shared)
 
      run
      (fn [code]
@@ -642,7 +642,7 @@
    fields — so a stored result can be CHOSEN before it is fetched in full."
   (let
     [ctx
-     (:python-context (ep/create-python-context {}))
+     (tpc/shared)
 
      run
      (fn [code]
@@ -669,7 +669,7 @@
         ;; only ever run for an id the index cannot label.
         (let
           [own
-           (:python-context (ep/create-python-context {}))
+           (tpc/shared)
 
            primed
            (atom [])]
@@ -718,7 +718,7 @@
   (let
     [context-with
      (fn [scope-fn]
-       (let [own (:python-context (ep/create-python-context {}))]
+       (let [own (tpc/shared)]
          (ep/set-python-binding! own (symbol "__vis_native_result_scope__") scope-fn)
          own))
 
@@ -827,7 +827,7 @@
     ;; Regression: the `# saved:` line under every result now stamps the COORDINATE, so
     ;; describe() leads with the same key instead of a 24-character id to copy.
     (it "describe() leads each entry with the coordinate the transcript stamped"
-        (let [own (:python-context (ep/create-python-context {}))]
+        (let [own (tpc/shared)]
           (ep/set-python-binding!
             own
             (symbol "__vis_native_result_index__")
@@ -857,7 +857,7 @@
                "returns within its budget while another thread holds the GIL"
                (let
                  [env
-                  {:python-context (:python-context (ep/create-python-context {}))}
+                  {:python-context (tpc/shared)}
 
                   entered
                   (promise)

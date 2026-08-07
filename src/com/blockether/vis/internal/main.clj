@@ -2183,7 +2183,7 @@
   "Standalone, vis-light-styled HTML transcript for a session — the canonical
    `transcript/transcript-html` render (DB lookup + summary card + turn-by-turn
    forensic body, all CSS inlined), the SAME renderer every other surface
-   (`/export-html`, gateway, companion) uses. No extra extension required."
+   (`/export`, gateway, companion) uses. No extra extension required."
   [db sid]
   ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript-html) db sid))
 

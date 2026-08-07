@@ -5,17 +5,15 @@
    `tomllib` for a spec-correct parse; writing is a pure-Python serializer covering
    scalars, arrays, inline/nested tables and array-of-tables. No host bridge."
   (:require [com.blockether.vis.internal.env-python :as ep]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]))
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
 
-;; A namespace-local context avoids paying GraalPy + shim bootstrap per assertion.
-(defonce ^:private python-context* (delay (ep/create-python-context {})))
-
 (defmacro with-python-context
   [& body]
-  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context @python-context*)]
+  `(let [~(with-meta 'python-context {:tag `Context}) (tpc/shared)]
      ~@body))
 
 (defdescribe

@@ -4,6 +4,7 @@
    Serializable fallback."
   (:require [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.foundation.shim-nippy :as shim-nippy]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]
             [taoensso.nippy :as nippy])
   (:import [java.util Base64 Date]
@@ -12,13 +13,9 @@
 
 (defn- ev [^Context context code] (ep/->clj (.eval context "python" code)))
 
-;; Most checks only need the already-initialized shim; the one lazy-loading check
-;; below explicitly asks for a fresh context.
-(defonce ^:private python-context* (delay (ep/create-python-context {})))
-
 (defmacro with-python-context
   [& body]
-  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context @python-context*)]
+  `(let [~(with-meta 'python-context {:tag `Context}) (tpc/shared)]
      ~@body))
 
 (defmacro with-fresh-python-context

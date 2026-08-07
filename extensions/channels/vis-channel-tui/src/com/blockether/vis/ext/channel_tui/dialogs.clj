@@ -6614,13 +6614,9 @@
   ;; Whole-session Markdown copy lives in the header as an icon. Draft ops
   ;; are slash-only (`/draft …`) and surface through `menu-commands` which
   ;; aggregates them from the engine slash registry (passed as extra-commands).
-  [{:id :cycle-model :label "Cycle Model"} {:id :pick-model :label "Choose Model…"}
-   {:id :cycle-reasoning :label "Cycle Reasoning Effort"}
-   {:id :cycle-verbosity :label "Cycle Answer Length"} {:id :search-open :label "Search in Session"}
-   {:id :show-sessions :label "Switch Session"} {:id :open-drafts :label "Switch Draft…"}
-   {:id :open-magit :label "Git Status (Magit)"} {:id :pick-file :label "Attach File"}
-   {:id :toggle-voice-recording :label "Voice Recording"} {:id :new-session :label "New Session"}
-   {:id :new-session-in :label "New Session in a Draft…"}
+  [{:id :search-open :label "Search in Session"} {:id :show-sessions :label "Switch Session"}
+   {:id :pick-file :label "Attach File"} {:id :toggle-voice-recording :label "Voice Recording"}
+   {:id :new-session :label "New Session"} {:id :new-session-in :label "New Session in a Draft…"}
    ;; Both fork verbs are `:has-turns`-gated: a session with no turns has
    ;; nothing to fork, so the palette must not even offer them.
    {:id :fork-session :label "Fork Session" :show-when :has-turns}

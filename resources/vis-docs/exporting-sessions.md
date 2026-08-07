@@ -33,7 +33,7 @@ vis-agent sessions export 3a7b2c1d --md | pbcopy
 ### HTML — `--html`
 
 Writes a styled, standalone HTML rendering of the session to the given path.
-The renderer is built in — the same `transcript-html` render the `/export-html`
+The renderer is built in — the same `transcript-html` render the `/export`
 slash and the gateway use — so no extra extension is needed.
 
 ```bash

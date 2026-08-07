@@ -13,6 +13,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]))
 
@@ -25,14 +26,9 @@
   (#'extension/load-builtin-extensions!)
   (extension/sandbox-shims))
 
-;; ONE context for the whole namespace: each shim is materialised on first import,
-;; which is exactly the path under test, and paying GraalPy boot per assertion
-;; would dominate the runtime.
-(defonce ^:private python-context* (delay (ep/create-python-context {})))
-
 (defmacro ^:private with-python-context
   [& body]
-  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context @python-context*)]
+  `(let [~(with-meta 'python-context {:tag `Context}) (tpc/shared)]
      ~@body))
 
 (defn- identity-of

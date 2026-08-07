@@ -10,6 +10,7 @@
             [com.blockether.imaging :as im]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.foundation.shim-anydoc :as shim-anydoc]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
@@ -18,11 +19,9 @@
 
 (defn- ev [^Context context code] (ep/->clj (.eval context "python" code)))
 
-(defonce ^:private python-context* (delay (ep/create-python-context {})))
-
 (defmacro ^:private with-python-context
   [& body]
-  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context @python-context*)]
+  `(let [~(with-meta 'python-context {:tag `Context}) (tpc/shared)]
      ~@body))
 
 (defmacro ^:private with-fresh-python-context

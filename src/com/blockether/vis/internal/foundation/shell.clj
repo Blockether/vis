@@ -2142,7 +2142,7 @@
      ;; Text-presentation glyph, never an emoji: U+2699 COG is emoji-presented by
      ;; iOS/WebKit, so the companion painted a colour pictogram in a monochrome
      ;; card. `▸` matches the stop card's `✕` and the app's own chevrons.
-     (str "▸ background `"
+     (str "▸ `"
           id
           "` "
           status
@@ -2376,8 +2376,8 @@
      summary
      (cond
        ;; A background START is its own lifecycle card even though it carries
-       ;; commands — mirror the finished `▸ background `id` started · pid N`.
-       (= "background" op) (str "▸ background " (when id (str "`" id "` ")) "starting")
+       ;; commands — mirror the finished `▸ `id` started · pid N`.
+       (= "background" op) (str "▸ " (when id (str "`" id "` ")) "starting")
        (seq cmds) (str "$ "
                        (clip-chip (shell-one-line (first cmds)) shell-chip-max)
                        (when (next cmds) (str " · +" (dec (count cmds)) " more"))

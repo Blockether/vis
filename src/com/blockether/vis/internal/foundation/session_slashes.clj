@@ -108,12 +108,6 @@
   [ctx]
   (export! ctx nil))
 
-(defn- handle-export-html
-  "`/export-html [path]` — always write a STANDALONE, vis-light-styled HTML
-   transcript. Kept for back-compat; `/export foo.html` is equivalent."
-  [ctx]
-  (export! ctx :html))
-
 (def specs
   "Declarative session slash specs, hooked onto foundation-core's manifest
    via `:ext/slash-commands` (concatenated with the workspace slashes)."
@@ -129,10 +123,4 @@
     :slash/usage "/export [path]"
     :slash/prompt-arg "Output path (.md or .html, optional)"
     :slash/requires #{:session}
-    :slash/run-fn handle-export}
-   {:slash/name "export-html"
-    :slash/doc "Export this session's transcript as styled HTML."
-    :slash/usage "/export-html [path]"
-    :slash/prompt-arg "Output .html path (optional)"
-    :slash/requires #{:session}
-    :slash/run-fn handle-export-html}])
+    :slash/run-fn handle-export}])

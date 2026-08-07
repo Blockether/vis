@@ -737,10 +737,6 @@ const FALLBACK_SLASHES: SlashCommand[] = [
     doc: "Export this session transcript to Markdown or HTML.",
   },
   {
-    name: "/export-html",
-    doc: "Export this session transcript as styled HTML.",
-  },
-  {
     name: "/cd",
     doc: "Show or change the session's filesystem root (the directory Vis works in).",
   },

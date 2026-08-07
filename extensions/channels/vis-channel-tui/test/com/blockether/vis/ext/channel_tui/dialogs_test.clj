@@ -1117,8 +1117,11 @@
         ;; The palette is THE entry point (Ctrl+P) for the verbs whose Alt chords
         ;; don't survive macOS — so the frequent ones must be present + runnable.
         (expect (every? ids
-                        [:cycle-model :cycle-reasoning :search-open :show-sessions :open-drafts
-                         :pick-file :new-session :new-session-in :fork-session]))
+                        [:search-open :show-sessions :pick-file :new-session :new-session-in
+                         :fork-session]))
+        (expect (not (some ids
+                           [:cycle-model :pick-model :cycle-reasoning :cycle-verbosity :open-drafts
+                            :open-magit])))
         (expect (not (contains? ids :open-resources)))))
   (it "a turnless session hides BOTH fork verbs from the palette"
       ;; Forking a session with no turns is prohibited, so it must not even be
@@ -1156,7 +1159,7 @@
                                                (clojure.string/lower-case q))
              labels))]
 
-        (expect (some #{"Cycle Model"} (match "model")))
+        (expect (some #{"Switch Session"} (match "session")))
         (expect (= [] (match "zzz-no-such-command"))))))
 
 (defdescribe fork-turn-items-test

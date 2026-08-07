@@ -9,18 +9,16 @@
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.foundation.shim-pil :as shim-pil]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.util Arrays Base64]
            [org.graalvm.polyglot Context]))
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
 
-;; A namespace-local context avoids paying GraalPy + shim bootstrap per assertion.
-(defonce ^:private python-context* (delay (ep/create-python-context {})))
-
 (defmacro with-python-context
   [& body]
-  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context @python-context*)]
+  `(let [~(with-meta 'python-context {:tag `Context}) (tpc/shared)]
      ~@body))
 
 (def ^:private gray-png-b64

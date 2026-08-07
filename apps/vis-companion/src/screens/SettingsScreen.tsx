@@ -67,7 +67,7 @@ import {
   setThemePref,
 } from "../lib/storage";
 import { BUNDLED_THEMES } from "../lib/palettes";
-import { Banner, Button, DialogFrame, Input, Modal } from "../components/ui";
+import { Banner, Button, DialogFrame, Input, Modal, PROSE } from "../components/ui";
 import {
   REACH_HINT,
   REACH_LABEL,
@@ -228,7 +228,7 @@ export function GatewaySettingsDialog({
         footer={`${settingCount} ${settingCount === 1 ? "option" : "options"}`}
       >
         <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
-          <p className="text-pretty text-justify text-ui text-dialog-hint">
+          <p className={`${PROSE} text-ui text-dialog-hint`}>
             These settings are stored by this gateway and shared with its TUI
             and every other client.
           </p>
@@ -449,7 +449,7 @@ export function GatewaySettingsDialog({
                             {toggle.label}
                           </p>
                           {toggle.description && (
-                            <p className="mt-0.5 hyphens-auto break-words text-pretty text-justify text-meta text-dialog-hint">
+                            <p className={`mt-0.5 break-words ${PROSE} text-meta text-dialog-hint`}>
                               {toggle.description}
                             </p>
                           )}
@@ -1183,7 +1183,7 @@ export function ApplicationSettingsDialog({
         onClose={onClose}
       >
         <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
-          <p className="text-pretty text-justify text-ui text-dialog-hint">
+          <p className={`${PROSE} text-ui text-dialog-hint`}>
             These choices affect this copy of Vis only. They are never sent to a
             gateway.
           </p>
@@ -2011,7 +2011,7 @@ function SettingsPanel({
             {title}
           </h3>
           {description && (
-            <p className="mt-0.5 pl-2 text-pretty text-justify font-mono text-chip text-dialog-hint">
+            <p className={`mt-0.5 pl-2 ${PROSE} font-mono text-chip text-dialog-hint`}>
               {description}
             </p>
           )}

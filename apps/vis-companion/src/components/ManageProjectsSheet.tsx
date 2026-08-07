@@ -21,7 +21,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, IconButton, Input, Spinner } from './ui';
-import { AnchoredPanel, MenuBack, MenuHeading, MenuItem, MenuNote } from './Menu';
+import { AnchoredPanel, MenuHeading, MenuItem, MenuNote } from './Menu';
 import type { MenuPosition } from '../lib/anchored-menu';
 import { ChevronIcon, PencilIcon, ProjectsIcon, TrashIcon } from './icons';
 import type { GatewayClient } from '../lib/gateway';
@@ -352,13 +352,11 @@ export function ManageProjectsSheet({
         </>
       ) : (
         <>
-      {projects.length > 0 ? (
-        <MenuBack label="Back to this machine's projects" onBack={() => setAdding(false)}>
-          Add a project
-        </MenuBack>
-      ) : (
-        <MenuHeading onClose={onCancel}>{`Add a project · ${label}`}</MenuHeading>
-      )}
+      {/* Adding is a task, not a step in a tour: its band carries the app's one way
+          out. A BACK arrow into the project inventory was an exit into a screen the
+          human never asked for — the `+` says "add a project", so the only way out of
+          it is closing it (or the scrim, which `AnchoredPanel` already dismisses on). */}
+      <MenuHeading onClose={onCancel}>{`Add a project · ${label}`}</MenuHeading>
 
       {typed === null ? (
         <div

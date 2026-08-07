@@ -1425,6 +1425,7 @@ export function SessionsScreen({
                             two-item menu costs a tap and a guess to say what two glyphs
                             say on the band itself. */}
                         <IconButton
+                          variant="quiet"
                           label={`Add a project on ${machineLabel(machine.conn)}`}
                           title="Add a project"
                           onClick={(event) => {
@@ -1440,6 +1441,7 @@ export function SessionsScreen({
                         </IconButton>
                         {onMachineSettings && (
                           <IconButton
+                            variant="quiet"
                             label={`Settings for ${machineLabel(machine.conn)}`}
                             title="Machine settings"
                             onClick={() => onMachineSettings(machine.conn)}

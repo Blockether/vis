@@ -18,6 +18,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.foundation.language-surface :as language-surface]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot PolyglotException]
            [org.graalvm.polyglot.proxy ProxyArray ProxyHashMap]))
@@ -26,15 +27,15 @@
   ;; One shared GraalPy sandbox for parsing + eval cases. Parser helpers live in
   ;; this SAME session context and take source as an argument, so they neither
   ;; allocate an auxiliary context nor race through a scratch global.
-  (delay (:python-context (ep/create-python-context {}))))
+  (delay (tpc/shared)))
 
 (defn- classify
   "Parse `code` (parse-only — never evaluates the forms). On SyntaxError, run it
    through `map-polyglot-error` and return the op-error map; otherwise `:parsed`."
   [code]
-  (try (ep/count-top-level-forms @py-ctx code)
+  (try (ep/count-top-level-forms (py-ctx) code)
        :parsed
-       (catch PolyglotException e (ep/map-polyglot-error @py-ctx e code))))
+       (catch PolyglotException e (ep/map-polyglot-error (py-ctx) e code))))
 
 (defn- prose-leading? [code] (boolean (get-in (classify code) [:data :prose-leading?])))
 
@@ -77,7 +78,7 @@
              (it "parses in the session context without clobbering the eval scratch global"
                  (let
                    [ctx
-                    @py-ctx
+                    (py-ctx)
 
                     g
                     (.getBindings ctx "python")]
@@ -92,7 +93,7 @@
 
                     jobs
                     (mapv (fn [[source expected]]
-                            (future (= expected (ep/count-top-level-forms @py-ctx source))))
+                            (future (= expected (ep/count-top-level-forms (py-ctx) source))))
                           cases)]
 
                    (expect (every? true? (mapv deref jobs))))))
@@ -100,65 +101,66 @@
 (defdescribe
   sandbox-auto-import-test
   (it "makes shlex available without an import in run_python code"
-      (let [r (ep/run-python-block @py-ctx "shlex.quote('a b')")]
+      (let [r (ep/run-python-block (py-ctx) "shlex.quote('a b')")]
         (expect (nil? (:error r)))
         (expect (= "'a b'" (:result r)))))
   (it "makes re available without an import in run_python code"
-      (let [r (ep/run-python-block @py-ctx "re.sub(r'\\d+', '#', 'a12b3')")]
+      (let [r (ep/run-python-block (py-ctx) "re.sub(r'\\d+', '#', 'a12b3')")]
         (expect (nil? (:error r)))
         (expect (= "a#b#" (:result r)))))
   (it "makes hashlib available without an import in run_python code"
-      (let [r (ep/run-python-block @py-ctx "hashlib.sha256(b'hello world').hexdigest()")]
+      (let [r (ep/run-python-block (py-ctx) "hashlib.sha256(b'hello world').hexdigest()")]
         (expect (nil? (:error r)))
         (expect (= "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
                    (:result r)))))
   (it "makes json available without an import in run_python code"
-      (let [r (ep/run-python-block @py-ctx "json.dumps({'b': 2, 'a': 1}, sort_keys=True)")]
+      (let [r (ep/run-python-block (py-ctx) "json.dumps({'b': 2, 'a': 1}, sort_keys=True)")]
         (expect (nil? (:error r)))
         (expect (= "{\"a\": 1, \"b\": 2}" (:result r)))))
   (it "makes os available without an import in run_python code"
-      (let [r (ep/run-python-block @py-ctx "os.path.join('a', 'b')")]
+      (let [r (ep/run-python-block (py-ctx) "os.path.join('a', 'b')")]
         (expect (nil? (:error r)))
         (expect (= "a/b" (:result r)))))
   (it "makes sys available without an import in run_python code"
-      (let [r (ep/run-python-block @py-ctx "isinstance(sys.maxsize, int)")]
+      (let [r (ep/run-python-block (py-ctx) "isinstance(sys.maxsize, int)")]
         (expect (nil? (:error r)))
         (expect (= true (:result r)))))
   (it "makes collections available without an import in run_python code"
-      (let [r (ep/run-python-block @py-ctx "dict(collections.Counter('aab'))")]
+      (let [r (ep/run-python-block (py-ctx) "dict(collections.Counter('aab'))")]
         (expect (nil? (:error r)))
         ;; strings-only boundary: dict keys come back as VERBATIM strings
         (expect (= {"a" 2 "b" 1} (:result r)))))
   (it "makes Counter available without an import in run_python code"
-      (let [r (ep/run-python-block @py-ctx "dict(Counter('abb'))")]
+      (let [r (ep/run-python-block (py-ctx) "dict(Counter('abb'))")]
         (expect (nil? (:error r)))
         (expect (= {"a" 1 "b" 2} (:result r)))))
   (it "makes pathlib and Path available without an import in run_python code"
       (let
-        [r (ep/run-python-block @py-ctx
+        [r (ep/run-python-block (py-ctx)
                                 "pathlib.Path('a/b').name == 'b' and Path('a/b').name == 'b'")]
         (expect (nil? (:error r)))
         (expect (= true (:result r)))))
   (it "makes textwrap available without an import in run_python code"
-      (let [r (ep/run-python-block @py-ctx "textwrap.shorten('alpha beta gamma', width=11)")]
+      (let [r (ep/run-python-block (py-ctx) "textwrap.shorten('alpha beta gamma', width=11)")]
         (expect (nil? (:error r)))
         (expect (= "alpha [...]" (:result r)))))
   (it "makes base64 available without an import in run_python code"
-      (let [r (ep/run-python-block @py-ctx "base64.b64encode(b'hi').decode()")]
+      (let [r (ep/run-python-block (py-ctx) "base64.b64encode(b'hi').decode()")]
         (expect (nil? (:error r)))
         (expect (= "aGk=" (:result r)))))
   (it "makes math available without an import in run_python code"
-      (let [r (ep/run-python-block @py-ctx "round(math.sqrt(2) + math.pi, 6)")]
+      (let [r (ep/run-python-block (py-ctx) "round(math.sqrt(2) + math.pi, 6)")]
         (expect (nil? (:error r)))
         (expect (= 4.555806 (:result r)))))
   (it
     "makes glob available without an import in run_python code"
-    (let [r (ep/run-python-block @py-ctx "hasattr(glob, 'glob') and callable(glob.glob)")]
+    (let [r (ep/run-python-block (py-ctx) "hasattr(glob, 'glob') and callable(glob.glob)")]
       (expect (nil? (:error r)))
       (expect (= true (:result r))))
     (it "makes builtins available without an import in run_python code"
         (let
-          [r (ep/run-python-block @py-ctx "hasattr(builtins, 'len') and builtins.len([1, 2]) == 2")]
+          [r (ep/run-python-block (py-ctx)
+                                  "hasattr(builtins, 'len') and builtins.len([1, 2]) == 2")]
           (expect (nil? (:error r)))
           (expect (= true (:result r)))))
     (it
@@ -166,7 +168,7 @@
       (let
         [r
          (ep/run-python-block
-           @py-ctx
+           (py-ctx)
            "bool(set(['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections', 'Counter', 'pathlib', 'Path', 'textwrap', 'base64', 'math', 'builtins']) & set().union(*(set(apropos(m)) for m in ['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections', 'Counter', 'pathlib', 'Path', 'textwrap', 'base64', 'math', 'builtins'])))")]
         (expect (nil? (:error r)))
         (expect (= false (:result r)))))))
@@ -247,8 +249,8 @@
   protected-tool-name-test
   (let
     [mk (fn []
-          (:python-context (ep/create-python-context {'patch (fn [& _]
-                                                               "patched")})))]
+          (tpc/shared-with! {'patch (fn [& _]
+                                      "patched")}))]
     (it "lets a block SHADOW a bound tool name and keeps the callable usable after"
         (let
           [ctx (mk)
@@ -273,7 +275,7 @@ await patch({'path': css})" "t1/i1")]
           (expect (nil? (:error r)))
           (expect (= "patched" (:result r)))))
     (it "a tool added after context creation is shadowable and survives the block"
-        (let [ctx (:python-context (ep/create-python-context {}))]
+        (let [ctx (tpc/shared)]
           (ep/set-python-binding! ctx
                                   'later_patch
                                   (fn [& _]
@@ -290,8 +292,8 @@ await patch({'path': css})" "t1/i1")]
     ;; `format`→`format_code`) so natural variables don't collide at all.
     (it "a shadowed run_tests is still the tool in the NEXT block"
         (let
-          [ctx (:python-context (ep/create-python-context {'run_tests (fn [& _]
-                                                                        "ran")}))
+          [ctx (tpc/shared-with! {'run_tests (fn [& _]
+                                               "ran")})
            r1 (ep/run-python-block ctx "run_tests = 'oops'" "t1/i1")
            r2 (ep/run-python-block ctx "run_tests('go')" "t1/i2")]
 
@@ -312,8 +314,8 @@ await patch({'path': css})" "t1/i1")]
           (expect (= "patched" (:result r2)))))
     (it "lets the model bind `test` and `format` as ordinary variables (not tools)"
         (let
-          [ctx (:python-context (ep/create-python-context {'patch (fn [& _]
-                                                                    "patched")}))
+          [ctx (tpc/shared-with! {'patch (fn [& _]
+                                           "patched")})
            r (ep/run-python-block
                ctx
                "test = 'promise_pool.test.ts'\nformat = 'csv'\nawait patch({'path': test})"
@@ -348,7 +350,7 @@ await patch({'path': css})" "t1/i1")]
    block is still live in the NEXT block on the same context — globals persist
    NATURALLY (no rebind, no pickle, no per-turn fresh sandbox)."
   (it "a bound variable is still live in a later call on the same context"
-      (let [ctx (:python-context (ep/create-python-context {}))]
+      (let [ctx (tpc/shared)]
         (ep/run-python-block ctx "kept_v = 41")
         (let [r2 (ep/run-python-block ctx "print(kept_v + 1)")]
           (expect (nil? (:error r2)))
@@ -357,7 +359,7 @@ await patch({'path': css})" "t1/i1")]
   ;; bodies execute in the SAME scope, so a name they bind is a module global in
   ;; real Python and must survive the block here too.
   (it "a variable bound INSIDE an if/for/with/try body persists into the next block"
-      (let [ctx (:python-context (ep/create-python-context {}))]
+      (let [ctx (tpc/shared)]
         (ep/run-python-block ctx
                              (str "import io\n"
                                   "if True:\n    in_if = 1\n"
@@ -372,8 +374,8 @@ await patch({'path': css})" "t1/i1")]
   ;; next block, which then died with a bare NameError.
   (it "a variable bound inside a `with` in an AWAIT-bearing block persists"
       (let
-        [ctx (:python-context (ep/create-python-context {'echo (fn [x]
-                                                                 (str "<" x ">"))}))]
+        [ctx (tpc/shared-with! {'echo (fn [x]
+                                        (str "<" x ">"))})]
         (ep/run-python-block
           ctx
           (str "import io\n" "with io.StringIO('x') as fh:\n" "    hk = await echo(fh.read())\n")
@@ -385,8 +387,8 @@ await patch({'path': css})" "t1/i1")]
   ;; can never clobber a protected tool name.
   (it "a `with` target that shadows a tool name stays block-local"
       (let
-        [ctx (:python-context (ep/create-python-context {'patch (fn [& _]
-                                                                  "patched")}))]
+        [ctx (tpc/shared-with! {'patch (fn [& _]
+                                         "patched")})]
         (ep/run-python-block
           ctx
           (str "import io\n" "with io.StringIO('s') as patch:\n" "    got = patch.read()\n")
@@ -397,7 +399,7 @@ await patch({'path': css})" "t1/i1")]
   ;; A walrus binds in the ENCLOSING scope from wherever it appears — an `if`
   ;; test, a comprehension, a call argument — so it is a module global too.
   (it "a walrus binding in an if test / comprehension persists"
-      (let [ctx (:python-context (ep/create-python-context {}))]
+      (let [ctx (tpc/shared)]
         (ep/run-python-block ctx
                              (str "if (wal := 5) > 1:\n    pass\n"
                                   "sq = [dbl := i * 2 for i in range(3)]\n")
@@ -408,7 +410,7 @@ await patch({'path': css})" "t1/i1")]
   ;; `del x` on a module global must delete the GLOBAL. Treated as a frame local
   ;; it raised UnboundLocalError on a name that was plainly there.
   (it "`del` removes a module global instead of raising UnboundLocalError"
-      (let [ctx (:python-context (ep/create-python-context {}))]
+      (let [ctx (tpc/shared)]
         (ep/run-python-block ctx "gone = 1" "t1/i1")
         (let [r (ep/run-python-block ctx "del gone\nprint('gone' in globals())" "t1/i2")]
           (expect (nil? (:error r)))
@@ -416,7 +418,7 @@ await patch({'path': css})" "t1/i1")]
   ;; `for` / `with` / `except` / `case` targets are bindings like any other: real
   ;; module scope keeps them alive after the statement.
   (it "`for` / `with` / `match` targets persist like module bindings"
-      (let [ctx (:python-context (ep/create-python-context {}))]
+      (let [ctx (tpc/shared)]
         (ep/run-python-block ctx
                              (str "import io\n" "for line in ['a']:\n    pass\n"
                                   "with io.StringIO('s') as fh:\n    pass\n"
@@ -429,8 +431,8 @@ await patch({'path': css})" "t1/i1")]
   ;; block-locally instead of being declared global.
   (it "a `for` target that shadows a tool name stays block-local"
       (let
-        [ctx (:python-context (ep/create-python-context {'patch (fn [& _]
-                                                                  "patched")}))]
+        [ctx (tpc/shared-with! {'patch (fn [& _]
+                                         "patched")})]
         (ep/run-python-block ctx "for patch in [1, 2]:\n    pass" "t1/i1")
         (let [r (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
           (expect (nil? (:error r)))
@@ -440,15 +442,15 @@ await patch({'path': css})" "t1/i1")]
   ;; which the host could not even render (bare UnsupportedOperationException).
   (it "`from mod import *` binds module names without clobbering a tool"
       (let
-        [ctx (:python-context (ep/create-python-context {'dumps (fn [& _]
-                                                                  "tool-dumps")}))]
+        [ctx (tpc/shared-with! {'dumps (fn [& _]
+                                         "tool-dumps")})]
         (ep/run-python-block ctx "from math import *\nfrom json import *" "t1/i1")
         (let [r (ep/run-python-block ctx "print(int(pi), dumps('x'))" "t1/i2")]
           (expect (nil? (:error r)))
           (expect (= "3 tool-dumps" (str/trim (str (:stdout r))))))))
   ;; At module level `exec('x = 1')` binds a global and `locals() is globals()`.
   (it "module-level `exec` / `locals()` act on the session globals"
-      (let [ctx (:python-context (ep/create-python-context {}))]
+      (let [ctx (tpc/shared)]
         (let
           [r
            (ep/run-python-block ctx "exec('made = 7')\nprint(made, locals() is globals())" "t1/i1")]
@@ -461,7 +463,7 @@ await patch({'path': css})" "t1/i1")]
   (it "`exec` inside a def keeps real function-scope semantics"
       (let
         [ctx
-         (:python-context (ep/create-python-context {}))
+         (tpc/shared)
 
          r
          (ep/run-python-block ctx
@@ -476,17 +478,14 @@ await patch({'path': css})" "t1/i1")]
   ;; A compile error on the SYNTHESIZED module has no source text; re-raised from
   ;; the preamble it renders as a normal Python error at the boundary.
   (it "a compile error on the wrapped module surfaces as a Python error"
-      (let
-        [r (ep/run-python-block (:python-context (ep/create-python-context {}))
-                                "nonlocal nope"
-                                "t1/i1")]
+      (let [r (ep/run-python-block (tpc/shared) "nonlocal nope" "t1/i1")]
         (expect (some? (:error r)))
         (expect (str/includes? (str (:message (:error r))) "nonlocal"))))
   ;; MODULE-SCOPE ANNOTATIONS. `x: int = 5` under the wrapper's `global x` is
   ;; "annotated name 'x' can't be global" in CPython; the AnnFix pass rewrites it
   ;; to a plain assignment plus the `__annotations__` record a module keeps.
   (it "an annotated module-level assignment binds and records its annotation"
-      (let [ctx (:python-context (ep/create-python-context {}))]
+      (let [ctx (tpc/shared)]
         (let
           [r (ep/run-python-block
                ctx
@@ -503,7 +502,7 @@ await patch({'path': css})" "t1/i1")]
   ;; and OR'd into compile() instead — here PEP 563 stores annotations unevaluated.
   (it "`from __future__ import annotations` compiles and applies its flag"
       (let
-        [r (ep/run-python-block (:python-context (ep/create-python-context {}))
+        [r (ep/run-python-block (tpc/shared)
                                 (str "from __future__ import annotations\n"
                                      "fut_v: int = 3\n"
                                      "print(fut_v, repr(__annotations__['fut_v']))")
@@ -514,16 +513,13 @@ await patch({'path': css})" "t1/i1")]
   ;; function), and a top-level `yield` turned it into an async generator whose
   ;; body never ran. Both are SyntaxErrors in a real module.
   (it "a top-level `return` is a SyntaxError, not a silently truncated block"
-      (let
-        [r (ep/run-python-block (:python-context (ep/create-python-context {}))
-                                "print('a')\nreturn 5"
-                                "t1/i1")]
+      (let [r (ep/run-python-block (tpc/shared) "print('a')\nreturn 5" "t1/i1")]
         (expect (some? (:error r)))
         (expect (str/includes? (str (:message (:error r))) "'return' outside function"))))
   ;; AUTO-SETTLE must not touch a generator: it only drives OUR deferred tool
   ;; thunks. Driving anything with `.send` exhausted the generator and bound None.
   (it "a generator binding is not driven to exhaustion by the auto-settle"
-      (let [ctx (:python-context (ep/create-python-context {}))]
+      (let [ctx (tpc/shared)]
         (ep/run-python-block ctx "gen = (i for i in range(3))" "t1/i1")
         (let [r (ep/run-python-block ctx "print(list(gen))" "t1/i2")]
           (expect (nil? (:error r)))
@@ -536,7 +532,7 @@ await patch({'path': css})" "t1/i1")]
   (it "a BeautifulSoup binding is not mistaken for an awaitable by the auto-settle"
       (let
         [ctx
-         (:python-context (ep/create-python-context {}))
+         (tpc/shared)
 
          r
          (ep/run-python-block ctx
@@ -550,7 +546,7 @@ await patch({'path': css})" "t1/i1")]
   (it "an object whose __getattr__ answers everything is not driven as a coroutine"
       (let
         [ctx
-         (:python-context (ep/create-python-context {}))
+         (tpc/shared)
 
          r
          (ep/run-python-block ctx
@@ -567,9 +563,7 @@ await patch({'path': css})" "t1/i1")]
   (it "`await` inside a lambda is a normal SyntaxError, not an engine fault"
       (let
         [r
-         (ep/run-python-block (:python-context (ep/create-python-context {}))
-                              "f = lambda: await g()"
-                              "t1/i1")
+         (ep/run-python-block (tpc/shared) "f = lambda: await g()" "t1/i1")
 
          msg
          (str (:message (:error r)))]
@@ -583,7 +577,7 @@ await patch({'path': css})" "t1/i1")]
   (it "a bare starred assignment target is a SyntaxError, not a host fault"
       (let
         [ctx
-         (:python-context (ep/create-python-context {}))
+         (tpc/shared)
 
          r
          (ep/run-python-block ctx "*only = [1]" "t1/i1")
@@ -662,8 +656,8 @@ await patch({'path': css})" "t1/i1")]
    rejects top-level await) and drives it, persisting assigned vars by name."
   (let
     [mk (fn []
-          (:python-context (ep/create-python-context {'echo (fn [x]
-                                                              (str "<" x ">"))})))]
+          (tpc/shared-with! {'echo (fn [x]
+                                     (str "<" x ">"))}))]
     (it "await runs a NESTED deferred tool call"
         (let [r (ep/run-python-block (mk) "print(await echo(\"hi\"))" "t1/i1")]
           (expect (nil? (:error r)))
@@ -697,8 +691,8 @@ await patch({'path': css})" "t1/i1")]
     (it "auto-settles a bare deferred assignment EXACTLY once (no double-run)"
         (let
           [calls (atom 0)
-           ctx (:python-context (ep/create-python-context {'tick (fn []
-                                                                   (str "n" (swap! calls inc)))}))
+           ctx (tpc/shared-with! {'tick (fn []
+                                          (str "n" (swap! calls inc)))})
            r (ep/run-python-block ctx "c = await tick()\nres = tick()\nprint(res)" "t1/i1")]
 
           (expect (nil? (:error r)))
@@ -719,8 +713,8 @@ await patch({'path': css})" "t1/i1")]
     (it "await on an already-settled binding does NOT re-run the tool"
         (let
           [calls (atom 0)
-           ctx (:python-context (ep/create-python-context {'tick (fn []
-                                                                   (str "n" (swap! calls inc)))}))
+           ctx (tpc/shared-with! {'tick (fn []
+                                          (str "n" (swap! calls inc)))})
            r (ep/run-python-block ctx "x = tick()\nprint(await x)" "t1/i1")]
 
           (expect (nil? (:error r)))
@@ -825,10 +819,10 @@ await patch({'path': css})" "t1/i1")]
 
      mk
      (fn []
-       (:python-context (ep/create-python-context {'echo (fn [x]
-                                                           (str "<" x ">"))
-                                                   (symbol "__vis_par__") par
-                                                   (symbol "__vis_par_isolated__") par-isolated})))]
+       (tpc/shared-with! {'echo (fn [x]
+                                  (str "<" x ">"))
+                          (symbol "__vis_par__") par
+                          (symbol "__vis_par_isolated__") par-isolated}))]
 
     (it
       "asyncio.run(main()) drives a coroutine that awaits tools"
@@ -995,7 +989,7 @@ await patch({'path': css})" "t1/i1")]
    dangerous capabilities stay denied."
   (let
     [mk (fn []
-          (:python-context (ep/create-python-context {})))]
+          (tpc/shared))]
     (it
       "threading.Thread runs to completion"
       (let
@@ -1045,7 +1039,7 @@ await patch({'path': css})" "t1/i1")]
         (expect (= {"path" "missing.txt" "exists" false} (:result via-missing)))
         (expect (str/includes? (get-in via-old [:error :message]) "`is_exists` is not defined"))))
   (it "removing the binding makes file_exists undefined"
-      (let [ctx (:python-context (ep/create-python-context {}))]
+      (let [ctx (tpc/shared)]
         (ep/set-python-binding! ctx
                                 'file-exists
                                 (fn [path]
@@ -1062,29 +1056,29 @@ await patch({'path': css})" "t1/i1")]
              ;; (R8 in-fence r["tN/iN/fF"] memory removed: context is print-only — a later
              ;; line uses ordinary Python variables, not an r[] dict.)
              (it "E1 — comment is not a form; assign + bare expr; last value is the result"
-                 (let [r (ep/run-python-block @py-ctx "# read it\ne1x = 41\ne1x")]
+                 (let [r (ep/run-python-block (py-ctx) "# read it\ne1x = 41\ne1x")]
                    (expect (= 41 (:result r)))
                    (expect (nil? (:error r)))))
              (it "E2 — a single value-returning expression echoes its value"
-                 (let [r (ep/run-python-block @py-ctx "40 + 2")]
+                 (let [r (ep/run-python-block (py-ctx) "40 + 2")]
                    (expect (= 42 (:result r)))))
              (it "E3 — multiple statements; the trailing tuple echoes both"
-                 (let [r (ep/run-python-block @py-ctx "e3a = 1\ne3b = 2\n(e3a, e3b)")]
+                 (let [r (ep/run-python-block (py-ctx) "e3a = 1\ne3b = 2\n(e3a, e3b)")]
                    (expect (= [1 2] (:result r)))))
              (it "E6 — a call expression echoes its return value"
-                 (let [r (ep/run-python-block @py-ctx "str(99)")]
+                 (let [r (ep/run-python-block (py-ctx) "str(99)")]
                    (expect (= "99" (:result r)))))
              (it "a def is one form; a following call evaluates"
-                 (let [r (ep/run-python-block @py-ctx "def e_f():\n    return 7\ne_f()")]
+                 (let [r (ep/run-python-block (py-ctx) "def e_f():\n    return 7\ne_f()")]
                    (expect (= 7 (:result r)))))
              (it "E7 — evaluation stops at the first erroring form; later forms do not run"
-                 (let [r (ep/run-python-block @py-ctx "e7x = 1\ne7_boom\ne7y = 2")]
+                 (let [r (ep/run-python-block (py-ctx) "e7x = 1\ne7_boom\ne7y = 2")]
                    (expect (nil? (:result r)))
                    (expect (= :python/runtime (get-in (:error r) [:data :phase])))))
              (it "E7b — a NameError for an undefined TOOL gets an enrichment hint"
                  (let
                    [r
-                    (ep/run-python-block @py-ctx "definitely_not_a_tool_zzz(\"x\")")
+                    (ep/run-python-block (py-ctx) "definitely_not_a_tool_zzz(\"x\")")
 
                     err
                     (:error r)]
@@ -1130,14 +1124,14 @@ await patch({'path': css})" "t1/i1")]
    model resends clean code. With native tool calling (one run_python code arg)
    the block-concat causes don't arise; :auto-repaired is always nil."
   (it "GLUED top-level forms ERROR as a SyntaxError (not repaired)"
-      (let [r (ep/run-python-block @py-ctx "len([1,2])abs(-3)")]
+      (let [r (ep/run-python-block (py-ctx) "len([1,2])abs(-3)")]
         (expect (nil? (:result r)))
         (expect (some? (:error r)))
         (expect (= :python/syntax (get-in r [:error :data :phase])))
         (expect (nil? (:auto-repaired r)))))
   (it "a PARROTED transcript tail (```ctx + r[...]= echoes) ERRORS as a SyntaxError, not salvaged"
       (let
-        [r (ep/run-python-block @py-ctx
+        [r (ep/run-python-block (py-ctx)
                                 (str "x_e2e = 1\nx_e2e + 41\n"
                                      "```ctx\n[\"env\"][\"nrepl\"] = 7888\n# tool results\n"
                                      "r[\"t4/i1/f1\"] = {\"files\": [\"a.clj\"]}"))]
@@ -1146,7 +1140,7 @@ await patch({'path': css})" "t1/i1")]
         (expect (= :python/syntax (get-in r [:error :data :phase])))
         (expect (nil? (:auto-repaired r)))))
   (it "clean Python still runs untouched (no false repair)"
-      (let [r (ep/run-python-block @py-ctx "len([1,2,3])")]
+      (let [r (ep/run-python-block (py-ctx) "len([1,2,3])")]
         (expect (= 3 (:result r)))
         (expect (nil? (:error r)))
         (expect (nil? (:auto-repaired r))))))
@@ -1223,7 +1217,7 @@ await patch({'path': css})" "t1/i1")]
       (let
         [r
          (ep/run-python-block
-           @py-ctx
+           (py-ctx)
            "def compute(x):\n    y = x + 1\n    return y / 0\n\nprint(compute(41))")
 
          err
@@ -1240,7 +1234,7 @@ await patch({'path': css})" "t1/i1")]
   (it "an undefined name pins line+caret to the name, overriding the shallow loc"
       (let
         [r
-         (ep/run-python-block @py-ctx "print(undefined_zzz)")
+         (ep/run-python-block (py-ctx) "print(undefined_zzz)")
 
          err
          (:error r)
@@ -1255,14 +1249,14 @@ await patch({'path': css})" "t1/i1")]
   (it "the DEEPEST user-code frame wins for an error raised inside a called fn"
       (let
         [r (ep/run-python-block
-             @py-ctx
+             (py-ctx)
              "def pick(xs):\n    return xs[10]\n\nrows = [1, 2, 3]\nprint(pick(rows))")]
         (expect (= 2 (get-in r [:error :data :line])))
         (expect (str/includes? (:message (:error r)) "return xs[10]"))))
   (it "a compile/syntax error keeps its precise loc-based excerpt"
       (let
         [r
-         (ep/run-python-block @py-ctx "def h():\n    if True 1")
+         (ep/run-python-block (py-ctx) "def h():\n    if True 1")
 
          err
          (:error r)]
@@ -1274,7 +1268,7 @@ await patch({'path': css})" "t1/i1")]
   (it "a tab-indented body renders an aligned caret with NO raw tab in the excerpt"
       (let
         [r
-         (ep/run-python-block @py-ctx "def tb(x):\n\treturn x / 0\n\nprint(tb(1))")
+         (ep/run-python-block (py-ctx) "def tb(x):\n\treturn x / 0\n\nprint(tb(1))")
 
          msg
          (:message (:error r))]
@@ -1287,7 +1281,7 @@ await patch({'path': css})" "t1/i1")]
     (let
       [r
        (ep/run-python-block
-         @py-ctx
+         (py-ctx)
          "def go():\n    try:\n        1/0\n    except Exception as e:\n        raise ValueError('oops') from e\ngo()")
 
        msg
@@ -1318,7 +1312,7 @@ await patch({'path': css})" "t1/i1")]
   (it "a CJK glyph before the token aligns the caret by CODEPOINT columns"
       (let
         [r
-         (ep/run-python-block @py-ctx "名前 = missing_var + 1")
+         (ep/run-python-block (py-ctx) "名前 = missing_var + 1")
 
          msg
          (:message (:error r))
@@ -1344,7 +1338,7 @@ await patch({'path': css})" "t1/i1")]
         (expect (= 11 span))))
   (it "an empty / comment-only / stripped block returns a clean message, not the async internal"
       (doseq [code ["# just a comment\n# nothing here" "   \n\t\n  " "from asyncio import gather"]]
-        (let [err (:error (ep/run-python-block @py-ctx code))]
+        (let [err (:error (ep/run-python-block (py-ctx) code))]
           (expect (= :python/empty-block (get-in err [:data :phase])))
           (expect (true? (get-in err [:data :empty-block?])))
           (expect (str/includes? (:message err) "nothing to execute"))
@@ -1352,7 +1346,7 @@ await patch({'path': css})" "t1/i1")]
           (expect (not (str/includes? (:message err) "AsyncFunctionDef")))
           (expect (not (str/includes? (:message err) "empty body"))))))
   (it "a clean eval carries no error and no excerpt"
-      (let [r (ep/run-python-block @py-ctx "print(1 + 2)")]
+      (let [r (ep/run-python-block (py-ctx) "print(1 + 2)")]
         (expect (nil? (:error r))))))
 
 (defn- host-throw!
@@ -1362,7 +1356,7 @@ await patch({'path': css})" "t1/i1")]
   [nm ^Throwable t]
   (let
     [^org.graalvm.polyglot.Context c
-     @py-ctx
+     (py-ctx)
 
      code
      (str nm "()")]
@@ -1407,7 +1401,7 @@ await patch({'path': css})" "t1/i1")]
   (it "relabels a tool-body NPE as :vis/host-null-tool-fault, keeping the null message"
       (let
         [^org.graalvm.polyglot.Context c
-         @py-ctx
+         (py-ctx)
 
          _
          (.putMember (.getBindings c "python")
@@ -1487,7 +1481,7 @@ await patch({'path': css})" "t1/i1")]
              (it "a SUCCESSFUL block in between clears the streak"
                  (let
                    [^org.graalvm.polyglot.Context c
-                    @py-ctx
+                    (py-ctx)
 
                     boom
                     (fn []
@@ -1590,7 +1584,7 @@ await patch({'path': css})" "t1/i1")]
              (it "tags a null-receiver NPE :host-null? even when it is not a host exception"
                  (let
                    [^org.graalvm.polyglot.Context c
-                    @py-ctx
+                    (py-ctx)
 
                     code
                     (str "raise RuntimeError('java.lang.NullPointerException: "

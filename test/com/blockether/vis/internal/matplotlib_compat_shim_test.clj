@@ -7,6 +7,7 @@
    which returns a PNG the shim writes to a path or file-like buffer."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as ep]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]))
 
@@ -31,12 +32,9 @@
            "__buf = io.BytesIO()\nplt.savefig(__buf)\n"
            "list(__buf.getvalue()[:8]) == [137, 80, 78, 71, 13, 10, 26, 10]")))
 
-;; A namespace-local context avoids paying GraalPy + shim bootstrap per assertion.
-(defonce ^:private python-context* (delay (ep/create-python-context {})))
-
 (defmacro with-python-context
   [& body]
-  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context @python-context*)]
+  `(let [~(with-meta 'python-context {:tag `Context}) (tpc/shared)]
      ~@body))
 
 (defdescribe
