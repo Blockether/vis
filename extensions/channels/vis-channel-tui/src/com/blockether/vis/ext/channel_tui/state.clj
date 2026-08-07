@@ -1082,18 +1082,17 @@
 (defn- restore-tab
   "Pull the per-tab locals for `workspace-id` back into the active db.
 
-   Layout is cached per tab so revisiting a tab can paint against its own
-   established geometry immediately instead of first rendering with no layout and
-   visibly settling on a later frame. The cache is safe only while terminal
-   dimensions match the tab being left; after a resize, discard the target layout
-   so the first frame recomputes against the new geometry.
+   The tab's cached `:layout` is NOT carried over. It describes the last frame
+   that tab painted, which a background turn has since outgrown, and every reader
+   of `:layout` (the scroll ease above all) would take it for the current
+   geometry.
 
    Switching tabs is deliberately a **latest-events jump**, not a restoration of a
    prior reading position. The incoming transcript was not on screen, and its
    background turn may have grown while hidden; retaining either a parked offset
    or eased `:pos` produces stale history followed by an unwanted scroll. Resetting
    to FOLLOW makes the first frame show the current tail, including for live turns.
-   The target layout remains reusable when terminal dimensions match."
+   The tab's stale published `:layout` is dropped for the same reason."
   [db workspace-id]
   (let
     [entry
@@ -1107,28 +1106,22 @@
      locals
      (merge (empty-tab-state) (get-in db [:tab-locals workspace-id]))
 
-     current-layout
-     (:layout db)
-
-     target-layout
-     (:layout locals)
-
-     compatible-layout?
-     (and (map? current-layout)
-          (map? target-layout)
-          (every? #(and (some? (get target-layout %))
-                        (= (get current-layout %) (get target-layout %)))
-                  [:cols :rows]))
-
      db'
      (-> (merge db locals)
          ;; A workspace switch always enters at the live tail. Per-tab scroll
          ;; snapshots still matter while a tab stays focused, but never across a
          ;; switch: a background/live tab should not reopen above its newest event.
          (assoc :scroll scroll/follow)
-         (cond->
-           (not compatible-layout?)
-           (dissoc :layout)))]
+         ;; And the incoming tab's published `:layout` goes with it. That map is
+         ;; the geometry of the LAST frame this tab painted, and a tab that was
+         ;; streaming in the background has grown taller since — while the render
+         ;; loop's `:ease-scroll` fires on every tick a turn is loading, off
+         ;; whatever `:layout` it finds. Kept, it pins FOLLOW's `:pos` to that old,
+         ;; shorter bottom, and the next frame's real layout then ANIMATES the
+         ;; whole transcript down to the true bottom — the same self-scroll a
+         ;; resize used to cause. With no layout there is nothing to ease from:
+         ;; the first frame lays the tail out flush and publishes the truth.
+         (dissoc :layout))]
 
     ;; The tab ENTRY carries the workspace root reliably (set at creation). A
     ;; stale/empty tab-locals snapshot — taken before `:set-workspace` landed —

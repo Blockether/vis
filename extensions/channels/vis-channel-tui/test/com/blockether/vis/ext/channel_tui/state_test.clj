@@ -339,7 +339,7 @@
       (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
       (expect (= "tab draft" (input/input->text (:input @state/app-db))))
       (expect (= ["tab prompt"] (:input-history @state/app-db))))
-  (it "restores a tab's cached layout but always enters at its latest event"
+  (it "drops a tab's cached layout and always enters at its latest event"
       (let
         [main-layout
          {:cols 120 :rows 40 :total-h 5000 :inner-h 30 :offsets [0 100 900]}
@@ -360,12 +360,14 @@
                                                    :layout tab-layout}}
                               :render-version 0})
         (state/dispatch [:select-tab-index 1])
-        (expect (= tab-layout (:layout @state/app-db)))
+        ;; The cached layout describes the frame this tab painted BEFORE it went
+        ;; to the background; carried over, the ease would animate against it.
+        (expect (nil? (:layout @state/app-db)))
         ;; A tab switch is a latest-events jump, not a restoration of where this
         ;; transcript was previously read. This applies equally to a live tab.
         (expect (= scroll/follow (:scroll @state/app-db)))
         (state/dispatch [:select-tab-index 0])
-        (expect (= main-layout (:layout @state/app-db)))
+        (expect (nil? (:layout @state/app-db)))
         (expect (= scroll/follow (:scroll @state/app-db)))))
   (it "snaps a FOLLOWing tab to the live bottom instead of easing down to it"
       ;; The regression: a hidden FOLLOW tab keeps `:pos` pinned at the bottom of
@@ -508,7 +510,33 @@
       (expect (= {:id "tab-c"} (:session @state/app-db)))
       (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
       (state/dispatch [:select-tab-by-session "missing"])
-      (expect (= :tab-1 (:active-tab-id @state/app-db)))))
+      (expect (= :tab-1 (:active-tab-id @state/app-db))))
+  ;; Regression, issue #2: switching tabs during a live turn made the whole
+  ;; transcript scroll by itself. The incoming tab was restored WITH the stale
+  ;; `:layout` it published the last time it was on screen, so the render loop's
+  ;; `:ease-scroll` (which fires on every tick while `:loading?`) pinned FOLLOW's
+  ;; `:pos` to that old, shorter bottom — and the next frame's real layout then
+  ;; animated the view down to the true bottom.
+  (it "switching tabs leaves no stale layout for the ease to animate from"
+      (reset! state/app-db {:tabs [{:id :main :label "Main" :active? true}
+                                   {:id :tab-1 :label "Tab 1"}]
+                            :active-tab-id :main
+                            :scroll scroll/follow
+                            :layout {:cols 80 :rows 40 :total-h 400 :inner-h 30}
+                            :render-version 0
+                            :tab-locals {:tab-1 {:loading? true
+                                                 :scroll scroll/follow
+                                                 :layout
+                                                 {:cols 80 :rows 40 :total-h 200 :inner-h 30}}}})
+      (state/dispatch [:select-tab-index 1])
+      (expect (nil? (:layout @state/app-db)))
+      ;; The render loop only eases once a layout has been published for the
+      ;; frame it is looking at (`maybe-ease!` bails on a nil layout).
+      (when-let [ly (:layout @state/app-db)]
+        (state/dispatch [:ease-scroll (:total-h ly) (:inner-h ly)]))
+      ;; The incoming tab's transcript grew while it was in the background: its
+      ;; real bottom is far below the stale layout's. Nothing may animate there.
+      (expect (not (scroll/animating? (:scroll @state/app-db) 970)))))
 
 (defdescribe
   init-settings-test
