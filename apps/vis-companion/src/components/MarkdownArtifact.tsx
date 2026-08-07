@@ -9,10 +9,34 @@ import {
 } from "../lib/markdown-annotations";
 import { Markdown } from "./ChatContent";
 import { readArtifactText } from "./TextArtifact";
-import { Button } from "./ui";
+import { TrashIcon } from "./icons";
+import { Button, IconButton } from "./ui";
 
 /** The blocks a tap may quote: one paragraph, heading, item or cell. */
 const QUOTABLE_BLOCKS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,pre,td,th";
+
+/**
+ * ONE COLOUR PER COMMENT, AND THE SAME COLOUR IN BOTH PLACES.
+ *
+ * A remark is identified by its ORDINAL and by its hue: the passage it is about
+ * is underlined in that hue and carries the number, and the card below wears the
+ * very same chip. Six remarks on one note are then six threads a reader can
+ * follow, instead of six identical grey boxes under a page of untouched prose.
+ * The palette is spelled here because it is DATA the DOM is painted with, not a
+ * class list: an underline colour has to be handed to `text-decoration-color`.
+ */
+export const ANNOTATION_COLORS = [
+  "#b45309",
+  "#1d4ed8",
+  "#047857",
+  "#be185d",
+  "#6d28d9",
+  "#0e7490",
+];
+
+export function annotationColor(index: number): string {
+  return ANNOTATION_COLORS[index % ANNOTATION_COLORS.length];
+}
 
 /**
  * A MARKDOWN NOTE, READ AS PROSE AND MARKED UP BY HAND.
@@ -153,6 +177,55 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
     setDirty(true);
   }, []);
 
+  // THE PASSAGE WEARS ITS OWN COMMENT.
+  //
+  // A remark that only exists in a list at the bottom leaves the reader guessing
+  // which line it is about — so the quoted block is UNDERLINED in that comment's
+  // colour and carries its ordinal, painted straight onto the rendered markdown
+  // (the prose comes from the shared `Markdown`, so there is no React node here
+  // to decorate). The cleanup removes exactly what this pass added.
+  useEffect(() => {
+    const prose = proseRef.current;
+    if (!prose) return;
+    const blocks = Array.from(
+      prose.querySelectorAll<HTMLElement>(QUOTABLE_BLOCKS),
+    );
+    const marks: HTMLElement[] = [];
+    const painted: HTMLElement[] = [];
+    for (const block of blocks) {
+      const text = quoteOf(block.textContent ?? "");
+      const hits: number[] = [];
+      comments.forEach((comment, at) => {
+        if (comment.quote === text) hits.push(at);
+      });
+      if (hits.length === 0) continue;
+      block.style.textDecorationLine = "underline";
+      block.style.textDecorationColor = annotationColor(hits[0]);
+      block.style.textDecorationThickness = "2px";
+      block.style.textUnderlineOffset = "3px";
+      painted.push(block);
+      for (const at of hits) {
+        const mark = document.createElement("sup");
+        mark.dataset.commentOrdinal = String(at + 1);
+        mark.textContent = String(at + 1);
+        mark.style.color = annotationColor(at);
+        mark.style.fontWeight = "700";
+        mark.style.marginInlineStart = "0.25em";
+        block.appendChild(mark);
+        marks.push(mark);
+      }
+    }
+    return () => {
+      for (const mark of marks) mark.remove();
+      for (const block of painted) {
+        block.style.textDecorationLine = "";
+        block.style.textDecorationColor = "";
+        block.style.textDecorationThickness = "";
+        block.style.textUnderlineOffset = "";
+      }
+    };
+  }, [comments, body]);
+
   const save = useCallback(() => {
     setSaving(true);
     setStatus("");
@@ -220,20 +293,29 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
           {comments.map((comment, at) => (
             <li
               key={`${at}:${comment.quote}`}
-              className="flex items-start gap-3 border border-dialog-edge bg-panel px-3 py-2"
+              className="flex items-start gap-2 border-l-2 border-dialog-edge bg-panel py-1 pl-2"
+              style={{ borderLeftColor: annotationColor(at) }}
             >
+              <span
+                aria-hidden="true"
+                className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full font-mono text-chip text-white"
+                style={{ backgroundColor: annotationColor(at) }}
+              >
+                {at + 1}
+              </span>
               <div className="min-w-0 flex-1">
-                <p className="text-meta text-dialog-hint">“{comment.quote}”</p>
+                <p className="truncate text-meta text-dialog-hint">
+                  “{comment.quote}”
+                </p>
                 <p className="text-body text-foreground">{comment.body}</p>
               </div>
-              <Button
-                type="button"
+              <IconButton
+                label={`Remove comment ${at + 1}`}
                 variant="quiet"
-                aria-label={`Remove comment on ${comment.quote}`}
                 onClick={() => removeComment(at)}
               >
-                Remove
-              </Button>
+                <TrashIcon className="size-4" />
+              </IconButton>
             </li>
           ))}
         </ul>

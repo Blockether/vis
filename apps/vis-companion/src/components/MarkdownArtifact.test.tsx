@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { MarkdownAnnotator } from "./MarkdownArtifact";
+import { annotationColor, MarkdownAnnotator } from "./MarkdownArtifact";
 
 const html = (node: Parameters<typeof renderToStaticMarkup>[0]) =>
   renderToStaticMarkup(node);
@@ -90,5 +90,60 @@ describe("picking a passage on a touch screen", () => {
     expect(markup).toContain("overflow-hidden");
     expect(markup).toContain("flex-1 touch-manipulation overflow-y-auto");
     expect(markup).toContain("env(safe-area-inset-bottom)");
+  });
+});
+
+// A remark used to be an anonymous grey box under a page of untouched prose:
+// nothing said which line it was about. Each comment now has an ordinal and a
+// colour, and the quoted block wears both.
+describe("marking up the passages a comment is about", () => {
+  it("underlines each quoted block in its comment's colour and numbers it", () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(
+        <MarkdownAnnotator
+          text={
+            "# Ship it\n\nWe cut on Friday.\n\n## Comments\n\n" +
+            "- **\u201cShip it\u201d** \u2014 When exactly?\n" +
+            "- **\u201cWe cut on Friday.\u201d** \u2014 Who signs off?\n"
+          }
+          onSave={noop}
+        />,
+      );
+    });
+
+    const heading = host.querySelector("h1") as HTMLElement;
+    const paragraph = host.querySelector("p") as HTMLElement;
+    expect(heading.style.textDecorationLine).toBe("underline");
+    // jsdom normalises a hex colour to `rgb(...)`, so the palette is compared
+    // through the same normalisation rather than by spelling.
+    const asRgb = (hex: string) => {
+      const probe = document.createElement("span");
+      probe.style.color = hex;
+      return probe.style.color;
+    };
+    expect(heading.style.textDecorationColor).toBe(asRgb(annotationColor(0)));
+    expect(paragraph.style.textDecorationColor).toBe(asRgb(annotationColor(1)));
+    expect(paragraph.style.textDecorationColor).not.toBe(
+      heading.style.textDecorationColor,
+    );
+
+    const ordinals = Array.from(
+      host.querySelectorAll<HTMLElement>("sup[data-comment-ordinal]"),
+    ).map((mark) => mark.textContent);
+    expect(ordinals).toEqual(["1", "2"]);
+
+    // The list below says the same thing, and removal names the number.
+    expect(
+      host.querySelector('button[aria-label="Remove comment 2"]'),
+    ).not.toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+    host.remove();
   });
 });
