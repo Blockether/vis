@@ -472,25 +472,24 @@
       (let [rows (painted-rows (assoc (hi/init-form (request)) :focus 6) "Confirm")]
         (expect (some #{(canonical-row
                           (fn [g]
-                            (dialogs/draw-field-row! g
-                                                     0
-                                                     0 40
-                                                     true (str (dialogs/choice-mark false false)
-                                                               "Confirm"))))}
+                            (dialogs/draw-toggle-row! g
+                                                      0
+                                                      0 40
+                                                      true (str (dialogs/choice-mark false false)
+                                                                "Confirm"))))}
                       rows))
         ;; The checkbox row IS the label — no duplicate bold label row above it.
         (expect (= 1 (count rows)))))
   (it "paints select options with the shared ●/○ status marks"
       (expect (some #{(canonical-row (fn [g]
-                                       (dialogs/draw-field-row! g
-                                                                0
-                                                                0 40
-                                                                true (str (dialogs/choice-mark true
-                                                                                               true)
-                                                                          "Dev"))))}
+                                       (dialogs/draw-toggle-row!
+                                         g
+                                         0
+                                         0 40
+                                         true (str (dialogs/choice-mark true true) "Dev"))))}
                     (painted-rows (assoc (hi/init-form (request)) :focus 2) "Dev")))
       (expect (some #{(canonical-row (fn [g]
-                                       (dialogs/draw-field-row!
+                                       (dialogs/draw-toggle-row!
                                          g
                                          0
                                          0 40
@@ -504,14 +503,14 @@
         [rows (into (painted-rows (assoc (hi/init-form (request)) :focus 4) "Alpha")
                     (painted-rows (assoc (hi/init-form (request)) :focus 4) "Beta"))]
         (expect (some #{(canonical-row (fn [g]
-                                         (dialogs/draw-field-row!
+                                         (dialogs/draw-toggle-row!
                                            g
                                            0
                                            0 40
                                            true (str (dialogs/choice-mark false false) "Alpha"))))}
                       rows))
         (expect (some #{(canonical-row (fn [g]
-                                         (dialogs/draw-field-row!
+                                         (dialogs/draw-toggle-row!
                                            g
                                            0
                                            0 40
@@ -521,14 +520,14 @@
   (it "fills the box of a chosen inclusive option and leaves its sibling empty"
       (let [form (feed (assoc (hi/init-form (request)) :focus 4) [(ch \space)])]
         (expect (some #{(canonical-row (fn [g]
-                                         (dialogs/draw-field-row!
+                                         (dialogs/draw-toggle-row!
                                            g
                                            0
                                            0 40
                                            true (str (dialogs/choice-mark false true) "Alpha"))))}
                       (painted-rows form "Alpha")))
         (expect (some #{(canonical-row (fn [g]
-                                         (dialogs/draw-field-row!
+                                         (dialogs/draw-toggle-row!
                                            g
                                            0
                                            0 40
@@ -967,40 +966,45 @@
    dialog's own paper it is just a margin nobody asked for. A checkbox IS its own
    label, so that margin made the one row that should line up with the other
    labels the only row indented away from them."
-  (it "starts a checkbox and an option one ring cell in, not two"
-      (let
-        [{:keys [screen g]}
-         (virtual-screen)
+  (it
+    "starts a checkbox and an option one ring cell in, not two"
+    (let
+      [{:keys [screen g]}
+       (virtual-screen)
 
-         _
-         (hi/paint! g
-                    80
-                    30
-                    (hi/init-form
-                      {:id "r"
-                       :title "T"
-                       :fields
-                       [{:id "env"
-                         :type :select
-                         :label "Environment"
-                         :options [{:value "stg" :label "Staging"}]}
-                        {:id "ok" :type :checkbox :label "I have read the diff"}]}))
+       _
+       (hi/paint! g
+                  80
+                  30
+                  (hi/init-form {:id "r"
+                                 :title "T"
+                                 :fields
+                                 [{:id "env"
+                                   :type :select
+                                   :label "Environment"
+                                   :options [{:value "stg" :label "Staging"}]}
+                                  {:id "ok" :type :checkbox :label "I have read the diff"}]}))
 
-         col-of
-         (fn [needle]
-           (some (fn [r]
-                   (let [line (screen-row screen r)
-                         at (str/index-of line needle)]
-                     (when at at)))
-                 (range 30)))
+       col-of
+       (fn [needle]
+         (some (fn [r]
+                 (let
+                   [line
+                    (screen-row screen r)
 
-         label-col
-         (col-of "Environment")]
+                    at
+                    (str/index-of line needle)]
 
-        (expect (some? label-col))
-        ;; The ring cell is the ONLY gutter a focusable row gets.
-        (expect (= (inc (long label-col)) (col-of "●")))
-        (expect (= (inc (long label-col)) (col-of "[ ]"))))))
+                   (when at at)))
+               (range 30)))
+
+       label-col
+       (col-of "Environment")]
+
+      (expect (some? label-col))
+      ;; The ring cell is the ONLY gutter a focusable row gets.
+      (expect (= (inc (long label-col)) (col-of "●")))
+      (expect (= (inc (long label-col)) (col-of "[ ]"))))))
 
 (def ^:private prose
   "Two sentences of dialog prose — wider than any dialog row, so it reaches the
@@ -1056,7 +1060,9 @@
         (expect (= :blank (:kind (nth rows (inc i)))))
         (expect (< 1 (count desc)))
         (expect (= (str/split prose #"\s+") (prose-words desc)))
-        (expect (= :input (:kind (nth rows (+ i 2 (count desc))))))))
+        ;; Then one row of air, and only then the box.
+        (expect (= :blank (:kind (nth rows (+ i 2 (count desc))))))
+        (expect (= :input (:kind (nth rows (+ i 3 (count desc))))))))
   (it "leaves the plan unwrapped when no width is offered"
       ;; The pure one-arity plan is what a caller measures without a terminal.
       (let
