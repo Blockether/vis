@@ -3845,18 +3845,33 @@
                      {:status "cancelling"})))))
 
 (defn cancel-current-turn!
-  "Tid-less twin of `cancel-turn!`: fire the cancellation token of WHATEVER
-   turn currently holds `sid`'s `:current-turn` slot. For clients that lost
-   (or never learned) the turn id — an Esc that raced the `turn.started`
-   late-bind, or a client-side cancel self-heal that dropped its
-   `:gateway-turn-id` while the server turn kept running. Without this, that
-   ghost turn keeps `:current-turn` and every next submit silently queues
-   behind it. Returns `{:status \"cancelling\" :turn_id tid}` or
-   `{:error :no-running-turn}`."
-  [sid]
+  "Tid-less twin of `cancel-turn!`: fire the cancellation token of the turn
+   currently holding `sid`'s `:current-turn` slot, but ONLY when `owner-key` is
+   the `idempotency_key` that turn was submitted with. For clients that lost (or
+   never learned) the turn id — an Esc that raced the `turn.started` late-bind,
+   or a client-side cancel self-heal that dropped its `:gateway-turn-id`. Without
+   this, that ghost turn keeps `:current-turn` and every next submit silently
+   queues behind it.
+
+   A session is SHARED, so \"whatever is running here\" never proves \"the turn I
+   submitted\": an unaddressed cancel used to kill the turn another channel (the
+   companion app, the web, a second TUI) was running the moment a client opened
+   the session. The correlation id the submitter already sent is the proof, and
+   a turn submitted without one is reachable only by `cancel-turn!`'s id-addressed
+   route — which every client learns from `turn.started`.
+
+   Returns `{:status \"cancelling\" :turn_id tid}`, `{:error :not-owner :turn_id
+   tid}` for someone else's turn, or `{:error :no-running-turn}`."
+  [sid owner-key]
   (if-let [tid (:current-turn (session-entry sid))]
-    (let [res (cancel-turn! sid tid :client-cancel-current)]
-      (if (:error res) res (assoc res :turn_id tid)))
+    (let [turn-key (:idempotency_key (turn-record sid tid))]
+      (if-not (and owner-key turn-key (= (str owner-key) (str turn-key)))
+        (do (tel/log! :info
+                      ["gateway: refusing tid-less cancel of turn" tid
+                       (str "owner=" (pr-str turn-key)) (str "caller=" (pr-str owner-key))])
+            {:error :not-owner :turn_id tid})
+        (let [res (cancel-turn! sid tid :client-cancel-current)]
+          (if (:error res) res (assoc res :turn_id tid)))))
     {:error :no-running-turn}))
 
 (defn cancel-all-running!

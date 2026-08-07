@@ -1083,12 +1083,17 @@
   (send-json! "POST" (str "/v1/sessions/" (enc sid) "/turns/" (enc tid) "/cancel")))
 
 (defn cancel-current-turn!
-  "Tid-less cancel: kill whatever turn currently holds `sid`'s `:current-turn`
-   slot in the daemon. For callers that lost (or never learned) the gateway
-   turn id. Returns the parsed body (`{\"status\" \"cancelling\", \"turn_id\" tid}`);
-   throws on HTTP error (409 when the session is idle)."
-  [sid]
-  (send-json! "POST" (str "/v1/sessions/" (enc sid) "/cancel-current")))
+  "Tid-less cancel: kill the turn currently holding `sid`'s `:current-turn` slot
+   in the daemon, iff THIS caller submitted it under `owner-key` (the
+   `idempotency_key` it sent). For callers that lost (or never learned) the
+   gateway turn id. A session is shared, so an unaddressed cancel would kill
+   whatever another channel happens to be running. Returns the parsed body
+   (`{\"status\" \"cancelling\", \"turn_id\" tid}`); throws on HTTP error (409 when
+   the session is idle or the running turn is someone else's)."
+  [sid owner-key]
+  (send-json! "POST"
+              (str "/v1/sessions/" (enc sid) "/cancel-current")
+              {:idempotency-key owner-key}))
 
 (defn drain-idle! [sid] (send-json! "POST" (str "/v1/sessions/" (enc sid) "/drain-queue")))
 

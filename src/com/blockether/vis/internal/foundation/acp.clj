@@ -225,36 +225,51 @@
 
 (defn gateway-backend
   "The live backend: every ACP session is an ORDINARY vis gateway session, so the
-   editor, the TUI, the web surface, and the phone all watch the same turns."
+   editor, the TUI, the web surface, and the phone all watch the same turns.
+
+   Because the session is shared, `:cancel` may not stop \"whatever is running\":
+   each prompt carries a correlation id and the cancel names it, so the editor
+   can never interrupt a turn the companion app or a TUI submitted."
   []
-  {:new-session (fn [{:keys [cwd]}]
-                  (let
-                    [created ((resolve+ 'com.blockether.vis.internal.gateway.client/create-session!)
-                               {:cwd cwd :channel "acp"})]
-                    (or (session-id-of created)
-                        (fail! :internal-error "the gateway did not return a session id" created))))
-   ;; nil when the daemon has no such session (`soul` answers nil on 404), so
-   ;; `session/load` can refuse a stale id instead of resuming a phantom.
-   :load-session (fn [{:keys [session-id]}]
-                   (when ((resolve+ 'com.blockether.vis.internal.gateway.client/soul) session-id)
-                     (let
-                       [page ((resolve+ 'com.blockether.vis.internal.gateway.client/transcript-page)
-                               session-id
-                               {:limit 50})]
-                       (vec (mapcat (fn [t]
-                                      (keep (fn [[role k]]
-                                              (let [v (get t k)]
-                                                (when (and (string? v) (seq (str/trim v)))
-                                                  {:role role :text v})))
-                                            [["user" "request"] ["assistant" "answer"]]))
-                                    (get page "turns"))))))
-   :prompt (fn [{:keys [session-id text on-event]}]
-             ((resolve+ 'com.blockether.vis.internal.gateway.client/submit-turn-sync!)
-               session-id
-               {:request text :on-event on-event}))
-   :cancel (fn [{:keys [session-id]}]
-             ((resolve+ 'com.blockether.vis.internal.gateway.client/cancel-current-turn!)
-               session-id))})
+  (let [prompt-keys (atom {})]
+    {:new-session
+     (fn [{:keys [cwd]}]
+       (let
+         [created ((resolve+ 'com.blockether.vis.internal.gateway.client/create-session!)
+                    {:cwd cwd :channel "acp"})]
+         (or (session-id-of created)
+             (fail! :internal-error "the gateway did not return a session id" created))))
+     ;; nil when the daemon has no such session (`soul` answers nil on 404), so
+     ;; `session/load` can refuse a stale id instead of resuming a phantom.
+     :load-session (fn [{:keys [session-id]}]
+                     (when ((resolve+ 'com.blockether.vis.internal.gateway.client/soul) session-id)
+                       (let
+                         [page ((resolve+
+                                  'com.blockether.vis.internal.gateway.client/transcript-page)
+                                 session-id
+                                 {:limit 50})]
+                         (vec (mapcat (fn [t]
+                                        (keep (fn [[role k]]
+                                                (let [v (get t k)]
+                                                  (when (and (string? v) (seq (str/trim v)))
+                                                    {:role role :text v})))
+                                              [["user" "request"] ["assistant" "answer"]]))
+                                      (get page "turns"))))))
+     :prompt (fn [{:keys [session-id text on-event]}]
+               (let [key (str "acp:" (java.util.UUID/randomUUID))]
+                 (swap! prompt-keys assoc session-id key)
+                 (try ((resolve+ 'com.blockether.vis.internal.gateway.client/submit-turn-sync!)
+                        session-id
+                        {:request text :on-event on-event :idempotency-key key})
+                      (finally (swap! prompt-keys (fn [m]
+                                                    (cond-> m
+                                                      (= key (get m session-id))
+                                                      (dissoc session-id))))))))
+     :cancel (fn [{:keys [session-id]}]
+               (when-let [key (get @prompt-keys session-id)]
+                 ((resolve+ 'com.blockether.vis.internal.gateway.client/cancel-current-turn!)
+                   session-id
+                   key)))}))
 
 (defn echo-backend
   "A dependency-free backend used by tests and by `--self-test`: it never starts a

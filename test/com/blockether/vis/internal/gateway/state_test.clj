@@ -2846,38 +2846,78 @@
   ;; used to record NOTHING about its origin: a stall force-cancel, the
   ;; shutdown sweep and a user stop were indistinguishable in a post mortem.
   ;; Each entry point now stamps itself on the turn's cancellation token.
-  (it "stamps the origin of every cancel entry point on the token"
-      (let
-        [sid
-         (str "cancel-source-" (java.util.UUID/randomUUID))
+  (it
+    "stamps the origin of every cancel entry point on the token"
+    (let
+      [sid
+       (str "cancel-source-" (java.util.UUID/randomUUID))
 
-         token-a
-         (cancellation/cancellation-token)
+       token-a
+       (cancellation/cancellation-token)
 
-         token-b
-         (cancellation/cancellation-token)
+       token-b
+       (cancellation/cancellation-token)
 
-         token-c
-         (cancellation/cancellation-token)
+       token-c
+       (cancellation/cancellation-token)
 
-         registry
-         (atom {sid {:current-turn "b"
-                     :turns {"a" {:turn_id "a" :status "running" :cancel-token token-a}
-                             "b" {:turn_id "b" :status "running" :cancel-token token-b}
-                             "c" {:turn_id "c" :status "running" :cancel-token token-c}}}})]
+       registry
+       (atom {sid {:current-turn "b"
+                   :turns
+                   {"a" {:turn_id "a" :status "running" :cancel-token token-a}
+                    "b"
+                    {:turn_id "b" :status "running" :idempotency_key "b-key" :cancel-token token-b}
+                    "c" {:turn_id "c" :status "running" :cancel-token token-c}}}})]
 
-        (with-redefs-fn {#'state/registry registry}
-          (fn []
-            (expect (= {:status "cancelling"} (state/cancel-turn! sid "a")))
-            (expect (= :client-cancel-turn (cancellation/cancel-reason token-a)))
-            (expect (= "b" (:turn_id (state/cancel-current-turn! sid))))
-            (expect (= :client-cancel-current (cancellation/cancel-reason token-b)))
-            (expect (= 3 (state/cancel-all-running!)))
-            (expect (= :gateway-shutdown (cancellation/cancel-reason token-c)))
-            ;; The shutdown sweep does not relabel the two already-attributed
-            ;; cancels.
-            (expect (= :client-cancel-turn (cancellation/cancel-reason token-a)))
-            (expect (= :client-cancel-current (cancellation/cancel-reason token-b))))))))
+      (with-redefs-fn {#'state/registry registry}
+        (fn []
+          (expect (= {:status "cancelling"} (state/cancel-turn! sid "a")))
+          (expect (= :client-cancel-turn (cancellation/cancel-reason token-a)))
+          (expect (= "b" (:turn_id (state/cancel-current-turn! sid "b-key"))))
+          (expect (= :client-cancel-current (cancellation/cancel-reason token-b)))
+          (expect (= 3 (state/cancel-all-running!)))
+          (expect (= :gateway-shutdown (cancellation/cancel-reason token-c)))
+          ;; The shutdown sweep does not relabel the two already-attributed
+          ;; cancels.
+          (expect (= :client-cancel-turn (cancellation/cancel-reason token-a)))
+          (expect (= :client-cancel-current (cancellation/cancel-reason token-b))))))))
+
+;; Regression: the tid-less cancel (`POST /v1/sessions/:sid/cancel-current`) fired
+;; the cancel token of WHATEVER turn held `:current-turn`, with no proof the caller
+;; had ever submitted it. A session is shared, so opening it in a second channel —
+;; the TUI, started while the companion app was already working in that session —
+;; let one client's Esc kill the OTHER client's running turn.
+(defdescribe cancel-current-owner-test
+             (it "cancels only the running turn the caller itself submitted"
+                 (let
+                   [sid
+                    (str "cancel-current-owner-" (java.util.UUID/randomUUID))
+
+                    token
+                    (cancellation/cancellation-token)
+
+                    registry
+                    (atom {sid {:current-turn "companion"
+                                :turns {"companion" {:turn_id "companion"
+                                                     :status "running"
+                                                     :idempotency_key "companion:1"
+                                                     :cancel-token token}}}})]
+
+                   (with-redefs-fn {#'state/registry registry}
+                     (fn []
+                       ;; A second channel's correlation id names a turn this session is not
+                       ;; running: refuse, and leave the companion's turn alone.
+                       (expect (= {:error :not-owner :turn_id "companion"}
+                                  (state/cancel-current-turn! sid "tui:2")))
+                       (expect (nil? (cancellation/cancel-reason token)))
+                       ;; No correlation id at all is not a licence to cancel anything.
+                       (expect (= {:error :not-owner :turn_id "companion"}
+                                  (state/cancel-current-turn! sid nil)))
+                       (expect (nil? (cancellation/cancel-reason token)))
+                       ;; The submitter's own key still gets the tid-less cancel it needs.
+                       (expect (= "companion"
+                                  (:turn_id (state/cancel-current-turn! sid "companion:1"))))
+                       (expect (= :client-cancel-current (cancellation/cancel-reason token))))))))
 
 ;; Regression: pressing Stop wrote a SETTLED durable turn row for the turn that
 ;; was still live on the wire — status :cancelled (persisted as "interrupted"),

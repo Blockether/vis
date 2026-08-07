@@ -1128,7 +1128,7 @@
            (reset! cancelled token))
 
          vis/gateway-cancel-current-turn!
-         (fn [_]
+         (fn [_ _]
            (deliver gateway-started true)
            @release-gateway
            {:status "cancelling"})
@@ -1141,6 +1141,7 @@
                               :loading? true
                               :cancel-token :token
                               :cancelling? false
+                              :live-turn-client-id "cid"
                               :render-version 0})
         ;; This returns while the gateway call is deliberately blocked.
         (state/dispatch [:cancel-turn])
@@ -1149,6 +1150,69 @@
         (expect (true? (:cancelling? @state/app-db)))
         (expect (= ["Cancelling current turn..." [:level :info :ttl-ms 2500]] @notified))
         (deliver release-gateway true)))))
+
+;; Regression: with no gateway turn id bound, Esc fell back to a BLIND
+;; `cancel-current`, which stops whatever turn the SESSION is running. A session is
+;; shared, so a TUI started on a session the companion app was already working in
+;; killed that other channel's turn.
+(defdescribe
+  cancel-never-blind-test
+  (it
+    "sends a tid-less cancel only for a submission of its own, naming it"
+    (let
+      [calls
+       (atom [])
+
+       seen-mine
+       (promise)]
+
+      (with-redefs
+        [vis/cancel!
+         (fn [_]
+           nil)
+
+         vis/notify!
+         (fn [_ & _]
+           nil)
+
+         vis/gateway-cancel-turn!
+         (fn [sid tid]
+           (swap! calls conj [:by-id sid tid])
+           {:status "cancelling"})
+
+         vis/gateway-cancel-current-turn!
+         (fn [sid owner-key]
+           (swap! calls conj [:current sid owner-key])
+           (when (= "cid-mine" owner-key) (deliver seen-mine true))
+           {:status "cancelling"})]
+
+        ;; Attached to a turn ANOTHER channel started: this tab paints it as live,
+        ;; but owns neither its turn id nor a correlation id of its own.
+        (reset! state/app-db {:session {:id "s1"}
+                              :active-tab-id "s1"
+                              :render-version 0
+                              :loading? true
+                              :cancel-token :token
+                              :cancelling? false
+                              :live-turn-client-id nil
+                              :gateway-turn-id nil
+                              :turn-start-ms 10})
+        (state/dispatch [:cancel-turn])
+        ;; Our own submission, whose server turn id has not bound yet: the
+        ;; correlation id we sent as the idempotency key names it.
+        (reset! state/app-db {:session {:id "s1"}
+                              :active-tab-id "s1"
+                              :render-version 0
+                              :loading? true
+                              :cancel-token :token-2
+                              :cancelling? false
+                              :live-turn-client-id "cid-mine"
+                              :gateway-turn-id nil
+                              :turn-start-ms 10})
+        (state/dispatch [:cancel-turn])
+        ;; The cancel lane is FIFO, so a blind first call would already be recorded.
+        (expect (= true (deref seen-mine 2000 :timeout)))
+        (expect (= [[:current "s1" "cid-mine"]] @calls))))))
 
 (defdescribe cancel-reaches-gateway-after-send-test
              (it "binds the matching send-message turn so Esc reaches the gateway"
@@ -1207,7 +1271,7 @@
                         (deliver terminal-cleared true)))
 
                     vis/gateway-cancel-current-turn!
-                    (fn [_]
+                    (fn [_ _]
                       {:error :no-running-turn})
 
                     vis/gateway-cancel-turn!
@@ -1329,7 +1393,7 @@
                                         (throw (ex-info "connection reset" {}))
                                         {:status "cancelling"}))]
           (expect (= {:status "cancelling"}
-                     (#'state/gateway-cancel-turn-or-current! "s1" "turn-1")))
+                     (#'state/gateway-cancel-turn-or-current! "s1" "turn-1" nil)))
           (expect (= 2 @attempts)))))
   (it
     "does not unlock resending on a local cancel before the gateway ACK"

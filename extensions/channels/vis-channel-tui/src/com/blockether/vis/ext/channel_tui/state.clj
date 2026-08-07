@@ -4432,18 +4432,24 @@
 (defn- gateway-cancel-turn-or-current!
   "Cancel the gateway turn, retrying transient transport failures.
 
-   With a known `tid`, use the id-addressed route; otherwise use `cancel-current`
-   for the Esc-before-`turn.started` race. HTTP errors are semantic responses and
-   are returned immediately. Discovery, connection, and other transport failures
-   are retried because dropping one cancel leaves the provider running and makes
-   the user's next request queue behind the supposedly cancelled turn."
-  [sid tid]
-  (when sid
+   With a known `tid`, use the id-addressed route; otherwise name the turn by
+   `owner-key` — the correlation id THIS tab sent as the submission's
+   `idempotency_key` — on `cancel-current`, for the Esc-before-`turn.started`
+   race. With NEITHER, nothing of ours is running: the session is shared, so a
+   blind `cancel-current` would stop whatever another channel (the companion
+   app, the web, a second TUI) is running, and we send nothing at all.
+
+   HTTP errors are semantic responses and are returned immediately. Discovery,
+   connection, and other transport failures are retried because dropping one
+   cancel leaves the provider running and makes the user's next request queue
+   behind the supposedly cancelled turn."
+  [sid tid owner-key]
+  (when (and sid (or tid owner-key))
     (loop [attempt 1]
       (let
         [outcome (try {:response (if tid
                                    (vis/gateway-cancel-turn! sid tid)
-                                   (vis/gateway-cancel-current-turn! sid))}
+                                   (vis/gateway-cancel-current-turn! sid owner-key))}
                       (catch clojure.lang.ExceptionInfo e
                         (let [data (ex-data e)]
                           (if (:http-status data)
@@ -4507,7 +4513,7 @@
               [:notify
                (if already-cancelling? "Turn force-cancelled locally." "Cancelling current turn...")
                (if already-cancelling? :warn :info) cancel-notification-ttl-ms]
-              [:gateway-cancel-active sid tid cancel-key]]}))))
+              [:gateway-cancel-active sid tid cancel-key (:live-turn-client-id db)]]}))))
 
 (reg-event-fx :gateway-cancel-result
               ;; Do not let the LOCAL attach worker's synthetic `:cancelled` result
@@ -4571,7 +4577,8 @@
                   {:db db
                    :fx (cond-> []
                          sid
-                         (conj [:gateway-cancel-active sid tid nil]))})))
+                         (conj [:gateway-cancel-active sid tid nil
+                                (:live-turn-client-id snap)]))})))
 
 (defn- cancel-self-heal-due?
   "True when a user cancel has been pending (`:cancelling?`) at least
@@ -4606,7 +4613,8 @@
                       ;; the dedicated cancel lane; it must not stall this heartbeat.
                       {:db (settle-cancelled-turn db)
                        :fx (cond->
-                             [[:cancel-local-turn token] [:gateway-cancel-active sid tid nil]
+                             [[:cancel-local-turn token]
+                              [:gateway-cancel-active sid tid nil (:live-turn-client-id db)]
                               [:notify "Cancel timed out — cleared locally. You can send again."
                                :warn cancel-notification-ttl-ms]]
                              (some :mine? (:pending-sends (db-for-tab db workspace-id)))
@@ -5619,10 +5627,10 @@
         ;; Best-effort server cancel on a dedicated lane. Never run gateway discovery
         ;; or HTTP on the Lanterna input/render thread. The generation-keyed result
         ;; event may release a first cancel early, without touching a newer turn.
-        (fn [sid tid cancel-key]
+        (fn [sid tid cancel-key owner-key]
           (when sid
             (gateway-cancel-io! (fn []
-                                  (let [result (gateway-cancel-turn-or-current! sid tid)]
+                                  (let [result (gateway-cancel-turn-or-current! sid tid owner-key)]
                                     (when cancel-key
                                       (dispatch [:gateway-cancel-result cancel-key result]))))))))
 

@@ -2259,19 +2259,32 @@
                                 :turn_status (:status result)))))
 
 (defn- cancel-current-turn-handler
-  "POST /sessions/:sid/cancel-current — tid-less cancel: fire the cancel token
-   of whatever turn holds the session's `:current-turn`. For clients that lost
-   the turn id (Esc before `turn.started` bound it, or a cancel self-heal that
-   dropped it) — the id-addressed `/turns/:tid/cancel` is useless to them and
-   the still-running ghost queues every next submit. 202 + `{:status
-   \"cancelling\" :turn_id tid}`, 409 `:no-running-turn` when idle."
+  "POST /sessions/:sid/cancel-current {idempotency_key} — tid-less cancel: fire
+   the cancel token of the turn holding the session's `:current-turn`, iff the
+   caller submitted it under `idempotency_key`. For clients that lost the turn id
+   (Esc before `turn.started` bound it, or a cancel self-heal that dropped it) —
+   the id-addressed `/turns/:tid/cancel` is useless to them and the still-running
+   ghost queues every next submit. A session is shared, so the correlation id is
+   what keeps this route from killing another channel's work. 202 + `{:status
+   \"cancelling\" :turn_id tid}`, 409 `:not-owner` for someone else's turn, 409
+   `:no-running-turn` when idle."
   [request]
-  (let [sid (path-sid request)]
+  (let
+    [sid
+     (path-sid request)
+
+     owner-key
+     (get (try (body-json request) (catch Throwable _ nil)) "idempotency_key")]
+
     (if (and sid (state/soul sid))
-      (let [result (state/cancel-current-turn! sid)]
+      (let [result (state/cancel-current-turn! sid owner-key)]
         (cond (:status result) (json-response 202 result)
               (= :no-running-turn (:error result))
               (error-response 409 :no-running-turn "session has no running turn")
+              (= :not-owner (:error result))
+              (error-response 409
+                              :not-owner "the running turn was submitted by another client"
+                              :turn_id (:turn_id result))
               (= :turn-not-found (:error result))
               (error-response 404 :turn-not-found "unknown turn")
               :else (error-response 409
