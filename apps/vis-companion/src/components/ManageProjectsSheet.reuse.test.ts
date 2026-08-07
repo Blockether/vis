@@ -58,9 +58,17 @@ describe('ManageProjectsSheet paints no box of its own', () => {
     expect(source).not.toContain('justify-between gap-2');
   });
 
-  it('says the path in ONE language, the same one the crumbs speak', () => {
-    // The footer printed the raw absolute path under crumbs reading `~ › vis`.
-    expect(source).toContain('homeify(aiming, home)');
+  it('does not caption the footer with the path the crumbs already say', () => {
+    // The footer repeated the destination as a third spelling of it — the crumb bar
+    // above already names the folder, and the button says what will happen to it.
+    expect(source).not.toContain('homeify(aiming, home)');
+    expect(source).not.toContain('const aiming');
+  });
+
+  it('docks the commit footer instead of scrolling it away', () => {
+    // The list is the only part of this sheet that scrolls; the two verbs stay put.
+    expect(source).toContain('min-h-0 flex-1 touch-pan-y overflow-y-auto');
+    expect(source).toContain('shrink-0 border-t border-dialog-edge bg-panel-2');
   });
 
   it('keeps a crumb a real target rather than 14px of bare text', () => {

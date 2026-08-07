@@ -432,7 +432,12 @@ export function DialogFrame({
       aria-label={title}
     >
       <DialogHeader title={title} subtitle={subtitle} closeLabel="Close dialog" onClose={onClose} />
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t border-dialog-edge">
+      {/* A COLUMN, so a dialog that lays out its own regions gets a scrolling body and
+          a docked footer. It used to be one plain scroll box: "Manage projects" put its
+          own `flex-1` list and its own `New folder` / `Use project` footer inside it,
+          nothing established a column, so the list grew to its content and the two verbs
+          the sheet exists for scrolled off the bottom of it. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain border-t border-dialog-edge">
         {children}
       </div>
       {footer && (

@@ -237,11 +237,6 @@ export function ManageProjectsSheet({
     </IconButton>
   );
 
-  // What the commit button is aimed at, in the SAME language the crumbs above speak.
-  // The footer used to print the raw absolute path while the crumbs said `~ › vis`,
-  // so one sheet named one folder two ways.
-  const aiming = folder === null ? target : here && `${here}/${folder.trim()}`;
-
   return (
     <Modal size="lg" onDismiss={onCancel}>
       <DialogFrame
@@ -431,13 +426,10 @@ export function ManageProjectsSheet({
       </div>
 
       <div className={`shrink-0 border-t border-dialog-edge bg-panel-2 py-2 ${SHEET_EDGE}`}>
-        <p className="truncate font-mono text-meta text-dialog-hint" title={aiming || undefined}>
-          {aiming ? homeify(aiming, home) : '…'}
-        </p>
         {/* Both buttons at the TRAILING edge, primary last, because that is where the
             thumb already is and where every other footer in this app commits. Thrown
             to opposite ends of a 384px panel they read as two unrelated screens. */}
-        <div className="mt-1.5 flex items-center justify-end gap-2">
+        <div className="flex items-center justify-end gap-2">
           {/* `ghost` beside `solid`, `justify-end gap-2`: the exact footer every other
               dialog in this app commits with. It was the one surface pairing `quiet`
               with the primary — and `quiet` is frameless until it is hovered, which on

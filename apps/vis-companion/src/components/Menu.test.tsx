@@ -9,6 +9,18 @@ import { MenuBack, MenuHeading, MenuItem, MenuNote, MENU_WIDTH } from './Menu';
 // with no band and one hand-built row. The same glyph, one line apart in the same
 // list, opened two different-looking things — so `⋯` stopped being a promise.
 describe('Menu parts', () => {
+  // Regression, user report ("delete button for project management is wrongly
+  // positioned"): the trash is an `edge` IconButton, which reclaims the row's
+  // trailing gutter with `-mr-3`. The action wrapper never had one, so the button
+  // hung 12px past the sheet's own paper.
+  it('gives an action the row’s own trailing gutter to reclaim', () => {
+    const html = renderToStaticMarkup(
+      <MenuItem title="vis" action={<button type="button">x</button>} onSelect={() => {}} />,
+    );
+
+    expect(html).toContain('items-stretch border-b border-dialog-edge pr-3');
+  });
+
   it('places from exactly the width the panel paints', () => {
     // The popover is positioned before it has ever been measured, so the number
     // and the `sm:w-80` class have to travel together.
