@@ -1045,13 +1045,25 @@ describe('SearchField', () => {
     expect(field).toContain('focus-within:border-accent');
   });
 
-  // Regression, user report ("the input is not looking sexy for iPhones, and also
-  // this X is far from right"): the field stood 32px tall on a phone while every
-  // other touch control on that screen keeps 44px, so it read as a hairline chip.
-  it('stands at the touch step and shrinks only for a mouse', () => {
-    expect(box).toContain('h-11');
-    expect(box).toContain('mouse:h-8');
-    expect(box).not.toContain('h-8');
+  // Regression, user report ("search HEIGHT still too big taking into account the
+  // other buttons"): the field stood 44px on the bar while `Preferences` next to it
+  // stands 32px (24px for a mouse), so the one framed box up there was 12px taller
+  // than every control it shares the row with. A `Button` already answers this: it
+  // paints a 32px face and reaches the finger's 44px through invisible slop. The
+  // field does the same, split into TWO strips so the face itself stays the input's
+  // own — a press in the middle of the text still places a caret where it landed.
+  it('wears the bar’s own face and reaches the touch step around it', () => {
+    expect(box).toContain('h-8');
+    expect(box).toContain('mouse:h-6');
+    expect(box).not.toContain('h-11');
+    expect(box).toContain('relative');
+    expect(box).toContain('before:-top-1.5');
+    expect(box).toContain('after:-bottom-1.5');
+    expect(box).toContain('before:h-1.5');
+    expect(box).toContain('after:h-1.5');
+    // A mouse needs no slop, and the strips would only eat the rows around it.
+    expect(box).toContain('mouse:before:content-none');
+    expect(box).toContain('mouse:after:content-none');
   });
 
   // Same report: Clear was a 12px glyph centred in its own 28px box sitting INSIDE
@@ -1495,6 +1507,33 @@ describe("the button's four ranks", () => {
       expect(source).not.toContain('variant="ghost"');
       expect(source).not.toContain('variant="inverse"');
     }
+  });
+});
+
+// Regression, user report ("not every one has the same height ... this copy button
+// has some space top bottom"): the transcript's card headers each spelled their own
+// band. A result with no body was text plus `py-1`, a result with a body was `min-h-6`
+// around a 24px `Copy` chip, and a program header was `min-h-6` with NO vertical
+// padding at all, so its chip sat rule-to-rule — while the same header with a
+// `Disclosure` in it measured 41px. Four heights in one column.
+describe("the transcript's card header band", () => {
+  const band = /const CARD_BAND =\s*"([^"]*)"/.exec(chatSource)?.[1] ?? "";
+
+  it("is one band, tall enough to give the Copy chip its air", () => {
+    // A `CopyChip` is `h-6` and a `Disclosure` is `min-h-8`: the band is `min-h-8`
+    // and CENTRES them, so the chip gets its 4px above and below while the taller
+    // control fills the row instead of stacking padding on top of its own height.
+    expect(band).toContain("min-h-8");
+    expect(band).toContain("items-center");
+    expect(band).toContain("px-2");
+    expect(band).not.toMatch(/\bp[ytb]-/);
+  });
+
+  it("is worn by every card header and re-spelled by none", () => {
+    expect(
+      (chatSource.match(/\$\{CARD_BAND\}|className={CARD_BAND}/g) ?? []).length,
+    ).toBe(3);
+    expect(chatSource).not.toContain("min-h-6");
   });
 });
 

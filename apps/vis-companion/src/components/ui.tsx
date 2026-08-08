@@ -913,10 +913,14 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
  * so the mark sits inside the box, before the caret, in the hint's own ink. Without it
  * the widest framed box on the screen announced nothing about itself.
  *
- * IT IS TYPED INTO WITH A FINGER, so it stands at the 44px touch step and only a
- * mouse takes it down to the bar's 32px rhythm. It was `h-8` everywhere: on a 390px
- * iPhone the verb the screen exists for was a hairline slab, 12px shorter than the
- * row a finger is expected to hit, wearing the smallest step in the scale.
+ * IT WEARS THE BAR'S OWN FACE AND CARRIES THE FINGER'S TARGET AROUND IT. The bar is
+ * a 32px rhythm (`Button`, 24px for a mouse), and a framed box 12px taller than every
+ * control beside it is the loudest thing on the row — which is exactly what `h-11`
+ * looked like. So the face is `h-8 mouse:h-6`, and the 44px touch rectangle arrives
+ * the way `Button` already does it: as invisible slop. It is split into TWO strips,
+ * above and below, rather than one overlay, because an overlay across the FACE would
+ * hand every press to the `<label>` and a press inside the text must place a caret
+ * where it landed. A mouse gets no strips at all — they would only eat the row above.
  *
  * BOTH OF ITS INKS SIT AT THE SAME INSET. Clear is an `edge` IconButton — the list
  * rows' own geometry — so its box runs to the field's border and pads its glyph away
@@ -940,7 +944,7 @@ export const SearchField = forwardRef<
   const own = useRef<HTMLInputElement | null>(null);
   return (
     <label
-      className={`flex h-11 min-w-0 items-center gap-2 self-center rounded-none border border-edge-strong bg-transparent px-3 transition-[background-color,border-color,box-shadow] duration-150 focus-within:border-accent focus-within:bg-input focus-within:ring-1 focus-within:ring-accent/30 motion-reduce:transition-none mouse:h-8 sm:px-4 ${className}`}
+      className={`relative flex h-8 min-w-0 items-center gap-2 self-center rounded-none border border-edge-strong bg-transparent px-3 transition-[background-color,border-color,box-shadow] duration-150 before:absolute before:inset-x-0 before:-top-1.5 before:h-1.5 before:content-[''] after:absolute after:inset-x-0 after:-bottom-1.5 after:h-1.5 after:content-[''] focus-within:border-accent focus-within:bg-input focus-within:ring-1 focus-within:ring-accent/30 motion-reduce:transition-none mouse:h-6 mouse:before:content-none mouse:after:content-none sm:px-4 ${className}`}
     >
       <SearchIcon className="size-3.5 shrink-0 text-dialog-hint" />
       {/* A SEARCH field, so the phone offers its own search key and stops correcting:

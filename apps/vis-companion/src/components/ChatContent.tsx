@@ -1055,6 +1055,20 @@ function ToolSummary({
   );
 }
 
+/**
+ * THE HEADER BAND OF A TRANSCRIPT CARD, and there is exactly one of it.
+ *
+ * A tool result with no body, a tool result that opens, and a program's own header
+ * are the same row read three times in one column: a name, a summary, a duration and
+ * — where there is something to take — the `Copy` chip. So the band owns the height
+ * (`min-h-8`, the app's compact step) and the side inset, and it CENTRES what it
+ * carries: a 24px `CopyChip` gets 4px of air above and below without the row spelling
+ * padding, and a 32px `Disclosure` fills the band instead of adding its own height to
+ * it. That padding is exactly what left one program header 41px tall beside a 33px
+ * one, while a chip in a third header stood rule-to-rule with no air at all.
+ */
+const CARD_BAND = "flex min-h-8 items-center gap-1.5 px-2";
+
 const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
   const resultText = resultBody(form);
   const failed = form.error != null;
@@ -1128,7 +1142,7 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
   if (!body) {
     return (
       <div
-        className={`border-l-2 ${failed ? "border-err" : "border-accent"} bg-result px-2 py-1`}
+        className={`${CARD_BAND} border-l-2 ${failed ? "border-err" : "border-accent"} bg-result`}
       >
         {headline}
       </div>
@@ -1142,7 +1156,9 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
         if (event.currentTarget.open) setWasOpened(true);
       }}
     >
-      <summary className="flex min-h-6 list-none cursor-pointer select-none items-center gap-1.5 px-2 py-1 text-code-result hover:bg-hover [&::-webkit-details-marker]:hidden">
+      <summary
+        className={`${CARD_BAND} list-none cursor-pointer select-none text-code-result hover:bg-hover [&::-webkit-details-marker]:hidden`}
+      >
         <ChevronIcon
           className={`size-3 shrink-0 group-open:rotate-90 ${failed ? "text-err" : "text-accent-ink"}`}
         />
@@ -1267,12 +1283,16 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
             `ToolCard` result headline — never a chip floating over the source.
             It is rendered even when the program is too short to collapse, so a
             4-line snippet and a 40-line one carry the same chrome. */}
-        <div className="flex min-h-6 items-center gap-1.5 border-b border-code-edge pr-1.5">
+        {/* The rule belongs to the CARD, not to the band: spelled on the band it ate
+            a pixel of the row's own 32px (boxes are border-box here), so the header
+            with a `Disclosure` in it measured 33 beside a plain one at 32. */}
+        <div className="border-b border-code-edge">
+          <div className={CARD_BAND}>
           {collapsible ? (
             <Disclosure
               isOpen={expanded}
               tone="step"
-              className="min-w-0 flex-1 px-2"
+              className="-ml-2 min-w-0 flex-1 px-2"
               onClick={() => setExpanded((current) => !current)}
             >
               <span className="min-w-0 truncate">
@@ -1280,13 +1300,14 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
               </span>
             </Disclosure>
           ) : (
-            <span className="min-w-0 flex-1 select-none truncate px-2 py-1 font-mono text-chip font-extrabold tracking-[0.06em] text-accent-ink">
+            <span className="min-w-0 flex-1 select-none truncate font-mono text-chip font-extrabold tracking-[0.06em] text-accent-ink">
               {label}
             </span>
           )}
           <CopyChip value={value} label="Copy code" className="shrink-0">
             Copy
           </CopyChip>
+          </div>
         </div>
         <SyntaxCodeBlock
           value={visibleValue}
