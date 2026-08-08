@@ -30,7 +30,7 @@ import {
   PenToolbar,
   type AnnotationSurface,
 } from "./AnnotationLayer";
-import { Button, DialogClose } from "./ui";
+import { Button, DialogHeader } from "./ui";
 
 interface ExpandableImageProps {
   src: string;
@@ -417,17 +417,14 @@ export function ImageViewer({
       aria-modal="true"
       aria-label={`${name} image viewer`}
     >
-      <header className="absolute inset-x-0 top-0 z-20 flex min-h-14 items-center gap-3 border-b border-dialog-edge bg-panel pb-2 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-[max(0.5rem,env(safe-area-inset-top))]">
-        <div className="min-w-0 flex-1 truncate font-mono text-ui text-dialog-hint-key">
-          {name}
-        </div>
-        <DialogClose
-          label={`Close ${name}`}
-          tone="panel"
-          className="-mb-2 -mr-[max(0.75rem,env(safe-area-inset-right))] -mt-[max(0.5rem,env(safe-area-inset-top))] self-stretch"
-          onClose={onClose}
-        />
-      </header>
+      {/* The picture's own title bar is the app's one dialog band — it only has to
+          float over the image and clear the notch. */}
+      <DialogHeader
+        title={name}
+        closeLabel={`Close ${name}`}
+        onClose={onClose}
+        className="absolute inset-x-0 top-0 z-20 pt-[env(safe-area-inset-top)]"
+      />
 
       <div
         className={`absolute inset-0 grid cursor-grab place-items-center overflow-hidden overscroll-none px-4 pt-20 active:cursor-grabbing [touch-action:none] ${drawing ? "pb-36" : "pb-24"}`}

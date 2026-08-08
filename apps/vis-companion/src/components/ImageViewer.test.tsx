@@ -69,6 +69,25 @@ describe("ImageViewer", () => {
     expect(close.className).toContain("border-l");
   });
 
+  // Regression, user report: the viewer's close looked nothing like the close in a
+  // dialog — smaller, and the wrong colour. The viewer hand-built its own `bg-panel`
+  // band with a quiet `text-ui` filename and asked `DialogClose` for the panel tone,
+  // so the app's one way out wore two faces on two surfaces of the same screen.
+  it("titles itself with the app's one dialog band", () => {
+    const header = document.querySelector('[role="dialog"] header');
+    expect(header?.className).toContain("bg-dialog-title");
+    expect(header?.className).toContain("min-h-12");
+    expect(header?.className).toContain("items-stretch");
+    expect(header?.querySelector("h2")?.textContent).toBe("chart.png");
+
+    // The one ✕: `DialogClose` on the title tone, in the band's own full ink —
+    // never the faded `/70` every close used to wear.
+    const close = control("Close chart.png");
+    expect(close.className).toContain("border-dialog-title-foreground/20");
+    expect(close.className).toContain("text-dialog-title-foreground");
+    expect(close.className).not.toContain("text-dialog-title-foreground/70");
+  });
+
   // Regression, reported attachment filename click: an image edit could only be opened
   // by striking its thumbnail; the adjacent filename looked like part of the same chip
   // but was not a trigger.
