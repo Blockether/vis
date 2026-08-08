@@ -18,6 +18,7 @@ import {
   CloseIcon,
   DotsIcon,
   DraftIcon,
+  SearchIcon,
 } from './icons';
 
 // Ref-forwarding: a button that ANCHORS something (a popover, a focus return) has
@@ -902,6 +903,11 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
  * (`t/input-field-bg` active, flat at rest). The Clear glyph is the field's own, so
  * emptying the query returns the caret rather than dropping focus onto the document.
  *
+ * IT LEADS WITH THE GLASS. Every guideline for a header search says the same two
+ * things — keep the text field OPEN in the bar, and mark it with a magnifying glass —
+ * so the mark sits inside the box, before the caret, in the hint's own ink. Without it
+ * the widest framed box on the screen announced nothing about itself.
+ *
  * IT IS TYPED INTO WITH A FINGER, so it stands at the 44px touch step and only a
  * mouse takes it down to the bar's 32px rhythm. It was `h-8` everywhere: on a 390px
  * iPhone the verb the screen exists for was a hairline slab, 12px shorter than the
@@ -929,8 +935,9 @@ export const SearchField = forwardRef<
   const own = useRef<HTMLInputElement | null>(null);
   return (
     <label
-      className={`flex h-11 min-w-0 items-center gap-1 self-center rounded-none border border-edge-strong bg-transparent px-3 transition-[background-color,border-color,box-shadow] duration-150 focus-within:border-accent focus-within:bg-input focus-within:ring-1 focus-within:ring-accent/30 motion-reduce:transition-none mouse:h-8 sm:px-4 ${className}`}
+      className={`flex h-11 min-w-0 items-center gap-2 self-center rounded-none border border-edge-strong bg-transparent px-3 transition-[background-color,border-color,box-shadow] duration-150 focus-within:border-accent focus-within:bg-input focus-within:ring-1 focus-within:ring-accent/30 motion-reduce:transition-none mouse:h-8 sm:px-4 ${className}`}
     >
+      <SearchIcon className="size-3.5 shrink-0 text-dialog-hint" />
       {/* A SEARCH field, so the phone offers its own search key and stops correcting:
           a machine name, a project folder and a session title are not prose. The
           platform's own cancel button is hidden because this field already has one,

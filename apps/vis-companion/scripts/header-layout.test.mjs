@@ -51,24 +51,28 @@ describe('app bar', () => {
     // POSITION it — the face (Button's box, paper at rest) belongs to the component.
     expect(app).toContain('<SearchField');
     expect(app).toContain('<SearchField');
-    expect(app).toContain('className="order-last w-full sm:order-none sm:mx-3 sm:w-auto sm:flex-1"');
+    expect(app).toContain('className="mx-2 min-w-0 flex-1 sm:mx-3 sm:max-w-[32rem]"');
     // Pairing is a twice-a-year verb; it stopped renting the bar.
     expect(app).not.toContain('aria-label="Pair a machine"');
   });
 
   // Regression, user report ("the input is not looking sexy for iPhones"): the field
   // shared one 48px row with the wordmark and a word-button, so on a 390px phone the
-  // screen's own verb was a hairline slab with barely 110px of usable width. The bar
-  // WRAPS below `sm:` — search takes its own full-width band under the identity row —
-  // and folds back into the bar's middle wherever there is room for it.
-  it('gives search its own band on a phone and the bar’s middle on a desktop', () => {
+  // screen's own verb was a hairline slab with barely 110px of usable width. Giving it
+  // its OWN band below `sm:` was worse — a full-width framed slab under the bar — and
+  // the report said so. Search belongs ON the bar at every width (every convention for
+  // it puts it in the top bar, one line high); the width comes from the field taking
+  // the bar's free space, and it is capped where the bar is wide so a focused field is
+  // never a 1000px frame.
+  it('keeps search on the bar’s one row at every width', () => {
     const bar = app.slice(app.indexOf('<header'), app.indexOf('aria-label="Vis"'));
-    expect(bar).toContain('flex-wrap');
-    expect(bar).toContain('sm:flex-nowrap');
-    // The band is a row of the bar, so the bar keeps its own gutters and pads under
-    // the field only while it stands on its own line.
-    expect(bar).toContain('pb-2');
-    expect(bar).toContain('sm:pb-0');
+    expect(bar).not.toContain('flex-wrap');
+    expect(bar).not.toContain('pb-2');
+    const search = app.slice(app.indexOf('<SearchField'), app.indexOf('ONE SCREEN, ONE COG'));
+    expect(search).toContain('flex-1');
+    expect(search).toContain('min-w-0');
+    expect(search).not.toContain('w-full');
+    expect(search).toMatch(/sm:max-w-\[/);
   });
 
   // Regression, user report ("make them nice buttons like the fucking New Session"):
@@ -76,7 +80,7 @@ describe('app bar', () => {
   // They are the app's own `Button` now, so the CLUSTER holds the free space and the
   // component owns every metric — a call site may only position.
   it('hands the free space to the trailing cluster, not to a control', () => {
-    expect(app).toContain('<div className="ml-auto flex h-12 items-center gap-2 sm:ml-0">');
+    expect(app).toContain('<div className="ml-auto flex h-12 items-center gap-2">');
     // Nothing else competes for that space now, so there is no breakpoint at which
     // the cluster gives it up.
     expect(cog).not.toContain('sm:ml-0');

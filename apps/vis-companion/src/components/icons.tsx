@@ -98,6 +98,21 @@ export function CloseIcon({ className }: { className?: string }) {
 }
 
 /**
+ * THE MARK OF SEARCH, and the one convention nobody gets to be creative about: a
+ * schematic magnifying glass, INSIDE the open field and leading it. A bare framed box
+ * on the bar reads as "some input"; the glass says what typing here does before a
+ * placeholder is read. It is ink, not a control — the field's own label speaks it.
+ */
+export function SearchIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <circle cx="10.5" cy="10.5" r="6.25" />
+      <path d="M15.25 15.25l4.5 4.5" />
+    </Icon>
+  );
+}
+
+/**
  * A disclosure. ONE icon in two states: it points right when closed and turns a
  * quarter clockwise when open, so opening a section is a MOVE the eye follows
  * rather than one character being swapped for a different character.

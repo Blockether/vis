@@ -1049,6 +1049,17 @@ describe('SearchField', () => {
     expect(box).toContain('sm:px-4');
   });
 
+  // Regression, user report (paraphrased: the second band looked worse — put search
+  // back on the header): a search box is recognised by the magnifying glass INSIDE the
+  // open field, and this one carried no mark at all, so a bare framed box on the bar
+  // read as "some input" rather than "search".
+  it('carries the magnifying glass inside the open field', () => {
+    expect(field).toContain('<SearchIcon');
+    // Leading, before the input: the mark introduces the field, it does not end it.
+    expect(field.indexOf('<SearchIcon')).toBeLessThan(field.indexOf('<input'));
+    expect(uiSource).toContain('SearchIcon');
+  });
+
   // It is a SEARCH field, so the phone keyboard says so and nothing autocorrects a
   // machine name into prose.
   it('asks the phone for a search keyboard', () => {
