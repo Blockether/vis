@@ -49,4 +49,14 @@ describe('SwipeActions tones', () => {
   it('leaves a neutral action in the shared verb ink', () => {
     expect(strip()).toContain('text-accent-ink');
   });
+
+  // Regression, user report ("this also has not full height of the parent"): the swipe
+  // track is as tall as its TALLEST panel, and the action strip — a 16px icon over a
+  // 10px caption — measured 34px against a 32px desktop session row. The row panel
+  // stretched to 34 but the row inside it stayed 32, so the button's hover slab stopped
+  // 2px short of the rule under it. The panel is a GRID: one child, stretched on both
+  // axes, so whatever height the track ends up with is the row's height too.
+  it('lets the row fill the swipe track', () => {
+    expect(strip()).toContain('grid w-full shrink-0 snap-start');
+  });
 });

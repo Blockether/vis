@@ -69,8 +69,13 @@ export function SwipeActions({
       }}
       className="flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
+      {/* A GRID, not a plain block: the track is as tall as its TALLEST panel, and the
+          action strip (a 16px icon over a 10px caption) stands 34px against a 32px
+          desktop session row. This panel stretches to the track, so its single child
+          has to stretch to IT — otherwise the row's hover slab stops short of the rule
+          under it and the row reads as if it had lost two pixels of its own height. */}
       <div
-        className="w-full shrink-0 snap-start bg-panel"
+        className="grid w-full shrink-0 snap-start bg-panel"
         onClickCapture={(event) => {
           // While the drawer is open the row itself is a dismiss target, never a
           // navigation: a thumb resting on it must not open the session.
