@@ -50,8 +50,9 @@ describe('app bar', () => {
     // The field is the app's own `SearchField` now, so the call site may only
     // POSITION it — the face (Button's box, paper at rest) belongs to the component.
     expect(app).toContain('<SearchField');
-    expect(app).toContain('<SearchField');
-    expect(app).toContain('className="mx-2 min-w-0 flex-1 sm:mx-3 sm:max-w-[32rem]"');
+    expect(app).toContain(
+      'className="mx-2 min-w-0 flex-1 sm:ml-auto sm:mr-3 sm:max-w-[32rem]"',
+    );
     // Pairing is a twice-a-year verb; it stopped renting the bar.
     expect(app).not.toContain('aria-label="Pair a machine"');
   });
@@ -75,14 +76,18 @@ describe('app bar', () => {
     expect(search).toMatch(/sm:max-w-\[/);
   });
 
-  // Regression, user report ("make them nice buttons like the fucking New Session"):
-  // the bar's two verbs were hand-rolled `<button className=…>` slabs of bare text.
-  // They are the app's own `Button` now, so the CLUSTER holds the free space and the
-  // component owns every metric — a call site may only position.
-  it('hands the free space to the trailing cluster, not to a control', () => {
-    expect(app).toContain('<div className="ml-auto flex h-12 items-center gap-2">');
-    // Nothing else competes for that space now, so there is no breakpoint at which
-    // the cluster gives it up.
+  // Regression, user report ("the X should be on the right side always"): the field
+  // was capped at 32rem and pinned directly after the wordmark, so on a wide bar its
+  // Clear ✕ ended at x=591 of 1280 — stranded mid-bar with 560px of empty paper to its
+  // right — while the trailing cluster held the edge alone. The FIELD takes the free
+  // space now (`sm:ml-auto`), so it ends where the trailing cluster begins and its ✕ is
+  // the last thing before `Preferences` at every width. Only one auto margin may exist
+  // on the row: two would split the space and put the gap back in the middle.
+  it('anchors the capped field to the trailing cluster', () => {
+    const search = app.slice(app.indexOf('<SearchField'), app.indexOf('ONE SCREEN, ONE COG'));
+    expect(search).toContain('sm:ml-auto');
+    expect(app).toContain('<div className="flex h-12 items-center gap-2">');
+    expect(cog).not.toContain('ml-auto');
     expect(cog).not.toContain('sm:ml-0');
   });
 

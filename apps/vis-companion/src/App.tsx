@@ -1137,7 +1137,7 @@ export function Header({
           onValue={onQuery}
           placeholder="Search all machines…"
           label="Search sessions on every machine"
-          className="mx-2 min-w-0 flex-1 sm:mx-3 sm:max-w-[32rem]"
+          className="mx-2 min-w-0 flex-1 sm:ml-auto sm:mr-3 sm:max-w-[32rem]"
         />
         {/* ONE SCREEN, ONE COG.
             The app used to carry a two-item tab bar whose second item existed for a
@@ -1149,7 +1149,7 @@ export function Header({
             It is a WORD in a button rather than a `⚙`: the glyph falls back to an emoji
             font whose advance width and baseline differ per platform, so it never sat
             centred in its own cell. */}
-        <div className="ml-auto flex h-12 items-center gap-2">
+        <div className="flex h-12 items-center gap-2">
           <Button
             type="button"
             variant="secondary"
