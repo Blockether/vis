@@ -1107,11 +1107,20 @@ export function SessionsScreen({
           The chips used to sit inside the machine card's own header, so the control
           that picks a machine looked like part of that machine's own answer. They are
           a segmented switch on the page's paper now: one track, the chosen machine a
-          raised tile inside it. There is no "All": a scope is one machine, always. */}
+          raised tile inside it. There is no "All": a scope is one machine, always.
+
+          ONE INSET PER EDGE. Standing on the page's paper means wearing the PAGE's
+          side edges, and the section above already spells them (`sm:px-6`). `px-3` is
+          here for the phone alone, where that section is full bleed and the ink edge
+          is the app bar's own 12px — it is what lands `Add machine` at 378 under
+          `Preferences`. A `sm:px-4` on top of the section's 24px was a second inset:
+          the verb ended at 1240 of 1280 while the card's edge and `Preferences` both
+          ended at 1256, so the one control on the page's own paper hung 16px inside
+          the page. */}
       <div
         role="group"
         aria-label="Machines"
-        className="relative z-10 flex items-center gap-1.5 px-3 pb-3 pt-6 sm:px-4 sm:pb-4 sm:pt-8"
+        className="relative z-10 flex items-center gap-1.5 px-3 pb-3 pt-6 sm:px-0 sm:pb-4 sm:pt-8"
       >
         {/* ONE MACHINE IS NOT A CHOICE. With a solo gateway paired the switcher had
             exactly one tab, always on, switching to itself — a row of chrome that

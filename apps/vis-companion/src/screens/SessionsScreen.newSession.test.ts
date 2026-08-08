@@ -514,8 +514,24 @@ describe('the machine strip', () => {
   it('pours the page ink into Add machine and clears the header by more', () => {
     expect(source).toMatch(/variant="secondary"[\s\S]{0,200}Add machine/);
     expect(source).toMatch(
-      /aria-label="Machines"[\s\S]{0,200}pb-3 pt-6 sm:px-4 sm:pb-4 sm:pt-8/,
+      /aria-label="Machines"[\s\S]{0,200}px-3 pb-3 pt-6 sm:px-0 sm:pb-4 sm:pt-8/,
     );
+  });
+
+  // Regression, user report ("why do we have this padding left right"): the strip
+  // stands on the PAGE's own paper, outside the card, so its ink edge is the page's
+  // edge. On a phone that edge is 12px (the card is full bleed, but the app bar's
+  // wordmark and `Preferences` sit at 12/378), and `px-3` is what puts `Add machine`
+  // at 378 with them. At `sm` the section ALREADY insets the page by 24px, so the
+  // strip's own `sm:px-4` was a second inset on top of it: measured at 1280, the verb
+  // ended at 1240 while the card's edge and `Preferences` both ended at 1256, so the
+  // one control on the page's paper hung 16px inside the page. One inset per edge.
+  it('takes its side edges from the page, never a second inset of its own', () => {
+    expect(source).toMatch(/aria-label="Machines"[\s\S]{0,200}px-3 /);
+    // `sm:px-0` is the RESET that hands the edge back to the section; any other
+    // `sm:px-*` here is a second inset on top of the page's own.
+    expect(source).toMatch(/aria-label="Machines"[\s\S]{0,200}sm:px-0/);
+    expect(source).not.toMatch(/aria-label="Machines"[\s\S]{0,200}sm:px-[1-9]/);
   });
 
   // Regression, user report ("This add machine should have some margin bottom as
