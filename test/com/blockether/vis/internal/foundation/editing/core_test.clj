@@ -1903,8 +1903,8 @@
          (try (grep {"anyy" ["needle"] "paths" ["."]}) nil (catch clojure.lang.ExceptionInfo e e))]
         (expect (some? err))
         (expect (= :ext.foundation.editing/invalid-rg-spec (:type (ex-data err)))))))
-  (it ":truncated-by :limit when results exceed the configured limit (default 250)"
-      ;; Limit bumped 50 -> 250 in the rg sweep. Use 300 hits to force the cap.
+  (it ":truncated-by :limit when results exceed the configured limit (default 50)"
+      ;; The rg sweep ships 50 elements by default. Use 300 hits to force the cap.
       (let
         [_
          (write-temp! "rgcap/a.txt" (string/join "\n" (map #(str "needle " %) (range 300))))
@@ -1915,7 +1915,7 @@
          out
          (grep {"all" ["needle"] "paths" [(temp-dir-path "rgcap")]})]
 
-        (expect (= 250 (count (:hits out))))
+        (expect (= 50 (count (:hits out))))
         (expect (= :limit (:truncated-by out)))))
   (it "empty result still has :truncated-by :end-of-results, never nil"
       (let
@@ -5309,6 +5309,18 @@
           (expect (= 3 (get out "item_count")))
           (expect (= #{"one.clj" "two.md" "three.txt"} names))
           (expect (every? #(get % "path") (get out "items")))))
+    ;; Regression: the fuzzy fallback capped itself at 20 items, so a filename
+    ;; search could never reach grep's own default limit of 50 elements.
+    (it "a fuzzy fallback fills grep's default 50-element limit, not a private 20"
+        (let
+          [_ (doseq [i (range 30)]
+               (write-temp! (format "findfuzzcap/alphaonly_%02d.clj" i) ";; x\n"))
+           dir (temp-dir-path "findfuzzcap")
+           out (find-search [{"query" "alphaonly betaonly" "paths" [dir]}])]
+
+          (expect (true? (get out "fuzzy")))
+          (expect (= 50 (get out "limit")))
+          (expect (= 30 (get out "item_count")))))
     (it "EVERY grep result carries the SAME TOTAL key set — hit, miss, ls, stale scope"
         (let
           [gt (private-fn "grep-tool")

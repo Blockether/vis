@@ -71,7 +71,7 @@
 ;; Tunables
 ;; =============================================================================
 
-(def ^:private default-grep-limit 250)
+(def ^:private default-grep-limit 50)
 
 (def ^:private max-rg-result-bytes
   "Total-bytes ceiling on a content-mode rg result — pi DEFAULT_MAX_BYTES parity
@@ -2353,12 +2353,6 @@
      ;; token on its own and surface files ranked by HOW MANY query terms
      ;; they match (coverage) then best term score. It stays a FILENAME tool
      ;; — it just stops requiring the whole sentence to be one filename.
-     ;; Low-confidence fuzzy results are ranked, not exhaustive — a tight cap
-     ;; keeps the card/model focused on the strongest candidates instead of a
-     ;; page of loose single-term noise.
-     fuzzy-limit
-     (min (long limit) 20)
-
      [ranked fuzzy?]
      (if is_ls
        [(find-ls roots limit is_hidden search-overlay) false]
@@ -2410,7 +2404,7 @@
 
      items
      (if fuzzy?
-       (vec (take fuzzy-limit (map #(dissoc % :rank-score) ranked)))
+       (vec (take limit (map #(dissoc % :rank-score) ranked)))
        (->> ranked
             ;; strongest match first; frecency then path break ties.
             (sort-by (fn [it]
