@@ -2082,7 +2082,7 @@
                            :got args})))
 
      allowed-keys
-     #{"query" "paths" "path" "limit" "include" "context" "is_hidden"}
+     #{"query" "paths" "path" "limit" "offset" "include" "context" "is_hidden"}
 
      unknown-keys
      (seq (remove allowed-keys (keys spec)))]
@@ -2090,7 +2090,7 @@
     (when unknown-keys
       (throw (ex-info (str "find spec has unknown keys: "
                            (str/join ", " (map str unknown-keys))
-                           ". Allowed: query, paths, limit, include, context, is_hidden.")
+                           ". Allowed: query, paths, limit, offset, include, context, is_hidden.")
                       {:type :ext.foundation.editing/invalid-find-args
                        :unknown (vec unknown-keys)
                        :allowed (vec (sort allowed-keys))})))
@@ -2164,7 +2164,17 @@
        _
        (when-not (and (integer? limit) (pos? (long limit)))
          (throw (ex-info "find \"limit\" must be a positive integer"
-                         {:type :ext.foundation.editing/invalid-find-args :limit limit})))]
+                         {:type :ext.foundation.editing/invalid-find-args :limit limit})))
+
+       ;; PAGING. `offset` is where this page STARTS on both grep axes — the
+       ;; ranked NAME list and the CONTENT hits. A caller never guesses it: the
+       ;; previous result's `next_offset` IS the value to pass back.
+       offset
+       (let [o (get spec "offset" 0)]
+         (when-not (and (integer? o) (not (neg? (long o))))
+           (throw (ex-info "find \"offset\" must be a non-negative integer"
+                           {:type :ext.foundation.editing/invalid-find-args :offset o})))
+         (long o))]
 
       {:query query
        :paths paths
@@ -2172,6 +2182,7 @@
        :missing missing
        :context context
        :limit limit
+       :offset offset
        :is_hidden (boolean (get spec "is_hidden"))
        :is_ls ls?})))
 
@@ -2317,7 +2328,7 @@
 (defn- find-search
   [args]
   (let
-    [{:keys [query paths limit is_hidden is_ls] scope-misses :missing}
+    [{:keys [query paths limit offset is_hidden is_ls] scope-misses :missing}
      (coerce-find-spec args)
 
      {roots :roots find-resolutions :resolutions searched-paths :searched-paths}
@@ -2326,8 +2337,10 @@
      ;; fff ranks genuine hits first but pads the page with loose subsequence
      ;; noise, so pull a WIDER candidate set than `limit` and let the relevance
      ;; filter below do the real cutting (a fresh fff scan is ~11ms).
+     ;; The page the caller asked for starts at `offset`, so the candidate set
+     ;; has to cover everything up to its END, not just one page's worth.
      candidate-page
-     (max (long limit) 300)
+     (max (+ (long limit) (long offset)) 300)
 
      ;; `.rgignore` + the `:grep` config overlay (issue #23), handed to fff
      ;; itself — see `fff-ignore-overlay`.
@@ -2355,7 +2368,7 @@
      ;; — it just stops requiring the whole sentence to be one filename.
      [ranked fuzzy?]
      (if is_ls
-       [(find-ls roots limit is_hidden search-overlay) false]
+       [(find-ls roots (+ (long limit) (long offset)) is_hidden search-overlay) false]
        (if (or (seq strict) (< (count tokens) 2))
          [strict false]
          (let
@@ -2404,12 +2417,13 @@
 
      items
      (if fuzzy?
-       (vec (take limit (map #(dissoc % :rank-score) ranked)))
+       (vec (take limit (drop offset (map #(dissoc % :rank-score) ranked))))
        (->> ranked
             ;; strongest match first; frecency then path break ties.
             (sort-by (fn [it]
                        [(- (double (:score it 0.0))) (- (long (or (:frecency-score it) 0)))
                         (:path it)]))
+            (drop offset)
             (take limit)
             vec))
 
@@ -2460,6 +2474,7 @@
      "query" query
      "searched_paths" searched-paths
      "limit" limit
+     "offset" offset
      "truncated_by" (if (>= (count items) (long limit)) "limit" "end_of_results")
      "fuzzy" (boolean fuzzy?)
      "matched_terms" (vec matched-terms)
@@ -2484,10 +2499,10 @@
            (= 1 (count args)) {"query" a}
            :else {})
 
-     {paths :precise-paths :keys [context]}
+     {paths :precise-paths :keys [context offset]}
      (coerce-find-spec args)]
 
-    (cond-> {"query" (get spec "query") "paths" paths}
+    (cond-> {"query" (get spec "query") "paths" paths "offset" offset}
       (pos? (long (or context 0)))
       (assoc "context" context)
 
@@ -2641,6 +2656,13 @@
    like a regex but matches no content gets a `hint` saying so, since CONTENT
    matching never interprets regex syntax.
 
+   PAGING is one knob on each side: `offset` says where this page starts on
+   both axes, and `next_offset` is the value to pass back as the NEXT page's
+   `offset` — `null` exactly when the page already is the whole answer. When
+   both axes are still capped it advances by the SMALLER delivered count, so a
+   page can repeat a row of the wider axis but can never skip one. A `time`
+   cap is NOT paged: a re-scan stops at the same wall, so narrow the search.
+
    For NAME matching, existing files normalize to their parent directory and
    missing paths to the nearest existing confined directory. CONTENT matching
    searches an existing file exactly as scoped and never widens it on zero hits;
@@ -2648,7 +2670,7 @@
    NAME matching is fuzzy subsequence over the fff file index."
   [& args]
   (let
-    [{:strs [query searched_paths limit item_count truncated_by] :as name-out}
+    [{:strs [query searched_paths limit offset item_count truncated_by] :as name-out}
      (find-search args)
 
      content-spec
@@ -2681,6 +2703,25 @@
        (name-relevant-paths (get name-out "paths") needles)
        (get name-out "paths"))
 
+     ;; PAGING. `next_offset` is the ONE value a caller passes back as `offset`;
+     ;; nil means this page IS the whole answer. Each capped axis proposes the
+     ;; offset just past what IT delivered and the smaller wins, so the next
+     ;; page may repeat a row of the wider axis but never skips one. A `time`
+     ;; cap proposes nothing: re-scanning stops at the same wall, and the hint
+     ;; below asks for a narrower search instead.
+     next-offset
+     (let
+       [advances (cond-> []
+                   (= "limit" truncated_by)
+                   (conj (long (or item_count 0)))
+
+                   (contains? #{"limit" "bytes"} (get content "hits_truncated_by"))
+                   (conj content-hits))]
+       (when-some
+         [advance (some->> (seq advances)
+                           (apply min))]
+         (when (pos? (long advance)) (+ (long (or offset 0)) (long advance)))))
+
      ;; ONE FLAT canonical result: the content block is merged UP (no nested
      ;; `content` envelope, no `items` duplicate of `paths`, no `fuzzy`/
      ;; `matched_terms`/`item_count` internals) so `matches`/`hit_count`/`paths`
@@ -2689,10 +2730,11 @@
      (cond->
        (-> name-out
            (dissoc "items" "fuzzy" "matched_terms" "item_count")
-           ;; `hint` is TOTAL too: present on every grep result, nil when the
-           ;; search has nothing to explain.
+           ;; `hint` and `next_offset` are TOTAL too: present on every grep
+           ;; result, nil when the search has nothing to explain / no next page.
            (assoc "paths" kept-paths
-                  "hint" nil)
+                  "hint" nil
+                  "next_offset" next-offset)
            (merge content))
        (and (not ls?) (zero? (long (or item_count 0))) (zero? content-hits))
        (assoc "hint"
@@ -2735,6 +2777,7 @@
                    :metadata {:query query
                               :paths searched_paths
                               :limit limit
+                              :offset offset
                               :item-count (count kept-paths)
                               :hit-count content-hits
                               :truncated-by truncated_by}})))
@@ -2862,7 +2905,7 @@
                          {:type :ext.foundation.editing/invalid-rg-spec :field label :got v}))))
 
      _
-     (nonneg-int! ":context" (get spec "context"))
+     (do (nonneg-int! ":context" (get spec "context")) (nonneg-int! ":offset" (get spec "offset")))
 
      is_files_only
      (boolean (get spec "is_files_only"))
@@ -2879,6 +2922,8 @@
      :is_hidden (boolean (get spec "is_hidden"))
      :limit (let [l (get spec "limit")]
               (if (and (integer? l) (pos? (long l))) (long l) default-grep-limit))
+     :offset (let [o (get spec "offset")]
+               (if (integer? o) (long o) 0))
      :context context
      :is_files_only is_files_only}))
 
@@ -3039,7 +3084,7 @@
    `r[...]`); only the wire VIEW is bounded by the 64KB per-observation clip."
   [spec]
   (let
-    [{:keys [needles paths include is_hidden limit context is_files_only]}
+    [{:keys [needles paths include is_hidden limit offset context is_files_only]}
      (coerce-rg-spec spec)
 
      before-ctx
@@ -3184,10 +3229,14 @@
                               (when (>= (long (swap! probed-extra inc))
                                         (long rg-breadth-probe-limit))
                                 (reset! breadth-capped? true)))
+                          ;; PAGING: `total-files` is this page's position in the
+                          ;; matching-file stream, so the first `offset` matches
+                          ;; are counted for breadth and left out of the page.
                           (when (file-has-any-hit? f matches?)
                             (swap! total-files inc)
-                            (swap! out conj (rel-path f))
-                            (when (>= (count @out) (long limit)) (reset! capped? true)))))
+                            (when (> (long @total-files) (long offset))
+                              (swap! out conj (rel-path f))
+                              (when (>= (count @out) (long limit)) (reset! capped? true))))))
                       {:files (vec @out)
                        :missing rg-missing-paths
                        :truncated-by (cond @capped? :limit
@@ -3201,6 +3250,12 @@
          (atom [])
 
          bytes-used
+         (atom 0)
+
+         ;; PAGING: hits before `offset` are walked but not kept, so the byte
+         ;; budget and the hit limit both bound the page the caller ASKED for
+         ;; rather than everything up to it.
+         skipped
          (atom 0)
 
          cap-reason
@@ -3247,15 +3302,17 @@
                   [hit hits
                    :while (not @cap-reason)]
 
-                  (let
-                    [hit* (cond-> hit
-                            (not (str/blank? (:text hit)))
-                            (assoc :anchor (patch/line-anchor (:line hit) (:text hit))))]
-                    (swap! out conj hit*)
-                    (swap! bytes-used + (hit-bytes hit*))
-                    (cond (>= (count @out) (long limit)) (reset! cap-reason :limit)
-                          (>= (long @bytes-used) (long max-rg-result-bytes)) (reset! cap-reason
-                                                                               :bytes))))))))
+                  (if (< (long @skipped) (long offset))
+                    (swap! skipped inc)
+                    (let
+                      [hit* (cond-> hit
+                              (not (str/blank? (:text hit)))
+                              (assoc :anchor (patch/line-anchor (:line hit) (:text hit))))]
+                      (swap! out conj hit*)
+                      (swap! bytes-used + (hit-bytes hit*))
+                      (cond (>= (count @out) (long limit)) (reset! cap-reason :limit)
+                            (>= (long @bytes-used) (long max-rg-result-bytes)) (reset! cap-reason
+                                                                                 :bytes)))))))))
         {:hits (vec @out)
          :missing rg-missing-paths
          :truncated-by (or @cap-reason (when @time-capped? :time) :end-of-results)
@@ -6511,12 +6568,14 @@
      :result
      (str
        "Fields `op,query,needles,searched_paths,missing_paths,paths,matches,file_counts,first_hit,hint,hit_count,"
-       "file_count,total_file_count,total_file_count_is_exact,limit,truncated_by,hits_truncated_by`. "
+       "file_count,total_file_count,total_file_count_is_exact,limit,offset,next_offset,truncated_by,"
+       "hits_truncated_by`. "
        "`matches={path:{\"line:hash\":{\"text\":string,\"before\"?:[{\"line\",\"text\"}],\"after\"?:[…]}}}` "
        "never a list; empty `before`/`after` omitted.")
      :description
      (str "Literal smart-case content plus fuzzy filenames; use first when location is unknown. "
-          "`query: \"\"` lists files; null `hits_truncated_by` means complete content.")
+          "`query: \"\"` lists files; null `hits_truncated_by` means complete content. "
+          "Page with `offset`: null `next_offset` means this page is the whole answer.")
      :render-finish-call-fn render-grep-result
      :schema
      {:type "object"
@@ -6536,6 +6595,9 @@
                   :minimum 0
                   :description "Context lines per hit in before/after (default 0)."}
        "limit" {:type "integer" :minimum 1 :description "Filename-match cap (default 50)."}
+       "offset" {:type "integer"
+                 :minimum 0
+                 :description "Page start on BOTH axes; pass back the previous `next_offset`."}
        "is_hidden" {:type "boolean" :description "Include hidden paths (default false)."}}
       :required ["query"]
       :additionalProperties false}

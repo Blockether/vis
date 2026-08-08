@@ -5055,6 +5055,93 @@
               (expect (= expected (get result "searched_paths")))
               (expect (not= ["."] (get result "searched_paths")))))))))
 
+;; A capped grep had no way to ask for the NEXT page: the only way past the
+;; limit was to re-run the same search with a bigger `limit` and pay for the
+;; first page all over again.
+(defdescribe
+  grep-paging-test
+  "`offset` + `next_offset` page BOTH grep axes — the CONTENT hits and the
+   ranked NAME matches. `next_offset` is null exactly when the page already is
+   the whole answer, so a paging loop terminates on a value test."
+  (let
+    [grep-tool
+     (private-fn "grep-tool")
+
+     page
+     (fn [spec]
+       (:result (grep-tool spec)))
+
+     texts
+     (fn [r]
+       (->> (get r "matches")
+            vals
+            (mapcat vals)
+            (mapv #(get % "text"))))]
+
+    (it "a capped CONTENT sweep hands back the offset of its next page"
+        (let
+          [_
+           (write-temp! "grep-page/a.txt" (string/join "\n" (map #(str "needle " %) (range 300))))
+
+           dir
+           (temp-dir-path "grep-page")
+
+           first-page
+           (page {"query" "needle" "paths" [dir]})
+
+           second-page
+           (page {"query" "needle" "paths" [dir] "offset" 50})]
+
+          (expect (= 0 (get first-page "offset")))
+          (expect (= 50 (get first-page "hit_count")))
+          (expect (= "limit" (get first-page "hits_truncated_by")))
+          (expect (= 50 (get first-page "next_offset")))
+          (expect (= "needle 0" (first (texts first-page))))
+          ;; The second page starts exactly where the first stopped: no repeat,
+          ;; no gap.
+          (expect (= 50 (get second-page "offset")))
+          (expect (= "needle 50" (first (texts second-page))))
+          (expect (not-any? (set (texts first-page)) (texts second-page)))))
+    (it "the LAST page reports next_offset null, so the loop stops"
+        (let
+          [_
+           (write-temp! "grep-page-end/a.txt"
+                        (string/join "\n" (map #(str "needle " %) (range 60))))
+
+           dir
+           (temp-dir-path "grep-page-end")
+
+           last-page
+           (page {"query" "needle" "paths" [dir] "offset" 50})]
+
+          (expect (= 10 (get last-page "hit_count")))
+          (expect (nil? (get last-page "hits_truncated_by")))
+          ;; TOTAL key: it ships on every result, null when there is no more.
+          (expect (contains? last-page "next_offset"))
+          (expect (nil? (get last-page "next_offset")))))
+    (it "the ranked NAME list pages on the same knob"
+        (let
+          [_
+           (doseq [i (range 30)]
+             (write-temp! (str "grep-page-name/pagefile-" i ".clj") "(ns x)\n"))
+
+           dir
+           (temp-dir-path "grep-page-name")
+
+           first-page
+           (page {"query" "pagefile" "paths" [dir] "limit" 10})
+
+           second-page
+           (page {"query" "pagefile" "paths" [dir] "limit" 10 "offset" 10})]
+
+          (expect (= 10 (count (get first-page "paths"))))
+          (expect (= "limit" (get first-page "truncated_by")))
+          (expect (= 10 (get first-page "next_offset")))
+          (expect (= 10 (count (get second-page "paths"))))
+          (expect (not-any? (set (get first-page "paths")) (get second-page "paths")))))
+    (it "a negative offset is refused at the seam, never silently floored"
+        (expect (throws? clojure.lang.ExceptionInfo #(grep-tool {"query" "needle" "offset" -1}))))))
+
 (defdescribe
   grep-truncation-and-literal-dialect-test
   "Two silent dead ends the runaway-loop post-mortems traced back to `grep`:
