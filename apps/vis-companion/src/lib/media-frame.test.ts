@@ -4,11 +4,11 @@ import {
   mediaCaptionClass,
   mediaContentClass,
   mediaFrameClass,
-  mediaSlotFrame,
-  type MediaSlotState,
+  mediaGridClass,
+  mediaGroupLayout,
+  mediaTileContentClass,
+  mediaTileFrameClass,
 } from "./media-frame";
-
-const STATES: MediaSlotState[] = ["pending", "ready", "failed"];
 
 // Regression, issue: scrolling an iOS transcript full of screenshots jumped.
 // A produced-image tile reserved a 96 px pulse while its object URL loaded and
@@ -17,12 +17,6 @@ const STATES: MediaSlotState[] = ["pending", "ready", "failed"];
 // above the fold shoved the reader's line down — and the scroll corrector
 // stands down while a finger is on the glass, so nobody put it back.
 describe("transcript media frame", () => {
-  it("reserves the same box in every state of a slot", () => {
-    const frames = new Set(STATES.map(mediaSlotFrame));
-
-    expect(frames).toEqual(new Set([mediaFrameClass]));
-  });
-
   it("sizes the box from the column and the viewport, never from the picture", () => {
     expect(mediaFrameClass).toContain("w-full");
     expect(mediaFrameClass).toMatch(/aspect-/u);
@@ -58,5 +52,43 @@ describe("the media plate", () => {
     expect(mediaCaptionClass).toContain("border");
     expect(mediaCaptionClass).toContain("border-t-0");
     expect(mediaCaptionClass).toContain("bg-thinking-surface");
+  });
+});
+
+// ONE picture is a plate; several are a gallery. Four dropped screenshots used
+// to be four 60svh plates stacked down the column, which is a wall to scroll
+// past rather than something to look at.
+describe("the media gallery", () => {
+  it("plates a lone picture and grids the rest", () => {
+    expect(mediaGroupLayout(0)).toBe("plate");
+    expect(mediaGroupLayout(1)).toBe("plate");
+    expect(mediaGroupLayout(2)).toBe("grid");
+    expect(mediaGroupLayout(9)).toBe("grid");
+  });
+
+  it("reserves a tile exactly as it reserves a plate", () => {
+    expect(mediaTileFrameClass).toContain("w-full");
+    expect(mediaTileFrameClass).toMatch(/aspect-/u);
+    expect(mediaTileFrameClass).toContain("overflow-hidden");
+    expect(mediaTileFrameClass).not.toMatch(/\b[wh]-auto\b/u);
+  });
+
+  it("wears the plate's own paper and edge, at gallery size", () => {
+    expect(mediaTileFrameClass).toContain("border-code-edge");
+    expect(mediaTileFrameClass).toContain("bg-code");
+  });
+
+  it("fills a tile instead of matting it", () => {
+    expect(mediaTileContentClass).toContain("object-cover");
+    expect(mediaContentClass).toContain("object-contain");
+  });
+
+  // An iPad is a wide TOUCH device: width may add a column, and only a mouse
+  // may take the tighter one. Nothing here pins a smaller box.
+  it("lets width add columns and never shrink a hit box", () => {
+    expect(mediaGridClass).toContain("grid-cols-2");
+    expect(mediaGridClass).toContain("sm:grid-cols-3");
+    expect(mediaGridClass).toContain("mouse:grid-cols-4");
+    expect(mediaGridClass).not.toMatch(/\bsm:(?:min-)?[wh]-/u);
   });
 });

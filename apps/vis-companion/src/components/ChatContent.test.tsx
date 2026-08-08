@@ -7,7 +7,11 @@ import {
   UserMessage,
 } from "./ChatContent";
 import type { GatewayClient } from "../lib/gateway";
-import { mediaFrameClass } from "../lib/media-frame";
+import {
+  mediaFrameClass,
+  mediaGridClass,
+  mediaTileFrameClass,
+} from "../lib/media-frame";
 import type { TranscriptTurn } from "../lib/types";
 import chatContentSource from "./ChatContent.tsx?raw";
 
@@ -148,6 +152,61 @@ describe("user bubble pictures", () => {
   it("never lets the picture size its own slot", () => {
     expect(html()).not.toMatch(/<img[^>]*\bw-auto\b/u);
     expect(html()).not.toMatch(/<img[^>]*\bh-auto\b/u);
+  });
+
+  // Regression: the picture the HUMAN sent wore no frame, while the model's own
+  // artifact two rows below it did. `ExpandableImage`'s trigger spells `border-0
+  // bg-transparent` on itself, and this rail handed that very same element
+  // `border border-code-edge bg-code` through `frameClassName` — two competing
+  // utilities on one element are settled by Tailwind's emission order and never
+  // by which one the call site typed. The frame is a WRAPPER, and the plate owns
+  // it (`MediaPlate`), so both rails wear the same face.
+  it("never spells the frame on the element that disowns its own border", () => {
+    expect(html()).not.toMatch(
+      /class="[^"]*\bborder-0\b[^"]*\bborder-code-edge\b/u,
+    );
+  });
+
+  it("captions a lone picture with its name and format", () => {
+    expect(text(html())).toContain("shot.png");
+    expect(text(html())).toContain("PNG");
+  });
+});
+
+// ONE picture is a plate; several are a GALLERY. A transcript where somebody
+// dropped four screenshots used to be four 60svh plates stacked down the
+// column — a wall to scroll past rather than something to look at.
+describe("user bubble galleries", () => {
+  const gallery = (count: number) =>
+    renderToStaticMarkup(
+      <UserMessage
+        attachments={Array.from({ length: count }, (_, i) => ({
+          filename: `shot-${i}.png`,
+          media_type: "image/png",
+          base64: "iVBORw0KGgo=",
+          size: 8,
+        }))}
+      >
+        {"look at these"}
+      </UserMessage>,
+    );
+
+  it("keeps a lone picture on its plate", () => {
+    expect(gallery(1)).toContain(mediaFrameClass);
+    expect(gallery(1)).not.toContain(mediaGridClass);
+  });
+
+  it("lays several pictures out as a grid of tiles", () => {
+    const html = gallery(3);
+
+    expect(html).toContain(mediaGridClass);
+    expect(html).toContain(mediaTileFrameClass);
+    expect(html).not.toContain(mediaFrameClass);
+  });
+
+  it("reports what the gallery holds instead of captioning every tile", () => {
+    expect(text(gallery(3))).toContain("3 images");
+    expect(text(gallery(3))).not.toContain("shot-0.png");
   });
 });
 

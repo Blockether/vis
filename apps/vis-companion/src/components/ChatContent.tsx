@@ -15,7 +15,6 @@ import { DataTable } from "./DataTable";
 import { DocPreview } from "./DocArtifact";
 import { AlertIcon, ArrowOutIcon, ChevronIcon } from "./icons";
 import {
-  artifactMedia,
   attachmentBytes,
   attachmentIsDoc,
   attachmentIsImage,
@@ -63,13 +62,19 @@ import type {
 import type { GatewayClient } from "../lib/gateway";
 import { ExpandableImage } from "./ImageViewer";
 import {
-  mediaCaptionClass,
   mediaContentClass,
-  mediaFrameClass,
+  mediaGroupLayout,
   mediaPendingClass,
-  mediaSlotFrame,
-  type MediaSlotState,
+  mediaTileContentClass,
+  type MediaLayout,
 } from "../lib/media-frame";
+import {
+  MediaGrid,
+  MediaPlate,
+  MediaTile,
+  mediaMeta,
+  mediaSummary,
+} from "./Media";
 
 // Transcript nodes the stream appends rise + fade in instead of popping into
 // place. A keyframe animation (see `--animate-transcript-*` in index.css) plays
@@ -1520,10 +1525,14 @@ const AttachmentTile = memo(function AttachmentTile({
   client,
   sid,
   attachment,
+  layout,
 }: {
   client: GatewayClient;
   sid: string;
   attachment: IterationAttachment;
+  // A lone artifact is a PLATE with its own caption; from the second one the
+  // rail is a gallery and this is one square tile in it (`mediaGroupLayout`).
+  layout: MediaLayout;
 }) {
   const [url, setUrl] = useState<string | null>(null);
   // Bumped when the browser refuses the URL we handed it — the client's object
@@ -1577,59 +1586,59 @@ const AttachmentTile = memo(function AttachmentTile({
   // ONE reserved box for the whole life of the slot — see `lib/media-frame`. A
   // failure that arrives after the bytes were requested says so INSIDE the box
   // it already holds: collapsing to a text line here would shove the reader
-  // just as hard as growing did.
-  const slot: MediaSlotState = failed ? "failed" : url ? "ready" : "pending";
+  // just as hard as growing did. The box belongs to `MediaPlate`/`MediaTile`,
+  // which is why nothing below can change it.
+  const isTile = layout === "grid";
+  const body = failed ? (
+    <div
+      className={`flex h-full w-full items-center gap-1.5 bg-thinking-surface font-mono text-chip text-footer-muted ${
+        isTile ? "justify-center" : "px-2"
+      }`}
+    >
+      <AlertIcon className="size-3" />
+      {isTile ? null : <span className="min-w-0 truncate">{name}</span>}
+    </div>
+  ) : !url ? (
+    <div className={mediaPendingClass} aria-hidden="true" />
+  ) : isVideo ? (
+    // A clip PLAYS in place, with the platform's own controls. It streams from
+    // the same attachment endpoint as the pictures, and `preload="metadata"`
+    // means a transcript full of clips costs a poster frame, not the bytes.
+    <video
+      src={url}
+      controls
+      playsInline
+      preload="metadata"
+      onError={() => setFailed(true)}
+      className={mediaContentClass}
+    />
+  ) : (
+    <ExpandableImage
+      src={url}
+      alt={name}
+      loading="lazy"
+      decoding="async"
+      frameClassName="h-full w-full"
+      onError={() => {
+        if (attempt >= 2) {
+          setFailed(true);
+          return;
+        }
+        setUrl(null);
+        setAttempt((current) => current + 1);
+      }}
+      className={isTile ? mediaTileContentClass : mediaContentClass}
+    />
+  );
 
+  if (isTile) return <MediaTile>{body}</MediaTile>;
   return (
-    <figure className="mt-2.5 min-w-0">
-      <div className={mediaSlotFrame(slot)}>
-        {failed ? (
-          <div className="flex h-full w-full items-center gap-1.5 bg-thinking-surface px-2 font-mono text-chip text-footer-muted">
-            <AlertIcon className="size-3" />
-            <span className="min-w-0 truncate">{name}</span>
-          </div>
-        ) : !url ? (
-          <div className={mediaPendingClass} aria-hidden="true" />
-        ) : isVideo ? (
-          // A clip PLAYS in place, with the platform's own controls. It streams from
-          // the same attachment endpoint as the pictures, and `preload="metadata"`
-          // means a transcript full of clips costs a poster frame, not the bytes.
-          <video
-            src={url}
-            controls
-            playsInline
-            preload="metadata"
-            onError={() => setFailed(true)}
-            className={mediaContentClass}
-          />
-        ) : (
-          <ExpandableImage
-            src={url}
-            alt={name}
-            loading="lazy"
-            decoding="async"
-            frameClassName="h-full w-full"
-            onError={() => {
-              if (attempt >= 2) {
-                setFailed(true);
-                return;
-              }
-              setUrl(null);
-              setAttempt((current) => current + 1);
-            }}
-            className={mediaContentClass}
-          />
-        )}
-      </div>
-      <figcaption className={mediaCaptionClass}>
-        <span className="min-w-0 flex-1 truncate">{name}</span>
-        <span className="shrink-0 uppercase tracking-wider opacity-70">
-          {[artifactMedia(attachment), attachmentBytes(attachment.size)]
-            .filter(Boolean)
-            .join(" · ")}
-        </span>
-      </figcaption>
-    </figure>
+    <MediaPlate
+      name={name}
+      meta={mediaMeta(attachment)}
+    >
+      {body}
+    </MediaPlate>
   );
 });
 
@@ -1746,6 +1755,21 @@ export const AttachmentRail = memo(function AttachmentRail({
   );
   const page = pageBySize(media, (entry) => entry.size, pages, RAIL_PAGE);
   const playable = page.shown.filter(attachmentIsPlayable);
+  // A clip is never a gallery tile: at ~183px the platform's own controls do not
+  // fit, and a still frame with no way to start it is a picture that lies. Clips
+  // keep the plate; the pictures beside them still become the gallery.
+  const clips = playable.filter(attachmentIsVideo);
+  const pictures = playable.filter((entry) => !attachmentIsVideo(entry));
+  const layout = mediaGroupLayout(pictures.length);
+  const gallery = pictures.map((attachment) => (
+    <AttachmentTile
+      key={`${attachment.iteration_id ?? "iter"}-${attachment.index}`}
+      client={client}
+      sid={sid}
+      attachment={attachment}
+      layout={layout}
+    />
+  ));
   const docs = page.shown.filter(attachmentIsDoc);
   const files = recordedFiles(
     attachments.filter(
@@ -1758,14 +1782,20 @@ export const AttachmentRail = memo(function AttachmentRail({
 
   return (
     <>
-      {playable.map((attachment) => (
+      {clips.map((attachment) => (
         <AttachmentTile
           key={`${attachment.iteration_id ?? "iter"}-${attachment.index}`}
           client={client}
           sid={sid}
           attachment={attachment}
+          layout="plate"
         />
       ))}
+      {layout === "grid" ? (
+        <MediaGrid summary={mediaSummary(pictures)}>{gallery}</MediaGrid>
+      ) : (
+        gallery
+      )}
       {docs.map((attachment) => (
         <AttachmentDocTile
           key={`doc-${attachment.iteration_id ?? "iter"}-${attachment.index}`}
@@ -2330,6 +2360,15 @@ export const AssistantMessage = memo(function AssistantMessage({
   );
 });
 
+// A user attachment carries its own bytes, already base64 — persisted, so the
+// picture survives a restart after the clipboard or temp file it came from is
+// gone. Some rows store the data URL whole and some only its payload.
+function attachmentSrc(att: GatewayAttachment): string {
+  return att.base64.startsWith("data:")
+    ? att.base64
+    : `data:${att.media_type};base64,${att.base64}`;
+}
+
 export const UserMessage = memo(function UserMessage({
   children,
   attachments,
@@ -2347,6 +2386,31 @@ export const UserMessage = memo(function UserMessage({
       !!a.base64 &&
       (!!a.media_type?.startsWith("image/") ||
         !!a.media_type?.startsWith("video/")),
+  );
+  // The very rule the assistant rail follows (`mediaGroupLayout`): ONE picture
+  // is a plate with its own caption, several are a gallery. A clip always keeps
+  // the plate, since the platform's controls do not fit a gallery tile.
+  const clips = mediaAttachments.filter((a) =>
+    Boolean(a.media_type?.startsWith("video/")),
+  );
+  const pictures = mediaAttachments.filter(
+    (a) => !a.media_type?.startsWith("video/"),
+  );
+  const layout = mediaGroupLayout(pictures.length);
+  // These bytes are inline, so there is no pulse to swap out — but a picture
+  // whose box is its own decoded size still reserves NOTHING until it decodes,
+  // and on iOS that decode happens as the bubble nears the viewport, i.e.
+  // mid-scroll. Same reserved frame as a produced artifact, for the same
+  // reason — and the frame is the PLATE's, never a class list on the zoom
+  // trigger, which spells `border-0 bg-transparent` on itself.
+  const picture = (att: GatewayAttachment, index: number, fill: boolean) => (
+    <ExpandableImage
+      key={att.id ?? `pic-${index}`}
+      src={attachmentSrc(att)}
+      alt={att.filename ?? "attachment"}
+      frameClassName="h-full w-full"
+      className={fill ? mediaTileContentClass : mediaContentClass}
+    />
   );
   // The user bubble keeps its OWN best-effort rule, decided in JS. `Markdown` can justify
   // unconditionally because it owns elements to scope `break-all` to (inline `code`, links);
@@ -2397,40 +2461,43 @@ export const UserMessage = memo(function UserMessage({
         )}
       </div>
       {mediaAttachments.length > 0 && (
-        <div className="mt-2 flex flex-col items-start gap-2">
-          {mediaAttachments.map((att, i) => {
-            const key = att.id ?? `att-${i}`;
-            const src = att.base64.startsWith("data:")
-              ? att.base64
-              : `data:${att.media_type};base64,${att.base64}`;
-            // The clip the user sent replays from the SAME DB-owned bytes as a
-            // picture, so it survives a restart after the source file is gone.
-            //
-            // These bytes are inline, so there is no pulse to swap out — but a
-            // picture whose box is its own decoded size still reserves NOTHING
-            // until it decodes, and on iOS that decode happens as the bubble
-            // nears the viewport, i.e. mid-scroll. Same reserved frame as a
-            // produced artifact, for the same reason.
-            return att.media_type?.startsWith("video/") ? (
-              <div key={key} className={mediaFrameClass}>
-                <video
-                  src={src}
-                  controls
-                  playsInline
-                  preload="metadata"
-                  className={mediaContentClass}
-                />
-              </div>
-            ) : (
-              <ExpandableImage
-                key={key}
-                src={src}
-                alt={att.filename ?? "attachment"}
-                frameClassName={mediaFrameClass}
+        <div className="min-w-0">
+          {/* The clip the user sent replays from the SAME DB-owned bytes as a
+              picture, so it survives a restart after the source file is gone. */}
+          {clips.map((att, index) => (
+            <MediaPlate
+              key={att.id ?? `clip-${index}`}
+              name={att.filename}
+              meta={mediaMeta(att)}
+            >
+              <video
+                src={attachmentSrc(att)}
+                controls
+                playsInline
+                preload="metadata"
                 className={mediaContentClass}
               />
-            );
-          })}
+            </MediaPlate>
+          ))}
+          {layout === "grid" ? (
+            <MediaGrid summary={mediaSummary(pictures)}>
+              {pictures.map((att, index) => (
+                <MediaTile key={att.id ?? `tile-${index}`}>
+                  {picture(att, index, true)}
+                </MediaTile>
+              ))}
+            </MediaGrid>
+          ) : (
+            pictures.map((att, index) => (
+              <MediaPlate
+                key={att.id ?? `plate-${index}`}
+                name={att.filename}
+                meta={mediaMeta(att)}
+              >
+                {picture(att, index, false)}
+              </MediaPlate>
+            ))
+          )}
         </div>
       )}
     </article>

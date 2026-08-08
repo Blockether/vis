@@ -152,7 +152,7 @@ export function artifactKind(attachment: IterationAttachment): ArtifactKind {
  * than as its subtype, and a generic `application/octet-stream` carries no word
  * at all.
  */
-export function artifactMedia(attachment: IterationAttachment): string {
+export function artifactMedia(attachment: Partial<IterationAttachment>): string {
   const extension = (attachment.filename ?? "").split(".").pop() ?? "";
   if (extension && /^[a-z0-9]{1,5}$/i.test(extension))
     return extension.toUpperCase();

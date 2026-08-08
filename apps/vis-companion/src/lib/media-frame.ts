@@ -20,9 +20,6 @@
  * mid-gesture or otherwise. Full resolution is one tap away in the viewer.
  */
 
-/** The three things one media slot can be showing. All reserve the same box. */
-export type MediaSlotState = "pending" | "ready" | "failed";
-
 /**
  * The reserved box itself: an aspect ratio off the column width, capped so a
  * wide desktop bubble cannot hand a single picture the whole screen. Both terms
@@ -55,11 +52,45 @@ export const mediaCaptionClass =
   "flex min-w-0 items-center gap-2 border border-t-0 border-code-edge bg-thinking-surface px-2 py-1 font-mono text-chip text-footer-muted";
 
 /**
- * The frame ONE media slot reserves in a given state.
+ * ONE picture is a PLATE; several are a GALLERY.
  *
- * The answer is the same string every time, on purpose: that identity IS the
- * fix, and the test that pins it is the regression gate.
+ * A rail that gave every picture the full 4/3 plate turned four dropped
+ * screenshots into four 60svh boxes stacked down the column — a wall to scroll
+ * past rather than something to look at. A lone picture still gets its plate
+ * and its caption, because that is the whole content of the message; from the
+ * second one the rail becomes a grid of square tiles and the names move into
+ * the viewer, where there is room for them.
  */
-export function mediaSlotFrame(_state: MediaSlotState): string {
-  return mediaFrameClass;
+export type MediaLayout = "plate" | "grid";
+
+/** The layout a rail of `count` pictures takes. The rule is the same on BOTH
+ *  rails: what the human sent and what the model produced read alike. */
+export function mediaGroupLayout(count: number): MediaLayout {
+  return count > 1 ? "grid" : "plate";
 }
+
+/**
+ * The gallery itself: two columns on a phone, more when there is room.
+ *
+ * Columns are the only thing width decides. A 390px phone gives ~183px tiles
+ * and the widest desktop still gives ~160px, so no tile ever approaches a hit
+ * box worth policing — and no `sm:` utility here shrinks one, because adding a
+ * column is not the same as pinning a smaller box.
+ */
+export const mediaGridClass =
+  "grid grid-cols-2 gap-2 sm:grid-cols-3 mouse:grid-cols-4";
+
+/** One gallery cell: square, reserved before its bytes land, same paper and
+ *  same edge as the plate — a tile is the plate at gallery size, not a
+ *  different control. */
+export const mediaTileFrameClass =
+  "block w-full aspect-square overflow-hidden border border-code-edge bg-code";
+
+/**
+ * A picture inside a tile FILLS it. The plate mats a tall screenshot because it
+ * is the message; a contact sheet is read by what each frame is OF, and a grid
+ * of letterboxed slivers separated by their own empty paper answers that worse
+ * than a crop does. Full pixels stay one tap away in the viewer.
+ */
+export const mediaTileContentClass =
+  "block h-full w-full object-cover object-center";
