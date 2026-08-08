@@ -7,6 +7,479 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.33] - 2026-08-08
+
+### Changed
+- Release v0.1.33
+- Put the search field and every transcript card header on one height
+- Take the machine strip's side edges from the page
+- Page grep results with offset and next_offset
+- Let a session row fill its swipe track
+- Anchor the companion search field to the bar's trailing edge
+- Default grep to 50 elements, filename fallback included
+- Frame a sent picture like a produced one and gallery several
+- Stretch a row-ending icon button at mouse density too
+- Put search back on the app bar with its own magnifying glass
+- Give search its own band on a phone and land Clear on the field's edge
+- Render MetaButton's children so the composer strip has words again
+- Name a button by its rank and give the composer one strip
+- Give the companion one chip, one row, one disclosure and one remove
+- Show a saved artifact revision without refetching the transcript
+- Give the opened document the one header band and the one button
+- Remove the copy, move, delete, create_directory and file_exists tools
+- Start a stroke from beside the picture, not only on its edge
+- Release the companion app locally when this machine can sign
+- Enforce :ext/protected-paths in the Python sandbox filesystem
+- Say the create inside its button and shrink the row question
+- Show a document artifact once, as a card that opens over everything
+- Paint the star action yellow and keep the starred row in view
+- Let the app stop the turn it started again
+- Never link a TestFlight build to an internal beta group
+- Give a note ten annotation threads and a comment on the whole document
+- Push from workflows through one shared git-push action
+- Mark annotations in theme colours and annotate plain text too
+- Make the machine switcher square, unread a highlight, and hide it for a solo machine
+- Draw a comment ordinal as a plain coloured number
+- Accept any spelling of a path in vis_attach
+- Clear the NEW badge on the row you just read
+- Make the fleet switcher one segmented track
+- Put the session star immediately right of the title
+- Number and colour markdown comments, and underline the passage each is about
+- Clear the machine card below the fleet strip
+- Pin the companion's artifact-revision save URL to its route
+- Read a note inline as source and comment on it by tapping
+- Pour the page ink into Add machine and lift the fleet strip
+- Put the machine tabs and Add machine on one control height
+- Give the phone a full-bleed sessions card with a fixed height
+- Link every TestFlight build to every beta group
+- Name the machine strip's pairing verb Add machine
+- Pair a machine from the tab strip's own + button
+- Abandon the stroke a pinch turned out to be
+- End the machine card where its content ends
+- Give the session list one meta ink and a closed machine card
+- Let the viewer zoom out to 50%
+- Write PDF annotations with the maintained pdf-lib fork
+- Annotate every opened artifact: comments on notes, ink on PDFs and pictures
+- Stand the machine tabs outside the machine card and drop the All scope
+- Give a document preview an Open chip that fills the screen
+- Remove the bin/vis-agent launcher tests
+- Keep a Python extension loaded between tests that ask for the same one
+- Restore the transcript copy chip's own look
+- Give the app bar search the buttons own face
+- Give the transcript's copy chip the app's own button and one preview box
+- Open every artifact at full height
+- Render markdown artifacts and let a human comment on them
+- Make search the app bar and move pairing into preferences
+- Make Return type a new line on phones and dismiss the keyboard on send
+- Collapse vis_attach_bytes into vis_attach
+- Show document artifacts plainly: no draw, hide or new tab
+- Stop shelling out to real git in the tests
+- Give the app bar and machine verbs a real button face
+- Label every companion verb and move the machines into the header
+- Pair from the app bar and show one fleet strip for any fleet size
+- Make pairing a chip and drop the tab bar
+- Key the shared test GraalPy sandbox so an abusive suite keeps its own
+- Remove the ACP extension
+- Make the machine a chip, not a second header band
+- Require UI proposals as ASCII sketches, not app-built galleries
+- Remove model, reasoning, verbosity, drafts, magit palette verbs and /export-html
+- Keep a renamed machine name across dev reloads
+- Close the gap between a session row and its disclosure
+- Cut the paramiko and sandbox-fd test walls
+- Rename a machine on its own header and add a project in one tap
+- Route overlay card justification through the shared run justifier
+- End the phone status on the timestamp edge, with the flags against it
+- Cut the wall-clock waste out of the slowest gateway and loop tests
+- Pin svar 0.7.109 for the 2-minute retrying TTFT watchdog
+- Put the machine header two verbs on the band as + and gear
+- Cap the session pager to a centred cluster
+- Sit the phone row flags beside the status they qualify
+- Align header names on one glyph column and always print the tally noun
+- Give the first token two minutes instead of five
+- Give session-row flags their own column
+- Hold the pager steps in fixed slots so > never moves
+- Page the session list with numbered, jumpable pages
+- Add a sharded parallel test runner
+- Always offer the draft half and delete the Offer drafts setting
+- Wall the test suite off from the public internet
+- Make Manage projects the same anchored panel as the draft picker
+- Frame transcript media as a plate with a docked filename label
+- Move the draft verb onto the project header as a split button
+- Show a human-input pause only on its own session's tab
+- Draw the draft mark as a forked project folder
+- Add hard no-profanity rule to AGENTS.md
+- Mark the draft verb with its own folder icon
+- Remove profanity from source comments and test reports
+- Make the drafts setting a named choice on the shared settings cell
+- Stop provider tests dialing the network and trim eval-timeout walls
+- Stop the Offer drafts toggle sliding sideways
+- Pad the trailing inside edge of a list row
+- Stretch a row-ending icon button to its row height
+- Open every dialog in the one Modal + DialogFrame
+- Pin the manage-projects path bar to one fixed height
+- Keep the project browser still when the pencil is taken
+- Make every dialog a full-height phone sheet and one desktop box
+- Refuse re-adding a folder that is already a project
+- Open project browsing one level above the current project
+- Dock the Manage projects footer and align its trash to the row edge
+- Read ui source through Vite raw import in the sheet pin
+- Make every dialog a bottom sheet on phones
+- Align companion trailing controls and drop the glyph hover frame
+- Keep inline images visible when a transient band opens
+- Shrink compact header buttons to a 32px face with a 44px touch target
+- Paint the transient band flat on the terminal's own paper
+- Load the TUI provider dialog from one gateway call
+- Close the transient band around its hint bar on slightly darker paper
+- Render TUI diff fences compact instead of side-by-side
+- Border the transient band, drop its tinted paper and column rules
+- Pin svar 0.7.107 for uncompressed SSE streaming
+- Never title a session after a pasted image's clipboard path
+- Order provider limit windows shortest-first (5h before 7d)
+- Keep a TUI tab's reading position across a workspace switch
+- Remember where a session transcript was being read
+- Never animate auto-follow scrolling in the TUI
+- Drop tool name from pending-summary docstring example
+- Drop unused form display exports and the dead auto-repaired flag
+- Drop a tab's stale layout on switch so the view stops self-scrolling
+- Correct label-overrides docstring after the shell/fs tool split
+- Drop same-path coalescing and the running-code-tools exception
+- Land the TUI scroll on a terminal resize instead of easing to it
+- Purge legacy fs/shell tool names from form and loop tests
+- Split the `shell` and `fs` mega-tools into named verbs
+- Print a TUI notice's sentence without its machine code
+- Unify the transient band into one embeddable component
+- Anchor every main-screen transient through one band anchor
+- Adopt svar 0.7.106 so a declared retry cooldown is waited out
+- Ink the transient band's title on its opening rule and move the palette into Tools
+- Serve a live turn's text-named images from the gateway
+- Anchor in-session transients above the prompt on their own paper
+- Report total line counts in a collapsed multi-file patch headline
+- Give a form one text column by moving the focus ring out of it
+- Report added/removed/modified line counts on every edit summary
+- Stop blaming the provider for a turn that never reached one
+- Abandon a wedged session engine instead of queueing behind it
+- Give every companion list header one band
+- Pin the turn soul on every attachment row, tool artifacts included
+- Give every attachment descriptor its turn id
+- Answer every cancel, even when the tab paints no live turn
+- Give every header one trailing cluster and one kebab
+- Share one overflow button and one header action cluster in the companion
+- Unify companion overflow menus, icon buttons, and dialog closes
+- Return attachment descriptors and drop the answer gallery
+- Search the zipper tree with one parse instead of re-parsing per node
+- Give a form field's input its own row of air and stop indenting toggles
+- Bump svar to 0.7.105
+- Decode Python provider maps from declared field tables
+- Give every C-x category its own column
+- Open one blank row under every human-input label
+- Lay a tall transient band out in which-key columns
+- Make C-x a transient hydra band
+- Ask a band's follow-up question in the band's own frame
+- Give every managed nREPL its own log file
+- Scope the tid-less cancel to the turn its caller submitted
+- Let Rift hand a clean draft over without pending changes
+- Name the project that owns a nested skill
+- Remove native tool color roles
+- Revert recent folding changes
+- Respect disabled Bridge toggle during commits
+- Require canonical gateway client for all API calls
+- Resolve nested skills from their owning projects
+- Fix live session turn iteration counts
+- Expose Impeccable to repository sessions
+- Keep skill slash commands root-only
+- Make nested slash commands project-relative
+- Fix wait card command rendering
+- Clear unread badge after live answer settles
+- Simplify session list borders
+- Remove retry_native replay verb
+- Auto-connect companion dev gateways
+- Compact project rows around new session
+- Center compact new session buttons
+- Keep new session button compact
+- Canonicalize workspace roots at persistence
+- Show companion diffs in one unified column
+- Keep project roots canonical
+- Put project borders on the clickable header
+- Fix HTTP migration namespace compilation
+- Give every project header both borders
+- Use babashka HTTP client and preserve requested services
+- Extract Web Push protocol interop helpers
+- Refactor gateway Web Push interop
+- Render filesystem copy results as expandable cards
+- Fix sticky machine border seams
+- Keep Magit responsive during commit verification
+- Keep browser push gateway-local
+- Keep machine banner borders single
+- Finish pending companion and engine work
+
+### Package changes
+
+#### com.blockether/vis
+- Release v0.1.33 (2ebb36887)
+- Put the search field and every transcript card header on one height (f8df6596e)
+- Take the machine strip's side edges from the page (f17a0baa9)
+- Page grep results with offset and next_offset (be31c6165)
+- Let a session row fill its swipe track (94f996d60)
+- Anchor the companion search field to the bar's trailing edge (3102648f0)
+- Default grep to 50 elements, filename fallback included (d6b9d2253)
+- Frame a sent picture like a produced one and gallery several (116c59834)
+- Stretch a row-ending icon button at mouse density too (c85b77e9a)
+- Put search back on the app bar with its own magnifying glass (ba9296498)
+- Give search its own band on a phone and land Clear on the field's edge (85d9d3b4c)
+- Render MetaButton's children so the composer strip has words again (3bae6b37d)
+- Name a button by its rank and give the composer one strip (bb59694f1)
+- Give the companion one chip, one row, one disclosure and one remove (0d3274b0b)
+- Show a saved artifact revision without refetching the transcript (94b26fdc5)
+- Give the opened document the one header band and the one button (b430dea50)
+- Remove the copy, move, delete, create_directory and file_exists tools (87c1562ea)
+- Start a stroke from beside the picture, not only on its edge (686ea2827)
+- Release the companion app locally when this machine can sign (7ad4c1123)
+- Enforce :ext/protected-paths in the Python sandbox filesystem (b11aa1706)
+- Say the create inside its button and shrink the row question (2d4b8e7ec)
+- Show a document artifact once, as a card that opens over everything (65cf41550)
+- Paint the star action yellow and keep the starred row in view (8ead5cd33)
+- Let the app stop the turn it started again (421734b0e)
+- Never link a TestFlight build to an internal beta group (6cef66c7c)
+- Give a note ten annotation threads and a comment on the whole document (8b832e827)
+- Push from workflows through one shared git-push action (5f4e33ac9)
+- Mark annotations in theme colours and annotate plain text too (7c3ba0413)
+- Make the machine switcher square, unread a highlight, and hide it for a solo machine (305cd6789)
+- Draw a comment ordinal as a plain coloured number (53d371558)
+- Accept any spelling of a path in vis_attach (d383fed53)
+- Clear the NEW badge on the row you just read (aea33924a)
+- Make the fleet switcher one segmented track (050cb9b70)
+- Put the session star immediately right of the title (c8b6263e2)
+- Number and colour markdown comments, and underline the passage each is about (1167b97b4)
+- Clear the machine card below the fleet strip (7d1bfb53f)
+- Pin the companion's artifact-revision save URL to its route (637600b9b)
+- Read a note inline as source and comment on it by tapping (1a706229c)
+- Pour the page ink into Add machine and lift the fleet strip (e0918c09d)
+- Put the machine tabs and Add machine on one control height (02700e1ed)
+- Give the phone a full-bleed sessions card with a fixed height (8e771c3e9)
+- Link every TestFlight build to every beta group (9142379af)
+- Name the machine strip's pairing verb Add machine (41715e01e)
+- Pair a machine from the tab strip's own + button (ec71c1c2a)
+- Abandon the stroke a pinch turned out to be (ebcc90c27)
+- End the machine card where its content ends (e41345a66)
+- Give the session list one meta ink and a closed machine card (2e312c16f)
+- Let the viewer zoom out to 50% (f93e02b32)
+- Write PDF annotations with the maintained pdf-lib fork (1a0d386d5)
+- Annotate every opened artifact: comments on notes, ink on PDFs and pictures (7fde3d069)
+- Stand the machine tabs outside the machine card and drop the All scope (eec70eb58)
+- Give a document preview an Open chip that fills the screen (76164492e)
+- Remove the bin/vis-agent launcher tests (b3f98438a)
+- Keep a Python extension loaded between tests that ask for the same one (efb5d97d2)
+- Restore the transcript copy chip's own look (82383147c)
+- Give the app bar search the buttons own face (3ed7d5270)
+- Give the transcript's copy chip the app's own button and one preview box (6586e491d)
+- Open every artifact at full height (a4e500782)
+- Render markdown artifacts and let a human comment on them (c4a1ea54f)
+- Make search the app bar and move pairing into preferences (7308e9c00)
+- Make Return type a new line on phones and dismiss the keyboard on send (da74a5be7)
+- Collapse vis_attach_bytes into vis_attach (1afa4df70)
+- Show document artifacts plainly: no draw, hide or new tab (774cfb6a8)
+- Stop shelling out to real git in the tests (e0d8aa5ca)
+- Give the app bar and machine verbs a real button face (b498ea4e9)
+- Label every companion verb and move the machines into the header (cc7f57260)
+- Pair from the app bar and show one fleet strip for any fleet size (50cadeda4)
+- Make pairing a chip and drop the tab bar (975a0d4b7)
+- Key the shared test GraalPy sandbox so an abusive suite keeps its own (545cad9e5)
+- Remove the ACP extension (8e6e9e413)
+- Make the machine a chip, not a second header band (6e9e6ef28)
+- Require UI proposals as ASCII sketches, not app-built galleries (afac2f6ae)
+- Remove model, reasoning, verbosity, drafts, magit palette verbs and /export-html (0d255f454)
+- Keep a renamed machine name across dev reloads (13aafb0b7)
+- Close the gap between a session row and its disclosure (bb611b512)
+- Cut the paramiko and sandbox-fd test walls (682e4206e)
+- Rename a machine on its own header and add a project in one tap (3295bc072)
+- End the phone status on the timestamp edge, with the flags against it (0687d2486)
+- Cut the wall-clock waste out of the slowest gateway and loop tests (375fce532)
+- Pin svar 0.7.109 for the 2-minute retrying TTFT watchdog (4de9b8291)
+- Put the machine header two verbs on the band as + and gear (e1b46d338)
+- Cap the session pager to a centred cluster (cbeb3e224)
+- Sit the phone row flags beside the status they qualify (52012ca27)
+- Align header names on one glyph column and always print the tally noun (f3f29d16a)
+- Give the first token two minutes instead of five (75fae850f)
+- Give session-row flags their own column (620af0f38)
+- Hold the pager steps in fixed slots so > never moves (0b92b77b3)
+- Page the session list with numbered, jumpable pages (6db2a1982)
+- Add a sharded parallel test runner (293ea7e19)
+- Always offer the draft half and delete the Offer drafts setting (0561f5fd6)
+- Wall the test suite off from the public internet (1275bf716)
+- Make Manage projects the same anchored panel as the draft picker (3f617032b)
+- Frame transcript media as a plate with a docked filename label (1bfa6855e)
+- Move the draft verb onto the project header as a split button (07ed1075f)
+- Draw the draft mark as a forked project folder (030af03e3)
+- Add hard no-profanity rule to AGENTS.md (d0045b87f)
+- Mark the draft verb with its own folder icon (13529ded0)
+- Remove profanity from source comments and test reports (d56c65216)
+- Make the drafts setting a named choice on the shared settings cell (c0d100981)
+- Stop provider tests dialing the network and trim eval-timeout walls (5326ced75)
+- Stop the Offer drafts toggle sliding sideways (c844743eb)
+- Pad the trailing inside edge of a list row (520e11f29)
+- Stretch a row-ending icon button to its row height (98a999030)
+- Open every dialog in the one Modal + DialogFrame (ae7c9a2c6)
+- Pin the manage-projects path bar to one fixed height (309299e32)
+- Keep the project browser still when the pencil is taken (e222d043e)
+- Make every dialog a full-height phone sheet and one desktop box (479d482a7)
+- Refuse re-adding a folder that is already a project (c0eacae97)
+- Open project browsing one level above the current project (353b0ac01)
+- Dock the Manage projects footer and align its trash to the row edge (80d33e9ad)
+- Read ui source through Vite raw import in the sheet pin (1e2bd6cda)
+- Make every dialog a bottom sheet on phones (27606096f)
+- Align companion trailing controls and drop the glyph hover frame (e9d60a060)
+- Shrink compact header buttons to a 32px face with a 44px touch target (3b0fdbaf1)
+- Load the TUI provider dialog from one gateway call (c181c0896)
+- Pin svar 0.7.107 for uncompressed SSE streaming (2c114ac36)
+- Never title a session after a pasted image's clipboard path (3ccc7ea62)
+- Order provider limit windows shortest-first (5h before 7d) (e50e51b0b)
+- Remember where a session transcript was being read (949000137)
+- Drop tool name from pending-summary docstring example (75e3858ef)
+- Drop unused form display exports and the dead auto-repaired flag (75bfd91ba)
+- Correct label-overrides docstring after the shell/fs tool split (020ed396f)
+- Drop same-path coalescing and the running-code-tools exception (6611bbb1b)
+- Purge legacy fs/shell tool names from form and loop tests (3e16113bf)
+- Split the `shell` and `fs` mega-tools into named verbs (5846c9dc9)
+- Adopt svar 0.7.106 so a declared retry cooldown is waited out (492c93ff8)
+- Serve a live turn's text-named images from the gateway (31970dec1)
+- Report total line counts in a collapsed multi-file patch headline (a357ce607)
+- Report added/removed/modified line counts on every edit summary (1fb5fe24f)
+- Stop blaming the provider for a turn that never reached one (0b8194c57)
+- Abandon a wedged session engine instead of queueing behind it (3e813c15a)
+- Give every companion list header one band (bc5516194)
+- Give every attachment descriptor its turn id (eec04cf37)
+- Give every header one trailing cluster and one kebab (2661521fc)
+- Share one overflow button and one header action cluster in the companion (795346602)
+- Unify companion overflow menus, icon buttons, and dialog closes (c4963e1d2)
+- Return attachment descriptors and drop the answer gallery (2d29bf3e9)
+- Search the zipper tree with one parse instead of re-parsing per node (54e508e2c)
+- Bump svar to 0.7.105 (f0e35f757)
+- Decode Python provider maps from declared field tables (7ae92e716)
+- Scope the tid-less cancel to the turn its caller submitted (9daf44093)
+- Let Rift hand a clean draft over without pending changes (8de1c5504)
+- Name the project that owns a nested skill (5d399ef38)
+- Remove native tool color roles (3f92b2cbd)
+- Revert recent folding changes (57f722736)
+- Require canonical gateway client for all API calls (645235f83)
+- Resolve nested skills from their owning projects (df1592e7d)
+- Fix live session turn iteration counts (e99f19e8e)
+- Expose Impeccable to repository sessions (6dba3f4ba)
+- Keep skill slash commands root-only (d1809bdb6)
+- Make nested slash commands project-relative (2385a429f)
+- Fix wait card command rendering (26e96a2e4)
+- Clear unread badge after live answer settles (886e10997)
+- Simplify session list borders (06dd224e1)
+- Remove retry_native replay verb (81097fbdc)
+- Auto-connect companion dev gateways (4d6e6a1a2)
+- Compact project rows around new session (3028852d4)
+- Center compact new session buttons (51cbff21b)
+- Keep new session button compact (2213321b3)
+- Canonicalize workspace roots at persistence (e181774b8)
+- Show companion diffs in one unified column (a79d29b58)
+- Keep project roots canonical (4317177dc)
+- Put project borders on the clickable header (455d4135f)
+- Fix HTTP migration namespace compilation (ce754530a)
+- Give every project header both borders (faaa463bc)
+- Use babashka HTTP client and preserve requested services (a4dc97066)
+- Extract Web Push protocol interop helpers (e22d2ae18)
+- Refactor gateway Web Push interop (5983d042a)
+- Render filesystem copy results as expandable cards (c8367cb76)
+- Fix sticky machine border seams (2ec8f9a96)
+- Keep browser push gateway-local (4dedb0cc5)
+- Keep machine banner borders single (3a0377cdd)
+- Finish pending companion and engine work (ab1db24db)
+
+#### com.blockether/vis-channel-tui
+- Remove model, reasoning, verbosity, drafts, magit palette verbs and /export-html (0d255f454)
+- Route overlay card justification through the shared run justifier (86adb7aaa)
+- Wall the test suite off from the public internet (1275bf716)
+- Show a human-input pause only on its own session's tab (e1ff3aa14)
+- Remove profanity from source comments and test reports (d56c65216)
+- Keep inline images visible when a transient band opens (2ab21ff16)
+- Paint the transient band flat on the terminal's own paper (f670c026d)
+- Load the TUI provider dialog from one gateway call (c181c0896)
+- Close the transient band around its hint bar on slightly darker paper (d639c94cd)
+- Render TUI diff fences compact instead of side-by-side (cf36e81c8)
+- Border the transient band, drop its tinted paper and column rules (12f68cc6d)
+- Order provider limit windows shortest-first (5h before 7d) (e50e51b0b)
+- Keep a TUI tab's reading position across a workspace switch (c896ed12d)
+- Never animate auto-follow scrolling in the TUI (6b2a8111e)
+- Drop a tab's stale layout on switch so the view stops self-scrolling (8d2b238ce)
+- Drop same-path coalescing and the running-code-tools exception (6611bbb1b)
+- Land the TUI scroll on a terminal resize instead of easing to it (c6dd2fe6f)
+- Print a TUI notice's sentence without its machine code (e7146ae58)
+- Unify the transient band into one embeddable component (3fc733b99)
+- Anchor every main-screen transient through one band anchor (2ff6b8f0d)
+- Ink the transient band's title on its opening rule and move the palette into Tools (4be2df9f7)
+- Anchor in-session transients above the prompt on their own paper (b9a9db2d2)
+- Give a form one text column by moving the focus ring out of it (699faae0d)
+- Answer every cancel, even when the tab paints no live turn (8e5f97569)
+- Return attachment descriptors and drop the answer gallery (2d29bf3e9)
+- Give a form field's input its own row of air and stop indenting toggles (bfd1c544e)
+- Decode Python provider maps from declared field tables (7ae92e716)
+- Give every C-x category its own column (151340f56)
+- Open one blank row under every human-input label (9bc3de016)
+- Lay a tall transient band out in which-key columns (1d67bfabb)
+- Make C-x a transient hydra band (f20d4c7aa)
+- Ask a band's follow-up question in the band's own frame (5414f777b)
+- Scope the tid-less cancel to the turn its caller submitted (9daf44093)
+- Remove native tool color roles (3f92b2cbd)
+- Keep Magit responsive during commit verification (d0531b830)
+- Finish pending companion and engine work (ab1db24db)
+
+#### com.blockether/vis-foundation-bridge
+- Respect disabled Bridge toggle during commits (e2907fb8d)
+- Finish pending companion and engine work (ab1db24db)
+
+#### com.blockether/vis-foundation-search
+- Remove native tool color roles (3f92b2cbd)
+- Finish pending companion and engine work (ab1db24db)
+
+#### com.blockether/vis-foundation-voice
+- Fix HTTP migration namespace compilation (ce754530a)
+- Use babashka HTTP client and preserve requested services (a4dc97066)
+- Finish pending companion and engine work (ab1db24db)
+
+#### com.blockether/vis-language-clojure
+- Give every managed nREPL its own log file (f0c3c358a)
+- Finish pending companion and engine work (ab1db24db)
+
+#### com.blockether/vis-language-python
+- Finish pending companion and engine work (ab1db24db)
+
+#### com.blockether/vis-language-typescript-bun
+- Finish pending companion and engine work (ab1db24db)
+
+#### com.blockether/vis-persistance-sqlite
+- Render markdown artifacts and let a human comment on them (c4a1ea54f)
+- Collapse vis_attach_bytes into vis_attach (1afa4df70)
+- Cut the wall-clock waste out of the slowest gateway and loop tests (375fce532)
+- Pin the turn soul on every attachment row, tool artifacts included (ab7a722da)
+- Finish pending companion and engine work (ab1db24db)
+
+#### com.blockether/vis-provider-anthropic
+- Finish pending companion and engine work (ab1db24db)
+
+#### com.blockether/vis-provider-github-copilot
+- Finish pending companion and engine work (ab1db24db)
+
+#### com.blockether/vis-provider-openai-codex
+- Finish pending companion and engine work (ab1db24db)
+
+#### com.blockether/vis-provider-opencode-go
+- Finish pending companion and engine work (ab1db24db)
+
+#### com.blockether/vis-provider-openrouter
+- Finish pending companion and engine work (ab1db24db)
+
+#### com.blockether/vis-provider-standard
+- Finish pending companion and engine work (ab1db24db)
+
+#### com.blockether/vis-provider-zai
+- Finish pending companion and engine work (ab1db24db)
+
+
+
 ## [v0.1.32] - 2026-08-06
 
 ### Changed
@@ -3649,7 +4122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.32...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.33...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -3675,3 +4148,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.28]: https://github.com/Blockether/vis/releases/tag/v0.1.28
 [v0.1.31]: https://github.com/Blockether/vis/releases/tag/v0.1.31
 [v0.1.32]: https://github.com/Blockether/vis/releases/tag/v0.1.32
+[v0.1.33]: https://github.com/Blockether/vis/releases/tag/v0.1.33
