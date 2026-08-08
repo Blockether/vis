@@ -43,7 +43,7 @@ export const Button = forwardRef<
      * bring its own. It stays a variant because a face is decided here or it is
      * decided by Tailwind's emission order at a call site, never by a `className`.
      */
-    variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay';
+    variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay' | 'close';
     /**
      * Press feedback. `scale` is the default nudge; `none` is for a button that
      * ANCHORS something (a popover) or sits in a segmented group — a transform
@@ -95,6 +95,15 @@ export const Button = forwardRef<
     // already says "you are on it", and the keyboard still gets its own ring.
     quiet:
       'border-transparent bg-transparent text-dialog-hint hover:bg-hover disabled:border-transparent disabled:bg-transparent disabled:text-muted',
+    // THE WAY OUT OF SOMETHING — a query, a picture, a sheet — and it is INK.
+    //
+    // It used to borrow `quiet`, whose ink is `text-dialog-hint` (#6f6a63): on the app
+    // bar that put a pale grey ✕ beside a query and a `Preferences` both at #262626,
+    // and an eye reads a faded mark as "disabled" rather than "press me to clear". A ✕
+    // carries the page's own ink at rest and turns red only under the pointer, exactly
+    // like `DialogClose` and `RemoveButton` — the three of them are one language.
+    close:
+      'border-transparent bg-transparent text-white hover:bg-err/15 hover:text-err disabled:border-transparent disabled:bg-transparent disabled:text-muted',
     // The red stays INK and the fill stays a wash, exactly as `MenuItem`'s danger
     // row does — one destructive language in both.
     danger: `border-err/40 bg-err/10 text-err hover:border-err hover:bg-err/20 ${dimmed}`,
@@ -156,7 +165,7 @@ export const IconButton = forwardRef<
   ButtonHTMLAttributes<HTMLButtonElement> & {
     /** Icon-only, so the name is not optional. */
     label: string;
-    variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay';
+    variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay' | 'close';
     /** Passed through: a control over a thumbnail is not on a header's rhythm. */
     density?: 'default' | 'compact';
     /**
@@ -546,7 +555,7 @@ export function RemoveButton({
       type="button"
       aria-label={label}
       title={label}
-      className={`grid min-h-7 w-7 shrink-0 place-items-center text-dialog-hint transition-colors duration-150 hover:bg-warn-surface hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-dialog-hint motion-reduce:transition-none ${
+      className={`grid min-h-7 w-7 shrink-0 place-items-center text-white transition-colors duration-150 hover:bg-warn-surface hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-white motion-reduce:transition-none ${
         edge ? 'border-l border-code-edge' : ''
       } ${className}`}
       {...props}
@@ -868,8 +877,8 @@ export function DialogClose({
 }) {
   const skin =
     tone === 'title'
-      ? 'border-dialog-title-foreground/20 text-dialog-title-foreground/70'
-      : 'border-dialog-edge text-dialog-hint';
+      ? 'border-dialog-title-foreground/20 text-dialog-title-foreground'
+      : 'border-dialog-edge text-white';
   return (
     <button
       type="button"
@@ -971,7 +980,7 @@ export const SearchField = forwardRef<
       {value ? (
         <IconButton
           edge
-          variant="quiet"
+          variant="close"
           label="Clear search"
           onClick={() => {
             onValue('');

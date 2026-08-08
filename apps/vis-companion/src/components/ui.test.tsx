@@ -1471,7 +1471,7 @@ describe("the button's four ranks", () => {
 
   it("names the RANK of a verb, never the paint it happens to wear", () => {
     expect(uiSource).toContain(
-      "variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay';",
+      "variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay' | 'close';",
     );
     // `solid`/`ghost` described a fill; `inverse` was a fifth face with one call
     // site. A rank has to be choosable without knowing the palette.
@@ -1711,5 +1711,41 @@ describe("the session screen and the settings dialog spell no control out", () =
     // `Card` and `Section` had no call site left anywhere in the app.
     expect(uiSource).not.toContain("export function Card(");
     expect(uiSource).not.toContain("export function Section(");
+  });
+});
+
+// Regression, user report ("see the X element — it should be black like everywhere"):
+// the search field's Clear rendered rgb(111, 106, 99) (`text-dialog-hint`) beside a
+// query and a `Preferences` both at rgb(38, 38, 38), measured on the live bar. The same
+// faded ink was worn by every other ✕ in the app — `DialogClose` on both its papers (the
+// image viewer, the artifacts sheet, the menu sheet) and `RemoveButton` — so no ✕
+// anywhere carried the page's own ink. A ✕ IS INK: only the pointer turns it red.
+describe("every ✕ in the app", () => {
+  it("rests in the ink of the surface it sits on, never in a hint", () => {
+    const clear = renderToStaticMarkup(
+      <Button variant="close" aria-label="Clear search" />,
+    );
+    expect(clear).toContain("text-white");
+    expect(clear).toContain("hover:text-err");
+    expect(clear).not.toContain("text-dialog-hint");
+
+    const field = uiSource.slice(
+      uiSource.indexOf("export const SearchField"),
+      uiSource.indexOf("export function Banner"),
+    );
+    expect(field).toContain('variant="close"');
+    expect(field).not.toContain('variant="quiet"');
+
+    for (const tone of ["title", "panel"] as const) {
+      const close = renderToStaticMarkup(
+        <DialogClose label="Close artifacts" tone={tone} onClose={() => {}} />,
+      );
+      expect(close).not.toContain("text-dialog-hint");
+      expect(close).not.toContain("text-dialog-title-foreground/70");
+    }
+
+    expect(
+      renderToStaticMarkup(<RemoveButton label="Remove notes.md" />),
+    ).not.toContain("text-dialog-hint");
   });
 });
