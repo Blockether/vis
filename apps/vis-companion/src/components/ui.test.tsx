@@ -1493,6 +1493,19 @@ describe("the composer's own controls", () => {
     }
   });
 
+  // Regression: MetaButton destructured `children` and then rendered a
+  // self-closing <button />, so the strip under the composer showed the model
+  // name and the reasoning level as two empty boxes with a hairline between
+  // them — the divider was the only thing on screen.
+  it("says the word it was given", () => {
+    expect(renderToStaticMarkup(<MetaButton isPicker>opus</MetaButton>)).toContain(
+      "opus",
+    );
+    expect(renderToStaticMarkup(<MetaButton>quick</MetaButton>)).toContain(
+      "quick",
+    );
+  });
+
   it("presses prose by moving the paper, dotted only where a word stands in", () => {
     const token = classes(
       renderToStaticMarkup(<TextButton isToken>{"[paste #1]"}</TextButton>),

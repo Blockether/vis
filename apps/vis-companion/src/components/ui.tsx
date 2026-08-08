@@ -709,7 +709,9 @@ export function MetaButton({
           : 'text-dialog-hint'
       } ${className}`}
       {...props}
-    />
+    >
+      {children}
+    </button>
   );
 }
 
