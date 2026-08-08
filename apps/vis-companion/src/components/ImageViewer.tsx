@@ -5,7 +5,6 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
-  type WheelEvent as ReactWheelEvent,
 } from "react";
 import { createPortal } from "react-dom";
 import { PEN_COLORS, flattenAnnotations, type PenToken } from "../lib/annotate";
@@ -19,6 +18,8 @@ import {
   pinchTransform,
   transformCss,
   zoomLabel,
+  wheelFactor,
+  zoomedAbout,
   zoomedBy,
   type Gesture,
   type Point,
@@ -109,6 +110,17 @@ export function ExpandableImage({
 }
 
 /**
+ * Safari's own trackpad pinch. No other engine sends it, and TypeScript's DOM
+ * library does not declare it, but it is the ONLY way a Safari pinch reaches a page:
+ * the ctrl+wheel Chrome and Firefox send never arrives there.
+ */
+type SafariGestureEvent = Event & {
+  scale: number;
+  clientX: number;
+  clientY: number;
+};
+
+/**
  * A picture, full screen: pinch/scroll/double-click zoom, pan, and a pen. Given
  * `onApply` it also hands the flattened result back, which is what makes an
  * attachment editable and a rendered document page sendable.
@@ -129,6 +141,7 @@ export function ImageViewer({
   const imageRef = useRef<HTMLImageElement | null>(null);
   const transformedRef = useRef<HTMLDivElement | null>(null);
   const zoomLabelRef = useRef<HTMLSpanElement | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const annotationRef = useRef<AnnotationSurface | null>(null);
   const transformRef = useRef<Transform>({ ...NO_TRANSFORM });
   const pointersRef = useRef(new Map<number, Point>());
@@ -265,11 +278,104 @@ export function ImageViewer({
     applyTransform(zoomedBy(transformRef.current, factor));
   }
 
-  function wheelZoom(event: ReactWheelEvent<HTMLDivElement>) {
-    if (drawing) return;
-    event.preventDefault();
-    zoomBy(event.deltaY < 0 ? 1.15 : 1 / 1.15);
-  }
+  /**
+   * THE WHEEL AND THE TRACKPAD ARE TAKEN NATIVELY, NON-PASSIVE.
+   *
+   * React registers `onWheel` PASSIVE at the root, so a `preventDefault()` inside it
+   * is dropped on the floor and the browser zooms the whole page under the open
+   * picture — which on Safari, where a page zoom does not reset, is the "not
+   * reliable" half of the report. Safari also reports a trackpad pinch as its own
+   * `gesture*` events INSTEAD of the ctrl+wheel every other engine sends, so without
+   * these three listeners the viewer never sees a Safari pinch at all.
+   *
+   * Both paths go through {@link zoomedAbout}, so the pixel under the pointer stays
+   * under it, and through {@link wheelFactor}, so the step follows the distance
+   * scrolled instead of the number of events the browser happened to send.
+   */
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    // A wheel burst writes the transform every frame, and the snap transition meant
+    // for the toolbar's buttons fights it exactly as a finger's does. It is restored
+    // once the burst stops — never while a finger still owns the picture.
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    const direct = () => {
+      const node = transformedRef.current;
+      if (!node) return;
+      node.style.transitionDuration = "0ms";
+      clearTimeout(settle);
+      settle = setTimeout(() => {
+        if (!gestureRef.current) node.style.transitionDuration = "";
+      }, 120);
+    };
+    const frameCenter = (): Point => {
+      const box = viewport.getBoundingClientRect();
+      return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    };
+
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      if (drawing) return;
+      direct();
+      applyTransform(
+        zoomedAbout(
+          transformRef.current,
+          wheelFactor(event.deltaY, event.deltaMode, event.ctrlKey),
+          { x: event.clientX, y: event.clientY },
+          frameCenter(),
+        ),
+      );
+    };
+
+    // A Safari pinch reports its scale CUMULATIVELY from the gesture's start, so the
+    // transform it started from is what every change is measured against.
+    let base: Transform | null = null;
+    let baseScale = 1;
+    const onGestureStart = (event: SafariGestureEvent) => {
+      event.preventDefault();
+      if (drawing) return;
+      base = { ...transformRef.current };
+      baseScale = event.scale || 1;
+      direct();
+    };
+    const onGestureChange = (event: SafariGestureEvent) => {
+      event.preventDefault();
+      if (!base) return;
+      direct();
+      applyTransform(
+        zoomedAbout(
+          base,
+          (event.scale || 1) / baseScale,
+          { x: event.clientX, y: event.clientY },
+          frameCenter(),
+        ),
+      );
+    };
+    const onGestureEnd = (event: SafariGestureEvent) => {
+      event.preventDefault();
+      base = null;
+    };
+
+    const gestures: [string, (event: SafariGestureEvent) => void][] = [
+      ["gesturestart", onGestureStart],
+      ["gesturechange", onGestureChange],
+      ["gestureend", onGestureEnd],
+    ];
+    viewport.addEventListener("wheel", onWheel, { passive: false });
+    for (const [type, handler] of gestures) {
+      viewport.addEventListener(type, handler as EventListener, {
+        passive: false,
+      });
+    }
+    return () => {
+      clearTimeout(settle);
+      viewport.removeEventListener("wheel", onWheel);
+      for (const [type, handler] of gestures) {
+        viewport.removeEventListener(type, handler as EventListener);
+      }
+    };
+  }, [applyTransform, drawing]);
 
   function toggleZoom() {
     if (drawing) return;
@@ -330,7 +436,7 @@ export function ImageViewer({
         onPointerUp={endGesture}
         onPointerCancel={endGesture}
         onDoubleClick={toggleZoom}
-        onWheel={wheelZoom}
+        ref={viewportRef}
       >
         <div
           ref={transformedRef}

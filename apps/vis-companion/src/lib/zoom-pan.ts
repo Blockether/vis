@@ -67,6 +67,69 @@ export function zoomedBy(current: Transform, factor: number): Transform {
   return clampTransform({ ...current, scale: current.scale * factor });
 }
 
+/**
+ * A wheel event's travel in CSS pixels, whatever unit the browser chose to report
+ * it in: Firefox sends lines, a page-scroll key sends pages, everything else pixels.
+ */
+const LINE_PIXELS = 16;
+const PAGE_PIXELS = 800;
+
+/**
+ * How much of a zoom one scrolled pixel buys. A trackpad reports a glide as ~60
+ * events a second carrying 1-4px each; a mouse notch arrives as a single ~100px
+ * event. Zoom is therefore a function of the DISTANCE scrolled — `e^(-pixels·rate)`,
+ * which composes: two half-flicks equal one whole one, in any browser, at any event
+ * rate. A ctrl+wheel is a trackpad PINCH, whose deltas are far smaller for the same
+ * intent, so it answers on its own rate.
+ */
+const SCROLL_RATE = 0.0025;
+const PINCH_RATE = 0.01;
+
+/** No single event may move the picture more than one mouse notch. */
+export const WHEEL_STEP_LIMIT = 1.25;
+
+/** The factor one wheel event asks for: proportional, normalized and capped. */
+export function wheelFactor(
+  deltaY: number,
+  deltaMode: number,
+  isPinch: boolean,
+): number {
+  const pixels =
+    deltaMode === 1
+      ? deltaY * LINE_PIXELS
+      : deltaMode === 2
+        ? deltaY * PAGE_PIXELS
+        : deltaY;
+  const factor = Math.exp(-pixels * (isPinch ? PINCH_RATE : SCROLL_RATE));
+  return clamp(factor, 1 / WHEEL_STEP_LIMIT, WHEEL_STEP_LIMIT);
+}
+
+/**
+ * Zoom about a POINT rather than about the frame's middle: the pixel under the
+ * cursor (or between the two trackpad fingers) stays under it. Zooming about the
+ * centre slides whatever you aimed at off the screen, which is what makes a
+ * cursor-driven zoom feel like it went somewhere else.
+ *
+ * `point` and `center` are both in client coordinates; `center` is the frame's own
+ * middle, which is the origin the transform is written against.
+ */
+export function zoomedAbout(
+  current: Transform,
+  factor: number,
+  point: Point,
+  center: Point,
+): Transform {
+  const scale = clamp(current.scale * factor, MIN_SCALE, MAX_SCALE);
+  const applied = scale / current.scale;
+  const dx = point.x - center.x;
+  const dy = point.y - center.y;
+  return clampTransform({
+    scale,
+    x: dx - (dx - current.x) * applied,
+    y: dy - (dy - current.y) * applied,
+  });
+}
+
 /** The transform a pinch has reached: scaled by the spread, following the midpoint. */
 export function pinchTransform(
   gesture: PinchGesture,

@@ -344,3 +344,77 @@ it("draws a stroke that starts beside the picture and crosses onto it", () => {
 
   expect(named("Undo").disabled).toBe(false);
 });
+
+// Regression, user report ("on desktop and safari the zooming is too fast and not
+// reliable when it comes to artefacts and the images"): the wheel was handled through
+// React's `onWheel`, which React attaches PASSIVE at the root, so the
+// `preventDefault()` in it was ignored and the browser kept its own page zoom under
+// the open picture. Every event also moved the picture a fixed 15%, so one flick of a
+// trackpad — sixty events a second — hit the 6x ceiling instantly.
+it("takes the wheel itself, and moves by the distance scrolled", () => {
+  const surface = document.querySelector<HTMLDivElement>(
+    '[role="dialog"] .cursor-grab',
+  );
+  if (!surface) throw new Error("viewer surface not found");
+
+  const notch = new WheelEvent("wheel", {
+    deltaY: -100,
+    bubbles: true,
+    cancelable: true,
+  });
+  act(() => {
+    surface.dispatchEvent(notch);
+  });
+  expect(notch.defaultPrevented).toBe(true);
+  expect(control("Reset zoom").textContent).toBe("125%");
+
+  act(() => control("Reset zoom").click());
+  // Ten frames of a trackpad glide are still less than one notch.
+  act(() => {
+    for (let i = 0; i < 10; i += 1) {
+      surface.dispatchEvent(
+        new WheelEvent("wheel", {
+          deltaY: -2,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }
+  });
+  const glided = Number.parseInt(control("Reset zoom").textContent ?? "", 10);
+  expect(glided).toBeGreaterThan(100);
+  expect(glided).toBeLessThan(125);
+});
+
+// Safari sends `gesturestart`/`gesturechange`/`gestureend` for a trackpad pinch
+// INSTEAD of the ctrl+wheel every other browser sends, so on Safari the viewer's own
+// pinch never ran and the page zoomed instead.
+it("zooms with Safari's own trackpad pinch", () => {
+  const surface = document.querySelector<HTMLDivElement>(
+    '[role="dialog"] .cursor-grab',
+  );
+  if (!surface) throw new Error("viewer surface not found");
+
+  const gesture = (type: string, scale: number) =>
+    Object.assign(new Event(type, { bubbles: true, cancelable: true }), {
+      scale,
+      clientX: 0,
+      clientY: 0,
+    });
+
+  const start = gesture("gesturestart", 1);
+  act(() => {
+    surface.dispatchEvent(start);
+  });
+  expect(start.defaultPrevented).toBe(true);
+
+  act(() => {
+    surface.dispatchEvent(gesture("gesturechange", 2));
+  });
+  expect(control("Reset zoom").textContent).toBe("200%");
+
+  act(() => {
+    surface.dispatchEvent(gesture("gestureend", 2));
+  });
+  expect(control("Reset zoom").textContent).toBe("200%");
+});
