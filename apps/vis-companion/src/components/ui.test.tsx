@@ -851,13 +851,29 @@ describe("one outer dialog component", () => {
 // row painted a floating hover band inside a taller row, with a dead strip above
 // and below it. A control that ENDS a row hovers the row.
 describe("a row-ending icon button fills its row", () => {
-  it("stretches instead of centring a fixed face", () => {
+  // The class list `edge` puts on the box, read out of the source it is written in.
+  const edgeBox = () => {
     const edge = uiSource.slice(uiSource.indexOf("const box = edge"));
-    const line = edge.slice(0, edge.indexOf("\n", edge.indexOf("?")));
+    return edge.slice(0, edge.indexOf("\n", edge.indexOf("?")));
+  };
+
+  it("stretches instead of centring a fixed face", () => {
+    const line = edgeBox();
     expect(line).toContain("h-auto");
     expect(line).toContain("self-stretch");
     // A stretched box needs no invisible reach for its target.
     expect(line).toContain("after:content-none");
+  });
+
+  // Regression, user report ("during the search the > are not having correct line
+  // height"): the cancellation was spelled once, unvarianted, so at mouse density the
+  // compact scale's own `mouse:h-6` outlived it. Measured on the 1440px desktop list,
+  // a session row ran 239–271 and its disclosure 239–263 — a 24px slab pinned to the
+  // TOP of a 32px row, its chevron four pixels above the title it belongs to and its
+  // hover band stopping eight pixels short of the row's rule.
+  it("cancels the fixed face at EVERY density, not only the default one", () => {
+    const line = edgeBox();
+    expect(line).toContain("mouse:h-auto");
   });
 });
 
