@@ -891,16 +891,28 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
 /**
  * The app bar's fleet-wide search.
  *
- * A FIELD is a control, so it wears the vocabulary's own face: `Button`'s box to the
- * pixel — flat corners, its 32px face (`h-8`, `mouse:h-6`), its border and type step.
- * It used to be a hand-rolled `<label className="… h-8 rounded border … bg-input">`: a
- * white-filled, rounded slab on paper that carries no other box at rest, so the quietest
- * thing on the bar was also the loudest.
+ * A FIELD is a control, so it wears the vocabulary's own face: flat corners, the
+ * app's own border and its type step. It used to be a hand-rolled `<label
+ * className="… h-8 rounded border … bg-input">`: a white-filled, rounded slab on
+ * paper that carries no other box at rest, so the quietest thing on the bar was
+ * also the loudest.
  *
  * Resting it is PAPER — border only, no fill — and the input surface plus the ring
  * arrive with the caret, which is the same rule the terminal already follows
  * (`t/input-field-bg` active, flat at rest). The Clear glyph is the field's own, so
  * emptying the query returns the caret rather than dropping focus onto the document.
+ *
+ * IT IS TYPED INTO WITH A FINGER, so it stands at the 44px touch step and only a
+ * mouse takes it down to the bar's 32px rhythm. It was `h-8` everywhere: on a 390px
+ * iPhone the verb the screen exists for was a hairline slab, 12px shorter than the
+ * row a finger is expected to hit, wearing the smallest step in the scale.
+ *
+ * BOTH OF ITS INKS SIT AT THE SAME INSET. Clear is an `edge` IconButton — the list
+ * rows' own geometry — so its box runs to the field's border and pads its glyph away
+ * from it by exactly the inset the field gives its leading side (`px-3 sm:px-4`, the
+ * same numbers `edge` absorbs). Centred in its own 28px box INSIDE that inset, the ✕
+ * used to stop about 20px short of the border while the placeholder started 10px in,
+ * and an eye reads that asymmetry as a control that missed its corner.
  */
 export const SearchField = forwardRef<
   HTMLInputElement,
@@ -910,15 +922,19 @@ export const SearchField = forwardRef<
     /** Spoken name; the placeholder is the promise, this is the label. */
     label: string;
     placeholder?: string;
-    /** POSITION only (`flex-1`, `mx-3`); the face belongs to the component. */
+    /** POSITION only (`w-full`, `flex-1`, an order); the face belongs here. */
     className?: string;
   }
 >(function SearchField({ value, onValue, label, placeholder, className = '' }, ref) {
   const own = useRef<HTMLInputElement | null>(null);
   return (
     <label
-      className={`flex h-8 min-w-0 items-center gap-1 self-center rounded-none border border-edge-strong bg-transparent px-2.5 py-0.5 transition-[background-color,border-color,box-shadow] duration-150 focus-within:border-accent focus-within:bg-input focus-within:ring-1 focus-within:ring-accent/30 motion-reduce:transition-none mouse:h-6 sm:px-3 ${className}`}
+      className={`flex h-11 min-w-0 items-center gap-1 self-center rounded-none border border-edge-strong bg-transparent px-3 transition-[background-color,border-color,box-shadow] duration-150 focus-within:border-accent focus-within:bg-input focus-within:ring-1 focus-within:ring-accent/30 motion-reduce:transition-none mouse:h-8 sm:px-4 ${className}`}
     >
+      {/* A SEARCH field, so the phone offers its own search key and stops correcting:
+          a machine name, a project folder and a session title are not prose. The
+          platform's own cancel button is hidden because this field already has one,
+          and two clear controls in one box is one too many. */}
       <input
         ref={(node) => {
           own.current = node;
@@ -927,12 +943,18 @@ export const SearchField = forwardRef<
         }}
         value={value}
         onChange={(event) => onValue(event.target.value)}
-        className="min-w-0 flex-1 bg-transparent font-mono text-meta text-white outline-none placeholder:text-dialog-hint sm:text-ui"
+        type="search"
+        enterKeyHint="search"
+        autoCorrect="off"
+        autoCapitalize="none"
+        spellCheck={false}
+        className="min-w-0 flex-1 appearance-none bg-transparent font-mono text-ui text-white outline-none placeholder:text-dialog-hint mouse:text-meta [&::-webkit-search-cancel-button]:hidden"
         placeholder={placeholder}
         aria-label={label}
       />
       {value ? (
         <IconButton
+          edge
           variant="quiet"
           label="Clear search"
           onClick={() => {

@@ -1015,18 +1015,46 @@ describe("running prose has exactly one rule", () => {
 // controls it sat beside — a white slab on paper that carries no other box at rest.
 describe('SearchField', () => {
   const field = uiSource.slice(uiSource.indexOf("export const SearchField"));
+  // The field's own box: the first class template in the component is its `<label>`.
+  const box = (/className={`([^`]*)`}/.exec(field)?.[1] ?? '').split(/\s+/);
 
   it('wears Button\'s own face and only lights up when focused', () => {
     expect(uiSource).toContain('export const SearchField');
-    // Same box as `Button`: flat corners, its 32px face, its type step.
+    // Same box as `Button`: flat corners, its border and type step.
     expect(field).toContain('rounded-none');
-    expect(field).toContain('h-8');
-    expect(field).toContain('mouse:h-6');
     expect(field).not.toContain('rounded ');
     // Paper at rest; the input surface and the ring arrive with the caret.
     expect(field).toContain('bg-transparent');
     expect(field).toContain('focus-within:bg-input');
     expect(field).toContain('focus-within:border-accent');
+  });
+
+  // Regression, user report ("the input is not looking sexy for iPhones, and also
+  // this X is far from right"): the field stood 32px tall on a phone while every
+  // other touch control on that screen keeps 44px, so it read as a hairline chip.
+  it('stands at the touch step and shrinks only for a mouse', () => {
+    expect(box).toContain('h-11');
+    expect(box).toContain('mouse:h-8');
+    expect(box).not.toContain('h-8');
+  });
+
+  // Same report: Clear was a 12px glyph centred in its own 28px box sitting INSIDE
+  // the field's inset, so the ✕ ink stopped about 20px short of the border while the
+  // placeholder started 10px in — the asymmetry an eye reads as "far from right".
+  it('lets Clear absorb the field’s own trailing inset', () => {
+    // The list rows' `edge` geometry: the box runs to the border and pads its glyph
+    // by exactly the inset the field gives its leading side, so both inks agree.
+    expect(field).toMatch(/<IconButton\s+edge/);
+    expect(box).toContain('px-3');
+    expect(box).toContain('sm:px-4');
+  });
+
+  // It is a SEARCH field, so the phone keyboard says so and nothing autocorrects a
+  // machine name into prose.
+  it('asks the phone for a search keyboard', () => {
+    expect(field).toContain('type="search"');
+    expect(field).toContain('enterKeyHint="search"');
+    expect(field).toContain('autoCorrect="off"');
   });
 });
 

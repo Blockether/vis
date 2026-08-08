@@ -1100,8 +1100,15 @@ export function Header({
   }, []);
   return (
     <header className="relative z-30 shrink-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
-      <div className="mx-auto flex h-12 w-full max-w-[1400px] items-center pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
-        <div className="flex items-center gap-2.5" aria-label="Vis">
+      {/* THE BAR WRAPS, because a phone cannot hold identity, the screen's own verb
+          and a word-button on one 48px line: the field ended up a hairline slab with
+          barely 110px of usable width. Below `sm:` the search takes the whole second
+          row of the bar (`order-last w-full`) and the identity row keeps the first;
+          wherever there is room it folds straight back into the bar's middle. It is
+          the app bar either way, so the band is pinned above the list and no query
+          ever scrolls out of reach. */}
+      <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center pb-2 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:flex-nowrap sm:pb-0 sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
+        <div className="flex h-12 items-center gap-2.5" aria-label="Vis">
           <img
             src="/vis-logo.png"
             alt=""
@@ -1129,7 +1136,7 @@ export function Header({
           onValue={onQuery}
           placeholder="Search all machines…"
           label="Search sessions on every machine"
-          className="mx-3 flex-1"
+          className="order-last w-full sm:order-none sm:mx-3 sm:w-auto sm:flex-1"
         />
         {/* ONE SCREEN, ONE COG.
             The app used to carry a two-item tab bar whose second item existed for a
@@ -1141,7 +1148,7 @@ export function Header({
             It is a WORD in a button rather than a `⚙`: the glyph falls back to an emoji
             font whose advance width and baseline differ per platform, so it never sat
             centred in its own cell. */}
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex h-12 items-center gap-2 sm:ml-0">
           <Button
             type="button"
             variant="secondary"
