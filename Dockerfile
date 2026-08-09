@@ -513,8 +513,8 @@ RUN set -eux; \
     test "$(stat -c '%U %a' /home/vis/.ssh)" = 'vis 700'; \
     test "$(stat -c '%U' /home/vis/.config)" = 'vis'
 
-# Proving the binary RUNS is not this file's job. The TUI's first frame, a whole
-# one-shot agent turn and the provider extensions compiled into the image belong
+# Proving the binary RUNS is not this file's job. The TUI's first frame and a
+# whole one-shot agent turn against a keyless provider the suite invents belong
 # to the ARTIFACT, not to one packaging of it, so they are proven against
 # `target/vis` itself — see `test-native/` (com.blockether.vis.native-binary-test,
 # `clojure -M:test-native`). A build-time RUN could only prove them for whoever

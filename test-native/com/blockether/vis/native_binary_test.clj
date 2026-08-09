@@ -4,7 +4,7 @@
    `container-image-test` reads the Dockerfile and the unit suite runs on the
    JVM, so neither can see the failures native-image actually produces: a
    missing reachability entry that compiles cleanly and dies on the first frame,
-   an agent path that never boots, a provider extension left out of the image.
+   an agent path that never boots, an HTTP transport that cannot reach a model.
    Those exist only once `clojure -T:build native` has linked `target/vis`, so
    they are proven HERE — by RUNNING that file — and nowhere else. Proving them
    inside a `docker build` instead made the answer cost a container build and
@@ -17,14 +17,20 @@
    minute build, and these tests must not pass by skipping when the binary is
    absent: a missing binary FAILS here and says how to build one.
 
-   THE AGENT TURN IS HERMETIC. A loopback stub speaks the OpenAI dialect and the
-   binary is pointed at it through a throwaway project overlay
-   (`<cwd>/.vis/config.yml`), so no test spends money and the developer's own
-   credentials cannot decide whether it passes. The overlay is the ONLY
-   isolation there is: `~/.vis` hangs off `user.home`, which both the JVM and
-   the native image read from the operating system's passwd entry — setting
-   HOME moves nothing (measured on macOS: HOME=/tmp/… still resolves
-   user.home to the real account)."
+   THE AGENT TURN IS HERMETIC, AND IT NAMES NO VENDOR. The model it talks to is
+   a provider this test INVENTS: an OpenAI-dialect stub on loopback, declared in
+   a throwaway project overlay (`<cwd>/.vis/config.yml`) with NO credential of
+   any kind. Nothing here may depend on a provider extension that happens to be
+   linked in, on a key in the environment, or on a vendor's endpoint — a suite
+   that names one is a suite that fails when that provider is dropped, and a
+   suite that accepts a key is one the developer's own credentials can pass.
+   The stub records what it was asked, so the assertions are about the request
+   the binary actually made.
+
+   The overlay is the ONLY isolation there is: `~/.vis` hangs off `user.home`,
+   which both the JVM and the native image read from the operating system's
+   passwd entry — setting HOME moves nothing (measured on macOS: HOME=/tmp/…
+   still resolves user.home to the real account)."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.pty :as pty]
@@ -203,9 +209,10 @@
 
 (defn- start-stub-provider!
   "An OpenAI-dialect model server on 127.0.0.1 that always answers `reply` and
-   RECORDS what it was asked. The recording is the point: an answer alone would
-   also appear if the binary quietly fell back to a credential this machine
-   happens to hold."
+   RECORDS what it was asked — route, body and request headers. The recording is
+   the point: an answer alone would also appear if the binary quietly fell back
+   to a credential this machine happens to hold, and the headers are how the
+   suite proves the keyless provider stayed keyless on the wire."
   [reply]
   (let
     [asked
@@ -214,48 +221,63 @@
      server
      (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
 
-    (.createContext server
-                    "/"
-                    (reify
-                      HttpHandler
-                        (handle [_ exchange]
-                          (let
-                            [^HttpExchange exchange
-                             exchange
+    (.createContext
+      server
+      "/"
+      (reify
+        HttpHandler
+          (handle [_ exchange]
+            (let
+              [^HttpExchange exchange
+               exchange
 
-                             request
-                             (slurp (.getRequestBody exchange))
+               request
+               (slurp (.getRequestBody exchange))
 
-                             stream?
-                             (str/includes? (str/replace request " " "") "\"stream\":true")
+               headers
+               (into {}
+                     (map (fn [[k v]]
+                            [(str/lower-case (str k)) (vec v)]))
+                     (.getRequestHeaders exchange))
 
-                             payload
-                             (.getBytes ^String (if stream? (stream-body reply) (whole-body reply))
-                                        StandardCharsets/UTF_8)]
+               stream?
+               (str/includes? (str/replace request " " "") "\"stream\":true")
 
-                            (swap! asked conj
-                              {:path (.getPath (.getRequestURI exchange)) :body request})
-                            (.add (.getResponseHeaders exchange)
-                                  "Content-Type"
-                                  (if stream? "text/event-stream" "application/json"))
-                            (.sendResponseHeaders exchange 200 (alength payload))
-                            (with-open [out (.getResponseBody exchange)]
-                              (.write out payload))))))
+               payload
+               (.getBytes ^String (if stream? (stream-body reply) (whole-body reply))
+                          StandardCharsets/UTF_8)]
+
+              (swap! asked conj
+                {:path (.getPath (.getRequestURI exchange)) :body request :headers headers})
+              (.add (.getResponseHeaders exchange)
+                    "Content-Type"
+                    (if stream? "text/event-stream" "application/json"))
+              (.sendResponseHeaders exchange 200 (alength payload))
+              (with-open [out (.getResponseBody exchange)]
+                (.write out payload))))))
     (.setExecutor server nil)
     (.start server)
     {:server server :asked asked :port (.getPort (.getAddress server))}))
 
 (defn- overlay!
-  "Writes `<dir>/.vis/config.yml`. The hidden project overlay is the highest
-   config tier, so it names the default provider whatever `~/.vis` says."
+  "Writes `<dir>/.vis/config.yml`: a provider that exists nowhere but here.
+
+   The hidden project overlay is the highest config tier, so this entry outranks
+   whatever `~/.vis` says and the binary has no reason to look for a vendor. It
+   carries NO `api_key` and no `api_key_command` on purpose — a stub needs no
+   credential, and a test that supplied one could no longer tell a configured
+   provider apart from a machine that happens to be signed in somewhere."
   [^File dir port]
   (let [vis-dir (io/file dir ".vis")]
     (.mkdirs vis-dir)
     (spit (io/file vis-dir "config.yml")
-          (str "default_provider: stub-local\n" "default_model: stub-model\n"
-               "providers:\n" "  - id: stub-local\n"
-               "    base_url: http://127.0.0.1:" port
-               "/v1\n" "    api_key: stub-key\n"
+          (str "default_provider: stub-local\n"
+               "default_model: stub-model\n"
+               "providers:\n"
+               "  - id: stub-local\n"
+               "    base_url: http://127.0.0.1:"
+               port
+               "/v1\n"
                "    compatibility: openai\n" "    models:\n"
                "      - name: stub-model\n" "        context: 32000\n"
                "        output_limit: 4096\n" "        is_tool_call: true\n"))))
@@ -320,60 +342,61 @@
              ;; merging, provider selection and the HTTP transport. No unit test crosses
              ;; all of that inside the LINKED image, and every one of those layers has a
              ;; native-image failure mode of its own.
-             (it "answers the prompt from the provider its config names"
-                 (let
-                   [dir
-                    (temp-dir "vis-native-agent")
+             ;;
+             ;; The provider is INVENTED HERE. No shipped provider extension is named, so
+             ;; this stays green when the set of bundled vendors changes, and it proves the
+             ;; thing a deployment actually relies on: an OpenAI-compatible endpoint put in
+             ;; config reaches a real model call out of the native image.
+             (it
+               "answers the prompt from the keyless custom provider its config names"
+               (let
+                 [dir
+                  (temp-dir "vis-native-agent")
 
-                    {:keys [server asked port]}
-                    (start-stub-provider! "hello world")]
+                  {:keys [server asked port]}
+                  (start-stub-provider! "hello world")]
 
-                   (try (overlay! dir port)
-                        (let
-                          [{:keys [exit output]}
-                           (run-binary dir
-                                       [(.getAbsolutePath (require-binary)) "--db" ":memory" "--raw"
-                                        "Reply with exactly: hello world"]
-                                       180)
+                 (try (overlay! dir port)
+                      (let
+                        [{:keys [exit output]}
+                         (run-binary dir
+                                     [(.getAbsolutePath (require-binary)) "--db" ":memory" "--raw"
+                                      "Reply with exactly: hello world"]
+                                     180)
 
-                           requests
-                           @asked]
+                         requests
+                         @asked
 
-                          (expect (= 0 exit) output)
-                          (expect (str/includes? output "hello world") output)
-                          ;; Without this the test would also pass on a machine whose own
-                          ;; ~/.vis holds a real credential, and would prove nothing.
-                          (expect (seq requests)
-                                  (str "the binary never called the configured provider:\n" output))
-                          (expect (str/includes? (:path (first requests)) "/chat/completions")
-                                  (str "unexpected provider route: " (:path (first requests))))
-                          (expect (str/includes? (:body (first requests)) "\"stub-model\"")
-                                  "the request did not carry the model the overlay names")
-                          (expect (str/includes? (:body (first requests))
-                                                 "Reply with exactly: hello world")
-                                  "the request did not carry the prompt"))
-                        (finally (.stop server 0) (delete-tree! dir))))))
+                         {:keys [path body headers]}
+                         (first requests)
 
-(defdescribe native-binary-carries-the-provider-extensions-test
-             ;; Provider extensions are compiled INTO the image. A deployment configures
-             ;; `zai-coding-plan` from outside it (a key in the environment, a `providers:`
-             ;; entry in config), which can only work if the extension is in the binary —
-             ;; and its absence is a silent "unknown provider" at the deployment, hours
-             ;; later. Here it costs one process.
-             (it "lists zai-coding-plan among the providers it knows"
-                 (let
-                   [dir
-                    (temp-dir "vis-native-providers")
+                         ;; Whatever the transport spells the auth header as, what matters is
+                         ;; whether anything SECRET rode in it.
+                         credentials
+                         (->> ["authorization" "x-api-key"]
+                              (mapcat #(get headers %))
+                              (map #(str/trim (str/replace (str %) #"(?i)^bearer" "")))
+                              (remove str/blank?))]
 
-                    {:keys [exit output]}
-                    (run-binary dir [(.getAbsolutePath (require-binary)) "providers" "list"] 90)
+                        (expect (= 0 exit) output)
+                        (expect (str/includes? output "hello world") output)
+                        ;; Without this the test would also pass on a machine whose own
+                        ;; ~/.vis holds a real credential, and would prove nothing.
+                        (expect (seq requests)
+                                (str "the binary never called the configured provider:\n" output))
+                        (expect (str/includes? path "/chat/completions")
+                                (str "unexpected provider route: " path))
+                        (expect (str/includes? body "\"stub-model\"")
+                                "the request did not carry the model the overlay names")
+                        (expect (str/includes? body "Reply with exactly: hello world")
+                                "the request did not carry the prompt")
+                        ;; The overlay names no key, so nothing may authenticate on its behalf.
+                        ;; MEASURED: the OpenAI-compatible transport still sends the header, and
+                        ;; it arrives as a bare `Bearer` with nothing after it. A value here
+                        ;; would be a credential from this machine attached to a provider that
+                        ;; never asked for one — which is exactly the way this test could pass
+                        ;; while proving nothing.
+                        (expect (empty? credentials)
+                                "the keyless provider authenticated with a credential of its own"))
+                      (finally (.stop server 0) (delete-tree! dir))))))
 
-                    ;; The table wraps at the terminal width, so an id can arrive split
-                    ;; across two rows. Strip the layout and ask about the text.
-                    flat
-                    (str/replace output #"\s+" "")]
-
-                   (try (expect (= 0 exit) output)
-                        (expect (str/includes? flat "zai-coding-plan") output)
-                        (expect (str/includes? flat "api.z.ai") output)
-                        (finally (delete-tree! dir))))))

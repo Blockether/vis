@@ -186,10 +186,10 @@ jobs:
             exit 1
           fi
           target/release-bundle/vis-agent --native gateway stop >/dev/null 2>&1 || true
-      # The binary's OWN suite (test-native/): the TUI's first frame on a pty, a
-      # whole one-shot agent turn against a loopback provider stub, and the
-      # provider extensions linked into it. Those paths exist only once
-      # native-image has linked the file, so this is the only place they run.
+      # The binary's OWN suite (test-native/): the TUI's first frame on a pty and a
+      # whole one-shot agent turn against a keyless loopback provider the suite
+      # invents. Those paths exist only once native-image has linked the file, so
+      # this is the only place they run.
       - name: Test the native binary
         shell: bash
         env:
@@ -249,10 +249,10 @@ jobs:
           set -euo pipefail
           out="$(target/release-bundle/vis-agent --native python -c "import ast; print('py-ok')")"
           [ "$out" = "py-ok" ] || { echo '::error::the staged language resources do not load'; exit 1; }
-      # The binary's OWN suite (test-native/): the TUI's first frame on a pty, a
-      # whole one-shot agent turn against a loopback provider stub, and the
-      # provider extensions linked into it. Those paths exist only once
-      # native-image has linked the file, so this is the only place they run.
+      # The binary's OWN suite (test-native/): the TUI's first frame on a pty and a
+      # whole one-shot agent turn against a keyless loopback provider the suite
+      # invents. Those paths exist only once native-image has linked the file, so
+      # this is the only place they run.
       - name: Test the native binary
         shell: bash
         env:
