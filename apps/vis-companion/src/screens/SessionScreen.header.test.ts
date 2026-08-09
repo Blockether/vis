@@ -26,3 +26,15 @@ describe('session header draft indicator', () => {
     expect(header).toContain('draft {draftName');
   });
 });
+
+// Regression, user report ("big on Ipad we don't need this"): the artifacts sheet
+// covered the transcript and left the composer standing under it — a band of chrome
+// for a message nobody is writing, and on a tablet the biggest thing on a screen that
+// is not about it.
+describe('the composer under an open artifacts sheet', () => {
+  const composer = source.slice(source.indexOf('<footer', fnStart));
+
+  it('is hidden while the sheet is open, never unmounted', () => {
+    expect(composer).toContain('${artifactsOpen ? "hidden" : ""}');
+  });
+});

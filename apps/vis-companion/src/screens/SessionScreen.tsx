@@ -4504,10 +4504,16 @@ export function SessionScreen({
         {/* `sm:pt-2`, never `sm:py-2`: the `sm` variant is emitted after the base
           rules, so a shorthand there would drop `--safe-bottom` — and `sm` is
           exactly where a phone lands when it is turned on its side, home
-          indicator included. */}
+          indicator included.
+
+          It is HIDDEN while the artifacts sheet is open. The sheet is the whole box
+          then, and a composer standing under a screen of thumbnails is a band of
+          chrome for a message nobody is writing — on a tablet it is the biggest thing
+          on a screen that is not about it. Hidden rather than unmounted, so the draft,
+          the caret and the queued turns survive a look at what the session made. */}
         <footer
           style={safeBottomStyle}
-          className="relative z-10 shrink-0 border-t border-dialog-edge bg-ink pl-[max(0.875rem,env(safe-area-inset-left))] pb-[calc(0.5rem+var(--safe-bottom,env(safe-area-inset-bottom)))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:pt-2"
+          className={`relative z-10 shrink-0 border-t border-dialog-edge bg-ink pl-[max(0.875rem,env(safe-area-inset-left))] pb-[calc(0.5rem+var(--safe-bottom,env(safe-area-inset-bottom)))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:pt-2 ${artifactsOpen ? "hidden" : ""}`}
         >
           {/* Anchored to the footer's top edge, so it always clears the queue
             tray and composer no matter how tall they grow. Hidden while a

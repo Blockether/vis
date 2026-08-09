@@ -410,6 +410,16 @@ describe("DialogClose", () => {
     expect(html({ tone: "panel" })).toContain("border-dialog-edge");
   });
 
+  // Regression, user report ("Why not black like all buttons"): the artifacts sheet has
+  // no title band to inherit a foreground from — its one row is the filter strip — so
+  // its ✕ rested as ink on paper beside a ‹ that is a black block.
+  it("brings the title band with it where a surface has none", () => {
+    const block = html({ tone: "block" });
+    expect(block).toContain("bg-dialog-title");
+    expect(block).toContain("text-dialog-title-foreground");
+    expect(block).not.toContain("text-current");
+  });
+
   it("is named for what it closes", () => {
     expect(html()).toContain('aria-label="Close artifacts"');
   });
@@ -453,10 +463,22 @@ describe("KebabButton", () => {
 
   // Over a thumbnail the app's paper is not underneath it, so the same control brings
   // its own ink instead of a call-site `bg-*` that Tailwind's emission order decides.
+  // Reported too ("not visible and goes outside of card!"): it wore the EDGE box as
+  // well, whose negative right margin reclaims a ROW's trailing gutter. Placed
+  // `right-1` on an artifact tile, that margin dragged the glyph past the card's edge.
   it("has an overlay face for the artifact tile, with no height of its own", () => {
     const over = html({ variant: "overlay", density: "default" });
-    expect(over).toContain("bg-ink/80");
+    expect(over).toContain("bg-dialog-title");
+    expect(over).toContain("text-dialog-title-foreground");
+    // `bg-ink/80` reads as ink and paints near-white in a light theme.
+    expect(over).not.toContain("bg-ink/80");
     expect(over).not.toContain("self-center");
+    // It ends no row, so it reclaims no row's gutter and centres its own glyph.
+    expect(over).not.toContain("-mr-3");
+    expect(over).not.toContain("justify-items-end");
+    // The row version still does, and that is the only difference between the two.
+    expect(html()).toContain("-mr-3");
+    expect(html()).toContain("justify-items-end");
   });
 });
 

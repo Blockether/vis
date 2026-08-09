@@ -43,6 +43,7 @@ import { DocFrame } from "./DocArtifact";
 import { ImageViewer } from "./ImageViewer";
 import { MarkdownArtifact } from "./MarkdownArtifact";
 import { PdfAnnotator } from "./PdfArtifact";
+import { readArtifactText } from "./TextArtifact";
 import { AlertIcon, ClipIcon, PlayIcon } from "./icons";
 import {
   Chip,
@@ -157,6 +158,54 @@ function useArtifactUrl(
 }
 
 /**
+ * A DOCUMENT SHOWS ITSELF TOO.
+ *
+ * A note's tile used to be five grey bars — a drawing of a page, identical on every
+ * document in the session, so the only thing telling two notes apart was the filename
+ * under them. A written artifact is text the app already reads itself, so the tile
+ * reads the head of it and paints the document's own first lines.
+ *
+ * Only a WRITTEN note and only a small one: a PDF has no cheap raster, and a 40 MB log
+ * is not worth a download for a 96px box — both keep the plate. The bytes come through
+ * the same retained object URL the picture tiles use, and the sheet's own paging is
+ * what bounds how many are fetched at once.
+ */
+const PREVIEW_LIMIT = 512_000;
+const PREVIEW_LINES = 8;
+
+/** The head of a note, blank lines dropped: eight tiny lines is the whole budget. */
+export function previewLines(text: string, limit = PREVIEW_LINES): string[] {
+  const lines: string[] = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trimEnd();
+    if (trimmed.trim() === "") continue;
+    lines.push(trimmed);
+    if (lines.length === limit) break;
+  }
+  return lines;
+}
+
+/** The note's text, once its bytes are in hand. A failure simply peeks at nothing. */
+function useArtifactPreview(url: string | null, enabled: boolean): string {
+  const [text, setText] = useState("");
+  useEffect(() => {
+    if (!enabled || !url) return;
+    let alive = true;
+    readArtifactText(url)
+      .then((next) => {
+        if (alive) setText(next);
+      })
+      .catch(() => {
+        if (alive) setText("");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [url, enabled]);
+  return text;
+}
+
+/**
  * The thumbnail. A picture shows ITSELF — this is the one place in the app where
  * a produced figure is browsable without its turn around it, so a generic icon
  * would defeat the whole surface. A clip, a document and a file have no cheap
@@ -172,12 +221,18 @@ function Thumb({
   artifact: SessionArtifact;
 }) {
   const box = "h-24 sm:h-28 shrink-0 border-b border-dialog-edge";
+  const previewable =
+    artifact.kind === "doc" &&
+    isTextMedia(artifact.mediaType, artifact.name) &&
+    typeof artifact.size === "number" &&
+    artifact.size <= PREVIEW_LIMIT;
   const { url, failed } = useArtifactUrl(
     client,
     sid,
     artifact,
-    artifact.kind === "image",
+    artifact.kind === "image" || previewable,
   );
+  const preview = previewLines(useArtifactPreview(url, previewable));
 
   if (artifact.kind === "image") {
     return (
@@ -205,6 +260,33 @@ function Thumb({
   }
 
   if (artifact.kind === "doc") {
+    const kind = (
+      <span className="absolute right-1 bottom-1 bg-ink/80 px-1 font-mono text-chip text-white">
+        {docKindLabel(artifact.mediaType, artifact.name)}
+      </span>
+    );
+    // The note itself, clipped by the box rather than summarised: a page continues
+    // past the bottom of a thumbnail exactly as it does in the reader. It DISSOLVES
+    // there rather than being guillotined — a row of letters sliced through the middle
+    // reads as a broken box, while a fade reads as "there is more of this".
+    if (preview.length) {
+      return (
+        <span className={`relative block overflow-hidden bg-panel-2 px-2 py-1 ${box}`}>
+          <span
+            aria-hidden="true"
+            className="block font-mono text-chip text-dialog-hint [mask-image:linear-gradient(to_bottom,black_60%,transparent)]"
+          >
+            {preview.map((line, at) => (
+              <span key={at} className="block truncate">
+                {line}
+              </span>
+            ))}
+          </span>
+          {kind}
+        </span>
+      );
+    }
+    // Nothing to read yet, or nothing this app can read: the plate, hued by name.
     return (
       <span
         className={`relative flex flex-col justify-center gap-1 overflow-hidden bg-panel-2 px-3 ${box}`}
@@ -215,9 +297,7 @@ function Thumb({
         <span className="h-0.5 w-4/5 bg-dialog-hint/50" />
         <span className="h-0.5 w-full bg-dialog-hint/50" />
         <span className="h-0.5 w-1/2 bg-dialog-hint/50" />
-        <span className="absolute right-1 bottom-1 bg-ink/80 px-1 font-mono text-chip text-white">
-          {docKindLabel(artifact.mediaType, artifact.name)}
-        </span>
+        {kind}
       </span>
     );
   }
@@ -378,19 +458,8 @@ function FilterStrip({
       {/* The way out is the app's way out: welded to the band's right edge behind
           its own hairline, exactly as a dialog and an opened artifact are left.
           It used to be one more bordered chip in a strip of bordered chips. */}
-      <DialogClose label="Close artifacts" tone="panel" onClose={onClose} />
+      <DialogClose label="Close artifacts" tone="block" onClose={onClose} />
     </div>
-  );
-}
-
-/** The one line that says what a tap buys: zoom, draw, send it back. */
-function SurfaceFooter() {
-  return (
-    <footer className="shrink-0 border-t border-dialog-edge bg-panel-2 px-3 py-1.5 font-mono text-chip text-dialog-hint sm:px-4">
-      Tap to open · pinch to zoom · draw on it and{" "}
-      <span className="font-bold text-white">Attach to message</span> sends the
-      picture back to the model
-    </footer>
   );
 }
 
@@ -722,7 +791,9 @@ export function ArtifactsSheet({
           setPages(1);
         }}
       />
-      <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
+      {/* The sheet is the whole box, composer included, so the bottom safe area is
+          this scroller's own: the last row of tiles must clear the home indicator. */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4 sm:pt-4">
         {shown.length ? (
           <>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 mouse:grid-cols-5">
@@ -752,7 +823,6 @@ export function ArtifactsSheet({
           </p>
         )}
       </div>
-      <SurfaceFooter />
       {versionsOf && (
         <ArtifactVersions
           artifact={versionsOf}

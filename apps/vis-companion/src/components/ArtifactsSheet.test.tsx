@@ -2,7 +2,11 @@ import artifactsSheetSource from "./ArtifactsSheet.tsx?raw";
 import uiSource from "./ui.tsx?raw";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ArtifactsChip, ArtifactsSheet } from "./ArtifactsSheet";
+import {
+  ArtifactsChip,
+  ArtifactsSheet,
+  previewLines,
+} from "./ArtifactsSheet";
 import type { GatewayClient } from "../lib/gateway";
 import type { SessionArtifact } from "../lib/artifacts";
 
@@ -21,6 +25,14 @@ const sessionIdChipHeight = () => {
 /** Every class on a rendering's first <button>. */
 const buttonClasses = (html: string) =>
   (/<button[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "").split(" ");
+
+/** The classes of the button whose tag carries `mark` — attribute order is React's. */
+const classesOf = (html: string, mark: string) => {
+  const tag =
+    (html.match(/<button[^>]*>/g) ?? []).find((entry) => entry.includes(mark)) ??
+    "";
+  return /class="([^"]*)"/.exec(tag)?.[1] ?? "";
+};
 
 /** The bytes are never fetched in static markup: effects do not run. */
 const client = {
@@ -158,10 +170,53 @@ describe("the artifacts sheet", () => {
     expect(html).toContain("absolute inset-0");
   });
 
-  it("opens directly on its filter strip — no separate title band above it", () => {
+  // Regression, user report ("Why not black like all buttons"): the way out of the
+  // sheet was ink on the strip's own paper, one row under a ‹ that leaves the session
+  // as a black block — one gesture drawn two ways on one screen.
+  it("opens on its filter strip and leaves by the app's own black block", () => {
     const html = sheet([picture]);
     expect(html).not.toMatch(/<header/);
-    expect(html).not.toContain("bg-dialog-title");
+    const close = classesOf(html, 'aria-label="Close artifacts"');
+    expect(close).toContain("bg-dialog-title");
+    expect(close).toContain("text-dialog-title-foreground");
+    // The title paint is the MARK's own, never a band above the strip.
+    expect(html.match(/bg-dialog-title/g)).toHaveLength(1);
+  });
+
+  // Regression, user report ("big on Ipad we don't need this"): a permanent band under
+  // the grid spelled out "Tap to open · pinch to zoom …" — an instruction one tap
+  // teaches, paid for on every screen for the life of the session.
+  it("spends no band on telling you what a tap does", () => {
+    const html = sheet([picture]);
+    expect(html).not.toContain("Tap to open");
+    expect(html).not.toMatch(/<footer/);
+  });
+
+  // Regression, user report ("why not sneakpeak! this should be visible too in
+  // artifacts"): every document wore the same five grey bars, so two notes produced by
+  // one session were told apart only by the filename under them.
+  it("reads the head of a written note, blank lines dropped", () => {
+    expect(previewLines("# Plan\n\n\nOne\nTwo\n")).toEqual(["# Plan", "One", "Two"]);
+    // Eight lines is the whole box: a log does not get to scroll a thumbnail.
+    expect(previewLines("a\nb\nc\nd\ne\nf\ng\nh\ni\nj")).toHaveLength(8);
+    expect(previewLines("")).toEqual([]);
+  });
+
+  // The last line lands ON the box's edge. It fades out there rather than being cut
+  // through the middle of its letters, which reads as a broken tile instead of a page
+  // that continues.
+  it("dissolves the peek at the bottom of the tile instead of slicing it", () => {
+    expect(artifactsSheetSource).toContain(
+      "[mask-image:linear-gradient(to_bottom,black_60%,transparent)]",
+    );
+  });
+
+  // A PDF has no cheap raster and nothing this app can read without a renderer, so it
+  // keeps the plate rather than faking a peek at itself.
+  it("leaves the plate on a document it cannot read", () => {
+    const html = sheet([document]);
+    expect(text(html)).toContain("PDF");
+    expect(html).toContain("bg-dialog-hint/50");
   });
 
   it("welds the close onto the filter strip instead of a band above it", () => {
@@ -326,6 +381,17 @@ describe("an artifact with a history", () => {
   it("keeps the history control a sibling of the tile it belongs to", () => {
     const html = sheet([threaded]);
     expect(html).not.toMatch(/<button(?:(?!<\/button>)[\s\S])*<button/);
+  });
+
+  // Regression, user report ("not visible and goes outside of card!"): the dot wore the
+  // box a `⋯` that ENDS A ROW wears, and that box reclaims the row's trailing gutter
+  // with a negative margin — placed `right-1` on a tile, it hung outside the card.
+  it("keeps the history control inside the card it belongs to", () => {
+    const dots = classesOf(sheet([threaded]), "versions of chart.png");
+    expect(dots).toContain("bg-dialog-title");
+    expect(dots).not.toContain("-mr-3");
+    expect(dots).not.toContain("sm:-mr-4");
+    expect(dots).not.toContain("justify-items-end");
   });
 });
 

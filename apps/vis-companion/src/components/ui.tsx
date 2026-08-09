@@ -128,13 +128,15 @@ export const Button = forwardRef<
     // The red stays INK and the fill stays a wash, exactly as `MenuItem`'s danger
     // row does — one destructive language in both.
     danger: `border-err/40 bg-err/10 text-err hover:border-err hover:bg-err/20 ${dimmed}`,
-    // A control that floats over CONTENT — a thumbnail, a picture — rather than over
-    // chrome. It carries its own ink because whatever is under it is not the app's
-    // paper, and it is a VARIANT rather than a class at the call site because
-    // `bg-transparent` and `bg-ink/80` are decided by Tailwind's emission order, never
-    // by which of the two the call site happened to type last.
+    // A control that floats over CONTENT — a thumbnail, a picture, a note's own first
+    // lines — rather than over chrome. It carries its own ink because whatever is under
+    // it is not the app's paper, and it wears the same black block every other floating
+    // control wears: `bg-ink/80` was ink by NAME only, and in a light theme that token
+    // resolves near-white, so the glyph disappeared into the page it sat on. It is a
+    // VARIANT rather than a class at the call site because two competing `bg-*` are
+    // settled by Tailwind's emission order, never by which one a call site typed last.
     overlay:
-      'border-transparent bg-ink/80 text-dialog-hint hover:bg-hover hover:text-accent-ink disabled:border-transparent disabled:bg-panel-2 disabled:text-muted',
+      'border-transparent bg-dialog-title text-dialog-title-foreground hover:bg-accent hover:text-accent-ink disabled:border-transparent disabled:bg-panel-2 disabled:text-muted',
     // A split button's caret half is NOT a second variant: it is `primary` with a
     // hairline in `accent-foreground`.
   }[variant];
@@ -257,6 +259,11 @@ export const IconButton = forwardRef<
  * a second rival to the yellow verb beside it. The frame arrives on hover and focus,
  * where it answers "can I press this"; `overlay` is the same control over a picture,
  * which has to bring its own ink to stay legible.
+ *
+ * THE EDGE BOX BELONGS TO THE ROW VERSION ONLY. A `⋯` that ends a row reclaims that
+ * row's trailing gutter (`-mr-3 sm:-mr-4`) so its ink lands on the paper's edge; an
+ * overlay ends no row — it is PLACED, `top-1 right-1` on an artifact tile — and that
+ * same negative margin hung the glyph outside the card it belongs to.
  */
 export const KebabButton = forwardRef<
   HTMLButtonElement,
@@ -278,7 +285,7 @@ export const KebabButton = forwardRef<
       label={label}
       variant={variant}
       density={density}
-      edge
+      edge={variant !== 'overlay'}
       className={className}
       aria-haspopup="menu"
       aria-expanded={isOpen}
@@ -902,8 +909,14 @@ export function Switch({
  * #0f1117: measured on the live menu, the ✕ disagreed with its band in five of the
  * six shipped themes and agreed in one only by coincidence.
  *
- * `tone` is therefore just the hairline that welds it to the band: a dialog's title
+ * `tone` is therefore mostly the hairline that welds it to the band: a dialog's title
  * bar draws it in its own foreground, every other band in `dialog-edge`.
+ *
+ * `block` is the exception, for that very reason. A surface whose only row is its own
+ * content — the artifacts sheet, which opens directly on its filter strip — has no
+ * title band to inherit a foreground from, so the mark BRINGS one: the same black box
+ * the `‹` that leaves a session already wears, which is what "black like every other
+ * button" means. Paper and ink are one entry in the table, so they cannot disagree.
  */
 export function DialogClose({
   label,
@@ -912,18 +925,21 @@ export function DialogClose({
   onClose,
 }: {
   label: string;
-  tone?: 'title' | 'panel';
+  tone?: 'title' | 'panel' | 'block';
   className?: string;
   onClose: () => void;
 }) {
-  const skin =
-    tone === 'title' ? 'border-dialog-title-foreground/20' : 'border-dialog-edge';
+  const skin = {
+    title: 'border-dialog-title-foreground/20 text-current',
+    panel: 'border-dialog-edge text-current',
+    block: 'border-dialog-edge bg-dialog-title text-dialog-title-foreground',
+  }[tone];
   return (
     <button
       type="button"
       onClick={onClose}
       aria-label={label}
-      className={`grid min-w-9 shrink-0 place-items-center border-l text-current transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none motion-reduce:transition-none mouse:min-w-8 ${skin} ${className}`}
+      className={`grid min-w-9 shrink-0 place-items-center border-l transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none motion-reduce:transition-none mouse:min-w-8 ${skin} ${className}`}
     >
       <CloseIcon />
     </button>
