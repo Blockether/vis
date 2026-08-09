@@ -1937,42 +1937,6 @@ export class GatewayClient {
    * `onPage` only fires on a cold load: with rows already on screen, a partial
    * list would paint as the list briefly shrinking.
    */
-  /**
-   * ONE page of ONE project, cut by the GATEWAY.
-   *
-   * The list view groups a machine's sessions per project and pages each group in
-   * place. Slicing an already-downloaded fleet is not paging: it makes the first
-   * page wait for the last row of the last project. `root=` narrows the gateway's
-   * own ordering to this project before it cuts the window, so `total` is the
-   * project's session count and the pager's arithmetic is the server's.
-   */
-  async listProjectPage(
-    root: string,
-    offset: number,
-    limit: number,
-    signal?: AbortSignal,
-  ): Promise<{ rows: Session[]; total: number; hasMore: boolean }> {
-    const res = await this.requestFull<{
-      sessions?: Session[];
-      total?: number;
-      has_more?: boolean;
-    }>(
-      "GET",
-      `/v1/sessions?limit=${limit}&offset=${Math.max(0, offset)}&root=${encodeURIComponent(root)}`,
-      undefined,
-      signal,
-    );
-    const rows = res.data?.sessions ?? [];
-    // Every row names the model it runs on, so opening any of them paints the
-    // right chip on the first frame.
-    this.seedSessionModels(rows);
-    return {
-      rows,
-      total: res.data?.total ?? rows.length,
-      hasMore: Boolean(res.data?.has_more),
-    };
-  }
-
   async listSessions(
     signal?: AbortSignal,
     onPage?: (rows: Session[]) => void,

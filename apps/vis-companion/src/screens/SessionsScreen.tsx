@@ -90,6 +90,7 @@ import {
   machineLabel,
   newSessionTarget,
   projectDelete,
+  projectPage,
   reconcileMachines,
   scopedConns,
   scopedMachines,
@@ -1760,49 +1761,21 @@ const ProjectGroup = memo(function ProjectGroup({
   const renameRow = useCallback((session: Session) => onRename(session, conn), [onRename, conn]);
   const deleteRow = useCallback((session: Session) => onDelete(session, conn), [onDelete, conn]);
 
-  // A project is WALKED, page by page, and the gateway cuts the pages
-  // (`listProjectPage`, `root=`). Page 1 is painted from rows the fleet poll has
-  // already delivered, so the first screen costs no request; every later page is
-  // the server's own window of this project, which is the only way a project with
-  // a thousand sessions can be read at all.
+  // A project is WALKED, page by page, and every page is cut from the rows this
+  // screen already paints: `projectPage` owns that arithmetic and the reason it
+  // is not the gateway's.
   const [page, setPage] = useState(1);
-  const pageCount = Math.max(1, Math.ceil(sessions.length / pageSize));
+  const {
+    page: shownPage,
+    pageCount,
+    rows,
+  } = useMemo(() => projectPage(sessions, page, pageSize), [sessions, page, pageSize]);
   useEffect(() => {
     // The fleet moved under the pager (a deletion, a filter, a smaller step): the
-    // page that no longer exists becomes the first one rather than an empty band.
+    // page that no longer exists becomes the first one rather than the last one a
+    // reader never asked for.
     if (page > pageCount) setPage(1);
   }, [page, pageCount]);
-
-  const localRows = useMemo(
-    () => sessions.slice((page - 1) * pageSize, page * pageSize),
-    [sessions, page, pageSize],
-  );
-
-  const [serverRows, setServerRows] = useState<Session[] | null>(null);
-  useEffect(() => {
-    // A search is a FLEET question answered client-side over rows already held;
-    // asking the gateway for an unfiltered window would page past the matches.
-    if (page === 1 || needle) {
-      setServerRows(null);
-      return;
-    }
-    let alive = true;
-    const controller = new AbortController();
-    void clientFor(conn)
-      .listProjectPage(root, (page - 1) * pageSize, pageSize, controller.signal)
-      .then((window) => {
-        if (alive) setServerRows(window.rows);
-      })
-      // The locally sliced page is a truthful fallback: same ordering, same rows.
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-      controller.abort();
-    };
-  }, [conn, root, page, pageSize, needle]);
-
-  const rows = serverRows ?? localRows;
-
   return (
     <>
     <section aria-label={`${project} sessions`}>
@@ -1852,7 +1825,7 @@ const ProjectGroup = memo(function ProjectGroup({
               onDelete={deleteRow}
             />
           ))}
-          <Pager page={page} pageCount={pageCount} onPage={setPage} label={`${project} sessions`} />
+          <Pager page={shownPage} pageCount={pageCount} onPage={setPage} label={`${project} sessions`} />
         </div>
       )}
     </section>

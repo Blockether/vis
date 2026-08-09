@@ -1052,20 +1052,24 @@ describe("NewSessionButton, split", () => {
   });
 });
 
-// Regression, user report ("it should have paging, and it should be supported by
-// the backend"): the pages were sliced out of a fleet the client had already
-// downloaded, so a project's history could only be read by growing one column.
-describe("a project's pages are cut by the gateway", () => {
+// Regression, user report ("when I am going to the latest page on the session list
+// there is a very unpleasant reflow and flicker"): page 1 and the page COUNT were cut
+// from the filtered, re-ordered rows this screen paints, while pages 2 and up were
+// re-fetched from `GET /v1/sessions?root=`, which hides nothing and re-orders nothing.
+// The two lists never agreed — the gateway counted 1034 sessions in a project the list
+// painted 763 of — so the last page painted its three real rows (239px) and then swapped
+// them 119ms later for an unrelated ten-row window (582px).
+describe("a project's pages are cut from the list on screen", () => {
   const sessions = sessionsListSource;
   const gateway = gatewaySource;
 
-  it("asks the gateway for the window, with the project as `root`", () => {
-    expect(gateway).toContain("async listProjectPage(");
-    expect(gateway).toContain("&root=${encodeURIComponent(root)}");
-    expect(sessions).toContain(
-      ".listProjectPage(root, (page - 1) * pageSize, pageSize",
-    );
+  it('slices the rows it paints, and asks no second source for them', () => {
+    expect(sessions).toContain('projectPage(sessions, page, pageSize)');
+    expect(sessions).not.toContain('listProjectPage');
+    expect(gateway).not.toContain('listProjectPage');
+    expect(gateway).not.toContain('&root=${encodeURIComponent(root)}');
   });
+
 
   it("keeps no disclosure and no 'Show more'", () => {
     expect(sessions).not.toContain("HeaderToggle");

@@ -426,6 +426,36 @@ export function groupByWorkDir(sessions: Session[]): Array<[string, Session[]]> 
   return [...groups.entries()];
 }
 
+/**
+ * ONE page of a project's history, cut from the rows the screen is PAINTING.
+ *
+ * The pager walks the list a reader can SEE, and that list belongs to this
+ * client: `sessionIsListed` hides the empty taps, `sessionOrder` lifts starred
+ * and unsent work above the gateway's own ranking, and a live query narrows it
+ * again. `GET /v1/sessions?root=` knows none of that, so its window at the same
+ * offset is a DIFFERENT list — on one machine the gateway counted 1034 sessions
+ * in a project this list paints 763 of, which puts the gateway's last page 27
+ * pages beyond the pager's. Cutting page 1 and the page COUNT locally while
+ * asking the gateway for pages 2 and up is what made the last page paint its
+ * three real rows (239px tall) and then swap them 119ms later for an unrelated
+ * ten-row window (582px): one tap, two paints, and neither of them the list.
+ * The fleet poll already drains every window of every machine, so every row is
+ * here already — one list, one arithmetic, one paint.
+ *
+ * `page` is CLAMPED, so a list that shrank under the reader (a deletion, a
+ * filter, a smaller step) never gets a frame with an empty band in it.
+ */
+export function projectPage(
+  sessions: Session[],
+  page: number,
+  pageSize: number,
+): { page: number; pageCount: number; rows: Session[] } {
+  const size = Math.max(1, Math.floor(pageSize) || 1);
+  const pageCount = Math.max(1, Math.ceil(sessions.length / size));
+  const at = Math.min(Math.max(1, Math.floor(page) || 1), pageCount);
+  return { page: at, pageCount, rows: sessions.slice((at - 1) * size, at * size) };
+}
+
 /** Where a machine is working right now, as the menu says it out loud. */
 export interface MachineProject {
   /** The repo root a new session starts in. */

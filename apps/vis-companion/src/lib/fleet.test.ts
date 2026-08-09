@@ -12,6 +12,7 @@ import {
   machineLabel,
   newSessionTarget,
   projectDelete,
+  projectPage,
   reconcileMachines,
   scopedMachines,
   scopeError,
@@ -545,6 +546,38 @@ describe('projectDelete', () => {
       rows.filter((row) => sessionIsListed(row, { hasDraftMessage: false, isFavorite: false })),
     ).toHaveLength(1);
     expect(projectDelete(rows).sessionIds).toEqual(['named', 'hidden']);
+  });
+});
+
+// Regression, user report ("when I am going to the latest page on the session list
+// there is a very unpleasant reflow and flicker"): the page count came from these
+// filtered rows while pages 2 and up were re-fetched from the gateway's own unfiltered
+// window at the same offset, so the last page painted three rows and then swapped them
+// for ten that belonged to a different list.
+describe('projectPage', () => {
+  const rows = (count: number) => Array.from({ length: count }, (_, at) => session(`s${at}`));
+
+  it('cuts the page out of the rows it was handed', () => {
+    const list = rows(23);
+    expect(projectPage(list, 1, 10).rows.map((row) => row.id)).toEqual(
+      list.slice(0, 10).map((row) => row.id),
+    );
+    expect(projectPage(list, 2, 10).rows.map((row) => row.id)).toEqual(
+      list.slice(10, 20).map((row) => row.id),
+    );
+  });
+
+  it('ends where the list ends: the last page is as short as it truly is', () => {
+    const page = projectPage(rows(763), 77, 10);
+    expect(page.pageCount).toBe(77);
+    expect(page.rows).toHaveLength(3);
+    expect(page.rows.map((row) => row.id)).toEqual(['s760', 's761', 's762']);
+  });
+
+  it('clamps a page the list no longer has instead of painting an empty band', () => {
+    expect(projectPage(rows(12), 99, 10)).toMatchObject({ page: 2, pageCount: 2 });
+    expect(projectPage(rows(12), 0, 10)).toMatchObject({ page: 1, pageCount: 2 });
+    expect(projectPage([], 3, 10)).toMatchObject({ page: 1, pageCount: 1, rows: [] });
   });
 });
 
