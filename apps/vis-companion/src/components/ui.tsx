@@ -1084,8 +1084,13 @@ export function Modal({
    * taking the whole phone for it makes a confirmation look like a destination.
    * It rides up from the bottom edge like the full sheet does, but only as tall as
    * what it holds, and on the desktop it is the same box without the fixed height.
+   *
+   * `wide` is SETTINGS, and settings only: the one dialog that stands two columns
+   * beside each other (this device, and the machines) rather than asking one
+   * question. Same scrim, same physics, same height — only the width differs, and
+   * below `sm:` it is the identical full-bleed sheet, where the columns stack.
    */
-  size?: 'full' | 'fit';
+  size?: 'full' | 'fit' | 'wide';
   children: ReactNode;
 }) {
   return createPortal(
@@ -1098,21 +1103,24 @@ export function Modal({
     >
       {/* ONE SIZE. On the phone a full dialog IS the screen — full bleed, full height,
           so a list inside it gets every pixel the glass has and the verbs at its
-          foot are always in the same place. From `sm:` up every dialog is the same
-          box (`sm:max-w-xl`, `DIALOG_DESKTOP_HEIGHT`): a question and a file browser
-          that open over the same screen used to be two different rectangles.
+          foot are always in the same place. From `sm:` up every dialog that asks one
+          question is the same box (`sm:max-w-xl`, `DIALOG_DESKTOP_HEIGHT`): a question
+          and a file browser that open over the same screen used to be two different
+          rectangles.
 
-          A `fit` dialog is the one exception, and it is a SIZE rather than a second
+          A `fit` dialog is one exception, and it is a SIZE rather than a second
           modal: same scrim, same physics, same box — it simply stops at its content.
+          `wide` is the other, and it is a LAYOUT rather than a mood: settings stands
+          two columns wide, and 36rem split in half is two columns of nothing.
 
-          The scrim is application settings' own — ink at 85% under a 2px blur, faded
+          The scrim is settings' own — ink at 85% under a 2px blur, faded
           in rather than snapped on. That dialog was hand-rolled beside this one and
           was the better looking of the two, so its glass moved IN HERE and the copy
           moved out; `sm:max-w-xl` is its width, for the same reason. */}
       <div
-        className={`flex w-full flex-col sm:max-w-xl ${
-          size === 'fit' ? 'max-h-full sm:h-auto' : DIALOG_DESKTOP_HEIGHT
-        }`}
+        className={`flex w-full flex-col ${
+          size === 'wide' ? 'sm:max-w-4xl' : 'sm:max-w-xl'
+        } ${size === 'fit' ? 'max-h-full sm:h-auto' : DIALOG_DESKTOP_HEIGHT}`}
         role="presentation"
         onClick={(event) => event.stopPropagation()}
       >

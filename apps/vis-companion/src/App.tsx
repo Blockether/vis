@@ -110,11 +110,8 @@ const RECOVERY_SWEEP_MIN_GAP_MS = 5_000;
 const SessionScreenLazy = lazy(async () => ({
   default: (await import("./screens/SessionScreen")).SessionScreen,
 }));
-const GatewaySettingsDialogLazy = lazy(async () => ({
-  default: (await import("./screens/SettingsScreen")).GatewaySettingsDialog,
-}));
-const ApplicationSettingsDialogLazy = lazy(async () => ({
-  default: (await import("./screens/SettingsScreen")).ApplicationSettingsDialog,
+const SettingsDialogLazy = lazy(async () => ({
+  default: (await import("./screens/SettingsScreen")).SettingsDialog,
 }));
 
 // Each split screen keeps its own boundary so a miss costs that screen, never the
@@ -129,22 +126,10 @@ function SessionScreen(props: ComponentProps<typeof SessionScreenLazy>) {
   );
 }
 
-function GatewaySettingsDialog(
-  props: ComponentProps<typeof GatewaySettingsDialogLazy>,
-) {
+function SettingsDialog(props: ComponentProps<typeof SettingsDialogLazy>) {
   return (
     <Suspense fallback={null}>
-      <GatewaySettingsDialogLazy {...props} />
-    </Suspense>
-  );
-}
-
-function ApplicationSettingsDialog(
-  props: ComponentProps<typeof ApplicationSettingsDialogLazy>,
-) {
-  return (
-    <Suspense fallback={null}>
-      <ApplicationSettingsDialogLazy {...props} />
+      <SettingsDialogLazy {...props} />
     </Suspense>
   );
 }
@@ -190,7 +175,7 @@ export function App() {
   const [settingsTarget, setSettingsTarget] = useState<GatewayConn | null>(
     null,
   );
-  const [appSettingsOpen, setAppSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // The settings dialog's REMOUNT identity is the machine you opened, captured
   // once — never its current URL. Switching address rewrites `settingsTarget.url`,
   // and keying the dialog on that tore it down and rebuilt it: the entry
@@ -198,9 +183,15 @@ export function App() {
   // panel refetched from an empty cache. That is the jump. The address is a
   // property of the machine, not its identity.
   const [settingsKey, setSettingsKey] = useState("");
-  const openSettings = useCallback((conn: GatewayConn) => {
-    setSettingsKey(conn.id ?? conn.url);
-    setSettingsTarget(conn);
+  // ONE settings dialog, opened from two places at two aims: the cog opens it on the
+  // machine the app is already using, a machine's `⋯` opens it on that machine. Both
+  // land in the same box, so neither is a different destination.
+  const openSettings = useCallback((conn: GatewayConn | null) => {
+    if (conn) {
+      setSettingsKey(conn.id ?? conn.url);
+      setSettingsTarget(conn);
+    }
+    setSettingsOpen(true);
   }, []);
   const [ready, setReady] = useState(false);
   // Set when the sessions screen finds the active gateway unreachable. While it
@@ -309,7 +300,7 @@ export function App() {
     shownScreen.current = screen;
     if (!isSessionEntered(previous, screen)) return;
     setSettingsTarget(null);
-    setAppSettingsOpen(false);
+    setSettingsOpen(false);
   }, [screen]);
 
   // A share sheet drop, an Android `ACTION_SEND`, or a Shortcuts run carries a
@@ -947,7 +938,7 @@ export function App() {
             setSearching(false);
             setQuery("");
           }}
-          onAppSettings={() => setAppSettingsOpen(true)}
+          onAppSettings={() => openSettings(active ?? primary ?? conns[0] ?? null)}
         />
       )}
 
@@ -1011,13 +1002,17 @@ export function App() {
         )}
       </main>
 
-      {settingsTarget && settingsClient && (
-        <GatewaySettingsDialog
-          key={settingsKey}
-          client={settingsClient}
+      {settingsOpen && (
+        <SettingsDialog
+          gateways={conns}
           gateway={settingsTarget}
-          isPrimary={settingsTarget.url === primary?.url}
+          gatewayKey={settingsKey}
+          client={settingsClient}
+          isPrimary={settingsTarget?.url === primary?.url}
+          onSelectGateway={openSettings}
+          onPair={() => setTab("connect")}
           onMakePrimary={async () => {
+            if (!settingsTarget) return;
             await Promise.all([
               setPrimaryUrl(settingsTarget.url),
               setActiveUrl(settingsTarget.url),
@@ -1029,16 +1024,19 @@ export function App() {
             setTab("sessions");
           }}
           onRename={async (label) => {
+            if (!settingsTarget) return;
             const updated = { ...settingsTarget, label };
             await upsertConnection(updated);
             setSettingsTarget(updated);
             await refresh();
           }}
           onRemove={async () => {
+            if (!settingsTarget) return;
             await removeConnection(settingsTarget.url);
             await refresh();
           }}
           onSelectAddress={async (url, pinned) => {
+            if (!settingsTarget) return;
             // The dialog's target and the active pointer must flip on ONE commit.
             // Moving the target onto the new address first left `isActive` false
             // for a render, blinking a "Use this machine" button at the machine
@@ -1064,13 +1062,7 @@ export function App() {
             if (wasActive) setActive(next);
             await refresh();
           }}
-          onClose={() => setSettingsTarget(null)}
-        />
-      )}
-      {appSettingsOpen && (
-        <ApplicationSettingsDialog
-          onPair={() => setTab("connect")}
-          onClose={() => setAppSettingsOpen(false)}
+          onClose={() => setSettingsOpen(false)}
         />
       )}
     </Shell>

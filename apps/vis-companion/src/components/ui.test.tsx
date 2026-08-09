@@ -800,11 +800,14 @@ describe("Modal and DialogFrame as a phone sheet", () => {
     expect(source).toContain(
       "DIALOG_DESKTOP_HEIGHT = 'sm:h-[min(38rem,100%)]'",
     );
-    expect(source).toContain("flex w-full flex-col sm:max-w-xl ${");
+    expect(source).toContain("'sm:max-w-4xl' : 'sm:max-w-xl'");
     expect(source).toContain("'max-h-full sm:h-auto' : DIALOG_DESKTOP_HEIGHT");
-    // One width, so a question and a file browser are the same rectangle.
+    // One width for every dialog that asks ONE question, so a question and a file
+    // browser are the same rectangle. `wide` is the settings box and nothing else:
+    // two columns side by side is a LAYOUT, and it is the only one in the app.
     expect(source).not.toContain("sm:max-w-md");
     expect(source).not.toContain("sm:max-w-lg");
+    expect(settingsSource).toContain('<Modal size="wide" onDismiss={onClose}>');
   });
 
   it("slides the frame in from below by its own height, and only tips in on desktop", () => {
@@ -833,8 +836,8 @@ describe("Modal and DialogFrame as a phone sheet", () => {
 describe("one outer dialog component", () => {
   const settings = settingsSource;
 
-  it("opens application settings in Modal + DialogFrame like every other dialog", () => {
-    expect(settings).toContain("<Modal onDismiss={onClose}>");
+  it("opens settings in Modal + DialogFrame like every other dialog", () => {
+    expect(settings).toContain('<Modal size="wide" onDismiss={onClose}>');
     expect(settings).toContain("<DialogFrame");
     // No second scrim, no second dialog box, no second close button.
     expect(settings).not.toContain("fixed inset-0 z-50");
@@ -847,6 +850,51 @@ describe("one outer dialog component", () => {
   it("keeps the glass that dialog had, in the one Modal", () => {
     expect(uiSource).toContain("bg-ink/85 backdrop-blur-[2px]");
     expect(uiSource).toContain("starting:opacity-0");
+  });
+});
+
+// Regression, user report ("unified settings"): the app had TWO settings dialogs
+// that could never be open at once — the cog's application settings, and a machine's
+// own settings behind a `⋯` three screens away — so "where do I change this?" was
+// answered by remembering which of two doors a choice lived behind, and pairing a
+// machine was filed under the device while the machine it produced was filed
+// somewhere else. There is one dialog: this device on the left, the machines on the
+// right.
+describe("settings is ONE dialog with two columns", () => {
+  const settings = settingsSource;
+
+  it("is the only settings dialog in the app", () => {
+    // The gateway half is a COLUMN BODY now, not a dialog of its own.
+    expect(settings).toContain("function GatewayPanels");
+    expect(settings).not.toContain("function GatewaySettingsDialog");
+    expect(settings).not.toContain("function ApplicationSettingsDialog");
+    expect(settings).toContain("export function SettingsDialog");
+  });
+
+  it("puts the columns side by side with room, and stacks them on a phone", () => {
+    expect(settings).toContain("grid-cols-1");
+    expect(settings).toContain("sm:grid-cols-2");
+    // One rule between the columns on desktop, one between the stacked halves on
+    // a phone — never both at once.
+    expect(settings).toContain("sm:divide-x");
+    expect(settings).toContain("sm:divide-y-0");
+  });
+
+  it("pairs a machine from the column the machines live in", () => {
+    expect(settings).toContain(">Pair machine</Button>");
+  });
+
+  it("switches machine inside the dialog instead of closing it", () => {
+    expect(settings).toContain("<MachineSwitcher>");
+    expect(settings).toContain("onSelectGateway");
+  });
+
+  it("gives each column its own scroll on desktop", () => {
+    // The grid stops at the dialog's height; the column bodies do the scrolling, so
+    // reaching a machine's last panel never drags Theme off the top of the screen.
+    expect(settings).toContain("sm:overflow-hidden");
+    expect(settings).toContain("sm:overflow-y-auto");
+    expect(settings).toContain("sm:min-h-0");
   });
 });
 
@@ -1220,7 +1268,7 @@ describe("NewSessionButton, busy", () => {
 // the whole glass, so "Delete this session?" read like a screen you had navigated to.
 describe("Modal, fit", () => {
   it("has a size that stops at its content, next to the full-screen one", () => {
-    expect(uiSource).toContain("size?: 'full' | 'fit';");
+    expect(uiSource).toContain("size?: 'full' | 'fit' | 'wide';");
     // The sheet still arrives from the bottom edge — same scrim, same physics.
     expect(uiSource).toContain("size === 'fit' ? 'items-end' : 'items-stretch'");
     expect(uiSource).toContain("size === 'fit' ? 'max-h-full sm:h-auto' : DIALOG_DESKTOP_HEIGHT");

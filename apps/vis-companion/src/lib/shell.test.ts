@@ -191,4 +191,21 @@ describe('one screen, pairing is a chip', () => {
     expect(appSource).not.toContain('onPairMachine');
     expect(appSource).toContain('onClose={hasConn ? () => setTab("sessions") : undefined}');
   });
+
+  // Regression, user report (a sketch over the cog's dialog retitling it `Settings`,
+  // with `Application` on one half and `Gateways` on the other): the shell mounted TWO
+  // settings dialogs — one for this device behind the cog, one for a machine behind a
+  // list `⋯` — and dismissing either was a different piece of state.
+  it('mounts ONE settings dialog, aimed by whoever opened it', () => {
+    expect(appSource).toContain('<SettingsDialog');
+    expect(appSource).not.toContain('ApplicationSettingsDialog');
+    expect(appSource).not.toContain('GatewaySettingsDialog');
+    // The cog opens it on the machine the app is already using; a machine's `⋯`
+    // opens the same box on that machine.
+    expect(appSource).toContain(
+      'onAppSettings={() => openSettings(active ?? primary ?? conns[0] ?? null)}',
+    );
+    expect(appSource).toContain('onMachineSettings={openSettings}');
+    expect(appSource).toContain('onSelectGateway={openSettings}');
+  });
 });

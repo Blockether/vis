@@ -75,6 +75,8 @@ import {
   DialogFrame,
   Input,
   ListRow,
+  MachineSwitcher,
+  MachineTab,
   Modal,
   PROSE,
   Switch,
@@ -103,18 +105,16 @@ import {
   useProviderAuth,
 } from "../components/ProviderAuth";
 
-interface Props {
-  client: GatewayClient;
-  gateway: GatewayConn;
-  isPrimary: boolean;
-  onMakePrimary?: () => void | Promise<void>;
-  onRename?: (label: string | undefined) => void | Promise<void>;
-  onRemove?: () => void | Promise<void>;
-  onSelectAddress?: (url: string, pinned: boolean) => void | Promise<void>;
-  onClose: () => void;
-}
-
-export function GatewaySettingsDialog({
+/**
+ * ONE MACHINE'S OWN SETTINGS, as a column inside `SettingsDialog`.
+ *
+ * These panels used to be a dialog of their own — `Machine settings`, opened from a
+ * machine's `⋯` — so the two halves of one question ("where do I change this?") stood
+ * behind two different doors that could not be open at once. The panels are unchanged;
+ * what left is the frame around them, and the dialog now owns Escape, the title and
+ * the way out.
+ */
+function GatewayPanels({
   client,
   gateway,
   isPrimary,
@@ -123,7 +123,17 @@ export function GatewaySettingsDialog({
   onRemove,
   onSelectAddress,
   onClose,
-}: Props) {
+}: {
+  client: GatewayClient;
+  gateway: GatewayConn;
+  isPrimary: boolean;
+  onMakePrimary?: () => void | Promise<void>;
+  onRename?: (label: string | undefined) => void | Promise<void>;
+  onRemove?: () => void | Promise<void>;
+  onSelectAddress?: (url: string, pinned: boolean) => void | Promise<void>;
+  /** Closes the whole dialog: making a machine primary leaves settings for it. */
+  onClose: () => void;
+}) {
   // Reopening the dialog paints the gateway's last known toggles immediately;
   // `load` below refreshes them (and `setSetting` patches the cache in place).
   const [groups, setGroups] = useState<ToggleGroup[] | null>(
@@ -177,13 +187,7 @@ export function GatewaySettingsDialog({
     return () => controller.abort();
   }, [load]);
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  // Escape belongs to the dialog that frames these panels.
 
   function patch(updated: Toggle) {
     setGroups(
@@ -219,8 +223,6 @@ export function GatewaySettingsDialog({
     }
   }
 
-  const settingCount =
-    groups?.reduce((total, group) => total + group.toggles.length, 0) ?? 0;
   const status = unreachable
     ? { dot: "○", label: "Offline", tone: "text-err" }
     : unauthorized
@@ -230,25 +232,10 @@ export function GatewaySettingsDialog({
         : { dot: "○", label: "Saved", tone: "text-dialog-hint" };
 
   return (
-    // The app's ONE dialog, same as every other layer that opens over a screen.
-    <Modal onDismiss={onClose}>
-      <DialogFrame
-        title="Machine settings"
-        subtitle={gateway.url}
-        onClose={onClose}
-        footer={`${settingCount} ${settingCount === 1 ? "option" : "options"}`}
-      >
-        <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
-          <p className={`${PROSE} text-ui text-dialog-hint`}>
-            These settings are stored by this gateway and shared with its TUI
-            and every other client.
-          </p>
-        </div>
-
-        {/* Groups run FULL BLEED and are divided by one rule, so the dialog's own
-            frame is the only box on the screen. A banner still needs air, so it
-            brings its own rather than padding every group to get it. */}
-        <div className="touch-pan-y divide-y divide-dialog-edge overflow-x-hidden">
+    // Groups run FULL BLEED and are divided by one rule, so the dialog's own frame is
+    // the only box on the screen. A banner still needs air, so it brings its own
+    // rather than padding every group to get it.
+    <div className="min-w-0 touch-pan-y divide-y divide-dialog-edge overflow-x-hidden">
           {err && (
             <div className="p-3 sm:p-4">
               <Banner kind="err">{err}</Banner>
@@ -492,9 +479,7 @@ export function GatewaySettingsDialog({
               </SettingsPanel>
             ))
           )}
-        </div>
-      </DialogFrame>
-    </Modal>
+    </div>
   );
 }
 
@@ -1076,12 +1061,93 @@ function FormLabel({
 }
 
 /** Settings owned by this companion installation, never by a gateway. */
-export function ApplicationSettingsDialog({
+/**
+ * ONE COLUMN OF SETTINGS, and the dialog has two of them.
+ *
+ * A column is the level ABOVE a `SettingsPanel`: it says whose settings these are —
+ * this copy of Vis, or the machine — and every band under it belongs to that owner.
+ * It is the sentence the two dialogs used to spend a whole header band saying.
+ */
+function SettingsColumn({
+  title,
+  description,
+  meta,
+  children,
+}: {
+  title: string;
+  description: string;
+  meta?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="flex min-w-0 flex-col sm:min-h-0">
+      <header className="flex shrink-0 items-start gap-3 border-b border-dialog-edge bg-level-machine px-3 py-2 sm:px-4">
+        <div className="min-w-0 flex-1">
+          <h3 className="min-w-0 truncate font-mono text-ui font-black uppercase tracking-[0.12em] text-white">
+            {title}
+          </h3>
+          <p className={`mt-0.5 ${PROSE} font-mono text-chip text-dialog-hint`}>
+            {description}
+          </p>
+        </div>
+        {meta && (
+          <span className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
+            {meta}
+          </span>
+        )}
+      </header>
+      <div className="min-w-0 divide-y divide-dialog-edge sm:min-h-0 sm:flex-1 sm:overflow-y-auto sm:overscroll-contain">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * SETTINGS IS ONE PLACE: this device on the left, the machines on the right.
+ *
+ * There used to be two settings dialogs that could never be open at once —
+ * `Application settings` behind the cog in the bar, `Machine settings` behind a
+ * machine's `⋯` three screens away — so "where do I change this?" was answered by
+ * remembering which of two doors a choice lived behind, and pairing a machine was
+ * filed under the device while the machine it produced was filed somewhere else.
+ *
+ * One dialog, two columns, one rule between them. APPLICATION owns what this copy of
+ * Vis decides (theme, page size) and GATEWAYS owns what a machine decides, with the
+ * machine chosen by a tab in its own column instead of by leaving and coming back.
+ * Below `sm:` the columns stack in the order they are read, application first.
+ */
+export function SettingsDialog({
+  gateways,
+  gateway,
+  gatewayKey,
+  client,
+  isPrimary,
+  onSelectGateway,
   onPair,
+  onMakePrimary,
+  onRename,
+  onRemove,
+  onSelectAddress,
   onClose,
 }: {
+  gateways: GatewayConn[];
+  /** The machine the Gateways column is showing; `null` only when none is paired. */
+  gateway: GatewayConn | null;
+  /**
+   * The selected machine's REMOUNT identity, captured once — never its current URL.
+   * Switching address rewrites the URL, and keying on that tore the column down.
+   */
+  gatewayKey: string;
+  client: GatewayClient | null;
+  isPrimary: boolean;
+  onSelectGateway: (conn: GatewayConn) => void;
   /** Opens the machines screen. Pairing is setup, and setup lives here. */
   onPair: () => void;
+  onMakePrimary?: () => void | Promise<void>;
+  onRename?: (label: string | undefined) => void | Promise<void>;
+  onRemove?: () => void | Promise<void>;
+  onSelectAddress?: (url: string, pinned: boolean) => void | Promise<void>;
   onClose: () => void;
 }) {
   const [pref, setPref] = useState<ThemePref>("blockether-light");
@@ -1125,8 +1191,8 @@ export function ApplicationSettingsDialog({
       const clients = connections.map(
         (connection) => new GatewayClient(connection),
       );
-      if (clients.every((client) => client.isThemeFresh())) return;
-      await Promise.allSettled(clients.map((client) => client.themeCatalog()));
+      if (clients.every((each) => each.isThemeFresh())) return;
+      await Promise.allSettled(clients.map((each) => each.themeCatalog()));
       if (cancelled) return;
       // Unreachable gateways keep contributing their last known catalog, so a
       // machine that is merely asleep never makes palettes vanish from the list.
@@ -1172,45 +1238,107 @@ export function ApplicationSettingsDialog({
 
   return (
     // The app's ONE dialog: `Modal` + `DialogFrame`, the same outer component
-    // "Manage projects" and every ask already open in. This screen used to hand-roll
-    // its own scrim and its own `<section>` beside them — two dialogs, two heights,
-    // two entrances. The scrim it had was the better one, so it moved INTO `Modal`
-    // and the copy here is gone rather than reconciled.
-    <Modal onDismiss={onClose}>
+    // "Manage projects" and every ask already open in. `wide` is the one size that
+    // holds two columns of settings side by side; the height is every dialog's.
+    <Modal size="wide" onDismiss={onClose}>
       <DialogFrame
-        title="Application settings"
-        subtitle="This device"
+        title="Settings"
+        subtitle={`This device · ${gateways.length} ${
+          gateways.length === 1 ? "machine" : "machines"
+        }`}
         onClose={onClose}
       >
-        <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
-          <p className={`${PROSE} text-ui text-dialog-hint`}>
-            These choices affect this copy of Vis only. They are never sent to a
-            gateway.
-          </p>
-        </div>
-
-        <div className="divide-y divide-dialog-edge">
-          {err && (
-            <div className="p-3 sm:p-4">
-              <Banner kind="err">{err}</Banner>
-            </div>
-          )}
-          {/* PAIRING IS SETUP, NOT CHROME.
-              It held the widest slot in the app bar — beside the cog, above every
-              screen — for a verb used twice a year, while the bar's middle had nothing
-              in it and the fleet-wide search sat three rows down inside the list. The
-              search took that space; pairing came here, where the rest of this device's
-              own setup already lives. */}
-          <SettingsPanel
-            title="Machines"
-            description="Pair another machine with this device. A machine's own settings stay on that machine, in the sessions list."
+        {/* Each column scrolls ITSELF on desktop. One shared scroller made the short
+            column a 1500px empty gutter: scrolling to a machine's Sandbox panel dragged
+            Theme off the top of the screen for no reason. Below `sm:` the halves stack
+            and the dialog body is the one scroller again. */}
+        <div className="grid min-w-0 grid-cols-1 divide-y divide-dialog-edge sm:min-h-0 sm:flex-1 sm:grid-cols-2 sm:divide-x sm:divide-y-0 sm:overflow-hidden">
+          <SettingsColumn
+            title="Application"
+            description="These choices affect this copy of Vis only. They are never sent to a gateway."
+            meta="this device"
           >
-            <div className="p-3 sm:p-4">
+            {err && (
+              <div className="p-3 sm:p-4">
+                <Banner kind="err">{err}</Banner>
+              </div>
+            )}
+
+            <SettingsPanel
+              title="Theme"
+              description="All themes advertised by your paired gateways. Duplicate theme ids appear once; the choice is saved on this device."
+              meta={`${themes.length} available`}
+            >
+              <div className="grid grid-cols-1 gap-px bg-dialog-edge">
+                {themes.map((choice) => (
+                  <ChoiceCell
+                    key={choice.id}
+                    title={choice.display_name}
+                    sub={choice.mode}
+                    isSelected={pref === choice.id}
+                    disabled={pending?.startsWith("theme:") ?? false}
+                    onClick={() => void chooseTheme(choice)}
+                  />
+                ))}
+              </div>
+            </SettingsPanel>
+
+            <SettingsPanel
+              title="Sessions per project"
+              description="How many sessions each project lists before paging. Collapsed projects show this many live sessions; expanding pages the rest in steps of the same size."
+              meta="saved on this device"
+            >
+              <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-3">
+                {[
+                  { size: 5, label: "compact" },
+                  { size: 10, label: "balanced" },
+                  { size: 15, label: "detailed" },
+                ].map(({ size, label }) => (
+                  <ChoiceCell
+                    key={size}
+                    title={String(size)}
+                    sub={label}
+                    isSelected={size === pageSize}
+                    disabled={pending?.startsWith("pageSize:") ?? false}
+                    onClick={() => void choosePageSize(size)}
+                  />
+                ))}
+              </div>
+            </SettingsPanel>
+          </SettingsColumn>
+
+          <SettingsColumn
+            title="Gateways"
+            description="Stored by the machine itself and shared with its TUI and every other client."
+            meta={
+              gateway
+                ? (gateway.label ?? gatewayHost(gateway.url))
+                : "none paired"
+            }
+          >
+            {/* PAIRING IS SETUP, NOT CHROME. It held the widest slot in the app bar —
+                beside the cog, above every screen — for a verb used twice a year. It
+                belongs beside the machines it produces, on the same row that switches
+                between them, and with one machine paired that row is the verb alone. */}
+            <div className="flex items-center gap-2 bg-panel px-3 py-2 sm:px-4">
+              {gateways.length > 1 && (
+                <MachineSwitcher>
+                  {gateways.map((conn) => (
+                    <MachineTab
+                      key={conn.url}
+                      isOn={conn.url === gateway?.url}
+                      onClick={() => onSelectGateway(conn)}
+                    >
+                      {conn.label ?? gatewayHost(conn.url)}
+                    </MachineTab>
+                  ))}
+                </MachineSwitcher>
+              )}
               <Button
                 type="button"
                 variant="primary"
                 density="compact"
-                className="shrink-0 whitespace-nowrap"
+                className="ml-auto shrink-0"
                 onClick={() => {
                   onClose();
                   onPair();
@@ -1218,49 +1346,27 @@ export function ApplicationSettingsDialog({
                 aria-label="Pair a machine"
               >Pair machine</Button>
             </div>
-          </SettingsPanel>
 
-          <SettingsPanel
-            title="Theme"
-            description="All themes advertised by your paired gateways. Duplicate theme ids appear once; the choice is saved on this device."
-            meta={`${themes.length} available`}
-          >
-            <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-2">
-              {themes.map((choice) => (
-                <ChoiceCell
-                  key={choice.id}
-                  title={choice.display_name}
-                  sub={choice.mode}
-                  isSelected={pref === choice.id}
-                  disabled={pending?.startsWith("theme:") ?? false}
-                  onClick={() => void chooseTheme(choice)}
-                />
-              ))}
-            </div>
-          </SettingsPanel>
-
-          <SettingsPanel
-            title="Sessions per project"
-            description="How many sessions each project lists before paging. Collapsed projects show this many live sessions; expanding pages the rest in steps of the same size."
-            meta="saved on this device"
-          >
-            <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-3">
-              {[
-                { size: 5, label: "compact" },
-                { size: 10, label: "balanced" },
-                { size: 15, label: "detailed" },
-              ].map(({ size, label }) => (
-                <ChoiceCell
-                  key={size}
-                  title={String(size)}
-                  sub={label}
-                  isSelected={size === pageSize}
-                  disabled={pending?.startsWith("pageSize:") ?? false}
-                  onClick={() => void choosePageSize(size)}
-                />
-              ))}
-            </div>
-          </SettingsPanel>
+            {gateway && client ? (
+              <GatewayPanels
+                key={gatewayKey}
+                client={client}
+                gateway={gateway}
+                isPrimary={isPrimary}
+                onMakePrimary={onMakePrimary}
+                onRename={onRename}
+                onRemove={onRemove}
+                onSelectAddress={onSelectAddress}
+                onClose={onClose}
+              />
+            ) : (
+              <SettingsPanel title="Machines">
+                <p className="px-4 py-6 text-center font-mono text-body text-dialog-hint">
+                  No machine paired with this device yet.
+                </p>
+              </SettingsPanel>
+            )}
+          </SettingsColumn>
         </div>
       </DialogFrame>
     </Modal>
