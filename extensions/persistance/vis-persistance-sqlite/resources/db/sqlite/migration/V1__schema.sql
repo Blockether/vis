@@ -643,7 +643,7 @@ CREATE INDEX idx_log_iteration
 -- com.blockether.vis.internal.attachments): 'both' is the default and reaches
 -- the human and the wire; 'user' is stored and rendered for the human but NEVER
 -- turned into a wire image block (the model is told it exists and can pull it
--- deliberately with `vis_read_attachment` / `vis_reinspect_attachment`); 'model'
+-- deliberately with `read_attachment` / `show_attachment`); 'model'
 -- is sent to the model and hidden from every human-facing gallery.
 -- =============================================================================
 CREATE TABLE session_attachment (

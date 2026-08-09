@@ -525,8 +525,8 @@
        (catch Throwable _ nil)))
 
 (defn attachment-descriptor
-  "One `session_attachment` row as the compact DESCRIPTOR `vis_attachments()` and
-   `vis_attachment(id)` hand the model: identity, provenance and shape, and never
+  "One `session_attachment` row as the compact DESCRIPTOR `list_attachments()` and
+   `get_attachment(id)` hand the model: identity, provenance and shape, and never
    any bytes.
 
    PROVENANCE STARTS AT THE TURN. Every row carries `session_turn_soul_id`, so
@@ -589,7 +589,7 @@
                   (when (some #(= (str id) (str (:id %)))
                               (persistance/db-list-session-attachments d sid))
                     (attachment-storage/hydrate (persistance/db-read-attachment d id))))
-          :reinspect (fn [id _detail]
+          :reinspect (fn [id]
                        (when-let
                          [a (when (some #(= (str id) (str (:id %)))
                                         (persistance/db-list-session-attachments d sid))
@@ -3933,7 +3933,7 @@
 (defn- elide-table-fences
   "Drop the ROWS out of every ````vis-table` fence in model-facing output.
 
-   A CSV/TSV `vis_attach` is DATA for the HUMAN: the fence rides the transcript
+   A CSV/TSV `attach` is DATA for the HUMAN: the fence rides the transcript
    verbatim (see `tool-result-display`) and both surfaces paint it as a live
    grid — sortable, pageable, openable as a full-screen sheet. The model needs
    none of that. Sending the payload would re-upload the whole sheet on EVERY
@@ -3943,7 +3943,7 @@
 
    So the wire keeps the headline (name, rows × cols, size, caption) and loses
    the rows; the bytes stay in the DB as a durable attachment, one
-   `vis_read_attachment` away. Everything outside a table fence — including a
+   `read_attachment` away. Everything outside a table fence — including a
    `vis-image` fence, which carries only a path — passes through untouched."
   [s]
   (let
@@ -3979,8 +3979,8 @@
                                        (str (if (str/blank? summary) "[Table]" summary)
                                             " — rows are NOT in this context: the grid is rendered"
                                             " in the transcript and the bytes are a stored"
-                                            " attachment (vis_attachments() lists it,"
-                                            " vis_read_attachment(id) opens it)."))))
+                                            " attachment (list_attachments() lists it,"
+                                            " read_attachment(id) opens it)."))))
                         (recur more (conj out line))))))))))
 
 (defn- iteration-results-message
@@ -4348,7 +4348,7 @@
   "One stored iteration attachment as the wire will carry it, or nil.
 
    The whole verdict lives in `attachments/wire-image` (the ONE send-time image
-   gate): a generic `vis_attach` artifact (csv/json/pdf/wav/…) is DB- and
+   gate): a generic `attach` artifact (csv/json/pdf/wav/…) is DB- and
    display-only, an `image/svg+xml` figure or a BMP is re-containered to PNG,
    and a payload the decoder cannot turn into pixels — a corrupt raster whose
    header sniffs perfectly — is DROPPED. Dropping matters more here than
@@ -4366,7 +4366,7 @@
 
 (defn- iteration-wired-images
   "Every IMAGE a prior iteration's tool calls produced (matplotlib figures,
-   `vis_attach`ed images, plus anything `vis_reinspect_attachment` re-queued),
+   `attach`ed images, plus anything `show_attachment` re-queued),
    each already across the send-time gate (see `wire-image-attachment`) and so
    carrying verified pixels in a container the wire accepts."
   [iter-rec]
@@ -4444,8 +4444,8 @@
                    " image(s) from this step are stored but NOT in this request"
                    " (image replay budget): " (str/join ", "
                                                         (map attachment-recovery-label dropped))
-                   ". Call vis_reinspect_attachment(\"<id>\") to put one back on the next request,"
-                   " or vis_read_attachment(\"<id>\") to open its bytes in Python.]")}))
+                   ". Call show_attachment(\"<id>\") to put one back on the next request,"
+                   " or read_attachment(\"<id>\") to open its bytes in Python.]")}))
 
 (defn- iteration-image-messages
   "The messages one prior iteration contributes AFTER its `<results>`: a
@@ -5764,7 +5764,7 @@
                 ;; call's whole stdout (no per-form split).
                 :stdout (:stdout result)
                 ;; Artifacts the block PRODUCED (matplotlib
-                ;; show/savefig, vis_attach, $VIS_OUTBOX write),
+                ;; show/savefig, attach, $VIS_OUTBOX write),
                 ;; captured at the SOURCE into the sandbox sink —
                 ;; carried down so the DB attachment OWNS the bytes.
                 :attachments (:attachments result)

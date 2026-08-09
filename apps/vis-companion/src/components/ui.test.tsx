@@ -1755,6 +1755,50 @@ describe("every ✕ in the app", () => {
   });
 });
 
+// Regression, user report ("some of the X are a different X than the dialog ones, and
+// white instead of black"): `DialogClose` painted its own resting ink — the page's
+// `--fg` on a panel band — while the band under it painted `text-accent-foreground`.
+// Measured live on the "Add a project" menu heading, the mark disagreed with the words
+// beside it in five of the six shipped themes: a #f3f4f6 ✕ on the #ffc420 band of
+// blockether-dark (1.5:1) whose own heading was #0f1117, a #1e1e1e ✕ on the #2563eb
+// band of vis-light whose heading was #f0f4fc, grey #839496 on solarized's blue. The
+// dialog's ✕ was right for the same reason the menu's was wrong: it names the band's
+// token instead of the page's.
+describe("the way out wears the ink of its band", () => {
+  it("brings no resting ink of its own", () => {
+    for (const tone of ["title", "panel"] as const) {
+      const close = renderToStaticMarkup(
+        <DialogClose label="Close artifacts" tone={tone} onClose={() => {}} />,
+      );
+      expect(close).toContain("text-current");
+      // Only the pointer inks it, and only red.
+      expect(close.replace(/hover:text-\S+|focus-visible:text-\S+/g, "")).not.toMatch(
+        /\btext-(white|dialog-title-foreground|accent-foreground|dialog-hint)\b/,
+      );
+    }
+  });
+
+  // A band that hosts the mark has to SAY its foreground, or inheriting it means
+  // inheriting the page's again.
+  it("is hosted only by bands that declare one", () => {
+    const menu = renderToStaticMarkup(
+      <MenuHeading onClose={() => {}} closeLabel="Close projects on tower">
+        Projects · tower
+      </MenuHeading>,
+    );
+    expect(menu).toContain("text-accent-foreground");
+
+    const dialog = renderToStaticMarkup(
+      <DialogHeader
+        title="Application settings"
+        onClose={() => {}}
+        closeLabel="Close Application settings"
+      />,
+    );
+    expect(dialog).toContain("text-dialog-title-foreground");
+  });
+});
+
 // The vocabulary's own rule, made executable: a `className` at a call site may only
 // POSITION. It had drifted in nine places — four copies of `min-h-9 px-3 font-mono
 // text-meta` two hundred lines apart in one settings screen, a spinner choosing its

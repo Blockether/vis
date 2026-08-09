@@ -80,12 +80,13 @@ describe("ImageViewer", () => {
     expect(header?.className).toContain("items-stretch");
     expect(header?.querySelector("h2")?.textContent).toBe("chart.png");
 
-    // The one ✕: `DialogClose` on the title tone, in the band's own full ink —
-    // never the faded `/70` every close used to wear.
+    // The one ✕: `DialogClose` on the title tone, inheriting the band's own full ink —
+    // never the faded `/70` every close used to wear, and never an ink of its own.
     const close = control("Close chart.png");
+    expect(header?.className).toContain("text-dialog-title-foreground");
+    expect(header?.className).not.toContain("text-dialog-title-foreground/70");
     expect(close.className).toContain("border-dialog-title-foreground/20");
-    expect(close.className).toContain("text-dialog-title-foreground");
-    expect(close.className).not.toContain("text-dialog-title-foreground/70");
+    expect(close.className).toContain("text-current");
   });
 
   // Regression, reported attachment filename click: an image edit could only be opened

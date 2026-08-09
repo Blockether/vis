@@ -2,7 +2,7 @@ import { memo, useCallback, useId, useMemo, useRef, useState } from 'react';
 import { SortIcon } from './icons';
 import { Button } from './ui';
 
-// A CSV/TSV artifact is DATA, not a picture. `vis_attach` emits it as a
+// A CSV/TSV artifact is DATA, not a picture. `attach` emits it as a
 // ````vis-table` fence and BOTH surfaces paint it as a real grid: the TUI through
 // `channel_tui/table.clj`, the companion through this component. Parsing, paging
 // and sorting are pure functions so the behaviour is testable without a DOM,

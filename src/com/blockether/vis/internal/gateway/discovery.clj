@@ -26,6 +26,7 @@
   (:import (java.io RandomAccessFile)
            (java.lang ProcessBuilder$Redirect ProcessHandle)
            (java.lang.management ManagementFactory)
+           (java.net InetSocketAddress Socket)
            (java.nio.channels FileChannel FileLock)
            (java.nio.charset StandardCharsets)
            (java.nio.file AtomicMoveNotSupportedException Files StandardCopyOption)
@@ -267,6 +268,66 @@
    but only if it still points at us (never clobber a successor that took over)."
   [db]
   (when-not (memory-db? db) (delete-registry-if! db #(= (:pid %) (current-pid)))))
+
+;; =============================================================================
+;; One daemon per DB (split-brain guard)
+;; =============================================================================
+
+(def ^:private ENDPOINT_PROBE_TIMEOUT_MS 400)
+
+(defn endpoint-listening?
+  "True when something ACCEPTS a TCP connection at `host`:`port` right now.
+
+   A wildcard bind (`0.0.0.0`, `::`) is probed on loopback, an address it also
+   answers on. Never throws: a blank host, an unusable port and a refused or
+   timed-out connect are all simply false."
+  [host port]
+  (let
+    [port
+     (long (or (parse-long (str port)) 0))
+
+     raw
+     (str/trim (str (or host "")))
+
+     host
+     (if (or (str/blank? raw) (contains? #{"0.0.0.0" "::" "[::]" "*"} raw)) "127.0.0.1" raw)]
+
+    (if (or (< port 1) (> port 65535))
+      false
+      (let [socket (Socket.)]
+        (try (.connect socket (InetSocketAddress. host (int port)) (int ENDPOINT_PROBE_TIMEOUT_MS))
+             true
+             (catch Throwable _ false)
+             (finally (try (.close socket) (catch Throwable _ nil))))))))
+
+(defn foreign-owner
+  "The registry entry of a gateway ANOTHER live process already runs for `db`, or
+   nil when this process is free to start one.
+
+   ONE gateway per DB is the whole design (Q2): its in-memory registry owns each
+   session's `:current-turn`, its queue and every cancellation token. A second
+   daemon on the same DB is a SPLIT BRAIN, not a spare - both append to the same
+   session journals and write the same SQLite, so two halves narrate one session
+   while a cancel, a queue drain or a `:current-turn` lookup only ever reaches
+   whichever half answered that client: the stop says \"cancelling\" forever and
+   the other half keeps iterating a turn nobody can see. The bind is no guard
+   either, because BSD lets `0.0.0.0:P` listen beside an existing `127.0.0.1:P`,
+   and [[write-registry!]] would then hand the newcomer the identity of a daemon
+   that is still serving turns.
+
+   Live = the recorded pid is alive, is NOT us, AND something still accepts TCP
+   on the recorded endpoint, so a crashed daemon - even one whose pid the OS has
+   recycled - never blocks a legitimate start. Effects are injectable for tests.
+   A `:memory` DB never registers, so it never has an owner."
+  ([db] (foreign-owner db {}))
+  ([db {:keys [alive? listening?] :or {alive? pid-alive? listening? endpoint-listening?}}]
+   (when-not (memory-db? db)
+     (let [{:keys [pid host port] :as entry} (read-registry db)]
+       (when (and pid
+                  (not= (str pid) (str (current-pid)))
+                  (boolean (alive? pid))
+                  (boolean (listening? host port)))
+         entry)))))
 
 ;; =============================================================================
 ;; Spawn argv + detached launch

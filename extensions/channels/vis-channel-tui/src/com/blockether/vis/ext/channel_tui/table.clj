@@ -241,7 +241,7 @@
 
 ;;; ── CSV grids (the `vis-table` attachment viewer) ────────────────────────────
 ;;
-;; A CSV/TSV attachment is DATA, not a picture: `vis_attach` emits it as a
+;; A CSV/TSV attachment is DATA, not a picture: `attach` emits it as a
 ;; ````vis-table` fence and BOTH surfaces paint it as a real grid — the TUI
 ;; through these primitives, the companion through `DataTable.tsx`. Parse,
 ;; measure, align, page, sort and render all live here as PURE functions, so

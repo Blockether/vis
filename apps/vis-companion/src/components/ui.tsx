@@ -893,8 +893,17 @@ export function Switch({
  * artifacts sheet ended up wearing a bordered chip in a strip of bordered chips
  * where every other surface wears chrome.
  *
- * `tone` is the paper it sits on, because that is the only thing that differs:
- * the dark title bar of a dialog, or a panel band.
+ * IT WEARS THE INK OF THE BAND IT SITS IN, and never the page's own. A band
+ * declares its foreground once — a dialog title bar `text-dialog-title-foreground`,
+ * a menu's accent heading `text-accent-foreground`, a panel strip the page ink it
+ * inherits anyway — and the mark inherits it, so one token moves both the words and
+ * the way out of them. Spelling the page's `--fg` here instead put a #f3f4f6 ✕ on the
+ * #ffc420 heading of `blockether-dark` at 1.5:1 while that band's own words were
+ * #0f1117: measured on the live menu, the ✕ disagreed with its band in five of the
+ * six shipped themes and agreed in one only by coincidence.
+ *
+ * `tone` is therefore just the hairline that welds it to the band: a dialog's title
+ * bar draws it in its own foreground, every other band in `dialog-edge`.
  */
 export function DialogClose({
   label,
@@ -908,15 +917,13 @@ export function DialogClose({
   onClose: () => void;
 }) {
   const skin =
-    tone === 'title'
-      ? 'border-dialog-title-foreground/20 text-dialog-title-foreground'
-      : 'border-dialog-edge text-white';
+    tone === 'title' ? 'border-dialog-title-foreground/20' : 'border-dialog-edge';
   return (
     <button
       type="button"
       onClick={onClose}
       aria-label={label}
-      className={`grid min-w-9 shrink-0 place-items-center border-l transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none motion-reduce:transition-none mouse:min-w-8 ${skin} ${className}`}
+      className={`grid min-w-9 shrink-0 place-items-center border-l text-current transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none motion-reduce:transition-none mouse:min-w-8 ${skin} ${className}`}
     >
       <CloseIcon />
     </button>

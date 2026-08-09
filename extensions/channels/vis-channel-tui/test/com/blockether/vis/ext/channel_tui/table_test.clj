@@ -143,7 +143,7 @@
 ;;; ── the inline `vis-table` fence ─────────────────────────────────────────────
 
 (defn- fence
-  "The block `vis_attach` emits for a CSV artifact: five header lines, then the
+  "The block `attach` emits for a CSV artifact: five header lines, then the
    payload."
   [n-rows]
   (str/join "\n"
@@ -162,7 +162,7 @@
 
 (defn- table-render
   "One fence body, rendered the way the transcript renders it — wrapped in the
-   four backticks `vis_attach` prints, never as a hand-built code node."
+   four backticks `attach` prints, never as a hand-built code node."
   [body]
   (markdown-render (str "````vis-table\n" body "\n````\n")))
 
@@ -695,7 +695,7 @@
 ;;; ── cross-surface: the TUI paints what the ENGINE hands the human ────────────
 
 (def ^:private wire-fence
-  "The block `vis_attach` really prints for a CSV artifact — four backticks, five
+  "The block `attach` really prints for a CSV artifact — four backticks, five
    header lines, then the payload; `shim-attach-test` pins that shape byte for
    byte on the engine side. The note cell carries a quoted comma: the field a
    naive split tears in half."
@@ -740,7 +740,7 @@
   (it "the model-facing text keeps the headline, loses the rows, paints no grid"
       (let [wire (#'vloop/elide-table-fences wire-fence)]
         (expect (str/includes? wire "[Table: fleet.csv 2 rows × 3 cols, 64 B] fleet counts"))
-        (expect (str/includes? wire "vis_read_attachment"))
+        (expect (str/includes? wire "read_attachment"))
         (expect (not (str/includes? wire "machine-0")))
         (expect (not (str/includes? wire "````")))
         ;; and what the model reads is prose, not a clickable grid

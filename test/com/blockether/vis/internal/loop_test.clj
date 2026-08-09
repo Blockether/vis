@@ -1894,7 +1894,7 @@
                               (and (vector? (:content m))
                                    (some #(= "image_url" (:type %)) (:content m))))
                             suffix))))
-    (it "skips a non-image vis_attach artifact — a csv never rides as an image block"
+    (it "skips a non-image attach artifact — a csv never rides as an image block"
         (let
           [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
            csv {:tool-call-id "tc-2"
@@ -2042,7 +2042,7 @@
                                  (some (fn [b] (= "image_url" (:type b))) (:content %)))
                            suffix))
      notes (fn [suffix]
-             (filterv #(re-find #"vis_reinspect_attachment" (str (:content %))) suffix))]
+             (filterv #(re-find #"show_attachment" (str (:content %))) suffix))]
 
     (it "replays every image when the budget is not under pressure"
         (let [suffix (conversation-suffix (trailer) target)]
@@ -2785,7 +2785,7 @@
 
 (defdescribe
   csv-attachment-wire-test
-  "A `vis_attach`ed CSV is DATA for the HUMAN. The ````vis-table` fence reaches
+  "A `attach`ed CSV is DATA for the HUMAN. The ````vis-table` fence reaches
    the TRANSCRIPT whole — the channel paints it as a live grid — while the model
    wire keeps only the `[Table: …]` headline and a pointer back to the stored
    attachment. Replayed rows are the most expensive thing a session can carry:
@@ -2822,7 +2822,7 @@
     (it "keeps the headline on the wire but not one data row"
         (let [text (wire stdout)]
           (expect (str/includes? text "[Table: fleet.csv 2 rows × 2 cols, 12 B] fleet counts"))
-          (expect (str/includes? text "vis_read_attachment"))
+          (expect (str/includes? text "read_attachment"))
           (expect (not (str/includes? text "rack-01")))
           (expect (not (str/includes? text "machine,sessions")))
           (expect (not (str/includes? text "````vis-table")))
@@ -6064,7 +6064,7 @@
       (expect (identical? (providers/router-rebuild-hook-val)
                           lp/reload-router!))))
 
-;; Regression: `vis_attachments()` located a TOOL artifact by its iteration
+;; Regression: `list_attachments()` located a TOOL artifact by its iteration
 ;; alone, so a descriptor for anything the model produced carried no turn id at
 ;; all — only a user image got `:turn-id` — and nothing on the rail could be
 ;; grouped by the turn it belongs to without a second lookup.

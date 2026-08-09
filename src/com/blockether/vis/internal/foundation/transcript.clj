@@ -149,7 +149,7 @@
    artifact can be MBs and would bloat every transcript projection — keeping only
    the metadata
    a reader needs PLUS the bare row `:id` to fetch the bytes on demand via
-   `db-read-attachment` (Clojure) / the sandbox `vis_read_attachment(id)` shim.
+   `db-read-attachment` (Clojure) / the sandbox `read_attachment(id)` shim.
    `:stored` records where the bytes live (`:inline` DB blob, `:external` storage
    backend, or `:none`) without carrying them."
   [att]
@@ -169,11 +169,11 @@
                 slice — every form lives on the iteration row.
 
      `:attachments` - byte-free descriptors for the OUTBOUND artifacts
-                (matplotlib figures, `vis_attach` payloads) the iter's
+                (matplotlib figures, `attach` payloads) the iter's
                 tool calls produced, joined from the `session_attachment`
                 rail via `db-list-iteration-attachments`. Each carries a
                 read-back `:id` so the bytes stay lazily fetchable
-                (`db-read-attachment` / `vis_read_attachment`) instead of
+                (`db-read-attachment` / `read_attachment`) instead of
                 bloating the transcript. Absent when the iter produced none.
 
    Degrades silently to `[]` so the renderer never throws on a
@@ -843,10 +843,10 @@
     (str "_iteration error:_\n" (render-fenced "text" (str error)) "\n")))
 
 (defn- render-attachments
-  "List the OUTBOUND artifacts (matplotlib figures, `vis_attach` payloads) an
+  "List the OUTBOUND artifacts (matplotlib figures, `attach` payloads) an
    iteration's tool calls produced, each with its read-back id. Bytes are NEVER
    inlined — the reader fetches them on demand via `db-read-attachment` /
-   `vis_read_attachment(<id>)`. nil when the iteration produced none."
+   `read_attachment(<id>)`. nil when the iteration produced none."
   [attachments]
   (when (seq attachments)
     (str "_attachments:_\n"
@@ -859,7 +859,7 @@
                        (when kind (str ", " kind))
                        (when size (str ", " size "B"))
                        (when (and stored (not= stored :none)) (str ", " (name stored)))
-                       ") — read with `vis_read_attachment("
+                       ") — read with `read_attachment("
                        id
                        ")`\n"))
                 attachments))

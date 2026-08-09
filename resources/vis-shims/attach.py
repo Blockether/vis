@@ -1,4 +1,4 @@
-# vis sandbox attachment shim: vis_attach.
+# vis sandbox attachment shim: attach.
 #
 # A tool that PRODUCES an artifact (image/csv/json/pdf/wav/...) persists it as a
 # durable iteration attachment (a session_iteration_attachment DB row) so it
@@ -131,7 +131,7 @@ def __vis_install_attach__():
         # size) and NO payload. The TUI opens the host file in the system
         # viewer; the companion renders it inside a sandboxed frame that cannot
         # reach the app's own DOM or styles. The model only ever sees the
-        # headline - the bytes are one vis_read_attachment away.
+        # headline - the bytes are one read_attachment away.
         # Returns True when a fence was printed.
         try:
             path = str(disp[0])
@@ -230,7 +230,7 @@ def __vis_install_attach__():
         aud = str(audience if audience is not None else "both").strip().lower()
         if aud not in ("both", "user", "model"):
             raise ValueError(
-                "vis_attach: audience must be 'both', 'user' or 'model', got "
+                "attach: audience must be 'both', 'user' or 'model', got "
                 + repr(audience)
             )
         if __vis_is_doc(mt):
@@ -240,12 +240,12 @@ def __vis_install_attach__():
             # told the file exists.
             if aud == "model":
                 raise ValueError(
-                    "vis_attach: "
+                    "attach: "
                     + str(mt)
                     + " is a document for the human, so audience='model' is "
                     "impossible - it is never sent as an image. Attach it with "
                     "audience='user'; the model is told the file exists and "
-                    "opens it with vis_read_attachment(id)."
+                    "opens it with read_attachment(id)."
                 )
             return "user"
         return aud
@@ -258,10 +258,10 @@ def __vis_install_attach__():
         b64 = _b64.b64encode(data).decode("ascii")
         rec = globals().get("__vis_record_attachment__")
         if rec is None:
-            raise RuntimeError("vis_attach: capture bridge not bound in this sandbox")
+            raise RuntimeError("attach: capture bridge not bound in this sandbox")
         env = rec(knd, mt, b64, name, len(data), aud, cap)
         if not env[0]:
-            raise RuntimeError("vis_attach: " + str(env[1]))
+            raise RuntimeError("attach: " + str(env[1]))
         if aud == "model":
             # audience='model': the bytes ride the next request and NOTHING is
             # painted for the human. Staying silent here is the whole point.
@@ -280,7 +280,7 @@ def __vis_install_attach__():
                 print("[Attached: " + name + "] " + cap)
         return None
 
-    def vis_attach(
+    def attach(
         source,
         filename=None,
         kind=None,
@@ -290,7 +290,7 @@ def __vis_install_attach__():
     ):
         # ONE attach verb, three shapes of source: a confined PATH, in-memory
         # BYTES (a str is a path, so encode text you produced), or anything with
-        # `savefig` - the matplotlib idiom `vis_attach(fig, 'plot.png')`.
+        # `savefig` - the matplotlib idiom `attach(fig, 'plot.png')`.
         if isinstance(source, (bytes, bytearray, memoryview)):
             return __vis_attach_data(
                 bytes(source),
@@ -320,224 +320,188 @@ def __vis_install_attach__():
         path = _os.path.expanduser(_os.path.expandvars(raw))
         if _os.path.isdir(path):
             raise IsADirectoryError(
-                "vis_attach: " + path + " is a directory - attach one file"
+                "attach: " + path + " is a directory - attach one file"
             )
         try:
             with open(path, "rb") as f:
                 data = f.read()
         except FileNotFoundError:
-            raise FileNotFoundError("vis_attach: no such file: " + path) from None
+            raise FileNotFoundError("attach: no such file: " + path) from None
         name = filename or _os.path.basename(path) or "artifact"
         return __vis_attach_data(data, str(name), kind, media_type, label, audience)
 
-    def vis_attachments():
+    def __vis_attachment_rows():
         lst = globals().get("__vis_list_attachments__")
         if lst is None:
             raise RuntimeError(
-                "vis_attachments: reader bridge not bound in this sandbox"
+                "list_attachments: reader bridge not bound in this sandbox"
             )
         env = lst()
         if not env[0]:
-            raise RuntimeError("vis_attachments: " + str(env[1]))
+            raise RuntimeError("list_attachments: " + str(env[1]))
         import json as _json
 
         rows = _json.loads(env[1])
-
         return [{str(k).replace("-", "_"): v for k, v in r.items()} for r in rows]
 
-    def vis_attachment(attachment_id):
-        target = str(attachment_id)
-        for r in vis_attachments():
-            if str(r.get("id")) == target:
-                return r
-        raise LookupError(
-            "vis_attachment: no attachment with id " + repr(target) + " in this session"
-        )
+    def __vis_thread(rows, name):
+        # One NAME is one artifact: every cut of it, oldest first.
+        thread = [r for r in rows if r.get("filename") == str(name)]
+        thread.sort(key=lambda r: int(r.get("version") or 1))
+        return thread
 
-    def vis_attachment_versions(name):
-        target = str(name)
-        rows = [r for r in vis_attachments() if r.get("filename") == target]
-        rows.sort(key=lambda r: int(r.get("version") or 1))
-        return rows
+    def list_attachments(name=None):
+        rows = __vis_attachment_rows()
+        return rows if name is None else __vis_thread(rows, name)
 
-    def vis_attachment_version(name, version=None):
-        rows = vis_attachment_versions(name)
-        if not rows:
+    def __vis_locate(caller, target, version=None):
+        # ONE addressing rule for the whole family, so "is this an id or a name?"
+        # is never a question the caller has to answer: an id names ONE stored
+        # cut, a filename names the ARTIFACT and resolves to its latest cut, and
+        # a version only ever qualifies a filename.
+        rows = __vis_attachment_rows()
+        wanted = str(target)
+        if version is None:
+            for r in rows:
+                if str(r.get("id")) == wanted:
+                    return r
+        thread = __vis_thread(rows, wanted)
+        if not thread:
             raise LookupError(
-                "vis_attachment_version: no artifact named "
-                + repr(str(name))
+                caller
+                + ": no attachment with id or filename "
+                + repr(wanted)
                 + " in this session"
             )
         if version is None:
-            return rows[-1]
+            return thread[-1]
         want = int(version)
         # -1 is the latest cut, -2 the one before it: the walk backwards a Python
         # list already means.
-        if -len(rows) <= want < 0:
-            return rows[want]
-        for r in rows:
+        if -len(thread) <= want < 0:
+            return thread[want]
+        for r in thread:
             if int(r.get("version") or 1) == want:
                 return r
         raise LookupError(
-            "vis_attachment_version: "
-            + repr(str(name))
+            caller
+            + ": "
+            + repr(wanted)
             + " has no version "
             + str(version)
             + " (versions: "
-            + ", ".join(str(int(r.get("version") or 1)) for r in rows)
+            + ", ".join(str(int(r.get("version") or 1)) for r in thread)
             + ")"
         )
 
-    def vis_reinspect_attachment(attachment_id, detail="auto"):
-        if detail not in ("auto", "low", "high"):
-            raise ValueError("detail must be auto, low, or high")
+    def get_attachment(target, version=None):
+        return __vis_locate("get_attachment", target, version)
+
+    def show_attachment(target, version=None):
         reinsp = globals().get("__vis_reinspect_attachment__")
         if reinsp is None:
             raise RuntimeError(
-                "vis_reinspect_attachment: reader bridge not bound in this sandbox"
+                "show_attachment: reader bridge not bound in this sandbox"
             )
-        env = reinsp(str(attachment_id), detail)
+        row = __vis_locate("show_attachment", target, version)
+        env = reinsp(str(row.get("id")))
         if not env[0]:
-            raise RuntimeError("vis_reinspect_attachment: " + str(env[1]))
-        row = env[1]
-        return {"id": row[0], "filename": row[1], "media_type": row[2], "size": row[3]}
+            raise RuntimeError("show_attachment: " + str(env[1]))
+        out = env[1]
+        return {"id": out[0], "filename": out[1], "media_type": out[2], "size": out[3]}
 
-    def vis_read_attachment(attachment_id):
+    def read_attachment(target, version=None):
         rd = globals().get("__vis_read_attachment__")
         if rd is None:
             raise RuntimeError(
-                "vis_read_attachment: reader bridge not bound in this sandbox"
+                "read_attachment: reader bridge not bound in this sandbox"
             )
-        env = rd(str(attachment_id))
+        row = __vis_locate("read_attachment", target, version)
+        env = rd(str(row.get("id")))
         if not env[0]:
-            raise RuntimeError("vis_read_attachment: " + str(env[1]))
+            raise RuntimeError("read_attachment: " + str(env[1]))
         b64 = env[1]
-        # BYTES, nothing else: the descriptor is one vis_attachment(id) away, so
+        # BYTES, nothing else: the descriptor is one get_attachment() away, so
         # printing this call can never spill a metadata map nobody asked for.
         return _b64.b64decode(b64) if b64 else b""
 
-    vis_attach.__doc__ = (
-        "Persist a produced file as a durable attachment. SAME DOCUMENT, SAME "
-        "NAME: a new revision of something you already attached goes back under "
-        "its OWN filename - report.png again, never report_v2.png or "
-        "report_final.png - and is stored as the next VERSION of that one "
-        "artifact, so a document reads as one continuous thread instead of a "
-        "pile of near-duplicates; a new name is for a genuinely different "
-        "document. ATTACH ONE OR TWO "
-        "ARTIFACTS PER TURN: a human reviews a figure, not a filmstrip, so "
-        "COMPOSE many images into a SINGLE sheet (a matplotlib grid of subplots, "
-        "one montage PNG) and attach that instead of N separate shots. audience "
-        "routes it: 'both' (default) shows the human AND sends it to the model, "
-        "'user' shows the human only and never enters the model's context, "
-        "'model' sends it to the model only and paints nothing for the human. "
-        "The sandbox-confined path is read, its "
-        "media type inferred, and its bytes stored across restarts; images can "
-        "replay to vision models. A CSV/TSV file attaches as a live TABLE: the "
-        "transcript paints it as a sortable, pageable grid, and its rows never "
-        "enter the model's context - vis_read_attachment(id) reads them back. "
-        "A *.pdf or *.html file attaches as a DOCUMENT for the HUMAN only: the "
-        "transcript shows a card that opens it (the app renders HTML inside a "
-        "sandboxed frame), it is never sent as an image, and audience='model' "
-        "is refused. "
-        "kind, media_type and filename override inference. label is a one-line "
-        "caption printed with the artifact, so a series of shots says which shot "
-        "is which. Returns None: call directly, do not print. Use "
-        "vis_attachments() / vis_attachment(id) for metadata."
+    attach.__doc__ = (
+        "Persist a produced artifact as a durable attachment. source is a confined "
+        "PATH, in-memory BYTES (name them with filename), or a matplotlib figure. "
+        "SAME DOCUMENT, SAME NAME: re-attaching a filename stores the next "
+        "VERSION of that artifact, never report_v2.png beside report.png; a new "
+        "name is a different document. Attach one or two artifacts per turn - "
+        "compose many images into ONE sheet. audience routes it: 'both' "
+        "(default), 'user' (human only), 'model' (context only). A CSV/TSV "
+        "becomes a transcript table whose rows stay out of the model's context; "
+        "a *.pdf/*.html is a human-only document and refuses audience='model'. "
+        "kind, media_type and filename override inference; label is a one-line "
+        "caption. Returns None - call it, do not print it."
     )
-    vis_attachment_versions.__doc__ = (
-        "Every VERSION of one artifact, oldest first. Attaching the same "
-        "filename again does not make a second artifact - it makes the next "
-        "version of this one - so a name is a CONTINUOUS thread of work and "
-        "this is how you walk it. Each row is a vis_attachments() descriptor "
-        "with its own id and version; [] when the name was never attached."
+    list_attachments.__doc__ = (
+        "Descriptor dicts for this session's artifacts, or - given a filename - "
+        "that one artifact's versions, oldest first ([] if never attached)."
     )
-    vis_attachment_version.__doc__ = (
-        "ONE version of an artifact: the latest cut by default, or the exact "
-        "version number you ask for (negative counts back from the latest). "
-        "Returns a vis_attachments() descriptor - pass its id to "
-        "vis_read_attachment() for the bytes. Raises LookupError when the name "
-        "or the version does not exist."
+    get_attachment.__doc__ = (
+        "ONE artifact's descriptor dict, never its bytes. target is the filename "
+        "you attached under (the artifact: latest cut unless you pass version, "
+        "negative counting back) or an id out of a descriptor (one exact cut). "
+        "LookupError when it does not exist."
     )
-    vis_attachment.__doc__ = (
-        "ONE artifact's DESCRIPTOR dict - id, filename, version, media_type, "
-        "kind, size, audience and where it was produced - and never its bytes. "
-        "This is what you read to find out WHAT an attachment is; "
-        "vis_read_attachment(id) is what you call when you actually want the "
-        "payload. Raises LookupError when this session has no such id."
+    read_attachment.__doc__ = (
+        "The artifact's raw BYTES, for Python. Same target/version addressing as "
+        "get_attachment."
+    )
+    show_attachment.__doc__ = (
+        "Put a stored IMAGE in front of the model for exactly the NEXT request, "
+        "then stored-only again; nothing is re-stored. Images replay only while "
+        "they fit the request's image budget, and this is the way back to one "
+        "that dropped out. Same addressing as get_attachment."
     )
 
     g = globals()
-    g["vis_attach"] = vis_attach
-    g["vis_attachments"] = vis_attachments
-    g["vis_attachment"] = vis_attachment
-    g["vis_attachment_versions"] = vis_attachment_versions
-    g["vis_attachment_version"] = vis_attachment_version
-    g["vis_read_attachment"] = vis_read_attachment
-    g["vis_reinspect_attachment"] = vis_reinspect_attachment
+    g["attach"] = attach
+    g["list_attachments"] = list_attachments
+    g["get_attachment"] = get_attachment
+    g["read_attachment"] = read_attachment
+    g["show_attachment"] = show_attachment
     g["__vis_guess_media_type"] = __vis_guess_media_type
     g["__vis_kind_for"] = __vis_kind_for
 
     docs = g.setdefault("__vis_docs__", {})
-    docs["vis_attach"] = (
-        "vis_attach(source, filename=None, kind=None, media_type=None, label=None, "
-        "audience='both'): persist a produced file as a durable "
-        "attachment across restarts. SAME DOCUMENT, SAME NAME - a revision of an "
-        "artifact you already attached goes back under its own filename and "
-        "becomes its next VERSION, never report_v2.png beside report.png; a new "
-        "name is for a genuinely different document. source is a confined PATH, "
-        "in-memory BYTES (name them with filename), or a matplotlib figure. "
-        "ATTACH ONE OR TWO ARTIFACTS PER TURN - a "
-        "human cannot review a filmstrip: COMPOSE many images into ONE sheet (a "
-        "matplotlib subplot grid, a single montage PNG) and attach that, never N "
-        "separate shots. audience='both' shows the human and sends it to the "
-        "model; 'user' shows the human ONLY and never enters the model's context; "
-        "'model' sends it to the model ONLY and paints nothing for the human. "
-        "Images replay to vision "
-        "models; a CSV/TSV attaches as a live TABLE the transcript paints as a "
-        "sortable, pageable grid whose rows stay OUT of the model's context "
-        "(vis_read_attachment(id) reads them back); a *.pdf/*.html attaches as "
-        "a DOCUMENT for the HUMAN only - a card that opens it, HTML rendered in "
-        "a sandboxed frame, never an image, and audience='model' is refused. "
-        "label is a one-line caption "
-        "printed with the artifact. Returns None; call, do not print. Use "
-        "vis_attachments() for metadata."
+    docs["attach"] = (
+        "attach(source, filename=None, kind=None, media_type=None, label=None, "
+        "audience='both'): persist an artifact durably across restarts. source is "
+        "a confined PATH, BYTES (name them with filename), or a matplotlib "
+        "figure. SAME DOCUMENT, SAME NAME - re-attaching a filename stores the "
+        "next VERSION of that artifact, never report_v2.png beside report.png; a "
+        "new name is a different document. One or two artifacts per turn: "
+        "compose many images into ONE sheet. audience='both'|'user'|'model' "
+        "routes who sees it. CSV/TSV becomes a transcript table whose rows stay "
+        "out of the model's context; *.pdf/*.html is a human-only document and "
+        "refuses audience='model'. label is a one-line caption. Returns None."
     )
-    docs["vis_reinspect_attachment"] = (
-        "vis_reinspect_attachment(id, detail='auto'): queue this session's persisted "
-        "image for exactly the NEXT provider request, then return it to stored-only. "
-        "detail is auto, low, or high; unknown/non-image ids raise RuntimeError."
+    docs["list_attachments"] = (
+        "list_attachments(name=None): descriptor dicts (id, filename, version, "
+        "media_type, kind, size, audience, turn_id, ...) for this session's "
+        "artifacts, or one filename's versions oldest first."
     )
-    docs["vis_attachments"] = (
-        "vis_attachments(): every artifact of THIS session as a list of "
-        "DESCRIPTOR dicts - id, filename, version, media_type, kind, size, "
-        "audience, position, turn_id, plus tool_call_id and iteration_id on a "
-        "tool artifact - and never any bytes. "
-        "Attaching the same filename again bumps version instead "
-        "of creating a second artifact. Pass an id to vis_attachment(id) for one "
-        "descriptor, or to vis_read_attachment(id) for that artifact's bytes."
+    docs["get_attachment"] = (
+        "get_attachment(target, version=None): ONE descriptor dict, no bytes. "
+        "target is the FILENAME you attached under - the artifact, latest cut "
+        "unless you name a version (negative counts back) - or an id out of a "
+        "descriptor, one exact stored cut. That same addressing holds for every "
+        "read call here. LookupError when it does not exist."
     )
-    docs["vis_attachment"] = (
-        "vis_attachment(id): ONE artifact's descriptor dict, the same shape "
-        "vis_attachments() lists, with no bytes in it. Ask this WHAT an "
-        "attachment is; ask vis_read_attachment(id) only when you want the "
-        "payload itself. LookupError when this session has no such id."
+    docs["read_attachment"] = (
+        "read_attachment(target, version=None): the artifact's raw BYTES and "
+        "nothing else, addressed like get_attachment."
     )
-    docs["vis_attachment_versions"] = (
-        "vis_attachment_versions(name): every version of ONE artifact, oldest "
-        "first, as vis_attachments() descriptors; [] when that name was never "
-        "attached. Re-attaching a filename is a new VERSION of that artifact, "
-        "never a new artifact."
-    )
-    docs["vis_attachment_version"] = (
-        "vis_attachment_version(name, version=None): one version of an artifact "
-        "- the latest by default, an exact version number otherwise (negative "
-        "counts back from the latest). Returns a vis_attachments() descriptor; "
-        "read its bytes with vis_read_attachment(id)."
-    )
-    docs["vis_read_attachment"] = (
-        "vis_read_attachment(id): the artifact's raw BYTES and nothing else. "
-        "Metadata lives in vis_attachment(id) / vis_attachments(), so reading a "
-        "payload never drags a descriptor map into the transcript with it."
+    docs["show_attachment"] = (
+        "show_attachment(target, version=None): put a stored IMAGE in front of "
+        "the model for exactly the NEXT request, then stored-only again. Images "
+        "replay only while they fit the request's image budget; this is the way "
+        "back to one that dropped out, and it re-stores nothing."
     )
 
 

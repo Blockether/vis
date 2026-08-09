@@ -411,7 +411,7 @@ export interface GatewayAttachment {
 }
 
 /**
- * ONE artifact a tool call PRODUCED (a matplotlib figure, a `vis_attach`ed
+ * ONE artifact a tool call PRODUCED (a matplotlib figure, an `attach`ed
  * image/file), as the gateway's byte-free descriptor. It ships identically on
  * the live `iteration.completed` frame and on the persisted transcript, so a
  * produced image renders the same live and in history. The bytes are lazy:

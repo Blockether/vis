@@ -389,7 +389,7 @@
       (expect (= [:user :tool :tool] (mapv :source all)))
       (expect (= ["u1.png" "t1.png" "t2.png"] (mapv :filename all)))
       ;; PROVENANCE STARTS AT THE TURN: EVERY row - user image AND tool artifact -
-      ;; carries the soul of the turn it belongs to, so `vis_attachments()` can stamp
+      ;; carries the soul of the turn it belongs to, so `list_attachments()` can stamp
       ;; `turn_id` on all of them. The iteration / tool-call grain is the FINER
       ;; provenance only a tool artifact also has.
       (expect (= [(str soul1) (str soul1) (str soul2)] (mapv :turn-soul-id all)))
@@ -3265,7 +3265,7 @@
          s
          {:session-turn-id tid
           :status :done
-          :code "vis_attach(png, 'fig.png', audience='user')"
+          :code "attach(png, 'fig.png', audience='user')"
           :attachments
           [{:tool-call-id "call_A"
             :media-type "image/png"
@@ -3289,7 +3289,7 @@
                  (into {} (map (juxt :filename :audience)) user-atts)))
       (expect (= {"fig.png" "user" "probe.png" "model" "sent.png" "both"}
                  (into {} (map (juxt :filename :audience)) tool-atts)))
-      ;; Bare-id read-back (the vis_reinspect_attachment path) sees it too.
+      ;; Bare-id read-back (the show_attachment path) sees it too.
       (expect (= "user"
                  (:audience (vis/db-read-attachment
                               s
@@ -3485,7 +3485,7 @@
        (h/store-iteration! s
                            {:session-turn-id tid
                             :status :done
-                            :code "vis_attach('/tmp/chart.png')"
+                            :code "attach('/tmp/chart.png')"
                             :attachments [(tool-att "call_A" "chart.png")
                                           (tool-att "call_A" "fresh.png")]})
 
@@ -3517,7 +3517,7 @@
       (expect (= {"chart.png" [3] "fresh.png" [1]}
                  (by-name (vis/db-list-iteration-attachments-meta s iid))))
       (expect (= {"chart.png" [4]} (by-name (vis/db-list-turn-attachments s tid2))))
-      ;; The bare-id read-back (vis_reinspect_attachment) carries it too.
+      ;; The bare-id read-back (show_attachment) carries it too.
       (expect (= 3
                  (:version (vis/db-read-attachment
                              s
@@ -3559,7 +3559,7 @@
        (h/store-iteration! s
                            {:session-turn-id tid
                             :status :done
-                            :code "vis_attach(...)"
+                            :code "attach(...)"
                             :attachments [{:tool-call-id "call_A"
                                            :media-type "text/markdown"
                                            :base64 (encode "# Note\n")

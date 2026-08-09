@@ -15,7 +15,7 @@ import {
   type TableRow,
 } from './DataTable';
 
-/** The block `vis_attach` emits for a CSV artifact: five header lines, then the payload. */
+/** The block `attach` emits for a CSV artifact: five header lines, then the payload. */
 const fence = [
   '[Table: fleet.csv 3 rows × 3 cols, 64 B]',
   'fleet.csv',

@@ -205,7 +205,7 @@ Same shape and the same resolution rules as the default pair: the model is looke
 
 Capabilities are per **model**, not per provider, and come from the router's pinned model registry (svar) — the same source as context windows and pricing. Every model has `chat`; `vision` is the one Vis actually gates on.
 
-Vis produces images on its own: matplotlib figures captured from the Python sandbox and anything `vis_attach`ed with an `image/*` media type are stored as durable session attachments (downsized first, so they stay legible without flooding the context). On later iterations and later turns they are replayed to the model as a canonical `image_url` data-URI block, emitted as its own message right after that iteration's `<results>`; the router translates it to Anthropic `image`, OpenAI `image_url`, or Gemini inline data, whichever the active provider speaks.
+Vis produces images on its own: matplotlib figures captured from the Python sandbox and anything `attach`ed with an `image/*` media type are stored as durable session attachments (downsized first, so they stay legible without flooding the context). On later iterations and later turns they are replayed to the model as a canonical `image_url` data-URI block, emitted as its own message right after that iteration's `<results>`; the router translates it to Anthropic `image`, OpenAI `image_url`, or Gemini inline data, whichever the active provider speaks.
 
 That replay is gated on the target model advertising `vision`:
 

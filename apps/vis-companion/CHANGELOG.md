@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.32 (3799) — 2026-08-07
+<!-- commit: 686ea282730f4d3a2868b30e0e03ec0727e28c26 -->
+
+- Start a stroke from beside the picture, not only on its edge
+- Release the companion app locally when this machine can sign
+- Enforce :ext/protected-paths in the Python sandbox filesystem
+- Say the create inside its button and shrink the row question
+- Show a document artifact once, as a card that opens over everything
+- Paint the star action yellow and keep the starred row in view
+- Let the app stop the turn it started again
+- Never link a TestFlight build to an internal beta group
+- Give a note ten annotation threads and a comment on the whole document
+- Push from workflows through one shared git-push action
+- Mark annotations in theme colours and annotate plain text too
+- Make the machine switcher square, unread a highlight, and hide it for a solo machine
+- Draw a comment ordinal as a plain coloured number
+- Accept any spelling of a path in vis_attach
+- Clear the NEW badge on the row you just read
+- Make the fleet switcher one segmented track
+- Put the session star immediately right of the title
+- Number and colour markdown comments, and underline the passage each is about
+- Clear the machine card below the fleet strip
+- Pin the companion's artifact-revision save URL to its route
+
 ## 0.1.21 (2871) — 2026-08-01
 <!-- commit: 1db0d4f7d66aecc93ba26cae8751d39f925181c5 -->
 

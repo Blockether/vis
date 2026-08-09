@@ -94,6 +94,109 @@
       (Files/createDirectories dir (make-array FileAttribute 0)))
     dir))
 
+;; ---------------------------------------------------------------------------
+;; Fleet liveness index
+;; ---------------------------------------------------------------------------
+
+(def ^:private ^:const LIVE_CACHE_MS
+  "How long ONE scan of the liveness directory is reused. A fleet listing asks for
+   every session's liveness inside a single build, so the scan must not run per
+   row. A local `mark-live!`/`clear-live!` invalidates immediately, so only a
+   SIBLING process's transition can be this stale — invisible next to the seconds
+   between a client's polls."
+  200)
+
+(defn- live-dir
+  "Directory holding one tiny marker per turn in flight ANYWHERE on this machine.
+   A journal answers \"what happened in session X\" and costs a file read per
+   session; this answers \"which sessions are running\" in one listing whose size
+   is the number of LIVE turns, which is what a fleet listing can afford."
+  ^Path []
+  (Path/of (System/getProperty "user.home") (into-array String [".vis" "gateway" "live"])))
+
+(defn- live-file ^File [sid] (.toFile (.resolve (live-dir) (str sid ".json"))))
+
+(defonce ^:private live-cache (atom {:at 0 :turns {}}))
+
+(defn- invalidate-live-cache! [] (swap! live-cache assoc :at 0) nil)
+
+(defn- scan-live-turns
+  "Read every marker into `{sid turn-id}`, keeping only those whose producer
+   process is still running. A marker whose pid is gone (kill -9, a crash, a
+   daemon restart mid-turn) is DELETED here: the producer that owed it a retract
+   no longer exists, and without this one dead process leaves a session lit
+   forever on every client of this machine."
+  []
+  (try (let [dir (.toFile (live-dir))]
+         (if-not (.isDirectory dir)
+           {}
+           (reduce (fn [acc ^File f]
+                     (let
+                       [marker (when (str/ends-with? (.getName f) ".json")
+                                 (try (wire/parse-json (slurp f)) (catch Throwable _ nil)))
+                        sid (get marker "session_id")
+                        tid (get marker "turn_id")
+                        pid (get marker "pid")]
+
+                       (cond (nil? marker) acc
+                             (and sid tid pid (producer-alive? pid)) (assoc acc (str sid) (str tid))
+                             :else (do (.delete f) acc))))
+                   {}
+                   (or (.listFiles dir) (make-array File 0)))))
+       (catch Throwable t (tel/log! :debug ["gateway-bus: live scan failed" (ex-message t)]) {})))
+
+(defn live-turns
+  "`{session-id-string turn-id-string}` for every turn in flight on this machine —
+   this process's and every sibling's alike.
+
+   THE cross-process answer to \"is this session live\". A process-local registry
+   only knows the turns IT runs, and a sibling's turn is mirrored into it only
+   once somebody SUBSCRIBES to that session, so a gateway answering from the
+   registry lit up exactly the sessions the asking client happened to watch: two
+   apps talking to the SAME gateway reported two different fleets."
+  []
+  (let
+    [{:keys [at turns]}
+     @live-cache
+
+     now
+     (System/currentTimeMillis)]
+
+    (if (< (- now (long at)) (long LIVE_CACHE_MS))
+      turns
+      (let [fresh (scan-live-turns)]
+        (reset! live-cache {:at now :turns fresh})
+        fresh))))
+
+(defn live-turn-id
+  "The turn `sid` is running in ANY vis process on this machine, or nil."
+  [sid]
+  (get (live-turns) (str sid)))
+
+(defn- mark-live!
+  "Announce that `turn-id` is in flight for `sid` in THIS process. Never throws."
+  [sid turn-id]
+  (try (let [dir (live-dir)]
+         (when-not (Files/exists dir (make-array LinkOption 0))
+           (Files/createDirectories dir (make-array FileAttribute 0)))
+         (spit (live-file sid)
+               (wire/json-str {"schema" 1
+                               "session_id" (str sid)
+                               "turn_id" (str turn-id)
+                               "pid" producer-pid
+                               "started_at" (System/currentTimeMillis)}))
+         (invalidate-live-cache!))
+       (catch Throwable t (tel/log! :debug ["gateway-bus: live mark failed" (ex-message t)])))
+  nil)
+
+(defn- clear-live!
+  "Retract `sid`'s liveness marker: its turn reached a terminal. Never throws."
+  [sid]
+  (try (.delete (live-file sid))
+       (invalidate-live-cache!)
+       (catch Throwable t (tel/log! :debug ["gateway-bus: live clear failed" (ex-message t)])))
+  nil)
+
 ;; sid-str -> this process's tail of that session's journal:
 ;;   {:lock Object   ; hydrate! (HTTP threads) vs drain-file! (tailer thread)
 ;;    :off  long     ; bytes already consumed
@@ -249,6 +352,17 @@
                        (.write raf (.getBytes (str head "\n") StandardCharsets/UTF_8))))))
            (.seek raf (.length raf))
            (.write raf (.getBytes ^String line StandardCharsets/UTF_8))))
+       ;; The fleet's liveness marker rides the SAME durable write as the event
+       ;; that changes it: a turn whose start reached disk is announced to every
+       ;; process on this machine, and a write that failed announces nothing.
+       (case (str (get event "type"))
+         "turn.started"
+         (mark-live! sid (get event "turn_id"))
+
+         ("turn.completed" "turn.failed" "turn.cancelled")
+         (clear-live! sid)
+
+         nil)
        (catch Throwable t (tel/log! :debug ["gateway-bus: publish failed" (ex-message t)]) nil))
   nil)
 
@@ -368,6 +482,7 @@
   "Drop a session's journal (on session close). Never throws."
   [sid]
   (try (.delete (session-file sid)) (catch Throwable _ nil))
+  (clear-live! sid)
   (let [k (str sid)]
     (swap! reaped-turns dissoc k)
     (swap! tails dissoc k))

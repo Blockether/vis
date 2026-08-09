@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.foundation.mpl-capture
   "SINK for artifacts the sandbox PRODUCES — matplotlib figures (`plt.show()` /
-   `plt.savefig()`), anything a tool hands to `vis_attach`, AND anything written
+   `plt.savefig()`), anything a tool hands to `attach`, AND anything written
    into the per-context OUTBOX directory (`$VIS_OUTBOX`) — so the engine OWNS the
    bytes (a `session_iteration_attachment` row) captured AT THE SOURCE, with NO
    re-parsing of the model-facing stdout fence.
@@ -9,7 +9,7 @@
    `vis-image` fence carrying just that PATH, then at persist time re-parsed the
    fence out of stdout and re-read the (possibly already-gone) file. We control the
    whole boundary, so that round-trip is gone: a producer renders/reads the bytes
-   HOST-side (matplotlib's `__vis_mpl_render_file__` imaging backend; `vis_attach`'s
+   HOST-side (matplotlib's `__vis_mpl_render_file__` imaging backend; `attach`'s
    sandbox-confined `open`; the outbox filesystem tap in `sandbox-fs`) and, right
    where it already holds the bytes, calls `record-attachment!` (or `record-file!`).
    `run-python-block` binds `*attachment-sink*` to a fresh collector around each
@@ -45,15 +45,15 @@
    bound by `run-python-code` around one block's eval (else nil). A map
    `{:list (fn [] [{:id :filename :media-type :kind :size :position :tool-call-id
    :iteration-id} …]) :read (fn [attachment-id] {:id :base64 :media-type …}|nil)}`
-   closing over the session's db-info + id. Lets the `vis_attachments` /
-   `vis_read_attachment` sandbox shims re-fetch an artifact a tool (or an earlier
+   closing over the session's db-info + id. Lets the `list_attachments` /
+   `read_attachment` sandbox shims re-fetch an artifact a tool (or an earlier
    turn) produced. Nil outside a driven block ⇒ the shim surfaces a clear
    `RuntimeError` instead of silently returning nothing."
   nil)
 
 (def ^:dynamic *attachment-reinspection-sink*
   "Per-block queue of persisted image attachments deliberately reintroduced to the
-   NEXT provider request. Bound by `run-python-code`; `vis_reinspect_attachment`
+   NEXT provider request. Bound by `run-python-code`; `show_attachment`
    appends hydrated session-owned images here. Unlike `*attachment-sink*`, these
    are ephemeral: the loop consumes them once and never stores duplicate bytes."
   nil)
@@ -147,7 +147,7 @@
   "THE single per-artifact byte cap (32 MiB) — the one source of truth every
    producer path shares. The filesystem outbox/temp tap (`record-file!`) SKIPS a
    larger file silently (an incidental write must not throw); the explicit
-   `vis_attach` shim REJECTS one with a clear error (a
+   `attach` shim REJECTS one with a clear error (a
    deliberate attach deserves a signal, not a silent drop). Either way a huge
    write can't OOM the engine or bloat the DB."
   (* 32 1024 1024))

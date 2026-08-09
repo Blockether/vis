@@ -107,7 +107,7 @@ export function attachmentIsVideo(attachment: IterationAttachment): boolean {
   return (attachment.media_type ?? "").startsWith("video/");
 }
 
-// A PDF, an HTML page or a written note is a DOCUMENT: `vis_attach` clamps it to
+// A PDF, an HTML page or a written note is a DOCUMENT: `attach` clamps it to
 // `audience: "user"`, so its bytes never reach the model and the app owes the
 // human a reader for them instead of one more line in the recorded-files row.
 export function attachmentIsDoc(attachment: IterationAttachment): boolean {

@@ -1673,7 +1673,7 @@
    `{:dir <abs path string> :on-close record-file!}` for
    `sandbox-fs/confined-filesystem`. The sandbox may WRITE files there
    (`$VIS_OUTBOX`); each file it closes is captured AT THE SOURCE as a
-   `session_iteration_attachment` — the implicit twin of `vis_attach`, for a
+   `session_iteration_attachment` — the implicit twin of `attach`, for a
    library that only knows how to write a file. Best-effort: on any failure returns
    nil (⇒ no outbox tap, the filesystem stays plain-confined)."
   []
@@ -1974,7 +1974,7 @@
     ;; OUTBOX: expose the per-context capture dir to Python as a `VIS_OUTBOX`
     ;; global and `$VIS_OUTBOX` env var. A file the sandbox WRITES there is
     ;; captured at the source as a durable iteration attachment (see the
-    ;; `sandbox-fs` outbox tap) — the implicit twin of `vis_attach` for libraries
+    ;; `sandbox-fs` outbox tap) — the implicit twin of `attach` for libraries
     ;; that only know how to write a file. Eval'd before the snapshot so
     ;; `VIS_OUTBOX` is a BASELINE name (not surfaced as a model-created live var).
     (when outbox
@@ -3002,7 +3002,7 @@
            only?
            (true? (->clj (.getMember g "__vis_only_results__")))
 
-           ;; Artifacts the block PRODUCED (matplotlib show/savefig, vis_attach,
+           ;; Artifacts the block PRODUCED (matplotlib show/savefig, attach,
            ;; or an $VIS_OUTBOX write), captured at the source into the per-block
            ;; sink — folded in as `:attachments` so the loop OWNS the bytes with
            ;; NO stdout-fence parsing.

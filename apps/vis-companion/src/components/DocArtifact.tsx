@@ -26,7 +26,7 @@ export type AnnotateContext = {
 };
 
 // A PDF or an HTML page is a DOCUMENT, not a picture and not data: nothing in it
-// is worth spending a model's context on, so `vis_attach` clamps it to
+// is worth spending a model's context on, so `attach` clamps it to
 // `audience: "user"` and emits a ````vis-doc` fence with five header lines
 // (summary / host path / mime / name / size) and NO payload. The TUI opens the
 // host file in the system viewer; this component is the app's half.

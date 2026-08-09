@@ -162,9 +162,9 @@
   (it
     "advertises exact model-facing Python capabilities, never internal shim ids"
     (let
-      [shims [{:shim/name "attach"
-               :shim/globals ["vis_attach" "vis_attachments" "vis_attachment" "vis_read_attachment"
-                              "vis_reinspect_attachment"]
+      [shims [{:shim/name "attachments"
+               :shim/globals ["attach" "list_attachments" "get_attachment" "read_attachment"
+                              "show_attachment"]
                :shim/description
                "Persist artifacts as durable attachments. Vis-native; no upstream library."}
               {:shim/name "fonttools" :shim/imports ["brotli" "fontTools"]}
@@ -186,10 +186,10 @@
             (expect (str/includes? text (str "`" module "`"))))
           (expect (str/includes? text "Prebound shim globals"))
           (doseq
-            [global ["vis_attach" "vis_attachments" "vis_attachment" "vis_read_attachment"
-                     "vis_reinspect_attachment"]]
+            [global ["attach" "list_attachments" "get_attachment" "read_attachment"
+                     "show_attachment"]]
             (expect (str/includes? text (str "`" global "`"))))
-          (expect (not (str/includes? text "`attach`")))
+          (expect (not (str/includes? text "`attachments`")))
           ;; NAMES ALONE ARE A TRAP. Every shim is a reimplementation, so the surface
           ;; it supports and the APIs it refuses must travel WITH the name: reading
           ;; only `numpy` in this block, the model wrote against the real numpy and
@@ -199,9 +199,9 @@
                     text
                     "- `numpy`: Pure-Python `numpy` subset. Not supported: eig/svd/qr."))
           (expect (str/includes? text
-                                 (str "- `vis_attach`, `vis_attachments`, "
-                                      "`vis_attachment`, `vis_read_attachment`, "
-                                      "`vis_reinspect_attachment`: Persist artifacts")))
+                                 (str "- `attach`, `list_attachments`, "
+                                      "`get_attachment`, `read_attachment`, "
+                                      "`show_attachment`: Persist artifacts")))
           ;; A shim that documents nothing contributes no empty bullet.
           (expect (not (str/includes? text "- `brotli`")))
           ;; With no shell layer active the block must SAY the process surface is

@@ -1348,7 +1348,7 @@
              state))))}))
 
 (defn table-view-dialog!
-  "Open a `vis-table` artifact — the CSV/TSV fence `vis_attach` writes — as a live
+  "Open a `vis-table` artifact — the CSV/TSV fence `attach` writes — as a live
    spreadsheet: PgUp/PgDn to turn a page, ↑/↓ and ←/→ to move the row /
    column cursor, Enter to sort by the current column. `tbl` is the click region's
    `:table` payload (`{:name :csv :cols :rows :title}`). Returns nil, or the

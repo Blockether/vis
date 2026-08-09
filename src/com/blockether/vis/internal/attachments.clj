@@ -251,7 +251,7 @@
    exactly these four in its rejection (`the image data you provided does not
    represent a valid image … supported image formats: ['image/jpeg',
    'image/png', 'image/gif', 'image/webp']`); OpenAI and Gemini are supersets.
-   Anything else — an `image/svg+xml` figure from `vis_attach`/matplotlib, a
+   Anything else — an `image/svg+xml` figure from `attach`/matplotlib, a
    BMP screenshot — is a hard 400, and since attachments
    REPLAY on every later turn ONE such row kills the whole session."
   #{"image/jpeg" "image/png" "image/gif" "image/webp"})
@@ -684,7 +684,7 @@
 
    Sending them would be a lie twice over — the bytes are not an image, and a
    multimodal request replays every block forever, so one report would be
-   re-billed on every later turn of the session. `vis_attach` of a `.pdf` or an
+   re-billed on every later turn of the session. `attach` of a `.pdf` or an
    `.html` is therefore clamped to `audience=\"user\"` at [[attachment-audience]],
    the one funnel every route already reads."
   #{"application/pdf" "text/html" "application/xhtml+xml"})
@@ -730,11 +730,11 @@
 
    The escape hatch for the one thing multimodal replay cannot undo — an image
    replays IN FULL on every later request, so a screenshot the model does not
-   actually need is re-billed forever. `vis_attach(..., audience='user')` stamps
+   actually need is re-billed forever. `attach(..., audience='user')` stamps
    `:audience \"user\"`, and the send-time gate routes the row to `:skipped` +
    `:readable-blind?` instead: the model is TOLD the file exists and can open the
-   bytes on demand (`vis_read_attachment`) or ask for it back with
-   `vis_reinspect_attachment`."
+   bytes on demand (`read_attachment`) or ask for it back with
+   `show_attachment`."
   [attachment]
   (= "user" (attachment-audience attachment)))
 
@@ -748,7 +748,7 @@
 
 (defn- media-candidate?
   "True when an attachment CLAIMS a still image or a clip and is therefore worth
-   decoding at send time. A generic `vis_attach` artifact (csv/json/pdf/wav/...)
+   decoding at send time. A generic `attach` artifact (csv/json/pdf/wav/...)
    is DB- and display-only and must never cost a base64 decode on every turn,
    and a BLANK media type never counts: unverifiable bytes an image block would
    have to label `image/png` are exactly the thing that bricks a session."

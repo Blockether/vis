@@ -1126,14 +1126,17 @@
    `att` is `{:filename :media-type :base64}`. nil when the iteration is unknown
    or the payload could not be stored."
   [iid att]
-  (try (when-let [iid (some-> iid
-                              str
-                              parse-uuid)]
+  (try (when-let
+         [iid (some-> iid
+                      str
+                      parse-uuid)]
          (when-let [stored (persistance/db-append-iteration-attachment! (lp/db-info) iid att)]
-           (let [rows (user-iteration-attachments iid)
-                 idx (first (keep-indexed (fn [i row]
-                                            (when (= (str (:id row)) (str (:id stored))) i))
-                                          rows))]
+           (let
+             [rows (user-iteration-attachments iid)
+              idx (first (keep-indexed (fn [i row]
+                                         (when (= (str (:id row)) (str (:id stored))) i))
+                                       rows))]
+
              (when idx (nth (attachment-descriptors iid rows) idx nil)))))
        (catch Throwable t
          (tel/log! :warn ["gateway: append-iteration-attachment! failed" (str iid) (ex-message t)])
@@ -1765,7 +1768,7 @@
             (tel/log! :warn ["gateway: turn-iteration hydration failed" (:id turn) (ex-message t)])
             []))
 
-     ;; Produced artifacts (matplotlib figures, `vis_attach`ed images) as the
+     ;; Produced artifacts (matplotlib figures, `attach`ed images) as the
      ;; SAME lean descriptors the live `iteration.completed` frame carries —
      ;; byte-free, so history costs nothing on the wire, and a remote client
      ;; lazy-fetches the bytes from the attachment endpoint. Without this a
@@ -4226,7 +4229,13 @@
   (when-let [session (lp/by-id sid)]
     (let
       [entry (session-entry sid)
-       current-turn-id (:current-turn entry)
+       ;; Liveness is a fact about the MACHINE, not about this process. A turn
+       ;; running in a SIBLING vis process is mirrored into this registry only
+       ;; once somebody subscribes to that session, so a registry-only answer lit
+       ;; up exactly the sessions the asking client had already watched — the
+       ;; desktop app and the phone reading the same gateway and being told two
+       ;; different fleets. `bus/live-turn-id` is the index every producer writes.
+       current-turn-id (or (:current-turn entry) (bus/live-turn-id sid))
        current-turn (get-in entry [:turns current-turn-id])
        last-turn (some->> (:turn-order entry)
                           peek
@@ -4260,7 +4269,8 @@
                          (= "suspended" (:status last-turn)) "suspended"
                          :else "idle")
            ;; Explicit wire-level liveness keeps clients from reverse-engineering
-           ;; status/current_turn_id. It changes synchronously with :current-turn.
+           ;; status/current_turn_id, and answers for the whole machine, so every
+           ;; client of this gateway sees the SAME session running.
            :live (boolean current-turn-id)
            :current_turn_id current-turn-id
            :last_active_at (:last-active entry)
@@ -4358,19 +4368,21 @@
    instead of the fleet's. Same key as `order-session-summaries`, from the same
    sources, so the cut is the one a fully decorated sort would have made."
   [channel stats]
-  (->> (lp/by-channel channel)
-       (sort-by (fn [record]
-                  (let
-                    [id
-                     (:id record)
+  (let
+    [;; ONE scan for the whole ordering: `sort-by` calls its key fn O(n log n)
+     ;; times, and a liveness key that could flip mid-sort is a comparator that
+     ;; contradicts itself.
+     live (bus/live-turns)]
+    (->> (lp/by-channel channel)
+         (sort-by (fn [record]
+                    (let
+                      [id (:id record)
+                       entry (session-entry id)]
 
-                     entry
-                     (session-entry id)]
-
-                    [(if (:current-turn entry) 0 1)
-                     (unchecked-negate (record-recency-ms record entry (get stats (str id))))
-                     (str id)])))
-       (mapv :id)))
+                      [(if (or (:current-turn entry) (get live (str id))) 0 1)
+                       (unchecked-negate (record-recency-ms record entry (get stats (str id))))
+                       (str id)])))
+         (mapv :id))))
 
 (defn- order-session-summaries
   "Gateway-owned navigator order: live sessions first, then most recently

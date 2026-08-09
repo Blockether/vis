@@ -1759,7 +1759,9 @@
      ;; first. With `root` the gateway cuts the ordering to that project, so
      ;; `total`/`has_more` describe the project the pager is printing.
      root
-     (some-> (get-in request [:query-params "root"]) str not-empty)]
+     (some-> (get-in request [:query-params "root"])
+             str
+             not-empty)]
 
     (if (or (and (given? "limit") (nil? limit)) (and (given? "offset") (nil? offset)))
       (error-response 400 :invalid-window "limit and offset must be integers")
@@ -2499,25 +2501,32 @@
    client re-reads the revision through the paths it already has."
   [request]
   (if (path-sid request)
-    (let [body (body-json request)
-          filename (some-> (get body "filename")
-                           str
-                           str/trim)
-          base64 (get body "base64")]
+    (let
+      [body
+       (body-json request)
+
+       filename
+       (some-> (get body "filename")
+               str
+               str/trim)
+
+       base64
+       (get body "base64")]
+
       (if (or (str/blank? filename) (str/blank? (str base64)))
         (error-response 400 :invalid-attachment "filename and base64 are required")
-        (if-let [descriptor (state/append-iteration-attachment!
-                              (path-iid request)
-                              {:filename filename
-                               :media-type (or (not-empty (str (get body "media_type")))
-                                               "application/octet-stream")
-                               :base64 (str base64)
-                               :kind "doc"
-                               :audience "user"})]
+        (if-let
+          [descriptor (state/append-iteration-attachment!
+                        (path-iid request)
+                        {:filename filename
+                         :media-type (or (not-empty (str (get body "media_type")))
+                                         "application/octet-stream")
+                         :base64 (str base64)
+                         :kind "doc"
+                         :audience "user"})]
           (json-response 201 descriptor)
           (error-response 404
-                          :attachment-not-stored
-                          "unknown iteration"
+                          :attachment-not-stored "unknown iteration"
                           :iteration_id (str (path-iid request))))))
     (session-404 (get-in request [:path-params :sid]))))
 
@@ -3707,6 +3716,29 @@
       _
       (when-let [db-path (and (map? db) (:path db))]
         (System/setProperty "vis.db.path" (str db-path)))
+
+      ;; ONE gateway per DB (see [[discovery/foreign-owner]]). A second daemon does
+      ;; not fail to bind - BSD lets `0.0.0.0:P` listen beside an existing
+      ;; `127.0.0.1:P` - it just takes the registry over while the first keeps
+      ;; running: two halves narrating one session, each with its own
+      ;; `:current-turn` and cancellation tokens, so a stop only reaches the half
+      ;; that answered the client and the other keeps iterating.
+      _
+      (when-let [{:keys [pid host port]} (discovery/foreign-owner db)]
+        (throw (ex-info (str "a gateway is already running for this DB at http://"
+                             host
+                             ":"
+                             port
+                             " (pid "
+                             pid
+                             "). Stop it first: `vis-agent gateway stop`. "
+                             "To pair a phone with the daemon that is already running: "
+                             "`vis-agent gateway pair`.")
+                        {:type :gateway/db-already-served
+                         :pid pid
+                         :host host
+                         :port port
+                         :vis/user-error true})))
 
       ;; :token must be visible to rebuild-app! before Jetty serves the
       ;; first request; a failed boot must roll the state back so a

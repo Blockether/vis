@@ -19,7 +19,7 @@
    OUTBOX tap — an optional engine-managed capture directory (`$VIS_OUTBOX`,
    distinct from configured filesystem roots): the sandbox may WRITE there and every
    file it closes is handed to `on-close` so the engine can persist it as a
-   `session_iteration_attachment` (the implicit twin of `vis_attach`). Reads,
+   `session_iteration_attachment` (the implicit twin of `attach`). Reads,
    and writes anywhere else, are untouched.
 
    Empty/zero roots ⇒ DENY everything (fail closed)."

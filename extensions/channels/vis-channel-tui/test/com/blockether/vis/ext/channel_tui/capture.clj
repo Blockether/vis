@@ -11,7 +11,7 @@
      (cap/shot! {:paint! (fn [{:keys [screen]}] (dlg/magit-dialog! screen root))})
      ;; => \"/tmp/vis-tui/shot.png\"
 
-   That string is a PATH: attach it with `vis_attach` and LOOK at it. Three more
+   That string is a PATH: attach it with `attach` and LOOK at it. Three more
    calls cover everything else:
 
      (cap/frame-text (cap/capture! {:paint! …}))   ; greppable text of the paint

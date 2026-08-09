@@ -910,19 +910,21 @@ every `sub_loop` fork) and loaded lazily on first import:
   `fontTools`.
 - Time — `zoneinfo` (604+ zones from `java.time`), `dateutil`.
 - Ops / testing — `paramiko`, `pytest` (the same shim the test runner installs).
-- Globals, no import needed — `vis_attach` / `vis_attachments` /
-  `vis_attachment` / `vis_read_attachment` and `nippy_encode` / `nippy_decode`.
-  `vis_attachments()` and `vis_attachment(id)` return descriptor dicts (id,
+- Globals, no import needed — `attach`, `list_attachments`, `get_attachment`,
+  `read_attachment`, `show_attachment`, plus `nippy_encode` / `nippy_decode`.
+  `list_attachments()` and `get_attachment(...)` return descriptor dicts (id,
   filename, version, media type, kind, size, audience, and the `turn_id` it
   belongs to — a tool artifact adds `iteration_id` / `tool_call_id`);
-  `vis_read_attachment(id)` returns the raw bytes and nothing else. **Same document,
-  same name**: a revision of an artifact you already attached goes back under
-  its own filename — `report.png` again, never `report_v2.png` beside it — and
-  is stored as the next **version** of that one artifact, so a document reads as
-  one continuous thread rather than a pile of near-duplicates. A fresh name is
-  for a genuinely different document. Walk the thread with
-  `vis_attachment_versions(name)` and pick a cut with
-  `vis_attachment_version(name, n)`.
+  `read_attachment(...)` returns the raw bytes and nothing else.
+  **Same document, same name**: a revision goes back under the filename it
+  already had and is stored as that artifact's next **version**, never
+  `report_v2.png` beside `report.png`; a fresh name is a different document, and
+  `list_attachments(name)` walks the thread.
+
+  **Name vs id — one addressing rule.** The filename is the artifact, an id is
+  one exact stored version of it. Every read call takes either as its first
+  argument: a filename resolves to the latest cut unless you pass a `version`
+  (negative counts back from the latest), an id resolves to that one cut.
 
 `matplotlib` renders through a native `imaging` PNG backend: `plt.show()` paints the
 figure inline in a graphics-capable terminal (Kitty/iTerm2, e.g. Ghostty) and

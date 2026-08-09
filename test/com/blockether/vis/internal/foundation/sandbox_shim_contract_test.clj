@@ -107,7 +107,7 @@
       ;; The sandbox capability docs are generated from these; a blank one ships
       ;; an unusable capability the model cannot discover. A shim reaches Python
       ;; either as an importable module (`:shim/imports`) or as prebound globals
-      ;; (`:shim/bindings`, how `attach` publishes `vis_attach` & friends) —
+      ;; (`:shim/bindings`, how the `attach` shim publishes `attach` & friends) —
       ;; declaring NEITHER makes it unreachable.
       (doseq [{:shim/keys [name description imports bindings]} (registered-shims)]
         (expect (not (str/blank? name)))

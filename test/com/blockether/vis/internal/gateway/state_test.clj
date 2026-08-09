@@ -3568,3 +3568,52 @@
         (=
           "Turn stalled before reaching the provider: no output for 360047ms in phase :engine-start"
           (failure-text (atom {:stall-detail "no output for 360047ms in phase :engine-start"})))))))
+
+(defdescribe
+  cross-process-liveness-test
+  "What `/v1/sessions` calls `live` has to describe the MACHINE, because that is
+   what the question means to a client: this gateway is the one authority two apps
+   share. `soul` therefore falls back to the bus's cross-process index for a turn
+   this process is not running itself."
+  ;; Regression: a desktop app and a phone reading the SAME gateway showed
+  ;; different sets of live sessions. `live` came only from this process's
+  ;; in-memory registry, which learns about a sibling process's turn just when
+  ;; somebody SSE-subscribes to that session — so each app lit up exactly the
+  ;; sessions it had happened to open, and neither ever saw the whole fleet.
+  (it "reports a turn running in a SIBLING process, with nothing subscribed here"
+      (with-redefs
+        [lp/by-id
+         (constantly {:id "s-foreign" :channel :api :title "t"})
+
+         lp/db-info
+         (constantly nil)
+
+         persistance/db-session-turn-stats
+         (constantly nil)
+
+         ;; No subscriber, so this process's registry holds no entry for the
+         ;; session at all — the index is the only thing that knows.
+         bus/live-turns
+         (constantly {"s-foreign" "T-foreign"})]
+
+        (let [row (state/soul "s-foreign")]
+          (expect (true? (get row "live")))
+          (expect (= "running" (get row "status")))
+          (expect (= "T-foreign" (get row "current_turn_id"))))))
+  (it "stays idle when no process on this machine is running the session"
+      (with-redefs
+        [lp/by-id
+         (constantly {:id "s-quiet" :channel :api :title "t"})
+
+         lp/db-info
+         (constantly nil)
+
+         persistance/db-session-turn-stats
+         (constantly nil)
+
+         bus/live-turns
+         (constantly {})]
+
+        (let [row (state/soul "s-quiet")]
+          (expect (false? (get row "live")))
+          (expect (= "idle" (get row "status")))))))

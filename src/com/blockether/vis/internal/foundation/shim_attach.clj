@@ -1,8 +1,8 @@
 (ns com.blockether.vis.internal.foundation.shim-attach
-  "Built-in sandbox SHIM: `vis_attach` — the GENERIC
+  "Built-in sandbox SHIM: `attach` — the GENERIC
    producer twin of the matplotlib capture. A tool running in `python_execution`
    writes any artifact (a PNG it rendered, a CSV/JSON/PDF/wav it built, whatever)
-   and hands it to `vis_attach(path)` (or `vis_attach(data, name)` for bytes it
+   and hands it to `attach(path)` (or `attach(data, name)` for bytes it
    never wrote out); the
    engine then OWNS the bytes as a durable `session_iteration_attachment` row,
    exactly like a matplotlib figure — surviving a web/TUI restart and (for image
@@ -20,7 +20,7 @@
    `:attachments`.
 
    Registered unconditionally as a foundation shim (like shim-yaml /
-   shim-matplotlib): its `:ext/sandbox-shims` entry autoloads `vis_attach` into
+   shim-matplotlib): its `:ext/sandbox-shims` entry autoloads `attach` into
    every sandbox (main + every `sub_loop` fork)."
   (:require [com.blockether.imaging :as imaging]
             [com.blockether.vis.internal.attachments :as attachments]
@@ -56,7 +56,7 @@
    an image (an SVG, or a format `com.blockether/imaging` cannot probe) — the
    caller then records the attachment with no inline fence and the renderer
    keeps its text placeholder. Never throws: a temp-file/decoding hiccup must
-   not break `vis_attach`."
+   not break `attach`."
   [^String media-type ^String b64]
   (try (let [mt (str/lower-case (str/trim (str media-type)))]
          (cond (attachments/human-only-media-type? mt)
@@ -100,18 +100,17 @@
    inline `vis-image` fence."
   [kind media-type b64 filename size audience label]
   (attach-envelope
-    #(cond (str/blank? (str b64)) (throw (ex-info "vis_attach: empty payload (no bytes to persist)"
-                                                  {}))
-           (str/blank? (str media-type)) (throw (ex-info "vis_attach: missing media type" {}))
+    #(cond (str/blank? (str b64)) (throw (ex-info "attach: empty payload (no bytes to persist)" {}))
+           (str/blank? (str media-type)) (throw (ex-info "attach: missing media type" {}))
            (> (long (or size 0)) mpl-capture/max-capture-bytes)
-           (throw (ex-info (str "vis_attach: payload "
+           (throw (ex-info (str "attach: payload "
                                 (long (or size 0))
                                 " bytes exceeds the "
                                 (quot mpl-capture/max-capture-bytes (* 1024 1024))
                                 " MiB attachment limit")
                            {}))
            (nil? mpl-capture/*attachment-sink*)
-           (throw (ex-info (str "vis_attach: no active capture sink — call it inside a "
+           (throw (ex-info (str "attach: no active capture sink — call it inside a "
                                 "python_execution block so the produced artifact can be "
                                 "attached to that iteration")
                            {}))
@@ -135,7 +134,7 @@
                    info))))
 
 (defn- attach-bridge-bindings
-  "Host callable the `vis_attach` shim delegates to. `__vis_record_attachment__`
+  "Host callable the `attach` shim delegates to. `__vis_record_attachment__`
    takes the already-decided attachment fields (kind / media-type / base64 /
    filename / size / audience / label) and appends the map to the
    active per-block artifact sink via `mpl-capture/record-attachment!`. Returns
@@ -156,7 +155,7 @@
    (fn []
      (attach-envelope
        #(if-let [r mpl-capture/*attachment-reader*] (json/write-json-str (vec (or ((:list r)) [])))
-          (throw (ex-info (str "vis_attachments: no active attachment reader — call it "
+          (throw (ex-info (str "list_attachments: no active attachment reader — call it "
                                "inside a python_execution block")
                           {})))))
    "__vis_read_attachment__"
@@ -165,23 +164,21 @@
        #(if-let [r mpl-capture/*attachment-reader*]
           (if-let [a ((:read r) (str id))]
             (:base64 a)
-            (throw (ex-info
-                     (str "vis_read_attachment: no attachment with id " id " in this session")
-                     {})))
-          (throw (ex-info (str "vis_read_attachment: no active attachment reader — call it "
+            (throw (ex-info (str "read_attachment: no attachment with id " id " in this session")
+                            {})))
+          (throw (ex-info (str "read_attachment: no active attachment reader — call it "
                                "inside a python_execution block")
                           {})))))
    "__vis_reinspect_attachment__"
-   (fn [id detail]
+   (fn [id]
      (attach-envelope
        #(if-let [r mpl-capture/*attachment-reader*]
-          (if-let [a ((:reinspect r) (str id) (str (or detail "auto")))]
+          (if-let [a ((:reinspect r) (str id))]
             [(str (:id a)) (str (:filename a)) (str (:media-type a)) (long (or (:size a) 0))]
-            (throw (ex-info (str "vis_reinspect_attachment: no image attachment with id "
-                                 id
-                                 " in this session")
-                            {})))
-          (throw (ex-info (str "vis_reinspect_attachment: no active attachment reader — call it "
+            (throw (ex-info
+                     (str "show_attachment: no image attachment with id " id " in this session")
+                     {})))
+          (throw (ex-info (str "show_attachment: no active attachment reader — call it "
                                "inside a python_execution block")
                           {})))))})
 
@@ -190,39 +187,35 @@
   (vis/extension
     {:ext/name "foundation-shim-attach"
      :ext/description
-     (str "Sandbox `vis_attach(source)` — a confined path, in-memory bytes, or a figure: "
-          "persists any artifact — image, CSV/TSV, JSON, PDF, wav — "
-          "as a durable session attachment without stdout parsing. "
-          "Survives restart; `image/*` replays to vision models across turns; a CSV/TSV becomes "
-          "a live transcript table whose rows never reach the model. "
-          "SAME DOCUMENT, SAME NAME: a revision goes back under the filename it already had and "
-          "is stored as that artifact's next VERSION, so one document stays one continuous "
-          "thread. ONE OR TWO artifacts per turn: `audience` routes each one to "
-          "`both`/`user`/`model`. `vis_attachments()` lists compact descriptor dicts; "
-          "`vis_read_attachment(id)` returns the raw bytes alone.")
+     (str "Sandbox `attach(source)` — a confined path, in-memory bytes, or a figure: "
+          "persists any artifact (image, CSV/TSV, JSON, PDF, wav) as a durable session "
+          "attachment. Survives restart; `image/*` replays to vision models; a CSV/TSV becomes "
+          "a transcript table whose rows never reach the model. "
+          "SAME DOCUMENT, SAME NAME: a revision goes back under the filename it already had, "
+          "as that artifact's next VERSION; a new name is a different document. "
+          "`list_attachments()`, `get_attachment` and `read_attachment` take the same target — "
+          "the filename, or an id out of a descriptor.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/kind "foundation"
      :ext/sandbox-shims
-     [{:shim/name "attach"
-       :shim/globals ["vis_attach" "vis_attachments" "vis_attachment"
-                      "vis_read_attachment" "vis_reinspect_attachment" "vis_attachment_versions"
-                      "vis_attachment_version"]
+     [{:shim/name "attachments"
+       :shim/globals ["attach" "list_attachments" "get_attachment" "read_attachment"
+                      "show_attachment"]
        :shim/description
-       (str
-         "`vis_attach` persists artifacts (images, CSV/TSV tables, JSON, "
-         "PDF, audio) as durable DB-owned iteration attachments with sniffed media types, "
-         "surviving restarts. SAME DOCUMENT, SAME NAME — a new revision of an artifact you "
-         "already attached goes back under its OWN filename and becomes that artifact's next "
-         "VERSION, never `report_v2.png` beside `report.png`; a fresh name starts a genuinely "
-         "different document, and `vis_attachment_versions(name)` / "
-         "`vis_attachment_version(name, n)` walk that thread. Multiple images compose into "
-         "one sheet (a matplotlib grid, one montage) for a single call; "
-         "`audience='both'|'user'|'model'` routes who sees it. `vis_attachments()` lists compact "
-         "descriptor DICTS and `vis_attachment(id)` is one of them; `vis_read_attachment(id)` "
-         "returns the raw BYTES alone. Vis-native; no upstream library.")
+       (str "`attach` persists artifacts (images, CSV/TSV tables, JSON, PDF, audio) as durable "
+            "DB-owned iteration attachments with sniffed media types, surviving restarts. "
+            "SAME DOCUMENT, SAME NAME — a revision goes back under its OWN filename as that "
+            "artifact's next VERSION, never `report_v2.png` beside `report.png`; a fresh name "
+            "is a different document, and `list_attachments(name)` walks the thread. Compose "
+            "many images into one sheet per call; `audience='both'|'user'|'model'` routes who "
+            "sees it. ONE ADDRESSING RULE on the read side: `get_attachment(target, "
+            "version=None)`, `read_attachment` and `show_attachment` take the FILENAME (latest "
+            "cut unless you name a version) or an `id` from a descriptor. `read_attachment` is "
+            "the only door to the BYTES; `show_attachment` puts a stored image back in front of "
+            "the MODEL for the next request. Vis-native; no upstream library.")
        :shim/bindings attach-bridge-bindings
        :shim/source "vis-shims/attach.py"}]}))
 

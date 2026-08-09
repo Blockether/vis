@@ -3822,7 +3822,7 @@
                  (vec (take 8 (drop 2 texts))))))))
 
 (defdescribe tool-card-image-reservation-test
-             ;; A `vis-image` fence inside an op-card RESULT (e.g. `vis_attach`'s stdout)
+             ;; A `vis-image` fence inside an op-card RESULT (e.g. `attach`'s stdout)
              ;; reserves a blank-lined cell box for the picture. The op-card body compaction
              ;; strips fence padding, but MUST NOT strip those reserved rows — else the box
              ;; collapses and the image overpaints the rows below it.
@@ -3868,7 +3868,7 @@
                       [body (fence w h)
                        {:keys [line-meta]} (render/format-answer-with-thinking-data
                                              nil
-                                             [{:forms [{:code "print(vis_attach(\"/tmp/shot.png\"))"
+                                             [{:forms [{:code "print(attach(\"/tmp/shot.png\"))"
                                                         :stdout body
                                                         :result body
                                                         :duration-ms 1

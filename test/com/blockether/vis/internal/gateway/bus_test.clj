@@ -28,12 +28,23 @@
      @(var-get #'bus/deliver-fn)]
 
     (with-redefs
-      [bus/events-dir (fn []
-                        tmp)]
+      [bus/events-dir
+       (fn []
+         tmp)
+
+       ;; In production the liveness index is a SIBLING of the journal dir; give
+       ;; it a home inside the throwaway one so no test ever marks a session live
+       ;; in the developer's own ~/.vis.
+       bus/live-dir
+       (fn []
+         (.resolve ^java.nio.file.Path tmp "live"))]
+
       ;; a fresh journal dir is a fresh world: drop this process's orphan-reap
-      ;; markers and tail cursors so re-running in one JVM starts clean
+      ;; markers, tail cursors and cached liveness so re-running in one JVM starts
+      ;; clean
       (reset! (var-get #'bus/reaped-turns) {})
       (reset! (var-get #'bus/tails) {})
+      (reset! (var-get #'bus/live-cache) {:at 0 :turns {}})
       (bus/set-deliver-fn! (fn [_sid _store? ev]
                              (swap! capture conj ev)))
       (try (f capture
@@ -468,3 +479,75 @@
                  (expect (true? (#'bus/poll-once!)))
                  (expect (= [sid] @seen))
                  (finally (bus/set-relevant-sids-fn! nil))))))))
+
+(defdescribe
+  fleet-liveness-test
+  "Liveness is a fact about the MACHINE, not about one process. `live-turns` is
+   the cross-process index every producer writes at `turn.started` and retracts at
+   the terminal, so a gateway can answer \"is this session running\" for a turn it
+   is not running itself and has never subscribed to."
+  ;; Regression: two Vis apps (desktop and phone) reading the SAME gateway showed
+  ;; different sets of live sessions. `/v1/sessions` derived `live` from this
+  ;; process's in-memory registry, which learns about a sibling process's turn only
+  ;; when somebody SSE-subscribes to that session — so each app lit up exactly the
+  ;; sessions it had happened to open, and both under-reported the fleet.
+  (it "reports a published turn with no subscriber, no hydrate and no tailer delivery"
+      (with-temp-journal
+        (fn [_capture _write!]
+          (let [sid (str (random-uuid))]
+            (expect (nil? (bus/live-turn-id sid)))
+            (bus/publish!
+              sid
+              {"schema" 1 "seq" 1 "type" "turn.started" "session_id" sid "turn_id" "T-1"}
+              {:store? true :truncate? true})
+            (expect (= "T-1" (bus/live-turn-id sid)))
+            (expect (= {sid "T-1"} (bus/live-turns)))))))
+  (it "retracts it on the terminal, so a finished session never stays lit"
+      (with-temp-journal
+        (fn [_capture _write!]
+          (let [sid (str (random-uuid))]
+            (bus/publish!
+              sid
+              {"schema" 1 "seq" 1 "type" "turn.started" "session_id" sid "turn_id" "T-2"}
+              {:store? true :truncate? true})
+            (expect (= "T-2" (bus/live-turn-id sid)))
+            (bus/publish!
+              sid
+              {"schema" 1 "seq" 2 "type" "turn.completed" "session_id" sid "turn_id" "T-2"}
+              {:store? true})
+            (expect (nil? (bus/live-turn-id sid)))))))
+  (it "ignores AND deletes a marker whose producer process is gone"
+      (with-temp-journal
+        (fn [_capture _write!]
+          (let
+            [sid
+             (str (random-uuid))
+
+             dir
+             ^java.nio.file.Path (#'bus/live-dir)
+
+             f
+             (.toFile (.resolve dir (str sid ".json")))]
+
+            (java.nio.file.Files/createDirectories dir
+                                                   (make-array java.nio.file.attribute.FileAttribute
+                                                               0))
+            (spit f
+                  (wire/json-str {"schema" 1 "session_id" sid "turn_id" "T-orphan" "pid" dead-pid}))
+            (reset! (var-get #'bus/live-cache) {:at 0 :turns {}})
+            ;; A crashed producer owes a retract it can no longer make, so the
+            ;; reader retracts for it — otherwise one kill -9 lights a session up
+            ;; forever on every client of this machine.
+            (expect (nil? (bus/live-turn-id sid)))
+            (expect (not (.exists f)))))))
+  (it "drops the marker when the session is forgotten"
+      (with-temp-journal
+        (fn [_capture _write!]
+          (let [sid (str (random-uuid))]
+            (bus/publish!
+              sid
+              {"schema" 1 "seq" 1 "type" "turn.started" "session_id" sid "turn_id" "T-3"}
+              {:store? true :truncate? true})
+            (expect (= "T-3" (bus/live-turn-id sid)))
+            (bus/forget! sid)
+            (expect (nil? (bus/live-turn-id sid))))))))

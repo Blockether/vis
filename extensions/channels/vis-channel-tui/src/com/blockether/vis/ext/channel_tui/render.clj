@@ -4260,14 +4260,14 @@
   (and (vector? node) (= :code (first node)) (= "vis-image" (:lang (second node)))))
 
 (defn- table-code-block?
-  "True for a `vis-table` code node — the fence `vis_attach` emits for a CSV or
+  "True for a `vis-table` code node — the fence `attach` emits for a CSV or
    TSV artifact. Body lines: summary, file name, mime, `COLSxROWS`, size-label,
    then the (row-capped) payload as normalized CSV."
   [node]
   (and (vector? node) (= :code (first node)) (= "vis-table" (:lang (second node)))))
 
 (defn- doc-code-block?
-  "True for a `vis-doc` code node — the fence `vis_attach` emits for a PDF or an
+  "True for a `vis-doc` code node — the fence `attach` emits for a PDF or an
    HTML page. Body lines: summary, absolute host path, mime, file name,
    size-label. There is no payload: a document is opened, not inlined."
   [node]
@@ -4497,7 +4497,7 @@
     (vec (concat header body))))
 
 (defn- table-block-parts
-  "Parse a `vis-table` node body — the header lines `vis_attach` writes, then the
+  "Parse a `vis-table` node body — the header lines `attach` writes, then the
    CSV payload — into `{:summary :name :cols :rows :csv}`. Missing fields come
    back nil."
   [node]
@@ -4624,7 +4624,7 @@
             (layout/ast->entries [:ast {} [:code {} (str/join "\n" lines)]] content-w {})))))
 
 (defn- doc-block-parts
-  "Parse a `vis-doc` node body — the header lines `vis_attach` writes for a PDF or
+  "Parse a `vis-doc` node body — the header lines `attach` writes for a PDF or
    an HTML page — into `{:summary :path :mime :name :size-label}`. Missing fields
    come back nil."
   [node]

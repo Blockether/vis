@@ -484,7 +484,7 @@
 (defdescribe
   iteration-attachments-test
   "The transcript surfaces the OUTBOUND artifacts a tool call produced
-   (matplotlib figures / `vis_attach` payloads) as byte-free descriptors
+   (matplotlib figures / `attach` payloads) as byte-free descriptors
    carrying a read-back id, so a reader can fetch them from the transcript.
    Bytes are NEVER inlined into the projection."
   (it
@@ -528,6 +528,6 @@
           ;; Markdown report: lists the artifact + its read-back id, no bytes.
           (expect (str/includes? md "_attachments:_"))
           (expect (str/includes? md "chart.png"))
-          (expect (str/includes? md (str "vis_read_attachment(" (:id att) ")")))
+          (expect (str/includes? md (str "read_attachment(" (:id att) ")")))
           (expect (not (str/includes? md b64))))
         (finally (vis/db-dispose-connection! s))))))

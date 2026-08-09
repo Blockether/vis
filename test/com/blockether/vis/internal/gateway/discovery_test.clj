@@ -371,3 +371,50 @@
              (is (some #{:tick} phases) "a heartbeat ticks while awaiting")
              (is (= {:phase :ready :mode :awaited :entry (:entry res)} (last @events)))))
          (finally (disco/release-spawn-lock! holder)))))
+
+;; Regression: the companion showed "Cancelling..." forever and the live turn
+;; then vanished from the transcript. A second `vis-agent gateway start` for the
+;; same DB (`--pair --host 0.0.0.0` beside a running `127.0.0.1` daemon) did not
+;; fail to bind and simply overwrote the registry, so two daemons appended to one
+;; session journal and the stop reached the half that did not hold the turn.
+(deftest a-live-daemon-for-the-db-forbids-a-second-one
+  (let
+    [db
+     "/tmp/split-brain/vis.db"
+
+     owner
+     (fn [opts]
+       (disco/foreign-owner db
+                            (merge {:alive? (constantly true) :listening? (constantly true)}
+                                   opts)))]
+
+    (testing "no registry at all: this process is free to start" (is (nil? (owner {}))))
+    (disco/write-registry! db {:pid (disco/current-pid) :port 7890 :host "127.0.0.1" :secret "t"})
+    (testing "our own entry is not foreign - an in-process restart is no split brain"
+      (is (nil? (owner {}))))
+    (disco/write-registry! db {:pid 4242 :port 7890 :host "0.0.0.0" :secret "t"})
+    (testing "another live process owns the DB, whatever host it bound"
+      (is (= 4242 (:pid (owner {})))))
+    (testing "a dead daemon frees the DB" (is (nil? (owner {:alive? (constantly false)}))))
+    (testing "a recycled pid whose endpoint no longer listens frees the DB"
+      (is (nil? (owner {:listening? (constantly false)}))))
+    (testing ":memory never registers, so it never has an owner"
+      (is (nil? (disco/foreign-owner :memory
+                                     {:alive? (constantly true) :listening? (constantly true)}))))))
+
+(deftest endpoint-listening?-reads-a-real-socket
+  (let
+    [server
+     (java.net.ServerSocket. 0)
+
+     port
+     (.getLocalPort server)]
+
+    (try (is (true? (disco/endpoint-listening? "127.0.0.1" port)))
+         (testing "a wildcard bind is probed on loopback, which it also answers on"
+           (is (true? (disco/endpoint-listening? "0.0.0.0" port))))
+         (finally (.close server)))
+    (is (false? (disco/endpoint-listening? "127.0.0.1" port))))
+  (testing "an unusable endpoint is never mistaken for a live daemon"
+    (is (false? (disco/endpoint-listening? "127.0.0.1" nil)))
+    (is (false? (disco/endpoint-listening? "" 0)))))
