@@ -1,13 +1,14 @@
 (ns com.blockether.vis.internal.foundation.git-tool
   "The single `git` tool — a thin, honest proxy to the host `git` binary.
 
-   ONE built-in Python function, `git`, runs a SERIAL batch of `git <args…>` commands
-   in the active workspace root and returns a TOTAL, string-keyed result the model reads
-   directly: `{\"commands\" [{\"command\", \"args\", \"stdout\", \"stderr\", \"exit\",
-   \"duration_ms\", \"timed_out\"} …]}`. Every key is present for every command
-   (`stderr` \"\" when empty, `exit` None only when that command timed out), so no
-   field ever KeyErrors. A non-zero exit is DATA, not a tool failure; later commands
-   still run, so a batch reports partial outcomes exactly like a terminal script.
+   ONE built-in Python function, `git`, runs ONE `git <args…>` command in the
+   active workspace root and returns a TOTAL, string-keyed result the model reads
+   directly: `{\"command\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\",
+   \"timed_out\"}`. Every key is present (`stderr` \"\" when empty, `exit` None only
+   when the command timed out), so no field ever KeyErrors. A non-zero exit is
+   DATA, not a tool failure. ONE call is ONE command, exactly as `shell` is: an
+   ordered batch was a second budget and a second result shape for what a second
+   call already says.
 
    This REPLACES the old JGit-backed `git_*` surface (foundation-git): no
    embedded git implementation, no SSH/BouncyCastle stack — the only git is
@@ -25,7 +26,6 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.git :as git]
-            [com.blockether.vis.internal.foundation.serial-batch :as batch]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.strutil :as strutil]))
 
@@ -70,37 +70,23 @@
                 :else (recur (inc i) (.append buf c) true q tokens)))))))
 
 (defn- normalize-args
-  "Coerce ONE element of the `commands` batch into a vector of literal git
-   tokens. The schema's item shape is a sequential of literal args, spaces and
-   all, and it passes through untouched. A bare STRING element is not refused any
-   more: it is the one-line spelling of that same argv, so it is split by
-   [[split-argv]] instead of wasting the call. Anything else has no reading as an
-   argv and throws. An empty result is the caller's signal to ask for at least
-   one argument."
+  "Coerce the caller's `command` into a vector of literal git tokens. The
+   schema's shape is a sequential of literal args, spaces and all, and it passes
+   through untouched. A bare STRING is not refused: it is the one-line spelling of
+   that same argv, so it is split by [[split-argv]] instead of wasting the call.
+   Anything else has no reading as an argv and throws. An empty result is the
+   caller's signal to ask for at least one argument."
   [args]
   (cond (sequential? args) (into [] (comp (map str) (remove str/blank?)) args)
         (string? args) (into [] (remove str/blank?) (split-argv args))
-        :else (throw (ex-info
-                       (str "git commands must be lists of literal tokens \u2014 "
-                            "one command is a batch of ONE, so pass each as an array, "
-                            "e.g. [[\"status\", \"--short\"]] or [[\"commit\", \"-m\", \"wip\"]]. "
-                            "Got "
-                            (pr-str (type args))
-                            ".")
-                       {:type ::bad-commands :tool "git"}))))
-
-(defn- normalize-batch
-  "The ordered batch with its ONE genuinely ambiguous spelling resolved. A FLAT
-   array of strings reads either as several one-line commands
-   (`[\"status --short\", \"diff --stat\"]`) or as a single argv whose tokens were
-   spread (`[\"commit\", \"-m\", \"wip\"]`). A git command never BEGINS with a flag,
-   so a flag element can only be the argv reading: take the whole array as one
-   command then. Otherwise every element stays its own command, and
-   [[normalize-args]] gives each its tokens."
-  [commands]
-  (if (and (every? string? commands) (some #(str/starts-with? % "-") commands))
-    [(vec commands)]
-    commands))
+        :else (throw
+                (ex-info
+                  (str "git `command` must be a list of literal tokens \u2014 "
+                       "one argv, e.g. [\"status\", \"--short\"] or [\"commit\", \"-m\", \"wip\"]. "
+                       "Got "
+                       (pr-str (type args))
+                       ".")
+                  {:type ::bad-command :tool "git"}))))
 
 (defn- verbose-add-tokens
   "`git add` is silent by design, so a bare `add` gives no feedback on WHAT it
@@ -140,69 +126,51 @@
    separate git process machinery: git commands are bounded shell commands, so
    they inherit the same working directory resolution, process jail, capped
    capture and timeout — a literal argv, so nothing is quoted or interpreted.
-   `secs` is what is LEFT of the BATCH's one wait budget (`serial-batch/budget`);
-   0 means it is spent, and the command is reported unstarted instead of starting
-   a fresh full timeout of its own.
-   A non-zero exit is deliberately a result, so callers can continue a batch and
-   inspect every command's stdout/stderr independently."
+   A non-zero exit is deliberately a result, so the caller can inspect stdout and
+   stderr instead of catching an exception."
   [env args ^long secs]
   (let [tokens (normalize-args args)]
     (when (empty? tokens)
       (throw
         (ex-info
-          "Every git command needs at least one argument, e.g. [\"status\"] or [\"commit\", \"-m\", \"msg\"]."
+          "The git command needs at least one argument, e.g. [\"status\"] or [\"commit\", \"-m\", \"msg\"]."
           {:type ::no-args})))
-    (if (zero? secs)
-      ;; The batch's shared budget is spent. The entry keeps the SAME total key set
-      ;; as one that ran, so `r["commands"][i]["stdout"]` never KeyErrors on it.
+    (let [r (shell/run-argv env (into ["git"] (verbose-add-tokens tokens)) {"timeout_secs" secs})]
       {"command" (str "git " (str/join " " tokens))
        "args" (vec tokens)
-       "stdout" ""
-       "stderr" (str "Not started: the "
-                     default-timeout-secs
-                     "s wait is ONE budget for the whole batch and it ran out before this command.")
-       "exit" nil
-       "duration_ms" 0
-       "timed_out" true}
-      (let [r (shell/run-argv env (into ["git"] (verbose-add-tokens tokens)) {"timeout_secs" secs})]
-        {"command" (str "git " (str/join " " tokens))
-         "args" (vec tokens)
-         "stdout" (or (get r "stdout") "")
-         "stderr" (or (get r "stderr") "")
-         "exit" (get r "exit")
-         "duration_ms" (get r "duration_ms")
-         "timed_out" (boolean (get r "timed_out"))}))))
+       "stdout" (or (get r "stdout") "")
+       "stderr" (or (get r "stderr") "")
+       "exit" (get r "exit")
+       "duration_ms" (get r "duration_ms")
+       "timed_out" (boolean (get r "timed_out"))})))
 
 (defn- git-impl
-  "Run the `commands` array from one options map, preserving its serial order."
+  "Run the ONE `command` argv from one options map."
   [env opts]
   (when-not (map? opts)
-    (throw (ex-info "git takes one options map, e.g. await git({\"commands\": [[\"status\"]]})."
+    (throw (ex-info "git takes one options map, e.g. await git({\"command\": [\"status\"]})."
                     {:type ::bad-options :tool "git"})))
   (let
-    [commands
-     (normalize-batch (batch/ordered "git" (or (get opts "commands") (get opts :commands))))
+    [command
+     (or (get opts "command") (get opts :command))
+
+     _
+     (when (nil? command)
+       (throw (ex-info "git needs {\"command\": [\"status\", \"--short\"]} in its options map."
+                       {:type ::no-command :tool "git"})))
 
      t0
      (now-ms)
 
-     ;; ONE budget for the whole batch, not a fresh one per command: ten commands
-     ;; must not be able to cost ten times the timeout.
-     left-secs
-     (batch/budget default-timeout-secs)
-
-     results
-     (batch/run-serial commands #(git-command-result env % (left-secs)))
+     r
+     (git-command-result env command default-timeout-secs)
 
      t1
      (now-ms)]
 
-    (extension/success {:result (batch/result results)
+    (extension/success {:result r
                         :op :git
-                        :metadata {:command-count (count results)
-                                   :started-at-ms t0
-                                   :finished-at-ms t1
-                                   :duration-ms (- t1 t0)}})))
+                        :metadata {:started-at-ms t0 :finished-at-ms t1 :duration-ms (- t1 t0)}})))
 
 ;; =============================================================================
 ;; Render — the op-card for a `git` call: `<args>` headline (with an
@@ -412,54 +380,43 @@
 
     {:summary (str "⎇ " head note) :body (when (seq body) body)}))
 
-(defn- render-git-batch-result
-  "Render one expandable result card with each command's own stdout/stderr intact.
-   The card layout itself is `serial-batch/card`, shared with `shell`."
-  [r]
-  (batch/card
-    {:icon "⎇" :noun "git" :results (get r batch/commands-key) :render-one render-git-result}))
-
 (defn- render-git-call
   "PENDING-call display for a `git` invocation: the SAME op-card the finished call
    wears, assembled by the SAME builders, out of what is known BEFORE the run.
 
    `:summary` is the finished headline with the outcome replaced by what the call
    is doing (`⎇ commit — fix the thing (running)`), `:render` is that card's BODY
-   — the `**COMMAND**` bash the batch is about to run plus, for a commit, the
+   — the `**COMMAND**` bash the call is about to run plus, for a commit, the
    `**MESSAGE**` blockquote it will author. There is no pending dialect: a
    running git block and the block it becomes are one card.
 
-   nil when the arguments name no command — a malformed batch is the CALL's error
+   nil when the arguments name no command — a malformed argv is the CALL's error
    to report, not this preview's, so the raw invocation stays the fallback."
   [input]
   (let
-    [argvs
-     (when-let [commands (or (get input "commands") (get input :commands))]
-       ;; The SAME coercion the run does — `batch/ordered` + `normalize-batch` +
-       ;; per-command `normalize-args` — so the preview shows the very tokens git
-       ;; will receive, one-line spellings split included.
-       (try (let [argvs (mapv normalize-args (normalize-batch (batch/ordered "git" commands)))]
-              (when (every? seq argvs) argvs))
+    [argv
+     (when-let [command (or (get input "command") (get input :command))]
+       ;; The SAME coercion the run does — `normalize-args` — so the preview shows
+       ;; the very tokens git will receive, one-line spellings split included.
+       (try (let [argv (normalize-args command)]
+              (when (seq argv) argv))
             (catch Throwable _ nil)))
 
-     msgs
-     (into [] (keep commit-message) argvs)
+     msg
+     (commit-message argv)
 
      summary
      (when-let
-       [head (some-> (first argvs)
+       [head (some-> argv
                      (git-headline true)
                      not-empty)]
-       (str "⎇ " head (when (next argvs) (str " · +" (dec (count argvs)) " more")) " (running)"))
+       (str "⎇ " head " (running)"))
 
      body
      (->> [(section "COMMAND"
-                    (some->> argvs
-                             seq
-                             (map git-command-line)
-                             (str/join "\n"))
-                    "bash")
-           (when (seq msgs) (prose-section "MESSAGE" (str/join "\n\n" (map quote-block msgs))))]
+                    (some-> argv
+                            git-command-line)
+                    "bash") (when msg (prose-section "MESSAGE" (quote-block msg)))]
           (remove nil?)
           (str/join "\n\n"))]
 
@@ -478,10 +435,10 @@
 
 (def
   ^{:doc
-    "await git({\"commands\": [[\"status\", \"--short\"], [\"diff\", \"--stat\"]]})
-await git({\"commands\": [[\"add\", \"-A\"], [\"commit\", \"-m\", \"message with spaces\"]]})
+    "await git({\"command\": [\"status\", \"--short\"]})
+await git({\"command\": [\"commit\", \"-m\", \"message with spaces\"]})
 
-Run host Git serially from the workspace root. Pass ONE map whose non-empty `commands` is a list of non-empty argv lists, with `git` omitted; each token is one literal argument, so paths and messages with spaces are safe. Never pass a positional array. Later commands see earlier mutations. Result: `{\"commands\": [{\"command\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\", \"timed_out\"}, ...]}`; output stays with its command. Non-zero `exit` is data, and later commands still run. The timeout is ONE budget for the whole batch, so a long batch cannot cost it once per command."
+Run ONE host Git command from the workspace root. Pass ONE map whose `command` is a non-empty argv list with `git` omitted; each token is one literal argument, so paths and messages with spaces are safe. Never pass a positional array. Result: `{\"command\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\", \"timed_out\"}`. Non-zero `exit` is data, not a failure. One call is one command — issue a second call for the next one."
     :arglists '([opts])}
   git
   git-impl)
@@ -492,15 +449,13 @@ Run host Git serially from the workspace root. Pass ONE map whose non-empty `com
     {:symbol 'git
      :native-tool? true
      :result
-     (str
-       "Top level is a MAP `{\"op\": \"git\", \"commands\": [row, ...]}`: read `r[\"commands\"][i]`, "
-       "never `r[0]`. Per row: `command`, `args`, `stdout`, `stderr`, `exit`, `timed_out`, "
-       "`duration_ms`.")
+     (str "Flat MAP: `command`, `args`, `stdout`, `stderr`, `exit`, `timed_out`, `duration_ms` "
+          "(plus `op`) — no `commands` array to index.")
      :name "git"
      :description
-     (str "Run SERIAL host Git only when `session[\"workspace\"]` lacks VCS facts or to act. "
-          "ONE options map; non-zero exits are data; later commands still run.")
-     :render-finish-call-fn render-git-batch-result
+     (str "Run ONE host Git command only when `session[\"workspace\"]` lacks VCS facts or to act. "
+          "ONE options map; a non-zero exit is data.")
+     :render-finish-call-fn render-git-result
      :render-start-call-fn render-git-call
      ;; Native calls dispatch straight to this two-argument handler. Python keeps
      ;; the same implementation through :inject-env?, so both paths have exactly
@@ -509,15 +464,15 @@ Run host Git serially from the workspace root. Pass ONE map whose non-empty `com
      :inject-env? true
      :tag :mutation
      :schema {:type "object"
-              :properties
-              {"commands"
-               (batch/commands-property
-                 {:items {:type "array" :minItems 1 :items {:type "string"}}
-                  :description
-                  (str "Serial argv lists with `git` omitted, e.g. `[[\"status\", \"--short\"]]`; "
-                       "a bare line is split into tokens; "
-                       "pass ONE options map, never a positional array.")})}
-              :required ["commands"]
+              :properties {"command"
+                           {:type "array"
+                            :minItems 1
+                            :items {:type "string"}
+                            :description
+                            (str "ONE argv with `git` omitted, e.g. `[\"status\", \"--short\"]`; "
+                                 "a bare line is split into tokens; "
+                                 "pass ONE options map, never a positional array.")}}
+              :required ["command"]
               :additionalProperties false}}))
 
 (def git-symbols [git-symbol])
@@ -526,7 +481,7 @@ Run host Git serially from the workspace root. Pass ONE map whose non-empty `com
   (vis/extension
     {:ext/name "foundation-git"
      :ext/description
-     "Built-in `git`: serial host-Git argv batches from the workspace root; returns per-command exit/stdout/stderr. Uses PATH `git`, not JGit; active when the workspace is in or contains a repository."
+     "Built-in `git`: ONE host-Git argv from the workspace root; returns its exit/stdout/stderr. Uses PATH `git`, not JGit; active when the workspace is in or contains a repository."
      :ext/version "0.2.0"
      :ext/author "Blockether"
      :ext/owner "vis"

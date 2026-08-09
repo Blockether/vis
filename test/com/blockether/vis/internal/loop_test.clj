@@ -2324,7 +2324,7 @@
                  (expect (= 190000
                             (eval-timeout-ms-for-code
                               120000
-                              "await shell({\"commands\": [\"clojure -M:test\"], \"timeout_secs\": 180})")))
+                              "await shell({\"command\": \"clojure -M:test\", \"timeout_secs\": 180})")))
                  (expect (= 310000
                             (eval-timeout-ms-for-code
                               120000
@@ -2350,7 +2350,7 @@
                  ;; its default: a `wait` whose budget the scan cannot read may legally own
                  ;; the full ten minutes, and the watchdog is a BACKSTOP, never a co-deadline.
                  (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
-                            (eval-timeout-ms-for-code 120000 "r = await shell(commands=[\"sleep 300\"])")))
+                            (eval-timeout-ms-for-code 120000 "r = await shell(command=\"sleep 300\")")))
                  (expect (= 610000
                             (eval-timeout-ms-for-code
                               120000
@@ -2360,7 +2360,7 @@
                  (expect (= 190000
                             (eval-timeout-ms-for-code
                               120000
-                              "r = await shell(commands=[\"x\"], timeout_secs=180)")))
+                              "r = await shell(command=\"x\", timeout_secs=180)")))
                  ;; A test run owns a multi-minute budget and answers timeouts itself.
                  (expect (= 310000
                             (eval-timeout-ms-for-code 120000 "r = await run_tests(\"clojure\", namespaces=[\"a.b-test\"])")))
@@ -3847,10 +3847,10 @@
         (expect (= "struct_index({\"paths\": [\"src/x.clj\"]})"
                    (synth {:name "struct_index" :input {"paths" ["src/x.clj"]}})))
         (expect (= "lint_code({\"code\": \"x\"})" (synth {:name "lint_code" :input {"code" "x"}})))
-        (expect (= "shell({\"commands\": [\"ls\"]})"
-                   (synth {:name "shell" :input {"commands" ["ls"]}})))
-        (expect (= "git({\"commands\": [[\"status\", \"--short\"]]})"
-                   (synth {:name "git" :input {"commands" [["status" "--short"]]}}))))
+        (expect (= "shell({\"command\": \"ls\"})"
+                   (synth {:name "shell" :input {"command" "ls"}})))
+        (expect (= "git({\"command\": [\"status\", \"--short\"]})"
+                   (synth {:name "git" :input {"command" ["status" "--short"]}}))))
     (it "python_execution still passes the model's code through"
         (expect (= "print(1)" (synth {:name "python_execution" :input {"code" "print(1)"}}))))
     (it
@@ -3886,13 +3886,13 @@
       ;; `struct_nodes` is plural-only too: `nodes` rides the generic whole-dict form.
       (expect (= "struct_nodes({\"nodes\": [{\"path\": \"a.clj\", \"nav\": [\"down\"]}]})"
                  (synth {:name "struct_nodes" :input {"nodes" [{"path" "a.clj" "nav" ["down"]}]}})))
-      (expect (= "shell({\"commands\": [\"ls\"], \"cwd\": \"/tmp\"})"
-                 (synth {:name "shell" :input {"commands" ["ls"] "cwd" "/tmp"}}))))
+      (expect (= "shell({\"command\": \"ls\", \"cwd\": \"/tmp\"})"
+                 (synth {:name "shell" :input {"command" "ls" "cwd" "/tmp"}}))))
     (it "all-positional + optional-trailing-positional shapes"
         ;; Every shell verb receives its complete request as one map.
         ;; Every shell verb receives its complete request as one map.
-        (expect (= "shell({\"id\": \"x\", \"commands\": [\"sleep 1\"]})"
-                   (synth {:name "shell" :input {"id" "x" "commands" ["sleep 1"]}})))
+        (expect (= "shell({\"id\": \"x\", \"command\": \"sleep 1\"})"
+                   (synth {:name "shell" :input {"id" "x" "command" "sleep 1"}})))
         (expect (= "shell_logs({\"id\": \"x\", \"offset\": 4096})"
                    (synth {:name "shell_logs" :input {"id" "x" "offset" 4096}})))
         (expect (= "shell_stop({\"id\": \"x\"})"
@@ -4064,7 +4064,7 @@
         [renderers (extension/native-tool-start-call-renderers [sh/vis-extension])
          tc {:id "c4"
              :name "shell"
-             :input {"commands" ["echo one"]}}
+             :input {"command" "echo one"}}
          block (native-tool-call-block {} nil tc)
          display (pending-call-display renderers
                                        (:vis/tool-name block)

@@ -114,10 +114,10 @@ shell analogue of `/slash`, and works the same way in the **TUI** and the
 ```
 
 - `!<cmd>` invokes the run operation, equivalent to Python
-  `await shell({"commands": ["<cmd>"]})`, and blocks until the command exits.
+  `await shell({"command": "<cmd>"})`, and blocks until the command exits.
   Use it for short bounded commands.
 - `!&<cmd>` invokes
-  `await shell({"commands": ["<cmd>"], "op": "background", "id": …})` under an
+  `await shell({"command": "<cmd>", "op": "background", "id": …})` under an
   auto-generated resource id (`background-<hex>`) and returns right away. Prefer it
   for commands that may take a while: builds, test suites, servers, watchers, and
   interactive processes. `logs` is an immediate snapshot of output:

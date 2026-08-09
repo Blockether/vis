@@ -9275,7 +9275,7 @@
               ;; PROCESS cwd — a bang inside a draft would then run on trunk.
               (extension/with-context
                 {:env env}
-                (if (= kind :bg) (shell-fn env [cmd] {"id" id "wait" 0}) (shell-fn env [cmd]))))
+                (if (= kind :bg) (shell-fn env cmd {"id" id "wait" 0}) (shell-fn env cmd))))
             (catch Throwable t
               (tel/log! {:level :warn :id ::bang-run-threw :data {:cmd cmd :error (ex-message t)}})
               {:result nil :error {:message (or (ex-message t) (str t))}})))
@@ -9313,13 +9313,10 @@
 
      block
      (cond->
-       {:code (if (= kind :bg)
-                (str "await shell({\"commands\": ["
-                     (pr-str cmd)
-                     "], \"wait\": 0, \"id\": "
-                     (pr-str id)
-                     "})")
-                (str "await shell({\"commands\": [" (pr-str cmd) "]})"))
+       {:code
+        (if (= kind :bg)
+          (str "await shell({\"command\": " (pr-str cmd) ", \"wait\": 0, \"id\": " (pr-str id) "})")
+          (str "await shell({\"command\": " (pr-str cmd) "})"))
         :svar/tool-call-id (str "bang-" (subs (str (java.util.UUID/randomUUID)) 0 8))
         :vis/tool-name tool-name
         :envelope {:started-at-ms t0 :finished-at-ms t1}}

@@ -6,77 +6,55 @@ the active workspace root.
 
 ## Direct native call
 
-Use the native tool for a small, fixed batch. Its only input is `commands`: a
-non-empty list of non-empty argument lists. Each inner list is the arguments
-*after* `git`; do not include the executable and do not pass a shell string.
+One call runs ONE command. Its only input is `command`: a non-empty list of the
+arguments *after* `git`; do not include the executable and do not pass a shell
+string.
 
 ```json
-{
-  "commands": [
-    ["status", "--short"],
-    ["diff", "--stat"]
-  ]
-}
+{"command": ["status", "--short"]}
 ```
 
 Arguments are literal tokens, so spaces stay safe:
 
 ```json
-{
-  "commands": [
-    ["add", "docs/git guide.md"],
-    ["commit", "-m", "docs: explain the Git tool"]
-  ]
-}
+{"command": ["commit", "-m", "docs: explain the Git tool"]}
 ```
 
-In `python_execution`, `git` also takes exactly one options map. A one-command batch is
-`await git({"commands": [["status", "--short"]]})`; never pass a bare string or an
-argument array positionally.
-
-Commands run serially in the given order. This makes a mutation sequence such
-as `add` then `commit` reliable. A non-zero exit is result data, not a tool
-transport failure: inspect it and expect later commands in the same batch to
-still run.
+In `python_execution`, `git` also takes exactly one options map —
+`await git({"command": ["status", "--short"]})`; never pass a bare string or an
+argument array positionally. A sequence such as `add` then `commit` is two
+calls, in that order; a non-zero exit is result data, not a tool transport
+failure.
 
 `git` IS a user of the `shell` tool: every command runs through the shell's own
 runner, so it inherits one working directory (`cwd`), one process jail, one
-capped capture and one timeout. It takes the same `commands` key, in the same
-input order, and answers under the same `commands` result key. Two things
-differ, and have to: a git item is an argv list (no shell, nothing to quote)
-while a shell item is one `bash -lc` command line, and `shell` answers with its
-ONE total result shape (top-level summary plus `commands`), where `git` returns
-`{"commands": [...]}` alone.
+capped capture and one timeout. It takes the same single-`command` shape and
+answers with the same flat result. One thing differs, and has to: a git command
+is an argv list (no shell, nothing to quote) while a shell command is one
+`bash -lc` command line.
 
 ## Python sandbox call
 
 The same engine-bound tool is available in `python_execution`. Await it and
-read ordinary Python dict/list data:
+read ordinary Python dict data:
 
 ```python
-result = await git({
-    "commands": [
-        ["status", "--short"],
-        ["diff", "--stat"],
-    ],
-})
+result = await git({"command": ["status", "--short"]})
 
-for command in result["commands"]:
-    if command["exit"] != 0:
-        print(command["args"], command["stderr"])
+if result["exit"] != 0:
+    print(result["args"], result["stderr"])
 ```
 
-`await git({...})` is the canonical form. It returns one object with a
-`"commands"` list in request order. Every command entry has these keys:
+`await git({...})` is the canonical form. It returns one flat object:
 
 | Key | Meaning |
 | --- | --- |
 | `"command"` | Display form, including `git`. |
 | `"args"` | The literal argument list supplied to Git. |
-| `"stdout"` / `"stderr"` | Output for that command only; empty strings when empty. |
-| `"exit"` | Exit code, or `None` when that command timed out. |
+| `"stdout"` / `"stderr"` | Output for that command; empty strings when empty. |
+| `"exit"` | Exit code, or `None` when the command timed out. |
 | `"duration_ms"` | Command duration in milliseconds. |
-| `"timed_out"` | Whether that command exceeded its deadline. |
+| `"timed_out"` | Whether the command exceeded its deadline. |
 
 Use the direct native tool for one simple action. Use `python_execution` when
 you need to inspect, filter, or combine Git results without sending every

@@ -1318,7 +1318,7 @@ vis.extension(
     "keeps vis.shell unrestricted even while the invoking session jail is enabled"
     (with-loaded
       {"shell_provider.py"
-       "import vis\ndef detect():\n    result = vis.shell({'commands': ['printf regular-shell']})\n    return {'token': result['commands'][0]['stdout'], 'source': 'shell'}\nvis.extension(name='shell-provider', description='shell provider', providers=[vis.provider(id='shell-provider', label='Shell provider', detect_fn=detect)])"}
+       "import vis\ndef detect():\n    result = vis.shell({'command': 'printf regular-shell'})\n    return {'token': result['stdout'], 'source': 'shell'}\nvis.extension(name='shell-provider', description='shell provider', providers=[vis.provider(id='shell-provider', label='Shell provider', detect_fn=detect)])"}
       (fn [_ _]
         (let
           [detect
@@ -1358,24 +1358,25 @@ vis.extension(
                                     (swap! configs subvec 1)
                                     value))]
         (let
-          [result (:result (shell/jailed-shell nil
-                                               {"cwd" (.getCanonicalPath latest-root)
-                                                "commands"
-                                                ["test -r latest.txt && printf latest-policy"
-                                                 "printf must-not-run"]}))
-           first-command (get-in result ["commands" 0])
-           second-command (get-in result ["commands" 1])]
+          [first-run (:result (shell/jailed-shell nil
+                                                  {"cwd" (.getCanonicalPath latest-root)
+                                                   "command"
+                                                   "test -r latest.txt && printf latest-policy"}))
+           second-run (try (:result (shell/jailed-shell nil
+                                                        {"cwd" (.getCanonicalPath latest-root)
+                                                         "command" "printf must-not-run"}))
+                           (catch Throwable t {"note" (ex-message t)}))]
 
-          (expect (= "latest-policy" (get first-command "stdout")))
-          (expect (true? (get first-command "started")))
-          (expect (false? (get second-command "started")))
-          (expect (re-find #"Invalid Vis configuration" (get second-command "note")))
+          (expect (= "latest-policy" (get first-run "stdout")))
+          ;; The SECOND spawn re-reads config and finds it invalid, so it refuses.
+          (expect (not= "must-not-run" (get second-run "stdout")))
+          (expect (re-find #"Invalid Vis configuration" (str (get second-run "note"))))
           (expect (= 2 @loads))))))
   (it
     "keeps the latest and session-snapshot jail APIs distinct"
     (with-loaded
       {"jail.py"
-       "import vis\ndef latest():\n    \"Use the latest jail.\"\n    return vis.jailed_shell({'commands':['echo latest']})['commands'][0]['stdout']\ndef session():\n    \"Use the session jail.\"\n    return vis.jailed_shell_session({'commands':['echo session']})['commands'][0]['stdout']\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(latest), vis.symbol(session)])"}
+       "import vis\ndef latest():\n    \"Use the latest jail.\"\n    return vis.jailed_shell({'command':'echo latest'})['stdout']\ndef session():\n    \"Use the session jail.\"\n    return vis.jailed_shell_session({'command':'echo session'})['stdout']\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(latest), vis.symbol(session)])"}
       (fn [_ _]
         (let
           [ext
@@ -1396,9 +1397,9 @@ vis.extension(
           (with-redefs
             [shell/jailed-shell (fn [actual-env opts]
                                   (swap! seen conj [actual-env opts])
-                                  {"commands" [{"stdout" "latest"}]})]
+                                  {"stdout" "latest"})]
             (expect (= "latest" (:result (latest))))
-            (expect (try (shell/session-jailed-shell nil {"commands" ["echo refused"]})
+            (expect (try (shell/session-jailed-shell nil {"command" "echo refused"})
                          false
                          (catch Throwable t
                            (str/includes?
@@ -1407,7 +1408,7 @@ vis.extension(
             (binding [extension/*current-environment* env]
               (expect (= "session\n" (:result (session)))))
             ;; The session API did not cross the latest-config host callback.
-            (expect (= [{"commands" ["echo latest"]}] (mapv second @seen))))))))
+            (expect (= [{"command" "echo latest"}] (mapv second @seen))))))))
   (it
     "unwraps the host tool ENVELOPE so a shelling extension crosses the boundary"
     ;; Regression, issue #96: `jailed-shell` returns an `extension/success`
@@ -1416,7 +1417,7 @@ vis.extension(
     ;; :result" — blaming the extension for the framework's own payload.
     (with-loaded
       {"jail.py"
-       "import vis\ndef run():\n    \"Shell out.\"\n    r = vis.jailed_shell({'commands': ['echo hi']})\n    return [r['commands'][0]['stdout'], r['stage'], sorted(r.keys())]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+       "import vis\ndef run():\n    \"Shell out.\"\n    r = vis.jailed_shell({'command': 'echo hi'})\n    return [r['stdout'], r['stage'], sorted(r.keys())]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
       (fn [_ _]
         (let
           [run
@@ -1427,19 +1428,18 @@ vis.extension(
 
           (with-redefs
             [shell/jailed-shell (fn [_env opts]
-                                  (extension/success
-                                    {:result {"commands" [{"stdout" (first (get opts "commands"))}]
-                                              "stage" :run}
-                                     :op :shell
-                                     :metadata {:duration-ms 1}}))]
+                                  (extension/success {:result {"stdout" (get opts "command")
+                                                               "stage" :run}
+                                                      :op :shell
+                                                      :metadata {:duration-ms 1}}))]
             (binding [extension/*current-environment* env]
               ;; Python sees the UNWRAPPED, deep-stringified `:result` only.
-              (expect (= ["echo hi" "run" ["commands" "stage"]] (:result (run))))))))))
+              (expect (= ["echo hi" "run" ["stage" "stdout"]] (:result (run))))))))))
   (it
     "raises a failing host tool envelope instead of handing Python the envelope"
     (with-loaded
       {"jail.py"
-       "import vis\ndef run():\n    \"Shell out.\"\n    return vis.jailed_shell({'commands': ['nope']})\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+       "import vis\ndef run():\n    \"Shell out.\"\n    return vis.jailed_shell({'command': 'nope'})\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
       (fn [_ _]
         (let
           [run

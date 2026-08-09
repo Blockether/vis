@@ -12,10 +12,16 @@
 (defn- fake-shell
   "Records one-options-map shell calls and returns lifecycle-shaped results."
   [calls]
-  (fn [opts]
+  (fn [& args]
     (let
-      [cmd
-       (first (or (get opts "commands") (get opts :commands)))
+      [[command opts]
+       (if (map? (first args)) [nil (first args)] [(first args) (second args)])
+
+       opts
+       (or opts {})
+
+       cmd
+       (or command (get opts "command") (get opts :command))
 
        op
        (or (get opts "op") (get opts :op))]
@@ -29,19 +35,18 @@
         {"status" "stopped" "stopped" true}
 
         (let [failed? (str/includes? (str cmd) "boom")]
-          {"timeout_secs" 120
-           "commands" [(cond->
-                         {"command" cmd
-                          "exit" (if failed? 7 0)
-                          "stdout" (if failed? "partial\n" "hello\n")
-                          "stderr" (if failed? "boom!\n" "")
-                          "duration_ms" (if failed? 3 2)
-                          "started" true
-                          "timed_out" false
-                          "stdout_omitted_chars" 0
-                          "stderr_omitted_chars" 0}
-                         (nil? cmd)
-                         (assoc "exit" nil))]})))))
+          (cond->
+            {"timeout_secs" 120
+             "command" cmd
+             "exit" (if failed? 7 0)
+             "stdout" (if failed? "partial\n" "hello\n")
+             "stderr" (if failed? "boom!\n" "")
+             "duration_ms" (if failed? 3 2)
+             "timed_out" false
+             "stdout_omitted_chars" 0
+             "stderr_omitted_chars" 0}
+            (nil? cmd)
+            (assoc "exit" nil)))))))
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
 
@@ -66,13 +71,22 @@
       ;; argv list was shell-quoted + joined into the direct bash line.
       (expect (= "echo hi" (:cmd (last @calls))))))
   (it
-    "passes run options and keeps Popen lifecycle ids inside the options map"
+    "passes run options and drives Popen through the shell handle verbs"
     (let
       [calls
        (atom [])
 
+       lifecycle
+       (atom [])
+
        {:keys [^Context python-context]}
-       (ep/create-python-context {'shell (fake-shell calls)})]
+       (ep/create-python-context {'shell (fake-shell calls)
+                                  'shell-logs (fn [id & [opts]]
+                                                (swap! lifecycle conj [:logs id opts])
+                                                {"status" "running" "exit" nil "text" ""})
+                                  'shell-stop (fn [id & _]
+                                                (swap! lifecycle conj [:stop id])
+                                                {"status" "stopped"})})]
 
       (.eval python-context "python" "import subprocess")
       (.eval python-context "python" "subprocess.run('sleep 1', shell=True, timeout=30, cwd='src')")
@@ -80,14 +94,15 @@
       (expect (= "src" (get (:opts (last @calls)) "cwd")))
       (.eval python-context "python" "p = subprocess.Popen('sleep 1', shell=True, cwd='src')")
       (let [popen-id (get (:opts (last @calls)) "id")]
-        (expect (= "background" (get (:opts (last @calls)) "op")))
+        ;; A background start is a `wait` 0 run, not a second op.
+        (expect (= 0 (get (:opts (last @calls)) "wait")))
         (expect (= "src" (get (:opts (last @calls)) "cwd")))
+        (expect (some? popen-id))
         (.eval python-context "python" "p.poll()")
-        (expect (nil? (:cmd (last @calls))))
-        (expect (= {"op" "logs" "id" popen-id} (:opts (last @calls))))
+        (expect (= :logs (first (last @lifecycle))))
+        (expect (= popen-id (second (last @lifecycle))))
         (.eval python-context "python" "p.terminate()")
-        (expect (nil? (:cmd (last @calls))))
-        (expect (= {"op" "stop" "id" popen-id} (:opts (last @calls)))))))
+        (expect (= [:stop popen-id] (last @lifecycle))))))
   (it "check_output returns stdout and raises on a non-zero exit"
       (let
         [calls

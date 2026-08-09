@@ -272,7 +272,7 @@ def notify(text, level='info'):
 def _shell_options(name, opts):
     if not isinstance(opts, dict):
         raise TypeError(
-            f"{name} takes one options map — use {name}({{'commands': ['ls']}})"
+            f"{name} takes one options map — use {name}({{'command': 'ls'}})"
         )
     return opts
 

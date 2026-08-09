@@ -734,7 +734,7 @@
 
          shell-lines
          (entry-lines {:vis/tool-name "shell"
-                       :code "shell({\"commands\": [\"sleep 30\"]})"
+                       :code "shell({\"command\": \"sleep 30\"})"
                        :display-code "sleep 30"
                        :display-language "bash"})
 
@@ -742,7 +742,7 @@
          (entry-lines {:vis/tool-name "python_execution" :code "print(1)"})]
 
         (expect (nil? (first (filter #(str/includes? (strip-ansi %) "sleep 30") shell-lines))))
-        (expect (nil? (first (filter #(str/includes? (strip-ansi %) "commands") shell-lines))))
+        (expect (nil? (first (filter #(str/includes? (strip-ansi %) "command\":") shell-lines))))
         (expect (some? (first (filter #(str/includes? (strip-ansi %) "print(1)") python-lines))))))
   (it "wears its op-card HEADLINE above the tool-authored card body while running"
       ;; REGRESSION: a running `shell` painted a naked bash band and only grew its
@@ -754,7 +754,7 @@
         [lines
          (format-iteration-entry {:iteration 0
                                   :forms [{:vis/tool-name "shell"
-                                           :code "shell({\"commands\": [\"sleep 30\"]})"
+                                           :code "shell({\"command\": \"sleep 30\"})"
                                            ;; the card `shell`'s own `:render-start-call-fn` authored
                                            :pending-summary "$ sleep 30 (running)"
                                            :pending-render "**COMMAND**\n```bash\nsleep 30\n```"
@@ -782,7 +782,7 @@
         (expect (< headline-idx body-idx))
         (expect (some? (idx-of #(str/includes? % "SHELL"))))
         ;; The invocation JSON the card replaces is gone, not shown twice.
-        (expect (nil? (idx-of #(str/includes? % "commands")))))))
+        (expect (nil? (idx-of #(str/includes? % "command\":")))))))
 
 (defdescribe
   provider-auth-error-test
@@ -4321,7 +4321,7 @@
                (format-iteration-entry
                  {:iteration 0
                   :forms [{:vis/tool-name "shell"
-                           :code "shell({\"commands\": [\"run.sh\"]})"
+                           :code "shell({\"command\": \"run.sh\"})"
                            :result-summary "$ run.sh"
                            :result-render (str
                                             "**COMMAND**\n```bash\nrun.sh\n```\n\n"

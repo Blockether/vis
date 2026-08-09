@@ -482,9 +482,19 @@ Done:
   cursor to EOF. With one verb left, `shell_run` is NAMED `shell`: the `_run` suffix only ever
   distinguished it from `shell_background`, so it now names a distinction that does not exist.
 
+- Phase 7, ONE call is ONE command — `PENDING`. `commands` is deleted from BOTH tools: `shell`
+  takes `command` (one `bash -lc` line; `&&` chains, independent work is separate calls) and
+  `git` takes `command` (one argv). Both answer with a FLAT result — `r["stdout"]`, `r["exit"]`,
+  never `r["commands"][i]` — which is the same shape a `wait` 0 start already returned, so a
+  call has ONE result shape whatever it waits for. `foundation/serial_batch.clj` and its test are
+  deleted with the batch they existed for: with one command there is no budget to divide, no
+  `started: false` entry to explain, and the shared-deadline defect fixed in `cdcfe21e8` cannot
+  recur. `vis.shell` / `vis.jailed_shell` / `vis.jailed_shell_session`, `posix.py`'s
+  `subprocess`, the `!` bang path and the synthesized Python call all move to the same key.
+
 TODO, in order:
 
-1. Phase 7 — the handle OBJECT (`sh.logs()`, `sh.wait(s)`, `sh.stop()`) replacing the three
-   id-taking Python symbols, and `git` folded into `wrap_with_shell` over the same request.
+1. Phase 8 — the handle OBJECT (`sh.logs()`, `sh.wait(s)`, `sh.stop()`) replacing the three
+   id-taking Python symbols.
 
 Each step ships as one commit with its own tests, lint-clean and formatted, per `AGENTS.md`.

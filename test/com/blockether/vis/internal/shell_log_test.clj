@@ -196,33 +196,33 @@
   index-test
   (it "makes a log findable by session, newest first, with its exit"
       (let [s (vis/db-create-connection! :memory)]
-        (try (let
-               [cid (h/store-session! s {:channel :tui :title "Shell log fixture"})
-                base
-                {:commands ["npm run build"] :script "npm run build" :dir "." :log-path "/x.log"}]
+        (try
+          (let
+            [cid (h/store-session! s {:channel :tui :title "Shell log fixture"})
+             base {:command "npm run build" :script "npm run build" :dir "." :log-path "/x.log"}]
 
-               (shell-log/index! s cid "build" (assoc base :started-at 100))
-               (shell-log/index! s cid "serve" (assoc base :started-at 200))
-               ;; The same id is one log, updated in place — a shell that exits
-               ;; does not become a second row.
-               (shell-log/index! s
-                                 cid
-                                 "build"
-                                 (assoc base
-                                   :started-at 100
-                                   :ended-at 900
-                                   :exit 0))
-               ;; The row outlives the process, so it is JSON on disk and wears
-               ;; the wire's snake_case string keys.
-               (let [rows (shell-log/session-logs s cid)]
-                 (expect (= 2 (count rows)))
-                 (expect (= ["serve" "build"] (mapv #(get % "id") rows)))
-                 (let [build (first (filter #(= "build" (get % "id")) rows))]
-                   (expect (= 0 (get build "exit")))
-                   (expect (= 900 (get build "ended_at")))
-                   (expect (= "npm run build" (get build "script")))
-                   (expect (= (str cid) (get build "session_id"))))))
-             (finally (vis/db-dispose-connection! s)))))
+            (shell-log/index! s cid "build" (assoc base :started-at 100))
+            (shell-log/index! s cid "serve" (assoc base :started-at 200))
+            ;; The same id is one log, updated in place — a shell that exits
+            ;; does not become a second row.
+            (shell-log/index! s
+                              cid
+                              "build"
+                              (assoc base
+                                :started-at 100
+                                :ended-at 900
+                                :exit 0))
+            ;; The row outlives the process, so it is JSON on disk and wears
+            ;; the wire's snake_case string keys.
+            (let [rows (shell-log/session-logs s cid)]
+              (expect (= 2 (count rows)))
+              (expect (= ["serve" "build"] (mapv #(get % "id") rows)))
+              (let [build (first (filter #(= "build" (get % "id")) rows))]
+                (expect (= 0 (get build "exit")))
+                (expect (= 900 (get build "ended_at")))
+                (expect (= "npm run build" (get build "script")))
+                (expect (= (str cid) (get build "session_id"))))))
+          (finally (vis/db-dispose-connection! s)))))
   (it "is best effort: no database is no index and no throw"
       (expect (nil? (shell-log/index! nil "sid" "id" {:started-at 1})))
       (expect (= [] (shell-log/session-logs nil "sid")))))

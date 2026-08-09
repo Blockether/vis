@@ -129,18 +129,13 @@ def __vis_install_posix_compat__():
             opts["timeout_secs"] = int(timeout)
         if cwd is not None:
             opts["cwd"] = str(cwd)
-        r = sr([cmd], opts)
-        # A run is ALWAYS a batch, so this one command's own stdout/stderr/exit
-        # is its entry in "commands"; the top level only summarises the group.
-        cmds = r.get("commands") or []
-        # A run is ALWAYS a batch, so the one command's own stdout/stderr/exit is
-        # its first entry — the top level carries NO cmd/stdout/stderr/timed_out
-        # of its own, so there is exactly one place each is read from.
-        c = cmds[0] if cmds else {}
+        c = sr(cmd, opts) or {}
+        # ONE call is ONE command, so its stdout/stderr/exit are the result's own
+        # top-level keys — there is no entry to unwrap.
         if c.get("timed_out"):
             raise TimeoutExpired(
                 cmd,
-                r.get("timeout_secs") or timeout,
+                c.get("timeout_secs") or timeout,
                 c.get("stdout") or "",
                 c.get("stderr") or "",
             )
@@ -198,7 +193,7 @@ def __vis_install_posix_compat__():
             opts = {"id": self._id, "wait": 0}
             if cwd is not None:
                 opts["cwd"] = str(cwd)
-            reg = sr([_to_cmd(args, shell)], opts)
+            reg = sr(_to_cmd(args, shell), opts)
             self.pid = reg.get("pid")
             self.returncode = None
 

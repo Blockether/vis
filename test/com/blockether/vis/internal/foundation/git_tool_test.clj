@@ -10,8 +10,6 @@
 
 (def ^:private render #'gt/render-git-result)
 
-(def ^:private render-batch #'gt/render-git-batch-result)
-
 (def ^:private render-start-call #'gt/render-git-call)
 
 (def ^:private verbose-add #'gt/verbose-add-tokens)
@@ -38,25 +36,24 @@
   (it "documents the direct native call shape and result semantics"
       (let [description (:ext.symbol/description gt/git-symbol)]
         (expect (str/includes? description "session[\"workspace\"]"))
-        ;; The argv shape belongs on the `commands` parameter it governs,
+        ;; The argv shape belongs on the `command` parameter it governs,
         ;; stated once rather than mirrored into the tool description.
         (let
-          [commands (get-in gt/git-symbol [:ext.symbol/schema :properties "commands" :description])]
-          (expect (str/includes? commands "[[\"status\", \"--short\"]]"))
-          (expect (str/includes? commands "`git` omitted")))
-        (expect (str/includes? description "non-zero exits"))
+          [command (get-in gt/git-symbol [:ext.symbol/schema :properties "command" :description])]
+          (expect (str/includes? command "[\"status\", \"--short\"]"))
+          (expect (str/includes? command "`git` omitted")))
+        (expect (str/includes? description "non-zero exit"))
         (expect (< (count description) 300))))
-  (it "makes command batches the closed native contract"
+  (it "makes ONE command the closed native contract"
       (let [schema (:ext.symbol/schema gt/git-symbol)]
-        (expect (= ["commands"] (:required schema)))
+        (expect (= ["command"] (:required schema)))
         ;; No call shape means the generic synthesizer preserves the entire
         ;; options map; Git has no positional projection.
         (expect (true? (:ext.symbol/inject-env? gt/git-symbol)))
         (expect (false? (:additionalProperties schema)))
-        (expect (= "array" (get-in schema [:properties "commands" :type])))
-        (expect (= 1 (get-in schema [:properties "commands" :minItems])))
-        (expect (= "array" (get-in schema [:properties "commands" :items :type])))
-        (expect (= "string" (get-in schema [:properties "commands" :items :items :type])))
+        (expect (= "array" (get-in schema [:properties "command" :type])))
+        (expect (= 1 (get-in schema [:properties "command" :minItems])))
+        (expect (= "string" (get-in schema [:properties "command" :items :type])))
         (expect (str/includes? (:doc (meta #'gt/git)) "await git"))))
   (it "uses an explicit two-argument handler for native-tool dispatch"
       (let
@@ -72,117 +69,85 @@
            (fn [_ argv _]
              (reset! seen argv)
              {"exit" 0 "stdout" "clean\n" "stderr" "" "timed_out" false "duration_ms" 1})]
-          (let [result (:result (handler {} {"commands" [["status" "--short"]]}))]
+          (let [result (:result (handler {} {"command" ["status" "--short"]}))]
             (expect (= ["git" "status" "--short"] @seen))
-            (expect (= "clean\n" (get-in result ["commands" 0 "stdout"])))))))
-  (it "states the TOP-LEVEL result shape, not just the per-command row"
-      ;; Regression: the contract read "Per command: `command`, `args`, `stdout`, ..."
-      ;; and never named the map holding those rows, so callers wrote `r[0]["stdout"]`
-      ;; and hit a KeyError. Name the container AND the lookup that reaches a row.
+            (expect (= "clean\n" (get result "stdout")))))))
+  (it "states the FLAT result shape a caller reads directly"
+      ;; Regression, one-command refactor: the contract described a `commands`
+      ;; array, so callers wrote `r["commands"][0]["stdout"]` against a flat map.
       (let [contract (:ext.symbol/result gt/git-symbol)]
-        (expect (str/includes? contract "commands"))
-        (expect (str/includes? contract "r[\"commands\"][i]"))
-        (expect (str/includes? contract "never `r[0]`"))
-        (expect (str/includes? contract "stdout"))))
+        (expect (str/includes? contract "Flat MAP"))
+        (expect (str/includes? contract "stdout"))
+        (expect (str/includes? contract "no `commands` array"))))
   (it "returns exactly the documented top-level keys"
       (with-redefs
         [shell/run-argv (fn [_ _ _]
                           {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
-        (let [result (:result (git-impl {} {"commands" [["status" "--short"]]}))]
-          (expect (= #{"commands"} (set (keys result))))
-          (expect (vector? (get result "commands")))))))
+        (let [result (:result (git-impl {} {"command" ["status" "--short"]}))]
+          (expect (= #{"command" "args" "stdout" "stderr" "exit" "duration_ms" "timed_out"}
+                     (set (keys result))))))))
+
 (defdescribe
   git-python-sandbox-test
-  (it
-    "await git exposes each serial command's stdout, stderr, and exit as plain Python data"
-    (let [seen (atom [])]
-      (with-redefs
-        [shell/run-argv
-         (fn [_ argv _]
-           (swap! seen conj (vec (rest argv)))
-           (case (second argv)
-             "status"
-             {"exit" 0 "stdout" "clean\n" "stderr" "" "timed_out" false "duration_ms" 1}
+  (it "await git exposes stdout, stderr, and exit as plain Python data"
+      (let [seen (atom [])]
+        (with-redefs
+          [shell/run-argv
+           (fn [_ argv _]
+             (swap! seen conj (vec (rest argv)))
+             {"exit" 128 "stdout" "" "stderr" "bad revision\n" "timed_out" false "duration_ms" 2})]
+          (let
+            [{:keys [python-context]} (ep/create-python-context {'git (fn [opts]
+                                                                        ;; The Python bridge receives the one options map.
+                                                                        (:result (git-impl {}
+                                                                                           opts)))})
+             result (ep/run-python-block python-context
+                                         (str "r = await git({'command': ['show', 'missing']})\n"
+                                              "(r['stdout'], r['stderr'], r['exit'])")
+                                         "t1/i1")]
 
-             "show"
-             {"exit" 128 "stdout" "" "stderr" "bad revision\n" "timed_out" false "duration_ms" 2}
-
-             "diff"
-             {"exit" 0 "stdout" "diff\n" "stderr" "warning\n" "timed_out" false "duration_ms" 3}))]
-        (let
-          [{:keys [python-context]} (ep/create-python-context {'git (fn [opts]
-                                                                      ;; The Python bridge receives the one options map.
-                                                                      (:result (git-impl {}
-                                                                                         opts)))})
-           result
-           (ep/run-python-block
-             python-context
-             (str
-               "r = await git({'commands': [['status', '--short'], ['show', 'missing'], ['diff', '--stat']]})\n"
-               "[(c['stdout'], c['stderr'], c['exit']) for c in r['commands']]")
-             "t1/i1")]
-
-          (expect (nil? (:error result)))
-          (expect (= [["status" "--short"] ["show" "missing"] ["diff" "--stat"]] @seen))
-          (expect (= [["clean\n" "" 0] ["" "bad revision\n" 128] ["diff\n" "warning\n" 0]]
-                     (:result result))))))))
+            (expect (nil? (:error result)))
+            (expect (= [["show" "missing"]] @seen))
+            (expect (= ["" "bad revision\n" 128] (:result result))))))))
 
 (defdescribe
   git-one-command-spelling-test
-  (it "coerces a bare string into the batch of one it obviously means"
-      ;; `commands` is git's only input carrier and it is an ARRAY — but the
-      ;; one-command spelling `"status --short"` has exactly one reading, so it
-      ;; is COERCED into `[["status" "--short"]]` instead of burning the call on
-      ;; a shape complaint. Quoting still decides the tokens.
+  (it "coerces a bare string into the argv it obviously means"
+      ;; `command` is an ARRAY — but the one-line spelling `"status --short"` has
+      ;; exactly one reading, so it is COERCED instead of burning the call on a
+      ;; shape complaint. Quoting still decides the tokens.
       (let [seen (atom [])]
         (with-redefs
           [shell/run-argv (fn [_ argv _]
                             (swap! seen conj (vec (rest argv)))
                             {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
-          (git-impl {} {"commands" "status --short"})
-          (git-impl {} {"commands" ["commit -m 'wip: with spaces'"]})
+          (git-impl {} {"command" "status --short"})
+          (git-impl {} {"command" "commit -m 'wip: with spaces'"})
           (expect (= [["status" "--short"] ["commit" "-m" "wip: with spaces"]] @seen)))))
-  (it "reads a FLAT token array as the one argv it can only be"
-      ;; `["status", "--short"]` is the other habitual mis-spelling: a git command
-      ;; never begins with a flag, so a flag element makes the whole array one
-      ;; argv rather than two commands. Flagless strings stay one command each.
-      (let [seen (atom [])]
-        (with-redefs
-          [shell/run-argv (fn [_ argv _]
-                            (swap! seen conj (vec (rest argv)))
-                            {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
-          (git-impl {} {"commands" ["commit" "-m" "wip"]})
-          (expect (= [["commit" "-m" "wip"]] @seen))
-          (reset! seen [])
-          (git-impl {} {"commands" ["status" "diff"]})
-          (expect (= [["status"] ["diff"]] @seen)))))
-  (it "still refuses a batch with no command and a command that is no argv"
-      (expect (some? (try (git-impl {} {"commands" []}) nil (catch Throwable e e))))
-      (expect (some? (try (git-impl {} {"commands" #{["status"]}}) nil (catch Throwable e e))))
-      (expect (some? (try (git-impl {} {"commands" [42]}) nil (catch Throwable e e)))))
-  (it "takes a one-element array as the ONE-COMMAND spelling of that same batch"
-      ;; `commands` is ALWAYS an array, so a single command is a batch of ONE,
-      ;; spelled `[["status" "--short"]]`, and it yields exactly one entry.
+  (it "still refuses a missing command and a command that is no argv"
+      (expect (some? (try (git-impl {} {}) nil (catch Throwable e e))))
+      (expect (some? (try (git-impl {} {"command" []}) nil (catch Throwable e e))))
+      (expect (some? (try (git-impl {} {"command" #{"status"}}) nil (catch Throwable e e)))))
+  (it "answers ONE command with ONE flat result"
       (let [seen (atom [])]
         (with-redefs
           [shell/run-argv
            (fn [_ argv _]
              (swap! seen conj (vec (rest argv)))
              {"exit" 0 "stdout" "clean\n" "stderr" "" "timed_out" false "duration_ms" 1})]
-          (let [one (:result (git-impl {} {"commands" [["status" "--short"]]}))]
+          (let [one (:result (git-impl {} {"command" ["status" "--short"]}))]
             (expect (= [["status" "--short"]] @seen))
-            (expect (= ["commands"] (vec (keys one))))
-            (expect (= 1 (count (get one "commands"))))
-            (expect (= "git status --short" (get-in one ["commands" 0 "command"])))))))
+            (expect (= "git status --short" (get one "command")))
+            (expect (= "clean\n" (get one "stdout")))))))
   (it "keeps a quoted argument as ONE token in the argv list"
-      ;; the literal-token contract is unchanged: each inner element is one git
+      ;; the literal-token contract is unchanged: each element is one git
       ;; argument, so a commit message with spaces stays a single token.
       (let [seen (atom [])]
         (with-redefs
           [shell/run-argv (fn [_ argv _]
                             (swap! seen conj (vec (rest argv)))
                             {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
-          (git-impl {} {"commands" [["commit" "-m" "wip: with spaces"]]})
+          (git-impl {} {"command" ["commit" "-m" "wip: with spaces"]})
           (expect (= [["commit" "-m" "wip: with spaces"]] @seen))))))
 
 
@@ -244,62 +209,14 @@
                [args
                 ["-C" "other" "commit" "-m" "x"]
 
-                result
-                (:result (git-impl {} {"commands" [args]}))
-
                 command
-                (first (get result "commands"))]
+                (:result (git-impl {} {"command" args}))]
 
                (expect (= 1 (get command "exit")))
                (expect (= "verification required" (get command "stderr")))
                (expect (= (into ["git"] args) (first @seen)))
                (expect (= {"timeout_secs" 120} (second @seen)))))
            (finally (.delete root))))))
-(defdescribe
-  git-batch-test
-  (it
-    "keeps stdout, stderr, and partial failures with their own serial commands"
-    (let [seen (atom [])]
-      (with-redefs
-        [shell/run-argv
-         (fn [_ argv _]
-           (swap! seen conj (vec (rest argv)))
-           (case (second argv)
-             "status"
-             {"exit" 0 "stdout" " M src/core.clj\n" "stderr" "" "timed_out" false "duration_ms" 1}
-
-             "show"
-             {"exit" 128 "stdout" "" "stderr" "bad revision" "timed_out" false "duration_ms" 2}
-
-             "diff"
-             {"exit" 0
-              "stdout" " src/core.clj | 2 +-\n"
-              "stderr" "warning: renamed"
-              "timed_out" false
-              "duration_ms" 3}))]
-        (let
-          [result (:result (git-impl {}
-                                     {"commands" [["status" "--short"] ["show" "missing"]
-                                                  ["diff" "--stat"]]}))
-           commands (get result "commands")
-           {:keys [summary body]} (render-batch result)]
-
-          (expect (= [["status" "--short"] ["show" "missing"] ["diff" "--stat"]] @seen))
-          (expect (= 3 (count commands)))
-          (expect (= " M src/core.clj\n" (get-in commands [0 "stdout"])))
-          (expect (= "bad revision" (get-in commands [1 "stderr"])))
-          (expect (= 128 (get-in commands [1 "exit"])))
-          (expect (= " src/core.clj | 2 +-\n" (get-in commands [2 "stdout"])))
-          (expect (= "warning: renamed" (get-in commands [2 "stderr"])))
-          (expect (= "⎇ 3 git commands — 2 succeeded, 1 failed" summary))
-          (expect (str/includes? body " M src/core.clj"))
-          (expect (str/includes? body "bad revision"))
-          ;; One blank row on each side of the divider keeps command cards distinct.
-          (expect (re-find #"(?s)### 1[.].*?\n\n────────────\n\n### 2[.]" body))
-          (expect (= 2 (count (re-seq #"────────────" body))))
-          (expect (str/includes? body "warning: renamed")))))))
-
-
 (defdescribe
   render-git-result-test
   ;; The op-card a LONE `git` call paints (a single commit that is NOT part of a
@@ -391,34 +308,27 @@
   ;; same section builders — exactly like `shell`. Never the raw `git({…})`
   ;; invocation JSON, and never a hand-written comment band narrating the call.
   (it "renders the pending card out of the finished card's own COMMAND section"
-      (let [{:keys [summary render]} (render-start-call {"commands" [["status" "--short"]]})]
+      (let [{:keys [summary render]} (render-start-call {"command" ["status" "--short"]})]
         (expect (= "⎇ status --short (running)" summary))
         (expect (str/includes? render "**COMMAND**"))
         (expect (str/includes? render "```bash\ngit status --short\n```"))
         ;; No pending dialect: nothing narrates the stage in prose comments.
         (expect (not (str/includes? render "#")))))
-  (it "keeps the whole serial batch in one COMMAND block, the rest counted on the headline"
-      (let
-        [{:keys [summary render]}
-         (render-start-call {"commands" [["add" "-A"] ["commit" "-m" "feat: thing"] ["push"]]})]
-        (expect (= "⎇ add -A · +2 more (running)" summary))
-        (expect (str/includes? render "git add -A\ngit commit -m feat: thing\ngit push"))))
   (it "previews the commit it is about to author as the same subject + blockquote"
       (let
-        [{:keys [summary render]} (render-start-call {"commands" [["commit" "-m" "feat: thing" "-m"
-                                                                   "body"]]})]
+        [{:keys [summary render]} (render-start-call {"command" ["commit" "-m" "feat: thing" "-m"
+                                                                 "body"]})]
         (expect (= "⎇ commit — feat: thing (running)" summary))
         (expect (str/includes? render "**MESSAGE**"))
         (expect (re-find #"(?m)^> feat: thing" render))
         (expect (re-find #"(?m)^> body" render))))
-  (it "coerces the one-line spelling and declines a batch it cannot read"
-      (expect (str/includes? (:render (render-start-call {"commands" ["status --short"]}))
+  (it "coerces the one-line spelling and declines a command it cannot read"
+      (expect (str/includes? (:render (render-start-call {"command" "status --short"}))
                              "git status --short"))
-      ;; A malformed batch is the CALL's error to report, not the preview's.
+      ;; A malformed command is the CALL's error to report, not the preview's.
       (expect (nil? (render-start-call {})))
-      (expect (nil? (render-start-call {"commands" [42]}))))
+      (expect (nil? (render-start-call {"command" 42}))))
   (it "is what the symbol declares as its pending renderer"
       (let [declared (:ext.symbol/render-start-call-fn gt/git-symbol)]
         (expect (some? declared))
-        (expect (= (render-start-call {"commands" [["status"]]})
-                   (declared {"commands" [["status"]]}))))))
+        (expect (= (render-start-call {"command" ["status"]}) (declared {"command" ["status"]}))))))

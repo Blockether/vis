@@ -241,7 +241,7 @@
     "  `patch` for text/unsupported.\n"
     "- Bugs: reproduce before editing: tests-only work starts with `run_tests`; interactive work uses `repl_eval`. Keep reproduction as a suite test and rerun after the fix.\n"
     "- A fix or feature is unverified until a test covers it. Prove with `run_tests`; use `repl_eval` for checks; Python extensions: native `run_tests(\"python\")`; CLI: `vis-agent python -m pytest <paths>`.\n"
-    "- BATCH every tool: reads, `shell`/`git` `commands`, `patch`/`struct_patch` `edits` — one call, never one\n"
+    "- BATCH every tool: reads, `patch`/`struct_patch` `edits` — one call, never one\n"
     "  per file. Each round must identify, reproduce, edit, verify, or conclude; no repeated search/read without a\n"
     "  named unresolved decision.\n\n" "## 4. Edit + verify\n"
     "- Surgical in-scope changes; preserve unrelated work. Write only files the task asked for —\n"
