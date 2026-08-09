@@ -442,15 +442,17 @@ Done:
   Phase 2, which keeps the seam and deletes the vocabulary; it stays on the record because it
   is what proved `confine!` is where a filesystem boundary belongs.
 - Phase 1, the five filesystem verbs — `87c1562ea`.
+- Phase 2, the `:fs/access` gate — `49d5a182e`. `protected_paths.clj`, `:ext/protected-paths`
+  and the access vocabulary are gone; `confine!` and the native editors ask one gate op, the
+  Bridge re-declares its path sandbox as its own hook, and a Python extension guards the
+  filesystem with `vis.op_hook(["fs_access"], …)`.
 
 TODO, in order:
 
-1. Phase 2 — the `:fs/access` gate hook; delete `protected_paths.clj` and
-   `:ext/protected-paths`.
-2. Phase 3 — remove `ls`, land the sandbox walk helper and its prompt line.
-3. Phase 4 — the offset-cursor log file, with its index row in the session DB.
-4. Phase 5 — every run carries an `::id`, so a timeout is a wait that expired.
-5. Phase 6 — `wait` replaces `shell_background`, the handle object replaces `shell_logs` /
+1. Phase 3 — remove `ls`, land the sandbox walk helper and its prompt line.
+2. Phase 4 — the offset-cursor log file, with its index row in the session DB.
+3. Phase 5 — every run carries an `::id`, so a timeout is a wait that expired.
+4. Phase 6 — `wait` replaces `shell_background`, the handle object replaces `shell_logs` /
    `shell_type` / `shell_stop`, one shell under `subprocess`/`shell_run`, `git` as
    `wrap_with_shell`.
 
