@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.33 (3824) — 2026-08-09
+<!-- commit: 5c0bcda60cac8388413d4fc55d088c0c5df9d621 -->
+
+- Let an attached page run its own script, never the app's origin
+- Rename the sandbox attachment surface to plain verbs
+- Make every way out say what it closes
+- Give the companion's paint back to the components that own it
+- Leave the image viewer through the app's one close
+- Give every close mark the page's own ink
+- Zoom a picture by the distance scrolled, and take Safari own pinch
+- Release v0.1.33
+- Put the search field and every transcript card header on one height
+- Take the machine strip's side edges from the page
+- Page grep results with offset and next_offset
+- Let a session row fill its swipe track
+- Anchor the companion search field to the bar's trailing edge
+- Default grep to 50 elements, filename fallback included
+- Frame a sent picture like a produced one and gallery several
+- Stretch a row-ending icon button at mouse density too
+- Put search back on the app bar with its own magnifying glass
+- Give search its own band on a phone and land Clear on the field's edge
+- Render MetaButton's children so the composer strip has words again
+- Name a button by its rank and give the composer one strip
+
 ## 0.1.32 (3799) — 2026-08-07
 <!-- commit: 686ea282730f4d3a2868b30e0e03ec0727e28c26 -->
 

@@ -303,20 +303,21 @@ export async function ensureProfiles({
 /**
  * Put a profile where xcodebuild looks for it.
  *
- * Xcode 16 reads `~/Library/Developer/Xcode/UserData/Provisioning Profiles`;
- * older toolchains and `xcodebuild -exportArchive` still read the MobileDevice
- * path, so write both and let whichever is asked answer.
+ * Xcode 16 and later read `~/Library/Developer/Xcode/UserData/Provisioning
+ * Profiles` and NOTHING else — a copy in the old MobileDevice path is not read,
+ * and while both copies exist Xcode prunes the UserData one mid-archive, which
+ * fails the build with "Build input file cannot be found" on the very profile it
+ * had just chosen. One file, one directory.
  *
  * @param {object} profile
  * @param {string} profile.uuid the profile's UUID (its file name)
  * @param {string} profile.content base64 `.mobileprovision`
  * @param {string} [home] home directory, for tests
- * @returns {string[]} the paths written
+ * @returns {string[]} the path written
  */
 export function installProfile({ uuid, content }, home = homedir()) {
   const bytes = Buffer.from(content, "base64");
   return [
-    join(home, "Library", "MobileDevice", "Provisioning Profiles"),
     join(
       home,
       "Library",

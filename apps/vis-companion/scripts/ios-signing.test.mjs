@@ -1,9 +1,13 @@
 import crypto from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   ascJwt,
   distributionIdentity,
   ensureProfiles,
+  installProfile,
   pickProfile,
   stampManualSigning,
 } from "./ios-signing.mjs";
@@ -353,5 +357,30 @@ describe("ensureProfiles", () => {
       globalThis.fetch = original;
     }
     expect(calls).not.toContain("POST /v1/profiles");
+  });
+});
+
+describe("installProfile", () => {
+  it("writes the profile only where Xcode 16 and later read it", () => {
+    const home = mkdtempSync(join(tmpdir(), "vis-home-"));
+    const written = installProfile(
+      { uuid: "uuid-0", content: Buffer.from("profile").toString("base64") },
+      home,
+    );
+    expect(written).toEqual([
+      join(
+        home,
+        "Library",
+        "Developer",
+        "Xcode",
+        "UserData",
+        "Provisioning Profiles",
+        "uuid-0.mobileprovision",
+      ),
+    ]);
+    expect(readFileSync(written[0], "utf8")).toBe("profile");
+    // A second copy under Library/MobileDevice is not read, and Xcode deletes the
+    // one it DID choose mid-archive while both exist.
+    expect(readdirSync(join(home, "Library"))).toEqual(["Developer"]);
   });
 });
