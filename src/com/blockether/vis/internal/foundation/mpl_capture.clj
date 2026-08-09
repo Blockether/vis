@@ -153,13 +153,27 @@
   (* 32 1024 1024))
 
 (def ^:private noisy-capture-exts
-  "Extensions the filesystem tap SKIPS — scratch/cache junk a temp-heavy library
-   drops in /tmp (compiled bytecode, native objects, lock/marker/pid files,
-   editor swaps, partial downloads, logs). Never an artifact worth persisting,
-   so filtering them at the capture source keeps the DB from bloating with noise
-   once every /tmp write streams through here."
-  #{"pyc" "pyo" "pyd" "class" "o" "obj" "so" "dll" "a" "lib" "lock" "pid" "swp" "swo" "tmp" "temp"
-    "part" "crdownload" "log"})
+  "Extensions the filesystem tap SKIPS — machine output, never a document.
+
+   Every entry is something a TOOLCHAIN writes for itself: a compiler, a linker,
+   a packager, a VM, an editor or a downloader. None of them is an artifact a
+   person came for, and once every /tmp write streams through here one `clojure
+   -T:build`, `npm run build` or GraalVM run would otherwise bury the session in
+   chips and the DB in megabytes.
+
+   This blocklist governs the INCIDENTAL tap only. `attach` is deliberate and
+   bypasses it entirely, so a task whose product genuinely IS a jar still ships
+   one — by naming it, which is the whole difference between the two paths."
+  #{;; bytecode + compiled objects
+    "pyc" "pyo" "pyd" "class" "o" "obj" "bc" "rlib" "rmeta"
+    ;; linked binaries and native libraries (`dylib`/`jnilib` are macOS `so`)
+    "so" "dll" "dylib" "jnilib" "node" "a" "lib" "exp" "pdb" "ilk"
+    ;; JVM packaging and runtime dumps
+    "jar" "war" "ear" "jmod" "jsa" "ser" "hprof" "jfr"
+    ;; build sidecars a reader never opens: source maps, incremental state, digests
+    "map" "tsbuildinfo" "cache" "sha1" "sha256" "sha512" "md5"
+    ;; process/edit/download scratch
+    "lock" "pid" "swp" "swo" "swn" "tmp" "temp" "bak" "orig" "rej" "part" "crdownload" "log"})
 
 (def ^:private ext->media-type
   "Extension → media-type fallback when magic bytes don't decide it."
