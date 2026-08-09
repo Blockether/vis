@@ -3127,7 +3127,17 @@ export function SessionScreen({
           // until the next chunk snaps the view back by the whole accumulated
           // gap. Re-pin in the frame it grew — one line, not a leap.
           if (!shellMoved) composerOnly = !followingRef.current;
-          else if (!followingRef.current) {
+          else if (followingRef.current && !readerOwnsScroll()) {
+            // Pin in THIS callback, not in the frame after it. A
+            // `ResizeObserver` still runs before the browser paints, so writing
+            // the end here lands in the very frame the keyboard shrank the
+            // shell. Handing this case to the `requestAnimationFrame` catch-up
+            // below paints one frame of the OLD `scrollTop` against the NEW
+            // height — the newest turn sitting a keyboard's height above the
+            // bottom — and then snaps it down: the small jump a reader sees
+            // every time the composer is tapped (measured on iOS: 274 px).
+            box.scrollTop = Math.max(0, box.scrollHeight - height);
+          } else if (!followingRef.current) {
             const limit = Math.max(0, box.scrollHeight - height);
             box.scrollTop = Math.max(
               0,

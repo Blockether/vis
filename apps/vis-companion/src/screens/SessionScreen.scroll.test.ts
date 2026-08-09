@@ -29,3 +29,23 @@ describe('session opening reveal', () => {
     );
   });
 });
+
+// Regression, iOS keyboard jump: tapping the composer while pinned to the newest
+// turn shrank the shell, and the re-pin was deferred to the next animation frame.
+// The reader saw one painted frame with the conversation a keyboard's height above
+// the bottom (measured 274 px on an iPhone 17 Pro simulator), then a snap down.
+describe('keyboard compensation while following', () => {
+  it('re-pins inside the resize callback rather than a frame later', () => {
+    expect(source).toContain(
+      'else if (followingRef.current && !readerOwnsScroll()) {',
+    );
+    const pin = source.indexOf(
+      'box.scrollTop = Math.max(0, box.scrollHeight - height);',
+    );
+    const deferred = source.indexOf(
+      'resizeScrollFrameRef.current = window.requestAnimationFrame(',
+    );
+    expect(pin).toBeGreaterThan(-1);
+    expect(deferred).toBeGreaterThan(pin);
+  });
+});
