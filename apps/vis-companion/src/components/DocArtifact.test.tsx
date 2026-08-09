@@ -1,6 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { DocFrame, DocOverlay, DocPreview, docSandbox } from "./DocArtifact";
+import {
+  DocFrame,
+  DocOverlay,
+  DocPreview,
+  DocStack,
+  docSandbox,
+  docStackSummary,
+} from "./DocArtifact";
 import docArtifactSource from "./DocArtifact.tsx?raw";
 
 /** Visible text of a rendered chunk: tags out, entities back. */
@@ -91,15 +98,57 @@ describe("DocPreview", () => {
     expect(body).not.toContain("New tab");
   });
 
-  // The one control the card carries is the app's own `Button` — a secondary
-  // (`secondary`) at the header rhythm — not a chip face spelled out here. A compact
-  // button keeps the 44px target on touch through its own invisible `::after`.
-  it("carries an Open button from the shared vocabulary", () => {
+  // Reported ("I love 4"): the card carried the screen's only verb as a chip at its
+  // far trailing edge, so the other nine tenths of it was paper a finger could land
+  // on for nothing. The ROW is the button now, and it keeps a finger's 48px box while
+  // only a cursor tightens it.
+  it("is itself the control that opens the document", () => {
     const html = preview();
-    expect(text(html)).toContain("Open");
-    expect(html).toContain("border-edge-strong");
-    expect(html).toContain("after:-top-1.5");
-    expect(html).not.toContain("bg-button");
+    expect(html).toContain('aria-label="Open report.pdf"');
+    expect(html).toContain("min-h-12");
+    expect(html).toContain("px-3");
+    expect(html).toContain("w-full");
+    // One press target in the row, and no second word beside it.
+    expect(html.match(/<button/g)).toHaveLength(1);
+    expect(text(html)).not.toContain("Open ");
+  });
+
+  // A row is a row of the stack: the frame, the paper and the edge belong to the
+  // stack around it, or four documents are four boxes down one turn.
+  it("carries no frame of its own", () => {
+    const html = preview();
+    expect(html).not.toContain("border-code-edge");
+    expect(html).not.toContain("mt-2");
+  });
+});
+
+// Reported ("I love 4"): every document artifact was its own framed card with its own
+// kind chip and its own Open, so a step that wrote four files read as four settings
+// panels stacked down the transcript instead of as one thing the step produced.
+describe("DocStack", () => {
+  const stack = (summary?: string) =>
+    renderToStaticMarkup(<DocStack summary={summary}>rows</DocStack>);
+
+  it("is the one frame the rows live in", () => {
+    const html = stack();
+    expect(html).toContain("border border-code-edge");
+    expect(html).toContain("divide-y");
+  });
+
+  it("reports the group, and only when there is a group", () => {
+    expect(text(stack("4 documents · 31.4KB"))).toContain(
+      "4 documents · 31.4KB",
+    );
+    // A lone document is one row and no header band at all.
+    expect(stack()).not.toContain("border-b");
+  });
+
+  it("claims a weight only when every document reported one", () => {
+    expect(docStackSummary([{ size: 1024 }, { size: 2048 }])).toBe(
+      "2 documents · 3.0KB",
+    );
+    expect(docStackSummary([{ size: 1024 }, {}])).toBe("2 documents");
+    expect(docStackSummary([{ size: 1024 }])).toBe("1 document · 1.0KB");
   });
 });
 

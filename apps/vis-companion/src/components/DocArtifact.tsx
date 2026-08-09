@@ -1,8 +1,9 @@
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, type ReactNode, useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import type { GatewayClient } from "../lib/gateway";
 import {
+  attachmentBytes,
   docKindLabel,
   isMarkdownMedia,
   isPdfMedia,
@@ -11,7 +12,8 @@ import {
 import { MarkdownArtifact } from "./MarkdownArtifact";
 import { PdfAnnotator } from "./PdfArtifact";
 import { TextFrame } from "./TextArtifact";
-import { Button, DialogHeader } from "./ui";
+import { ChevronIcon } from "./icons";
+import { DialogHeader, ListRow } from "./ui";
 
 /**
  * What an OPENED artifact needs in order to be marked up: which session and
@@ -120,29 +122,51 @@ function DocBody({
   );
 }
 
-/** The caption row both the card and the opened document wear. */
-function DocCaption({
-  mime,
-  name,
-  sizeLabel,
-  action,
+/**
+ * THE DOCUMENTS OF ONE STEP, in one stack.
+ *
+ * A card per file made every artifact its own framed box, so four files were four
+ * frames with four edges and four kind chips down the transcript — the turn read
+ * as a settings screen rather than as "this step wrote four documents". The stack
+ * is the frame; a document is a ROW inside it, and the rows share one rule.
+ *
+ * The header is the group's own report — `4 documents · 31.4KB` — and it only
+ * exists when there IS a group: one document is a single row with no header at
+ * all, so the common turn pays nothing for the rarer one.
+ */
+export const DocStack = memo(function DocStack({
+  summary,
+  children,
 }: {
-  mime: string;
-  name: string;
-  sizeLabel?: string;
-  action: React.ReactNode;
+  /** What the whole group is. Omitted for a lone document. */
+  summary?: string;
+  children: ReactNode;
 }) {
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
-      <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-warn">
-        {docKindLabel(mime)}
-      </span>
-      <span className="min-w-0 flex-1 truncate font-mono text-chip text-muted">
-        {[name, sizeLabel].filter(Boolean).join(" · ")}
-      </span>
-      {action}
+    <div className="mt-2 min-w-0 border border-code-edge bg-input">
+      {summary ? (
+        <p className="border-b border-code-edge bg-panel px-3 py-1 font-mono text-chip text-footer-muted">
+          {summary}
+        </p>
+      ) : null}
+      <div className="divide-y divide-code-edge">{children}</div>
     </div>
   );
+});
+
+/**
+ * `4 documents · 31.4KB` — what a stack is, said once above it.
+ *
+ * The weight is claimed only when every document reported one, exactly as
+ * `mediaSummary` claims a gallery's: a partial total is a wrong number, not a
+ * smaller one.
+ */
+export function docStackSummary(docs: { size?: number }[]): string {
+  const things = `${docs.length} ${docs.length === 1 ? "document" : "documents"}`;
+  const total = docs.every((doc) => typeof doc.size === "number")
+    ? attachmentBytes(docs.reduce((sum, doc) => sum + (doc.size ?? 0), 0))
+    : "";
+  return total ? `${things} · ${total}` : things;
 }
 
 /**
@@ -219,8 +243,12 @@ export const DocOverlay = memo(function DocOverlay({
 });
 
 /**
- * A document attachment in the transcript: ONE caption row and the single `Open`
- * chip that throws it over the whole screen.
+ * ONE document in the transcript: a row of a {@link DocStack}, and the row IS the
+ * verb — pressing anywhere on it throws the artifact over the whole screen.
+ *
+ * The screen's only verb used to be a chip at the far trailing edge, so nine
+ * tenths of the card was dead paper a finger could land on for nothing. A row
+ * that opens needs no `Open` beside it; the `›` says where the press goes.
  *
  * The bytes are NOT painted here. A note embedded in place stood taller than the
  * turn that produced it — the reader scrolled a whole document to reach the next
@@ -257,22 +285,23 @@ export const DocPreview = memo(function DocPreview({
   const open = useCallback(() => setOpened(true), []);
 
   return (
-    <div className="mt-2 min-w-0 border border-code-edge bg-input">
-      <DocCaption
-        mime={mime}
-        name={name}
-        sizeLabel={sizeLabel}
-        action={
-          <Button
-            variant="secondary"
-            density="compact"
-            onClick={open}
-            aria-label={`Open ${name}`}
-          >
-            Open
-          </Button>
-        }
-      />
+    <>
+      {/* The row IS the control, so the whole line is the target a finger gets:
+          `ListRow` is the app's one pressable row and owns that box. */}
+      <ListRow onClick={open} title={name} aria-label={`Open ${name}`}>
+        <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-warn">
+          {docKindLabel(mime, name)}
+        </span>
+        <span className="min-w-0 flex-1 truncate font-mono text-chip text-muted">
+          {name}
+        </span>
+        {sizeLabel ? (
+          <span className="shrink-0 font-mono text-chip text-footer-muted">
+            {sizeLabel}
+          </span>
+        ) : null}
+        <ChevronIcon className="size-3 shrink-0 text-footer-muted opacity-70" />
+      </ListRow>
       {/* The opened document is a SCREEN, not a part of the transcript: it is
           portalled to the document body, so the composer strip the session screen
           pins to the bottom cannot paint on top of it. */}
@@ -289,6 +318,6 @@ export const DocPreview = memo(function DocPreview({
           />,
           document.body,
         )}
-    </div>
+    </>
   );
 });

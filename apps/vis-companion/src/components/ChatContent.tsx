@@ -12,7 +12,7 @@ import {
 } from "react";
 import Prism from "prismjs";
 import { DataTable } from "./DataTable";
-import { DocPreview } from "./DocArtifact";
+import { DocPreview, DocStack, docStackSummary } from "./DocArtifact";
 import { AlertIcon, ArrowOutIcon, ChevronIcon } from "./icons";
 import {
   attachmentBytes,
@@ -1792,7 +1792,11 @@ export const AttachmentRail = memo(function AttachmentRail({
       layout={layout}
     />
   ));
-  const docs = page.shown.filter(attachmentIsDoc);
+  // A tile with no iteration to fetch from paints nothing, so it must not count
+  // towards the stack's own report either.
+  const docs = page.shown.filter(
+    (entry) => attachmentIsDoc(entry) && entry.iteration_id,
+  );
   const files = recordedFiles(
     attachments.filter(
       (entry) => !attachmentIsPlayable(entry) && !attachmentIsDoc(entry),
@@ -1818,14 +1822,20 @@ export const AttachmentRail = memo(function AttachmentRail({
       ) : (
         gallery
       )}
-      {docs.map((attachment) => (
-        <AttachmentDocTile
-          key={`doc-${attachment.iteration_id ?? "iter"}-${attachment.index}`}
-          client={client}
-          sid={sid}
-          attachment={attachment}
-        />
-      ))}
+      {docs.length > 0 && (
+        // One frame for the step's documents, and the header only when there is a
+        // GROUP to report: a single document is one row and no header at all.
+        <DocStack summary={docs.length > 1 ? docStackSummary(docs) : undefined}>
+          {docs.map((attachment) => (
+            <AttachmentDocTile
+              key={`doc-${attachment.iteration_id ?? "iter"}-${attachment.index}`}
+              client={client}
+              sid={sid}
+              attachment={attachment}
+            />
+          ))}
+        </DocStack>
+      )}
       {page.rest.length > 0 && (
         <LoadMore
           label={`Load ${page.restLabel} of attachments`}
