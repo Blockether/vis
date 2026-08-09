@@ -87,6 +87,28 @@
         (expect (str/includes? stage "test ! -e /root/.vis") stage)
         (expect (str/includes? stage "test -d /home/vis/.vis/logs") stage))))
 
+(defdescribe
+  image-is-a-base-a-deployment-extends-test
+  ;; The image carries vis and the toolchain VIS drives. An operator's own CLI
+  ;; is a layer in the deployment's own repository: baked in here, every user of
+  ;; vis pays download time and attack surface for one operator's habits.
+  (it "installs no operator-specific CLI"
+      (let [stage (runtime-stage)]
+        (expect (not (str/includes? stage "cli.github.com")) stage)
+        (expect (nil? (re-find #"install[^\n]*\bgh\b" stage)) stage)
+        (expect (not (str/includes? stage "/home/vis/.config/gh")) stage)))
+  (it "documents the recipe and the contract a derived image builds on"
+      (let [text (dockerfile)]
+        (expect (str/includes? text "EXTENDING THIS IMAGE") text)
+        (expect (str/includes? text "FROM vis-gateway:local") text)
+        (expect (str/includes? text "USER root") text)))
+  (it "leaves a derived image a seeded, vis-owned .config to add to"
+      ;; docker seeds a named volume from the image's directory and inherits its
+      ;; owner: root-owned .config is a credential directory nothing can write.
+      (let [stage (runtime-stage)]
+        (expect (str/includes? stage "/home/vis/.config/git") stage)
+        (expect (str/includes? stage "test \"$(stat -c '%U' /home/vis/.config)\" = 'vis'") stage))))
+
 (defdescribe compose-passes-no-second-version-source-test
              (it "leaves the version to the image it builds"
                  (let [compose (slurp "docker-compose.yml")]

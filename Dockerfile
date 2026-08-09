@@ -25,6 +25,28 @@
 #   docker build -t vis-gateway:lean --build-arg WITH_BROWSERS=false \
 #                                    --build-arg WITH_CHROME=false .
 #
+# EXTENDING THIS IMAGE
+# `runtime` is the LAST stage, so `docker build .` produces it, and it is the
+# BASE every deployment extends. It carries vis and the toolchain vis itself
+# drives — nothing site-specific. A tool only YOUR deployment needs (a GitHub
+# CLI, a cloud CLI, an internal CA, a company apt repo, a credential helper) is
+# a layer in YOUR OWN repository, never a line in this file — otherwise every
+# user of vis pays download time and attack surface for one operator's habits:
+#
+#   FROM vis-gateway:local
+#   USER root
+#   RUN apt-get update && apt-get install -y --no-install-recommends gh \
+#       && rm -rf /var/lib/apt/lists/*
+#   RUN mkdir -p /home/vis/.config/gh && chown -R vis:vis /home/vis/.config
+#   USER vis
+#
+# What a derived image may rely on: user `vis`, uid 10001, HOME=/home/vis,
+# WORKDIR /work, the wrapper on PATH at /usr/local/bin/vis-agent, and the
+# ENTRYPOINT/CMD at the bottom of this file (inherited unless overridden).
+# Seed a dotfile directory the way this file does — `mkdir -p` then
+# `chown vis:vis` — because docker seeds a named volume from the image's
+# directory and inherits its owner and mode.
+#
 # Build cost: native-image is the expensive part — roughly twenty minutes and a
 # ~12 GiB live set in `builder`, and it is paid on every build because the
 # gateway this image serves IS that binary. Build where the RAM is, or hand the
@@ -298,17 +320,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         rlwrap build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# gh — from GitHub's own apt repo (Debian's archive does not carry it).
-RUN set -eux; \
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-        -o /usr/share/keyrings/githubcli-archive-keyring.gpg; \
-    chmod 0644 /usr/share/keyrings/githubcli-archive-keyring.gpg; \
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-        > /etc/apt/sources.list.d/github-cli.list; \
-    apt-get update && apt-get install -y --no-install-recommends gh; \
-    rm -rf /var/lib/apt/lists/*; \
-    gh --version
-
+# No `gh`, no cloud CLI, no operator-specific package: this is the base image,
+# and site tooling is a layer in the deployment's own repository (see the
+# header). The list above is what VIS drives — its own git/ssh/ffmpeg/rg use
+# and the language packs that shell out to python, node, clojure and maven.
 # github.com's SSH host keys, pinned into the SYSTEM known_hosts at build time.
 # A fresh container has an empty ~/.ssh, so the first `git fetch git@github.com:`
 # would have nothing to verify against: with no tty it cannot answer the TOFU
@@ -423,12 +438,12 @@ ENV VIS_PARAKEET_MODEL_DIR=/opt/vis/models/${PARAKEET_MODEL}
 # belong to the user that runs them.
 # Absolute path on purpose: the PATH set above deliberately omits /usr/sbin
 # (the vis user has no business there), so a bare `useradd` is "not found".
-# .ssh and .config/gh are created HERE, owned by vis: docker seeds a named
+# .ssh and .config are created HERE, owned by vis: docker seeds a named
 # volume from the image's directory and inherits its owner and mode. Mount a
 # volume on a path the image does not have and it lands root-owned 0755 —
 # ssh-keygen then cannot write, and ssh refuses a group-readable ~/.ssh.
 RUN /usr/sbin/useradd --create-home --shell /bin/bash --uid 10001 vis \
-    && mkdir -p /home/vis/.vis /home/vis/.ssh /home/vis/.config/gh /home/vis/.config/git /work \
+    && mkdir -p /home/vis/.vis /home/vis/.ssh /home/vis/.config/git /work \
     && chmod 0700 /home/vis/.ssh \
     && chown -R vis:vis /home/vis /work
 
@@ -485,7 +500,7 @@ ENV HOME=/home/vis \
 # SEE the model.
 RUN set -eux; \
     java -version; clojure --version; mvn -v | head -1; \
-    python3 --version; node --version; gh --version | head -1; \
+    python3 --version; node --version; \
     ffmpeg -version | head -1; git --version; ssh -V; \
     vis-agent --version; \
     vis-agent runtime | grep -Eq '^Runtime: +native'; \
@@ -496,7 +511,7 @@ RUN set -eux; \
     test ! -e /root/.vis; \
     test -d /home/vis/.vis/logs; \
     test "$(stat -c '%U %a' /home/vis/.ssh)" = 'vis 700'; \
-    test -d /home/vis/.config/gh
+    test "$(stat -c '%U' /home/vis/.config)" = 'vis'
 
 EXPOSE 7890
 

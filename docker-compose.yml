@@ -2,8 +2,12 @@
 # vis — containerised gateway
 # =============================================================================
 # Everything vis needs is inside the image (JDK, clojure, maven, python, node,
-# gh, chrome, spel + Playwright browsers, ffmpeg, the Parakeet ASR model). The
+# chrome, spel + Playwright browsers, ffmpeg, the Parakeet ASR model). The
 # host contributes nothing but a port, a state volume and a workspace.
+#
+# Site tooling is NOT in here. This file builds and runs the BASE image; a
+# deployment that needs its own CLIs extends it in its own repository (see the
+# Dockerfile header) and points `VIS_IMAGE`/`VIS_TAG` at that derived tag.
 #
 # The gateway itself is the native binary this source builds: `docker compose
 # build` runs native-image (roughly twenty minutes and a ~12 GiB live set), and
@@ -52,11 +56,11 @@ services:
       # The GitHub identity, split from the state volume on purpose: `docker
       # volume rm vis-state` throws away session history, and doing so must not
       # also throw away a registered SSH key (which would have to be deleted on
-      # github.com and re-added) or the gh token.
+      # github.com and re-added) or a credential a derived image's CLI stored.
       #   .ssh    — id_ed25519_github + known_hosts + the github.com Host block
-      #   .config — gh's hosts.yml (`gh auth login --insecure-storage`) and
-      #             git's config, which the image points here with
-      #             GIT_CONFIG_GLOBAL rather than leaving it in ~/.gitconfig.
+      #   .config — git's config, which the image points here with
+      #             GIT_CONFIG_GLOBAL rather than leaving it in ~/.gitconfig,
+      #             beside whatever a derived image keeps there.
       # Both paths exist in the image owned by uid 10001, which is what makes
       # docker seed these volumes writable — see the Dockerfile's useradd.
       - vis-ssh:/home/vis/.ssh
