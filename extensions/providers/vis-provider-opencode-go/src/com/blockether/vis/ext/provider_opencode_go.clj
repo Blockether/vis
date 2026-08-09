@@ -30,8 +30,7 @@
     3. `vis-agent providers status opencode-go` shows the source without
        exposing the key.
     4. `vis-agent providers logout opencode-go` deletes the persisted key."
-  (:require [babashka.http-client :as http]
-            [charred.api :as json]
+  (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
@@ -63,50 +62,35 @@
 
 (defn- anthropic-model? [^String model-id] (boolean (re-find ANTHROPIC_PATTERN model-id)))
 
-(defn- catalog-entry
-  "Convert a raw model ID from the `/models` endpoint to a `:default-models` ref —
-   a bare string for OpenAI-wire models, a `{:name … :api-style :anthropic}` map
-   for MiniMax/Qwen so svar routes them to `/messages`."
-  [model-id]
-  (if (anthropic-model? model-id) {:name model-id :api-style :anthropic} model-id))
+(def ^:private DEFAULT_MODELS
+  "The catalog this build ships: a bare string rides svar's default OpenAI chat
+   wire, a `{:name … :api-style :anthropic}` map routes to `/messages`.
 
-(def ^:private SEED_MODELS
-  "Fallback when the live catalog is unreachable at load time. Kept current with
-   the last known catalog so the picker still shows plausible models offline."
+   Nothing is fetched here. `native-image` (graal-build-time) initializes this
+   namespace at BUILD time, so a `/models` call at load ran on the BUILDER — it
+   froze that machine's catalog into the binary and left its `HttpClient` in the
+   image heap, which failed every native build after v0.1.32. The LIVE catalog
+   still reaches the picker, at runtime, through `providers/fetch-models` (svar
+   `/models!` against this same public endpoint), and `enrich-models` below
+   stamps the wire on whatever comes back."
   ["kimi-k2.7-code" "glm-5.2" "deepseek-v4-flash" "deepseek-v4-pro" "kimi-k2.6" "mimo-v2.5-pro"
    "mimo-v2.5" "hy3" {:name "minimax-m3" :api-style :anthropic}
    {:name "minimax-m2.7" :api-style :anthropic} {:name "qwen3.7-max" :api-style :anthropic}
    {:name "qwen3.7-plus" :api-style :anthropic}])
 
-(defn- fetch-live-catalog!
-  "GET the PUBLIC OpenCode Go `/models` endpoint — no API key required. Returns a
-   vector of model refs (bare strings + `:api-style` maps) built from the live
-   catalog, or nil on any failure (timeout, non-200, parse error, offline)."
-  []
-  (try (let
-         [resp (http/get (str BASE_URL "/models")
-                         {:headers {"Accept" "application/json"} :timeout 5000 :throw false})]
-         (when (<= 200 (:status resp) 299)
-           (->> (json/read-json (:body resp) :key-fn keyword)
-                (:data)
-                (keep :id)
-                (filter string?)
-                (map catalog-entry)
-                seq)))
-       (catch Throwable _ nil)))
+(defn- enrich-models
+  "`:provider/enrich-models-fn`: `(svar-provider router-opts) -> models-vec`, run
+   when the router is built — at runtime, in the process that will make the call.
 
-;; `defonce` + `delay`: the catalog is fetched ONCE per process. `reload!` in
-;; tests preserves the realized delay, so repeated reloads don't repeat the HTTP
-;; call. For native-image this extension namespace is loaded dynamically at
-;; runtime, so the fetch happens then — not at image-build time.
-(defonce ^:private live-catalog (delay (fetch-live-catalog!)))
-
-(def ^:private DEFAULT_MODELS
-  "Live OpenCode Go model catalog (fetched from the public `/models` endpoint at
-   registration) or seed fallback. The gateway's catalog endpoint is public — no
-   key needed — so the LIVE catalog is the source of truth, not a hand-curated
-   list. Falls back to `SEED_MODELS` when the network is unreachable."
-  (or (force live-catalog) SEED_MODELS))
+   The wire is a pure function of the model id, so a MiniMax/Qwen model the live
+   `/models` catalog gained after this release still reaches `/messages`. An
+   explicit `:api-style` from config wins."
+  [svar-provider _router-opts]
+  (mapv (fn [model]
+          (if (and (nil? (:api-style model)) (anthropic-model? (str (:name model))))
+            (assoc model :api-style :anthropic)
+            model))
+        (:models svar-provider)))
 
 ;; =============================================================================
 ;; Persistence
@@ -320,4 +304,5 @@
                       :provider/auth-fn auth-fn
                       :provider/auth-prompt-fn auth-instruction-lines
                       :provider/get-token-fn get-token
+                      :provider/enrich-models-fn #'enrich-models
                       :provider/limits-fn limits-fn}]}))

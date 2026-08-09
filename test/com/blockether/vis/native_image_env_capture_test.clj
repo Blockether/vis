@@ -121,10 +121,40 @@
        (filter #(and (.isFile ^java.io.File %) (str/ends-with? (.getName ^java.io.File %) ".clj")))
        sort))
 
-(defn- offenders
-  "`{:file :line :form}` for every top-level `def`/`defonce` that reads the
-   environment eagerly."
-  []
+(defn- strip-strings
+  "Blank out string literals, so an `@` inside a docstring is not read as a deref."
+  [^String form]
+  (str/replace form #"\"(?:\\.|[^\"\\])*\"" "\"\""))
+
+(defn- deferred-names
+  "Names this file defines as a `delay`/`future`/`promise` — the values whose whole
+   point is that they have NOT run yet."
+  [^String text]
+  (into #{}
+        (keep (fn [[_ form]]
+                (when (re-find #"\((?:delay|future|promise)[\s)]" form)
+                  (second (re-find #"^\(def(?:once)?\s+(?:\^[^\s]+\s+)*([^\s()\[\]{}]+)" form)))))
+        (top-level-forms text)))
+
+(defn- forces-deferred?
+  "Does this top-level form RUN a deferred value while the namespace loads?
+   `(force x)` says so outright; `@x` / `(deref x)` only when `x` is one of this
+   file's own deferred defs, because deref of an atom is a different animal."
+  [^String form ^String text]
+  (let [code (strip-strings form)]
+    (boolean (or (re-find #"\(force[\s)]" code)
+                 (re-find #"@\((?:delay|future|promise)[\s)]" code)
+                 (some (fn [^String nm]
+                         (re-find (re-pattern (str "(?:@|\\(deref\\s+)"
+                                                   (java.util.regex.Pattern/quote nm)
+                                                   "[\\s)]"))
+                                  code))
+                       (deferred-names text))))))
+
+(defn- scan
+  "`{:file :line :form}` for every top-level `def`/`defonce` in the shipped source
+   whose load-time code (deferred subforms removed) satisfies `(match? form text)`."
+  [match?]
   (for
     [^java.io.File f
      (clj-files)
@@ -135,11 +165,22 @@
      (top-level-forms text)
 
      :when (re-find #"^\(def(once)?[\s^]" form)
-     :when (re-find env-read (strip-lazy form))]
+     :when (match? (strip-lazy form) text)]
 
     {:file (.getPath f)
      :line (inc (count (re-seq #"\n" (subs text 0 offset))))
      :form (first (str/split-lines form))}))
+
+(defn- offenders
+  "Top-level `def`/`defonce` forms that read the environment eagerly."
+  []
+  (scan (fn [form _text]
+          (re-find env-read form))))
+
+(defn- forcing-offenders
+  "Top-level `def`/`defonce` forms that force a deferred value at namespace load."
+  []
+  (scan forces-deferred?))
 
 ;; Regression: the installed native binary read the BUILD machine — it logged to the
 ;; builder's `~/.vis/vis.log` ("no such file or directory" on the user's box), looked
@@ -181,7 +222,49 @@
 
         (expect (re-find env-read (strip-lazy eager)))
         (expect (re-find env-read (strip-lazy qualified)))
-        (expect (nil? (re-find env-read (strip-lazy lazy)))))))
+        (expect (nil? (re-find env-read (strip-lazy lazy))))))
+  ;; Regression, issue #N: every native build after v0.1.32 died with
+  ;; "HttpClientFacade found in the image heap". A provider extension held
+  ;; `(def DEFAULT_MODELS (or (force live-catalog) SEED_MODELS))` — the delay was
+  ;; deferred and then forced right back, so the catalog HTTP call ran during
+  ;; <clinit>, which native-image performs at build time.
+  (it "no shipped namespace forces a deferred value at namespace load"
+      (let [found (forcing-offenders)]
+        (expect (empty? found)
+                (str "Top-level def/defonce forcing a delay/future/promise at namespace load. "
+                     "native-image runs <clinit> on the BUILD machine, so whatever the "
+                     "deferred body does (an HTTP call, a file read) happens there and its "
+                     "objects land in the image heap:\n"
+                     (str/join "\n"
+                               (for [{:keys [file line form]} found]
+                                 (str "  " file ":" line "  " form)))))))
+  (it "the force scanner reads code, not prose, and knows a delay from an atom"
+      (let
+        [file
+         (str "(def live-catalog (delay (fetch!)))\n" "(def active-theme-id (atom :dark))\n")
+
+         eager
+         "(def models (or (force live-catalog) SEED))"
+
+         derefed
+         "(def models @live-catalog)"
+
+         atom-deref
+         "(def default-theme (theme/theme @active-theme-id))"
+
+         lazy
+         "(def models (delay (force live-catalog)))"
+
+         prose
+         "(def models \"Ask @maintainer for the catalog.\" SEED)"]
+
+        (expect (forces-deferred? (strip-lazy eager) file))
+        (expect (forces-deferred? (strip-lazy derefed) file))
+        ;; An atom is state, not a deferred computation: reading one at load runs
+        ;; nothing the builder could freeze.
+        (expect (not (forces-deferred? (strip-lazy atom-deref) file)))
+        (expect (not (forces-deferred? (strip-lazy lazy) file)))
+        (expect (not (forces-deferred? (strip-lazy prose) file))))))
 
 (defn- with-home
   [home f]

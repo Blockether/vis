@@ -56,26 +56,46 @@
                    (expect (some #(re-find #"minimax" (:name %)) styled))
                    (expect (some #(re-find #"qwen" (:name %)) styled)))))
 
-(defdescribe catalog-entry-test
-             (it "routes MiniMax/Qwen to Anthropic Messages wire, everything else to OpenAI chat"
-                 (expect (= "glm-5.2" (#'opencode-go/catalog-entry "glm-5.2")))
-                 (expect (= "kimi-k3" (#'opencode-go/catalog-entry "kimi-k3")))
-                 (expect (= {:name "minimax-m3" :api-style :anthropic}
-                            (#'opencode-go/catalog-entry "minimax-m3")))
-                 (expect (= {:name "qwen3.8-max" :api-style :anthropic}
-                            (#'opencode-go/catalog-entry "qwen3.8-max")))))
+;; Regression, issue #N: `DEFAULT_MODELS` forced a `delay` that fetched the live
+;; `/models` catalog at the top level, so the request ran during namespace
+;; <clinit> — which `native-image` performs at BUILD time. That froze the
+;; builder's catalog into the binary and left its `HttpClient` in the image heap:
+;; "HttpClientFacade found in the image heap" failed every native build after
+;; v0.1.32. The catalog must be static here; the live one arrives at runtime.
+(defdescribe
+  static-catalog-test
+  (it "builds its default catalog without touching the network"
+      (reload!)
+      (let [models (get-in (vis/provider-by-id :opencode-go) [:provider/preset :default-models])]
+        (expect (seq models))
+        ;; No delay, no promise, no future: the value is already there.
+        (expect (vector? models)))))
 
-;; Regression, issue #N: DEFAULT_MODELS was a stale hardcoded constant. The
-;; `/models` endpoint is public (no key), so the catalog is now fetched live and
-;; includes models the old list never had (kimi-k3, grok-4.5, mimo-v2-omni).
-(defdescribe live-catalog-test
-             (it "fetches the live catalog from the public /models endpoint"
-                 (when-let [catalog (#'opencode-go/fetch-live-catalog!)]
-                   (let [ids (set (map #(if (map? %) (:name %) %) catalog))]
-                     ;; The live catalog has more models than the seed fallback.
-                     (expect (> (count catalog) (count @#'opencode-go/SEED_MODELS)))
-                     ;; The live catalog includes models the stale constant never had.
-                     (expect (some #(contains? ids %) ["kimi-k3" "grok-4.5" "mimo-v2-omni"]))))))
+(defdescribe enrich-models-test
+             (it "stamps the Anthropic wire on MiniMax/Qwen at router-build time"
+                 (let
+                   [enriched
+                    (#'opencode-go/enrich-models
+                     {:models [{:name "glm-5.2"} {:name "minimax-m3"} {:name "qwen3.8-max"}]}
+                     nil)
+
+                    by-name
+                    (into {} (map (juxt :name identity)) enriched)]
+
+                   ;; A model the shipped list never had still reaches /messages,
+                   ;; because the wire is a function of the id, not of this file.
+                   (expect (= :anthropic (:api-style (by-name "minimax-m3"))))
+                   (expect (= :anthropic (:api-style (by-name "qwen3.8-max"))))
+                   (expect (nil? (:api-style (by-name "glm-5.2"))))))
+             (it "never overrides an :api-style that config already decided"
+                 (let
+                   [enriched (#'opencode-go/enrich-models
+                              {:models [{:name "minimax-m3" :api-style :openai}]}
+                              nil)]
+                   (expect (= :openai (:api-style (first enriched))))))
+             (it "is registered on the provider, so the live catalog is enriched too"
+                 (reload!)
+                 (expect (ifn? (:provider/enrich-models-fn (vis/provider-by-id :opencode-go))))))
 
 (defdescribe
   shared-key-auth-test

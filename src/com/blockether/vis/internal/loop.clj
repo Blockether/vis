@@ -67,7 +67,7 @@
                                 parse-long)
                         32)))))
 
-(defonce ^:private ^ExecutorService gather-executor
+(defonce ^:private gather-executor
   ;; Pool backing the sandbox `gather` builtin. Each thunk runs a GraalPy
   ;; `Value.execute` that PINS its carrier for the blocking tool call (the
   ;; polyglot boundary does not unmount virtual threads), so virtual threads gave
@@ -77,41 +77,48 @@
   ;; no retained backlog. Saturated nested work may run inline only from a platform
   ;; thread; a virtual submitter instead blocks on the queue's virtual-thread-safe
   ;; handoff until a platform worker is free, so GraalPy never pins its carrier.
-  (let
-    [seq
-     (AtomicLong. 0)
+  ;;
+  ;; A `delay`, never an eager build: `native-image` initializes this namespace at
+  ;; BUILD time, so constructing the pool here forced `@gather-max-threads` on the
+  ;; BUILDER — shipping its `VIS_GATHER_MAX_THREADS` answer and putting a live
+  ;; ThreadPoolExecutor in the image heap. Built on first `gather`, in the process
+  ;; that will actually run the thunks.
+  (delay
+    (let
+      [seq
+       (AtomicLong. 0)
 
-     tf
-     (reify
-       ThreadFactory
-         (newThread [_ r]
-           (doto (Thread. ^Runnable r (str "vis-gather-" (.getAndIncrement seq)))
-             (.setDaemon true))))
+       tf
+       (reify
+         ThreadFactory
+           (newThread [_ r]
+             (doto (Thread. ^Runnable r (str "vis-gather-" (.getAndIncrement seq)))
+               (.setDaemon true))))
 
-     rejection-handler
-     (reify
-       java.util.concurrent.RejectedExecutionHandler
-         (rejectedExecution [_ task executor]
-           (cond (.isShutdown ^ThreadPoolExecutor executor)
-                 (throw (java.util.concurrent.RejectedExecutionException.
-                          "Gather executor is shut down"))
-                 (.isVirtual (Thread/currentThread))
-                 (try (.put (.getQueue ^ThreadPoolExecutor executor) ^Runnable task)
-                      (catch InterruptedException e
-                        (.interrupt (Thread/currentThread))
-                        (throw (java.util.concurrent.RejectedExecutionException.
-                                 "Interrupted while applying gather backpressure"
-                                 e))))
-                 :else (.run ^Runnable task))))]
+       rejection-handler
+       (reify
+         java.util.concurrent.RejectedExecutionHandler
+           (rejectedExecution [_ task executor]
+             (cond (.isShutdown ^ThreadPoolExecutor executor)
+                   (throw (java.util.concurrent.RejectedExecutionException.
+                            "Gather executor is shut down"))
+                   (.isVirtual (Thread/currentThread))
+                   (try (.put (.getQueue ^ThreadPoolExecutor executor) ^Runnable task)
+                        (catch InterruptedException e
+                          (.interrupt (Thread/currentThread))
+                          (throw (java.util.concurrent.RejectedExecutionException.
+                                   "Interrupted while applying gather backpressure"
+                                   e))))
+                   :else (.run ^Runnable task))))]
 
-    (doto (ThreadPoolExecutor. 0
-                               (int @gather-max-threads)
-                               30
-                               TimeUnit/SECONDS
-                               (SynchronousQueue.)
-                               tf
-                               rejection-handler)
-      (.allowCoreThreadTimeOut true))))
+      (doto (ThreadPoolExecutor. 0
+                                 (int @gather-max-threads)
+                                 30
+                                 TimeUnit/SECONDS
+                                 (SynchronousQueue.)
+                                 tf
+                                 rejection-handler)
+        (.allowCoreThreadTimeOut true)))))
 
 (defn- settle-gather-futures!
   "Settle every submitted gather future — `{:ok v}` or `{:err e}` per slot,
@@ -10899,7 +10906,7 @@
 
           futs
           (mapv (fn [t]
-                  (.submit gather-executor
+                  (.submit ^ExecutorService @gather-executor
                            ^Callable
                            (bound-fn* (fn []
                                         (call t)))))
@@ -10960,7 +10967,7 @@
 
           futs
           (mapv (fn [t]
-                  (.submit gather-executor
+                  (.submit ^ExecutorService @gather-executor
                            ^Callable
                            (bound-fn* (fn []
                                         (call t)))))
