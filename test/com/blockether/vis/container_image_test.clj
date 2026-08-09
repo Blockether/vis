@@ -5,11 +5,11 @@
    install. The image therefore installs the release bundle the `builder` and
    `native-export` stages produce — wrapper, `vis-agent-native` and the
    language-resources sidecar in one directory — so a gap in
-   `reachability-metadata.json`, or a constant native-image folded in at BUILD
-   time (`config.clj` folds `config-dir` off `user.home`, which is why the
-   builder is handed `-Duser.home=/home/vis`), fails in the build rather than in
-   production. These tests pin that arrangement, and the wrapper contract it
-   stands on."
+   `reachability-metadata.json` fails in the build rather than in production.
+   The image's home is the `vis` user's own — HOME=/home/vis, so `~/.vis` is
+   /home/vis/.vis and never root's — and the build proves that by running the
+   binary and looking at what it wrote. These tests pin that arrangement, and
+   the wrapper contract it stands on."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]])
@@ -72,7 +72,20 @@
         ;; The GraalPy/Truffle resources ship BESIDE the binary; without them
         ;; every Python tool dies with "No module named 'ast'".
         (expect (str/includes? stage "test -d /opt/vis/agent/vis-agent-resources") stage)
-        (expect (str/includes? stage "vis-agent python -c") stage))))
+        (expect (str/includes? stage "vis-agent python -c") stage)))
+  (it "gives the agent the vis user's home, and proves the runtime uses it"
+      (let [stage (runtime-stage)]
+        (expect (str/includes? stage "ENV HOME=/home/vis") stage)
+        (expect (str/includes? stage "VIS_HOME=/home/vis/.vis") stage)
+        (expect (str/includes? stage "useradd --create-home --shell /bin/bash --uid 10001 vis")
+                stage)
+        (expect (str/includes? stage "chown -R vis:vis /home/vis /work") stage)
+        ;; Existence of ~/.vis proves only that the image mkdir'd it. `logs` is
+        ;; written by `config/init-cli!` on every command, so the assertion below
+        ;; is the RUNTIME saying where its home is — and /root/.vis staying
+        ;; absent is the same statement from the other side.
+        (expect (str/includes? stage "test ! -e /root/.vis") stage)
+        (expect (str/includes? stage "test -d /home/vis/.vis/logs") stage))))
 
 (defdescribe compose-passes-no-second-version-source-test
              (it "leaves the version to the image it builds"

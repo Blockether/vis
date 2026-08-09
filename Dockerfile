@@ -99,9 +99,9 @@ ARG VIS_ORACLE_NATIVE_IMAGE
 ARG VIS_NATIVE_EXTRA_ARGS
 
 # HOME here is only about where the BUILD's caches land (~/.m2, ~/.gitconfig).
-# It deliberately does NOT fix `user.home` in the produced binary: building the
-# whole image with HOME=/home/vis was measured and the binary still opened
-# /root/.vis. That is handled by the wrapper in the runtime stage.
+# It is /home/vis so the builder JVM's `user.home` is already the runtime user's
+# home: native-image initializes Clojure namespaces at BUILD time, and anything
+# that captured a home path then would otherwise capture root's.
 ENV HOME=/home/vis \
     GRAALVM_HOME=/opt/graalvm \
     JAVA_HOME=/opt/graalvm \
@@ -161,16 +161,15 @@ RUN check-graal-pins
 
 # `native` honours VIS_ORACLE_NATIVE_IMAGE / VIS_NATIVE_EXTRA_ARGS from the env.
 #
-# `-Duser.home=/home/vis` is not cosmetic. Clojure namespaces are initialised at
-# IMAGE BUILD time, so top-level defs that read `user.home` are FOLDED INTO THE
-# BINARY as constants — `config.clj:34` bakes `config-dir`, and `vis.log`,
-# `state.yml`, `vis.mdb` all hang off it. A runtime `-Duser.home` (the wrapper
-# below) comes too late for those: measured, the binary still opened
-# `/root/.vis/vis.log` and died "Permission denied" as the unprivileged user.
-# A `-D` on the native-image command line sets the property in the BUILDER JVM,
-# which is exactly where that folding happens, so the constant bakes as
-# /home/vis/.vis — matching the runtime user's HOME. Setting HOME alone does not
-# do it: the JDK derives user.home from getpwuid(), and the build runs as root.
+# `-Duser.home=/home/vis` keeps the BUILDER JVM's home equal to the runtime
+# user's home. Vis' own code never needs it — `config-dir` is a FUNCTION on
+# purpose (see its docstring in internal/config.clj), read per call, so the
+# effective `~/.vis` comes from the wrapper's `-Duser.home=$HOME` at launch.
+# The flag exists for the build's OWN initialization: native-image runs static
+# initializers while building, and a value some initializer captured from the
+# builder (whose getpwuid() home is root's, HOME notwithstanding) can only ever
+# fold to /home/vis this way. The runtime stage then PROVES the home instead of
+# trusting it: it runs the binary and asserts it wrote ~vis/.vis, never /root.
 #
 # `vis/VERSION` — what `vis-agent --version` prints — is the repo-root
 # VIS_VERSION, verbatim: that file is the only version source, and the build
@@ -455,9 +454,9 @@ RUN test "${WITH_BROWSERS}" != "true" \
 # This is what makes a deployment worth trusting: the container serves the
 # artifact every user installs, so a gap in `reachability-metadata.json` or a
 # constant that native-image folded in at BUILD time fails in this build,
-# loudly, instead of only in someone's release. `-Duser.home=/home/vis` is
-# passed to the builder above for exactly that reason — `config.clj` folds
-# `config-dir` off `user.home`, and it must fold to this image's runtime home.
+# loudly, instead of only in someone's release. The agent's home is the `vis`
+# user's: HOME=/home/vis, so the wrapper hands the runtime
+# `-Duser.home=/home/vis` and every `~/.vis` path lands there.
 #
 # The JDK, the Clojure CLI and Maven stay in this image, but they are the
 # AGENT's toolchain for the projects it works on — nothing here runs Vis itself
@@ -495,7 +494,7 @@ RUN set -eux; \
     vis-agent python -c "import ast, json, os; print('py-ok')" | grep -qx 'py-ok'; \
     vis-agent extension voice models status; \
     test ! -e /root/.vis; \
-    test -d /home/vis/.vis; \
+    test -d /home/vis/.vis/logs; \
     test "$(stat -c '%U %a' /home/vis/.ssh)" = 'vis 700'; \
     test -d /home/vis/.config/gh
 
