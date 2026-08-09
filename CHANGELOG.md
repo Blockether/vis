@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.35] - 2026-08-09
+
+### Changed
+- Release v0.1.35
+- A wait is ONE budget for the whole batch, not one per command
+- Drop README library packaging note
+- Trim README install and runtime prose
+- Simplify README install section
+- Name the one shell tool `shell`
+- Give apropos groups and every sandbox verb its raw-result doc
+- Make `wait` the only difference between a run and a background shell
+- Serve the whole session's artifacts from a metadata index
+- PLAN: name Phase 5 by its commit
+- Make every run a handle: a timeout is a wait that expired
+- Stop forcing deferred work at namespace load, which native-image runs on the builder
+- PLAN: name Phase 4 by its commit
+- Give a background shell a log FILE and a byte OFFSET cursor
+- Page a project from the list on screen, not the gateway's own window
+- Delete the project-wide rename
+- Ask the :fs/access gate from struct_rename too
+- release: update release notes for v0.1.34
+- Record what a host map actually looks like in the sandbox
+
+### Package changes
+
+#### com.blockether/vis
+- Release v0.1.35 (165edb397)
+- A wait is ONE budget for the whole batch, not one per command (cdcfe21e8)
+- Drop README library packaging note (9bdbc1cf7)
+- Trim README install and runtime prose (66527db92)
+- Simplify README install section (0d29554ca)
+- Name the one shell tool `shell` (25089f16f)
+- Give apropos groups and every sandbox verb its raw-result doc (07cf88d36)
+- Make `wait` the only difference between a run and a background shell (634c0476c)
+- Serve the whole session's artifacts from a metadata index (cac2e80a3)
+- PLAN: name Phase 5 by its commit (4f9983d23)
+- Make every run a handle: a timeout is a wait that expired (451a644a2)
+- Stop forcing deferred work at namespace load, which native-image runs on the builder (8d0eae493)
+- PLAN: name Phase 4 by its commit (1be019874)
+- Give a background shell a log FILE and a byte OFFSET cursor (e98cc607e)
+- Page a project from the list on screen, not the gateway's own window (a264ef547)
+- Delete the project-wide rename (71f00d8c9)
+- Ask the :fs/access gate from struct_rename too (a6557f244)
+- release: update release notes for v0.1.34 (6469254b2)
+- Record what a host map actually looks like in the sandbox (1afa5d007)
+
+#### com.blockether/vis-channel-tui
+- Name the one shell tool `shell` (25089f16f)
+- Make `wait` the only difference between a run and a background shell (634c0476c)
+
+#### com.blockether/vis-persistance-sqlite
+- Serve the whole session's artifacts from a metadata index (cac2e80a3)
+
+#### com.blockether/vis-provider-opencode-go
+- Stop forcing deferred work at namespace load, which native-image runs on the builder (8d0eae493)
+
+
+
 ## [v0.1.34] - 2026-08-09
 
 ### Changed
@@ -4197,7 +4255,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.34...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.35...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -4225,3 +4283,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.32]: https://github.com/Blockether/vis/releases/tag/v0.1.32
 [v0.1.33]: https://github.com/Blockether/vis/releases/tag/v0.1.33
 [v0.1.34]: https://github.com/Blockether/vis/releases/tag/v0.1.34
+[v0.1.35]: https://github.com/Blockether/vis/releases/tag/v0.1.35
