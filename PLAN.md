@@ -463,10 +463,19 @@ Done:
   beside `db-delete-session-tree!`, and the index row rides the existing `extension_aggregate`
   rail (`ON DELETE CASCADE`), so there is no migration.
 
+- Phase 5, every run IS a handle — `<commit>`. A run claims its id and its log file BEFORE it
+  waits, so the result carries `id` whether it finished or not; a wait that expires no longer
+  kills the child but ADOPTS it as an ordinary background handle, and nothing after it in the
+  ordered batch is started. `capped-capture` replaced `read-capped` so a stream can be
+  snapshotted while it is still filling, and `shell_logs` answers for a finished run from the
+  file plus its sidecar row once the registry entry is gone. The phase's Unknowns are answered:
+  an adopted run has NO writable stdin (it was spawned on pipes, not a PTY, so `send` refuses it
+  by name), and it is LEFT ALONE at the end of a turn — listed as a session resource, running
+  until it exits or `resource_stop`.
+
 TODO, in order:
 
-1. Phase 5 — every run carries an `::id`, so a timeout is a wait that expired.
-2. Phase 6 — `wait` replaces `shell_background`, the handle object replaces `shell_logs` /
+1. Phase 6 — `wait` replaces `shell_background`, the handle object replaces `shell_logs` /
    `shell_type` / `shell_stop`, one shell under `subprocess`/`shell_run`, `git` as
    `wrap_with_shell`.
 

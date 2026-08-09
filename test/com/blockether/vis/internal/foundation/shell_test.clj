@@ -7,6 +7,7 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.resources :as resources]
+            [com.blockether.vis.internal.shell-log :as shell-log]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]])
@@ -367,7 +368,12 @@
                  (let [stop (resources/stop! sid "worker")]
                    (expect (= :stopped (:result stop)))
                    (expect (empty? (resources/list-resources sid)))
-                   (expect (threw? #(shell-logs* env "worker"))))
+                   ;; The registry entry is gone, but the LOG is the session's, not the
+                   ;; process's: a stopped shell still reads back by id, as exited.
+                   (let [r (:result (shell-logs* env "worker" {:offset 0}))]
+                     (expect (str/starts-with? (get r "text") "l1"))
+                     (expect (= "exited" (get r "status"))))
+                   (expect (threw? #(shell-logs* env "no-such-shell"))))
                  (finally (resources/stop-all! sid))))))))
   (it "keeps an exited process listed (status :exited) with readable logs + exit"
       (with-shell-on (fn []
@@ -1414,3 +1420,56 @@
       (expect (nil? (command-note {:jail-policy-fn (constantly {:disabled? false})}
                                   {:text "hello"}
                                   {:text ""})))))
+
+;; Phase 5: a run IS a handle — the wait expires, the process does not.
+(defdescribe
+  run-is-a-handle-test
+  (it "carries an id whether it finished or not, and the id's log holds what the wait never saw"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-run-handle"
+               env {:session-id sid}
+               overdue (:result (shell* env
+                                        {"commands" ["printf 'early\\n'; sleep 3; printf 'late\\n'"]
+                                         "timeout_secs" 1}))
+               id (get overdue "id")]
+
+              (try
+                ;; The WAIT expired; there is no exit because the process is still alive.
+                (expect (true? (get overdue "timed_out")))
+                (expect (nil? (get overdue "exit")))
+                (expect (string? id))
+                (expect (seq id))
+                ;; …and the very output the timed-out call could not wait for arrives on
+                ;; the handle, read from offset 0 by the same cursor loop the model runs.
+                (let
+                  [text (loop [n 0]
+                          (let [text (log-text env id)]
+                            (if (or (str/includes? text "late") (<= 60 n))
+                              text
+                              (do (Thread/sleep 200) (recur (inc n))))))]
+                  (expect (str/includes? text "early"))
+                  (expect (str/includes? text "late")))
+                (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
+  (it "gives a run that finished inside its wait an id too, whose log is the same bytes"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-run-handle-fast"
+               env {:session-id sid}
+               r (:result (shell* env {"commands" ["printf 'done\\n'"]}))
+               id (get r "id")]
+
+              (try (expect (false? (get r "timed_out")))
+                   (expect (= 0 (get r "exit")))
+                   (expect (seq id))
+                   (expect (= "done\n" (get-in r ["commands" 0 "stdout"])))
+                   ;; No live process is left to account for, yet the bytes are still
+                   ;; readable by id: the log belongs to the session, not to the child.
+                   (let [logs (:result (shell-logs* env id {:offset 0}))]
+                     (expect (str/includes? (get logs "text") "done"))
+                     (expect (= "exited" (get logs "status"))))
+                   (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))))

@@ -113,57 +113,71 @@
 ;; Small helpers
 ;; =============================================================================
 
-(defn- read-capped
-  "Drain a Reader keeping the HEAD and the TAIL of the stream, dropping only the
-   MIDDLE when output exceeds `head-limit`+`tail-limit` — so neither the opening
-   context nor the closing failure/summary is ever silently lost (the old
-   tail-only cap swallowed everything before the last N chars). When truncated a
-   visible omitted-count marker is spliced in at the boundary. Bounded memory:
-   the middle is collapsed at read time, so a megabyte-then-killed command can't
-   balloon the heap. Returns {:text :truncated :omitted} — `omitted` is the exact
-   dropped-char count (0 when nothing was dropped). Never throws: a stream closed
-   mid-read (the timeout/stop path closes it) just ends the drain."
-  [^java.io.Reader r ^long head-limit ^long tail-limit]
+(defn- capped-capture
+  "A capture of ONE stream that can be READ WHILE IT IS STILL FILLING.
+
+   `:drain!` pumps a Reader to EOF keeping the HEAD and the TAIL of the stream and
+   dropping only the MIDDLE when it exceeds `head-limit`+`tail-limit` — so neither
+   the opening context nor the closing failure/summary is ever silently lost (the
+   old tail-only cap swallowed everything before the last N chars). Memory stays at
+   ~cap: the middle is collapsed at read time, so a megabyte-then-killed command
+   cannot balloon the heap. It never throws — a stream closed mid-read just ends
+   the drain.
+
+   `:snapshot` answers `{:text :truncated :omitted}` for what has arrived SO FAR,
+   with the exact dropped-char count (0 when nothing was dropped) and a visible
+   omitted-count marker spliced in at the boundary. Snapshotting mid-stream is the
+   whole point: a run that outstays its wait is no longer killed, so the bytes it
+   had already printed must be answerable before its stream ends."
+  [^long head-limit ^long tail-limit]
   (let
     [sb
      (StringBuilder.)
-
-     buf
-     (char-array 8192)
 
      cap
      (+ head-limit tail-limit)
 
      total
-     (volatile! 0)
+     (atom 0)
 
      trunc
-     (volatile! false)]
+     (atom false)]
 
-    (try (loop []
+    {:drain! (fn [^java.io.Reader r]
+               (let [buf (char-array 8192)]
+                 (try (loop []
 
-           (let [n (.read r buf 0 (alength buf))]
-             (when (pos? n)
-               (vswap! total
-                       (fn [t]
-                         (+ (long t) n)))
-               (.append sb buf 0 n)
-               (when (> (.length sb) cap)
-                 (vreset! trunc true)
-                 ;; keep the first `head-limit` chars + the last `tail-limit`;
-                 ;; excise the run between them so memory stays at ~cap.
-                 (.delete sb (int head-limit) (int (- (.length sb) tail-limit))))
-               (recur))))
-         (catch Throwable _ nil))
-    {:text (if @trunc
-             (str (subs (.toString sb) 0 head-limit)
-                  "\n\n…[" (- (long @total) cap)
-                  " chars omitted]…\n\n" (subs (.toString sb) head-limit))
-             (.toString sb))
-     :truncated @trunc
-     ;; Exact dropped-char count: the text now carries an inline marker, so a
-     ;; caller can SEE both that it is no longer parseable and how much is gone.
-     :omitted (if @trunc (- (long @total) cap) 0)}))
+                        (let [n (.read r buf 0 (alength buf))]
+                          (when (pos? n)
+                            (locking sb
+                              (swap! total (fn [t]
+                                             (+ (long t) n)))
+                              (.append sb buf 0 n)
+                              (when (> (.length sb) cap)
+                                (reset! trunc true)
+                                ;; keep the first `head-limit` chars + the last `tail-limit`;
+                                ;; excise the run between them so memory stays at ~cap.
+                                (.delete sb (int head-limit) (int (- (.length sb) tail-limit)))))
+                            (recur))))
+                      (catch Throwable _ nil))))
+     :snapshot (fn []
+                 (locking sb
+                   (let
+                     [s
+                      (.toString sb)
+
+                      omitted
+                      (if @trunc (- (long @total) cap) 0)]
+
+                     {:text (if @trunc
+                              (str (subs s 0 head-limit)
+                                   "\n\n…[" omitted
+                                   " chars omitted]…\n\n" (subs s head-limit))
+                              s)
+                      :truncated @trunc
+                      ;; Exact dropped-char count: the text now carries an inline marker, so a
+                      ;; caller can SEE both that it is no longer parseable and how much is gone.
+                      :omitted omitted})))}))
 
 (defn- truncation-note
   "Note for a command whose capture lost a middle. Truncation splices a marker
@@ -628,9 +642,17 @@
    (`shell-batch-impl`), so a command's line and output have exactly one home.
 
    `cmd` is either one bash line (a string) or a literal argv (a sequential,
-   used by `git`). The echoed `cmd` is always the display string."
-  ([env cmd] (shell-run-impl env cmd nil))
-  ([env cmd opts]
+   used by `git`). The echoed `cmd` is always the display string.
+
+   `handle` is what makes the run a HANDLE: `:sink` is the log file every captured
+   byte is teed into, and `:on-spawn` is handed the live process the moment it
+   exists, so the registry knows what is running before the wait even begins. A
+   handled run that outstays its wait is NOT killed — the wait expired, the process
+   did not, and the caller comes back to it by id — while a handle-less run (`git`)
+   still dies on its deadline, because nothing could ever read it again."
+  ([env cmd] (shell-run-impl env cmd nil nil))
+  ([env cmd opts] (shell-run-impl env cmd opts nil))
+  ([env cmd opts {:keys [sink on-spawn]}]
    (let
      [argv
       (when (sequential? cmd) (mapv str cmd))
@@ -658,21 +680,32 @@
         p
         (spawn! (or argv cmd) dir false policy)
 
-        empty-tail
-        {:text "" :truncated false :omitted 0}
+        _
+        (when on-spawn (on-spawn p))
 
         ;; Separate reader futures per stream — avoids the classic full-pipe
-        ;; deadlock on chatty commands. `read-capped` bounds memory to the
+        ;; deadlock on chatty commands. `capped-capture` bounds memory to the
         ;; head+tail budget per stream at READ time (dropping only the MIDDLE
         ;; of a huge stream, not its start), so a megabyte-then-killed command
-        ;; can't balloon the heap yet the opening context survives.
+        ;; can't balloon the heap yet the opening context survives — and it can
+        ;; be snapshotted while the process is still printing.
+        out-cap
+        (capped-capture max-sync-head-chars max-sync-tail-chars)
+
+        err-cap
+        (capped-capture max-sync-head-chars max-sync-tail-chars)
+
+        ;; Every captured byte is written through to the log file, so the handle's
+        ;; log holds what the call returned AND everything printed after it.
+        reader-of
+        (fn [^java.io.InputStream s]
+          (io/reader (if sink (shell-log/tee s sink) s)))
+
         out-f
-        (future
-          (read-capped (io/reader (.getInputStream p)) max-sync-head-chars max-sync-tail-chars))
+        (future ((:drain! out-cap) (reader-of (.getInputStream p))))
 
         err-f
-        (future
-          (read-capped (io/reader (.getErrorStream p)) max-sync-head-chars max-sync-tail-chars))
+        (future ((:drain! err-cap) (reader-of (.getErrorStream p))))
 
         finished?
         (try (.waitFor p timeout-secs TimeUnit/SECONDS)
@@ -682,18 +715,21 @@
                (kill-tree! p)
                (throw ie)))]
 
-       (when-not finished?
+       (when (and (not finished?) (nil? sink))
          (kill-tree! p)
          ;; Closing the streams unblocks the reader futures on a wedged child
          ;; so their threads don't linger past our 5s deref ceiling.
          (doseq [^java.io.InputStream s [(.getInputStream p) (.getErrorStream p)]]
            (try (.close s) (catch Throwable _ nil))))
+       ;; A handled run that timed out is STILL PRINTING: waiting on its drains
+       ;; would be waiting on the very command whose wait already expired.
+       (when (or finished? (nil? sink)) (deref out-f 5000 nil) (deref err-f 5000 nil))
        (let
          [out
-          (deref out-f 5000 empty-tail)
+          ((:snapshot out-cap))
 
           err
-          (deref err-f 5000 empty-tail)
+          ((:snapshot err-cap))
 
           exit
           (when finished? (.exitValue p))
@@ -704,7 +740,7 @@
          (with-meta (command-result
                       ;; TOTAL entry shape (`command-result-base`). The old "lean" map dropped a
                       ;; key whenever it carried no signal, so ordinary model Python
-                      ;; (`c["stderr"]`, `c["timed_out"]`) died with a bare `KeyError` — read as
+                      ;; (`c[\"stderr\"]`, `c[\"timed_out\"]`) died with a bare `KeyError` — read as
                       ;; "the tool broke", retried with cosmetic variations, and spun.
                       {"command" cmd
                        ;; The child exists: this is intentionally distinct from a batch entry
@@ -725,8 +761,12 @@
            ;; Request scope, IDENTICAL for every entry of a batch: carried as metadata
            ;; so the group summarises one `cwd`/`timeout_secs` instead of every entry
            ;; repeating them, and nothing extra crosses to Python. A relative dir is
-           ;; `/`-separated on every OS.
-           {:dir (paths/unixify (.getPath dir)) :timeout-secs timeout-secs}))))))
+           ;; `/`-separated on every OS. A run left alive past its wait carries the
+           ;; process and its still-running drains, which is what adoption needs.
+           {:dir (paths/unixify (.getPath dir))
+            :timeout-secs timeout-secs
+            :process (when-not finished? p)
+            :drains [out-f err-f]}))))))
 
 (defn- batch-exit
   "ONE exit code for a whole batch: the FIRST non-zero exit — the command an `&&`
@@ -792,51 +832,6 @@
       (throw (ex-info "shell commands must not contain blank commands." {:type ::blank-command})))
     lines))
 
-(defn- shell-batch-impl
-  "Run `commands` strictly in input order: each bounded foreground shell call
-   finishes before the next begins. Same ordered-batch machinery
-   (`serial-batch`) the `git` tool runs its own `commands` through.
-
-   EVERY bounded run lands here — a lone command is a batch of ONE, exactly as
-   `git` has no single-command shape either. The answer is ONE ordinary shell
-   result, never a second envelope: the total `shell-result` map, whose
-   `commands` carries each command's own full entry in input order while the
-   top-level `cwd`/`started`/`exit`/`timed_out`/`duration_ms` SUMMARISE the group.
-   Nothing is echoed twice: the result has no top-level `cmd` (the commands are
-   `commands`) and no top-level `stdout`/`stderr` (the bytes stay with the command
-   that emitted them), and `note` says exactly that in the data."
-  [env commands opts]
-  (let
-    [commands
-     (ordered-lines commands)
-
-     results
-     (batch/run-serial commands
-                       #(shell-run-impl env % opts)
-                       ;; An infrastructure failure (for example ProcessBuilder refusing
-                       ;; its dir) must not erase the completed entries nor make later
-                       ;; commands ambiguous. Keep the input-position result and continue.
-                       (fn [command ^Exception e]
-                         (command-result {"command" command
-                                          "status" "not started"
-                                          "note" (or (.getMessage e) (.getName (class e)))})))]
-
-    (extension/success {:result
-                        (shell-result
-                          "run"
-                          (merge {;; Request scope lives on the GROUP, read back off the
-                                  ;; entries' metadata rather than duplicated into each.
-                                  "cwd" (some #(:dir (meta %)) results)
-                                  ;; Started only when EVERY child was spawned, so a
-                                  ;; launch failure anywhere stays visible at the top.
-                                  "started" (every? #(get % "started") results)
-                                  "exit" (batch-exit results)
-                                  "duration_ms" (reduce + 0 (keep #(get % "duration_ms") results))
-                                  "timed_out" (boolean (some #(get % "timed_out") results))
-                                  "timeout_secs" (clamp-timeout-secs (get opts "timeout_secs"))
-                                  "note" (batch-note (count results))}
-                                 (batch/result results)))
-                        :op :shell-run})))
 
 ;; =============================================================================
 ;; BACKGROUND — Python sandbox: `await shell_background(["npm run dev"], id="dev")`
@@ -866,10 +861,13 @@
 (defn- bg-entry [session id] (get-in @bg-procs [(str session) (str id)]))
 
 (defn- bg-live?
-  "True only while `id` still holds a RUNNING process in this session."
+  "True only while `id` still holds a RUNNING process in this session. An entry
+   registered before its first process exists (a run claims its handle at the top
+   of the batch) is not live yet."
   [session id]
   (boolean (when-let [entry (bg-entry session id)]
-             ((:alive? (:proc entry))))))
+             (when-let [alive? (:alive? (:proc entry))]
+               (alive?)))))
 
 (defn- command->bg-id-slug
   "Name a background shell after the program it runs: `npm run dev` -> `npm`.
@@ -1322,8 +1320,288 @@
                                  "\"} as one shell map.")
                             {:type ::missing-command :op "background" :id id}))))))))
 
+;; =============================================================================
+;; RUN as a handle — a timeout is a WAIT that expired, not a lost process
+;; =============================================================================
+
+(defn- process-handle
+  "A spawned `java.lang.Process` in the PTY handle SHAPE (`:pid :in :alive? :wait
+   :destroy`) that `bg-core`, `kill-tree!` and the background registry already
+   speak. A foreground run that outstays its wait is then an ORDINARY shell handle
+   rather than a second kind of live process with its own lifecycle."
+  [^Process p]
+  {:pid (.pid p)
+   :in (.getInputStream p)
+   :alive? (fn []
+             (.isAlive p))
+   :wait (fn []
+           (.waitFor p))
+   :destroy (fn [force?]
+              (if force? (.destroyForcibly p) (.destroy p)))})
+
+(defn- adopt-run!
+  "Promote a run that outstayed its wait into an ordinary background handle: the
+   child is NOT killed, its log keeps filling, and `logs`/`stop` reach it by the id
+   the run already answered with. The watcher thread finishes what the background
+   pump finishes — wait out the drains, close the log, stamp the ending, publish the
+   exit code — so a caller that comes back later reads a complete file and a real
+   exit instead of a process nobody is accounting for."
+  [{:keys [session id proc sink script cwd drains exit-atom exited-at stopped? index-fn]}]
+  (swap! bg-procs assoc-in [(str session) id :dir] cwd)
+  (index-fn {:dir cwd})
+  (try (resources/register!
+         session
+         {:id id
+          :kind :shell
+          :label (one-line script 48)
+          :detail script
+          :pid (:pid proc)
+          :owner "foundation-shell"
+          :status :running}
+         {:stop-fn (fn []
+                     (reset! stopped? true)
+                     (kill-tree! proc)
+                     (try (.close ^java.io.InputStream (:in proc)) (catch Throwable _ nil))
+                     (shell-log/close! sink)
+                     (drop-bg-entry! session id))
+          :alive-fn (fn []
+                      (some? (bg-entry session id)))
+          ;; A run keeps no line ring: the log FILE is the view, so the
+          ;; registry card reads its tail the same way `logs` does.
+          :logs-fn (fn []
+                     (-> (shell-log/read-chunk id (shell-log/log-file session id))
+                         :text
+                         str/split-lines))
+          :health-fn (fn []
+                       (cond (nil? (bg-entry session id)) :down
+                             (nil? @exit-atom) :running
+                             (zero? (long @exit-atom)) :exited
+                             :else :failed))})
+       (catch Throwable _ nil))
+  (doto (Thread.
+          (fn []
+            (doseq [f drains]
+              (try (deref f) (catch Throwable _ nil)))
+            ;; The stream is finished, so the file is complete: flush and close it
+            ;; BEFORE the exit code is published, or a reader that already saw the
+            ;; exit could still be missing the last buffered bytes.
+            (shell-log/close! sink)
+            (let [code (try ((:wait proc)) (catch Throwable _ nil))]
+              (compare-and-set! exited-at nil (now-ms))
+              (reset! exit-atom code)
+              (index-fn {:dir cwd :ended-at @exited-at :exit code})
+              (when-not @stopped?
+                (try (resources/update! session
+                                        id
+                                        {:status :exited
+                                         :detail
+                                         (str "exit " code " — logs retained until resource_stop")})
+                     (catch Throwable _ nil))))))
+    (.setName (str "vis-shell-run-" id))
+    (.setDaemon true)
+    (.start))
+  nil)
+
+(defn- shell-batch-impl
+  "Run `commands` strictly in input order: each bounded foreground shell call
+   finishes before the next begins. Same ordered-batch machinery
+   (`serial-batch`) the `git` tool runs its own `commands` through.
+
+   EVERY bounded run lands here — a lone command is a batch of ONE, exactly as
+   `git` has no single-command shape either. The answer is ONE ordinary shell
+   result, never a second envelope: the total `shell-result` map, whose
+   `commands` carries each command's own full entry in input order while the
+   top-level `cwd`/`started`/`exit`/`timed_out`/`duration_ms` SUMMARISE the group.
+   Nothing is echoed twice: the result has no top-level `cmd` (the commands are
+   `commands`) and no top-level `stdout`/`stderr` (the bytes stay with the command
+   that emitted them), and `note` says exactly that in the data.
+
+   EVERY run IS a handle. It claims its `id` and its log file BEFORE it waits, so
+   the result carries that id whether the batch finished or not, and a wait that
+   expires is no longer a lost process: the command keeps running under its id,
+   `shell_logs(id, offset=0)` reads everything the timed-out call never saw, and
+   nothing after it is started, because the group is ordered and its first command
+   has not finished. A batch that finished inside its wait drops the registry
+   entry — there is no live process to account for — while its log file stays
+   readable by id for as long as the session does."
+  [env commands opts]
+  (let
+    [session
+     (:session-id env)
+
+     commands
+     (ordered-lines commands)
+
+     ;; The handle is named after the program, exactly as a background start is,
+     ;; and never hijacks an id a live shell already holds.
+     id
+     (auto-bg-id session commands)
+
+     script
+     (str/join "\n" commands)
+
+     ;; The log is a FILE, opened BEFORE the first spawn so not one byte of a fast
+     ;; command's output can be printed before there is somewhere to keep it.
+     sink
+     (shell-log/open! session id)
+
+     t0
+     (now-ms)
+
+     exit-atom
+     (atom nil)
+
+     exited-at
+     (atom nil)
+
+     stopped?
+     (atom false)
+
+     ;; The first command whose wait expired: everything after it stays unstarted,
+     ;; and its process is what gets adopted.
+     overdue
+     (atom nil)
+
+     index-fn
+     (fn [m]
+       (shell-log/index! (:db-info env)
+                         session
+                         id
+                         (merge {:commands commands
+                                 :script script
+                                 :dir nil
+                                 :log-path (:path sink)
+                                 :started-at t0
+                                 :ended-at nil
+                                 :exit nil}
+                                m)))
+
+     on-spawn
+     (fn [p]
+       (swap! bg-procs assoc-in [(str session) id :proc] (process-handle p)))
+
+     _
+     (swap! bg-procs assoc-in
+       [(str session) id]
+       {:proc nil
+        :buffer (atom {:lines [] :next-seq 1 :dropped 0})
+        :exit exit-atom
+        :exited-at exited-at
+        :stopped? stopped?
+        :commands commands
+        :script script
+        :dir nil
+        :started-at t0})
+
+     results
+     (batch/run-serial
+       commands
+       (fn [command]
+         (if @overdue
+           (command-result {"command" command
+                            "status" "not started"
+                            "note" (str "The wait expired on an earlier command, which is still"
+                                        " running as shell '" id
+                                        "'; nothing after it was" " started.")})
+           (let [r (shell-run-impl env command opts {:sink sink :on-spawn on-spawn})]
+             (when (get r "timed_out") (reset! overdue (meta r)))
+             r)))
+       ;; An infrastructure failure (for example ProcessBuilder refusing
+       ;; its dir) must not erase the completed entries nor make later
+       ;; commands ambiguous. Keep the input-position result and continue.
+       (fn [command ^Exception e]
+         (command-result {"command" command
+                          "status" "not started"
+                          "note" (or (.getMessage e) (.getName (class e)))})))
+
+     ;; Request scope lives on the GROUP, read back off the entries' metadata
+     ;; rather than duplicated into each.
+     cwd
+     (some #(:dir (meta %)) results)
+
+     timed-out
+     @overdue]
+
+    (if timed-out
+      (adopt-run! {:session session
+                   :id id
+                   :proc (:proc (bg-entry session id))
+                   :sink sink
+                   :script script
+                   :cwd cwd
+                   :drains (:drains timed-out)
+                   :exit-atom exit-atom
+                   :exited-at exited-at
+                   :stopped? stopped?
+                   :index-fn index-fn})
+      (do (shell-log/close! sink)
+          (reset! exited-at (now-ms))
+          (reset! exit-atom (batch-exit results))
+          (index-fn {:dir cwd :ended-at @exited-at :exit @exit-atom})
+          (drop-bg-entry! session id)))
+    (extension/success
+      {:result (shell-result "run"
+                             (merge {;; ALWAYS a handle, finished or not — that is the whole point:
+                                     ;; no rule to remember about when an id is present.
+                                     "id" id
+                                     "cwd" cwd
+                                     ;; Started only when EVERY child was spawned, so a
+                                     ;; launch failure anywhere stays visible at the top.
+                                     "started" (every? #(get % "started") results)
+                                     "exit" (batch-exit results)
+                                     "duration_ms"
+                                     (reduce + 0 (keep #(get % "duration_ms") results))
+                                     "timed_out" (boolean timed-out)
+                                     "timeout_secs" (clamp-timeout-secs (get opts "timeout_secs"))
+                                     "note" (if timed-out
+                                              (str (batch-note (count results))
+                                                   " The WAIT expired, not the process: it is still"
+                                                   " running as shell '"
+                                                   id
+                                                   "' — read everything it"
+                                                   " printed with await shell_logs(\""
+                                                   id
+                                                   "\", offset=0), and stop it with"
+                                                   " await shell_stop(\""
+                                                   id
+                                                   "\").")
+                                              (batch-note (count results)))}
+                                    (batch/result results)))
+       :op :shell-run})))
+
+(defn- retired-log-core
+  "The `logs` identity for an id whose registry entry is GONE but whose log file is
+   not — a run that finished inside its wait keeps no live process, yet its bytes
+   stay readable by id for as long as the session does. The sidecar index row is
+   where the command lines, the cwd, the lifetime and the exit come from, so \"what
+   did that build print\" is answerable a turn later with nothing but the id."
+  [env session id]
+  (let
+    [row
+     (->> (shell-log/session-logs (:db-info env) session)
+          (filter #(= id (get % "id")))
+          first)
+
+     started
+     (get row "started_at")
+
+     ended
+     (get row "ended_at")]
+
+    (assoc (shell-result
+             "logs"
+             {"id" id
+              batch/commands-key (mapv #(command-result {"command" (str %) "started" true})
+                                       (get row "commands"))
+              "cwd" (get row "dir")
+              "started" true
+              "exit" (get row "exit")
+              "uptime_ms" (when (and started ended) (max 0 (- (long ended) (long started))))})
+      ;; The process is gone by construction: this stage reads a FILE, never a child.
+      "status" "exited")))
+
 (defn- shell-logs-impl
-  "ONE read of a background shell's log, from a byte OFFSET.
+  "ONE read of a shell's log, from a byte OFFSET.
 
    The log is a file, so a read is a WINDOW on it and the caller owns the cursor:
    feed `next_offset` back and the loop walks the whole stream, however long it
@@ -1332,7 +1610,11 @@
 
    With no `:offset` the window is the TAIL, which is what someone watching a live
    command wants; `{:offset 0}` is the head, and a loop from there is the whole
-   log. `is_eof` false means read again NOW rather than sleep."
+   log. `is_eof` false means read again NOW rather than sleep.
+
+   The id may name a LIVE shell or a finished RUN: every run claims a handle before
+   it waits, so a batch that ended inside its wait still has a log to read, and the
+   file is what answers once the registry entry is gone."
   ([env id] (shell-logs-impl env id nil))
   ([env id {:keys [offset limit]}]
    (let
@@ -1343,18 +1625,19 @@
       (str id)
 
       entry
-      (bg-entry session id)]
+      (bg-entry session id)
 
-     (when-not entry
-       (throw (ex-info (str "No background shell '"
-                            id
-                            "' in this session — start one with"
-                            " await shell_background([\"…\"], id=id);"
-                            " live ids are listed in resources.")
+      ^java.io.File file
+      (shell-log/log-file session id)]
+
+     (when-not (or entry (.isFile file))
+       (throw (ex-info (str "No shell '" id
+                            "' in this session — every run and every background start"
+                            " answers with its own id; live ids are listed in resources.")
                        {:type ::unknown-bg-id :id id})))
      (let
        [chunk
-        (shell-log/read-chunk id (shell-log/log-file session id) {:offset offset :limit limit})
+        (shell-log/read-chunk id file {:offset offset :limit limit})
 
         t
         (now-ms)]
@@ -1363,7 +1646,7 @@
          ;; Sharing `bg-core`'s identity keys with every other stage: `exit` None
          ;; while running. `text` is the window this read returned, already joined
          ;; — a file has no line numbers to carry and no seq pairs to unwrap.
-         {:result (assoc (bg-core "logs" id entry)
+         {:result (assoc (if entry (bg-core "logs" id entry) (retired-log-core env session id))
                     "text" (:text chunk)
                     "offset" (:offset chunk)
                     "next_offset" (:next-offset chunk)
@@ -2437,13 +2720,16 @@
      :native-tool? true
      :name "shell_run"
      :result
-     (str "`{cwd, commands, exit, duration_ms, timed_out}`; each entry under `commands` carries "
-          "its own `command`, `stdout`, `stderr`, `exit`, `duration_ms`, `timed_out` and `note` "
-          "(`*_omitted_chars` says what a huge stream lost). Nonzero exit is data.")
+     (str "`{id, cwd, commands, exit, duration_ms, timed_out}`; each entry under `commands` "
+          "carries its own `command`, `stdout`, `stderr`, `exit`, `duration_ms`, `timed_out` and "
+          "`note` (`*_omitted_chars` says what a huge stream lost). Nonzero exit is data. `id` is "
+          "ALWAYS a handle: `timed_out` means the WAIT expired, not the process.")
      :description
      (str
        "Run `bash -lc` lines in order and return their output; drive it from `python_execution`: "
        "batch the `commands`, read `r[\"commands\"][i][\"stdout\"]`, print only what you need. "
+       "The result is always a handle: on `timed_out` the command is STILL RUNNING under `id`, so "
+       "resume with `shell_logs(id, offset=0)` and `shell_stop(id)` instead of running it again. "
        "Long or interactive work goes to `shell_background`.")
      :render-finish-call-fn render-shell-batch-result
      :render-start-call-fn (shell-start-renderer "run")
