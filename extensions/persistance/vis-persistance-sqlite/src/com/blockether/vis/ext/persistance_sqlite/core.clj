@@ -2916,7 +2916,40 @@
                        :iteration-id (:session_turn_iteration_id row))))
              vec)))))
 
+(def ^:private session-attachment-meta-select
+  "[[attachment-meta-select]] qualified to the `a` alias, plus the turn columns
+   the whole-session roll-up orders by. Same rule: never the `bytes` BLOB — a
+   session-wide INDEX must not read a session's worth of payload off disk."
+  (into [[:a.id :id] [:a.session_turn_soul_id :session_turn_soul_id]
+         [:a.session_turn_iteration_id :session_turn_iteration_id] [:a.tool_call_id :tool_call_id]
+         [:a.position :position] [:a.kind :kind] [:a.media_type :media_type] [:a.filename :filename]
+         [:a.version :version] [:a.audience :audience] [:a.storage_uri :storage_uri]
+         [:a.size_bytes :size_bytes] [[:case [:= :a.bytes nil] 0 :else 1] :has_bytes]]
+        [[:ts.position :turn_position] [:ts.session_state_id :turn_state_id]]))
 
+(defn db-list-session-attachments-meta
+  "[[db-list-session-attachments]] WITHOUT the bytes — the same rows in the same
+   order, `:base64` replaced by `:has-bytes`. THE lister for a whole-session
+   artifact INDEX: a client that wants to know everything a session produced
+   asks once and pays metadata, then fetches the one blob it renders by id."
+  [db-info session-id]
+  (let [state-ids (session-state-chain db-info session-id)]
+    (if-not (and (ds db-info) (seq state-ids))
+      []
+      (let [rank (zipmap state-ids (range))]
+        (->> (query! db-info
+                     {:select session-attachment-meta-select
+                      :from [[:session_attachment :a]]
+                      :join [[:session_turn_soul :ts] [:= :a.session_turn_soul_id :ts.id]]
+                      :where [:in :ts.session_state_id state-ids]})
+             (sort-by (fn [r]
+                        [(get rank (:turn_state_id r) Long/MAX_VALUE) (or (:turn_position r) 0)
+                         (if (:session_turn_iteration_id r) 1 0) (or (:position r) 0)]))
+             (mapv (fn [row]
+                     (assoc (row->attachment-meta row)
+                       :turn-soul-id (:session_turn_soul_id row)
+                       :iteration-id (:session_turn_iteration_id row))))
+             vec)))))
 
 
 (defn db-read-attachment
@@ -3295,8 +3328,8 @@
                                           :media_type (str (:media-type att))
                                           :filename (:filename att)
                                           :version version
-                                          :audience (attachments/normalize-audience (or (:audience att)
-                                                                                        "user"))
+                                          :audience (attachments/normalize-audience
+                                                      (or (:audience att) "user"))
                                           :created_at (now-ms)}
                                          payload)]})
               {:id id :version version :position position})))))))

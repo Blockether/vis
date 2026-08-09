@@ -399,7 +399,17 @@
       (expect (= "call_A" (:tool-call-id (nth all 1))))
       (expect (= "call_B" (:tool-call-id (nth all 2))))
       ;; Unknown session -> [].
-      (expect (= [] (vis/db-list-session-attachments s (str (java.util.UUID/randomUUID))))))))
+      (expect (= [] (vis/db-list-session-attachments s (str (java.util.UUID/randomUUID)))))
+      ;; The bytes-free twin answers the SAME rows in the SAME order - a
+      ;; whole-session artifact INDEX must never read a session's payload.
+      (let [meta (vis/db-list-session-attachments-meta s cid)]
+        (expect (= (mapv :filename all) (mapv :filename meta)))
+        (expect (= (mapv #(str (:turn-soul-id %)) all) (mapv #(str (:turn-soul-id %)) meta)))
+        (expect (= (mapv #(str (:iteration-id %)) all) (mapv #(str (:iteration-id %)) meta)))
+        (expect (every? #(nil? (:base64 %)) meta))
+        (expect (every? :has-bytes meta))
+        (expect (= []
+                   (vis/db-list-session-attachments-meta s (str (java.util.UUID/randomUUID)))))))))
 
 (defdescribe
   sqlite-extension-aggregate-index-data-filter-test

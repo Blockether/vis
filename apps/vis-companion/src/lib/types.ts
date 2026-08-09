@@ -434,6 +434,16 @@ export interface IterationAttachment {
 }
 
 /**
+ * One row of `GET /v1/sessions/:sid/artifacts` — the byte-free descriptor of
+ * [[IterationAttachment]] plus the 1-based `turn` that produced it, counted
+ * from the start of the session. The endpoint answers the WHOLE session, so a
+ * gallery no longer depends on how far back the reader has paged.
+ */
+export interface SessionArtifactRow extends IterationAttachment {
+  turn?: number;
+}
+
+/**
  * The gateway's version contract, mirrored from
  * `com.blockether.vis.internal.gateway.protocol`. `protocol` is the wire
  * number it speaks; `min_client` / `min_gateway` are the oldest counterparts it

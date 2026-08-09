@@ -31,6 +31,7 @@ import type {
   GatewayStatus,
   GatewayTheme,
   IterationAttachment,
+  SessionArtifactRow,
   Session,
   SessionUsage,
   SettingsResponse,
@@ -2531,6 +2532,27 @@ export class GatewayClient {
     writeSnapshot(key, turns);
     transcriptWindows.set(key, { offset: page.offset, total: page.total });
     return turns;
+  }
+
+  /**
+   * EVERY artifact this session ever produced, in ONE byte-free request.
+   *
+   * The transcript arrives newest-page-first, so a gallery derived from the
+   * rows we hold listed only what the reader had already paged back to. The
+   * gateway indexes the whole session instead; the bytes stay lazy behind
+   * `attachmentUrl`.
+   */
+  async sessionArtifacts(
+    sid: string,
+    signal?: AbortSignal,
+  ): Promise<SessionArtifactRow[]> {
+    const response = await this.request<{ artifacts?: SessionArtifactRow[] }>(
+      "GET",
+      `/v1/sessions/${encodeURIComponent(sid)}/artifacts`,
+      undefined,
+      signal,
+    );
+    return response.artifacts ?? [];
   }
 
   /**

@@ -11,6 +11,8 @@ import {
   attachmentIsVideo,
   collapseArtifactVersions,
   collectArtifacts,
+  artifactsFromIndex,
+  mergeArtifacts,
   withSavedAttachment,
   docKindLabel,
   isDocMedia,
@@ -451,5 +453,57 @@ describe("folding a saved revision back into the transcript", () => {
     const held = turns();
     expect(withSavedAttachment(held, { ...saved, iteration_id: "i9" })).toBe(held);
     expect(withSavedAttachment(held, { ...saved, iteration_id: undefined })).toBe(held);
+  });
+});
+
+// Regression: the artifacts sheet was built only from the transcript rows the
+// screen held. The transcript is fetched newest-page-first, so a long session
+// opened on an almost empty gallery and artifacts appeared one page at a time
+// as the reader scrolled upward.
+describe("the session-wide artifact index", () => {
+  const rows = [
+    {
+      index: 0,
+      iteration_id: "i1",
+      filename: "revenue.png",
+      media_type: "image/png",
+      size: 2048,
+      turn: 3,
+    },
+    {
+      index: 0,
+      iteration_id: "i9",
+      filename: "report.pdf",
+      media_type: "application/pdf",
+      turn: 3,
+    },
+  ];
+
+  it("reads the whole session, newest first, with the turn that made it", () => {
+    const list = artifactsFromIndex(rows);
+    expect(list.map((entry) => entry.name)).toEqual([
+      "report.pdf",
+      "revenue.png",
+    ]);
+    expect(list.map((entry) => entry.turn)).toEqual([3, 3]);
+    expect(list[1].key).toBe("i1:0");
+    expect(list[1].sizeLabel).toBe("2.0KB");
+    expect(list[0].kind).toBe("doc");
+  });
+
+  it("lists an artifact from a turn the reader never scrolled back to", () => {
+    const held = collectArtifacts(turns, 40);
+    const merged = mergeArtifacts(held, artifactsFromIndex(rows));
+    expect(merged.map((entry) => entry.name)).toEqual([
+      "report.pdf",
+      "notes.csv",
+      "revenue.png",
+      "report.pdf",
+    ]);
+    // A held row keeps its own provenance; the turn nobody scrolled back to is
+    // the one the index adds.
+    expect(merged[0].tool).toBe("shell");
+    expect(merged[3].tool).toBe("");
+    expect(merged.map((entry) => entry.turn)).toEqual([42, 41, 41, 3]);
   });
 });

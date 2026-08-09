@@ -14,7 +14,13 @@ import {
   UserMessage,
 } from "../components/ChatContent";
 import { ArtifactsChip, ArtifactsSheet } from "../components/ArtifactsSheet";
-import { collapseArtifactVersions, collectArtifacts } from "../lib/artifacts";
+import {
+  artifactsFromIndex,
+  collapseArtifactVersions,
+  collectArtifacts,
+  mergeArtifacts,
+} from "../lib/artifacts";
+import type { SessionArtifact } from "../lib/artifacts";
 import { ExpandableImage } from "../components/ImageViewer";
 import {
   BackButton,
@@ -1154,14 +1160,36 @@ export function SessionScreen({
     () => client.transcriptWindow(sid).offset,
   );
   const [artifactsOpen, setArtifactsOpen] = useState(false);
+  // The session's WHOLE artifact index, asked of the gateway in one byte-free
+  // request. Without it the sheet listed only what the reader had already
+  // scrolled back to: the transcript is fetched newest-page-first, so a long
+  // session's gallery opened nearly empty and filled in page by page as the
+  // reader paged upward. Refetched as the session grows a turn.
+  const [indexedArtifacts, setIndexedArtifacts] = useState<SessionArtifact[]>(
+    [],
+  );
+  useEffect(() => {
+    const control = new AbortController();
+    client
+      .sessionArtifacts(sid, control.signal)
+      .then((rows) => setIndexedArtifacts(artifactsFromIndex(rows)))
+      .catch(() => {});
+    return () => control.abort();
+  }, [client, sid, turns.length]);
   // Everything this session PRODUCED, flattened out of the turns that made it,
   // then collapsed so a NAME is one artifact with a version history rather than
   // one row per file written. The transcript paints each artifact where it was
   // made, which is right and is also why "show me that chart again" is otherwise
   // a scroll hunt.
   const artifacts = useMemo(
-    () => collapseArtifactVersions(collectArtifacts(turns, earlierRemaining)),
-    [turns, earlierRemaining],
+    () =>
+      collapseArtifactVersions(
+        mergeArtifacts(
+          collectArtifacts(turns, earlierRemaining),
+          indexedArtifacts,
+        ),
+      ),
+    [turns, earlierRemaining, indexedArtifacts],
   );
   // A revision the human saves from inside this screen — a commented note, an
   // inked figure, a stamped PDF page — is appended to an ITERATION THAT ALREADY

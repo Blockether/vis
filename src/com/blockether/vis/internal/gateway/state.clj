@@ -2030,6 +2030,59 @@
       (tel/log! :warn ["gateway: transcript page hydration failed" (ex-message t)])
       {:turns [] :total 0 :offset 0 :has-more false})))
 
+(defn session-artifacts
+  "EVERY artifact the whole SESSION produced, oldest turn first — the index
+   behind a client's artifacts gallery.
+
+   A transcript is read newest-page-first, so a client that derives its gallery
+   from the rows it happens to HOLD can only list what the reader already
+   scrolled past: a 200-turn session opens on an empty sheet and grows one page
+   at a time. This answers the whole session in ONE metadata query — never a
+   byte of payload — and the client fetches the blobs it renders from
+   `GET /v1/sessions/:sid/iterations/:iid/attachments/:idx`.
+
+   The rows are the SAME [[attachment-descriptors]] the live frame and the
+   transcript ship, with `:turn` added: the 1-based ordinal of the turn that
+   produced it, counted from the start of the session, so `index` names the same
+   artifact here, in history and at the byte endpoint. Model-only rows are
+   dropped by the very filter the byte endpoint indexes
+   ([[user-iteration-attachments]]), and a user's own uploaded image is not an
+   artifact the model produced, so it is not here either."
+  [sid]
+  (try
+    (let
+      [db
+       (lp/db-info)
+
+       ordinal
+       (into {}
+             (map-indexed (fn [i turn]
+                            [(str (:id turn)) (inc (long i))]))
+             (persistance/db-list-session-turns db sid))
+
+       rows
+       (->> (persistance/db-list-session-attachments-meta db sid)
+            (filter :iteration-id)
+            (remove attachments/hidden-from-user?))]
+
+      (->> (group-by #(str (:iteration-id %)) rows)
+           (mapcat (fn [[iid group]]
+                     ;; `(tool_call_id, position)` is the order
+                     ;; `db-list-iteration-attachments-meta` serves, so index N is
+                     ;; the same N the byte endpoint resolves.
+                     (let
+                       [ordered (vec (sort-by (juxt #(str (:tool-call-id %)) #(or (:position %) 0))
+                                              group))]
+                       (map (fn [descriptor row]
+                              (assoc descriptor :turn (get ordinal (str (:turn-soul-id row)) 0)))
+                            (attachment-descriptors iid ordered)
+                            ordered))))
+           (sort-by (juxt :turn :iteration_id :index))
+           vec))
+    (catch Throwable t
+      (tel/log! :warn ["gateway: session artifacts read failed" (str sid) (ex-message t)])
+      [])))
+
 (defn turn-trace
   "THE canonical wire trace of ONE persisted turn: its iteration rows (each
   with hydrated `:attachments` re-read from the attachment store) through

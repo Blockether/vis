@@ -522,6 +522,8 @@
 
 (defdelegate db-list-session-attachments [db-info session-id])
 
+(defdelegate db-list-session-attachments-meta [db-info session-id])
+
 (defdelegate db-list-session-turn-iterations [db-info session-turn-ref])
 
 (defdelegate db-list-iteration-attachments [db-info iteration-id])

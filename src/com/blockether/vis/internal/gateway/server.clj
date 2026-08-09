@@ -2362,6 +2362,16 @@
                           :has-more (:has-more page)}))))
     (session-404 (get-in request [:path-params :sid]))))
 
+(defn- session-artifacts-handler
+  "GET /v1/sessions/:sid/artifacts — `{\"artifacts\": [descriptor, …]}` for the
+   WHOLE session, oldest turn first, metadata only. A gallery asks this once
+   instead of deriving itself from the transcript page it happens to hold, which
+   listed only what the reader had already scrolled back to."
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response {:artifacts (state/session-artifacts sid)})
+    (session-404 (get-in request [:path-params :sid]))))
+
 (defn- transcript-md-handler
   "Render a session's user/assistant dialog as Markdown — the canonical
    `transcript->md :dialog` every surface (CLI, web, file export) renders
@@ -3443,6 +3453,7 @@
         [(sid-route "/events-since") {:get events-since-handler}]
         [(sid-route "/seq") {:get seq-handler}] [(sid-route "/context") {:get context-handler}]
         [(sid-route "/transcript") {:get transcript-handler}]
+        [(sid-route "/artifacts") {:get session-artifacts-handler}]
         [(sid-route "/transcript.md") {:get transcript-md-handler}]
         [(sid-route "/transcript.html") {:get transcript-html-handler}]
         [(sid-route "/resources") {:get resources-handler}]

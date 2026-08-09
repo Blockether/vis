@@ -17,7 +17,11 @@
  * which is why the whole vocabulary is testable without rendering a session.
  */
 
-import type { IterationAttachment, TranscriptTurn } from "./types";
+import type {
+  IterationAttachment,
+  SessionArtifactRow,
+  TranscriptTurn,
+} from "./types";
 
 /** Media types that ride the transcript as a document, never as model input. */
 const FRAME_MEDIA = new Set([
@@ -199,6 +203,27 @@ export interface SessionArtifact {
  * the gateway before the window we hold. A turn has no ordinal of its own, so
  * the count only means "turn 6" when the pages before it are added back.
  */
+function toArtifact(
+  attachment: IterationAttachment,
+  where: { turn: number; tool: string; iterationId: string },
+): SessionArtifact {
+  const index = attachment.index ?? 0;
+  return {
+    key: `${where.iterationId}:${index}`,
+    kind: artifactKind(attachment),
+    name: attachment.filename || "attachment",
+    media: artifactMedia(attachment),
+    mediaType: attachment.media_type ?? "",
+    size: attachment.size,
+    sizeLabel: attachmentBytes(attachment.size),
+    turn: where.turn,
+    tool: where.tool,
+    iterationId: where.iterationId,
+    index,
+    version: attachment.version ?? 1,
+  };
+}
+
 export function collectArtifacts(
   turns: TranscriptTurn[],
   earlier = 0,
@@ -213,25 +238,53 @@ export function collectArtifacts(
       const tool =
         typeof iteration.tool_name === "string" ? iteration.tool_name : "";
       for (const attachment of iteration.attachments ?? []) {
-        const index = attachment.index ?? 0;
-        list.push({
-          key: `${iterationId}:${index}`,
-          kind: artifactKind(attachment),
-          name: attachment.filename || "attachment",
-          media: artifactMedia(attachment),
-          mediaType: attachment.media_type ?? "",
-          size: attachment.size,
-          sizeLabel: attachmentBytes(attachment.size),
-          turn: ordinal,
-          tool,
-          iterationId,
-          index,
-          version: attachment.version ?? 1,
-        });
+        list.push(toArtifact(attachment, { turn: ordinal, tool, iterationId }));
       }
     }
   });
   return list.reverse();
+}
+
+/**
+ * THE WHOLE SESSION'S ARTIFACTS, NOT ONLY THE PAGE ON SCREEN.
+ *
+ * `GET /v1/sessions/:sid/artifacts` answers every artifact the session ever
+ * produced, oldest first, each row stamped with the `turn` that made it. The
+ * transcript is fetched newest-page-first, so [[collectArtifacts]] alone can
+ * only list what the reader already scrolled back to — the gallery of a long
+ * session opened nearly empty and filled in as the reader paged upward.
+ *
+ * The gateway knows no tool NAME here (that lives on the iteration row, not on
+ * the artifact), so a row the transcript also holds keeps its own provenance —
+ * see [[mergeArtifacts]].
+ */
+export function artifactsFromIndex(
+  rows: SessionArtifactRow[],
+): SessionArtifact[] {
+  return rows
+    .map((row) =>
+      toArtifact(row, {
+        turn: row.turn ?? 0,
+        tool: "",
+        iterationId: row.iteration_id ?? "",
+      }),
+    )
+    .reverse();
+}
+
+/**
+ * The session-wide index UNDER the turns we actually hold: an artifact the
+ * transcript carries wins, because those rows also know which tool made them
+ * and are already folded with any revision saved on this screen. Newest first,
+ * by the turn that produced it.
+ */
+export function mergeArtifacts(
+  held: SessionArtifact[],
+  indexed: SessionArtifact[],
+): SessionArtifact[] {
+  const seen = new Set(held.map((entry) => entry.key));
+  const list = held.concat(indexed.filter((entry) => !seen.has(entry.key)));
+  return list.sort((a, b) => b.turn - a.turn);
 }
 
 /**

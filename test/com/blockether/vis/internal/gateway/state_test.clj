@@ -798,6 +798,71 @@
   (it "is nil for an unknown turn"
       (expect (nil? (state/turn-attachments (str (java.util.UUID/randomUUID)) "nope")))))
 
+
+(defdescribe
+  session-artifacts-test
+  "A client's gallery used to be derived from the transcript rows it happened to
+   hold. The transcript is read newest-page-first, so a long session listed only
+   the artifacts the reader had already scrolled back to. This index answers the
+   WHOLE session in one metadata read."
+  (it
+    "indexes every produced artifact with the turn that made it"
+    (let
+      [sid
+       (java.util.UUID/randomUUID)
+
+       turns
+       [{:id "soul-0"} {:id "soul-1"} {:id "soul-2"}]
+
+       att
+       (fn [m]
+         (merge {:kind "image" :media-type "image/png" :audience "both" :size 10 :position 0} m))]
+
+      (with-redefs-fn {#'lp/db-info (constantly ::db)
+                       #'persistance/db-list-session-turns (fn [_ _]
+                                                             turns)
+                       #'persistance/db-list-session-attachments-meta
+                       (fn [_ _]
+                         [;; A user's own uploaded image: no iteration, not an artifact the
+                          ;; model produced.
+                          (att {:filename "upload.png" :turn-soul-id "soul-0" :iteration-id nil})
+                          (att {:filename "second.png"
+                                :turn-soul-id "soul-0"
+                                :iteration-id "i1"
+                                :tool-call-id "call_B"})
+                          (att {:filename "first.png"
+                                :turn-soul-id "soul-0"
+                                :iteration-id "i1"
+                                :tool-call-id "call_A"})
+                          ;; Model-only: absent from the byte endpoint, so absent here.
+                          (att {:filename "hidden.png"
+                                :audience "model"
+                                :turn-soul-id "soul-2"
+                                :iteration-id "i9"
+                                :tool-call-id "call_C"})
+                          (att {:filename "late.png"
+                                :turn-soul-id "soul-2"
+                                :iteration-id "i9"
+                                :tool-call-id "call_D"
+                                :version 3})])}
+        (fn []
+          (let [rows (state/session-artifacts sid)]
+            (expect (= ["first.png" "second.png" "late.png"] (mapv :filename rows)))
+            ;; The turn ordinal is counted from the START of the session, so a
+            ;; client never has to hold the earlier pages to name it.
+            (expect (= [1 1 3] (mapv :turn rows)))
+            ;; `(tool_call_id, position)` is the byte endpoint's own order, so
+            ;; index N names the same artifact everywhere.
+            (expect (= [0 1 0] (mapv :index rows)))
+            (expect (= ["i1" "i1" "i9"] (mapv :iteration_id rows)))
+            (expect (= 3 (:version (last rows)))))))))
+  (it "is empty, never an exception, when the read fails"
+      (with-redefs-fn {#'lp/db-info (constantly ::db)
+                       #'persistance/db-list-session-turns (fn [_ _]
+                                                             (throw (ex-info "nope" {})))}
+        (fn []
+          (expect (= [] (state/session-artifacts (java.util.UUID/randomUUID))))))))
+
 (defdescribe
   transcript-page-test
   "The transcript window exists so a client never pays for history it will not
