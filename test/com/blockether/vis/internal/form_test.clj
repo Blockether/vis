@@ -103,10 +103,10 @@
       (expect (not (form/hide-tool-code? {:vis/tool-name "cat" :error "boom"})))
       (expect (not (form/hide-tool-code? {:vis/tool-name "cat" :success? false})))
       ;; A long-running tool needs no exception here: `python_execution` keeps its
-      ;; program above, and shell_run authors its own pending card
+      ;; program above, and shell authors its own pending card
       ;; body, so nothing has to re-show raw invocation JSON while a call runs.
-      (expect (form/hide-tool-code? {:vis/tool-name "shell_run"}))
-      (expect (form/hide-tool-code? {:vis/tool-name "shell_run"})))
+      (expect (form/hide-tool-code? {:vis/tool-name "shell"}))
+      (expect (form/hide-tool-code? {:vis/tool-name "shell"})))
   (it "removes redundant mutation verbs from new and persisted tool summaries"
       (doseq
         [[tool summary expected] [["patch" "update `a.clj` · add `b.clj`" "`a.clj`, `b.clj`"]
@@ -120,7 +120,7 @@
       ;; headline AND the body its own `:render-start-call-fn` authored (`$ npm test
       ;; (running)` over a COMMAND section) instead of collapsing to a bare band.
       (let
-        [running (form/result-card {:vis/tool-name "shell_run"
+        [running (form/result-card {:vis/tool-name "shell"
                                     :pending-summary "$ npm test (running)"
                                     :pending-render "**COMMAND**\n```bash\nnpm test\n```"})]
         (expect (= "$ npm test (running)" (:summary running)))
@@ -134,7 +134,7 @@
         (expect (not (:collapsible? bare))))
       ;; The moment the result lands it wins — a finished card never says "running".
       (let
-        [done (form/result-card {:vis/tool-name "shell_run"
+        [done (form/result-card {:vis/tool-name "shell"
                                  :pending-summary "$ npm test (running)"
                                  :pending-render "**COMMAND**\n```bash\nnpm test\n```"
                                  :result-summary "exit 0 · 12 lines"
@@ -149,17 +149,17 @@
 
 (defdescribe form-authored-display-code-test
              (it "keeps a tool-authored pending display instead of re-deriving it from the call"
-                 ;; `shell_run`'s `:render-start-call-fn` already rendered the bash this call is about to run;
+                 ;; `shell`'s `:render-start-call-fn` already rendered the bash this call is about to run;
                  ;; `with-display-code` must not overwrite it with the invocation's own formatting.
                  (let
-                   [form (form/with-display-code {:code "shell_run({\"commands\": [\"sleep 30\"]})"
+                   [form (form/with-display-code {:code "shell({\"commands\": [\"sleep 30\"]})"
                                                   :display-code "sleep 30"
                                                   :display-language "bash"
-                                                  :vis/tool-name "shell_run"})]
+                                                  :vis/tool-name "shell"})]
                    (expect (= "sleep 30" (:display-code form)))
                    (expect (= "bash" (:display-language form)))
                    ;; the raw invocation is still carried for the model-facing surfaces
-                   (expect (= "shell_run({\"commands\": [\"sleep 30\"]})" (:code form)))))
+                   (expect (= "shell({\"commands\": [\"sleep 30\"]})" (:code form)))))
              (it "still derives the display for a form that authored none"
                  (let [form (form/with-display-code {:code "x=1"})]
                    (expect (seq (:display-code form)))

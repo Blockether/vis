@@ -473,13 +473,14 @@ Done:
   by name), and it is LEFT ALONE at the end of a turn — listed as a session resource, running
   until it exits or `resource_stop`.
 
-- Phase 6, `wait` is the only knob — `PENDING`. `shell_background` is deleted: `shell_run` takes
+- Phase 6, `wait` is the only knob — `PENDING`. `shell_background` is deleted: `shell` takes
   `wait` (0 does not wait at all, and takes the adopted-run path Phase 5 built), so "run" and
-  "background" are one request with one result shape and one id. `shell_run` is now the ONLY
+  "background" are one request with one result shape and one id. `shell` is now the ONLY
   native shell tool; `shell_logs` / `shell_type` / `shell_stop` stay as sandbox Python symbols on
   the handle's id, so the model's schema surface is one tool instead of five. `subprocess` in
-  `resources/vis-shims/posix.py` spawns through `shell_run` with `wait` 0 and reads the log
-  cursor to EOF.
+  `resources/vis-shims/posix.py` spawns through `shell` with `wait` 0 and reads the log
+  cursor to EOF. With one verb left, `shell_run` is NAMED `shell`: the `_run` suffix only ever
+  distinguished it from `shell_background`, so it now names a distinction that does not exist.
 
 TODO, in order:
 

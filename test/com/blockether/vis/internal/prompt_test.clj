@@ -94,7 +94,7 @@
       (doseq [verb ["`copy`" "`move`" "`delete`" "`create_directory`" "`file_exists`"]]
         (expect (not (str/includes? text verb))))
       (expect (str/includes? text "CHANGING the tree is plain Python"))
-      (expect (str/includes? text "`shell_run` runs programs"))
+      (expect (str/includes? text "`shell` runs programs"))
       (expect (< (str/index-of text "`grep` FIRST") (str/index-of text "`vis_docs()`")))
       (doseq
         [heading ["## 1. Identity + Epistemic stance" "## 2. Execution surfaces" "## 3. Inspect"
@@ -218,7 +218,7 @@
       ;; Invocation syntax belongs to the shell symbol docs; this supplemental
       ;; block only exposes otherwise-undiscoverable compatibility routing.
       (let [text (#'prompt/sandbox-shims-prompt-block [{:ext/name "foundation-shell"}])]
-        (expect (str/includes? text "active `shell_run` shell tools"))
+        (expect (str/includes? text "active `shell` tool"))
         (expect (not (str/includes? text "DISABLED")))
         (expect (str/includes? text "subprocess"))
         (expect (str/includes? text "os.system"))

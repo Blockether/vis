@@ -111,7 +111,7 @@
              ;; NameError to the model, which reads as "the tool is gone" and invites a spin.
              (it "exposes grep as grep/find_files/find and unaliased tools as themselves"
                  (expect (= ["grep" "find_files" "find"] (ep/python-binding-names 'grep)))
-                 (expect (= ["shell_run"] (ep/python-binding-names 'shell_run)))
+                 (expect (= ["shell"] (ep/python-binding-names 'shell)))
                  (expect (= ["shell_logs"] (ep/python-binding-names 'shell-logs))))
              (it "routes every alias to the SAME tool in a live context"
                  (let
@@ -982,10 +982,10 @@
     (it "every bound tool is filed under a group"
         (let
           [out (run (str "g = __vis_groups__\n"
-                         "print('shell_run='+g.get('shell_run','?'))\n"
+                         "print('shell='+g.get('shell','?'))\n"
                          "print('shell_logs='+g.get('shell_logs','?'))\n"
                          "print('cat='+g.get('cat','?'))\n" "print('yaml='+g.get('yaml','?'))"))]
-          (expect (str/includes? out "shell_run=shell"))
+          (expect (str/includes? out "shell=shell"))
           (expect (str/includes? out "shell_logs=shell"))
           (expect (str/includes? out "cat=filesystem"))
           (expect (str/includes? out "yaml=shims"))))

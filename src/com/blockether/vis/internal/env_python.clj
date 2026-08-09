@@ -1143,7 +1143,7 @@
 
 (def ^:private posix-compat-shim-src
   "Pure-Python source that replaces `subprocess` / `os.system` / `os.popen`
-   with thin wrappers that DELEGATE to the vis shell tools (`shell_run`,
+   with thin wrappers that DELEGATE to the vis shell tools (`shell`,
    `shell_logs`, `shell_type`, `shell_stop`). The body lives in the
    `vis-shims/posix.py` CLASSPATH RESOURCE (`resources/vis-shims/posix.py`) -
    real Python in a real `.py` file, never a Clojure string - and is embedded in
@@ -2562,8 +2562,8 @@
      ;; Runtime `NameError: name 'X' is not defined`. The #1 cause of an
      ;; undefined TOOL name is an extension toggled OFF — the engine REMOVES
      ;; its symbols when inactive, so the call raises a plain NameError with
-     ;; no hint that the tool merely needs enabling (e.g. a call to `shell_run`
-     ;; while the "shell" toggle is off only yields "shell_run is not defined").
+     ;; no hint that the tool merely needs enabling (e.g. a call to `shell`
+     ;; while the "shell" toggle is off only yields "shell is not defined").
      ;; Point it at apropos + the user instead
      ;; of letting it retry a name that will never resolve on its own.
      undefined-name

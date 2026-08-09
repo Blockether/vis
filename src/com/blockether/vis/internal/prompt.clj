@@ -219,7 +219,7 @@
     "- Direct native tools: single operations, simple edits, small fixed call sets. Batch independent\n"
     "  work via plural args; `await gather(...)` only for independent calls in `python_execution`.\n"
     "- `python_execution`: default for most Python/data work, YAML/JSON/TOML/CSV; prefer over shell.\n"
-    "- Nothing blocks for you: `shell_run` with `wait=0`, then poll `shell_logs` in `python_execution`.\n"
+    "- Nothing blocks for you: `shell` with `wait=0`, then poll `shell_logs` in `python_execution`.\n"
     "- In `python_execution`, define once and reuse a small higher-order helper (functions that accept or return\n"
     "  callables): NEVER paste a near-identical loop or block twice; on the second occurrence factor it out and call it.\n"
     "- Native results are raw data, not rendered text. Use `ntr[key]` for data-bearing native calls, never a\n"
@@ -230,7 +230,7 @@
     "  native tools directly; use `apropos`/`doc` only for unadvertised capabilities. Reuse a live REPL; query\n"
     "  status only when absent or stale.\n\n" "## 3. Inspect\n"
     "- **Filesystem work goes through native tools**: `grep` searches, `cat` reads files,\n"
-    "  `shell_run` runs programs. `ls(dir)` in `python_execution` maps an unknown tree's shape\n"
+    "  `shell` runs programs. `ls(dir)` in `python_execution` maps an unknown tree's shape\n"
     "  FIRST (`depth` descends), so no path is guessed. CHANGING the tree is plain Python\n"
     "  (`os`, `shutil`, `pathlib`).\n"
     "- For concrete work, after the initial search make at most two targeted discovery rounds before reproducing a\n"
@@ -241,7 +241,7 @@
     "  `patch` for text/unsupported.\n"
     "- Bugs: reproduce before editing: tests-only work starts with `run_tests`; interactive work uses `repl_eval`. Keep reproduction as a suite test and rerun after the fix.\n"
     "- A fix or feature is unverified until a test covers it. Prove with `run_tests`; use `repl_eval` for checks; Python extensions: native `run_tests(\"python\")`; CLI: `vis-agent python -m pytest <paths>`.\n"
-    "- BATCH every tool: reads, `shell_run`/`git` `commands`, `patch`/`struct_patch` `edits` — one call, never one\n"
+    "- BATCH every tool: reads, `shell`/`git` `commands`, `patch`/`struct_patch` `edits` — one call, never one\n"
     "  per file. Each round must identify, reproduce, edit, verify, or conclude; no repeated search/read without a\n"
     "  named unresolved decision.\n\n" "## 4. Edit + verify\n"
     "- Surgical in-scope changes; preserve unrelated work. Write only files the task asked for —\n"
@@ -635,7 +635,7 @@
                   (str/join "\n" shim-capabilities)))
            (if shell?
              (str "\n`subprocess`, `os.system`, and `os.popen` route through the active "
-                  "`shell_run` shell tools; use that tool's authoritative contract for calls.")
+                  "`shell` tool; use its authoritative contract for calls.")
              (str "\nShell commands are DISABLED in this sandbox: there is no shell tool, and "
                   "`subprocess`, `os.system`, and `os.popen` are NOT allowed — every spawn "
                   "attempt raises. No external process can run here, so use the native tools "

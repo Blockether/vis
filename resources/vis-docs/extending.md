@@ -252,7 +252,7 @@ vis.op_hook(ops, fn, phase="before")
 ```
 
 - `ops` — sandbox tool names to hook: `"write"`, `"patch"`,
-  `"struct_patch"`, `"shell_run"`, `"python_execution"`, … or a GATE op
+  `"struct_patch"`, `"shell"`, `"python_execution"`, … or a GATE op
   (below), which is a different shape and may not share a hook with them.
 - `phase="before"` — `fn(call)` receives `{"op", "args"}` **before** the op
   runs. Return `vis.block(reason)` to refuse it (the model sees the reason

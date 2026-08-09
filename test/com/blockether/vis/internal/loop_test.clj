@@ -3839,7 +3839,7 @@
         ;; lint_code takes a whole dict → it declares NO :call and uses the default.
         (expect (nil? (get real-call-shapes "lint_code")))
         ;; Every shell verb and Git are one-map calls; none may grow a positional shape.
-        (doseq [n ["shell_run" "shell_logs" "shell_type" "shell_stop" "git"]]
+        (doseq [n ["shell" "shell_logs" "shell_type" "shell_stop" "git"]]
           (expect (nil? (get real-call-shapes n)))))
     (it "a tool with NO :call gets the generic whole-dict call"
         (expect (= "rg({\"query\": [\"x\"]})" (synth {:name "rg" :input {"query" ["x"]}})))
@@ -3847,8 +3847,8 @@
         (expect (= "struct_index({\"paths\": [\"src/x.clj\"]})"
                    (synth {:name "struct_index" :input {"paths" ["src/x.clj"]}})))
         (expect (= "lint_code({\"code\": \"x\"})" (synth {:name "lint_code" :input {"code" "x"}})))
-        (expect (= "shell_run({\"commands\": [\"ls\"]})"
-                   (synth {:name "shell_run" :input {"commands" ["ls"]}})))
+        (expect (= "shell({\"commands\": [\"ls\"]})"
+                   (synth {:name "shell" :input {"commands" ["ls"]}})))
         (expect (= "git({\"commands\": [[\"status\", \"--short\"]]})"
                    (synth {:name "git" :input {"commands" [["status" "--short"]]}}))))
     (it "python_execution still passes the model's code through"
@@ -3878,7 +3878,7 @@
         (expect (not (.contains ^String prog "\n")))
         (expect (.startsWith ^String prog "struct_patch("))))
     (it
-      "positional + optional-rest-dict shapes (copy/shell_run) and plural-only dicts"
+      "positional + optional-rest-dict shapes (copy/shell) and plural-only dicts"
       ;; `cat` is plural-only, so it rides the generic whole-dict form.
       (expect (= "cat({\"paths\": [\"a.clj\"]})" (synth {:name "cat" :input {"paths" ["a.clj"]}})))
       (expect (= "cat({\"paths\": [\"a.clj\"], \"ranges\": [[1, 2]]})"
@@ -3886,13 +3886,13 @@
       ;; `struct_nodes` is plural-only too: `nodes` rides the generic whole-dict form.
       (expect (= "struct_nodes({\"nodes\": [{\"path\": \"a.clj\", \"nav\": [\"down\"]}]})"
                  (synth {:name "struct_nodes" :input {"nodes" [{"path" "a.clj" "nav" ["down"]}]}})))
-      (expect (= "shell_run({\"commands\": [\"ls\"], \"cwd\": \"/tmp\"})"
-                 (synth {:name "shell_run" :input {"commands" ["ls"] "cwd" "/tmp"}}))))
+      (expect (= "shell({\"commands\": [\"ls\"], \"cwd\": \"/tmp\"})"
+                 (synth {:name "shell" :input {"commands" ["ls"] "cwd" "/tmp"}}))))
     (it "all-positional + optional-trailing-positional shapes"
         ;; Every shell verb receives its complete request as one map.
         ;; Every shell verb receives its complete request as one map.
-        (expect (= "shell_run({\"id\": \"x\", \"commands\": [\"sleep 1\"]})"
-                   (synth {:name "shell_run" :input {"id" "x" "commands" ["sleep 1"]}})))
+        (expect (= "shell({\"id\": \"x\", \"commands\": [\"sleep 1\"]})"
+                   (synth {:name "shell" :input {"id" "x" "commands" ["sleep 1"]}})))
         (expect (= "shell_logs({\"id\": \"x\", \"offset\": 4096})"
                    (synth {:name "shell_logs" :input {"id" "x" "offset" 4096}})))
         (expect (= "shell_stop({\"id\": \"x\"})"
@@ -4056,14 +4056,14 @@
 
         (expect (= "native" (:lang block)))
         (expect (= {"query" "vis"} (:vis/native-input block)))))
-  (it "renders a pending `shell_run` call as the op-card it becomes, not the call JSON"
+  (it "renders a pending `shell` call as the op-card it becomes, not the call JSON"
       ;; End to end over the real seam: the block's input reaches the tool's own
       ;; `:render-start-call-fn`, so the running form is the shell CARD its result card
-      ;; completes instead of `shell_run({\"commands\": …})`.
+      ;; completes instead of `shell({\"commands\": …})`.
       (let
         [renderers (extension/native-tool-start-call-renderers [sh/vis-extension])
          tc {:id "c4"
-             :name "shell_run"
+             :name "shell"
              :input {"commands" ["echo one"]}}
          block (native-tool-call-block {} nil tc)
          display (pending-call-display renderers

@@ -4,18 +4,18 @@
    (default ON; flip it OFF in Settings or in `vis.yml` via `toggles: {shell: false}`
    to drop the tools). The OS process jail is the containment layer while active.
 
-   ONE model-facing tool — `shell_run` — bound BARE in the flat Python sandbox
+   ONE model-facing tool — `shell` — bound BARE in the flat Python sandbox
    next to `git` / `cat` / `grep`. `wait` says how long the CALLER waits, and it
    is the only difference there has ever been between a \"run\" and a \"background\"
    shell, so there is one verb with one schema and one result shape.
 
-   1. `await shell_run([\"ls\"])` — `bash -lc` in the workspace root, waited for up
+   1. `await shell([\"ls\"])` — `bash -lc` in the workspace root, waited for up
       to 120s. Output is bounded at READ time to a head+tail budget per stream, so
       only the MIDDLE of a huge stream is dropped, never its start or end (a
       chatty-then-killed command cannot balloon the heap). A non-zero exit is DATA
       the model reads, not an error.
 
-   2. `await shell_run([\"npm run dev\"], {\"wait\": 0, \"id\": \"dev\"})` — the wait
+   2. `await shell([\"npm run dev\"], {\"wait\": 0, \"id\": \"dev\"})` — the wait
       that expires immediately: spawned under a REAL pty, its merged output
       streamed verbatim to a log FILE, registered as a session RESOURCE, and
       answered in the same run shape with `timed_out` true. Prefer it for servers,
@@ -532,7 +532,7 @@
   nil)
 
 ;; =============================================================================
-;; SYNC run — Python sandbox: `await shell_run(["ls"])`
+;; SYNC run — Python sandbox: `await shell(["ls"])`
 ;; =============================================================================
 
 (defn- clamp-timeout-secs
@@ -838,7 +838,7 @@
 
 
 ;; =============================================================================
-;; BACKGROUND — Python sandbox: `await shell_run(["npm run dev"], {"wait": 0, "id": "dev"})`
+;; BACKGROUND — Python sandbox: `await shell(["npm run dev"], {"wait": 0, "id": "dev"})`
 ;; =============================================================================
 
 (defonce ^:private bg-procs
@@ -1259,12 +1259,12 @@
         {:result (assoc (bg-core "background" id (bg-entry session id))
                    "already_running" false
                    "note" nil)
-         :op :shell-run
+         :op :shell
          :metadata
          {:command script :pid (:pid p) :started-at-ms t0 :finished-at-ms t0 :duration-ms 0}}))))
 
 (defn- shell-bg-impl
-  "`await shell_run([\"npm run dev\"], {\"wait\": 0, \"id\": id})` — IDEMPOTENT on a live id.
+  "`await shell([\"npm run dev\"], {\"wait\": 0, \"id\": id})` — IDEMPOTENT on a live id.
 
    Re-using an id whose process is still running used to THROW. That reads as a
    plain tool failure: a model that already started the shell (or that lost the
@@ -1303,7 +1303,7 @@
                                    "\"). To start a fresh process, first run await shell_stop(\""
                                    id
                                    "\")."))
-             :op :shell-run
+             :op :shell
              :metadata {:command (:script live)
                         :pid (:pid (:proc live))
                         :started-at-ms (:started-at live)
@@ -1440,7 +1440,7 @@
                                           "\", offset=0) and stop it with await shell_stop(\""
                                           id
                                           "\").")})
-       :op :shell-run
+       :op :shell
        :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))
 
 (defn- run-of-background
@@ -1468,7 +1468,7 @@
                                              "' — read it with await shell_logs(\"" (get m "id")
                                              "\", offset=0), type at it with await shell_type, and"
                                              " stop it with await shell_stop."))})
-      :op :shell-run)))
+      :op :shell)))
 
 (defn- shell-batch-impl
   "Run `commands` strictly in input order: each bounded foreground shell call
@@ -1638,7 +1638,7 @@
                                                    "\").")
                                               (batch-note (count results)))}
                                     (batch/result results)))
-       :op :shell-run})))
+       :op :shell})))
 
 (defn- retired-log-core
   "The `logs` identity for an id whose registry entry is GONE but whose log file is
@@ -1790,7 +1790,7 @@
        (throw (ex-info (str "No background shell '"
                             id
                             "' in this session — start one with"
-                            " await shell_run([\"…\"], {\"wait\": 0, \"id\": id});"
+                            " await shell([\"…\"], {\"wait\": 0, \"id\": id});"
                             " live ids are listed in resources.")
                        {:type ::unknown-bg-id :id id})))
      (when-not ((:alive? (:proc entry)))
@@ -1816,7 +1816,7 @@
                              {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}}))))))
 
 ;; -----------------------------------------------------------------------------
-;; Internal lifecycle grammar — the model calls `shell_run` /
+;; Internal lifecycle grammar — the model calls `shell` /
 ;; -----------------------------------------------------------------------------
 
 (defn- opts-arg?
@@ -1879,7 +1879,7 @@
   "INTERNAL shell lifecycle grammar, kept for the Python-extension entry points
    (`trusted-extension-shell`, `jailed-shell`, `session-jailed-shell`) whose
    caller authors an options map by hand and therefore genuinely needs an `op`
-   discriminator. The MODEL never reaches this: it calls `shell_run` — one tool
+   discriminator. The MODEL never reaches this: it calls `shell` — one tool
    whose `wait` decides whether it blocks — and the bare verbs `shell_logs`,
    `shell_type` and `shell_stop` on the id it already holds, so one schema with
    five mutually-exclusive shapes is never presented as a contract to
@@ -2170,7 +2170,7 @@
 ;; =============================================================================
 
 (defn- op-label
-  "Human call name from a registered op keyword: :shell-run -> \"shell_run\"."
+  "Human call name from a registered op keyword: :shell-logs -> \"shell_logs\"."
   [op]
   (str/replace (if (namespace op) (str (namespace op) "_" (name op)) (name op)) "-" "_"))
 
@@ -2227,8 +2227,8 @@
             named
             more)))
 
-(defn shell-run
-  "`await shell_run([\"git status\"])` — run bash lines in order and return their
+(defn shell
+  "`await shell([\"git status\"])` — run bash lines in order and return their
    output. `wait` is how long the CALLER waits (default 120s): the call returns
    EARLY with the exit code when the command finishes first, and `wait=0` returns
    at once with the shell running under a pty. Either way the result carries an
@@ -2776,12 +2776,12 @@
   (fn [input]
     (render-shell-call op input)))
 
-(def shell-run-symbol
+(def shell-symbol
   (vis/symbol
-    #'shell-run
-    {:symbol 'shell-run
+    #'shell
+    {:symbol 'shell
      :native-tool? true
-     :name "shell_run"
+     :name "shell"
      :result
      (str "`{id, cwd, commands, exit, duration_ms, timed_out}`; each entry under `commands` "
           "carries its own `command`, `stdout`, `stderr`, `exit`, `duration_ms`, `timed_out` and "
@@ -2817,7 +2817,7 @@
               :additionalProperties false}
      :inject-env? true
      :tag :mutation
-     :on-error-fn (shell-on-error :shell-run)}))
+     :on-error-fn (shell-on-error :shell)}))
 
 
 (def shell-logs-symbol
@@ -2897,7 +2897,7 @@
   ;; because operations on an object the caller already holds are control flow,
   ;; and control flow belongs in `python_execution` — not in four more schemas the
   ;; model has to disambiguate before it can run one command.
-  [shell-run-symbol shell-logs-symbol shell-type-symbol shell-stop-symbol])
+  [shell-symbol shell-logs-symbol shell-type-symbol shell-stop-symbol])
 
 (defn shell-attach-command
   "`vis-agent extension shell attach <id>` — the human-side passthrough: join a live
@@ -2940,7 +2940,7 @@
 (vis/register-toggle! {:id "shell"
                        :label "Shell commands"
                        :description
-                       (str "Expose `shell_run` — one tool whose `wait` decides whether the "
+                       (str "Expose `shell` — one tool whose `wait` decides whether the "
                             "caller blocks — plus the handle verbs it hands back (`shell_logs` "
                             "/ `shell_type` / `shell_stop`). When OFF none of them is bound. "
                             "Contained by the OS process jail whenever it is ON.")
@@ -2953,7 +2953,7 @@
   (vis/extension
     {:ext/name "foundation-shell"
      :ext/description
-     "One shell tool: `shell_run`, whose `wait` decides whether the caller blocks — 0 does not wait at all — plus the handle verbs `shell_logs` / `shell_type` / `shell_stop`; `resource_stop` also stops PTYs. Default-on behind the `shell` toggle and OS process jail."
+     "One shell tool: `shell`, whose `wait` decides whether the caller blocks — 0 does not wait at all — plus the handle verbs `shell_logs` / `shell_type` / `shell_stop`; `resource_stop` also stops PTYs. Default-on behind the `shell` toggle and OS process jail."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

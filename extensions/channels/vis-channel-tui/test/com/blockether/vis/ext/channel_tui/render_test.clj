@@ -721,7 +721,7 @@
         (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 429")))))
   (it "hides a running native tool's invocation, but keeps a running python program"
       ;; A native tool spins behind its badge in every state: the long-running ones
-      ;; (`shell_run`/`shell_background`) author their own pending card body, so
+      ;; (`shell`/`shell_background`) author their own pending card body, so
       ;; nothing has to fall back to raw invocation JSON while the call runs.
       (let
         [entry-lines
@@ -733,8 +733,8 @@
                                    {:now-ms 2500}))
 
          shell-lines
-         (entry-lines {:vis/tool-name "shell_run"
-                       :code "shell_run({\"commands\": [\"sleep 30\"]})"
+         (entry-lines {:vis/tool-name "shell"
+                       :code "shell({\"commands\": [\"sleep 30\"]})"
                        :display-code "sleep 30"
                        :display-language "bash"})
 

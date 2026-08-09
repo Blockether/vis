@@ -3,7 +3,7 @@
 # The agent sandbox is deny-by-default (no native access), so CPython's real
 # `subprocess` / `os.system` cannot spawn — they fail with an opaque error.
 # This shim replaces them with a thin layer that DELEGATES to the vis shell
-# TOOL `shell_run` and its sandbox verbs (`shell_logs`, `shell_type`,
+# TOOL `shell` and its sandbox verbs (`shell_logs`, `shell_type`,
 # `shell_stop`), so the
 # model's ordinary Python (`subprocess.run([...])`, `os.system(...)`) just works
 # and still rides the workspace-cwd containment, timeout,
@@ -31,7 +31,7 @@ def __vis_install_posix_compat__():
     )
 
     def _tool(name):
-        # Extension contexts expose `vis.shell_run` & co. instead of native
+        # Extension contexts expose `vis.shell` & co. instead of native
         # process access; agent sandboxes bind the same names bare. One lookup
         # helper serves every stage, so a stage is named exactly once below.
         fn = globals().get(name)
@@ -122,7 +122,7 @@ def __vis_install_posix_compat__():
         # `text`/`universal_newlines` decide bytes-vs-str on the returned
         # streams; capture_output/stdout/stderr are accepted but the shell tool
         # always captures, so they only affect whether we surface the text.
-        sr = _tool("shell_run")
+        sr = _tool("shell")
         cmd = _to_cmd(args, shell)
         opts = {}
         if timeout is not None:
@@ -183,7 +183,7 @@ def __vis_install_posix_compat__():
         return getstatusoutput(cmd)[1]
 
     class Popen(object):
-        # Background process backed by `shell_run` with `wait` 0 — the wait that
+        # Background process backed by `shell` with `wait` 0 — the wait that
         # expires immediately, which is what "background" always meant (a session
         # resource under a pty). Auto picks an id; terminate/kill use
         # `shell_stop`, poll/wait read `shell_logs` status, and communicate walks
@@ -191,7 +191,7 @@ def __vis_install_posix_compat__():
         _counter = [0]
 
         def __init__(self, args, shell=False, cwd=None, **kwargs):
-            sr = _tool("shell_run")
+            sr = _tool("shell")
             Popen._counter[0] += 1
             self._id = "popen_" + str(Popen._counter[0])
             self.args = args

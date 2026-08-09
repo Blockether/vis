@@ -95,8 +95,8 @@
 
 (defdescribe shell-env-injection-test
              (it "uses declarative env injection rather than a before middleware shim"
-                 (expect (true? (:ext.symbol/inject-env? shell/shell-run-symbol)))
-                 (expect (nil? (:ext.symbol/before-fn shell/shell-run-symbol))))
+                 (expect (true? (:ext.symbol/inject-env? shell/shell-symbol)))
+                 (expect (nil? (:ext.symbol/before-fn shell/shell-symbol))))
              (it "a failing or nil session policy denies spawn instead of failing open"
                  (binding [workspace/*workspace-root* (workspace/trunk-root)]
                    (expect (threw? #(shell-run* {:session-id "t"
@@ -944,7 +944,7 @@
   ;; disambiguate five mutually-exclusive shapes on every call; five tools then cost
   ;; five schemas for operations on ONE object.
   (it "advertises exactly one native shell tool, because a wait is not a lifecycle"
-      (expect (= ["shell_run"]
+      (expect (= ["shell"]
                  (mapv :ext.symbol/name (filter :ext.symbol/native-tool? shell/shell-symbols))))
       (expect (= 4 (count shell/shell-symbols))))
   (it "gives each tool a satisfiable schema with no op discriminator and no blocking knobs"
@@ -961,13 +961,13 @@
       (let
         [props (fn [s]
                  (get-in s [:ext.symbol/schema :properties]))]
-        (expect (= "array" (get-in (props shell/shell-run-symbol) ["commands" :type])))
-        (expect (= 0 (get-in (props shell/shell-run-symbol) ["wait" :minimum])))
+        (expect (= "array" (get-in (props shell/shell-symbol) ["commands" :type])))
+        (expect (= 0 (get-in (props shell/shell-symbol) ["wait" :minimum])))
         (expect (not (contains? (props shell/shell-logs-symbol) "commands")))
         (expect (contains? (props shell/shell-type-symbol) "text"))
         (expect (= ["id"] (get-in shell/shell-stop-symbol [:ext.symbol/schema :required])))))
   (it "points the shell verbs at the Python loop that replaced a blocking wait"
-      (expect (str/includes? (:ext.symbol/description shell/shell-run-symbol) "python_execution"))
+      (expect (str/includes? (:ext.symbol/description shell/shell-symbol) "python_execution"))
       (expect (str/includes? (:ext.symbol/description shell/shell-logs-symbol)
                              "python_execution"))))
 
@@ -978,7 +978,7 @@
                  ;; next to git / cat / grep, so there is no `shell.run(…)` namespace.
                  (expect (true? (get-in shell/vis-extension [:ext/engine :ext.engine/builtin?])))
                  (expect (nil? (get-in shell/vis-extension [:ext/engine :ext.engine/alias])))
-                 (expect (= '[shell-run shell-logs shell-type shell-stop]
+                 (expect (= '[shell shell-logs shell-type shell-stop]
                             (mapv :ext.symbol/symbol shell/shell-symbols)))))
 
 (defdescribe
@@ -1042,7 +1042,7 @@
       (expect (nil? (render-shell-call "run" {"commands" [""]}))))
   (it "publishes the renderer under the one native tool's wire name"
       (let [rs (extension/native-tool-start-call-renderers [shell/vis-extension])]
-        (expect (= ["shell_run"] (vec (keys rs))))
+        (expect (= ["shell"] (vec (keys rs))))
         (expect (every? fn? (vals rs))))))
 
 (defdescribe
@@ -1121,45 +1121,43 @@
   "The bare Python global has only the one-map shell grammar."
   (it "binds the four shell symbols into sandbox globals, each with a doc"
       (let [bind (extension/builtin-sandbox-bindings (constantly nil))]
-        (expect (= '[shell-logs shell-run shell-stop shell-type]
+        (expect (= '[shell shell-logs shell-stop shell-type]
                    (vec (sort (filter #(str/includes? (name %) "shell") (keys bind))))))
-        (expect (contains? (extension/sandbox-symbol-docs) 'shell-run))))
+        (expect (contains? (extension/sandbox-symbol-docs) 'shell))))
   (it "documents the commands array on the run tool"
       (let
         [source-doc
-         (:doc (meta #'shell/shell-run))
+         (:doc (meta #'shell/shell))
 
          d
-         (str (py (py-ctx {}) "doc('shell_run')"))]
+         (str (py (py-ctx {}) "doc('shell')"))]
 
-        (expect (str/includes? source-doc "await shell_run([\"git status\"])"))
+        (expect (str/includes? source-doc "await shell([\"git status\"])"))
         (expect (str/includes? d "`commands`"))))
-  (it
-    "runs and backgrounds commands through the bare shell global using maps"
-    (let
-      [sid
-       (str "py-shell-" (System/nanoTime))
+  (it "runs and backgrounds commands through the bare shell global using maps"
+      (let
+        [sid
+         (str "py-shell-" (System/nanoTime))
 
-       c
-       (py-ctx {:session-id sid})]
+         c
+         (py-ctx {:session-id sid})]
 
-      (try
-        (expect (= ["run" "hi" "echo hi"]
-                   (py c
-                       (str "r = __vis_settle__(shell_run(['echo hi']))\n"
-                            "x = r['commands'][0]\n"
-                            "[r['stage'], x['stdout'].strip(), x['command']]"))))
-        (expect
-          (=
-            ["run" "logs" "stop"]
-            (py
-              c
-              (str
-                "b = __vis_settle__(shell_run(['echo alive; sleep 30'], {'id':'pyjob','wait':0}))\n"
-                "l = __vis_settle__(shell_logs('pyjob', {'limit':10}))\n"
-                "s = __vis_settle__(shell_stop('pyjob'))\n"
-                "[b['stage'], l['stage'], s['stage']]"))))
-        (finally (resources/stop-all! sid)))))
+        (try
+          (expect (= ["run" "hi" "echo hi"]
+                     (py c
+                         (str "r = __vis_settle__(shell(['echo hi']))\n"
+                              "x = r['commands'][0]\n"
+                              "[r['stage'], x['stdout'].strip(), x['command']]"))))
+          (expect
+            (= ["run" "logs" "stop"]
+               (py
+                 c
+                 (str
+                   "b = __vis_settle__(shell(['echo alive; sleep 30'], {'id':'pyjob','wait':0}))\n"
+                   "l = __vis_settle__(shell_logs('pyjob', {'limit':10}))\n"
+                   "s = __vis_settle__(shell_stop('pyjob'))\n"
+                   "[b['stage'], l['stage'], s['stage']]"))))
+          (finally (resources/stop-all! sid)))))
   (it "removes the binding when the shell toggle is off"
       (let
         [before
@@ -1175,7 +1173,7 @@
 
         (try (toggles/set-enabled! "shell" false)
              (lp/sync-active-extension-symbols! env)
-             (expect (false? (boolean (py c "'shell_run' in globals()"))))
+             (expect (false? (boolean (py c "'shell' in globals()"))))
              (finally (toggles/set-enabled! "shell" before)))))
   ;; Regression, issue #106: turning Shell commands back ON from a settings
   ;; dialog left every session that was already open without the `shell` global
@@ -1200,11 +1198,11 @@
 
         (try (toggles/set-enabled! "shell" false)
              (lp/sync-active-extension-symbols! env)
-             (expect (false? (boolean (py c "'shell_run' in globals()"))))
+             (expect (false? (boolean (py c "'shell' in globals()"))))
              ;; No explicit sync and no HTTP handler: the toggle flip alone has
              ;; to reach this session's live Python globals.
              (toggles/set-enabled! "shell" true)
-             (expect (true? (boolean (py c "'shell_run' in globals()"))))
+             (expect (true? (boolean (py c "'shell' in globals()"))))
              (finally (swap! (deref #'lp/cache) dissoc (:id cached))
                       (toggles/set-enabled! "shell" before)))))
   (it "routes the lifecycle tools through the native Python bridge"
@@ -1218,20 +1216,18 @@
          c
          (py-ctx {:session-id sid})]
 
-        (try
-          (expect
-            (= ["run" "logs" "stop"]
-               (py
-                 c
-                 (str
-                   "job = "
-                   (pr-str sid)
-                   "\n"
-                   "b = __vis_settle__(shell_run(['echo ready; sleep 30'], {'id':job,'wait':0}))\n"
-                   "l = __vis_settle__(shell_logs(job, {'limit':1}))\n"
-                   "s = __vis_settle__(shell_stop(job))\n"
-                   "[b['stage'], l['stage'], s['stage']]"))))
-          (finally (resources/stop-all! sid))))))
+        (try (expect
+               (= ["run" "logs" "stop"]
+                  (py c
+                      (str
+                        "job = "
+                        (pr-str sid)
+                        "\n"
+                        "b = __vis_settle__(shell(['echo ready; sleep 30'], {'id':job,'wait':0}))\n"
+                        "l = __vis_settle__(shell_logs(job, {'limit':1}))\n"
+                        "s = __vis_settle__(shell_stop(job))\n"
+                        "[b['stage'], l['stage'], s['stage']]"))))
+             (finally (resources/stop-all! sid))))))
 
 
 (def ^:private fd-exhaustion? @#'shell/fd-exhaustion?)
@@ -1536,9 +1532,9 @@
   ;; The whole point of the phase: one process jail, one schema. Everything else the
   ;; family used to advertise operates on a handle the caller already holds.
   (it "advertises exactly one native tool for the whole shell family"
-      (expect (= ["shell_run"]
+      (expect (= ["shell"]
                  (->> shell/shell-symbols
                       (filter :ext.symbol/native-tool?)
                       (mapv :ext.symbol/name))))
-      (expect (= ["shell_run" "shell_logs" "shell_type" "shell_stop"]
+      (expect (= ["shell" "shell_logs" "shell_type" "shell_stop"]
                  (mapv :ext.symbol/name shell/shell-symbols)))))
