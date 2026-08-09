@@ -463,7 +463,7 @@ Done:
   beside `db-delete-session-tree!`, and the index row rides the existing `extension_aggregate`
   rail (`ON DELETE CASCADE`), so there is no migration.
 
-- Phase 5, every run IS a handle — `<commit>`. A run claims its id and its log file BEFORE it
+- Phase 5, every run IS a handle — `451a644a2`. A run claims its id and its log file BEFORE it
   waits, so the result carries `id` whether it finished or not; a wait that expires no longer
   kills the child but ADOPTS it as an ordinary background handle, and nothing after it in the
   ordered batch is started. `capped-capture` replaced `read-capped` so a stream can be
