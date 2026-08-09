@@ -374,409 +374,226 @@
     (let [thrown (try (extension/op-tag :v/extensions) nil (catch clojure.lang.ExceptionInfo e e))]
       (expect (= :extension/unregistered-op (:type (ex-data thrown))))))
 
-(defn- protected-env
-  [rules]
-  {:extensions (atom [(extension/extension {:ext/name "test.protected-paths"
-                                            :ext/description "Test protected paths."
-                                            :ext/protected-paths (constantly (vec rules))})])})
-
 (defn- gate-env
-  "A non-protecting env carrying a `:mutation-gate` stub that records the call
-   payload into `seen!` and returns `ret` (a refusal string or nil)."
+  "A plain env carrying a `:mutation-gate` stub that records the call payload into
+   `seen!` and returns `ret` (a refusal string or nil)."
   [seen! ret]
   {:extensions (atom [])
    :mutation-gate (fn [payload]
                     (reset! seen! payload)
                     ret)})
 
+(defn- with-fs-gate!
+  "Install `hook-fn` as the one `:fs/access` gate for `body`, then tear it down.
+   A gate lives in the GLOBAL op-hook registry rather than on the env, and that
+   IS the contract: an extension declares a boundary once and every surface — the
+   editors here, the Python interpreter's own filesystem — asks that same one."
+  [hook-fn body]
+  (try (extension/register-op-hook! {:op :fs/access :owner :ext/test-fs-gate :fn hook-fn})
+       (body)
+       (finally (extension/unregister-op-hooks-for-owner! :ext/test-fs-gate))))
+
+(defn- refusing-gate
+  "A gate that records every ctx it is asked about and refuses any path spelling
+   `marker`, with `hint` as its sentence."
+  [seen! marker hint]
+  (fn [_env _op ctx]
+    (swap! seen! conj ctx)
+    (when (clojure.string/includes? (str (:path ctx)) marker) hint)))
+
 (defdescribe
-  protected-path-before-fn-test
+  fs-access-gate-before-fn-test
   (it
-    "cat blocks :none protected paths and returns the extension hint"
+    "cat asks the gate with file-read and refuses with the extension's own sentence"
     (let
-      [hint
-       "Use (br/policy) instead of reading this file directly."
+      [seen!
+       (atom [])
 
-       path
-       "target/editing-test/protected/secret.edn"
+       hint
+       "Use (br/policy) instead of reading this file directly."]
 
-       before
-       (:ext.symbol/before-fn (private-fn "cat-symbol"))
+      (with-fs-gate!
+        (refusing-gate seen! "protected/secret.edn" hint)
+        (fn []
+          (let
+            [before
+             (:ext.symbol/before-fn (private-fn "cat-symbol"))
 
-       out
-       (before (protected-env
-                 [{:glob "target/editing-test/protected/*.edn" :access :none :hint hint}])
-               (constantly :ok)
-               [path])
+             failure
+             (:result (before {:extensions (atom [])}
+                              (constantly :ok)
+                              ["target/editing-test/protected/secret.edn"]))]
 
-       failure
-       (:result out)]
-
-      (expect (some? failure))
-      (expect (false? (:success? failure)))
-      (expect (= :ext.foundation.editing/path-protected
-                 (-> failure
-                     :error
-                     :type)))
-      (expect (= hint
-                 (-> failure
-                     :error
-                     :hint)))
-      (expect (= hint
-                 (-> failure
-                     :error
-                     :loop-hint)))
-      (expect (= :none
-                 (-> failure
-                     :error
-                     :failures
-                     first
-                     :access)))
-      (expect (= :read
-                 (-> failure
-                     :error
-                     :failures
-                     first
-                     :intent)))))
+            (expect (some? failure))
+            (expect (false? (:success? failure)))
+            (expect (= :ext.foundation.editing/path-protected
+                       (-> failure
+                           :error
+                           :type)))
+            (expect (= hint
+                       (-> failure
+                           :error
+                           :hint)))
+            (expect (= hint
+                       (-> failure
+                           :error
+                           :loop-hint)))
+            (expect (= "file-read"
+                       (-> failure
+                           :error
+                           :operation)))
+            (expect (= ["file-read"] (mapv :operation @seen!)))
+            ;; The gate is asked about the ABSOLUTE path the op resolved to, so a
+            ;; rule cannot be dodged by spelling the same file differently.
+            (expect (clojure.string/starts-with? (:path (first @seen!)) "/")))))))
   (it
-    "patch blocks writes to :read-only protected paths and returns the extension hint"
+    "patch asks with file-write and refuses the WHOLE batch when one path is protected"
     (let
-      [hint
-       "Use (br/update-policy!) instead of patching policy files."
+      [seen!
+       (atom [])
 
-       path
-       "target/editing-test/protected/policy.txt"
+       hint
+       "Use (br/update-policy!) instead of patching policy files."]
 
-       before
-       (:ext.symbol/before-fn (private-fn "patch-symbol"))
+      (with-fs-gate! (refusing-gate seen! "protected/policy.txt" hint)
+                     (fn []
+                       (let
+                         [before
+                          (:ext.symbol/before-fn (private-fn "patch-symbol"))
 
-       out
-       (before (protected-env
-                 [{:glob "target/editing-test/protected/*.txt" :access :read-only :hint hint}])
-               (constantly :ok)
-               [[{"path" path "from_anchor" "1:abc" "replace" "new"}]])
+                          out
+                          (before {:extensions (atom [])}
+                                  (constantly :ok)
+                                  [[{"path" "target/editing-test/plain.txt"
+                                     "from_anchor" "1:abc"
+                                     "replace" "new"}
+                                    {"path" "target/editing-test/protected/policy.txt"
+                                     "from_anchor" "1:abc"
+                                     "replace" "new"}]])]
 
-       failure
-       (:result out)]
+                         (expect (= :ext.foundation.editing/path-protected
+                                    (-> out
+                                        :result
+                                        :error
+                                        :type)))
+                         (expect (= hint
+                                    (-> out
+                                        :result
+                                        :error
+                                        :hint)))
+                         (expect (= ["file-write" "file-write"] (mapv :operation @seen!))))))))
+  (it "a gate hook that THROWS refuses: a boundary that fails open is not a boundary"
+      (with-fs-gate! (fn [_env _op _ctx]
+                       (throw (ex-info "guard exploded" {})))
+                     (fn []
+                       (let
+                         [before
+                          (:ext.symbol/before-fn (private-fn "write-symbol"))
 
-      (expect (some? failure))
-      (expect (false? (:success? failure)))
-      (expect (= :ext.foundation.editing/path-protected
-                 (-> failure
-                     :error
-                     :type)))
-      (expect (= hint
-                 (-> failure
-                     :error
-                     :hint)))
-      (expect (= :read-only
-                 (-> failure
-                     :error
-                     :failures
-                     first
-                     :access)))
-      (expect (= :write
-                 (-> failure
-                     :error
-                     :failures
-                     first
-                     :intent)))))
-  (it
-    "rg allows current directory even when descendants are protected (regression: .bridge/ blocks rg on `.`)"
-    ;; Repro for transcript ccee2e1f-16ee-4acf-8d93-b4505034c0de iter 1:
-    ;;   (rg {:any ["scrollbar"] :paths ["."] :is_counts true})
-    ;;   -> ERROR ":rg blocked: . is protected; use the owning extension API instead."
-    ;; The bridge extension registers `.bridge/` with :access :none. Because
-    ;; "." is an ancestor of every protected descendant, the composite-dir
-    ;; branch in `protected-rule-matches?` reported a match and rg failed
-    ;; closed even though it's a recursive read that can skip protected
-    ;; subtrees during its own walk. The cwd-ancestor bypass must apply to
-    ;; rg the same way it applies to ls.
-    (let
-      [before
-       (:ext.symbol/before-fn (private-fn "grep-symbol"))
+                          out
+                          (before {:extensions (atom [])}
+                                  (constantly :ok)
+                                  [{"path" "target/editing-test/a.clj" "content" "x"}])]
 
-       out
-       (before (protected-env [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
-               (constantly :ok)
-               [{"any" ["scrollbar"] "paths" ["."] "is_counts" true}])]
-
-      (expect (not (contains? out :result)))
-      (expect (= [{"any" ["scrollbar"] "paths" ["."] "is_counts" true}] (:args out)))))
-  (it "rg with no :paths (default `.`) is allowed when only descendants are protected"
-      ;; rg-arg-paths returns ["."] when :paths is omitted; same bypass
-      ;; must apply so model can call `(rg {:any ["x"]})` without paths.
+                         (expect (= :ext.foundation.editing/path-protected
+                                    (-> out
+                                        :result
+                                        :error
+                                        :type)))
+                         (expect (clojure.string/includes? (-> out
+                                                               :result
+                                                               :error
+                                                               :hint)
+                                                           "fails closed"))))))
+  (it "no gate registered: the op passes through with its args untouched"
       (let
         [before
-         (:ext.symbol/before-fn (private-fn "grep-symbol"))
-
-         out
-         (before (protected-env [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
-                 (constantly :ok)
-                 [{"any" ["scrollbar"]}])]
-
-        (expect (not (contains? out :result)))))
-  (it "grep allows nested repository roots when only default-hidden descendants are protected"
-      ;; A parent-workspace session searches each repository directly. Bridge
-      ;; contributes `bridge/.bridge/**` and `vis/.bridge/**`; those hidden
-      ;; descendants must not make the repository roots themselves protected.
-      (let
-        [before
-         (:ext.symbol/before-fn (private-fn "grep-symbol"))
+         (:ext.symbol/before-fn (private-fn "write-symbol"))
 
          args
-         [{"query" "protected-rule-matches?"
-           "paths" ["target/editing-test/workspace/bridge" "target/editing-test/workspace/vis"]}]
+         [{"path" "target/editing-test/a.clj" "content" "x"}]
 
          out
-         (before (protected-env [{:glob "target/editing-test/workspace/bridge/.bridge/**"
-                                  :access :none
-                                  :hint "Use br/* tools."}
-                                 {:glob "target/editing-test/workspace/vis/.bridge/**"
-                                  :access :none
-                                  :hint "Use br/* tools."}])
-                 (constantly :ok)
-                 args)]
+         (before {:extensions (atom [])} (constantly :ok) args)]
 
         (expect (not (contains? out :result)))
         (expect (= args (:args out)))))
-  (it "grep still blocks nested ancestors when hidden files are requested"
+  (it "a gate that reads a file does not recurse: the nested ask is skipped"
+      (let [depth (atom 0)]
+        (with-fs-gate!
+          (fn [env op ctx]
+            (swap! depth inc)
+            ;; What a guard that reads a file in order to decide looks like from
+            ;; in here: the nested operation re-enters the gate.
+            (extension/run-gate-hooks op env ctx))
+          (fn []
+            (let
+              [before (:ext.symbol/before-fn (private-fn "cat-symbol"))
+               out (before {:extensions (atom [])} (constantly :ok) ["target/editing-test/a.clj"])]
+
+              (expect (not (contains? out :result)))
+              (expect (= 1 @depth)))))))
+  (it ":fs/access refuses BEFORE the env's :mutation-gate is consulted"
+      (with-fs-gate! (fn [_env _op _ctx]
+                       "owner API only")
+                     (fn []
+                       (let
+                         [before
+                          (:ext.symbol/before-fn (private-fn "write-symbol"))
+
+                          out
+                          (before {:extensions (atom [])
+                                   :mutation-gate (fn [_]
+                                                    (throw (ex-info "gate must not run" {})))}
+                                  (constantly :ok)
+                                  [{"path" "target/editing-test/protected/x.clj" "content" "x"}])]
+
+                         (expect (= :ext.foundation.editing/path-protected
+                                    (-> out
+                                        :result
+                                        :error
+                                        :type)))))))
+  (it ":mutation-gate refusal becomes a :plan-required failure carrying its paths"
       (let
-        [before
-         (:ext.symbol/before-fn (private-fn "grep-symbol"))
+        [seen!
+         (atom nil)
+
+         before
+         (:ext.symbol/before-fn (private-fn "write-symbol"))
 
          out
-         (before
-           (protected-env [{:glob "target/editing-test/workspace/bridge/.bridge/**"
-                            :access :none
-                            :hint "Use br/* tools."}])
-           (constantly :ok)
-           [{"query" "secret" "paths" ["target/editing-test/workspace/bridge"] "is_hidden" true}])]
+         (before (gate-env seen! "Write a PLAN.md first.")
+                 (constantly :ok)
+                 [{"path" "target/editing-test/a.clj" "content" "x"}])]
 
-        (expect (false? (-> out
-                            :result
-                            :success?)))
-        (expect (= :ext.foundation.editing/path-protected
+        (expect (= :ext.foundation.editing/plan-required
                    (-> out
                        :result
                        :error
-                       :type)))))
-  (it "grep still blocks nested ancestors of visible protected paths"
-      (let
-        [before
-         (:ext.symbol/before-fn (private-fn "grep-symbol"))
-
-         out
-         (before (protected-env [{:glob "target/editing-test/workspace/bridge/secrets/**"
-                                  :access :none
-                                  :hint "Use the owner API."}])
-                 (constantly :ok)
-                 [{"query" "secret" "paths" ["target/editing-test/workspace/bridge"]}])]
-
-        (expect (false? (-> out
-                            :result
-                            :success?)))
-        (expect (= :ext.foundation.editing/path-protected
+                       :type)))
+        (expect (= "Write a PLAN.md first."
                    (-> out
                        :result
                        :error
-                       :type)))))
-  (it "ls on `.` is allowed when only descendants are protected"
+                       :hint)))
+        (expect (= :write (:op @seen!)))
+        (expect (= ["target/editing-test/a.clj"] (:paths @seen!)))
+        (expect (false? (:atomic? @seen!)))))
+  (it "a nil :mutation-gate answer passes the op through"
       (let
-        [before
-         (:ext.symbol/before-fn (private-fn "ls-symbol"))
+        [seen!
+         (atom nil)
+
+         before
+         (:ext.symbol/before-fn (private-fn "write-symbol"))
 
          out
-         (before (protected-env [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
+         (before (gate-env seen! nil)
                  (constantly :ok)
-                 ["."])]
+                 [{"path" "target/editing-test/a.clj" "content" "x"}])]
 
         (expect (not (contains? out :result)))
-        (expect (= ["."] (:args out)))))
-  (it "rg still respects direct rules whose glob matches `.` itself"
-      ;; The bypass is descendant-only. If an extension explicitly says
-      ;; `:glob "." :access :none` (\"do not read cwd at all\") that's still
-      ;; honored — we don't want the bypass to be a back door.
-      (let
-        [before
-         (:ext.symbol/before-fn (private-fn "grep-symbol"))
-
-         out
-         (before (protected-env [{:glob "." :access :none :hint "cwd is sealed."}])
-                 (constantly :ok)
-                 [{"any" ["x"] "paths" ["."]}])
-
-         failure
-         (:result out)]
-
-        (expect (some? failure))
-        (expect (false? (:success? failure)))))
-  ;; The read bypass for an ANCESTOR target only ever applied to composite (whole
-  ;; subtree) targets, which after the removal of the batch fs verbs are read-only
-  ;; by construction. Writes into a protected path are gated per path at
-  ;; `sandbox-fs/confine!` (see `internal.sandbox-fs-test`).
-  ;; =============================================================================
-  ;; FORCING plan-gate composition — write/patch consult env :mutation-gate AFTER
-  ;; path-protection clears. (proposal Decision 2 / G1)
-  ;; =============================================================================
-  (describe
-    "plan-gate-before-fn-test"
-    (it "write SHORT-CIRCUITS with a :plan-required failure when the gate refuses"
-        (let
-          [seen
-           (atom nil)
-
-           before
-           (:ext.symbol/before-fn (private-fn "write-symbol"))
-
-           out
-           (before (gate-env seen "Plan required — 2nd file.")
-                   (constantly :ok)
-                   [{"path" "target/editing-test/b.clj" "content" "x"}])
-
-           failure
-           (:result out)]
-
-          (expect (some? failure))
-          (expect (false? (:success? failure)))
-          (expect (= :ext.foundation.editing/plan-required
-                     (-> failure
-                         :error
-                         :type)))
-          (expect (= :plan-required
-                     (-> failure
-                         :error
-                         :reason)))
-          ;; gate saw the canonical path + op
-          (expect (= :write (:op @seen)))
-          (expect (= ["target/editing-test/b.clj"] (:paths @seen)))
-          (expect (false? (:atomic? @seen)))))
-    (it "write PASSES THROUGH (no :result) when the gate allows (nil)"
-        (let
-          [seen
-           (atom nil)
-
-           before
-           (:ext.symbol/before-fn (private-fn "write-symbol"))
-
-           out
-           (before (gate-env seen nil)
-                   (constantly :ok)
-                   [{"path" "target/editing-test/a.clj" "content" "x"}])]
-
-          (expect (not (contains? out :result)))
-          (expect (= [{"path" "target/editing-test/a.clj" "content" "x"}] (:args out)))))
-    (it "detects the atomic=True escape flag on a write"
-        (let
-          [seen
-           (atom nil)
-
-           before
-           (:ext.symbol/before-fn (private-fn "write-symbol"))]
-
-          (before (gate-env seen nil)
-                  (constantly :ok)
-                  [{"path" "target/editing-test/a.clj" "content" "x" "atomic" true}])
-          (expect (true? (:atomic? @seen)))))
-    (it "detects atomic on a patch edit map + reports all edited paths"
-        (let
-          [seen
-           (atom nil)
-
-           before
-           (:ext.symbol/before-fn (private-fn "patch-symbol"))]
-
-          (before
-            (gate-env seen nil)
-            (constantly :ok)
-            [[{"path" "target/editing-test/a.clj" "from_anchor" "1:abc" "replace" "n" "atomic" true}
-              {"path" "target/editing-test/b.clj" "from_anchor" "1:def" "replace" "n"}]])
-          (expect (true? (:atomic? @seen)))
-          (expect (= #{"target/editing-test/a.clj" "target/editing-test/b.clj"}
-                     (set (:paths @seen))))))
-    (it "path-protection wins: a protected path NEVER reaches the gate"
-        (let
-          [hint
-           "owner API only"
-
-           before
-           (:ext.symbol/before-fn (private-fn "write-symbol"))
-
-           env
-           (assoc (protected-env
-                    [{:glob "target/editing-test/protected/*.clj" :access :read-only :hint hint}])
-             :mutation-gate (fn [_]
-                              (throw (ex-info "gate must not run" {}))))
-
-           out
-           (before env
-                   (constantly :ok)
-                   [{"path" "target/editing-test/protected/x.clj" "content" "x"}])
-
-           failure
-           (:result out)]
-
-          (expect (= :ext.foundation.editing/path-protected
-                     (-> failure
-                         :error
-                         :type)))))
-    (it "no :mutation-gate on env → write passes through (gate is optional)"
-        (let
-          [before
-           (:ext.symbol/before-fn (private-fn "write-symbol"))
-
-           out
-           (before {:extensions (atom [])}
-                   (constantly :ok)
-                   [{"path" "target/editing-test/a.clj" "content" "x"}])]
-
-          (expect (not (contains? out :result))))))
-  (it
-    "allows first-match :read-write exceptions for the exact file without unblocking siblings"
-    (let
-      [hint
-       "Use (br/files) instead of listing Bridge-owned files."
-
-       path
-       "target/editing-test/protected/public.edn"
-
-       rules
-       [{:glob path :access :read-write :hint "Direct edits are allowed for this file."}
-        {:glob "target/editing-test/protected/*.edn" :access :none :hint hint}]
-
-       patch-before
-       (:ext.symbol/before-fn (private-fn "patch-symbol"))
-
-       cat-before
-       (:ext.symbol/before-fn (private-fn "cat-symbol"))
-
-       patch-out
-       (patch-before (protected-env rules)
-                     (constantly :ok)
-                     [[{"path" path "from_anchor" "1:abc" "replace" "new"}]])
-
-       cat-out
-       (cat-before (protected-env rules)
-                   (constantly :ok)
-                   ["target/editing-test/protected/secret.edn"])
-
-       failure
-       (:result cat-out)]
-
-      (expect (not (contains? patch-out :result)))
-      (expect (= [[{"path" path "from_anchor" "1:abc" "replace" "new"}]] (:args patch-out)))
-      (expect (some? failure))
-      (expect (false? (:success? failure)))
-      (expect (= hint
-                 (-> failure
-                     :error
-                     :hint)))
-      (expect (= :none
-                 (-> failure
-                     :error
-                     :failures
-                     first
-                     :access))))))
+        (expect (some? @seen!)))))
 
 (defn- numbered-tuples
   "[[start str0] [start+1 str1] …] helper for assembling expected

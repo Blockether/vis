@@ -6,7 +6,6 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mpl-capture :as mc]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.protected-paths :as protected-paths]
             [com.blockether.vis.internal.sandbox-fs :as sfs]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]
@@ -24,6 +23,25 @@
 (defn- denied? [thunk] (try (thunk) false (catch java.io.IOException _ true)))
 
 (defn- p ^java.nio.file.Path [s] (Paths/get s (make-array String 0)))
+
+(defn- gated-root
+  "A root the `:fs/access` gate actually covers. `tmp-root` sits under the system
+   temp dir, which `confine!` deliberately does NOT gate: temp, the attachment
+   outbox and `~/.vis` are engine surfaces lent to the guest, and a hook able to
+   refuse them is a hook able to brick a live session."
+  ^String []
+  (let
+    [target
+     (java.io.File. (str (System/getProperty "user.dir")) "target")
+
+     _
+     (.mkdirs target)
+
+     d
+     (Files/createTempDirectory (p (str target)) "vis-fs-gate-test" (make-array FileAttribute 0))]
+
+    (spit (str d "/inside.txt") "ROOT-DATA")
+    (str (.toRealPath d (make-array java.nio.file.LinkOption 0)))))
 
 (defdescribe
   confine-test
@@ -348,78 +366,101 @@
                  (Files/deleteIfExists (p log-probe))
                  (Files/deleteIfExists (p config-probe)))))))
 
-;; Regression, PLAN P0: `:ext/protected-paths` only reached the native file
-;; verbs, so a path an extension declared protected still accepted a plain
-;; Python `open(..., "w")` / `shutil.move` through the sandbox filesystem.
+(defn- prefix-rule-hook
+  "An extension's guard, in miniature. The rule VOCABULARY belongs to the guard —
+   after Phase 2 the engine owns no globs and no access levels — so the test
+   writes plain prefixes and answers with the sentence a refusal carries."
+  [root rules]
+  (fn [_env _op {:keys [operation path]}]
+    (let
+      [rel
+       (str/replace-first (str path) (str root "/") "")
+
+       intent
+       (if (str/ends-with? (str operation) "-write") :write :read)]
+
+      (some (fn [{:keys [prefix access hint]}]
+              (when (and (str/starts-with? rel prefix)
+                         (or (= :none access) (and (= :write intent) (= :read-only access))))
+                hint))
+            rules))))
+
+(defn- with-fs-gate!
+  "Register `hook-fn` as the one `:fs/access` gate, hand `body` the gate fn the
+   engine builds from it (exactly as `loop.clj` does), then tear it down."
+  [hook-fn body]
+  (try (extension/register-op-hook! {:op :fs/access :owner :ext/test-sandbox-gate :fn hook-fn})
+       (body (extension/fs-access-gate (constantly {:extensions (atom [])})))
+       (finally (extension/unregister-op-hooks-for-owner! :ext/test-sandbox-gate))))
+
+;; Regression, PLAN Phase 2: an extension's path boundary only reached the native
+;; file verbs, so a path it declared protected still accepted a plain Python
+;; `open(..., "w")` / `shutil.move` through the sandbox filesystem.
 (defdescribe
-  protected-paths-in-sandbox-test
-  (let
-    [deny-fn (fn [root rules]
-               (protected-paths/deny-fn
-                 (constantly {:extensions (atom [(extension/extension
-                                                   {:ext/name "test.protected-paths"
-                                                    :ext/description "Test protected paths."
-                                                    :ext/protected-paths (constantly (vec
-                                                                                       rules))})])})
-                 (constantly root)))]
-    (it "refuses a WRITE to an extension-protected path, inside an approved root"
-        (let
-          [root (tmp-root)
-           fs (sfs/confined-filesystem
-                (fn []
-                  [root])
-                nil
-                (deny-fn root [{:glob "secrets/**" :access :none :hint "Use the vault API."}]))]
+  fs-access-gate-in-sandbox-test
+  (it "refuses a WRITE an extension gate blocks, inside an approved root"
+      (let [root (gated-root)]
+        (with-fs-gate!
+          (prefix-rule-hook root [{:prefix "secrets/" :access :none :hint "Use the vault API."}])
+          (fn [gate-fn]
+            (let
+              [fs (sfs/confined-filesystem (fn []
+                                             [root])
+                                           nil
+                                           gate-fn)]
+              (Files/createDirectory (p (str root "/secrets")) (make-array FileAttribute 0))
+              (expect (denied? #(.newByteChannel fs
+                                                 (p (str root "/secrets/key.txt"))
+                                                 #{StandardOpenOption/WRITE
+                                                   StandardOpenOption/CREATE}
+                                                 (make-array FileAttribute 0))))
+              (expect (denied? #(.delete fs (p (str root "/secrets/key.txt")))))
+              ;; :none also refuses the READ
+              (expect (denied? #(.newByteChannel fs
+                                                 (p (str root "/secrets/key.txt"))
+                                                 #{StandardOpenOption/READ}
+                                                 (make-array FileAttribute 0))))
+              ;; an unprotected sibling is untouched
+              (expect (some? (.newByteChannel fs
+                                              (p (str root "/plain.txt"))
+                                              #{StandardOpenOption/WRITE StandardOpenOption/CREATE}
+                                              (make-array FileAttribute 0)))))))))
+  (it "a read-only rule still reads, and the guest error names the owner's hint"
+      (let [root (gated-root)]
+        (with-fs-gate! (prefix-rule-hook root
+                                         [{:prefix "inside.txt"
+                                           :access :read-only
+                                           :hint "Use (br/policy) instead."}])
+                       (fn [gate-fn]
+                         (let
+                           [fs (sfs/confined-filesystem (fn []
+                                                          [root])
+                                                        nil
+                                                        gate-fn)
+                            msg (try (.newByteChannel fs
+                                                      (p (str root "/inside.txt"))
+                                                      #{StandardOpenOption/WRITE}
+                                                      (make-array FileAttribute 0))
+                                     nil
+                                     (catch java.io.IOException e (ex-message e)))]
 
-          (Files/createDirectory (p (str root "/secrets")) (make-array FileAttribute 0))
-          (expect (denied? #(.newByteChannel fs
-                                             (p (str root "/secrets/key.txt"))
-                                             #{StandardOpenOption/WRITE StandardOpenOption/CREATE}
-                                             (make-array FileAttribute 0))))
-          (expect (denied? #(.delete fs (p (str root "/secrets/key.txt")))))
-          ;; :none also refuses the READ
-          (expect (denied? #(.newByteChannel fs
-                                             (p (str root "/secrets/key.txt"))
-                                             #{StandardOpenOption/READ}
-                                             (make-array FileAttribute 0))))
-          ;; an unprotected sibling is untouched
-          (expect (some? (.newByteChannel fs
-                                          (p (str root "/plain.txt"))
-                                          #{StandardOpenOption/WRITE StandardOpenOption/CREATE}
-                                          (make-array FileAttribute 0))))))
-    (it "a :read-only rule still reads, and the guest error names the owner's hint"
-        (let
-          [root (tmp-root)
-           fs (sfs/confined-filesystem (fn []
-                                         [root])
-                                       nil
-                                       (deny-fn root
-                                                [{:glob "inside.txt"
-                                                  :access :read-only
-                                                  :hint "Use (br/policy) instead."}]))
-           msg (try (.newByteChannel fs
-                                     (p (str root "/inside.txt"))
-                                     #{StandardOpenOption/WRITE}
-                                     (make-array FileAttribute 0))
-                    nil
-                    (catch java.io.IOException e (ex-message e)))]
-
-          (expect (some? (.newByteChannel fs
-                                          (p (str root "/inside.txt"))
-                                          #{StandardOpenOption/READ}
-                                          (make-array FileAttribute 0))))
-          (expect (str/includes? (str msg) "reason=path_protected"))
-          (expect (str/includes? (str msg) "Use (br/policy) instead."))))
-    (it "fails CLOSED when the protected-paths registry itself throws"
-        (let
-          [root (tmp-root)
-           fs (sfs/confined-filesystem (fn []
-                                         [root])
-                                       nil
-                                       (fn [_op _path]
-                                         (throw (ex-info "broken registry" {}))))]
-
-          (expect (denied? #(.newByteChannel fs
-                                             (p (str root "/inside.txt"))
-                                             #{StandardOpenOption/READ}
-                                             (make-array FileAttribute 0))))))))
+                           (expect (some? (.newByteChannel fs
+                                                           (p (str root "/inside.txt"))
+                                                           #{StandardOpenOption/READ}
+                                                           (make-array FileAttribute 0))))
+                           (expect (str/includes? (str msg) "reason=path_protected"))
+                           (expect (str/includes? (str msg) "Use (br/policy) instead.")))))))
+  (it "fails CLOSED when the gate hook itself throws"
+      (let [root (gated-root)]
+        (with-fs-gate! (fn [_env _op _ctx]
+                         (throw (ex-info "broken guard" {})))
+                       (fn [gate-fn]
+                         (let
+                           [fs (sfs/confined-filesystem (fn []
+                                                          [root])
+                                                        nil
+                                                        gate-fn)]
+                           (expect (denied? #(.newByteChannel fs
+                                                              (p (str root "/inside.txt"))
+                                                              #{StandardOpenOption/READ}
+                                                              (make-array FileAttribute 0))))))))))

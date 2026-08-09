@@ -368,7 +368,9 @@
      :access (protected-access (or (:access rule) (:default-access sandbox)))
      :hint (protected-path-hint-for-rule rule)}))
 
-(defn- bridge-protected-paths
+(defn- discovered-sandbox-rules
+  "Every ENFORCED path-sandbox rule of every discovered project as
+   `{:glob :access :hint}`, deepest project first."
   [env]
   (let
     [projects (->> (:projects (bridge-project-discovery (workspace-root env)))
@@ -385,6 +387,99 @@
                              (:rules sandbox))
                        []))))
          vec)))
+
+(def ^:private sandbox-rules-ttl-ms
+  ;; The gate is asked once per PATH, and reading the rules walks the workspace
+  ;; and parses every profile. Without a cache a directory listing would pay for
+  ;; a full discovery per entry. The window is short enough that an edited
+  ;; profile takes effect while the author is still looking at the terminal.
+  5000)
+
+(defonce ^:private sandbox-rules-cache (atom {}))
+
+(defn- bridge-sandbox-rules
+  "`discovered-sandbox-rules` for this workspace, cached per root for
+   `sandbox-rules-ttl-ms`."
+  [env]
+  (let
+    [root
+     (workspace-root env)
+
+     now
+     (now-ms)
+
+     cached
+     (get @sandbox-rules-cache root)]
+
+    (if (and cached (< (- now ^long (:at cached)) ^long sandbox-rules-ttl-ms))
+      (:rules cached)
+      (let [rules (discovered-sandbox-rules env)]
+        (swap! sandbox-rules-cache assoc root {:at now :rules rules})
+        rules))))
+
+;; The vocabulary of a protected path belongs to THIS extension: what a glob is,
+;; what an access level means, which rule wins. The engine owns none of it — it
+;; asks the `:fs/access` gate and reads back one sentence.
+
+(defn- rule-glob-matches?
+  "Whether `glob` matches the workspace-relative `rel`, or its last segment."
+  [glob rel]
+  (let
+    [matcher
+     (.getPathMatcher (java.nio.file.FileSystems/getDefault) (str "glob:" glob))
+
+     rel
+     (str/replace (str rel) (str (char 92)) "/")
+
+     leaf
+     (last (str/split rel #"/+"))]
+
+    (boolean (some (fn [candidate]
+                     (try (.matches matcher
+                                    (java.nio.file.Paths/get (str candidate) (make-array String 0)))
+                          (catch Throwable _ false)))
+                   (distinct [rel leaf])))))
+
+(defn- path-in-workspace
+  "`abs` addressed relative to `root`, `/`-separated, or nil when it is outside —
+   the Bridge's rules are written against the workspace, so a path elsewhere is
+   simply not its business."
+  [root abs]
+  (let
+    [root
+     (str/replace (str/replace (str root) (str (char 92)) "/") #"/+$" "")
+
+     abs
+     (str/replace (str abs) (str (char 92)) "/")]
+
+    (cond (str/blank? root) nil
+          (= root abs) "."
+          (str/starts-with? abs (str root "/")) (subs abs (inc (count root)))
+          :else nil)))
+
+(defn- bridge-fs-access-gate
+  "`:fs/access` GATE hook — the Bridge's path sandbox, asked for EVERY path the
+   engine's editors and the Python interpreter touch, so `open(p, \"w\")` and
+   `write` are refused by the same rule. FIRST match wins, nested project before
+   ancestor and policy order within a project, so a policy's own exception still
+   reads as an exception; the rule's hint is the refusal sentence, nil allows."
+  [env _op {:keys [operation path]}]
+  ;; `workspace-root` THROWS for a tool fired outside a workspace, which is
+  ;; right for a tool and wrong for a gate: the gate is asked for every path
+  ;; the engine touches, including reads that belong to no session at all, and
+  ;; a boundary that fails closed would turn "no workspace" into "nothing may
+  ;; be read". No workspace root means the Bridge has no rules to apply.
+  (when-let [rel (path-in-workspace (:workspace/root env) path)]
+    (let
+      [intent (if (str/ends-with? (str operation) "-write") :write :read)
+       rule (some (fn [rule]
+                    (when (rule-glob-matches? (:glob rule) rel) rule))
+                  (bridge-sandbox-rules env))]
+
+      (when (and rule
+                 (or (= :none (:access rule))
+                     (and (= :write intent) (= :read-only (:access rule)))))
+        (:hint rule)))))
 
 (defn- bridge-session-context
   [env]
@@ -901,9 +996,9 @@
      :ext/engine {:ext.engine/alias 'br :ext.engine/symbols bridge-symbols}
      :ext/cli bridge-cli
      :ext/kind "verification"
-     :ext/op-hooks [{:op :git/commit :phase :around :fn bridge-commit-gate}]
+     :ext/op-hooks [{:op :git/commit :phase :around :fn bridge-commit-gate}
+                    {:op :fs/access :fn bridge-fs-access-gate}]
      :ext/ctx-fn bridge-session-context
-     :ext/protected-paths bridge-protected-paths
      :ext/prompt-fn bridge-prompt}))
 
 (vis/register-extension! vis-extension)

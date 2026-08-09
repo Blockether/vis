@@ -572,6 +572,91 @@ vis.extension(
                        (fn [_]
                          :ran)))))))))
 
+;; =============================================================================
+;; Gate hooks — a Python extension guards the FILESYSTEM, not a tool's arguments
+;; =============================================================================
+
+(def ^:private fs-gate-py
+  "\"\"\"Filesystem gate fixture.\"\"\"
+import vis
+
+
+def _fs_gate(access):
+    if \"secrets\" in access[\"path\"] and access[\"operation\"].endswith(\"write\"):
+        return vis.block(\"the vault is written through the vault tool\")
+    return None
+
+
+vis.extension(
+    name=\"vault\",
+    description=\"Vault fixture extension.\",
+    kind=\"guard\",
+    op_hooks=[vis.op_hook([\"fs_access\"], _fs_gate)],
+)
+")
+
+(def ^:private broken-fs-gate-py
+  "\"\"\"Filesystem gate that breaks.\"\"\"
+import vis
+
+
+def _fs_gate(access):
+    raise RuntimeError(\"the rule table is unreadable\")
+
+
+vis.extension(
+    name=\"broken-vault\",
+    description=\"Broken vault fixture extension.\",
+    kind=\"guard\",
+    op_hooks=[vis.op_hook([\"fs_access\"], _fs_gate)],
+)
+")
+
+(defdescribe
+  fs-access-gate-python-test
+  "A gate is ASKED, never wrapped: the Python callable receives the gate's own
+   string-keyed ctx and answers with `vis.block(reason)` or None. The op reaches
+   `confine!`, so the rule binds `open(p, 'w')` and `write` alike — an argument
+   guard could only ever see the tool."
+  (it "compiles a Python fs_access hook into a :gate hook that refuses by sentence"
+      (with-loaded
+        {"vault.py" fs-gate-py}
+        (fn [_ _]
+          (let
+            [hooks
+             (:ext/op-hooks (registered "vault"))
+
+             gate
+             (first hooks)]
+
+            (expect (= 1 (count hooks)))
+            (expect (= :fs/access (:op gate)))
+            (expect (= :gate (:phase gate)))
+            ;; refused: the guest's own sentence crosses back, unchanged
+            (expect (= {:reason "the vault is written through the vault tool"}
+                       ((:fn gate) {} :fs/access {:operation "file-write" :path "/w/secrets/key"})))
+            ;; a READ of the same path, and a write elsewhere, both pass
+            (expect (nil?
+                      ((:fn gate) {} :fs/access {:operation "file-read" :path "/w/secrets/key"})))
+            (expect
+              (nil? ((:fn gate) {} :fs/access {:operation "file-write" :path "/w/notes.txt"})))))))
+  (it "fails CLOSED when the Python guard raises"
+      (with-loaded {"broken_vault.py" broken-fs-gate-py}
+                   (fn [_ _]
+                     (let
+                       [gate
+                        (first (:ext/op-hooks (registered "broken-vault")))
+
+                        refusal
+                        ((:fn gate) {} :fs/access {:operation "file-read" :path "/w/notes.txt"})]
+
+                       ;; The opposite of an ordinary hook, which logs and runs on: a
+                       ;; boundary that opens when its guard breaks is not a boundary.
+                       (expect (some? refusal))
+                       (expect (str/includes? (:reason refusal) "fails closed"))
+                       (expect (str/includes? (:reason refusal)
+                                              "the rule table is unreadable")))))))
+
 (defdescribe
   op-hook-payload-test
   "Op-hook payloads carry ORDINARY host data — a keyword op enum, keyword arg

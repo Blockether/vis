@@ -110,15 +110,19 @@
 (defn- confine!
   "Throw a clear IOException unless `p` resolves under a current root OR one
    of the always-allowed `extra-roots` (the engine outbox dir, the system temp
-   dirs `/tmp`/`$TMPDIR`, and Vis's own `~/.vis` tree) AND is not refused by
-   `protected-fn` — the extension-declared `:ext/protected-paths` boundary, the
-   very same registry the native file verbs consult. Returns `p` (a Path) on
-   success. `cache` memoizes root canonicalization.
+   dirs `/tmp`/`$TMPDIR`, and Vis's own `~/.vis` tree) AND the `:fs/access` gate
+   allows it. Returns `p` (a Path) on success. `cache` memoizes root
+   canonicalization.
 
-   `protected-fn` is `(fn [operation abs-path] -> rule | nil)`; nil disables the
-   check. A THROW from it denies the operation (fail closed) rather than opening
-   the path."
-  ^Path [roots-fn cache extra-roots protected-fn operation p]
+   `gate-fn` is `(fn [operation abs-path] -> refusal | nil)` — the `:fs/access`
+   gate an extension's hook answers, built by `extension/fs-access-gate`; nil
+   leaves only root confinement. A THROW from it denies the operation (fail
+   closed) rather than opening the path.
+
+   A path under `extra-roots` is NOT gated. Those are engine surfaces LENT to the
+   guest — the attachment outbox, temp scratch, `~/.vis` — not the user's tree,
+   and a guard able to refuse them is a guard able to brick a live session."
+  ^Path [roots-fn cache extra-roots gate-fn operation p]
   (let
     [^Path pp
      (if (instance? Path p) p (Paths/get (str p) (make-array String 0)))
@@ -126,8 +130,16 @@
      real
      (real-path pp)
 
+     extra
+     (vec extra-roots)
+
      roots
-     (into (vec extra-roots) (current-real-roots roots-fn cache))]
+     (into extra (current-real-roots roots-fn cache))
+
+     engine-owned?
+     (some (fn [^Path root]
+             (.startsWith real root))
+           extra)]
 
     (when-not (some (fn [^Path root]
                       (.startsWith real root))
@@ -139,17 +151,15 @@
       (throw (IOException. (str "[vis:sandbox_denied] operation="
                                 operation
                                 " reason=outside_approved_filesystem_roots"))))
-    (when protected-fn
+    (when (and gate-fn (not engine-owned?))
       (when-let
-        [rule (try
-                (protected-fn operation (str real))
-                (catch Throwable _
-                  {:hint
-                   "Fix the extension's :ext/protected-paths callback before retrying file IO."}))]
-        ;; The owning extension's own hint IS the remedy — it names the API to use
-        ;; instead, so the guest error is actionable without naming the path.
+        [refusal (try (gate-fn operation (str real))
+                      (catch Throwable _
+                        {:reason "the :fs/access gate itself failed; file IO fails closed."}))]
+        ;; The gate's own sentence IS the remedy — it names what to do instead, so
+        ;; the guest error is actionable without naming the path.
         (throw (IOException. (str "[vis:sandbox_denied] operation=" operation
-                                  " reason=path_protected" (when-let [h (:hint rule)]
+                                  " reason=path_protected" (when-let [h (:reason refusal)]
                                                              (str " hint=" h)))))))
     pp))
 
@@ -194,7 +204,7 @@
    scratch streams to the DB too, not just `$VIS_OUTBOX`. Nil ⇒ no tap."
   (^FileSystem [roots-fn] (confined-filesystem roots-fn nil nil))
   (^FileSystem [roots-fn outbox] (confined-filesystem roots-fn outbox nil))
-  (^FileSystem [roots-fn outbox protected-fn]
+  (^FileSystem [roots-fn outbox gate-fn]
    (let
      [^FileSystem d
       (FileSystem/newDefaultFileSystem)
@@ -215,7 +225,7 @@
 
       c
       (fn [operation p]
-        (confine! roots-fn root-cache extra-roots protected-fn operation p))
+        (confine! roots-fn root-cache extra-roots gate-fn operation p))
 
       confined
       (proxy [FileSystem] []

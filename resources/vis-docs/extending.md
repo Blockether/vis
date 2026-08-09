@@ -102,7 +102,7 @@ Exactly one call per file. Keyword arguments:
 | `prompt` | str or callable | Model-facing fragment. A callable receives the env dict every turn and returns a string or `None` (no fragment that turn). |
 | `activation` | callable | `(env) -> bool`, evaluated per turn; gates the whole extension. Default: always on. |
 | `slash_commands` | list of `vis.slash(...)` | User-facing commands. |
-| `op_hooks` | list of `vis.op_hook(...)` | Guards/observers over file ops. |
+| `op_hooks` | list of `vis.op_hook(...)` | Guards/observers over ops, and gates such as `fs_access`. |
 | `network_filters` | list of `vis.network_filter(...)` | Request/response policy at the gateway's decrypted HTTP boundary. |
 | `providers` | list of `vis.provider(...)` | LLM providers the router can select. |
 | `ctx` | callable | `(env) -> dict`, evaluated per turn; the returned dict is deep-merged into the model's `session` bag. See [Session context](#session-context). |
@@ -252,12 +252,24 @@ vis.op_hook(ops, fn, phase="before")
 ```
 
 - `ops` — sandbox tool names to hook: `"write"`, `"patch"`,
-  `"struct_patch"`, `"shell_run"`, `"python_execution"`, …
+  `"struct_patch"`, `"shell_run"`, `"python_execution"`, … or a GATE op
+  (below), which is a different shape and may not share a hook with them.
 - `phase="before"` — `fn(call)` receives `{"op", "args"}` **before** the op
   runs. Return `vis.block(reason)` to refuse it (the model sees the reason
   as a tool failure) or `None` to allow. A hook error fails open.
 - `phase="after"` — `fn(call)` receives `{"op", "args", "result"}` after the
   op; observe-only (the return value is ignored).
+
+**Gate ops.** `"fs_access"` is not a tool: it is asked for every path the
+engine's editors AND the Python interpreter touch, so `open(p, "w")`,
+`Path.unlink` and `shutil.move` are refused by the same rule as `write` and
+`patch` — a guard cannot be routed around by picking another tool or another
+language. `fn(access)` receives `{"operation": "file-read" | "file-write",
+"path": <absolute path>}`, returns `vis.block(reason)` to refuse or `None` to
+allow, and `phase` says nothing (the operation has not run yet, so declaring
+one is refused at the call site). A gate fails **closed**: an error inside the
+hook refuses the operation, because a boundary that opens when its guard breaks
+is not a boundary. See `resources/examples/python-extensions/protected_paths.py`.
 
 `vis.strings_of(value)` collects every string leaf of a nested structure —
 handy for scanning op args for paths.
@@ -1085,7 +1097,7 @@ my-extension/
 
 Channels, providers, persistence backends, and workspace backends register through their own keys (`:ext/channels`, `:ext/providers`, `:ext/persistance`, `:ext/workspace-backends`) — read a first-party extension of the matching kind as the reference implementation.
 
-The remaining accepted keys are declarative registrations: the host applies them when the extension registers and undoes them when it unregisters, so nothing needs a global atom or an imperative `register-*!` call. `:ext/cli` adds CLI commands (auto-placed under the `vis-agent extension` parent unless the entry names its own `:cmd/parent`); `:ext/language-tools` contributes a language's format/lint/test/REPL handlers; `:ext/hooks` and `:ext/op-hooks` run at named lifecycle phases; `:ext/network-filters` adds egress predicates; `:ext/protected-paths` guards paths from edits; `:ext/attachment-storage` supplies an attachment backend; `:ext/channel-contributions` fills channel UI slots; `:ext/theme` ships theme overrides; `:ext/requires` names extensions that must register first (load order is topologically sorted); `:ext/source-nses` marks the namespaces the extension is built from. The authoritative, complete list is the `::extension` spec in `com.blockether.vis.internal.extension`.
+The remaining accepted keys are declarative registrations: the host applies them when the extension registers and undoes them when it unregisters, so nothing needs a global atom or an imperative `register-*!` call. `:ext/cli` adds CLI commands (auto-placed under the `vis-agent extension` parent unless the entry names its own `:cmd/parent`); `:ext/language-tools` contributes a language's format/lint/test/REPL handlers; `:ext/hooks` and `:ext/op-hooks` run at named lifecycle phases (an op-hook on a GATE op such as `:fs/access` guards paths instead, and is asked rather than wrapped); `:ext/network-filters` adds egress predicates; `:ext/attachment-storage` supplies an attachment backend; `:ext/channel-contributions` fills channel UI slots; `:ext/theme` ships theme overrides; `:ext/requires` names extensions that must register first (load order is topologically sorted); `:ext/source-nses` marks the namespaces the extension is built from. The authoritative, complete list is the `::extension` spec in `com.blockether.vis.internal.extension`.
 
 ### Tools: symbols
 

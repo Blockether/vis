@@ -53,10 +53,11 @@ Observation tools:
 - `(br/run-evidence id)` remains a failure when no profile exists, but the
   error is concise and actionable rather than stack-oriented.
 
-The extension also exposes Bridge policy `:bridge-path-sandbox` rules through
-Vis `:ext/protected-paths`. When policy enforcement is enabled, Bridge
-`path-pattern` entries become workspace-relative protected globs for the
-foundation editing tools. Directory patterns such as `.bridge/` are expanded
+The extension also enforces Bridge policy `:bridge-path-sandbox` rules through
+the Vis `:fs/access` gate hook. When policy enforcement is enabled, Bridge
+`path-pattern` entries become workspace-relative globs the extension itself
+matches — for the foundation editing tools and for the Python sandbox's own
+filesystem alike. Directory patterns such as `.bridge/` are expanded
 to subtree globs such as `.bridge/**`; relative policy paths are resolved
 against the normalized Bridge profile root. In a multi-repository workspace,
 rules from every discovered Bridge project are combined, with nested project
@@ -213,7 +214,7 @@ Extension-owned:
 - string-keyed project identity in `session["env"]["bridge"]`
 - converting Bridge library calls into plain Vis tool envelopes
 - registering op tags and prompt guidance
-- translating Bridge path sandbox policy into Vis protected-path declarations
+- enforcing Bridge path sandbox policy through the `:fs/access` gate hook
 - declaring the fail-closed semantic `:git/commit` around hook
 
 The extension consumes Bridge exclusively through `bridge.api` (Bridge's

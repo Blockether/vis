@@ -1756,7 +1756,7 @@
    Shared by `create-python-context` (the main session sandbox) and `fork-context!`
    (each `sub_loop` child) so they are byte-for-byte the same sandbox — only the
    bound env (which ctx-atom the verbs close over) differs."
-  [custom-bindings roots-fn network-opts stdin stderr protected-fn]
+  [custom-bindings roots-fn network-opts stdin stderr gate-fn]
   (let
     [stdout-baos
      (java.io.ByteArrayOutputStream.)
@@ -1814,7 +1814,7 @@
        (-> (IOAccess/newBuilder)
            (cond->
              roots-fn
-             (.fileSystem (sandbox-fs/confined-filesystem roots-fn outbox protected-fn)))
+             (.fileSystem (sandbox-fs/confined-filesystem roots-fn outbox gate-fn)))
            (.allowHostSocketAccess net?)
            (.build))
        IOAccess/NONE)
@@ -2127,9 +2127,9 @@
    (optional InputStream) is wired to the guest `sys.stdin` — used by `vis-agent python`
    to forward the caller's real stdin; agent sandboxes leave it nil. The 5-arity
    `stderr` (optional OutputStream) does the same for guest `sys.stderr`; nil keeps
-   the JVM's `System/err`. The 6-arity `protected-fn` is the extension-declared
-   `:ext/protected-paths` predicate the confined filesystem enforces (see
-   `internal/protected-paths`); nil leaves only root confinement."
+   the JVM's `System/err`. The 6-arity `gate-fn` is the `:fs/access` gate the
+   confined filesystem asks before every path operation (see
+   `extension/fs-access-gate`); nil leaves only root confinement."
   ([custom-bindings] (create-python-context custom-bindings nil nil nil nil nil))
   ([custom-bindings roots-fn] (create-python-context custom-bindings roots-fn nil nil nil nil))
   ([custom-bindings roots-fn network-opts]
@@ -2138,13 +2138,13 @@
    (create-python-context custom-bindings roots-fn network-opts stdin nil nil))
   ([custom-bindings roots-fn network-opts stdin stderr]
    (create-python-context custom-bindings roots-fn network-opts stdin stderr nil))
-  ([custom-bindings roots-fn network-opts stdin stderr protected-fn]
+  ([custom-bindings roots-fn network-opts stdin stderr gate-fn]
    @graalvm-runtime-checked
    ;; Build/force the one process-wide Engine before the session Context. Child
    ;; sub-loops create their own restrictive Context only when true parallel
    ;; Python execution is requested; all contexts share this Engine's code cache.
    (try @shared-engine (catch Throwable _ nil))
-   (build-agent-context custom-bindings roots-fn network-opts stdin stderr protected-fn)))
+   (build-agent-context custom-bindings roots-fn network-opts stdin stderr gate-fn)))
 
 (defn fork-context!
   "Fork a CHILD agent Context for a `sub_loop` — same deny-by-default sandbox as
@@ -2155,14 +2155,14 @@
    `{:python-context :sandbox-ns :initial-ns-keys}` shape as
    `create-python-context`. The caller owns the child Context's lifecycle (close
    it when the sub_loop ends). `roots-fn` (optional) confines the child's Python
-   filesystem to the current filesystem roots, same as the parent; `protected-fn`
-   carries the parent's `:ext/protected-paths` boundary into the child."
+   filesystem to the current filesystem roots, same as the parent; `gate-fn`
+   carries the parent's `:fs/access` gate into the child."
   ([custom-bindings] (fork-context! custom-bindings nil nil nil))
   ([custom-bindings roots-fn] (fork-context! custom-bindings roots-fn nil nil))
   ([custom-bindings roots-fn network-opts]
    (fork-context! custom-bindings roots-fn network-opts nil))
-  ([custom-bindings roots-fn network-opts protected-fn]
-   (build-agent-context custom-bindings roots-fn network-opts nil nil protected-fn)))
+  ([custom-bindings roots-fn network-opts gate-fn]
+   (build-agent-context custom-bindings roots-fn network-opts nil nil gate-fn)))
 
 ;; =============================================================================
 ;; Eval — the loop's hook (a thin entry point so the spike + Python loop share

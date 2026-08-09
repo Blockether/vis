@@ -525,22 +525,6 @@
 (s/def :ext/activation-fn fn?)
 ;; Optional extra LLM-facing documentation appended when the extension is active.
 (s/def :ext/prompt-fn fn?)
-;; Extension-owned file boundary declarations. The callback receives the
-;; live environment and returns rules in first-match-wins order *within
-;; that extension*. Global enforcement across extensions is handled by
-;; the editing core with most-restrictive-wins semantics.
-(s/def :ext.protected-path/glob string?)
-
-(s/def :ext.protected-path/access #{:read-only :read-write :none})
-
-(s/def :ext.protected-path/hint string?)
-
-(s/def ::protected-path
-  (s/keys :req-un [:ext.protected-path/glob :ext.protected-path/access :ext.protected-path/hint]))
-
-(s/def ::protected-paths-result (s/coll-of ::protected-path :kind vector?))
-
-(s/def :ext/protected-paths fn?)
 ;; Optional structured data merged into engine `ctx` before every model call.
 ;; Return a map such as `{:project {...}}`; engine-owned keys still win on
 ;; collision.
@@ -548,11 +532,11 @@
 ;; Declarative cross-cutting operation hooks: `[{:op :phase :fn} ...]` installed
 ;; under an owner derived from the extension name, so they register/unregister
 ;; with its lifecycle. Each entry: `:op` (op-keyword), `:phase`
-;; (:before|:around|:after, default :after), `:fn` (the hook fn — see
+;; (:before|:around|:after|:gate, default :after), `:fn` (the hook fn — see
 ;; `register-op-hook!`). `:owner` is set automatically.
 (s/def :ext.op-hook/op keyword?)
 
-(s/def :ext.op-hook/phase #{:before :around :after})
+(s/def :ext.op-hook/phase #{:before :around :after :gate})
 
 (s/def :ext.op-hook/fn ifn?)
 
@@ -1289,12 +1273,11 @@
 (s/def ::extension
   (s/and (s/keys :req [:ext/name :ext/description]
                  :opt [:ext/source-nses :ext/kind :ext/activation-fn :ext/engine :ext/prompt-fn
-                       :ext/ctx-fn :ext/protected-paths :ext/hooks :ext/op-hooks
-                       :ext/network-filters :ext/env :ext/settings :ext/theme :ext/requires
-                       :ext/version :ext/author :ext/owner :ext/license :ext/cli :ext/channels
-                       :ext/providers :ext/persistance :ext/attachment-storage
-                       :ext/channel-contributions :ext/slash-commands :ext/doctor-fn
-                       :ext/sandbox-shims])
+                       :ext/ctx-fn :ext/hooks :ext/op-hooks :ext/network-filters :ext/env
+                       :ext/settings :ext/theme :ext/requires :ext/version :ext/author :ext/owner
+                       :ext/license :ext/cli :ext/channels :ext/providers :ext/persistance
+                       :ext/attachment-storage :ext/channel-contributions :ext/slash-commands
+                       :ext/doctor-fn :ext/sandbox-shims])
          ns-alias-required-when-symbols?
          kind-required-when-symbols?))
 ;; =============================================================================
@@ -2235,53 +2218,7 @@
 
        ~@body)))
 
-(defn- call-extension-env-fn
-  [ext f environment]
-  (with-context {:ext ext :env environment} (f environment)))
 
-(defn- active-extension?
-  [environment ext]
-  (try (boolean
-         (call-extension-env-fn ext (or (:ext/activation-fn ext) (constantly true)) environment))
-       (catch Throwable t
-         (tel/log! {:level :error
-                    :id ::ext-activation-error
-                    :data {:ext (:ext/name ext) :error (ex-message t)}}
-                   (str "Extension '" (:ext/name ext) "' activation-fn threw"))
-         false)))
-
-(defn- active-extension-rows
-  [environment]
-  (let [active-value (:active-extensions environment)]
-    (cond (some? active-value)
-          (vec (if (instance? clojure.lang.IDeref active-value) @active-value active-value))
-          :else (filterv #(active-extension? environment %)
-                  (vec (or (some-> (:extensions environment)
-                                   deref)
-                           []))))))
-
-(defn active-protected-globs
-  "Aggregate protected path rules from active extensions in extension order.
-
-   Each active extension may declare `:ext/protected-paths` as
-   `(fn [env] -> [{:glob string :access :read-only|:read-write|:none
-                   :hint string} ...])`. Rule order is preserved within
-   each extension; the foundation editing core resolves first-match-wins
-   per extension and most-restrictive-wins globally. Returned rows are
-   enriched with `:extension/name` for diagnostics."
-  [environment]
-  (mapv identity
-        (mapcat (fn [ext]
-                  (when-let [f (:ext/protected-paths ext)]
-                    (let [rows (call-extension-env-fn ext f environment)]
-                      (when-not (s/valid? ::protected-paths-result rows)
-                        (throw (ex-info ":ext/protected-paths returned invalid protected path rules"
-                                        {:type :extension/invalid-protected-paths
-                                         :extension (:ext/name ext)
-                                         :value rows
-                                         :explain (s/explain-data ::protected-paths-result rows)})))
-                      (mapv #(assoc % :extension/name (:ext/name ext)) rows))))
-                (active-extension-rows environment))))
 
 (defn- deep-merge
   [& maps]
@@ -2334,6 +2271,35 @@
       ;; already persisted via the sink entry for anyone who needs fidelity.
       (throw (ex-info (or (:message err) "Tool failed")
                       {:type :vis/tool-failure :symbol (:symbol result) :error err})))))
+;; ── GATE ops ────────────────────────────────────────────────────────────────
+;; A gate is the one op shape that is ASKED rather than wrapped. Every hook
+;; registered for it is consulted in registration order, none of them receives
+;; `next`, and the FIRST refusal stands — so no extension can loosen another
+;; extension's boundary, which is the property a cross-extension precedence rule
+;; used to buy. A gate hook that THROWS refuses (fail CLOSED); every other hook
+;; keeps failing open, because a broken convenience guard must not brick the loop
+;; while a broken boundary must not open it.
+
+(def gate-ops
+  "Gate ops, keyed by op keyword and valued by the spelling a hook author writes
+   (`vis.op_hook([\"fs_access\"], guard)` in Python, `{:op :fs/access}` in Clojure).
+
+   `:fs/access` is asked for EVERY path the Python sandbox's filesystem touches
+   (`internal/sandbox-fs`) and for every path the model-driven editors touch
+   (`foundation/editing/core`), with `{:operation :path}` — so ONE rule covers
+   `open(p, \"w\")`, `shutil.move`, `Path.unlink` and `write`/`patch`/`struct_patch`
+   alike, and \"protected\" can never mean \"protected from Python only\"."
+  {:fs/access "fs_access"})
+
+(defn gate-op
+  "The gate op keyword `s` names, or nil when it names no gate. Both spellings
+   resolve: the author's `\"fs_access\"` and the engine's `:fs/access`."
+  [s]
+  (let [n (if (keyword? s) (subs (str s) 1) (str s))]
+    (some (fn [[op spelling]]
+            (when (or (= n spelling) (= n (subs (str op) 1))) op))
+          gate-ops)))
+
 ;; ── Cross-cutting operation hooks ────────────────────────────────────────────
 ;; A generic, op-keyword-keyed hook registry so ANY extension can decorate an
 ;; operation it does NOT own — e.g. the Clojure pack repairs `.clj` files after
@@ -2348,18 +2314,31 @@
 (defn register-op-hook!
   "Register a cross-cutting hook on operation `:op` (its op-keyword, e.g.
    :struct_patch). `:phase` is :after (default — sees & may rewrite the result
-   envelope), :before (sees & may rewrite the args vector), or :around (MIDDLEWARE
-   — wraps the call). `:fn` is, for :after, (fn [env op-kw args result] ->
+   envelope), :before (sees & may rewrite the args vector), :around (MIDDLEWARE
+   — wraps the call), or :gate (the op is ASKED, never wrapped — see `gate-ops`;
+   a gate op forces this phase whatever the caller declared, because the op
+   decides the shape). `:fn` is, for :after, (fn [env op-kw args result] ->
    result-envelope); for :before, (fn [env op-kw args] -> args-vector); for
    :around, (fn [env op-kw args next] -> result) where `next` runs the inner call
    and may be invoked zero+ times (skip / retry) or wrapped in try/catch (recover
-   — this is how an op is made NOT to fail). `:owner` (an ext keyword) makes the
-   registration idempotent across `:reload`s — re-registering the same
-   owner+phase for an op REPLACES the prior one. Returns the op-keyword."
+   — this is how an op is made NOT to fail); for :gate, (fn [env op-kw ctx] ->
+   nil | reason). `:owner` (an ext keyword) makes the registration idempotent
+   across `:reload`s — re-registering the same owner+phase for an op REPLACES the
+   prior one. Returns the op-keyword."
   [{:keys [op phase owner] hook-fn :fn :or {phase :after}}]
-  (assert (#{:before :around :after} phase) "op hook :phase must be :before, :around, or :after")
+  (assert (#{:before :around :after :gate} phase)
+          "op hook :phase must be :before, :around, :after, or :gate")
   (assert (ifn? hook-fn) "op hook :fn must be a function")
-  (let [op-kw (keyword op)]
+  (let
+    [gate-kw
+     (gate-op op)
+
+     op-kw
+     (or gate-kw (keyword op))
+
+     phase
+     (if gate-kw :gate phase)]
+
     (swap! op-hooks update
       op-kw
       (fn [hooks]
@@ -2468,6 +2447,57 @@
                base
                arounds)
         args))))
+
+(def ^:dynamic ^:private *in-gate*
+  "True while a gate hook is running on THIS thread. A guard that reads a file in
+   order to decide re-enters the gate; skipping it there is what keeps the guard
+   from recursing into itself."
+  false)
+
+(defn- gate-refusal
+  "Normalize a gate hook's answer: nil — or anything that is not a sentence —
+   ALLOWS; a non-blank string, or a map carrying `:reason`/`:hint`, REFUSES with
+   it."
+  [answer]
+  (cond (string? answer) (when-not (str/blank? answer) {:reason answer})
+        (map? answer) (let [reason (or (:reason answer) (:hint answer))]
+                        (when (and (string? reason) (not (str/blank? reason)))
+                          (assoc answer :reason reason)))
+        :else nil))
+
+(defn gate-hooked?
+  "Whether any gate hook is registered for `op-kw` — the short-circuit that keeps
+   an engine with no guard installed paying one map lookup per operation."
+  [op-kw]
+  (boolean (some #(= :gate (:phase %)) (get @op-hooks op-kw))))
+
+(defn run-gate-hooks
+  "Ask the gate hooks registered for `op-kw` whether the operation `ctx` describes
+   may proceed. Each hook is `(fn [env op-kw ctx] -> nil | reason)`. Returns nil to
+   ALLOW, or `{:reason <sentence> :owner <ext>}` to REFUSE — see `gate-ops` for the
+   contract the mechanism carries so the guard author does not have to."
+  [op-kw env ctx]
+  (when-not *in-gate*
+    (let [gates (filterv #(= :gate (:phase %)) (get @op-hooks op-kw))]
+      (when (seq gates)
+        (binding [*in-gate* true]
+          (some (fn [{:keys [owner] hook-fn :fn}]
+                  (some-> (try (gate-refusal (hook-fn env op-kw ctx))
+                               (catch Throwable e
+                                 {:reason (str "the " (or owner "?")
+                                               " guard failed, and a boundary fails closed: "
+                                               (ex-message e))}))
+                          (assoc :owner owner)))
+                gates))))))
+
+(defn fs-access-gate
+  "The `(fn [operation abs-path] -> refusal | nil)` the Python sandbox's `confine!`
+   consults on every path it touches. `env-thunk` yields the live environment, and
+   is only called when a gate hook is actually registered."
+  [env-thunk]
+  (fn [operation abs-path]
+    (when (gate-hooked? :fs/access)
+      (run-gate-hooks :fs/access (env-thunk) {:operation (str operation) :path (str abs-path)}))))
 
 (defn invoke-operation
   "Invoke host operation `f` through the declarative :around hooks for

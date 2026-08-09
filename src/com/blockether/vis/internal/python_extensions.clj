@@ -677,6 +677,38 @@
                               "' Python extension. Ask the user before retrying.")}})
         (next-fn args)))))
 
+(defn- gate-adapter
+  "Python hook on a GATE op -> a host `:gate` hook. The callable receives that
+   gate's own ctx, string-keyed (for `fs_access`: `{'operation', 'path'}`);
+   returning `vis.block(reason)` REFUSES with that sentence and returning None
+   allows.
+
+   A hook error fails CLOSED — the opposite of `guard-adapter` — because a
+   boundary that opens when its guard breaks is not a boundary. That asymmetry is
+   the whole reason a gate is its own shape."
+  [ext-name ^Context ctx ^Value pyfn]
+  (fn [env op-kw gate-ctx]
+    (try (let
+           [payload
+            (reduce-kv (fn [m k v]
+                         (assoc m (name k) (str v)))
+                       {}
+                       gate-ctx)
+
+            res
+            (call-py-ext ext-name env ctx pyfn [payload])]
+
+           (when (and (map? res) (= "block" (get res "marker")))
+             {:reason (str (or (get res "reason")
+                               (str "Refused by the '" ext-name "' extension.")))}))
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::gate-hook-failed
+                      :data {:extension ext-name :op op-kw :error (ex-message t)}})
+           {:reason (str "the '" ext-name
+                         "' extension's " (name op-kw)
+                         " guard failed, and a boundary fails closed: " (ex-message t))}))))
+
 (defn- after-adapter
   "Python `phase='after'` hook -> a host :after op hook. Observe-only:
    the callable receives `{'op', 'args', 'result'}`; its return value is
@@ -905,16 +937,22 @@
      (= "before" (str (get spec "phase")))
 
      pyfn
-     (get spec "fn")
-
-     f
-     (if before? (guard-adapter ext-name ctx pyfn) (after-adapter ext-name ctx pyfn))]
+     (get spec "fn")]
 
     ;; `:op` keys the INTERNAL op-hook registry (keyword-keyed, matched against
     ;; canonical tool op keywords). The vocabulary is author-declared config,
     ;; not model data — the one sanctioned mint in this file.
     (mapv (fn [op]
-            {:op (keyword (str op)) :phase (if before? :around :after) :fn f})
+            ;; A GATE op (`"fs_access"`) is a different shape, and the OP decides
+            ;; it: asked rather than wrapped, refusing rather than rewriting, and
+            ;; failing CLOSED. `phase` is not consulted — there is nothing to be
+            ;; before or after when the operation has not been allowed yet.
+            (if-let [gate-kw (extension/gate-op op)]
+              {:op gate-kw :phase :gate :fn (gate-adapter ext-name ctx pyfn)}
+              {:op (keyword (str op))
+               :phase (if before? :around :after)
+               :fn
+               (if before? (guard-adapter ext-name ctx pyfn) (after-adapter ext-name ctx pyfn))}))
           (get spec "ops"))))
 
 ;; ── Providers: DECODED against a declared shape, never walked ────────────────

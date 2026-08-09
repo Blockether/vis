@@ -30,7 +30,6 @@
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.session-model :as session-model]
             [com.blockether.vis.internal.prompt :as prompt]
-            [com.blockether.vis.internal.protected-paths :as protected-paths]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.provider-error :as perr]
             [com.blockether.vis.internal.providers :as providers]
@@ -11276,15 +11275,13 @@
      _register-repl-jail
      (when session-id (process-jail/register-session-jail! session-id jail-policy-fn))
 
-     ;; The SAME `:ext/protected-paths` boundary the native file verbs enforce,
-     ;; pushed down into the sandbox filesystem: an extension-protected path
-     ;; refuses `open(..., "w")` / `shutil.move` exactly as it refuses `delete`.
-     sandbox-protected-fn
+     ;; The `:fs/access` gate, pushed down into the sandbox filesystem: a path an
+     ;; extension's gate hook refuses is refused for `open(..., "w")`,
+     ;; `shutil.move` and `Path.unlink` exactly as it is for `write` / `patch`.
+     sandbox-gate-fn
      (when sandbox-roots-fn
-       (protected-paths/deny-fn (fn []
-                                  @environment-atom)
-                                (fn []
-                                  (:root @workspace-atom))))
+       (extension/fs-access-gate (fn []
+                                   @environment-atom)))
 
      {:keys [python-context sandbox-ns initial-ns-keys]}
      (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))
@@ -11292,7 +11289,7 @@
                                 network-opts
                                 nil
                                 nil
-                                sandbox-protected-fn)
+                                sandbox-gate-fn)
 
      env
      (cond->

@@ -50,7 +50,10 @@
 (defdescribe
   bridge-commit-gate-test
   (it "is declared as lifecycle-owned semantic middleware"
-      (expect (= [{:op :git/commit :phase :around :fn bridge-commit-gate}]
+      ;; The commit gate is `:around` middleware; the path sandbox beside it is a
+      ;; GATE, which is asked and never wraps, so it declares no phase.
+      (expect (= [{:op :git/commit :phase :around :fn bridge-commit-gate}
+                  {:op :fs/access :fn (var-get #'bridge/bridge-fs-access-gate)}]
                  (:ext/op-hooks bridge/vis-extension))))
   (it "allows an ordinary commit when Bridge is not configured"
       (let
@@ -183,9 +186,11 @@
       (expect (= #{"init" "profile" "check" "list-evidence" "run-evidence"}
                  (set (map :cmd/name (get-in bridge/vis-extension [:ext/cli 0 :cmd/subcommands])))))
       (expect (fn? (:ext/ctx-fn bridge/vis-extension)))
-      (expect (fn? (:ext/protected-paths bridge/vis-extension)))
       (expect (nil? (:ext/hooks bridge/vis-extension)))
       (expect (= :git/commit (get-in bridge/vis-extension [:ext/op-hooks 0 :op])))
+      ;; The path sandbox is a GATE hook now: asked before every path the engine
+      ;; and the Python interpreter touch, rather than a table the engine reads.
+      (expect (= :fs/access (get-in bridge/vis-extension [:ext/op-hooks 1 :op])))
       (expect (= :observation (vis/op-tag :br/check)))
       (expect (= :mutation (vis/op-tag :br/init)))
       (expect (= :mutation (vis/op-tag :br/run-evidence))))
@@ -465,13 +470,23 @@
                    (expect (= root-profile (get-in (result-of result) ["profile_path"])))
                    (expect (not= nested-profile (get-in (result-of result) ["profile_path"]))))))
 
+(def ^:private fs-access-gate
+  (->> (:ext/op-hooks bridge/vis-extension)
+       (some (fn [hook]
+               (when (= :fs/access (:op hook)) (:fn hook))))))
+
+(defn- refusal
+  "What the gate answers for one operation on one absolute path: the refusal
+   sentence, or nil when the Bridge allows it."
+  [root operation path]
+  (fs-access-gate (protected-env root) :fs/access {:operation operation :path path}))
+
 (defdescribe
-  bridge-protected-paths-test
-  (it "returns no protected path rules when Bridge is unconfigured"
+  bridge-fs-access-gate-test
+  (it "allows everything when Bridge is unconfigured"
       (let [root (temp-root "bridge-ext-protected-unconfigured")]
-        (expect (= [] ((:ext/protected-paths bridge/vis-extension) (protected-env root))))
-        (expect (= [] (extension/active-protected-globs (protected-env root))))))
-  (it "returns no protected path rules when policy enforcement is disabled"
+        (expect (nil? (refusal root "file-write" (str root "/.bridge/profile.yaml"))))))
+  (it "allows everything when policy enforcement is disabled"
       (let
         [root
          (temp-root "bridge-ext-protected-disabled")
@@ -481,85 +496,77 @@
 
         (bridge/init env)
         (write-policy! root {:enforce? false :rules [{:path-pattern ".bridge/" :access "none"}]})
-        (expect (= [] ((:ext/protected-paths bridge/vis-extension) (protected-env root))))))
-  (it
-    "maps enforced Bridge path sandbox rules to Vis protected path rules"
-    (let
-      [root
-       (temp-root "bridge-ext-protected")
+        (expect (nil? (refusal root "file-write" (str root "/.bridge/profile.yaml"))))))
+  (it "an enforced :none rule refuses the read and the write with the policy's own reason"
+      (let
+        [root
+         (temp-root "bridge-ext-protected")
 
-       env
-       {:workspace/root root}
+         env
+         {:workspace/root root}
 
-       hint
-       "Policy changes require human approval."]
+         reason
+         "Use br/* tools for Bridge-owned state."]
 
-      (bridge/init env)
-      (write-policy!
-        root
-        {:enforce? true
-         :default-access "read-write"
-         :rules
-         [{:path-pattern ".bridge/" :access "none" :reason "Use br/* tools for Bridge-owned state."}
-          {:path-pattern ".bridge/verification-policy.yaml" :access "read-only" :reason hint}
-          {:path-pattern ".bridge/ephemeral/evidence/**" :access "read-write"}]})
-      (expect
-        (=
-          [{:glob ".bridge/**" :access :none :hint "Use br/* tools for Bridge-owned state."}
-           {:glob ".bridge/verification-policy.yaml" :access :read-only :hint hint}
-           {:glob ".bridge/ephemeral/evidence/**"
-            :access :read-write
-            :hint
-            "Bridge policy protects this path; use the br/* tool surface instead of direct file IO."}]
-          ((:ext/protected-paths bridge/vis-extension) (protected-env root))))
-      (expect
-        (=
-          [{:glob ".bridge/**"
-            :access :none
-            :hint "Use br/* tools for Bridge-owned state."
-            :extension/name "foundation-bridge"}
-           {:glob ".bridge/verification-policy.yaml"
-            :access :read-only
-            :hint hint
-            :extension/name "foundation-bridge"}
-           {:glob ".bridge/ephemeral/evidence/**"
-            :access :read-write
-            :hint
+        (bridge/init env)
+        (write-policy! root
+                       {:enforce? true
+                        :default-access "read-write"
+                        :rules [{:path-pattern ".bridge/" :access "none" :reason reason}]})
+        (expect (= reason (refusal root "file-write" (str root "/.bridge/profile.yaml"))))
+        (expect (= reason (refusal root "file-read" (str root "/.bridge/profile.yaml"))))
+        ;; A file the policy says nothing about is not the Bridge's business, and
+        ;; neither is a path outside the workspace.
+        (expect (nil? (refusal root "file-write" (str root "/src/app.clj"))))
+        (expect (nil? (refusal root "file-write" "/tmp/elsewhere.txt")))))
+  (it "a :read-only rule refuses the write and allows the read"
+      (let
+        [root
+         (temp-root "bridge-ext-protected-read-only")
+
+         env
+         {:workspace/root root}
+
+         hint
+         "Policy changes require human approval."]
+
+        (bridge/init env)
+        (write-policy! root
+                       {:enforce? true
+                        :rules [{:path-pattern ".bridge/verification-policy.yaml"
+                                 :access "read-only"
+                                 :reason hint}]})
+        (expect (= hint (refusal root "file-write" (str root "/.bridge/verification-policy.yaml"))))
+        (expect (nil? (refusal root "file-read" (str root "/.bridge/verification-policy.yaml"))))))
+  (it "prefixes policy patterns when the Bridge profile root is below the workspace"
+      (let
+        [root
+         (temp-root "bridge-ext-protected-subroot")
+
+         project-root
+         (str root "/project")
+
+         env
+         {:workspace/root root}
+
+         profile-path
+         (str root "/.bridge/profile.yaml")]
+
+        (bridge/init env)
+        (.mkdirs (java.io.File. project-root ".bridge"))
+        (bio/write-data profile-path (assoc (bio/read-data profile-path) :root-path "../project"))
+        (bio/write-data (str project-root "/.bridge/verification-policy.yaml")
+                        {:artifact "verification-policy"
+                         :policy-id "sandboxed-subroot"
+                         :bridge-path-sandbox {:enforce? true
+                                               :rules [{:path-pattern ".bridge/" :access "none"}]}
+                         :rules []})
+        (expect
+          (=
             "Bridge policy protects this path; use the br/* tool surface instead of direct file IO."
-            :extension/name "foundation-bridge"}]
-          (extension/active-protected-globs (protected-env root))))))
-  (it
-    "prefixes policy patterns when the Bridge profile root is below the workspace"
-    (let
-      [root
-       (temp-root "bridge-ext-protected-subroot")
-
-       project-root
-       (str root "/project")
-
-       env
-       {:workspace/root root}
-
-       profile-path
-       (str root "/.bridge/profile.yaml")]
-
-      (bridge/init env)
-      (.mkdirs (java.io.File. project-root ".bridge"))
-      (bio/write-data profile-path (assoc (bio/read-data profile-path) :root-path "../project"))
-      (bio/write-data (str project-root "/.bridge/verification-policy.yaml")
-                      {:artifact "verification-policy"
-                       :policy-id "sandboxed-subroot"
-                       :bridge-path-sandbox {:enforce? true
-                                             :rules [{:path-pattern ".bridge/" :access "none"}]}
-                       :rules []})
-      (expect
-        (=
-          [{:glob "project/.bridge/**"
-            :access :none
-            :hint
-            "Bridge policy protects this path; use the br/* tool surface instead of direct file IO."}]
-          ((:ext/protected-paths bridge/vis-extension) (protected-env root))))))
-  (it "aggregates protected paths from nested projects before ancestor projects"
+            (refusal root "file-write" (str root "/project/.bridge/state.edn"))))
+        (expect (nil? (refusal root "file-write" (str root "/.bridge/state.edn"))))))
+  (it "the nested project's rule wins over its ancestor's"
       (let
         [root
          (temp-root "bridge-ext-protected-projects")
@@ -585,9 +592,9 @@
         (write-policy! nested
                        {:enforce? true
                         :rules [{:path-pattern ".bridge/" :access "none" :reason "nested"}]})
-        (expect (= [{:glob "nested/.bridge/**" :access :none :hint "nested"}
-                    {:glob ".bridge/**" :access :read-only :hint "ancestor"}]
-                   ((:ext/protected-paths bridge/vis-extension) (protected-env root)))))))
+        (expect (= "nested" (refusal root "file-read" (str root "/nested/.bridge/state.edn"))))
+        (expect (= "ancestor" (refusal root "file-write" (str root "/.bridge/state.edn"))))
+        (expect (nil? (refusal root "file-read" (str root "/.bridge/state.edn")))))))
 
 (defdescribe
   bridge-unconfigured-workspace-test

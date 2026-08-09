@@ -43,7 +43,6 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.editing.patch :as patch]
             [com.blockether.vis.internal.foundation.editing.index :as index]
-            [com.blockether.vis.internal.protected-paths :as pp]
             [com.blockether.vis.internal.foundation.editing.structural :as structural]
             [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
@@ -653,12 +652,13 @@
        (catch Throwable _ {:requested (str requested) :resolved nil :absolute nil :kind kind})))
 
 ;; =============================================================================
-;; Extension protected paths
+;; The :fs/access gate
 ;; =============================================================================
 
-;; Rule matching + precedence live in `internal/protected-paths`, the ONE
-;; resolver the Python sandbox filesystem shares. This layer only extracts the
-;; op's paths and turns a refusal into a tool failure.
+;; The vocabulary of what is protected belongs to an EXTENSION, never to the
+;; engine: the engine only ASKS, through the `:fs/access` gate that the Python
+;; sandbox filesystem asks under the interpreter. This layer extracts the op's
+;; paths and turns a refusal into a tool failure.
 
 (defn- extracted-paths
   [path-extractor args]
@@ -852,139 +852,53 @@
 
     (mapv normalize-find-dir-path paths)))
 
-(defn- protected-target
-  [path kind]
-  (let [target (path->target path kind)]
-    (when (:resolved target) target)))
-
-;; (protected rule matching: see `internal/protected-paths`)
-
-(defn- hidden-descendant-prefix?
-  "Whether the static protected prefix is strictly below `ancestor` and crosses
-   a dot-prefixed path segment. A default grep walk prunes at that segment."
-  [ancestor glob]
-  (let
-    [prefix
-     (pp/glob-static-prefix glob)
-
-     suffix
-     (when (and (not= ancestor prefix) (pp/path-prefix? ancestor prefix))
-       (if (= "." ancestor) prefix (subs prefix (inc (count ancestor)))))]
-
-    (boolean (some #(str/starts-with? % ".") (when suffix (str/split suffix #"/+"))))))
-
-(defn- hidden-search? [args] (boolean (some #(and (map? %) (get % "is_hidden")) args)))
-
-(defn- safe-read-ancestor-match?
-  "True when a protected rule matched only because the read target is an
-   ancestor of the protected path and the operation can safely start there.
-
-   Reads at `.` retain the existing workspace-root behavior. A nested grep
-   scope is also safe when reaching the protected prefix crosses a hidden
-   segment (for example `bridge/.bridge/**`) and the caller did not request
-   hidden files. Direct reads of that hidden directory, visible protected
-   descendants, hidden-enabled searches, and every write remain blocked."
-  [op access-intent target rule args]
-  (let [rel (:resolved target)]
-    (and (= :read access-intent)
-         (pp/composite-target? target)
-         (not (pp/glob-matches? (:glob rule) rel))
-         (or (= "." rel)
-             (and (= :grep op)
-                  (not (hidden-search? args))
-                  (hidden-descendant-prefix? rel (:glob rule)))))))
-
-(defn- protected-failure-row
-  [{:keys [target intent glob access hint] ext-name :extension/name}]
-  {:path (:resolved target)
-   :requested (:requested target)
-   :reason :path-protected
-   :intent intent
-   :access access
-   :glob glob
-   :extension ext-name
-   :hint hint})
-
-(defn- path-protected-failure
-  [op kind access-intent blocked]
-  (let
-    [t
-     (now-ms)
-
-     first-row
-     (first blocked)
-
-     first-tgt
-     (:target first-row)
-
-     first-hint
-     (:hint first-row)
-
-     failures
-     (mapv protected-failure-row blocked)]
-
-    (extension/failure
-      {:result nil
-       :op op
-       :metadata {:target first-tgt
-                  :started-at-ms t
-                  :finished-at-ms t
-                  :duration-ms 0
-                  :access-intent access-intent
-                  :protected-paths failures}
-       :error {:message (str op
-                             " blocked: "
-                             (:resolved first-tgt)
-                             " is protected; use the owning extension API instead.")
-               :type :ext.foundation.editing/path-protected
-               :reason :path-protected
-               :intent access-intent
-               :hint first-hint
-               :loop-hint first-hint
-               :failures failures
-               :kind kind}})))
-
-(defn- path-protection-error-failure
-  [op kind err]
+(defn- gate-refusal-failure
+  "Turn a `:fs/access` refusal into the tool failure the model reads. The gate's
+   own sentence IS the remedy — the extension that declared the boundary is the
+   only party that knows what to do instead — so it is the message, the `:hint`
+   and the `:loop-hint` alike."
+  [op kind operation {:keys [reason owner target]}]
   (let [t (now-ms)]
     (extension/failure
       {:result nil
        :op op
-       :metadata {:target (path->target "." kind) :started-at-ms t :finished-at-ms t :duration-ms 0}
-       :error {:message "Protected path registry failed; refusing direct file operation."
-               :type :ext.foundation.editing/path-protection-error
-               :reason :path-protection-error
-               :hint
-               "Fix the extension's :ext/protected-paths callback before retrying direct file IO."
-               :loop-hint
-               "Fix the extension's :ext/protected-paths callback before retrying direct file IO."
-               :cause (ex-message err)}})))
+       :metadata {:target target
+                  :started-at-ms t
+                  :finished-at-ms t
+                  :duration-ms 0
+                  :operation operation
+                  :gate :fs/access
+                  :owner owner}
+       :error {:message (str op " blocked: " (:resolved target) " — " reason)
+               :type :ext.foundation.editing/path-protected
+               :reason :path-protected
+               :operation operation
+               :hint reason
+               :loop-hint reason
+               :owner owner
+               :kind kind}})))
 
-(defn- path-protected-before-fn
-  [op kind access-intent path-extractor]
+(defn- fs-access-before-fn
+  "Ask the `:fs/access` gate about every path this op touches, BEFORE it runs.
+   `operation` is the verb the hook sees (`\"file-read\"`, `\"file-write\"`) — the
+   same vocabulary `internal/sandbox-fs` passes for guest IO, so one rule covers
+   the tool and `open(p, \"w\")` alike. The first refusal wins and no path of the
+   batch is touched: a batch that would be half-refused is refused whole."
+  [op kind operation path-extractor]
   (fn [env f args]
-    (try (let
-           [rules
-            (extension/active-protected-globs env)
-
-            targets
-            (keep #(protected-target % kind) (extracted-paths path-extractor args))
-
-            blocked
-            (keep (fn [target]
-                    (when-let [rule (pp/resolve-access rules target)]
-                      (when (and (pp/blocked-access? access-intent (:access rule))
-                                 (not
-                                   (safe-read-ancestor-match? op access-intent target rule args)))
-                        (assoc rule
-                          :target target
-                          :intent access-intent))))
-                  targets)]
-
-           (if (seq blocked)
-             {:result (path-protected-failure op kind access-intent (vec blocked))}
-             {:env env :fn f :args args}))
-         (catch Throwable t {:result (path-protection-error-failure op kind t)}))))
+    (if-let
+      [refusal (when (extension/gate-hooked? :fs/access)
+                 (some (fn [path]
+                         (let [target (path->target path kind)]
+                           (some-> (extension/run-gate-hooks :fs/access
+                                                             env
+                                                             {:operation operation
+                                                              :path (or (:absolute target)
+                                                                        (str path))})
+                                   (assoc :target target))))
+                       (extracted-paths path-extractor args)))]
+      {:result (gate-refusal-failure op kind operation refusal)}
+      {:env env :fn f :args args})))
 
 (defn- mutation-atomic?
   "True when a write/patch args vector carries the documented `atomic` escape
@@ -1015,14 +929,14 @@
                                 :paths paths}})))
 
 (defn- plan-gated-before-fn
-  "Write-intent gate for patch / write / struct_patch. Path-protection runs
-   FIRST (owner-API refusals always win); only AFTER it clears does this
+  "Write-intent gate for patch / write / struct_patch. The `:fs/access` gate runs
+   FIRST (an extension's boundary always wins); only AFTER it clears does this
    consult the env's OPTIONAL `:mutation-gate`. The gate receives
    `{:op :paths :atomic?}` and returns a refusal string to short-circuit with a
    `:plan-required` failure, or nil to pass through. No `:mutation-gate` on the
    env = pass through unchanged (the gate is opt-in)."
-  [op kind access path-extractor]
-  (let [protect (path-protected-before-fn op kind access path-extractor)]
+  [op kind path-extractor]
+  (let [protect (fs-access-before-fn op kind "file-write" path-extractor)]
     (fn [env f args]
       (let [out (protect env f args)]
         (if (contains? out :result)
@@ -6450,7 +6364,7 @@
         "1-based inclusive `[[start,end],…]`; keeps definitions intersecting any window. `line_count` stays whole-file."}}
       :required ["paths"]
       :additionalProperties false}
-     :before-fn (path-protected-before-fn :struct_index :file :read read-arg-paths)
+     :before-fn (fs-access-before-fn :struct_index :file "file-read" read-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :struct_index :file nil)}))
 
@@ -6509,7 +6423,7 @@
        "`struct_index` maps code first. A write invalidates only that file's earlier anchors.")
      :render-finish-call-fn render-cat-result
      :schema cat-schema
-     :before-fn (path-protected-before-fn :cat :file :read read-arg-paths)
+     :before-fn (fs-access-before-fn :cat :file "file-read" read-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :cat :file nil)}))
 
@@ -6556,7 +6470,7 @@
           "Dotfiles need `is_hidden`; gitignored entries are never listed. `cat` reads files.")
      :render-finish-call-fn render-ls-results
      :schema ls-schema
-     :before-fn (path-protected-before-fn :ls :dir :read read-arg-paths)
+     :before-fn (fs-access-before-fn :ls :dir "file-read" read-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :ls :dir nil)}))
 
@@ -6601,7 +6515,7 @@
        "is_hidden" {:type "boolean" :description "Include hidden paths (default false)."}}
       :required ["query"]
       :additionalProperties false}
-     :before-fn (path-protected-before-fn :grep :dir :read find-arg-paths)
+     :before-fn (fs-access-before-fn :grep :dir "file-read" find-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :grep :dir nil)}))
 
@@ -6638,7 +6552,7 @@
                  :additionalProperties false}}}
               :required ["edits"]
               :additionalProperties false}
-     :before-fn (plan-gated-before-fn :patch :file :write patch-arg-paths)
+     :before-fn (plan-gated-before-fn :patch :file patch-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :patch :file nil)}))
 
@@ -6666,7 +6580,7 @@
                          :description "Write only when the target mtime equals this."}}
       :required ["path" "content"]
       :additionalProperties false}
-     :before-fn (plan-gated-before-fn :write :file :write write-arg-paths)
+     :before-fn (plan-gated-before-fn :write :file write-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :write :file nil)}))
 
@@ -7150,7 +7064,7 @@
        "nav" {:type "array" :description "Relative zipper moves after `at` (strings/maps)."}}
       ;; Either a lone `path`+`op` edit or an `edits` batch — validated in the tool.
       :additionalProperties false}
-     :before-fn (plan-gated-before-fn :struct_patch :file :write write-arg-paths)
+     :before-fn (plan-gated-before-fn :struct_patch :file write-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :struct_patch :file nil)}))
 
@@ -7365,7 +7279,7 @@
                  :description
                  "`lineno:hash` from struct_index/cat; enters that line's node instead of `at`."}}
       :additionalProperties false}
-     :before-fn (path-protected-before-fn :struct_nodes :file :read nodes-arg-paths)
+     :before-fn (fs-access-before-fn :struct_nodes :file "file-read" nodes-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :struct_nodes :file nil)}))
 

@@ -12,7 +12,7 @@ in a live session):
 | File | Demonstrates |
 | --- | --- |
 | `todo.py` | Model-facing **tools** + durable **`vis.state`** + a `/todos` **slash command** + a prompt fragment |
-| `protected_paths.py` | **Op hooks** — a before-hook that blocks file mutations on protected paths |
+| `protected_paths.py` | **Gate op hook** — an `fs_access` guard that refuses protected paths for tools and for plain Python IO alike |
 | `pirate.py` | Dynamic **prompt fragment** (a callable, re-evaluated per turn) toggled by `/pirate` |
 | `github_issues.py` | Real-world integration: **HTTP from the trusted context**, config via slash + state, secrets via env vars |
 | `provider_acme.py` | **LLM provider** (`vis.provider`) — a router-callable provider from a `preset` + `get_token_fn`, credentials via env vars |

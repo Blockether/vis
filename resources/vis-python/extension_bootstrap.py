@@ -164,7 +164,15 @@ def slash(name, run, doc=None, usage=None):
         raise ValueError('vis.slash(name, run, ...) requires a callable run')
     return {'marker': 'slash', 'name': name, 'run': run, 'doc': doc, 'usage': usage}
 
+GATE_OPS = ('fs_access',)
+
 def op_hook(ops, fn, phase='before'):
+    # A GATE op is ASKED, never wrapped: the hook receives that gate's own ctx
+    # (fs_access -> {'operation', 'path'}), returns vis.block(reason) to REFUSE,
+    # and an error inside it refuses too, because a boundary fails closed. There
+    # is nothing to be before or after when the operation has not been allowed
+    # yet, so mixing a gate into an ordinary hook is a mistake named here rather
+    # than a hook that silently never runs.
     if phase not in ('before', 'after'):
         raise ValueError('vis.op_hook phase must be before or after, got %r' % (phase,))
     if not callable(fn):
@@ -172,6 +180,15 @@ def op_hook(ops, fn, phase='before'):
     ops = [str(o) for o in (ops or [])]
     if not ops:
         raise ValueError('vis.op_hook requires a non-empty ops list')
+    gates = [o for o in ops if o in GATE_OPS]
+    if gates and len(gates) != len(ops):
+        raise ValueError(
+            'vis.op_hook: %r is a gate and is asked, not wrapped, so it cannot share a hook with %r'
+            % (gates[0], [o for o in ops if o not in GATE_OPS]))
+    if gates and phase != 'before':
+        raise ValueError(
+            'vis.op_hook: %r is a gate, asked before the operation runs, so phase=%r means nothing'
+            % (gates[0], phase))
     return {'marker': 'op_hook', 'ops': ops, 'fn': fn, 'phase': phase}
 
 def network_filter(fn):
