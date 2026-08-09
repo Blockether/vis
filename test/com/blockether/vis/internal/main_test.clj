@@ -101,7 +101,10 @@
                (expect (.contains (str out) "Test channel for help.")))
              (finally (registry/deregister-channel! (:channel/id fake-channel))))))
   (it "strips launcher selectors when they leak into JVM args"
-      (expect (= ["channels" "--help"] (#'main/strip-global-args ["channels" "--jvm" "--help"])))))
+      (expect (= ["channels" "--help"] (#'main/strip-global-args ["channels" "--jvm" "--help"]))))
+  (it "strips --stream-trace, which the wrapper consumes as a system property"
+      (expect (= ["channels" "tui"]
+                 (#'main/strip-global-args ["channels" "--stream-trace" "tui"])))))
 
 (defdescribe
   parse-run-args-test

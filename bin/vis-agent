@@ -92,6 +92,7 @@ for arg in "$@"; do
     --)        end_of_flags=1; args+=("$arg") ;;
     --measure) export VIS_MEASURE=1 ;;
     --jfr)     jfr=1 ;;
+    --stream-trace) export VIS_STREAM_TRACE=1 ;;
     --native|--jvm|--dev)
       if [[ -n "$flag_runtime" && "$flag_runtime" != "${arg#--}" ]]; then
         die "name one runtime, not --$flag_runtime and $arg"
@@ -140,6 +141,24 @@ if (( jfr )); then
   mkdir -p "$vis_home" 2>/dev/null || true
   warn "JFR profiling on → $vis_home/vis-{client,gateway}-<pid>-<ts>.jfr"
   warn "  snapshot: jcmd <pid> JFR.dump name=vis-<role>"
+fi
+
+# ── --stream-trace: raw provider SSE tracing ─────────────────────────────────
+# `--stream-trace` (or VIS_STREAM_TRACE=1) turns on svar's own stream tracer,
+# which logs every SSE line with its gap and the running reasoning length — the
+# instrument that says whether a stunted thinking block lost its deltas on the
+# wire or inside the extractor. The switch is a system property svar reads at
+# load, so it is passed to both runtimes; exporting the variable also carries it
+# into the detached gateway daemon, where the model loop actually runs.
+stream_trace_on() {
+  case "${VIS_STREAM_TRACE:-0}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+  esac
+  return 1
+}
+if stream_trace_on; then
+  export VIS_STREAM_TRACE=1
+  warn "svar stream trace on → raw provider SSE lines in the vis log"
 fi
 
 # Dev mode — and only dev mode — hands off to the live checkout's own launcher.
@@ -911,7 +930,9 @@ case "$runtime" in
       resource_args=("-Dpolyglot.engine.resourcePath=$candidate")
       break
     done
-    run_measured_or_exec "process native runtime" "$native_runtime" "-Duser.home=${HOME:-$vis_home}" ${resource_args[@]+"${resource_args[@]}"} "$@"
+    stream_trace_args=()
+    if stream_trace_on; then stream_trace_args=("-Dsvar.stream.trace=true"); fi
+    run_measured_or_exec "process native runtime" "$native_runtime" "-Duser.home=${HOME:-$vis_home}" ${resource_args[@]+"${resource_args[@]}"} ${stream_trace_args[@]+"${stream_trace_args[@]}"} "$@"
     ;;
   jvm|dev)
     source_root="$(find_jvm_source 2>/dev/null || true)"
@@ -991,12 +1012,10 @@ if [[ -n "$user_extension_sdeps" ]]; then
 fi
 
 stream_trace_jvm_opts=()
-case "${VIS_STREAM_TRACE:-0}" in
-  1|true|TRUE|yes|YES|on|ON)
-    stream_trace_jvm_opts=("-J-Dsvar.stream.trace=true")
-    measure_log "svar stream trace enabled"
-    ;;
-esac
+if stream_trace_on; then
+  stream_trace_jvm_opts=("-J-Dsvar.stream.trace=true")
+  measure_log "svar stream trace enabled"
+fi
 
 # Preserve the invocation directory through user.dir while resolving deps from
 # the selected source.
