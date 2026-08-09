@@ -17,10 +17,16 @@
    reached directly by the analysis get no such courtesy.
 
    The fix: in `beforeAnalysis` — which runs in the image-builder JVM, before the
-   analysis can raw-init anything — `require` every app + extension namespace with
-   the compiler vars bound. `require` initializes each class through Clojure's
-   loader (binding active), so its `set!` succeeds; by the time the analysis marks
-   the class build-time-initialized it is already initialized and is not re-run.
+   analysis can raw-init anything — `require` those namespaces with the compiler
+   vars bound. `require` initializes each class through Clojure's loader (binding
+   active), so its `set!` succeeds; by the time the analysis marks the class
+   build-time-initialized it is already initialized and is not re-run.
+
+   The preload list is NARROW on purpose (build.clj `write-preload-namespaces!`):
+   the reflection-setting namespaces plus the EXTENSION entry namespaces, never
+   the whole source tree. Loading unreachable code in the builder JVM runs its
+   load-time side effects and persists whatever they build into the image heap —
+   a live jdk.internal.net.http.HttpClientFacade that way aborted the analysis.
 
    Wired via `--features=com.blockether.vis.internal.nativeimage` in main's
    `resources/META-INF/native-image/com.blockether/vis/native-image.properties`,

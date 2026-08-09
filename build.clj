@@ -664,24 +664,6 @@
              (when (and (seq? form) (= 'ns (first form))) (first (filter symbol? (rest form)))))))
        (catch Throwable _ nil)))
 
-(defn- all-source-root-namespaces
-  "Every namespace defined under vis + extension source roots. The preload must
-   build-time `require` ALL of them: any may be loaded at RUNTIME via
-   `requiring-resolve` (e.g. the sqlite backend core, lazily loaded from its
-   registrar), and a runtime `require` in a native image RECOMPILES the ns
-   (eval → 'Classes cannot be defined at runtime'). Build-time-requiring them
-   makes the lazy resolve a no-op. Covers nses that lack a
-   `(set! *warn-on-reflection* …)` and aren't manifest entry points."
-  []
-  (->> (all-source-roots)
-       (mapcat (fn [d]
-                 (->> (file-seq (io/file d))
-                      (filter #(and (.isFile ^java.io.File %)
-                                    (re-matches #".*\.cljc?$" (.getName ^java.io.File %))))
-                      (keep (fn [f]
-                              (ns-name-of (slurp f)))))))
-       (map str)
-       distinct))
 
 (def ^:private warn-on-reflection-re #"\(set!\s+\*(?:warn-on-reflection|unchecked-math)\*")
 
@@ -750,26 +732,31 @@
 
 (defn- write-preload-namespaces!
   [class-dir basis]
-  ;; The native Feature `require`s every ns in this list at BUILD time. It must
-  ;; cover not just the (set! *warn-on-reflection* …) namespaces, but also every
-  ;; namespace vis `require`s at RUNTIME during extension discovery
+  ;; The native Feature `require`s every ns in this list at BUILD time, and the
+  ;; list is deliberately NARROW: the (set! *warn-on-reflection* …) namespaces,
+  ;; which must be initialized through `require` so the set! has a binding, plus
+  ;; the EXTENSION entry namespaces vis `require`s at RUNTIME during discovery
   ;; (extension/discover-extensions! -> load-builtin-extensions! +
-  ;; manifest/scan-extensions!). A runtime `require` in a native image must
-  ;; DEFINE the namespace's classes at runtime — forbidden ("Classes cannot be
-  ;; defined at runtime", the foundation/core.clj smoke-test crash). Build-time
-  ;; initializing them here makes the runtime require a no-op.
+  ;; manifest/scan-extensions!) — a runtime `require` in a native image would
+  ;; have to DEFINE classes at runtime, which is forbidden ("Classes cannot be
+  ;; defined at runtime"), and build-time initializing them makes it a no-op.
+  ;;
+  ;; It must NOT be "every namespace under the source roots". Requiring the whole
+  ;; tree inside the builder JVM runs load-time side effects of code the image
+  ;; never reaches, and whatever those effects construct lands in the image heap:
+  ;; that is how a live jdk.internal.net.http.HttpClientFacade (babashka's
+  ;; implicit @default-client) got persisted and aborted the points-to analysis.
+  ;; An extension entry ns pulls its own transitive requires with it, so the
+  ;; reachable graph is covered without loading the unreachable one.
   (let
     [warn
      (map str (preload-namespaces basis))
-
-     srcs
-     (all-source-root-namespaces)
 
      exts
      (concat builtin-extension-nses (manifest-entry-namespaces class-dir))
 
      nses
-     (->> (concat warn srcs exts)
+     (->> (concat warn exts)
           distinct
           sort
           vec)
@@ -1073,23 +1060,26 @@
      (truffle-platform-tokens)
 
      ;; ── Builder JVM heap ────────────────────────────────────────────────
-     ;; The points-to analysis live set for this image peaks around 12 GiB.
-     ;; native-image's DEFAULT is 80% of physical RAM, which on a 36 GB Mac
-     ;; means the builder is free to page: the old generation fills, full GCs
-     ;; take over and the build dies with an OOM after ~20 wasted minutes
-     ;; (GraalVM 25.2.x makes this dramatically worse — see .graalvm-version).
-     ;; So pin a deterministic, RAM-clamped ceiling instead of inheriting the
-     ;; machine's size; VIS_NATIVE_EXTRA_ARGS is spliced LAST and overrides it.
+     ;; The points-to analysis live set for this image peaks around 12 GiB, and a
+     ;; ceiling only a little above the live set is what kills the build: the old
+     ;; generation fills, full GCs take over and native-image dies with "GC
+     ;; overhead limit exceeded" after ~20 wasted minutes. native-image's DEFAULT
+     ;; is 80% of physical RAM, which lets the builder page instead; GraalVM
+     ;; 25.2.x makes both failure modes dramatically worse (see .graalvm-version).
+     ;; So pin a deterministic, RAM-clamped ceiling with real headroom over the
+     ;; live set — 75% of RAM, up to 26 GiB — and start the heap high enough that
+     ;; the builder is not growing it while the analysis is already hot.
+     ;; VIS_NATIVE_EXTRA_ARGS is spliced LAST and overrides both.
      total-ram
      (try (.getTotalMemorySize ^com.sun.management.OperatingSystemMXBean
                                (java.lang.management.ManagementFactory/getOperatingSystemMXBean))
           (catch Throwable _ 0))
 
      heap-gib
-     (max 6 (min 18 (long (/ (* 0.6 (double total-ram)) 1073741824.0))))
+     (max 6 (min 26 (long (/ (* 0.75 (double total-ram)) 1073741824.0))))
 
      init-gib
-     (max 2 (quot heap-gib 3))
+     (max 2 (quot heap-gib 2))
 
      ;; Extra native-image args spliced from the environment (space-separated).
      ;; Lets CI tune the builder JVM per-runner (e.g. -J-Xmx6g -J-Xms2g to fit a
